@@ -1,0 +1,122 @@
+name: quarantined scenario lane
+on:
+  workflow_call:
+    inputs:
+      mode:
+        type: string
+        required: true
+permissions:
+  contents: read
+jobs:
+  scenarios:
+    name: quarantine ${{ inputs.mode }} (${{ matrix.suite }}, ${{ matrix.os }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - suite: web
+            os: Linux
+            runner: ubuntu-latest
+            platform: linux-x86_64
+          - suite: web
+            os: macOS
+            runner: macos-15
+            platform: macos-aarch64
+          - suite: web
+            os: Windows
+            runner: windows-latest
+            platform: windows-x86_64
+          - suite: desktop
+            os: macOS
+            runner: macos-15
+            platform: macos-aarch64
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: ci-plan
+      - name: Validate the precise registry
+        id: filter
+        env:
+          MODE: ${{ inputs.mode }}
+          SUITE: ${{ matrix.suite }}
+        run: |
+          python3 scripts/ci-quarantine.py check
+          count=$(python3 scripts/ci-quarantine.py filter --suite "$SUITE" --os "$RUNNER_OS" --mode "$MODE" --plan ci-plan.json --output "$RUNNER_TEMP/quarantine-list.txt")
+          echo "count=$count" >> "$GITHUB_OUTPUT"
+      - uses: pnpm/action-setup@v6
+        if: steps.filter.outputs.count != '0' && steps.filter.outputs.count != ''
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        if: steps.filter.outputs.count != '0' && steps.filter.outputs.count != ''
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - uses: Swatinem/rust-cache@v2
+        if: steps.filter.outputs.count != '0' && steps.filter.outputs.count != ''
+        with:
+          workspaces: '. -> target'
+          save-if: false
+      - run: sudo apt-get install -y --no-install-recommends zsh
+        if: runner.os == 'Linux' && steps.filter.outputs.count != '0' && steps.filter.outputs.count != ''
+      - name: Prepare this OS candidate
+        if: steps.filter.outputs.count != '0' && steps.filter.outputs.count != ''
+        run: |
+          bash scripts/verify-cargo.sh cli
+          bash scripts/verify-web.sh install
+          bash scripts/verify-web.sh web build
+          bash scripts/verify-web.sh hcoord build
+          bash scripts/verify-web.sh web playwright-install
+          if [ '${{ matrix.suite }}' = desktop ]; then bash scripts/verify-web.sh desktop electron-install; fi
+      - name: Fetch the pinned runtime
+        if: steps.filter.outputs.count != '0' && steps.filter.outputs.count != ''
+        id: herdr
+        env:
+          PLATFORM: ${{ matrix.platform }}
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then
+            bin=$(pwsh -NoProfile -File scripts/fetch-herdr-runtime.ps1 | tr -d '\r')
+          else
+            bin=$(zsh scripts/fetch-herdr-runtime.sh --platform "$PLATFORM")
+          fi
+          echo "bin=$bin" >> "$GITHUB_OUTPUT"
+      - name: Run each selected exact scenario
+        if: steps.filter.outputs.count != '0' && steps.filter.outputs.count != ''
+        timeout-minutes: 20
+        env:
+          HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
+          HIDE_E2E_SCREENSHOT_DIR: ${{ runner.temp }}/hide-e2e
+          CI_LEDGER_PATH: ${{ runner.temp }}/hide-e2e/ledger.json
+          CI_LANE: quarantine
+          CI_JOB_LABEL: quarantine ${{ inputs.mode }} (${{ matrix.suite }}, ${{ matrix.os }})
+        run: |
+          mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
+          bash scripts/verify-web.sh ${{ matrix.suite }} e2e --no-deps --test-list "$RUNNER_TEMP/quarantine-list.txt" --retries=0
+      - name: Require a reported result for every selected identity
+        if: always() && steps.filter.outputs.count != '' && steps.filter.outputs.count != '0'
+        env:
+          MODE: ${{ inputs.mode }}
+          SUITE: ${{ matrix.suite }}
+        run: python3 scripts/ci-quarantine.py results --suite "$SUITE" --os "$RUNNER_OS" --mode "$MODE" --plan ci-plan.json --ledger "$RUNNER_TEMP/hide-e2e/ledger.json"
+      - uses: actions/upload-artifact@v7
+        if: always() && steps.filter.outputs.count != '0' && steps.filter.outputs.count != ''
+        with:
+          name: quarantine-${{ inputs.mode }}-${{ matrix.suite }}-${{ matrix.os }}
+          path: ${{ runner.temp }}/hide-e2e
+          retention-days: 14
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always() && steps.filter.outputs.count != '0' && steps.filter.outputs.count != ''
+        with:
+          name: ci-ledger-quarantine-${{ inputs.mode }}-${{ matrix.suite }}-${{ matrix.os }}
+          path: ${{ runner.temp }}/hide-e2e/ledger.json
+          retention-days: 30
+          if-no-files-found: error

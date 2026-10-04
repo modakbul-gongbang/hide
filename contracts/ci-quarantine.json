@@ -1,0 +1,217 @@
+{
+  "version": 1,
+  "entries": [
+    {
+      "id": "issue-311",
+      "suite": "desktop",
+      "file": "desktop/e2e/browser.spec.ts",
+      "title": "area cycle native: page input previews one exact area, releases once and cancels",
+      "oses": [
+        "macOS"
+      ],
+      "owner": "@tansfil",
+      "issue": "https://github.com/modakbul-gongbang/hide/issues/311",
+      "evidence": "https://github.com/modakbul-gongbang/hide/issues/311",
+      "expires": "2026-10-11",
+      "signature": {
+        "category": "assertion",
+        "any_of": [
+          [
+            "Expected: true",
+            "Received: false"
+          ],
+          [
+            "[data-cycle=area]",
+            "toBeVisible"
+          ]
+        ]
+      },
+      "fix_paths": [
+        "desktop/src/main/browser.ts",
+        "web/src/areaCycle.ts",
+        "web/src/keyboard.ts",
+        "desktop/e2e/browser.spec.ts"
+      ],
+      "alternative": [
+        "web/src/areaCycle.test.ts",
+        "desktop/e2e/keys.spec.ts"
+      ],
+      "return_criteria": "30 retry-zero fresh fixtures per affected OS and the original suite, preserving native/input/count contracts",
+      "registered": "2026-10-04"
+    },
+    {
+      "id": "issue-287",
+      "suite": "web",
+      "file": "web/e2e/agent-tab-groups.spec.ts",
+      "title": "Delegated canvas returns to its normal tab and its tab menu keeps the Agent commands",
+      "oses": [
+        "macOS"
+      ],
+      "owner": "@tansfil",
+      "issue": "https://github.com/modakbul-gongbang/hide/issues/287",
+      "evidence": "https://github.com/modakbul-gongbang/hide/issues/287",
+      "expires": "2026-10-11",
+      "signature": {
+        "category": "assertion",
+        "any_of": [
+          [
+            "data-pane-view",
+            "data-focused",
+            "toHaveAttribute"
+          ]
+        ]
+      },
+      "fix_paths": [
+        "herdr-core/src/runtime/agent_areas.rs",
+        "web/e2e/agent-tab-groups.spec.ts"
+      ],
+      "alternative": [
+        "herdr-core/src/runtime/tests/agent_areas.rs"
+      ],
+      "return_criteria": "30 retry-zero fresh fixtures per affected OS and the original suite, preserving native/input/count contracts",
+      "registered": "2026-10-04"
+    },
+    {
+      "id": "issue-303",
+      "suite": "web",
+      "file": "web/e2e/agent-tab-groups.spec.ts",
+      "title": "Agent pointer drags split live canvases, reorder, move, cancel, resize, collapse and restore",
+      "oses": [
+        "macOS"
+      ],
+      "owner": "@tansfil",
+      "issue": "https://github.com/modakbul-gongbang/hide/issues/303",
+      "evidence": "https://github.com/modakbul-gongbang/hide/issues/303",
+      "expires": "2026-10-11",
+      "signature": {
+        "category": "assertion",
+        "any_of": [
+          [
+            "toContain",
+            "area-0-live-3"
+          ]
+        ]
+      },
+      "fix_paths": [
+        "herdr-core/src/runtime/terminal.rs",
+        "web/e2e/agent-tab-groups.spec.ts"
+      ],
+      "alternative": [
+        "herdr-core/src/runtime/tests/agent_areas.rs"
+      ],
+      "return_criteria": "30 retry-zero fresh fixtures per affected OS and the original suite, preserving native/input/count contracts",
+      "registered": "2026-10-04"
+    },
+    {
+      "id": "issue-286",
+      "suite": "web",
+      "file": "web/e2e/s7.spec.ts",
+      "title": "the tab menu offers only what a view can do, and each cap refuses with its reason and leaves the views alone",
+      "oses": [
+        "macOS"
+      ],
+      "owner": "@tansfil",
+      "issue": "https://github.com/modakbul-gongbang/hide/issues/286",
+      "evidence": "https://github.com/modakbul-gongbang/hide/issues/286",
+      "expires": "2026-10-11",
+      "signature": {
+        "category": "assertion",
+        "any_of": [
+          [
+            "toBeLessThan",
+            "450",
+            "631"
+          ],
+          [
+            "toBeGreaterThan",
+            "600",
+            "311"
+          ],
+          [
+            "f60.txt",
+            "aria-selected"
+          ]
+        ]
+      },
+      "fix_paths": [
+        "web/src/AreaTree.tsx",
+        "herdr-core/src/runtime/documents.rs",
+        "web/e2e/s7.spec.ts"
+      ],
+      "alternative": [
+        "web/src/viewLayout.test.ts"
+      ],
+      "return_criteria": "30 retry-zero fresh fixtures per affected OS and the original suite, preserving native/input/count contracts",
+      "registered": "2026-10-04"
+    },
+    {
+      "id": "issue-308",
+      "suite": "web",
+      "file": "web/e2e/sidebar-menus.spec.ts",
+      "title": "the sidebar's row menus: pin an unregistered project, open a tab, move the default, copy a session id",
+      "oses": [
+        "Linux"
+      ],
+      "owner": "@tansfil",
+      "issue": "https://github.com/modakbul-gongbang/hide/issues/308",
+      "evidence": "https://github.com/modakbul-gongbang/hide/issues/308",
+      "expires": "2026-10-11",
+      "signature": {
+        "category": "assertion",
+        "any_of": [
+          [
+            "toHaveCount",
+            "Expected: 2",
+            "Received: 1"
+          ]
+        ]
+      },
+      "fix_paths": [
+        "herdr-core/src/runtime/agent_areas.rs",
+        "herdr-core/src/runtime/session.rs",
+        "web/e2e/sidebar-menus.spec.ts"
+      ],
+      "alternative": [
+        "web/e2e/checkout-owner.spec.ts"
+      ],
+      "return_criteria": "30 retry-zero fresh fixtures per affected OS and the original suite, preserving native/input/count contracts",
+      "registered": "2026-10-04"
+    },
+    {
+      "id": "issue-231",
+      "suite": "web",
+      "file": "web/e2e/agent-close-contract.spec.ts",
+      "title": "primary last tab and last pane close retain the linked workspace boundary",
+      "oses": [
+        "Linux",
+        "macOS"
+      ],
+      "owner": "@tansfil",
+      "issue": "https://github.com/modakbul-gongbang/hide/issues/231",
+      "evidence": "https://github.com/modakbul-gongbang/hide/issues/231",
+      "expires": "2026-10-11",
+      "signature": {
+        "category": "assertion",
+        "any_of": [
+          [
+            "enterWorkspace",
+            "Test timeout"
+          ],
+          [
+            "close_pane",
+            "replacement_failed"
+          ]
+        ]
+      },
+      "fix_paths": [
+        "herdr-core/src/runtime/session.rs",
+        "web/e2e/agent-close-contract.spec.ts"
+      ],
+      "alternative": [
+        "herdr-core/src/runtime/tests/tree_close.rs"
+      ],
+      "return_criteria": "30 retry-zero fresh fixtures per affected OS and the original suite, preserving native/input/count contracts",
+      "registered": "2026-10-04"
+    }
+  ]
+}

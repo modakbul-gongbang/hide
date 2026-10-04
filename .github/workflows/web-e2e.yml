@@ -27,6 +27,15 @@ on:
         description: The pinned Herdr asset to run, as `fetch-herdr-runtime.sh --platform` names it.
         type: string
         required: true
+      max-parallel:
+        description: Trial capacity, keeping all shard tests and identities.
+        type: number
+        required: false
+        default: 6
+      ledger-lane:
+        type: string
+        required: false
+        default: web-e2e
       shards:
         description: How many shards deal the tests out.
         type: number
@@ -38,11 +47,6 @@ on:
         default: ""
       full-suite:
         description: Include @flaky tests in the blocking suite (nightly only).
-        type: boolean
-        required: false
-        default: false
-      quarantine:
-        description: Run the `@flaky` tests once, in shard 1, in a step that cannot fail the lane.
         type: boolean
         required: false
         default: false
@@ -62,10 +66,13 @@ jobs:
       - id: plan
         env:
           SHARDS: ${{ inputs.shards }}
+          MAX_PARALLEL: ${{ inputs.max-parallel }}
         run: |
           python3 - <<'PYPLAN'
           import json, os
           shards = int(os.environ['SHARDS'])
+          if int(os.environ['MAX_PARALLEL']) not in (4, 6):
+              raise ValueError('capacity trial must be 4 or 6')
           if not 1 <= shards <= 8:
               raise ValueError('shards must be between 1 and 8')
           with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
@@ -141,7 +148,7 @@ jobs:
     needs: [plan, build, zsh]
     # `build` is skipped for a single shard and `zsh` off Linux; a failed or
     # cancelled one still stops the shards, and the lane reports the failure.
-    if: ${{ !cancelled() && needs.plan.result == 'success' && contains(fromJSON('["success","skipped"]'), needs.build.result) && contains(fromJSON('["success","skipped"]'), needs.zsh.result) }}
+    if: ${{ !cancelled() && needs.plan.result == 'success' && ((inputs.shards > 1 && needs.build.result == 'success') || (inputs.shards == 1 && needs.build.result == 'skipped')) && ((startsWith(inputs.runner, 'ubuntu') && needs.zsh.result == 'success') || (!startsWith(inputs.runner, 'ubuntu') && needs.zsh.result == 'skipped')) }}
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 40
     defaults:
@@ -149,6 +156,7 @@ jobs:
         shell: bash
     strategy:
       fail-fast: false
+      max-parallel: ${{ inputs.max-parallel }}
       matrix:
         shard: ${{ fromJSON(needs.plan.outputs.shards) }}
     steps:
@@ -235,6 +243,10 @@ jobs:
         env:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
           HIDE_E2E_SCREENSHOT_DIR: ${{ runner.temp }}/hide-e2e
+          CI_LEDGER_PATH: ${{ runner.temp }}/hide-e2e/ledger-${{ matrix.shard }}.json
+          CI_SHARD: ${{ matrix.shard }}/${{ inputs.shards }}
+          CI_LANE: ${{ inputs.ledger-lane }}
+          CI_JOB_LABEL: web e2e ${{ inputs.lane }} ${{ matrix.shard }}/${{ inputs.shards }}
           HIDE_E2E_TRACE: "1"
           GREP: ${{ inputs.grep }}
           SHARD: ${{ matrix.shard }}/${{ inputs.shards }}
@@ -242,27 +254,12 @@ jobs:
         run: |
           mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
           args=(--shard="$SHARD")
-          if [ "$FULL_SUITE" != true ]; then args+=(--grep-invert @flaky); fi
+          if [ "$FULL_SUITE" != true ]; then
+            python3 scripts/ci-quarantine.py filter --suite web --mode exclude --os "$RUNNER_OS" --output "$RUNNER_TEMP/quarantine-list.txt"
+            args+=(--test-list-invert "$RUNNER_TEMP/quarantine-list.txt")
+          fi
           if [ -n "$GREP" ]; then args+=(--grep "$GREP"); fi
           bash scripts/verify-web.sh web e2e "${args[@]}"
-      - name: Quarantined end-to-end (does not block verify)
-        # A test tagged @flaky carries the issue that tracks its cause. It still
-        # runs here, once, so a fix shows up as a pass and a regression of the
-        # product it covers still shows up in the log; it cannot turn verify red.
-        timeout-minutes: 10
-        id: quarantine
-        # Only after the setup it needs succeeded, and into its own output
-        # directory: Playwright empties its output directory when a run starts,
-        # which would delete the required step's failure snapshots.
-        if: ${{ inputs.quarantine && matrix.shard == 1 && !cancelled() && steps.herdr.outcome == 'success' }}
-        continue-on-error: true
-        env:
-          HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
-          HIDE_E2E_SCREENSHOT_DIR: ${{ runner.temp }}/hide-e2e
-          HIDE_E2E_TRACE: "1"
-        run: |
-          mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
-          bash scripts/verify-web.sh web e2e --grep @flaky --output=test-results-quarantine
       - name: Keep the e2e run's logs
         # The daemon, Herdr server and PTY input logs behind a failed flow
         # (with the screenshots the specs take, under the same directory),
@@ -270,12 +267,20 @@ jobs:
         # option set that is the error-context page snapshot. The wire trace
         # is on the step's stdout. A screen assertion alone cannot say which
         # side moved.
-        if: failure() || steps.quarantine.outcome == 'failure'
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: hide-web-e2e-logs-${{ inputs.lane }}-${{ matrix.shard }}
           path: |
             ${{ runner.temp }}/hide-e2e
             web/test-results
-            web/test-results-quarantine
-          if-no-files-found: ignore
+          if-no-files-found: error
+          retention-days: 14
+      - name: Keep normalized attempts separately
+        if: always()
+        uses: actions/upload-artifact@v7
+        with:
+          name: ci-ledger-web-${{ inputs.lane }}-${{ matrix.shard }}
+          path: ${{ runner.temp }}/hide-e2e/ledger-${{ matrix.shard }}.json
+          retention-days: 30
+          if-no-files-found: error

@@ -1,0 +1,69 @@
+name: quarantine advisory
+on:
+  pull_request:
+  schedule:
+    - cron: '30 18 * * *'
+  workflow_dispatch:
+permissions:
+  contents: read
+  actions: read
+concurrency:
+  group: advisory-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+jobs:
+  plan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      advisory: ${{ steps.plan.outputs.advisory }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: plan
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 scripts/ci-plan.py plan --base "$BASE_SHA" --head "$HEAD_SHA"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ci-plan
+          path: ci-plan.json
+          retention-days: 30
+          if-no-files-found: error
+  quarantine:
+    needs: plan
+    if: needs.plan.outputs.advisory == 'true'
+    uses: ./.github/workflows/quarantine.yml
+    with:
+      mode: advisory
+  history:
+    needs: [plan, quarantine]
+    if: always() && needs.plan.outputs.advisory == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: ci-ledger-*
+          path: ci-ledgers
+      - uses: actions/github-script@v8
+        with:
+          script: |
+            const collect=require('./scripts/ci-history.cjs');
+            await collect({github,context,core,directory:'ci-ledgers'});
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ci-history-attempt-${{ github.run_attempt }}
+          path: ci-history.json
+          retention-days: 30
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ci-history-window
+          path: ci-history-window.json
+          retention-days: 30
+          if-no-files-found: error

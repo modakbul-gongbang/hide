@@ -16,7 +16,7 @@ export default defineConfig({
   fullyParallel: true,
   // The list reporter names every test with its duration, so a CI log says
   // where the minutes went; the dot reporter CI would default to does not.
-  reporter: "list",
+  reporter: [["list"], ["../scripts/ci-reporter.ts"]],
   use: {
     baseURL: process.env.HIDE_E2E_ORIGIN ?? "http://127.0.0.1:4173",
     headless: true,

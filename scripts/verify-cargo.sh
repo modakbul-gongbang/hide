@@ -38,7 +38,7 @@ done
 # Scoped modes cannot move the checkout or its artifacts through cargo flags.
 # Keep the legacy modes unchanged for sealed verification commands.
 case "${1:-}" in
-    test-scoped|check|build|clippy)
+    test-scoped|check|build|clippy|fmt)
         mode=$1
         shift
         (( $# <= 128 )) || { printf 'too many cargo arguments\n' >&2; exit 2; }
@@ -51,6 +51,7 @@ case "${1:-}" in
             esac
         done
         [[ "$mode" != test-scoped ]] || mode=test
+        if [[ "$mode" == fmt ]]; then exec cargo fmt "$@"; fi
         exec cargo "$mode" --locked "$@"
         ;;
     test)

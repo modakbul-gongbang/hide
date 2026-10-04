@@ -21,7 +21,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: nightly
+  group: nightly-${{ github.ref }}-${{ github.event_name }}
   cancel-in-progress: false
 
 jobs:
@@ -143,6 +143,7 @@ jobs:
         env:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
           HIDE_E2E_SCREENSHOT_DIR: ${{ runner.temp }}/hide-e2e
+          CI_LEDGER_PATH: ${{ runner.temp }}/hide-e2e/ledger-${{ matrix.system }}.json
         run: |
           mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
           if [ "$RUNNER_OS" = Linux ]; then
@@ -150,15 +151,16 @@ jobs:
           else
             bash scripts/verify-web.sh desktop e2e
           fi
-      - name: Keep the failed desktop run
-        if: failure()
+      - name: Keep the desktop observations
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: hide-nightly-desktop-${{ matrix.system }}
           path: |
             ${{ runner.temp }}/hide-e2e
             desktop/test-results
-          if-no-files-found: ignore
+          if-no-files-found: error
+          retention-days: 14
 
   package:
     name: package

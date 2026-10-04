@@ -1,6 +1,5 @@
-# Every pull request and every push to main runs the same required lanes, and the
-# single `verify` job is what branch protection requires. Adding a lane means
-# adding it to `verify`'s `needs`; the protection rule never changes.
+# Every PR records a versioned package/consumer selection. Main runs all lanes.
+# `verify` reconciles the exact planned results, including intentional skips.
 #
 # Each gate here has a local command in CONTRIBUTING.md under "CI gates".
 #
@@ -31,13 +30,64 @@ on:
 
 permissions:
   contents: read
+  actions: read
 
 concurrency:
   group: verify-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  plan:
+    name: CI selection and policy
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      docs: ${{ steps.plan.outputs.docs }}
+      rust: ${{ steps.plan.outputs.rust }}
+      web-checks: ${{ steps.plan.outputs.web-checks }}
+      desktop-checks: ${{ steps.plan.outputs.desktop-checks }}
+      windows-e2e: ${{ steps.plan.outputs.windows-e2e }}
+      checks: ${{ steps.plan.outputs.checks }}
+      windows-check: ${{ steps.plan.outputs.windows-check }}
+      web-e2e: ${{ steps.plan.outputs.web-e2e }}
+      web-e2e-platform: ${{ steps.plan.outputs.web-e2e-platform }}
+      desktop-e2e: ${{ steps.plan.outputs.desktop-e2e }}
+      os-contract: ${{ steps.plan.outputs.os-contract }}
+      quarantine-fixes: ${{ steps.plan.outputs.quarantine-fixes }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - id: plan
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: python3 scripts/ci-plan.py plan --base "$BASE_SHA" --head "$HEAD_SHA"
+      - uses: actions/upload-artifact@v7
+        with:
+          name: ci-plan
+          path: ci-plan.json
+          if-no-files-found: error
+          retention-days: 30
+
+  docs:
+    name: documentation policy
+    needs: plan
+    if: needs.plan.outputs.docs == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v7
+      - name: Documentation, namespace and policy contracts
+        run: |
+          bash scripts/check-no-workstation-identity.sh
+          bash scripts/check-harness-ignore-anchor.sh
+          bash scripts/check-agent-asset-committed.sh
+          python3 scripts/ci-quarantine.py check
+
   rust:
+    needs: plan
+    if: needs.plan.outputs.rust == 'true'
     name: rust workspace
     runs-on: ubuntu-latest
     timeout-minutes: 20
@@ -49,15 +99,36 @@ jobs:
           # A cache per pull request ref pushed the repository past the 10 GB
           # cache limit and evicted main's; main's is the one every run reads.
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      # The ubuntu image ships rustfmt and Clippy with its Rust toolchain.
-      # Every lane covers the whole Rust workspace.
-      - name: Check formatting and lint the workspace
-        run: bash scripts/verify-cargo.sh lint
-      - name: Test the workspace
-        # hide-ai drives its codex backend against a python fake app server.
-        run: bash scripts/verify-cargo.sh test
+      - uses: actions/download-artifact@v8
+        with:
+          name: ci-plan
+      - name: Formatting
+        run: bash scripts/verify-cargo.sh fmt --all --check
+      - name: Lint and test selected reverse dependencies
+        env:
+          CI_RUST_LOG: ${{ runner.temp }}/rust-tests.log
+          CI_LEDGER_PATH: ${{ runner.temp }}/rust-ledger.json
+          CI_LANE: rust
+          CI_JOB_LABEL: rust workspace
+        run: python3 scripts/ci-plan.py rust
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ci-ledger-rust
+          path: ${{ runner.temp }}/rust-ledger.json
+          retention-days: 30
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: rust-raw
+          path: ${{ runner.temp }}/rust-tests.log
+          retention-days: 14
+          if-no-files-found: error
 
   checks:
+    needs: plan
+    if: needs.plan.outputs.checks == 'true'
     name: checks and unit suites
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -74,10 +145,12 @@ jobs:
       - name: Install zsh
         # The invariant scripts and the Herdr fetch are zsh; the image has bash.
         run: sudo apt-get install -y --no-install-recommends zsh
+      - name: Install dependencies
+        run: bash scripts/verify-web.sh install
       - name: Test performance measurement semantics
         run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
       - name: Test nightly failure reporting
-        run: node --test scripts/tests/nightly-report.test.cjs
+        run: node --test scripts/tests/nightly-report.test.cjs scripts/tests/ci-ledger.test.cjs
       - name: Structural checks
         run: |
           bash scripts/check-harness-ignore-anchor.sh
@@ -96,8 +169,6 @@ jobs:
           echo "bin=$bin" >> "$GITHUB_OUTPUT"
       - name: Compare the Herdr API schema with the contract
         run: python3 scripts/check-herdr-schema.py --herdr-bin "${{ steps.herdr.outputs.bin }}"
-      - name: Install dependencies
-        run: bash scripts/verify-web.sh install
       - name: hcoord typecheck, build, unit test, and end-to-end test
         timeout-minutes: 10
         run: |
@@ -105,19 +176,54 @@ jobs:
           bash scripts/verify-web.sh hcoord build
           bash scripts/verify-web.sh hcoord test
           bash scripts/verify-web.sh hcoord test:e2e
-      - name: Web shell typecheck, lint, unit test, and build
+
+  web-checks:
+    name: web static and unit suites
+    needs: plan
+    if: needs.plan.outputs.web-checks == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - run: bash scripts/verify-web.sh install
+      - name: Typecheck, lint, unit suite and build
         run: |
           bash scripts/verify-web.sh web typecheck
           bash scripts/verify-web.sh web lint
           bash scripts/verify-web.sh web test
           bash scripts/verify-web.sh web build
-      - name: Desktop app typecheck, lint, and unit test
-        # The menu is built from the web registry, so a registry change is
-        # typechecked and tested here too.
+
+  desktop-checks:
+    name: desktop static and unit suites
+    needs: plan
+    if: needs.plan.outputs.desktop-checks == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - run: bash scripts/verify-web.sh install
+      - name: Typecheck, lint, unit suite and build
         run: |
           bash scripts/verify-web.sh desktop typecheck
           bash scripts/verify-web.sh desktop lint
           bash scripts/verify-web.sh desktop test
+          bash scripts/verify-web.sh desktop build
 
   # What differs on Windows (issue #293), as a required lane: the whole
   # workspace compiles for Windows, hided's pane bootstrap and end-to-end
@@ -130,6 +236,8 @@ jobs:
   # warm-cache jobs took 4-8 minutes on 2026-10-03; the new job's runtime
   # must be measured, and a cold run compiles the workspace from nothing.
   windows-check:
+    needs: plan
+    if: needs.plan.outputs.windows-check == 'true'
     name: windows check
     runs-on: windows-latest
     timeout-minutes: 50
@@ -210,38 +318,28 @@ jobs:
         if: ${{ !cancelled() && steps.web-deps.outcome == 'success' }}
         timeout-minutes: 10
         run: bash scripts/verify-web.sh desktop test
-      - name: Build the Windows browser platform smoke
-        id: platform-build
-        if: ${{ !cancelled() && steps.web-deps.outcome == 'success' }}
-        timeout-minutes: 5
-        run: |
-          bash scripts/verify-web.sh web build
-          bash scripts/verify-web.sh web playwright-install
-      - name: Windows browser platform smoke
-        if: ${{ !cancelled() && steps.herdr.outcome == 'success' && steps.platform-build.outcome == 'success' }}
-        timeout-minutes: 20
-        env:
-          HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
-          HIDE_E2E_SCREENSHOT_DIR: ${{ runner.temp }}/hide-e2e
-          HIDE_E2E_TRACE: "1"
-        run: |
-          mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
-          bash scripts/verify-web.sh web e2e --grep @platform
-      - name: Keep the failed Windows platform run
-        if: failure()
-        uses: actions/upload-artifact@v7
-        with:
-          name: hide-windows-platform-logs
-          path: |
-            ${{ runner.temp }}/hide-e2e
-            web/test-results
-          if-no-files-found: ignore
+
+  windows-e2e:
+    name: Windows browser platform smoke
+    needs: plan
+    if: needs.plan.outputs.windows-e2e == 'true'
+    uses: ./.github/workflows/web-e2e.yml
+    with:
+      lane: windows
+      ledger-lane: windows-e2e
+      runner: windows-latest
+      herdr-platform: windows-x86_64
+      shards: 1
+      grep: "@platform"
+
 
   # The web shell is the same code on every operating system, so the whole
   # suite runs once, on Linux, where runners are plentiful. What differs by
   # system is the daemon and Herdr under it, and the `@platform` tests cover
   # that on macOS.
   web-e2e:
+    needs: plan
+    if: needs.plan.outputs.web-e2e == 'true'
     name: web e2e
     uses: ./.github/workflows/web-e2e.yml
     with:
@@ -259,13 +357,16 @@ jobs:
       # replaced. The organization runs 20 jobs at once, so fewer jobs per run
       # also queue less.
       shards: 6
-      quarantine: true
+      full-suite: ${{ github.event_name != 'pull_request' }}
 
   web-e2e-platform:
+    needs: plan
+    if: needs.plan.outputs.web-e2e-platform == 'true'
     name: web e2e (macOS)
     uses: ./.github/workflows/web-e2e.yml
     with:
       lane: macos
+      ledger-lane: web-e2e-platform
       runner: macos-15
       herdr-platform: macos-aarch64
       shards: 1
@@ -274,10 +375,14 @@ jobs:
   # The OS contract's Linux and Windows legs (see os-contract.yml). Its macOS
   # leg runs in `desktop-e2e` below, on the runner that job already holds.
   os-contract:
+    needs: plan
+    if: needs.plan.outputs.os-contract == 'true'
     name: os contract
     uses: ./.github/workflows/os-contract.yml
 
   desktop-e2e:
+    needs: plan
+    if: needs.plan.outputs.desktop-e2e == 'true'
     name: desktop e2e
     runs-on: macos-15
     timeout-minutes: 30
@@ -318,7 +423,9 @@ jobs:
         run: bash scripts/verify-web.sh desktop playwright-install
       - name: Fetch the pinned Herdr runtime
         id: herdr
-        run: echo "bin=$(zsh scripts/fetch-herdr-runtime.sh)" >> "$GITHUB_OUTPUT"
+        run: |
+          bin=$(zsh scripts/fetch-herdr-runtime.sh)
+          echo "bin=$bin" >> "$GITHUB_OUTPUT"
       - name: Compare the binary schema and version with the pin on macOS
         run: python3 scripts/check-herdr-schema.py --herdr-bin "${{ steps.herdr.outputs.bin }}"
       - name: OS contract on macOS
@@ -338,51 +445,85 @@ jobs:
         env:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
           HIDE_E2E_SCREENSHOT_DIR: ${{ runner.temp }}/hide-e2e
+          CI_LEDGER_PATH: ${{ runner.temp }}/hide-e2e/ledger-${{ github.job }}.json
+          CI_LANE: desktop-e2e
+          CI_JOB_LABEL: desktop e2e
         run: |
           mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
-          bash scripts/verify-web.sh desktop e2e --grep-invert @flaky
-      - name: Quarantined end-to-end (does not block verify)
-        # A test tagged @flaky carries the issue that tracks its cause. It still
-        # runs here, once, so a fix shows up as a pass and a regression of the
-        # product it covers still shows up in the log; it cannot turn verify red.
-        # The build is the required step's. `--no-deps` matters: a project
-        # dependency runs whole whatever `--grep` says, so a `@needs-focus`
-        # quarantined test would otherwise bring the entire background suite
-        # with it.
-        timeout-minutes: 10
-        id: quarantine
-        # Into its own output directory: Playwright empties its output directory
-        # when a run starts, which would delete the required step's failure
-        # snapshots.
-        if: ${{ !cancelled() && steps.electron.outcome == 'success' && steps.herdr.outcome == 'success' }}
-        continue-on-error: true
-        env:
-          HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
-          HIDE_E2E_SCREENSHOT_DIR: ${{ runner.temp }}/hide-e2e
-        run: |
-          mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
-          bash scripts/verify-web.sh desktop e2e --no-deps --grep @flaky --output=test-results-quarantine
+          if [ "$GITHUB_EVENT_NAME" = pull_request ]; then
+            python3 scripts/ci-quarantine.py filter --suite desktop --mode exclude --os macOS --output "$RUNNER_TEMP/quarantine-list.txt"
+            bash scripts/verify-web.sh desktop e2e --test-list-invert "$RUNNER_TEMP/quarantine-list.txt"
+          else
+            bash scripts/verify-web.sh desktop e2e
+          fi
       - name: Keep the e2e run's logs
-        if: failure() || steps.quarantine.outcome == 'failure'
+        if: always()
         uses: actions/upload-artifact@v7
         with:
           name: hide-desktop-e2e-logs
           path: |
             ${{ runner.temp }}/hide-e2e
             desktop/test-results
-            desktop/test-results-quarantine
-          if-no-files-found: ignore
+          if-no-files-found: error
+          retention-days: 14
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ci-ledger-desktop
+          path: ${{ runner.temp }}/hide-e2e/ledger-${{ github.job }}.json
+          retention-days: 30
+          if-no-files-found: error
+
+  quarantine-fixes:
+    name: quarantined scenarios changed by this fix
+    needs: plan
+    if: needs.plan.outputs.quarantine-fixes == 'true'
+    uses: ./.github/workflows/quarantine.yml
+    with:
+      mode: required
 
   verify:
     name: verify
-    needs: [rust, checks, web-e2e, web-e2e-platform, desktop-e2e, os-contract, windows-check]
+    needs: [plan, docs, rust, checks, web-checks, desktop-checks, windows-e2e, web-e2e, web-e2e-platform, desktop-e2e, os-contract, windows-check, quarantine-fixes]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Every lane succeeded
-        # A skipped or cancelled lane is a failure here; `needs` alone would
-        # let one through.
+      - uses: actions/checkout@v7
+      - uses: actions/download-artifact@v8
+        with:
+          name: ci-plan
+      - name: Reconcile every lane with the recorded selection
+        env:
+          RESULTS: ${{ toJSON(needs) }}
         run: |
-          echo '${{ toJSON(needs) }}' | jq -e 'all(.[]; .result == "success")' >/dev/null \
-            || { echo 'a lane did not succeed:'; echo '${{ toJSON(needs) }}' | jq '.'; exit 1; }
+          printf '%s' "$RESULTS" > ci-results.json
+          python3 scripts/ci-plan.py aggregate --results ci-results.json
+      - uses: actions/download-artifact@v8
+        if: always()
+        with:
+          pattern: ci-ledger-*
+          path: ci-ledgers
+      - name: Reconcile actual suite inventory and bounded failure history
+        if: always()
+        uses: actions/github-script@v8
+        with:
+          script: |
+            const fs=require('node:fs');
+            fs.mkdirSync('ci-ledgers',{recursive:true});
+            const collect=require('./scripts/ci-history.cjs');
+            await collect({github,context,core,directory:'ci-ledgers',plan:JSON.parse(fs.readFileSync('ci-plan.json','utf8'))});
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ci-history-attempt-${{ github.run_attempt }}
+          path: ci-history.json
+          retention-days: 30
+          if-no-files-found: error
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: ci-history-window
+          path: ci-history-window.json
+          retention-days: 30
+          if-no-files-found: error
