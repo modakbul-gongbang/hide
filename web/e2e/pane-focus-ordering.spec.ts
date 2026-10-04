@@ -183,7 +183,7 @@ function observeFocusFrames(page: Page) {
 
 // Headless Chromium composites in software, so each frame of xterm's WebGL
 // canvas is read back synchronously on the page's main thread (ReadPixels in
-// the layer commit), up to half a second per frame on a loaded runner. Those
+// the layer commit), up to half a second per frame in a local trace. Those
 // stalls delay clicks and snapshot frames inside the held request's real
 // five-second budget. Focus does not depend on the terminal renderer, so these
 // cases run the DOM renderer the shell falls back to when WebGL is missing.
