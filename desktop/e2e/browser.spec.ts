@@ -769,18 +769,19 @@ test("area cycle native: page input previews one exact area, releases once and c
   const outsideId = await displayIdOf(page, "Page A");
   const pid = app.process().pid!;
   const focus = async (url: string, displayId: string) => {
-    await app!.evaluate(({ app: electron, BrowserWindow }, url) => {
+    const deadline = Date.now() + 5000;
+    await app!.evaluate(({ app: electron, BrowserWindow }) => {
+      electron.focus({ steal: true });
+      BrowserWindow.getAllWindows()[0]!.focus();
+    });
+    await expect.poll(() => app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.isFocused()), { timeout: Math.max(1, deadline - Date.now()) }).toBe(true);
+    // Activation and page focus are separate one-shot actions. Polling only
+    // observes their result, so a failed focus cannot be repaired by a retry.
+    await app!.evaluate(({ BrowserWindow }, url) => {
       const window = BrowserWindow.getAllWindows()[0]!;
-      electron.focus({ steal: true }); window.focus();
       const child = window.contentView.children.find(view => (view as { webContents?: Electron.WebContents }).webContents?.getURL() === url) as unknown as { webContents: Electron.WebContents };
-      // A page already holding native focus announces nothing when focused
-      // again, so the shell takes it first and the page enters as an operator's click would.
       window.webContents.focus(); child.webContents.focus();
     }, url);
-    // macOS activates the window asynchronously, and an activation still in
-    // flight can hand the keyboard back to the shell a moment after the page
-    // took it; keys posted then reach no page. Accept the page only once it
-    // has kept the keyboard in the key window for a while, refocusing it otherwise.
     const holds = () => app!.evaluate(({ BrowserWindow }, url) => {
       const window = BrowserWindow.getAllWindows()[0]!;
       const child = window.contentView.children.find(view => (view as { webContents?: Electron.WebContents }).webContents?.getURL() === url) as unknown as { webContents: Electron.WebContents };
@@ -795,17 +796,7 @@ test("area cycle native: page input previews one exact area, releases once and c
     // native focus alone drew nothing.
     const admitted = async () => (await viewOf(url)).visible && (await page.evaluate((id) =>
       document.querySelector("[data-keyboard-area=true] [data-view-tab-bar] [aria-selected=true]")?.getAttribute("data-display") === id, displayId));
-    await expect.poll(async () => {
-      await app!.evaluate(({ app: electron, BrowserWindow }, url) => {
-        const window = BrowserWindow.getAllWindows()[0]!;
-        electron.focus({ steal: true }); window.focus();
-        const child = window.contentView.children.find(view => (view as { webContents?: Electron.WebContents }).webContents?.getURL() === url) as unknown as { webContents: Electron.WebContents };
-        window.webContents.focus(); child.webContents.focus();
-      }, url);
-      if (!(await holds())) return false;
-      await new Promise((resolve) => setTimeout(resolve, 250));
-      return (await holds()) && (await admitted());
-    }).toBe(true);
+    await expect.poll(async () => (await holds()) && (await admitted()), { timeout: Math.max(1, deadline - Date.now()) }).toBe(true);
   };
   const capture = async (name: string) => {
     const dir = process.env.HIDE_E2E_SCREENSHOT_DIR;
@@ -830,7 +821,6 @@ test("area cycle native: page input previews one exact area, releases once and c
   await expect(page.locator("[data-cycle]")).toHaveCount(0);
   await expect(tab(page, "Page B")).toHaveAttribute("aria-selected", "true");
   await expect.poll(() => sent.get("view_layout") ?? 0).toBe(commits + 1);
-  await page.waitForTimeout(300);
   expect(sent.get("view_layout") ?? 0).toBe(commits + 1);
   expect(await inPage(current, "window.tabKeys")).toBe(0);
   await expect.poll(async () => (await zoomOf(previous)).focused).toBe(true);

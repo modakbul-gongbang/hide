@@ -249,9 +249,9 @@ test("An external focused creation joins a bar without replacing either shown ca
   const herdr = await startHerdr({ agents: false });
   let daemon: Daemon | null = null;
   try {
-    const second = herdr.run(["tab", "create", "--workspace", herdr.workspace, "--cwd", path.join(herdr.root, "fixture"), "--label", "second", "--no-focus"]) as { result: { tab: { tab_id: string } } };
+    const second = herdr.run(["tab", "create", "--workspace", herdr.workspace, "--cwd", path.join(herdr.root, "fixture"), "--label", "second", "--no-focus"]) as { result: { tab: { tab_id: string }; root_pane: { pane_id: string } } };
     daemon = await startHided(herdr, "agent-external-focus");
-    await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+    await page.goto(`${daemon.origin}/?probe=1#token=${daemon.token}`);
     await enterWorkspace(page, "fixture");
     await expect(tab(page, second.result.tab.tab_id)).toBeVisible();
     const body = await box(page.locator("[data-agent-body]"));
@@ -263,13 +263,15 @@ test("An external focused creation joins a bar without replacing either shown ca
     // Wait through the actual separate creation/layout/focus stream, including
     // the next read-only projection, rather than asserting its first frame.
     await expect.poll(async () => (await shape(page)).map(({ id, active, shown }) => ({ id, active, shown }))).toEqual(before);
-    await page.waitForTimeout(1500);
-    expect((await shape(page)).map(({ id, active, shown }) => ({ id, active, shown }))).toEqual(before);
     // A genuinely later external focus still selects a known tab.
     // Pinned Herdr emits no event for a no-op focus on its current tab.
     // Exercise an observable external focus transition after creation instead.
+    // Select the other shown canvas first, so each later boundary has a
+    // distinguishable accepted pane and cannot pass on an unchanged UI frame.
+    herdr.run(["tab", "focus", herdr.tab]);
+    await expect.poll(() => page.evaluate(() => window.__hideProbe?.paneId())).toBe(herdr.panes[0]);
     herdr.run(["tab", "focus", second.result.tab.tab_id]);
-    await page.waitForTimeout(300);
+    await expect.poll(() => page.evaluate(() => window.__hideProbe?.paneId())).toBe(second.result.root_pane.pane_id);
     herdr.run(["tab", "focus", external.result.tab.tab_id]);
     await expect(tab(page, external.result.tab.tab_id)).toHaveAttribute("aria-selected", "true");
     await expect(page.locator(`[data-canvas="${external.result.tab.tab_id}"]`)).toBeVisible();
