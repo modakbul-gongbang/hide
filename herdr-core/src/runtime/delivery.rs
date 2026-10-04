@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::delivery::ledger::Ledger;
-use crate::delivery::worker::{Authority, Client, Prepared};
+use crate::delivery::worker::{Authority, Client, Prepared, PreparedHuman};
 use crate::delivery::{Actor, Command};
 use crate::sidebar::SessionSnapshotPayload;
 use crate::workspace_control::{Caller, Context, Query};
@@ -147,20 +147,27 @@ impl Runtime {
             .workspace_control_query(device, caller, Query::Info)
             .map_err(|refusal| refusal.reason.to_owned())?
             .context;
-        if context != *expected || device != "local" {
+        if context != *expected {
             return Err("caller_context_changed".into());
         }
+        let qualify = |pane: &str| {
+            if device == "local" || pane.starts_with(&format!("remote:{device}:pane:")) {
+                pane.to_owned()
+            } else {
+                format!("remote:{device}:pane:{pane}")
+            }
+        };
         let actor_pane = match Caller::parse(caller) {
             Caller::Pane(pane) => {
-                if hint.is_some_and(|hint| hint != pane) {
+                if hint.is_some_and(|hint| qualify(hint) != pane) {
                     return Err("caller_identity_conflict".into());
                 }
-                pane
+                pane.to_owned()
             }
-            Caller::Checkout { .. } => hint.ok_or("agent_pane_required")?,
+            Caller::Checkout { .. } => qualify(hint.ok_or("agent_pane_required")?),
         };
         let actor_context = self
-            .workspace_control_query(device, actor_pane, Query::Info)
+            .workspace_control_query(device, &actor_pane, Query::Info)
             .map_err(|_| "agent_pane_required")?
             .context;
         if actor_context != context {
@@ -168,11 +175,45 @@ impl Runtime {
         }
         let actor = self
             .delivery_observations
-            .get(actor_pane)
+            .get(&actor_pane)
             .ok_or("agent_pane_required")?
             .actor
             .clone();
         actor.require_native_identity()?;
+        let resolves_to_caller = |key: &str| {
+            key == actor.pane_id
+                || key == actor.name
+                || self.delivery_ledger.as_ref().is_ok_and(|ledger| {
+                    crate::coordination::resolve_actor(ledger, key)
+                        .is_some_and(|registered| registered.same_identity(&actor))
+                })
+        };
+        match &command {
+            Command::WatchStart {
+                actor: declared,
+                observer,
+                ..
+            } => {
+                if declared
+                    .as_deref()
+                    .is_some_and(|key| !resolves_to_caller(key))
+                    || observer
+                        .as_deref()
+                        .is_some_and(|key| !resolves_to_caller(key))
+                {
+                    return Err("caller_identity_conflict".into());
+                }
+            }
+            Command::WatchAssign {
+                actor: declared, ..
+            } if declared
+                .as_deref()
+                .is_some_and(|key| !resolves_to_caller(key)) =>
+            {
+                return Err("caller_identity_conflict".into());
+            }
+            _ => {}
+        }
         let repeated = match &command {
             Command::Send { intent, .. } => self.delivery_ledger.as_ref().is_ok_and(|ledger| {
                 crate::delivery::mailbox::existing_intent(
@@ -187,9 +228,21 @@ impl Runtime {
         };
         let target = match &command {
             Command::Send { .. } if repeated => None,
-            Command::Send { target, .. } | Command::WatchStart { target } => {
+            Command::Send { target, .. }
+            | Command::WatchStart { target, .. }
+            | Command::WatchAssign {
+                observer: target, ..
+            } => {
+                let registered = self
+                    .delivery_ledger
+                    .as_ref()
+                    .ok()
+                    .and_then(|ledger| crate::coordination::resolve_actor(ledger, target));
                 let mut matches = self.delivery_observations.values().filter(|observation| {
-                    observation.actor.pane_id == *target || observation.actor.name == *target
+                    observation.actor.pane_id == *target
+                        || observation.actor.name == *target
+                        || registered
+                            .is_some_and(|registered| registered.same_identity(&observation.actor))
                 });
                 let first = matches.next().cloned();
                 if matches.next().is_some() {
@@ -202,7 +255,9 @@ impl Runtime {
             }
             _ => None,
         };
-        if matches!(&command, Command::Send { .. }) && !repeated {
+        if (matches!(&command, Command::Send { .. }) && !repeated)
+            || matches!(&command, Command::WatchAssign { .. })
+        {
             target
                 .as_ref()
                 .ok_or("target_unavailable")?
@@ -223,6 +278,13 @@ impl Runtime {
 
     pub(crate) fn install_delivery_client(&mut self, client: Client) {
         self.delivery_client = Some(client);
+    }
+
+    pub(crate) fn prepare_delivery_human(&self) -> Result<PreparedHuman, String> {
+        self.delivery_state()?;
+        Ok(PreparedHuman::new(
+            self.delivery_client.clone().ok_or("delivery_unavailable")?,
+        ))
     }
 
     pub(crate) fn delivery_state(&self) -> Result<Arc<Ledger>, String> {
@@ -262,13 +324,15 @@ impl Runtime {
             .is_some_and(|observation| observation.actor.same_identity(actor))
     }
 
-    pub(crate) fn delivery_bell_context(
+    pub(crate) fn delivery_connector(
         &self,
-    ) -> Option<(Arc<Ledger>, Arc<dyn hide_herdr_client::ApiConnector>)> {
-        Some((
-            self.delivery_state().ok()?,
-            self.live.as_ref()?.api_connector.clone(),
-        ))
+        device: &str,
+    ) -> Option<Arc<dyn hide_herdr_client::ApiConnector>> {
+        if device == "local" {
+            self.live.as_ref().map(|live| live.api_connector.clone())
+        } else {
+            self.remote_herdr_api(device)
+        }
     }
 
     pub(crate) fn delivery_observation(&self, actor: &Actor) -> Option<Observation> {
@@ -498,6 +562,102 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn remote_delivery_uses_attested_pane_and_native_kind_without_a_remote_store() {
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, _, _, path) = fixture(root.path());
+        let (worker, client) = Worker::spawn(
+            Arc::downgrade(&runtime),
+            ChangeNotifier::noop(),
+            path.clone(),
+        )
+        .unwrap();
+        let caller = "remote:device:pane:sender";
+        let context;
+        {
+            let mut guard = runtime.lock().unwrap();
+            guard.install_delivery_client(client);
+            let mut remote = guard.snapshot.navigator.workspaces[0].clone();
+            remote.device_id = "device".into();
+            remote.id = "remote-workspace".into();
+            remote.remote_target_id = Some("device".into());
+            for tab in &mut remote.checkouts[0].tabs {
+                for pane in &mut tab.panes {
+                    pane.id = format!("remote:device:pane:{}", pane.id);
+                }
+            }
+            guard.snapshot.navigator.workspaces.push(remote);
+            guard
+                .snapshot
+                .status
+                .remote
+                .push(crate::model::RemoteStatusSnapshot {
+                    target_id: "device".into(),
+                    state: "connected".into(),
+                    message: None,
+                    herdr_version: None,
+                    session: None,
+                    files: crate::model::RemoteFileListSnapshot::idle(),
+                    catalog: Default::default(),
+                });
+            let payload: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[{"id":"remote-sender","pane_id":"sender","agent":"claude","agent_status":"working","state_change_seq":1,"lineage_session":"remote-session"}]})).unwrap();
+            guard.observe_delivery("device", &payload, Some("fixture-device"));
+            context = guard
+                .workspace_control_query("device", caller, Query::Info)
+                .unwrap()
+                .context;
+            assert!(
+                guard
+                    .prepare_delivery(
+                        "device",
+                        caller,
+                        &context,
+                        Some("recipient"),
+                        Command::Inbox
+                    )
+                    .is_err()
+            );
+            assert!(
+                guard
+                    .prepare_delivery(
+                        "device",
+                        caller,
+                        &context,
+                        Some("remote:other:pane:sender"),
+                        Command::Inbox
+                    )
+                    .is_err()
+            );
+        }
+        let prepared = runtime
+            .lock()
+            .unwrap()
+            .prepare_delivery(
+                "device",
+                caller,
+                &context,
+                Some("sender"),
+                Command::Send {
+                    target: "recipient".into(),
+                    intent: "remote-once".into(),
+                    body: "done".into(),
+                    kind: "report".into(),
+                },
+            )
+            .unwrap();
+        let result = prepared.run(Duration::from_secs(5)).unwrap();
+        assert_eq!(result["sender"]["kind"], "claude");
+        assert_eq!(result["sender"]["device_id"], "device");
+        assert_eq!(result["sender"]["pane_id"], caller);
+        let stored = crate::delivery::ledger::load(&path).unwrap();
+        assert_eq!(stored.letters.len(), 1);
+        assert_eq!(
+            stored.letters[0].sender.session.as_deref(),
+            Some("remote-session")
+        );
+        drop(worker);
+    }
+
+    #[test]
     fn prepared_command_refuses_changed_pane_or_checkout_capability_context_without_saving() {
         for checkout_bound in [false, true] {
             let root = tempfile::tempdir().unwrap();
@@ -528,6 +688,7 @@ pub(crate) mod tests {
                             target: "recipient".into(),
                             intent: "must-refuse".into(),
                             body: "private".into(),
+                            kind: "request".into(),
                         },
                     )
                     .unwrap()
@@ -562,5 +723,67 @@ pub(crate) mod tests {
             assert_eq!(std::fs::read(&path).unwrap(), before);
             drop(worker);
         }
+    }
+}
+
+impl Runtime {
+    pub(crate) fn coordination_fork_context(
+        &self,
+        pane: &str,
+    ) -> Result<(Client, Authority, Actor), String> {
+        let actor = self
+            .delivery_observations
+            .get(pane)
+            .ok_or("parent_unavailable")?
+            .actor
+            .clone();
+        let context = self
+            .workspace_control_query(&actor.device_id, pane, Query::Info)
+            .map_err(|_| "parent_unavailable")?
+            .context;
+        Ok((
+            self.delivery_client.clone().ok_or("delivery_unavailable")?,
+            Authority {
+                caller: pane.into(),
+                context,
+            },
+            actor,
+        ))
+    }
+    pub(crate) fn coordination_context(
+        &self,
+        device: &str,
+    ) -> Result<
+        (
+            Arc<dyn hide_herdr_client::ApiConnector>,
+            String,
+            String,
+            crate::codex_launch::CodexDaemon,
+        ),
+        String,
+    > {
+        let (connector, scope, machine) = if device == "local" {
+            let live = self.live.as_ref().ok_or("herdr_unavailable")?;
+            (
+                live.api_connector.clone(),
+                live.socket_path
+                    .to_str()
+                    .ok_or("host_scope_unavailable")?
+                    .to_owned(),
+                self.local_machine_id
+                    .clone()
+                    .ok_or("machine_identity_unavailable")?,
+            )
+        } else {
+            (
+                self.remote_herdr_api(device).ok_or("device_unavailable")?,
+                device.to_owned(),
+                self.device_machine_ids
+                    .get(device)
+                    .cloned()
+                    .ok_or("machine_identity_unavailable")?,
+            )
+        };
+        Ok((connector, scope, machine, self.codex_daemon(device)))
     }
 }

@@ -7,10 +7,15 @@ use super::{Actor, BODY_LIMIT, HOOK_LETTERS, HOOK_LIMIT, LETTER_LIMIT, OPEN_LIMI
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize, Serialize)]
 #[serde(tag = "op", rename_all = "snake_case", deny_unknown_fields)]
 pub enum Command {
+    Agents {
+        command: crate::coordination::Command,
+    },
     Send {
         target: String,
         intent: String,
         body: String,
+        #[serde(default = "request_kind")]
+        kind: String,
     },
     Reply {
         id: String,
@@ -33,11 +38,23 @@ pub enum Command {
     },
     WatchStart {
         target: String,
+        observer: Option<String>,
+        actor: Option<String>,
     },
     WatchStop {
         id: String,
     },
+    WatchAssign {
+        id: String,
+        observer: String,
+        actor: Option<String>,
+        expected_generation: Option<u64>,
+    },
     WatchList,
+}
+
+fn request_kind() -> String {
+    "request".into()
 }
 
 pub(crate) fn existing_intent<'a>(
@@ -69,14 +86,14 @@ pub(crate) fn send(
 ) -> Result<Letter, String> {
     sender.require_native_identity()?;
     recipient.require_native_identity()?;
-    if sender.device_id != "local" || recipient.device_id != "local" {
-        return Err("remote_delivery_unsupported".into());
-    }
     if !sender.valid() || !recipient.valid() {
         return Err("invalid_actor".into());
     }
     if !super::valid_key(intent) {
         return Err("invalid_intent".into());
+    }
+    if !matches!(kind, "request" | "block" | "report" | "reply" | "watch") {
+        return Err("invalid_kind".into());
     }
     if let Some(letter) = existing_intent(ledger, sender, intent, now) {
         return Ok(letter.clone());
@@ -100,13 +117,14 @@ pub(crate) fn send(
         kind: kind.to_owned(),
         body: body.to_owned(),
         state: State::Pending,
-        waiting_answer: kind == "request",
+        waiting_answer: matches!(kind, "request" | "block"),
         reply_to,
         created_at_unix_ms: now,
         finished_at_unix_ms: None,
         bell_errors: 0,
         bell_sent: false,
         bell_attempts: Some(0),
+        human_notified: false,
     };
     ledger.letters.push(letter.clone());
     Ok(letter)
@@ -126,13 +144,15 @@ pub fn apply(
         return Ok(json!(letter));
     }
     match command {
-        Command::Send { intent, body, .. } => Ok(json!(send(
+        Command::Send {
+            intent, body, kind, ..
+        } => Ok(json!(send(
             ledger,
             actor,
             target.ok_or("target_unavailable")?,
             intent,
             body,
-            "request",
+            kind,
             None,
             now
         )?)),
@@ -209,6 +229,7 @@ pub fn apply(
                     return Err("recipient_required".into());
                 }
             }
+            let mut reports = Vec::new();
             for id in ids {
                 let letter = ledger
                     .letters
@@ -216,17 +237,28 @@ pub fn apply(
                     .find(|letter| letter.id == *id)
                     .ok_or("letter_unavailable")?;
                 if letter.state == State::Pending {
+                    if letter.kind == "report" {
+                        reports.push((letter.sender.clone(), letter.recipient.clone()));
+                    }
                     letter.state = State::Delivered;
                     if !letter.waiting_answer {
                         letter.finished_at_unix_ms = Some(now);
                     }
                 }
             }
+            // Delivery and ending the matching watch are one durable transaction.
+            ledger.watches.retain(|watch| {
+                !reports.iter().any(|(sender, recipient)| {
+                    sender.same_identity(&watch.target) && recipient.same_identity(&watch.parent)
+                })
+            });
             Ok(json!({"confirmed":ids}))
         }
-        Command::WatchStart { .. } | Command::WatchStop { .. } | Command::WatchList => {
-            Err("watch_command_required".into())
-        }
+        Command::Agents { .. }
+        | Command::WatchStart { .. }
+        | Command::WatchStop { .. }
+        | Command::WatchAssign { .. }
+        | Command::WatchList => Err("watch_command_required".into()),
     }
 }
 
@@ -356,6 +388,7 @@ mod tests {
                 target: sender.pane_id.clone(),
                 intent: "third".into(),
                 body: "private".into(),
+                kind: "request".into(),
             },
         ] {
             assert_eq!(
@@ -504,6 +537,7 @@ mod tests {
                 target: "gone".into(),
                 intent: "first".into(),
                 body: "changed".into(),
+                kind: "request".into(),
             },
             2,
         )
@@ -544,6 +578,162 @@ mod tests {
                 .waiting_answer
         );
         assert_eq!(ledger.letters.len(), 3);
+    }
+
+    #[test]
+    fn report_ends_only_its_parent_watch_on_hook_confirmation_and_replays_once() {
+        let mut ledger = Ledger::default();
+        let child = actor("child");
+        let parent = actor("parent");
+        let other = actor("other");
+        super::super::watch::start(&mut ledger, &parent, &child, 1).unwrap();
+        super::super::watch::start(&mut ledger, &other, &child, 1).unwrap();
+        let report = send(
+            &mut ledger,
+            &child,
+            &parent,
+            "report",
+            "done",
+            "report",
+            None,
+            2,
+        )
+        .unwrap();
+        assert!(!report.waiting_answer);
+        assert_eq!(pull(&ledger, &parent).unwrap().ids, vec![report.id.clone()]);
+        assert_eq!(ledger.watches.len(), 2);
+        let mut restored: Ledger = serde_json::from_slice(&ledger.bytes().unwrap()).unwrap();
+        assert_eq!(
+            send(
+                &mut restored,
+                &child,
+                &parent,
+                "report",
+                "changed",
+                "report",
+                None,
+                3
+            )
+            .unwrap()
+            .id,
+            report.id
+        );
+        apply(
+            &mut restored,
+            &parent,
+            None,
+            &Command::Confirm {
+                ids: vec![report.id.clone()],
+            },
+            4,
+        )
+        .unwrap();
+        assert_eq!(restored.watches.len(), 1);
+        assert_eq!(restored.watches[0].parent, other);
+        assert_eq!(restored.letters[0].state, State::Delivered);
+        assert!(pull(&restored, &parent).unwrap().ids.is_empty());
+        // Starting another episode after delivery is explicitly supported.
+        super::super::watch::start(&mut restored, &parent, &child, 5).unwrap();
+        apply(
+            &mut restored,
+            &parent,
+            None,
+            &Command::Confirm {
+                ids: vec![report.id],
+            },
+            6,
+        )
+        .unwrap();
+        assert_eq!(restored.watches.len(), 2);
+    }
+
+    #[test]
+    fn acknowledging_or_canceling_a_report_never_ends_a_watch() {
+        for cancel in [false, true] {
+            let mut ledger = Ledger::default();
+            let child = actor("child");
+            let parent = actor("parent");
+            super::super::watch::start(&mut ledger, &parent, &child, 1).unwrap();
+            let report = send(
+                &mut ledger,
+                &child,
+                &parent,
+                "report",
+                "done",
+                "report",
+                None,
+                2,
+            )
+            .unwrap();
+            let command = if cancel {
+                Command::Cancel { id: report.id }
+            } else {
+                Command::Ack { id: report.id }
+            };
+            apply(
+                &mut ledger,
+                if cancel { &child } else { &parent },
+                None,
+                &command,
+                3,
+            )
+            .unwrap();
+            assert_eq!(ledger.watches.len(), 1);
+        }
+    }
+
+    #[test]
+    fn remote_letters_use_the_same_durable_intent_and_native_session_boundary() {
+        let mut ledger = Ledger::default();
+        let local = actor("local");
+        let mut remote = actor("remote:device:pane:target");
+        remote.device_id = "device".into();
+        let letter = send(
+            &mut ledger,
+            &local,
+            &remote,
+            "remote",
+            "body",
+            "block",
+            None,
+            1,
+        )
+        .unwrap();
+        assert!(letter.waiting_answer);
+        let mut restored: Ledger = serde_json::from_slice(&ledger.bytes().unwrap()).unwrap();
+        assert_eq!(
+            pull(&restored, &remote).unwrap().ids,
+            vec![letter.id.clone()]
+        );
+        let mut replaced = remote.clone();
+        replaced.session = Some("replacement".into());
+        assert!(pull(&restored, &replaced).unwrap().ids.is_empty());
+        apply(
+            &mut restored,
+            &remote,
+            None,
+            &Command::Confirm {
+                ids: vec![letter.id.clone()],
+            },
+            2,
+        )
+        .unwrap();
+        assert!(pull(&restored, &remote).unwrap().ids.is_empty());
+        assert_eq!(
+            send(
+                &mut restored,
+                &local,
+                &remote,
+                "remote",
+                "changed",
+                "report",
+                None,
+                3
+            )
+            .unwrap()
+            .id,
+            letter.id
+        );
     }
 
     #[test]

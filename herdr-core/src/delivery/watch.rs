@@ -15,6 +15,8 @@ pub struct Watch {
     pub last_status: String,
     pub last_state_change_seq: Option<u64>,
     pub status_changed_at_unix_ms: u64,
+    #[serde(default)]
+    pub generation: u64,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
@@ -43,7 +45,6 @@ impl Watch {
         super::valid_key(&self.id)
             && self.parent.valid()
             && self.target.valid()
-            && self.parent.device_id == "local"
             && self.warning_count <= 2
             && super::valid_key(&self.last_status)
             && (self.warning_count == 0) == self.first_warning_at_unix_ms.is_none()
@@ -57,9 +58,6 @@ pub fn start(
     activity: u64,
 ) -> Result<Watch, String> {
     parent.require_native_identity()?;
-    if parent.device_id != "local" {
-        return Err("local_parent_required".into());
-    }
     if let Some(watch) = ledger
         .watches
         .iter()
@@ -83,6 +81,7 @@ pub fn start(
         last_status: "unknown".into(),
         last_state_change_seq: None,
         status_changed_at_unix_ms: activity,
+        generation: 0,
     };
     ledger.watches.push(watch.clone());
     Ok(watch)
@@ -96,6 +95,40 @@ pub fn stop(ledger: &mut Ledger, parent: &Actor, id: &str) -> Result<(), String>
         .ok_or("watch_unavailable")?;
     ledger.watches.remove(index);
     Ok(())
+}
+
+pub fn assign(
+    ledger: &mut Ledger,
+    parent: &Actor,
+    id: &str,
+    observer: &Actor,
+    expected_generation: Option<u64>,
+) -> Result<Watch, String> {
+    observer.require_native_identity()?;
+    let registered = crate::coordination::resolve_actor(ledger, id).cloned();
+    let mut matches = ledger.watches.iter().enumerate().filter(|(_, watch)| {
+        watch.parent.same_identity(parent)
+            && (watch.id == id
+                || registered
+                    .as_ref()
+                    .is_some_and(|target| watch.target.same_identity(target)))
+    });
+    let index = matches
+        .next()
+        .map(|(index, _)| index)
+        .ok_or("watch_unavailable")?;
+    if matches.next().is_some() {
+        return Err("watch_ambiguous".into());
+    }
+    let watch = &mut ledger.watches[index];
+    if expected_generation.is_some_and(|expected| expected != watch.generation) {
+        return Err("stale_generation".into());
+    }
+    if !watch.parent.same_identity(observer) {
+        watch.generation = watch.generation.checked_add(1).ok_or("capacity")?;
+        watch.parent = observer.clone();
+    }
+    Ok(watch.clone())
 }
 
 #[derive(Clone)]
@@ -343,6 +376,38 @@ mod tests {
     }
 
     #[test]
+    fn reassigning_a_watch_preserves_activity_and_rejects_stale_or_wrong_observers() {
+        let mut ledger = Ledger::default();
+        let parent = actor("parent");
+        let next = actor("next");
+        let target = actor("target");
+        let watch = start(&mut ledger, &parent, &target, 10).unwrap();
+        tick(&mut ledger, &[reading(&watch.id, 10)], 10 + INACTIVITY_MS).unwrap();
+        let before = ledger.watches[0].clone();
+        let changed = assign(&mut ledger, &parent, &watch.id, &next, Some(0)).unwrap();
+        assert_eq!(changed.generation, 1);
+        assert_eq!(
+            changed.last_activity_at_unix_ms,
+            before.last_activity_at_unix_ms
+        );
+        assert_eq!(
+            changed.first_warning_at_unix_ms,
+            before.first_warning_at_unix_ms
+        );
+        assert_eq!(changed.warning_count, before.warning_count);
+        assert_eq!(
+            assign(&mut ledger, &next, &watch.id, &parent, Some(0)).unwrap_err(),
+            "stale_generation"
+        );
+        assert_eq!(
+            assign(&mut ledger, &parent, &watch.id, &parent, Some(1)).unwrap_err(),
+            "watch_unavailable"
+        );
+        let restored: Ledger = serde_json::from_slice(&ledger.bytes().unwrap()).unwrap();
+        assert_eq!(restored.watches[0], changed);
+    }
+
+    #[test]
     fn missing_target_reference_keeps_status_only_watch_without_mailbox_authority() {
         let mut ledger = Ledger::default();
         let parent = actor("parent");
@@ -529,6 +594,7 @@ mod tests {
             bell_errors: 0,
             bell_sent: false,
             bell_attempts: Some(0),
+            human_notified: false,
         }
     }
 

@@ -101,6 +101,18 @@ fn format_context(program: &OsString, reference: &Path, answer: &Value) -> Optio
         return None;
     }
     let mut commands = vec!["workspace info"];
+    if has("request.send") {
+        commands.push(
+            "request send <target> --intent <key> --body <text> [--kind request|block|report]",
+        );
+    }
+    if has("inbox") {
+        commands.push("inbox");
+    }
+    if has("watch.assign") {
+        commands
+            .push("watch assign <watch-or-target-id> --observer <id> [--expected-generation <n>]");
+    }
     if has("file.open") {
         commands.push("file open <path> [--beside] [--reveal]");
     }
@@ -134,7 +146,7 @@ fn format_context(program: &OsString, reference: &Path, answer: &Value) -> Optio
         shell_quote(&program.to_string_lossy()),
     );
     Some(format!(
-        "Hide Workspace control is available for this session's checkout `{checkout_path}`. Commands affect only that checkout's Workspace; there is no Workspace override. Prefix each command with `{command_prefix}`. Available commands: {}. Run `{} workspace info` to refresh capabilities and `{} --help` for syntax. Omit `--reveal` to leave the current screen and keyboard focus unchanged. A failed command returns a reason and next action; recheck before retrying a timed-out action.",
+        "Hide Workspace control is available for this session's checkout `{checkout_path}`. Workspace commands affect only that checkout; there is no Workspace override. Delivery commands use the current agent pane and native session, including on a connected device. Prefix each command with `{command_prefix}`. Available commands: {}. Run `{} workspace info` to refresh capabilities and `{} --help` for syntax. Omit `--reveal` to leave the current screen and keyboard focus unchanged. A failed command returns a reason and next action; recheck before retrying a timed-out action.",
         commands.join(", "),
         command_prefix,
         shell_quote(&program.to_string_lossy()),

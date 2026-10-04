@@ -394,6 +394,13 @@ impl Core {
         lock_recover(&self.runtime).prepare_delivery(device, caller, expected, hint, command)
     }
 
+    pub fn prepare_delivery_human(&self) -> Result<crate::delivery::worker::PreparedHuman, String> {
+        if !check_owner_thread(self, "delivery.human.prepare") {
+            return Err("delivery_unavailable".into());
+        }
+        lock_recover(&self.runtime).prepare_delivery_human()
+    }
+
     /// Where each device's file work runs, handed over once by the daemon.
     pub fn set_file_roots(&self, roots: crate::files::FileRoots) {
         if check_owner_thread(self, "set_file_roots")

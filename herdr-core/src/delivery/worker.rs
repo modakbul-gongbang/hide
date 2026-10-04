@@ -2,15 +2,12 @@
 //! candidates are validated and persisted before a result or publication.
 
 use std::path::PathBuf;
-use std::process::{Command as ProcessCommand, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, SyncSender};
 use std::sync::{Arc, Mutex, Weak};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
-use hide_platform::process::{CaptureFailureKind, OwnedChild};
-use serde::Deserialize;
 use serde_json::{Value, json};
 
 use crate::handle::ChangeNotifier;
@@ -27,7 +24,7 @@ const SAVE_BATCH: usize = 32;
 #[derive(Clone)]
 pub(crate) struct Client {
     requests: SyncSender<Request>,
-    probes: Weak<Mutex<ProbeOwner>>,
+    pub(crate) runtime: Weak<Mutex<Runtime>>,
 }
 
 pub struct Prepared {
@@ -36,6 +33,54 @@ pub struct Prepared {
     actor: Actor,
     target: Option<Observation>,
     command: Command,
+}
+
+/// Immutable notification receipt. Reserving it consumes the attempt before
+/// either external channel runs, so a crash or failed channels cannot resend.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct HumanNotice {
+    pub id: String,
+    pub actor: Actor,
+    pub title: String,
+    pub body: String,
+}
+
+impl HumanNotice {
+    /// Runs only after the durable receipt on a daemon request worker.
+    pub fn notify_herdr(
+        &self,
+        connector: &dyn hide_herdr_client::ApiConnector,
+    ) -> Result<bool, String> {
+        // The pinned request schema requires title and accepts body/sound.
+        // This outcome is an external effect receipt, never a core input.
+        let params = json!({"title":self.title,"body":self.body,"sound":"request"});
+        let value = hide_herdr_client::request_small_response(
+            connector,
+            "notification.show",
+            params,
+            Duration::from_millis(500),
+        )
+        .map_err(|_| "delivery_notification_unavailable")?;
+        value
+            .get("shown")
+            .and_then(Value::as_bool)
+            .ok_or_else(|| "delivery_notification_format".into())
+    }
+}
+
+pub struct PreparedHuman {
+    client: Client,
+}
+
+impl PreparedHuman {
+    pub(crate) fn new(client: Client) -> Self {
+        Self { client }
+    }
+
+    pub fn run(self, timeout: Duration) -> Result<Vec<HumanNotice>, String> {
+        let value = self.client.submit(Effect::HumanClaim, timeout)?;
+        serde_json::from_value(value).map_err(|_| "ledger_unavailable".into())
+    }
 }
 
 pub(crate) struct Authority {
@@ -61,19 +106,10 @@ impl Prepared {
     }
 
     /// Called by the request worker after owner-thread preparation. Its wait
-    /// and registration-only subprocess probe never hold Runtime's mutex.
+    /// never holds Runtime's mutex.
     pub fn run(self, timeout: Duration) -> Result<Value, String> {
-        if matches!(&self.command, Command::WatchStart { .. }) {
-            let target = self.target.as_ref().ok_or("target_unavailable")?;
-            match conflict_probe(target, &self.client) {
-                Ok(true) => return Err("conflict".into()),
-                Ok(false) => {}
-                Err(failure) => crate::diagnostic!(json!({
-                    "component":"delivery","kind":"watch.conflict_unverified",
-                    "pane_id":target.actor.pane_id,"code":failure.code,
-                    "cleanup_io_kind":failure.cleanup.map(|kind| format!("{kind:?}")),
-                })),
-            }
+        if let Command::Agents { command } = self.command {
+            return crate::coordination::run(self.client, self.authority, self.actor, command);
         }
         self.client.submit(
             Effect::Command {
@@ -109,6 +145,12 @@ struct Request {
 }
 
 pub(crate) enum Effect {
+    HumanClaim,
+    Agents {
+        authority: Authority,
+        actor: Actor,
+        mutation: crate::coordination::Mutation,
+    },
     Command {
         authority: Authority,
         actor: Actor,
@@ -352,7 +394,6 @@ pub(crate) struct Worker {
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
     producers: Vec<JoinHandle<()>>,
-    probes: Arc<Mutex<ProbeOwner>>,
 }
 
 impl Worker {
@@ -369,16 +410,14 @@ impl Worker {
             .name("hide-delivery-store".into())
             .spawn(move || run(store_runtime, notifier, path, receiver, stopped))
             .map_err(|_| "delivery_unavailable".to_owned())?;
-        let probes = Arc::new(Mutex::new(ProbeOwner::default()));
         let client = Client {
             requests,
-            probes: Arc::downgrade(&probes),
+            runtime: runtime.clone(),
         };
         let mut worker = Self {
             stop,
             thread: Some(thread),
             producers: Vec::new(),
-            probes,
         };
         let bell_runtime = runtime.clone();
         let bell_client = client.clone();
@@ -413,14 +452,6 @@ impl Drop for Worker {
         {
             crate::diagnostic!(json!({"component":"delivery","kind":"worker.join_failed"}));
         }
-        // Clients held by Runtime are weak references; only this off-lock
-        // owner or an in-flight registration can end a retained process.
-        match self.probes.lock() {
-            Ok(mut owner) => owner.stop(),
-            Err(_) => crate::diagnostic!(
-                json!({"component":"delivery","kind":"watch.probe_owner_unavailable"})
-            ),
-        }
     }
 }
 
@@ -434,6 +465,27 @@ pub(crate) fn now() -> u64 {
 
 fn apply(ledger: &mut Ledger, request: &Request, now: u64) -> Result<(Value, bool), String> {
     let (actor, target, command) = match &request.effect {
+        Effect::HumanClaim => {
+            let notices = ledger.letters.iter_mut()
+                .filter(|letter| letter.state == super::ledger::State::Undelivered && !letter.human_notified)
+                .take(8)
+                .map(|letter| {
+                    letter.human_notified = true;
+                    HumanNotice {
+                        id: letter.id.clone(),
+                        actor: letter.sender.clone(),
+                        title: "Hide: letter undelivered".into(),
+                        body: format!("{} did not receive {} within 60 minutes. Inspect it with hide request show {}.", letter.recipient.name, letter.id, letter.id),
+                    }
+                }).collect::<Vec<_>>();
+            return Ok((json!(notices), false));
+        }
+        Effect::Agents {
+            actor, mutation, ..
+        } => {
+            return crate::coordination::apply(ledger, actor, mutation, now)
+                .map(|value| (value, true));
+        }
         Effect::Tick(readings) => {
             let tick = watch::tick(ledger, readings, now)?;
             return Ok((
@@ -499,6 +551,20 @@ fn apply(ledger: &mut Ledger, request: &Request, now: u64) -> Result<(Value, boo
             watch::stop(ledger, actor, id)?;
             Ok(json!({"stopped":id}))
         }
+        Command::WatchAssign {
+            id,
+            expected_generation,
+            ..
+        } => {
+            let observer = target.as_ref().ok_or("target_unavailable")?;
+            Ok(json!(watch::assign(
+                ledger,
+                actor,
+                id,
+                &observer.actor,
+                *expected_generation
+            )?))
+        }
         Command::WatchList => Ok(json!(
             ledger
                 .watches
@@ -518,7 +584,10 @@ fn apply(ledger: &mut Ledger, request: &Request, now: u64) -> Result<(Value, boo
         value,
         matches!(
             command,
-            Command::WatchStart { .. } | Command::WatchStop { .. }
+            Command::WatchStart { .. }
+                | Command::WatchStop { .. }
+                | Command::WatchAssign { .. }
+                | Command::Confirm { .. }
         ),
     ))
 }
@@ -584,6 +653,25 @@ fn run(
         for request in &batch {
             let before = candidate.clone();
             let current = match &request.effect {
+                Effect::Agents {
+                    authority, actor, ..
+                } => runtime
+                    .lock()
+                    .map_err(|_| "delivery_unavailable".to_owned())
+                    .and_then(|guard| {
+                        let context = guard
+                            .workspace_control_query(
+                                &actor.device_id,
+                                &authority.caller,
+                                Query::Info,
+                            )
+                            .map_err(|_| "caller_context_changed")?
+                            .context;
+                        if context != authority.context || !guard.delivery_identity_current(actor) {
+                            return Err("caller_identity_changed".into());
+                        }
+                        Ok(())
+                    }),
                 Effect::Command {
                     authority,
                     actor,
@@ -592,8 +680,10 @@ fn run(
                 } => {
                     // The intent lookup uses the owned candidate outside Runtime.
                     // Replays converge even after the original recipient leaves.
-                    let target_required = matches!(command, Command::WatchStart { .. })
-                        || matches!(command, Command::Send { intent, .. }
+                    let target_required = matches!(
+                        command,
+                        Command::WatchStart { .. } | Command::WatchAssign { .. }
+                    ) || matches!(command, Command::Send { intent, .. }
                             if super::mailbox::existing_intent(&candidate, actor, intent, now).is_none());
                     runtime
                         .lock()
@@ -614,7 +704,10 @@ fn run(
                             }
                             if target_required {
                                 let target = target.as_ref().ok_or("target_unavailable")?;
-                                if matches!(command, Command::Send { .. }) {
+                                if matches!(
+                                    command,
+                                    Command::Send { .. } | Command::WatchAssign { .. }
+                                ) {
                                     target.actor.require_native_identity()?;
                                 }
                                 if !guard.delivery_identity_current(&target.actor) {
@@ -693,192 +786,65 @@ fn run(
     }
 }
 
-#[derive(Deserialize)]
-struct ProbeReply<T> {
-    ok: bool,
-    value: Vec<T>,
-}
-#[derive(Deserialize)]
-struct CoordinationWatch {
-    target: String,
-    status: String,
-}
-#[derive(Deserialize)]
-struct Participant {
-    id: String,
-    machine: String,
-    #[serde(rename = "hostScope")]
-    host_scope: String,
-    pane: Option<String>,
-    session: String,
-    connection: String,
-}
-
-struct ProbeFailure {
-    code: &'static str,
-    cleanup: Option<std::io::ErrorKind>,
-}
-
-impl From<&'static str> for ProbeFailure {
-    fn from(code: &'static str) -> Self {
-        Self {
-            code,
-            cleanup: None,
-        }
-    }
-}
-
-#[derive(Default)]
-struct ProbeOwner {
-    unconfirmed: Option<OwnedChild>,
-    stopped: bool,
-}
-
-impl ProbeOwner {
-    fn stop(&mut self) {
-        self.stopped = true;
-        if let Some(mut child) = self.unconfirmed.take()
-            && let Err(error) = child.capture_until(Instant::now() + Duration::from_millis(50), 1)
-        {
-            crate::diagnostic!(
-                json!({"component":"delivery","kind":"watch.probe_cleanup_unconfirmed","cleanup_io_kind":error.cleanup.as_ref().map(|source| format!("{:?}", source.kind()))})
-            );
-        }
-    }
-
-    fn read<T: for<'a> Deserialize<'a>>(
-        &mut self,
-        topic: &str,
-        deadline: Instant,
-    ) -> Result<Vec<T>, ProbeFailure> {
-        const OUTPUT: usize = 1024 * 1024;
-        if self.stopped {
-            return Err("conflict_probe_unavailable".into());
-        }
-        if let Some(mut child) = self.unconfirmed.take() {
-            let cleanup_deadline = deadline.min(Instant::now() + Duration::from_millis(50));
-            if let Err(failure) = child.capture_until(cleanup_deadline, OUTPUT) {
-                self.unconfirmed = Some(child);
-                return Err(ProbeFailure {
-                    code: "conflict_probe_cleanup_pending",
-                    cleanup: failure.cleanup.as_ref().map(std::io::Error::kind),
-                });
-            }
-        }
-        if Instant::now() >= deadline {
-            return Err("conflict_probe_timeout".into());
-        }
-        let mut command = ProcessCommand::new("hcoord");
-        command
-            .args([topic, "list", "--json"])
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .stdout(Stdio::piped());
-        let mut child = hide_platform::process::OwnedChild::spawn(&mut command)
-            .map_err(|_| "conflict_probe_unavailable")?;
-        let output = match child.capture_until(deadline, OUTPUT) {
-            Ok(output) => output,
-            Err(failure) => {
-                if failure.cleanup.is_some() {
-                    self.unconfirmed = Some(child);
-                }
-                return Err(ProbeFailure {
-                    code: match failure.kind {
-                        CaptureFailureKind::Deadline => "conflict_probe_timeout",
-                        CaptureFailureKind::OutputLimit { .. } => "conflict_probe_bounds",
-                        CaptureFailureKind::Io(_) | CaptureFailureKind::Cleanup => {
-                            "conflict_probe_failed"
-                        }
-                    },
-                    cleanup: failure.cleanup.as_ref().map(std::io::Error::kind),
-                });
-            }
-        };
-        if !output.status.success() {
-            return Err("conflict_probe_failed".into());
-        }
-        let response: ProbeReply<T> =
-            serde_json::from_slice(&output.stdout).map_err(|_| "conflict_probe_format")?;
-        if !response.ok {
-            return Err("conflict_probe_failed".into());
-        }
-        if response.value.len() > 2048 {
-            return Err("conflict_probe_bounds".into());
-        }
-        Ok(response.value)
-    }
-}
-
-fn conflict_probe(target: &Observation, client: &Client) -> Result<bool, ProbeFailure> {
-    let deadline = Instant::now() + Duration::from_secs(2);
-    let probes = client
-        .probes
-        .upgrade()
-        .ok_or("conflict_probe_unavailable")?;
-    let mut owner = probes.try_lock().map_err(|_| "conflict_probe_busy")?;
-    let watches = owner.read::<CoordinationWatch>("watch", deadline)?;
-    let active: Vec<_> = watches
-        .into_iter()
-        .filter(|watch| watch.status == "active")
-        .collect();
-    if active.is_empty() {
-        return Ok(false);
-    }
-    let participants = owner.read::<Participant>("agent", deadline)?;
-    // The existing local hcoord route explicitly uses machine=local and the
-    // exact socket as hostScope. "default", host-name aliases and unknown
-    // remote routes cannot establish a binding and take B36's diagnostic path.
-    let scope = target
-        .host_scope
-        .as_deref()
-        .ok_or("conflict_binding_unavailable")?;
-    let session = target
-        .actor
-        .session
-        .as_deref()
-        .ok_or("conflict_binding_unavailable")?;
-    if target.actor.device_id != "local" {
-        return Err("conflict_binding_unavailable".into());
-    }
-    let mut incomplete = false;
-    for watch in active {
-        let mut matches = participants
-            .iter()
-            .filter(|participant| participant.id == watch.target);
-        let Some(participant) = matches.next() else {
-            incomplete = true;
-            continue;
-        };
-        if matches.next().is_some() {
-            incomplete = true;
-            continue;
-        }
-        if participant.machine != "local" || participant.host_scope != scope {
-            incomplete = true;
-            continue;
-        }
-        if participant.pane.as_deref() == Some(target.raw_pane_id.as_str()) {
-            if participant.connection != "connected"
-                || crate::wire::session_digest(&participant.session).as_deref() != Some(session)
-            {
-                incomplete = true;
-                continue;
-            }
-            return Ok(true);
-        }
-    }
-    if incomplete {
-        Err("conflict_binding_unavailable".into())
-    } else {
-        Ok(false)
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use crate::runtime::delivery::tests::{authority, fixture};
     use crate::sidebar::SessionSnapshotPayload;
+
+    #[test]
+    fn human_claims_only_undelivered_letters_once_across_restart() {
+        let parent = Actor {
+            pane_id: "parent".into(),
+            name: "parent".into(),
+            kind: "codex".into(),
+            device_id: "local".into(),
+            session: Some("parent-session".into()),
+        };
+        let child = Actor {
+            pane_id: "child".into(),
+            name: "child".into(),
+            kind: "codex".into(),
+            device_id: "local".into(),
+            session: Some("child-session".into()),
+        };
+        let mut ledger = Ledger::default();
+        let letter = mailbox::send(
+            &mut ledger,
+            &child,
+            &parent,
+            "report",
+            "done",
+            "report",
+            None,
+            1,
+        )
+        .unwrap();
+        let (reply, _) = mpsc::sync_channel(1);
+        let request = Request {
+            effect: Effect::HumanClaim,
+            reply,
+        };
+        assert_eq!(apply(&mut ledger, &request, 2).unwrap().0, json!([]));
+        assert!(!ledger.expire(super::super::DELIVERY_EXPIRY_MS));
+        assert!(ledger.expire(1 + super::super::DELIVERY_EXPIRY_MS));
+        let notices = apply(&mut ledger, &request, 1 + super::super::DELIVERY_EXPIRY_MS)
+            .unwrap()
+            .0;
+        assert_eq!(notices[0]["id"], letter.id);
+        assert_eq!(ledger.letters.len(), 1);
+        let mut restored: Ledger = serde_json::from_slice(&ledger.bytes().unwrap()).unwrap();
+        assert_eq!(
+            apply(
+                &mut restored,
+                &request,
+                2 + super::super::DELIVERY_EXPIRY_MS
+            )
+            .unwrap()
+            .0,
+            json!([])
+        );
+    }
 
     struct ActivityPeer(std::sync::atomic::AtomicU64);
     impl crate::host_access::HostChannel for ActivityPeer {
@@ -1099,7 +1065,7 @@ mod tests {
             let mut guard = runtime.lock().unwrap();
             guard.publish_delivery(Arc::new(installed), false);
             guard.invalidate_delivery();
-            assert!(guard.delivery_bell_context().is_none());
+            assert!(guard.delivery_state().is_err());
             assert!(guard.delivery_watch_work().is_empty());
             assert!(!guard.delivery_bell_current(&letter.id, &target, None));
         }
@@ -1118,6 +1084,7 @@ mod tests {
                 target: "recipient".into(),
                 intent: "new".into(),
                 body: "private".into(),
+                kind: "request".into(),
             },
         ] {
             assert_eq!(
@@ -1173,6 +1140,7 @@ mod tests {
                 target: "recipient".into(),
                 intent: "once".into(),
                 body: "private".into(),
+                kind: "request".into(),
             };
             assert_eq!(
                 client
@@ -1267,6 +1235,7 @@ mod tests {
                         target: "recipient".into(),
                         intent: "send-once".into(),
                         body: "private fixture".into(),
+                        kind: "request".into(),
                     },
                 },
                 Duration::from_secs(5),

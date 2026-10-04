@@ -35,6 +35,8 @@ pub struct Letter {
     pub bell_sent: bool,
     #[serde(default)]
     pub bell_attempts: Option<u8>,
+    #[serde(default)]
+    pub human_notified: bool,
 }
 
 impl Letter {
@@ -71,6 +73,10 @@ pub struct Ledger {
     pub next_id: u64,
     pub letters: Vec<Letter>,
     pub watches: Vec<Watch>,
+    #[serde(default)]
+    pub agents: Vec<crate::coordination::AgentRecord>,
+    #[serde(default)]
+    pub spawns: Vec<crate::coordination::SpawnRecord>,
 }
 
 impl Default for Ledger {
@@ -80,6 +86,8 @@ impl Default for Ledger {
             next_id: 1,
             letters: Vec::new(),
             watches: Vec::new(),
+            agents: Vec::new(),
+            spawns: Vec::new(),
         }
     }
 }
@@ -103,9 +111,10 @@ impl Ledger {
                 || !super::valid_key(&letter.intent)
                 || !letter.sender.valid()
                 || !letter.recipient.valid()
-                || !matches!(letter.kind.as_str(), "request" | "reply" | "watch")
-                || letter.sender.device_id != "local"
-                || letter.recipient.device_id != "local"
+                || !matches!(
+                    letter.kind.as_str(),
+                    "request" | "block" | "report" | "reply" | "watch"
+                )
                 || letter.body.len() > BODY_LIMIT
                 || letter.body.trim().is_empty()
                 || letter.bell_errors > 3
@@ -125,8 +134,14 @@ impl Ledger {
                 return Err("ledger_unavailable".into());
             }
         }
+        crate::coordination::validate_records(self)?;
         let mut sequences = HashSet::new();
-        for id in ids.into_iter().chain(watches) {
+        for id in ids
+            .into_iter()
+            .chain(watches)
+            .chain(self.agents.iter().map(|record| &record.id))
+            .chain(self.spawns.iter().map(|record| &record.id))
+        {
             let sequence = id
                 .split_once('-')
                 .and_then(|(_, value)| value.parse::<u64>().ok())

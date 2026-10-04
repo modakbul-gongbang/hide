@@ -4,7 +4,7 @@ use herdr_core::delivery::{BODY_LIMIT, Command, HOOK_LETTERS};
 
 use crate::env::{self, Env};
 
-pub const USAGE: &str = "hide request send <target> --intent <key> --body <text>\nhide request reply <id> --intent <key> --body <text>\nhide request ack|cancel|show <id>\nhide inbox\nhide watch start <target>\nhide watch stop <id>\nhide watch list\nDelivery commands require a running daemon and a current agent pane; they do not require an open renderer.";
+pub const USAGE: &str = "hide request send <target> --intent <key> --body <text> [--kind request|block|report]\nhide request reply <id> --intent <key> --body <text>\nhide request ack|cancel|show <id>\nhide inbox\nhide watch start <target> [--observer <id>] [--actor <id>]\nhide watch assign <watch-or-target-id> --observer <id> [--actor <id>] [--expected-generation <n>]\nhide watch stop <id>\nhide watch list\nDelivery commands require a running daemon and a current agent pane; they do not require an open renderer.";
 
 pub fn parse<'a>(
     topic: &str,
@@ -30,12 +30,37 @@ pub fn parse<'a>(
     }
     let subject = args.next().filter(|value| key(value)).ok_or(USAGE)?.clone();
     if topic == "watch" {
-        if args.next().is_some() {
-            return Err(USAGE.into());
+        let mut observer = None;
+        let mut actor = None;
+        let mut expected_generation = None;
+        while let Some(flag) = args.next() {
+            let value = args.next().ok_or(USAGE)?;
+            match flag.as_str() {
+                "--observer" if observer.is_none() && key(value) => observer = Some(value.clone()),
+                "--actor" if actor.is_none() && key(value) => actor = Some(value.clone()),
+                "--expected-generation"
+                    if expected_generation.is_none() && verb == Some("assign") =>
+                {
+                    expected_generation = Some(value.parse::<u64>().map_err(|_| USAGE)?);
+                }
+                _ => return Err(USAGE.into()),
+            }
         }
         return match verb {
-            Some("start") => Ok(Command::WatchStart { target: subject }),
-            Some("stop") => Ok(Command::WatchStop { id: subject }),
+            Some("start") => Ok(Command::WatchStart {
+                target: subject,
+                observer,
+                actor,
+            }),
+            Some("assign") => Ok(Command::WatchAssign {
+                id: subject,
+                observer: observer.ok_or(USAGE)?,
+                actor,
+                expected_generation,
+            }),
+            Some("stop") if observer.is_none() && actor.is_none() => {
+                Ok(Command::WatchStop { id: subject })
+            }
             _ => Err(USAGE.into()),
         };
     }
@@ -43,11 +68,19 @@ pub fn parse<'a>(
         Some("send" | "reply") => {
             let mut intent = None;
             let mut body = None;
+            let mut kind = None;
             while let Some(flag) = args.next() {
                 let value = args.next().ok_or(USAGE)?.clone();
                 match flag.as_str() {
                     "--intent" if intent.is_none() && key(&value) => intent = Some(value),
                     "--body" if body.is_none() => body = Some(value),
+                    "--kind"
+                        if kind.is_none()
+                            && verb == Some("send")
+                            && matches!(value.as_str(), "request" | "block" | "report") =>
+                    {
+                        kind = Some(value)
+                    }
                     _ => return Err(USAGE.into()),
                 }
             }
@@ -63,6 +96,7 @@ pub fn parse<'a>(
                     target: subject,
                     intent,
                     body,
+                    kind: kind.unwrap_or_else(|| "request".into()),
                 })
             } else {
                 Ok(Command::Reply {
@@ -137,10 +171,58 @@ mod tests {
             Command::Send {
                 target: "target".into(),
                 intent: "key".into(),
-                body: "body".into()
+                body: "body".into(),
+                kind: "request".into()
             }
         );
         assert!(parse_line(&["watch", "start", "target", "--force"]).is_err());
         assert!(parse_line(&["inbox", "--confirm", "a", "b", "c", "d", "e", "f"]).is_err());
+    }
+
+    #[test]
+    fn reports_blocks_and_reassignment_have_typed_bounded_flags() {
+        for kind in ["report", "block"] {
+            assert!(
+                matches!(parse_line(&["request","send","parent","--intent","done","--body","body","--kind",kind]).unwrap(), Command::Send {kind: parsed,..} if parsed == kind)
+            );
+        }
+        assert!(matches!(
+            parse_line(&[
+                "watch",
+                "assign",
+                "watch-1",
+                "--observer",
+                "next",
+                "--actor",
+                "parent",
+                "--expected-generation",
+                "2"
+            ])
+            .unwrap(),
+            Command::WatchAssign {
+                expected_generation: Some(2),
+                ..
+            }
+        ));
+        assert!(parse_line(&["watch", "start", "target", "--interval", "60"]).is_err());
+        assert!(
+            parse_line(&[
+                "watch",
+                "assign",
+                "target",
+                "--observer",
+                "next",
+                "--expected-generation",
+                "-1"
+            ])
+            .is_err()
+        );
+        assert!(
+            parse_line(&[
+                "request", "reply", "letter-1", "--intent", "done", "--body", "body", "--kind",
+                "report"
+            ])
+            .is_err()
+        );
     }
 }

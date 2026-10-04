@@ -738,6 +738,18 @@ impl Runtime {
         });
         let mut capabilities = vec![
             "workspace.info",
+            "request.send",
+            "request.reply",
+            "request.show",
+            "request.ack",
+            "request.cancel",
+            "inbox",
+            "inbox.hook",
+            "inbox.confirm",
+            "watch.start",
+            "watch.assign",
+            "watch.stop",
+            "watch.list",
             "view.list",
             "view.select",
             "view.split",

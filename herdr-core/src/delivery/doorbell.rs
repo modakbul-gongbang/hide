@@ -45,8 +45,7 @@ impl From<&Observation> for Episode {
 }
 
 pub(crate) fn eligible(observation: &Observation, now: u64) -> bool {
-    observation.actor.device_id == "local"
-        && observation.actor.require_native_identity().is_ok()
+    observation.actor.require_native_identity().is_ok()
         && matches!(observation.status.as_str(), "idle" | "done")
         && observation.state_change_seq.is_some()
         && now.saturating_sub(observation.last_input_at_unix_ms) >= QUIET_MS
@@ -57,7 +56,7 @@ pub(crate) fn eligible(observation: &Observation, now: u64) -> bool {
 }
 
 pub(crate) fn run(runtime: Weak<Mutex<Runtime>>, client: Client, stop: Arc<AtomicBool>) {
-    // Both maps are bounded by the <=1024 pending local letters in this pass.
+    // Both maps are bounded by the <=1024 pending letters in this pass.
     // A refusal is retried only after state/input changes, never by screen diff.
     let mut tried = HashMap::<String, Episode>::new();
     let mut rung = HashMap::<String, Episode>::new();
@@ -68,15 +67,14 @@ pub(crate) fn run(runtime: Weak<Mutex<Runtime>>, client: Client, stop: Arc<Atomi
         let context = owner
             .lock()
             .ok()
-            .and_then(|guard| guard.delivery_bell_context());
-        if let Some((ledger, connector)) = context {
+            .and_then(|guard| guard.delivery_state().ok());
+        if let Some(ledger) = context {
             let mut targets = HashSet::new();
             let pending: Vec<_> = ledger
                 .letters
                 .iter()
                 .filter(|letter| {
                     letter.state == State::Pending
-                        && letter.recipient.device_id == "local"
                         && letter.attempts() < 3
                         && now().saturating_sub(letter.created_at_unix_ms)
                             < super::DELIVERY_EXPIRY_MS
@@ -96,6 +94,13 @@ pub(crate) fn run(runtime: Weak<Mutex<Runtime>>, client: Client, stop: Arc<Atomi
                     .ok()
                     .and_then(|guard| guard.delivery_observation(&letter.recipient));
                 let Some(observed) = observed.filter(|value| eligible(value, now())) else {
+                    continue;
+                };
+                let Some(connector) = owner
+                    .lock()
+                    .ok()
+                    .and_then(|guard| guard.delivery_connector(&letter.recipient.device_id))
+                else {
                     continue;
                 };
                 let episode = Episode::from(&observed);
