@@ -6,6 +6,7 @@ pub mod browser_routes;
 pub mod build_id;
 pub mod cli;
 pub mod core;
+pub mod delivery_cli;
 pub mod demand;
 pub mod device_watch;
 pub mod env;
@@ -362,6 +363,7 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         version: VERSION,
         demand: Arc::new(demand::ObservationDemand::default()),
         start_demand,
+        request_view_demand: Arc::new(demand::ObservationDemand::default()),
         daemon_info: Arc::new(serde_json::json!({
             "version": VERSION,
             "schema_version": SCHEMA_VERSION,

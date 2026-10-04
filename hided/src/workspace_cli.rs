@@ -210,6 +210,25 @@ pub fn request(path: &Path, query: &str) -> Result<Value, String> {
     )
 }
 
+/// Losing the final capability claim cannot turn durable success into retry.
+pub fn request_delivery(
+    path: &Path,
+    command: herdr_core::delivery::Command,
+    hint: Option<&str>,
+) -> Result<Value, String> {
+    let reference = read_reference(path)?;
+    let request_id = fresh_request_id()?;
+    run_exchange(
+        path,
+        &reference,
+        json!({
+            "type":"delivery", "request_id":request_id, "command":command, "caller_pane":hint
+        }),
+        &request_id,
+        true,
+    )
+}
+
 pub fn request_action(path: &Path, action: Action, request_id: &str) -> Result<Value, String> {
     let reference = read_reference(path)?;
     if !valid_request_id(request_id) {
@@ -427,8 +446,16 @@ mod tests {
                 Lines(Vec::new(), sent),
             ));
         });
-        let ready: Value =
-            serde_json::from_str(&lines.recv_timeout(Duration::from_secs(10)).unwrap()).unwrap();
+        let ready = match lines.recv_timeout(Duration::from_secs(10)) {
+            Ok(line) => line,
+            // The bridge drops its output before it hands back its result,
+            // so wait for the result rather than read what is there now.
+            Err(_) => panic!(
+                "the bridge never became ready: {:?}",
+                bridge.recv_timeout(Duration::from_secs(1))
+            ),
+        };
+        let ready: Value = serde_json::from_str(&ready).unwrap();
         assert_eq!(ready["type"], "ready");
         // Both ends of the line read and write the wire spelling, which on
         // Windows is the only one `from_wire` reads.

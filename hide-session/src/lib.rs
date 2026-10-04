@@ -1,4 +1,5 @@
-//! Locate and read local Claude Code and Codex session JSONL files.
+//! Locate and read local Claude Code and Codex session JSONL files, and
+//! OpenCode's session database.
 //!
 //! The crate has three deliberately separate responsibilities:
 //!
@@ -8,6 +9,8 @@
 //!   reports replacement and truncation explicitly.
 //! - The conversation parsers turn provider-specific records into a small,
 //!   common event stream.
+//! - [`session_activity`] reuses native ownership proof and returns only
+//!   modification time and size for inactivity watches.
 //!
 //! No provider response or session body is logged by this crate. Callers can
 //! use the public raw-line helpers for records outside the conversation event
@@ -24,9 +27,16 @@ use std::path::{Path, PathBuf};
 
 mod catalog;
 mod conversation_cursor;
+mod envelope;
 mod label_owner;
 pub mod label_transcript;
+mod opencode;
 pub mod search;
+pub mod session_activity;
+mod sightings;
+
+pub use envelope::envelope_sender;
+pub use sightings::{MAX_SIGHTINGS_PER_OUTPUT, PrSighting, pull_request_addresses};
 
 pub use label_owner::{ConfirmedLabelSession, confirm_label_session, label_reference_token};
 
@@ -48,6 +58,52 @@ use std::os::unix::fs::MetadataExt;
 pub const CODEX_FALLBACK_DAYS: usize = 7;
 /// Number of newest files considered by the usage fallback.
 pub const CODEX_CANDIDATE_LIMIT: usize = 32;
+/// Total directory visits and retained path bytes in one session lookup.
+const SESSION_LOOKUP_DIRECTORY_LIMIT: usize = 64;
+const SESSION_LOOKUP_PATH_BYTES: usize = 8 * 1024 * 1024;
+
+#[derive(Default)]
+struct DiscoveryBudget {
+    entries: usize,
+    directories: usize,
+    path_bytes: usize,
+}
+
+impl DiscoveryBudget {
+    fn directory(&mut self) -> Result<()> {
+        if self.directories >= SESSION_LOOKUP_DIRECTORY_LIMIT {
+            return Err(SessionError::Capacity {
+                resource: "discovery_directories",
+                limit: SESSION_LOOKUP_DIRECTORY_LIMIT as u64,
+            });
+        }
+        self.directories += 1;
+        Ok(())
+    }
+
+    fn entry(&mut self) -> Result<()> {
+        if self.entries >= SESSION_DISCOVERY_LIMIT {
+            return Err(SessionError::Capacity {
+                resource: "discovery_entries",
+                limit: SESSION_DISCOVERY_LIMIT as u64,
+            });
+        }
+        self.entries += 1;
+        Ok(())
+    }
+
+    fn path(&mut self, path: &Path) -> Result<()> {
+        let bytes = path.as_os_str().as_encoded_bytes().len();
+        if bytes > SESSION_LOOKUP_PATH_BYTES.saturating_sub(self.path_bytes) {
+            return Err(SessionError::Capacity {
+                resource: "discovery_path_bytes",
+                limit: SESSION_LOOKUP_PATH_BYTES as u64,
+            });
+        }
+        self.path_bytes += bytes;
+        Ok(())
+    }
+}
 /// Largest complete session file parsed by archive and detail views.
 pub const SESSION_READ_LIMIT_BYTES: u64 = 64 * 1024 * 1024;
 /// Largest append chunk consumed by one incremental projection poll.
@@ -55,12 +111,16 @@ pub const SESSION_INCREMENT_READ_LIMIT_BYTES: u64 = 1024 * 1024;
 /// Largest individual JSONL record retained or parsed by a cursor.
 pub const SESSION_LINE_LIMIT_BYTES: usize = 256 * 1024;
 
-/// The two local agent session formats supported by Hide.
+/// The local agent session formats supported by Hide. Claude Code and Codex
+/// keep a JSONL file per session; OpenCode keeps every session in one SQLite
+/// database, which only the session adapter reads (`label_transcript`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Agent {
     Codex,
     Claude,
+    #[serde(rename = "opencode")]
+    OpenCode,
 }
 
 impl Agent {
@@ -68,7 +128,14 @@ impl Agent {
         match self {
             Self::Codex => "codex",
             Self::Claude => "claude",
+            Self::OpenCode => "opencode",
         }
+    }
+
+    /// Whether the agent keeps a JSONL file per session, which the file
+    /// readers (the locator, the cursors, search) understand.
+    pub const fn has_session_file(self) -> bool {
+        matches!(self, Self::Codex | Self::Claude)
     }
 }
 
@@ -120,6 +187,9 @@ pub struct ConversationEvent {
     provider_injected: bool,
     pub at_unix_ms: u64,
     pub text: String,
+    /// Images attached to the message; their bytes never enter `text`, and
+    /// a message of images alone has empty `text`.
+    pub images: u32,
 }
 
 impl ConversationEvent {
@@ -135,7 +205,13 @@ impl ConversationEvent {
             provider_injected: false,
             at_unix_ms,
             text: text.into(),
+            images: 0,
         }
+    }
+
+    fn with_images(mut self, images: u32) -> Self {
+        self.images = images;
+        self
     }
 
     pub const fn is_provider_injected(&self) -> bool {
@@ -200,6 +276,12 @@ pub struct ParsedSession {
     /// chunk wins. It is a property of the session rather than an event, so
     /// it never enters `events`. Codex has no such record and leaves `None`.
     pub title: Option<String>,
+    /// The name the operator gave the session (Claude Code's `/rename`, a
+    /// `custom-title` record), which wins over `title`.
+    pub custom_title: Option<String>,
+    /// Pull request addresses the session's tools printed, in record order
+    /// (`sightings`).
+    pub pr_sightings: Vec<PrSighting>,
     pub skipped_lines: usize,
     pub skipped_reasons: BTreeMap<SkipReason, usize>,
     pub rescan_reason: Option<RescanReason>,
@@ -526,8 +608,9 @@ impl SessionLocator {
         // reported again by the runtime hook, so a switch reaches here as a
         // new id. The cwd search below serves only a pane with no reported
         // session at all.
+        let mut budget = DiscoveryBudget::default();
         if let Some(identity) = identity {
-            let path = self.reported_path(agent, cwd, identity)?;
+            let path = self.reported_path(agent, cwd, identity, &mut budget)?;
             self.resolved.insert(pane_id.to_owned(), path.clone());
             return Ok(path);
         }
@@ -539,7 +622,7 @@ impl SessionLocator {
         }
 
         let cwd = cwd.ok_or(SessionError::CwdUnavailable)?;
-        match self.newest_for_cwd(agent, cwd)? {
+        match self.newest_for_cwd(agent, cwd, &mut budget)? {
             Some(path) => {
                 self.resolved.insert(pane_id.to_owned(), path.clone());
                 Ok(path)
@@ -556,6 +639,7 @@ impl SessionLocator {
         agent: Agent,
         cwd: Option<&str>,
         identity: &SessionIdentity,
+        budget: &mut DiscoveryBudget,
     ) -> Result<PathBuf> {
         match identity {
             SessionIdentity::Path(path) => path
@@ -563,8 +647,9 @@ impl SessionLocator {
                 .then_some(path.clone())
                 .ok_or(SessionError::SessionFileMissing),
             SessionIdentity::Id(id) => match agent {
-                Agent::Claude => self.claude_path_for_id(cwd, id),
-                Agent::Codex => self.codex_path_for_id(id),
+                Agent::Claude => self.claude_path_for_id(cwd, id, budget),
+                Agent::Codex => self.codex_path_for_id(id, budget),
+                Agent::OpenCode => Err(SessionError::UnsupportedSessionKind),
             },
         }
     }
@@ -577,7 +662,12 @@ impl SessionLocator {
         self.home.join(".codex/sessions")
     }
 
-    fn claude_path_for_id(&self, cwd: Option<&str>, id: &str) -> Result<PathBuf> {
+    fn claude_path_for_id(
+        &self,
+        cwd: Option<&str>,
+        id: &str,
+        budget: &mut DiscoveryBudget,
+    ) -> Result<PathBuf> {
         let name = format!("{id}.jsonl");
         if let Some(cwd) = cwd {
             let direct = self.claude_root().join(project_directory(cwd)).join(&name);
@@ -586,7 +676,7 @@ impl SessionLocator {
             }
         }
         let root = self.claude_root();
-        for entry in read_directory(&root)? {
+        for entry in read_directory(&root, budget)? {
             let candidate = entry.join(&name);
             if candidate.is_file() {
                 return Ok(candidate);
@@ -595,9 +685,9 @@ impl SessionLocator {
         Err(SessionError::SessionFileMissing)
     }
 
-    fn codex_path_for_id(&self, id: &str) -> Result<PathBuf> {
-        for directory in self.recent_codex_days()? {
-            for path in jsonl_files(&directory)? {
+    fn codex_path_for_id(&self, id: &str, budget: &mut DiscoveryBudget) -> Result<PathBuf> {
+        for directory in self.recent_codex_days(budget)? {
+            for path in jsonl_files(&directory, budget)? {
                 if path
                     .file_name()
                     .is_some_and(|name| name.to_string_lossy().contains(id))
@@ -609,19 +699,30 @@ impl SessionLocator {
         Err(SessionError::SessionFileMissing)
     }
 
-    fn newest_for_cwd(&self, agent: Agent, cwd: &str) -> Result<Option<PathBuf>> {
+    fn newest_for_cwd(
+        &self,
+        agent: Agent,
+        cwd: &str,
+        budget: &mut DiscoveryBudget,
+    ) -> Result<Option<PathBuf>> {
         match agent {
             Agent::Claude => Ok(newest_by_modified(jsonl_files(
                 &self.claude_root().join(project_directory(cwd)),
+                budget,
             )?)),
-            Agent::Codex => self.newest_codex_session(cwd),
+            Agent::Codex => self.newest_codex_session(cwd, budget),
+            Agent::OpenCode => Err(SessionError::UnsupportedSessionKind),
         }
     }
 
-    fn newest_codex_session(&self, cwd: &str) -> Result<Option<PathBuf>> {
+    fn newest_codex_session(
+        &self,
+        cwd: &str,
+        budget: &mut DiscoveryBudget,
+    ) -> Result<Option<PathBuf>> {
         let mut candidates = Vec::new();
-        for directory in self.recent_codex_days()? {
-            for path in jsonl_files(&directory)? {
+        for directory in self.recent_codex_days(budget)? {
+            for path in jsonl_files(&directory, budget)? {
                 let Some(modified) = fs::metadata(&path).and_then(|data| data.modified()).ok()
                 else {
                     continue;
@@ -636,11 +737,11 @@ impl SessionLocator {
             .find(|path| codex_session_cwd(path).as_deref() == Some(cwd)))
     }
 
-    fn recent_codex_days(&self) -> Result<Vec<PathBuf>> {
+    fn recent_codex_days(&self, budget: &mut DiscoveryBudget) -> Result<Vec<PathBuf>> {
         let mut days = Vec::new();
-        for year in newest_directories(&self.codex_root(), 2)? {
-            for month in newest_directories(&year, 2)? {
-                days.extend(newest_directories(&month, CODEX_FALLBACK_DAYS)?);
+        for year in newest_directories(&self.codex_root(), 2, budget)? {
+            for month in newest_directories(&year, 2, budget)? {
+                days.extend(newest_directories(&month, CODEX_FALLBACK_DAYS, budget)?);
             }
         }
         days.sort();
@@ -650,26 +751,39 @@ impl SessionLocator {
     }
 }
 
-fn read_directory(path: &Path) -> Result<Vec<PathBuf>> {
+fn read_directory(path: &Path, budget: &mut DiscoveryBudget) -> Result<Vec<PathBuf>> {
+    budget.directory()?;
     let entries = match fs::read_dir(path) {
         Ok(entries) => entries,
         Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(Vec::new()),
         Err(error) => return Err(SessionError::io("read_directory", path, error)),
     };
-    Ok(entries
-        .filter_map(|entry| entry.ok().map(|entry| entry.path()))
-        .collect())
+    let mut paths = Vec::new();
+    for entry in entries {
+        // Count before filtering or retaining: junk extensions, unmatched
+        // names and unreadable entries cannot bypass the common total cap.
+        budget.entry()?;
+        let entry = entry.map_err(|error| SessionError::io("read_directory", path, error))?;
+        let path = entry.path();
+        budget.path(&path)?;
+        paths.push(path);
+    }
+    Ok(paths)
 }
 
-fn jsonl_files(directory: &Path) -> Result<Vec<PathBuf>> {
-    Ok(read_directory(directory)?
+fn jsonl_files(directory: &Path, budget: &mut DiscoveryBudget) -> Result<Vec<PathBuf>> {
+    Ok(read_directory(directory, budget)?
         .into_iter()
         .filter(|path| path.extension().is_some_and(|value| value == "jsonl"))
         .collect())
 }
 
-fn newest_directories(root: &Path, limit: usize) -> Result<Vec<PathBuf>> {
-    let mut directories = read_directory(root)?
+fn newest_directories(
+    root: &Path,
+    limit: usize,
+    budget: &mut DiscoveryBudget,
+) -> Result<Vec<PathBuf>> {
+    let mut directories = read_directory(root, budget)?
         .into_iter()
         .filter(|path| path.is_dir())
         .collect::<Vec<_>>();
@@ -699,9 +813,10 @@ fn project_directory(cwd: &str) -> String {
 /// This is intentionally separate from conversation parsing because Codex
 /// usage records are not conversation events.
 pub fn newest_codex_session_files(root: &Path) -> Result<Vec<PathBuf>> {
+    let mut budget = DiscoveryBudget::default();
     let mut level = root.to_path_buf();
     for _ in 0..3 {
-        let children = newest_directories(&level, usize::MAX)?
+        let children = newest_directories(&level, usize::MAX, &mut budget)?
             .into_iter()
             .filter(|path| {
                 path.file_name().is_some_and(|name| {
@@ -716,7 +831,7 @@ pub fn newest_codex_session_files(root: &Path) -> Result<Vec<PathBuf>> {
         };
         level = next;
     }
-    let mut candidates = jsonl_files(&level)?
+    let mut candidates = jsonl_files(&level, &mut budget)?
         .into_iter()
         .filter_map(|path| Some((fs::metadata(&path).ok()?.modified().ok()?, path)))
         .collect::<Vec<_>>();
@@ -893,6 +1008,11 @@ enum LineResult {
     /// A session-level record rather than a turn: the title the agent gave
     /// the conversation.
     Title(String),
+    /// The title the operator gave the conversation.
+    CustomTitle(String),
+    /// A tool's output, which is no turn, and the pull request addresses it
+    /// printed.
+    Sightings(Vec<PrSighting>),
 }
 
 /// Parse Claude Code JSONL records into normalized events.
@@ -912,10 +1032,12 @@ pub fn parse_events(agent: Agent, contents: &str) -> ParsedSession {
 
 /// Parse a complete-line chunk while preserving each record's absolute byte
 /// offset. The caller supplies the byte offset where `contents` begins.
+/// OpenCode keeps no session file, so a chunk of one parses to nothing.
 pub fn parse_events_at(agent: Agent, contents: &str, base_offset: u64) -> ParsedSession {
     match agent {
         Agent::Claude => parse_lines_at(contents, base_offset, parse_claude_line),
         Agent::Codex => parse_lines_at(contents, base_offset, parse_codex_line),
+        Agent::OpenCode => ParsedSession::default(),
     }
 }
 
@@ -952,30 +1074,44 @@ fn parse_lines_at(
                 parsed.event_offsets.push(line_offset);
             }
             LineResult::Title(title) => parsed.title = Some(title),
+            LineResult::CustomTitle(title) => parsed.custom_title = Some(title),
+            LineResult::Sightings(found) => parsed.pr_sightings.extend(found),
         }
     }
     parsed
 }
 
 fn parse_claude_line(item: &Value) -> LineResult {
+    let title = |key: &str| {
+        item.get(key)
+            .and_then(Value::as_str)
+            .map(str::trim)
+            .filter(|title| !title.is_empty())
+            .map(str::to_owned)
+    };
     let role = match item.get("type").and_then(Value::as_str) {
         Some("user") => "user",
         Some("assistant") => "assistant",
-        Some("ai-title") => {
-            return match item
-                .get("aiTitle")
-                .and_then(Value::as_str)
-                .map(str::trim)
-                .filter(|title| !title.is_empty())
-            {
-                Some(title) => LineResult::Title(title.to_owned()),
-                None => LineResult::Ignore,
-            };
+        Some("ai-title") => return title("aiTitle").map_or(LineResult::Ignore, LineResult::Title),
+        Some("custom-title") => {
+            return title("customTitle").map_or(LineResult::Ignore, LineResult::CustomTitle);
         }
         _ => return LineResult::Ignore,
     };
-    let Some(text) = session_text(item.pointer("/message/content")) else {
-        return LineResult::Ignore;
+    let content = item.pointer("/message/content");
+    if role == "user"
+        && let Some(outputs) = claude_tool_outputs(content)
+    {
+        return match timestamp_ms(item.get("timestamp")) {
+            Ok(at) => LineResult::Sightings(sightings_in(&outputs, at)),
+            Err(_) => LineResult::Ignore,
+        };
+    }
+    let images = image_blocks(content, "image");
+    let text = match session_text(content) {
+        Some(text) => text,
+        None if role == "user" && images > 0 => String::new(),
+        None => return LineResult::Ignore,
     };
     let timestamp = match timestamp_ms(item.get("timestamp")) {
         Ok(timestamp) => timestamp,
@@ -999,14 +1135,23 @@ fn parse_claude_line(item: &Value) -> LineResult {
             .is_some_and(Value::is_string);
     let is_meta = item.get("isMeta").and_then(Value::as_bool).unwrap_or(false);
     let is_system_prompt = item.get("promptSource").and_then(Value::as_str) == Some("system");
-    let provider_injected = origin_is_injected || is_meta || is_system_prompt;
+    // A compaction summary is Claude Code's own record, written as an external
+    // user prompt with a `promptId`; only these flags tell it from the operator.
+    let is_compact_summary = item
+        .get("isCompactSummary")
+        .and_then(Value::as_bool)
+        .unwrap_or(false)
+        || item
+            .get("isVisibleInTranscriptOnly")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+    let provider_injected = origin_is_injected || is_meta || is_system_prompt || is_compact_summary;
     let interrupted = is_interruption(&text);
     let command = slash_command_text(&text);
     let kind = if interrupted {
         EventKind::Interrupted
     } else if (origin_is_human || external_human)
-        && !is_meta
-        && !is_system_prompt
+        && !provider_injected
         && !has_injected_prefix(&text)
     {
         EventKind::Human
@@ -1020,8 +1165,76 @@ fn parse_claude_line(item: &Value) -> LineResult {
     };
     LineResult::Event(
         ConversationEvent::new(role, kind, timestamp, text)
-            .with_provider_injected(provider_injected),
+            .with_provider_injected(provider_injected)
+            .with_images(images),
     )
+}
+
+/// The text of every `tool_result` block in a Claude user record, or `None`
+/// when the record holds none (a person's message).
+fn claude_tool_outputs(content: Option<&Value>) -> Option<Vec<&str>> {
+    let blocks = content?.as_array()?;
+    let mut outputs = Vec::new();
+    let mut any = false;
+    for block in blocks {
+        if block.get("type").and_then(Value::as_str) != Some("tool_result") {
+            continue;
+        }
+        any = true;
+        collect_text(block.get("content"), &mut outputs);
+    }
+    any.then_some(outputs)
+}
+
+/// A tool output's text, whether a string or blocks carrying `text`.
+fn collect_text<'a>(value: Option<&'a Value>, into: &mut Vec<&'a str>) {
+    match value {
+        Some(Value::String(text)) => into.push(text),
+        Some(Value::Array(blocks)) => {
+            for block in blocks {
+                match block {
+                    Value::String(text) => into.push(text),
+                    other => {
+                        if let Some(text) = other.get("text").and_then(Value::as_str) {
+                            into.push(text);
+                        }
+                    }
+                }
+            }
+        }
+        _ => {}
+    }
+}
+
+fn sightings_in(outputs: &[&str], at_unix_ms: u64) -> Vec<PrSighting> {
+    let mut found: Vec<PrSighting> = Vec::new();
+    for output in outputs {
+        for (repository, number) in pull_request_addresses(output) {
+            if found.len() == MAX_SIGHTINGS_PER_OUTPUT {
+                return found;
+            }
+            if !found
+                .iter()
+                .any(|seen| seen.number == number && seen.repository == repository)
+            {
+                found.push(PrSighting {
+                    repository,
+                    number,
+                    at_unix_ms,
+                });
+            }
+        }
+    }
+    found
+}
+
+fn image_blocks(content: Option<&Value>, kind: &str) -> u32 {
+    content.and_then(Value::as_array).map_or(0, |blocks| {
+        blocks
+            .iter()
+            .filter(|block| block.get("type").and_then(Value::as_str) == Some(kind))
+            .count() as u32
+    })
 }
 
 fn parse_codex_line(item: &Value) -> LineResult {
@@ -1031,8 +1244,24 @@ fn parse_codex_line(item: &Value) -> LineResult {
     let Some(payload) = item.get("payload") else {
         return LineResult::Ignore;
     };
-    if payload.get("type").and_then(Value::as_str) != Some("message") {
-        return LineResult::Ignore;
+    match payload.get("type").and_then(Value::as_str) {
+        Some("message") => {}
+        // Codex records a tool's output after the tool ran, so the record's
+        // time is when the output was printed.
+        Some("function_call_output" | "custom_tool_call_output") => {
+            let mut outputs = Vec::new();
+            match payload.get("output") {
+                Some(Value::Object(object)) => {
+                    collect_text(object.get("content").or(object.get("output")), &mut outputs);
+                }
+                other => collect_text(other, &mut outputs),
+            }
+            return match timestamp_ms(item.get("timestamp")) {
+                Ok(at) => LineResult::Sightings(sightings_in(&outputs, at)),
+                Err(_) => LineResult::Ignore,
+            };
+        }
+        _ => return LineResult::Ignore,
     }
     let role = match payload.get("role").and_then(Value::as_str) {
         Some("user") => "user",
@@ -1040,8 +1269,11 @@ fn parse_codex_line(item: &Value) -> LineResult {
         Some("assistant") => "assistant",
         _ => return LineResult::Ignore,
     };
-    let Some(text) = session_text(payload.get("content")) else {
-        return LineResult::Ignore;
+    let images = image_blocks(payload.get("content"), "input_image");
+    let text = match session_text(codex_own_text(role, payload.get("content")).as_ref()) {
+        Some(text) => text,
+        None if role == "user" && images > 0 => String::new(),
+        None => return LineResult::Ignore,
     };
     let timestamp = match timestamp_ms(item.get("timestamp")) {
         Ok(timestamp) => timestamp,
@@ -1073,7 +1305,7 @@ fn parse_codex_line(item: &Value) -> LineResult {
     } else {
         text
     };
-    LineResult::Event(ConversationEvent::new(role, kind, timestamp, text))
+    LineResult::Event(ConversationEvent::new(role, kind, timestamp, text).with_images(images))
 }
 
 /// All prefixes that identify prompt scaffolding live here so both providers
@@ -1085,6 +1317,8 @@ pub const INJECTED_PREFIXES: &[&str] = &[
     "# AGENTS.md instructions",
     "<environment_context>",
     "<user_instructions>",
+    // Claude Code's compaction summary, for a version that does not flag it.
+    "This session is being continued from a previous conversation",
 ];
 
 fn has_injected_prefix(text: &str) -> bool {
@@ -1125,6 +1359,36 @@ fn slash_command_text(text: &str) -> Option<String> {
     } else {
         args.to_owned()
     })
+}
+
+/// A Codex user message without what Codex wrapped around its attachments:
+/// each image sits between `<image name=[Image #N] path="...">` and
+/// `</image>` blocks, and attached files are listed in a
+/// `# Files mentioned by the user:` block (codex-cli 0.160). None of it is
+/// the operator's words, and the paths name the operator's folders.
+fn codex_own_text(role: &str, content: Option<&Value>) -> Option<Value> {
+    let content = content?;
+    let (true, Value::Array(blocks)) = (role == "user", content) else {
+        return Some(content.clone());
+    };
+    let wrapper = |block: &&Value| {
+        block
+            .get("text")
+            .and_then(Value::as_str)
+            .map(str::trim_start)
+            .is_some_and(|text| {
+                text.starts_with("<image name=")
+                    || text == "</image>"
+                    || text.starts_with("# Files mentioned by the user:")
+            })
+    };
+    Some(Value::Array(
+        blocks
+            .iter()
+            .filter(|block| !wrapper(block))
+            .cloned()
+            .collect(),
+    ))
 }
 
 fn session_text(content: Option<&Value>) -> Option<String> {

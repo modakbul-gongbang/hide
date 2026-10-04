@@ -102,6 +102,10 @@ pub struct AppState {
     /// read while any does, without the Settings-only hook diagnosis (PRD
     /// home-device-rail D-18).
     pub start_demand: Arc<crate::demand::ObservationDemand>,
+    /// Which connections show the Overview's request view: while any does,
+    /// the core re-reads the pull requests whose checks are running (PRD
+    /// overview-request-view D-32).
+    pub request_view_demand: Arc<crate::demand::ObservationDemand>,
     /// What the Settings General tab reads about this daemon, sent once after
     /// a handshake. No token, no environment beyond the paths it names.
     pub daemon_info: Arc<Value>,
@@ -751,6 +755,7 @@ async fn scoped_client_loop(
     enum ScopedRequest {
         Query(herdr_core::workspace_control::Query),
         Action(herdr_core::workspace_control::Action),
+        Delivery(herdr_core::delivery::Command, Option<String>),
     }
     let previous = state.clients.fetch_add(1, Ordering::SeqCst);
     if previous >= MAX_CLIENTS {
@@ -760,7 +765,7 @@ async fn scoped_client_loop(
     }
     let incoming = tokio::time::timeout(Duration::from_secs(10), socket.recv()).await;
     let response = match incoming {
-        Ok(Some(Ok(Message::Text(text)))) if text.len() <= 16 * 1024 => {
+        Ok(Some(Ok(Message::Text(text)))) if text.len() <= 128 * 1024 => {
             match serde_json::from_str::<Value>(&text) {
                 Ok(value) => {
                     let request_id = value["request_id"].as_str().unwrap_or("");
@@ -781,9 +786,32 @@ async fn scoped_client_loop(
                             .ok()
                             .map(ScopedRequest::Action)
                         }
+                        Some("delivery") => {
+                            serde_json::from_value::<herdr_core::delivery::Command>(
+                                value["command"].clone(),
+                            )
+                            .ok()
+                            .filter(|_| {
+                                value.get("caller_pane").is_none_or(|hint| {
+                                    hint.is_null()
+                                        || hint.as_str().is_some_and(|hint| {
+                                            !hint.is_empty()
+                                                && hint.len() <= 256
+                                                && !hint.chars().any(char::is_control)
+                                        })
+                                })
+                            })
+                            .map(|command| {
+                                ScopedRequest::Delivery(
+                                    command,
+                                    value["caller_pane"].as_str().map(str::to_owned),
+                                )
+                            })
+                        }
                         _ => None,
                     };
                     if command.is_none()
+                        || (value["type"] != "delivery" && text.len() > 16 * 1024)
                         || request_id.is_empty()
                         || request_id.len() > 64
                         || !request_id
@@ -806,14 +834,19 @@ async fn scoped_client_loop(
                         let outcome = tokio::task::spawn_blocking(move || {
                             let cap = registry
                                 .validate(&query_token, herdr_socket.as_deref(), &core)
-                                .map_err(|reason| (reason, crate::pane_auth::refusal_next_action(reason)))?;
-                            if renderers.load(Ordering::SeqCst) == 0 {
+                                .map_err(|reason| (reason.to_owned(), crate::pane_auth::refusal_next_action(reason)))?;
+                            if !matches!(&command, ScopedRequest::Delivery(..)) && renderers.load(Ordering::SeqCst) == 0 {
                                 return Err((
-                                    "renderer_unavailable",
+                                    "renderer_unavailable".to_owned(),
                                     "Open Hide's web or desktop shell and retry",
                                 ));
                             }
                             let result = match command {
+                                ScopedRequest::Delivery(command, hint) => {
+                                    core.prepare_delivery(&cap.context.device_id, &cap.pane_id, &cap.context, hint, command)
+                                        .and_then(|prepared| prepared.run(Duration::from_secs(5)))
+                                        .map_err(|code| (code, "Check the current agent pane and retry the same intent"))?
+                                }
                                 ScopedRequest::Query(query) => {
                                     let mut result = core
                                         .workspace_query(
@@ -821,9 +854,10 @@ async fn scoped_client_loop(
                                             &cap.pane_id,
                                             query,
                                         )
-                                        .map_err(|refusal| (refusal.reason, refusal.next_action))?;
+                                        .map_err(|refusal| (refusal.reason.to_owned(), refusal.next_action))?;
                                     if result.context != cap.context {
-                                        return Err(cap.changed_refusal());
+                                        let (reason, next_action) = cap.changed_refusal();
+                                        return Err((reason.to_owned(), next_action));
                                     }
                                     if desktop_renderers.load(Ordering::SeqCst) == 0 {
                                         result.capabilities.retain(|capability| !capability.starts_with("browser."));
@@ -837,12 +871,12 @@ async fn scoped_client_loop(
                                         }
                                     }
                                     serde_json::to_value(result).map_err(|_| {
-                                        ("result_encoding_failed", "Reconnect Hide and retry")
+                                        ("result_encoding_failed".to_owned(), "Reconnect Hide and retry")
                                     })?
                                 }
                                 ScopedRequest::Action(action) => {
                                     if matches!(action, herdr_core::workspace_control::Action::OpenBrowser { .. }) && desktop_renderers.load(Ordering::SeqCst) == 0 {
-                                        return Err(("browser_unsupported", "Open the Hide desktop app and retry"));
+                                        return Err(("browser_unsupported".to_owned(), "Open the Hide desktop app and retry"));
                                     }
                                     let preparation = core
                                         .workspace_prepare_action(
@@ -852,12 +886,12 @@ async fn scoped_client_loop(
                                             &command_request_id,
                                             &action,
                                         )
-                                        .map_err(|refusal| (refusal.reason, refusal.next_action))?;
+                                        .map_err(|refusal| (refusal.reason.to_owned(), refusal.next_action))?;
                                     let material = match preparation {
                                         herdr_core::workspace_control::ActionPreparation::Cached(result) => {
-                                            let result = result.map_err(|refusal| (refusal.reason, refusal.next_action))?;
+                                            let result = result.map_err(|refusal| (refusal.reason.to_owned(), refusal.next_action))?;
                                             return serde_json::to_value(result).map_err(|_| {
-                                                ("result_encoding_failed", "Reconnect Hide and retry")
+                                                ("result_encoding_failed".to_owned(), "Reconnect Hide and retry")
                                             });
                                         }
                                         herdr_core::workspace_control::ActionPreparation::Ready => Ok(None),
@@ -874,16 +908,17 @@ async fn scoped_client_loop(
                                             action,
                                             material,
                                         )
-                                        .map_err(|refusal| (refusal.reason, refusal.next_action))?;
+                                        .map_err(|refusal| (refusal.reason.to_owned(), refusal.next_action))?;
                                     if result.context != cap.context {
-                                        return Err(cap.changed_refusal());
+                                        let (reason, next_action) = cap.changed_refusal();
+                                        return Err((reason.to_owned(), next_action));
                                     }
                                     serde_json::to_value(result).map_err(|_| {
-                                        ("result_encoding_failed", "Reconnect Hide and retry")
+                                        ("result_encoding_failed".to_owned(), "Reconnect Hide and retry")
                                     })?
                                 }
                             };
-                            Ok::<_, (&str, &str)>(result)
+                            Ok::<_, (String, &str)>(result)
                         })
                         .await;
                         match outcome {
@@ -1089,6 +1124,21 @@ fn handle_client_text(
         Some("ai_settings") => {
             return handle_ai_settings(state, event, connection);
         }
+        Some("request_view") => {
+            let Some(observing) = event
+                .get("payload")
+                .and_then(|payload| payload.get("observing"))
+                .and_then(Value::as_bool)
+            else {
+                return Err("request_view.observing must be a boolean".to_owned());
+            };
+            Demand::RequestView
+                .of(state)
+                .set(connection, observing, |aggregate| {
+                    dispatch_observation(&state.core, Demand::RequestView, connection, aggregate)
+                });
+            return Ok(ClientAction::Replies(Vec::new()));
+        }
         // The daemon owns this flag from its renderer count; a window that
         // sent it would pause the readers every other window draws.
         Some("ui_attached") => return Err("ui_attached is sent by the daemon only".to_owned()),
@@ -1261,6 +1311,8 @@ pub(crate) enum Demand {
     Settings,
     /// A start surface: the catalog only.
     Start,
+    /// The Overview's request view: the running checks' re-read.
+    RequestView,
 }
 
 impl Demand {
@@ -1268,6 +1320,7 @@ impl Demand {
         match self {
             Self::Settings => "observing",
             Self::Start => "start_observing",
+            Self::RequestView => "request_view",
         }
     }
 
@@ -1275,6 +1328,7 @@ impl Demand {
         match self {
             Self::Settings => &state.demand,
             Self::Start => &state.start_demand,
+            Self::RequestView => &state.request_view_demand,
         }
     }
 }
@@ -1297,11 +1351,18 @@ pub(crate) fn dispatch_observation(
             "observing": observing,
         })
     );
-    let event = json!({
-        "schema_version": SCHEMA_VERSION,
-        "kind": "ai_settings",
-        "payload": {demand.field(): observing},
-    });
+    let event = match demand {
+        Demand::RequestView => json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "request_view",
+            "payload": {"observing": observing},
+        }),
+        Demand::Settings | Demand::Start => json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "ai_settings",
+            "payload": {demand.field(): observing},
+        }),
+    };
     if let Err(error) = core.dispatch(event.to_string().into_bytes()) {
         eprintln!(
             "{}",
@@ -2645,7 +2706,7 @@ fn client_gone(state: &AppState, connection: u64, renderer: bool, desktop: bool)
     }
     state.attachments.release(connection);
     state.mobile.release(connection);
-    for demand in [Demand::Settings, Demand::Start] {
+    for demand in [Demand::Settings, Demand::Start, Demand::RequestView] {
         demand.of(state).release(connection, |observing| {
             dispatch_observation(&state.core, demand, connection, observing)
         });

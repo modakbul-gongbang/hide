@@ -60,7 +60,6 @@ fn duplicate_inflight_remote_tab_creation_is_observable_and_ignored() {
         request_id: "request-2".to_owned(),
         report_pane_focus_outcome: false,
         focus_device: false,
-        in_place: false,
         request: RemoteControlRequest::CreateTab {
             workspace_id: projected_workspace_id.to_owned(),
             checkout_id: None,
@@ -597,6 +596,41 @@ fn a_chosen_agent_and_model_move_the_snapshot_and_queue_one_write() {
     );
 }
 
+/// PRD overview-request-view D-11, B21: the agent-summary switch moves the
+/// snapshot at once, keeps the provider choice, and is queued to be kept.
+#[test]
+fn the_agent_summary_switch_moves_the_snapshot_and_queues_one_write() {
+    let mut runtime = runtime();
+    let event = |payload: serde_json::Value| {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": 2, "kind": "ai_settings", "payload": payload
+        }))
+        .expect("the event encodes")
+    };
+    assert!(
+        runtime.agent_summary(),
+        "on until the operator turns it off"
+    );
+    assert!(runtime.snapshot.status.background_ai.agent_summary);
+
+    assert!(runtime.dispatch_json(&event(serde_json::json!({"provider": "claude"}))));
+    runtime.take_ai_settings_save();
+    assert!(runtime.dispatch_json(&event(serde_json::json!({"agent_summary": false}))));
+    assert!(!runtime.agent_summary());
+    assert!(!runtime.snapshot.status.background_ai.agent_summary);
+    let saved = runtime
+        .take_ai_settings_save()
+        .expect("the switch is queued for the coordinator to write");
+    assert!(!saved.agent_summary);
+    assert_eq!(saved.provider, hide_ai::ProviderId::Claude);
+
+    runtime.dispatch_json(&event(serde_json::json!({"agent_summary": false})));
+    assert!(
+        runtime.take_ai_settings_save().is_none(),
+        "the same position writes nothing"
+    );
+}
+
 /// PRD home-device-rail D-18: a start surface's model menu reads the provider
 /// catalog while it shows, without the Settings tab's hook diagnosis, and the
 /// two demands stop independently.
@@ -796,7 +830,6 @@ fn remote_pane_focus_uses_its_existing_request_outcome() {
         request_id: request_id.to_owned(),
         report_pane_focus_outcome: true,
         focus_device: false,
-        in_place: false,
         request: RemoteControlRequest::FocusPane {
             pane_id: projected_pane_id.clone(),
         },
@@ -816,7 +849,6 @@ fn remote_pane_focus_uses_its_existing_request_outcome() {
         request_id: "ordinary-remote-focus".to_owned(),
         report_pane_focus_outcome: false,
         focus_device: false,
-        in_place: false,
         request: RemoteControlRequest::FocusPane {
             pane_id: projected_pane_id.clone(),
         },
@@ -1434,7 +1466,11 @@ fn read_record_stops_following_a_pane_herdr_moved_focus_away_from() {
     assert!(runtime.dispatch_json(&operator_focus_event("w1:p3")));
     // The requested focus lands, then a spawned pane takes it away.
     runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p3")));
+    super::session_navigation::finish_running_pane_focus(&mut runtime, Ok(()));
+    assert!(runtime.pending_pane_focus.is_none());
+    assert!(runtime.pane_focus_in_flight.is_none());
     runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
+    assert_eq!(diagnostic_count(&runtime, "pane.focus.followed"), 1);
 
     let moved = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6031)];
     runtime.ingest_session(Ok(finished_tab_payload(&moved, "w1:p1")));

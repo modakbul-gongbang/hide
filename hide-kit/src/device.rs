@@ -48,6 +48,7 @@ pub fn device_target(
         herdr_socket: herdr_socket.to_path_buf(),
         herdr_bin,
         hcoord,
+        codex: hide_agent_hooks::codex_daemon::find_codex(home),
         hcoord_home: relocated,
         legacy: crate::legacy::device(home, root),
         stop,

@@ -123,7 +123,10 @@ test("the theme and accent switch at once, keep the terminal, and survive a rest
 });
 
 test("an editor open during a theme switch is drawn like one opened after it", async ({ page }) => {
-  await page.setViewportSize({ width: 1440, height: 900 });
+  // Wide enough for File Views and the Explorer side by side: below the wide
+  // step an open calls File Views in the Explorer's place (PRD
+  // three-column-panel D-07), and this opens a second file from it.
+  await page.setViewportSize({ width: 1920, height: 1080 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
   try {

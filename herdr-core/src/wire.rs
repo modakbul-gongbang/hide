@@ -1101,14 +1101,18 @@ pub(crate) fn layout_apply_params(
     })
 }
 
+/// Every agent start Hide makes; a Codex with the shared daemon gets
+/// `--no-daemon` here, so no start path can leave it out (PRD
+/// overview-request-view D-20).
 pub(crate) fn agent_start_params(
     pane_id: &str,
     name: &str,
     kind: &str,
     args: Vec<String>,
+    codex_daemon: crate::codex_launch::CodexDaemon,
 ) -> Result<Value, String> {
     params(req::AgentStartParams {
-        args,
+        args: crate::codex_launch::start_arguments(kind, codex_daemon, args)?,
         kind: kind.into(),
         name: name.into(),
         pane_id: pane_id.into(),
@@ -1270,6 +1274,56 @@ pub(crate) fn agent_state(value: Value) -> Result<AgentState, String> {
         }),
         _ => Err(missing.into()),
     }
+}
+
+/// Fresh delivery guard, converted here rather than exposing generated types.
+pub(crate) struct DeliveryAgent {
+    pub pane_id: String,
+    pub name: String,
+    pub kind: Option<String>,
+    pub session: Option<String>,
+    pub status: String,
+    pub state_change_seq: u64,
+    pub ready: bool,
+}
+
+pub(crate) fn delivery_agent(value: Value) -> Result<DeliveryAgent, String> {
+    match response(value, "delivery_agent_format")? {
+        res::ResponseResult::AgentInfo { agent } => Ok(DeliveryAgent {
+            name: agent.name.unwrap_or_else(|| agent.pane_id.clone()),
+            pane_id: agent.pane_id,
+            kind: agent.agent,
+            session: agent
+                .agent_session
+                .and_then(|session| session_digest(&session.value)),
+            status: agent.agent_status.to_string(),
+            state_change_seq: agent.state_change_seq,
+            // Herdr omits a false launch_pending flag on a ready agent.
+            // Positive readiness remains mandatory; an active launch refuses.
+            ready: agent.interactive_ready == Some(true) && agent.launch_pending != Some(true),
+        }),
+        _ => Err("delivery_agent_format".into()),
+    }
+}
+
+pub(crate) fn delivery_screen_params(pane: &str) -> Result<Value, String> {
+    params(req::PaneReadParams {
+        pane_id: pane.into(),
+        // Detection normalizes away styling even with strip_ansi=false.
+        // Visible ANSI distinguishes a placeholder from an identical draft.
+        source: req::ReadSource::Visible,
+        lines: Some(128),
+        format: req::ReadFormat::Ansi,
+        strip_ansi: false,
+    })
+}
+
+pub(crate) fn delivery_input_params(pane: &str, text: &str) -> Result<Value, String> {
+    params(req::PaneSendInputParams {
+        pane_id: pane.into(),
+        text: Some(text.into()),
+        keys: vec!["enter".into()],
+    })
 }
 
 /// Which process group holds a pane's terminal, which is its shell's, and
@@ -1729,6 +1783,35 @@ pub(crate) fn checked_response_fixture(id: &Value, result: Value) -> Value {
 
 #[cfg(test)]
 mod tests {
+
+    #[test]
+    fn delivery_requires_positive_readiness_and_preserves_visible_styling() {
+        // The actual ready response omits launch_pending=false. Missing
+        // interactive_ready or an explicit active launch still refuses input.
+        let mut response = serde_json::json!({"type":"agent_info", "agent": {
+            "pane_id":"w1:p1", "terminal_id":"terminal", "workspace_id":"w1",
+            "tab_id":"w1:t1", "focused":false, "revision":1,
+            "agent":"codex", "agent_status":"idle", "state_change_seq":1,
+            "interactive_ready":true
+        }});
+        assert!(super::delivery_agent(response.clone()).unwrap().ready);
+        response["agent"]["launch_pending"] = serde_json::json!(true);
+        assert!(!super::delivery_agent(response.clone()).unwrap().ready);
+        response["agent"]["launch_pending"] = serde_json::json!(false);
+        assert!(super::delivery_agent(response.clone()).unwrap().ready);
+        response["agent"]
+            .as_object_mut()
+            .unwrap()
+            .remove("interactive_ready");
+        assert!(!super::delivery_agent(response.clone()).unwrap().ready);
+        response["agent"]["interactive_ready"] = serde_json::json!(false);
+        assert!(!super::delivery_agent(response).unwrap().ready);
+        assert_eq!(
+            super::delivery_screen_params("w1:p1").unwrap(),
+            serde_json::json!({"pane_id":"w1:p1", "source":"visible",
+                "lines":128, "format":"ansi", "strip_ansi":false})
+        );
+    }
 
     #[test]
     fn a_program_holding_the_terminal_is_named_apart_from_the_shell() {

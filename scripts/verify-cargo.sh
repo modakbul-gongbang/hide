@@ -1,7 +1,8 @@
 #!/usr/bin/env bash
 # The cargo entrypoint for verification, as plain argv.
 #
-# Usage: verify-cargo.sh test [cargo test arguments...] | lint | release | cli
+# Usage: verify-cargo.sh test [args...] | lint | release | cli
+# CI-scoped lanes: test-scoped | check | build | clippy [cargo arguments...]
 #
 # The PRD harness runs each verify command with execvp and no shell, so an
 # `ENV=value cargo ...` binding fails with ENOENT at verify time rather than at
@@ -34,7 +35,24 @@ for name in $(compgen -e); do
     case "$name" in HERDR_*) unset "$name" ;; esac
 done
 
+# Scoped modes cannot move the checkout or its artifacts through cargo flags.
+# Keep the legacy modes unchanged for sealed verification commands.
 case "${1:-}" in
+    test-scoped|check|build|clippy)
+        mode=$1
+        shift
+        (( $# <= 128 )) || { printf 'too many cargo arguments\n' >&2; exit 2; }
+        for argument in "$@"; do
+            case "$argument" in
+                --target-dir|--target-dir=*|--manifest-path|--manifest-path=*|--config|--config=*)
+                    printf 'cargo argument may not redirect verification: %s\n' "$argument" >&2
+                    exit 2
+                    ;;
+            esac
+        done
+        [[ "$mode" != test-scoped ]] || mode=test
+        exec cargo "$mode" --locked "$@"
+        ;;
     test)
         shift
         exec cargo test --locked --workspace "$@"
@@ -52,7 +70,7 @@ case "${1:-}" in
         exec cargo build --locked -p hided --bins -p hide-host --bin hide-host-helper -p hide-agent-hooks --bin hide-agent-hooks
         ;;
     *)
-        printf 'usage: %s test [cargo test arguments...]|lint|release|cli\n' "$0" >&2
+        printf 'usage: %s test [args...]|lint|release|cli|test-scoped|check|build|clippy [args...]\n' "$0" >&2
         exit 2
         ;;
 esac

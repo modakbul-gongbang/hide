@@ -36,6 +36,11 @@ on:
         type: string
         required: false
         default: ""
+      full-suite:
+        description: Include @flaky tests in the blocking suite (nightly only).
+        type: boolean
+        required: false
+        default: false
       quarantine:
         description: Run the `@flaky` tests once, in shard 1, in a step that cannot fail the lane.
         type: boolean
@@ -57,7 +62,15 @@ jobs:
       - id: plan
         env:
           SHARDS: ${{ inputs.shards }}
-        run: echo "shards=$(seq 1 "$SHARDS" | jq -sc .)" >> "$GITHUB_OUTPUT"
+        run: |
+          python3 - <<'PYPLAN'
+          import json, os
+          shards = int(os.environ['SHARDS'])
+          if not 1 <= shards <= 8:
+              raise ValueError('shards must be between 1 and 8')
+          with open(os.environ['GITHUB_OUTPUT'], 'a') as output:
+              output.write('shards=' + json.dumps(list(range(1, shards + 1))) + '\n')
+          PYPLAN
 
   # zsh for the Linux shards, fetched once. The Ubuntu mirror serves one
   # connection at about 60 kB/s when many runners ask at once (2026-10-01: 5 MB
@@ -95,7 +108,12 @@ jobs:
     if: ${{ inputs.shards > 1 }}
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 30
+    defaults:
+      run:
+        shell: bash
     steps:
+      - name: Keep line endings as committed
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@v7
         timeout-minutes: 5
       - uses: Swatinem/rust-cache@v2
@@ -106,15 +124,15 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build hided for Playwright
         timeout-minutes: 20
-        run: bash -lc 'source scripts/toolchain-env.sh && cargo build --locked -p hided'
+        run: bash scripts/verify-cargo.sh build -p hided
       - name: Keep the binaries for the shards
         uses: actions/upload-artifact@v7
         timeout-minutes: 5
         with:
           name: hided-debug-${{ inputs.lane }}
           path: |
-            target/debug/hided
-            target/debug/hide
+            target/debug/hided${{ runner.os == 'Windows' && '.exe' || '' }}
+            target/debug/hide${{ runner.os == 'Windows' && '.exe' || '' }}
           if-no-files-found: error
           retention-days: 1
 
@@ -126,11 +144,16 @@ jobs:
     if: ${{ !cancelled() && needs.plan.result == 'success' && contains(fromJSON('["success","skipped"]'), needs.build.result) && contains(fromJSON('["success","skipped"]'), needs.zsh.result) }}
     runs-on: ${{ inputs.runner }}
     timeout-minutes: 40
+    defaults:
+      run:
+        shell: bash
     strategy:
       fail-fast: false
       matrix:
         shard: ${{ fromJSON(needs.plan.outputs.shards) }}
     steps:
+      - name: Keep line endings as committed
+        run: git config --global core.autocrlf false
       - uses: actions/checkout@v7
         timeout-minutes: 5
       - uses: pnpm/action-setup@v6
@@ -153,7 +176,7 @@ jobs:
       - name: Build hided for Playwright
         if: ${{ inputs.shards == 1 }}
         timeout-minutes: 20
-        run: bash -lc 'source scripts/toolchain-env.sh && cargo build --locked -p hided'
+        run: bash scripts/verify-cargo.sh build -p hided
       - name: Fetch hided from the build job
         if: ${{ inputs.shards > 1 }}
         uses: actions/download-artifact@v8
@@ -162,15 +185,15 @@ jobs:
           name: hided-debug-${{ inputs.lane }}
           path: target/debug
       - name: Mark the binaries executable
-        if: ${{ inputs.shards > 1 }}
+        if: ${{ inputs.shards > 1 && runner.os != 'Windows' }}
         # An artifact does not keep the executable bit.
         run: chmod +x target/debug/hided target/debug/hide
       - name: Install web dependencies
         timeout-minutes: 5
-        run: pnpm --dir web install --frozen-lockfile
+        run: bash scripts/verify-web.sh install
       - name: Build the web shell
         timeout-minutes: 5
-        run: pnpm --dir web build
+        run: bash scripts/verify-web.sh web build
       - name: Fetch zsh from the zsh job
         if: runner.os == 'Linux'
         uses: actions/download-artifact@v8
@@ -192,7 +215,7 @@ jobs:
         # passes on it (2026-10-01 run 36896943318, no "missing dependencies"
         # from Playwright); `--with-deps` only added fonts and newer Mesa
         # builds. A launch failure names the missing library in the shard log.
-        run: pnpm --dir web exec playwright install chromium
+        run: bash scripts/verify-web.sh web playwright-install
       - name: Fetch the pinned Herdr runtime
         id: herdr
         timeout-minutes: 5
@@ -200,7 +223,13 @@ jobs:
         # fixture refuses any binary whose version is not the pin.
         env:
           HERDR_PLATFORM: ${{ inputs.herdr-platform }}
-        run: echo "bin=$(zsh scripts/fetch-herdr-runtime.sh --platform "$HERDR_PLATFORM")" >> "$GITHUB_OUTPUT"
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then
+            bin=$(pwsh -NoProfile -File scripts/fetch-herdr-runtime.ps1 | tr -d '\r')
+          else
+            bin=$(zsh scripts/fetch-herdr-runtime.sh --platform "$HERDR_PLATFORM")
+          fi
+          echo "bin=$bin" >> "$GITHUB_OUTPUT"
       - name: End-to-end
         timeout-minutes: 20
         env:
@@ -209,11 +238,13 @@ jobs:
           HIDE_E2E_TRACE: "1"
           GREP: ${{ inputs.grep }}
           SHARD: ${{ matrix.shard }}/${{ inputs.shards }}
+          FULL_SUITE: ${{ inputs.full-suite }}
         run: |
           mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
-          args=(--shard="$SHARD" --grep-invert @flaky)
+          args=(--shard="$SHARD")
+          if [ "$FULL_SUITE" != true ]; then args+=(--grep-invert @flaky); fi
           if [ -n "$GREP" ]; then args+=(--grep "$GREP"); fi
-          pnpm --dir web exec playwright test "${args[@]}"
+          bash scripts/verify-web.sh web e2e "${args[@]}"
       - name: Quarantined end-to-end (does not block verify)
         # A test tagged @flaky carries the issue that tracks its cause. It still
         # runs here, once, so a fix shows up as a pass and a regression of the
@@ -231,7 +262,7 @@ jobs:
           HIDE_E2E_TRACE: "1"
         run: |
           mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
-          pnpm --dir web exec playwright test --grep @flaky --output=test-results-quarantine
+          bash scripts/verify-web.sh web e2e --grep @flaky --output=test-results-quarantine
       - name: Keep the e2e run's logs
         # The daemon, Herdr server and PTY input logs behind a failed flow
         # (with the screenshots the specs take, under the same directory),

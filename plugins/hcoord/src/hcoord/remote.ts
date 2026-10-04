@@ -162,7 +162,65 @@ export function controlOptions(): string[] {
   return ["-o", "ControlMaster=auto", "-o", `ControlPath=${dir}/%C`, "-o", `ControlPersist=${CONTROL_PERSIST_SECONDS}`];
 }
 
-export const sshArgs = (target: string, argv: string[]): string[] => ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=2", ...controlOptions(), target, "--", remoteShell(argv)];
+const sshCommandArgs = (target: string, command: string): string[] => ["-o", "BatchMode=yes", "-o", "ConnectTimeout=10", "-o", "ServerAliveInterval=5", "-o", "ServerAliveCountMax=2", ...controlOptions(), target, "--", command];
+export const sshArgs = (target: string, argv: string[]): string[] => sshCommandArgs(target, remoteShell(argv));
+
+const CODEX_PROBE_TIMEOUT_MS = 5_000;
+const CODEX_PROBE_OUTPUT_BYTES = 64 * 1024;
+type CodexProbe = { status: number | null; errorCode: string | null; valid: boolean; hasDaemon: boolean };
+
+/** Only bounded feature facts cross SSH, never configuration or CLI output. */
+function codexProbeResult(result: { status: number | null; stdout?: string | null; error?: NodeJS.ErrnoException }): CodexProbe {
+  return {
+    status: result.status,
+    errorCode: result.error?.code ?? null,
+    valid: /^[a-z0-9_]+\s+\S+\s+(true|false)\s*$/m.test(result.stdout ?? ""),
+    hasDaemon: /^daemon_auto_start\s/m.test(result.stdout ?? ""),
+  };
+}
+
+/**
+ * Probe the executable on the machine that will start the agent, once per
+ * start. There is no capability cache to outlive a CLI upgrade or SSH target
+ * change. Connection failures use the existing finite machine backoff.
+ * The target's existing Node bounds the Codex child itself, independently of
+ * the SSH deadline; no new remote hcoord protocol or kit install is needed.
+ */
+export function codexHasDaemon(machine: string): boolean {
+  let probe: CodexProbe;
+  if (isLocalMachine(machine)) {
+    probe = codexProbeResult(spawnSync("codex", ["features", "list"], { encoding: "utf8", shell: false, timeout: CODEX_PROBE_TIMEOUT_MS, killSignal: "SIGKILL", maxBuffer: CODEX_PROBE_OUTPUT_BYTES }));
+  } else {
+    if (machineBackoff(machine) !== null) throw new HcoordError("machine_unreachable", `Codex probe on ${machine} is deferred until the connection backoff expires`, { machine, unfinishedStep: "codex_probe" });
+    const saved = savedMachine(machine);
+    const script = `const r=require("node:child_process").spawnSync("codex",["features","list"],{encoding:"utf8",shell:false,timeout:${CODEX_PROBE_TIMEOUT_MS},killSignal:"SIGKILL",maxBuffer:${CODEX_PROBE_OUTPUT_BYTES}});process.stdout.write(JSON.stringify((${codexProbeResult.toString()})(r)));`;
+    // Herdr starts agents through the target shell. A login shell resolves
+    // the same user's CLI installations, unlike SSH's minimal default PATH.
+    const command = `exec "\${SHELL:-/bin/sh}" -lc ${quote(`exec node -e ${quote(script)}`)}`;
+    const result = spawnSync("ssh", sshCommandArgs(saved.target, command), { encoding: "utf8", timeout: REMOTE_HERDR_TIMEOUT_MS, killSignal: "SIGKILL", maxBuffer: CODEX_PROBE_OUTPUT_BYTES });
+    const processCode = (result.error as NodeJS.ErrnoException | undefined)?.code ?? null;
+    const details = { machine, unfinishedStep: "codex_probe", exitStatus: result.status, processCode };
+    if (processCode === "ENOBUFS") throw new HcoordError("codex_probe_capacity", `Codex probe on ${machine} exceeded its output limit; no agent was started`, details);
+    if (result.error || result.status === 255) {
+      if (/permission denied|authentication|host key verification/i.test(result.stderr ?? "")) throw new HcoordError("auth_failed", `SSH authentication for the Codex probe on ${machine} failed; no agent was started`, details);
+      unreachableUntil.set(machine, Date.now() + UNREACHABLE_BACKOFF_MS);
+      throw new HcoordError("machine_unreachable", `SSH for the Codex probe on ${machine} did not complete; no agent was started`, details);
+    }
+    unreachableUntil.delete(machine);
+    if (result.status !== 0) throw new HcoordError("codex_probe_unavailable", `The bounded Codex probe on ${machine} could not run with its existing Node installation; no agent was started`, details);
+    let value: unknown;
+    try { value = JSON.parse((result.stdout ?? "").trim().split("\n").at(-1) ?? ""); }
+    catch { throw new HcoordError("codex_probe_invalid_output", `Codex probe on ${machine} returned no feature facts; no agent was started`, details); }
+    if (value === null || typeof value !== "object" || !("status" in value) || !(value.status === null || typeof value.status === "number") || !("errorCode" in value) || !(value.errorCode === null || typeof value.errorCode === "string") || !("valid" in value) || typeof value.valid !== "boolean" || !("hasDaemon" in value) || typeof value.hasDaemon !== "boolean") throw new HcoordError("codex_probe_invalid_output", `Codex probe on ${machine} returned invalid feature facts; no agent was started`, details);
+    probe = value as CodexProbe;
+  }
+  const details = { machine, unfinishedStep: "codex_probe", exitStatus: probe.status, processCode: probe.errorCode };
+  if (probe.errorCode === "ETIMEDOUT") throw new HcoordError("codex_probe_timeout", `Codex feature probe on ${machine} exceeded its deadline; no agent was started`, details);
+  if (probe.errorCode === "ENOBUFS") throw new HcoordError("codex_probe_capacity", `Codex feature probe on ${machine} exceeded its output limit; no agent was started`, details);
+  if (probe.errorCode !== null || probe.status !== 0) throw new HcoordError("codex_probe_failed", `Codex feature probe on ${machine} failed; no agent was started`, details);
+  if (!probe.valid) throw new HcoordError("codex_probe_invalid_output", `Codex feature probe on ${machine} returned no feature list; no agent was started`, details);
+  return probe.hasDaemon;
+}
 
 export type Raw = { status: number | null; stdout: string; stderr: string };
 

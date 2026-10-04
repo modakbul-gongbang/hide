@@ -52,8 +52,9 @@ export function countSent(page: Page, last: Map<string, Record<string, unknown>>
 /**
  * A first run opens on Main (S6 D-11); a spec about the Workspace goes in
  * through its Project's Overview (the one named `project`, else the first)
- * to that Project's first Workspace: the Overview opens on the Agents graph,
- * whose first box head is a checkout's Workspace (agents-graph-view B1, B15);
+ * to that Project's first Workspace: the Overview opens on the request view,
+ * whose Agents tile is the graph, whose first box head is a checkout's
+ * Workspace (overview-request-view D-05, agents-graph-view B15);
  * a project that draws no box goes
  * through the sidebar's project list, put back on the list it showed. A page
  * that already shows a Workspace is left where it is.
@@ -66,6 +67,8 @@ export async function enterWorkspace(page: Page, project?: string): Promise<void
   await main.locator('[data-main-tab="projects"]').click();
   await main.locator("[data-main-project]:not([disabled])", project ? { hasText: project } : {}).first().click();
   const overview = page.locator("[data-overview-screen]");
+  // Every way in opens the request view; the boxes are the Agents tile's (overview-request-view D-05).
+  await overview.locator('[data-lens-tile-button="agents"]').click();
   const head = overview.locator("[data-graph-box] [data-graph-head-open]").first();
   await expect(head.or(overview.locator("[data-graph-empty], [data-graph-fold]")).first()).toBeVisible();
   if ((await head.count()) > 0) {
@@ -93,30 +96,25 @@ export async function screenshot(page: Page, name: string): Promise<unknown> {
 }
 
 /**
- * Shows one tool in the side panel's column: a Workspace starts with its
- * panel closed, the panel toggle opens it, the column's toggle shows the
- * column, and its icon tabs choose the tool (issue 170).
+ * Shows one tool in the Tools column: a Workspace starts with Tools off, the
+ * toolbar's Tools icon turns it on, and its icon tabs choose the tool (PRD
+ * three-column-panel D-04).
  */
 export async function showTool(page: Page, tool: "explorer" | "changes"): Promise<void> {
   const shown = page.locator(`[data-tool="${tool}"]`);
   if (await shown.isVisible()) return;
-  const panel = page.locator("[data-side-panel]");
-  if ((await panel.count()) === 0) await page.locator('[data-panel-toggle="off"]').click();
-  await expect(panel).toBeVisible();
+  const column = page.locator('[data-column="tools"]');
+  if ((await column.count()) === 0) await page.locator('[data-column-toggle="tools"]').click();
+  await expect(column).toBeVisible();
   const tab = page.locator(`[data-tool-tab="${tool}"]`);
-  await expect(tab.or(page.locator('[data-tools-toggle="off"]')).first()).toBeVisible();
-  if (!(await tab.isVisible())) await page.locator('[data-tools-toggle="off"]').click();
   if ((await tab.getAttribute("aria-selected")) !== "true") await tab.click();
   await expect(shown).toBeVisible();
 }
 
-/**
- * Chooses the side panel's state from the Workspace toolbar's menu, the one
- * place that names all three states (the palette no longer does).
- */
-export async function choosePanel(page: Page, state: "closed" | "open" | "expanded"): Promise<void> {
+/** Shows or hides a column from the Workspace toolbar's menu (B15). */
+export async function chooseColumn(page: Page, column: "views" | "tools"): Promise<void> {
   await page.locator("[data-workspace-location]").click({ button: "right" });
-  await page.locator(`[data-menu-item="panel:${state}"]`).click();
+  await page.locator(`[data-menu-item="${column}"]`).click();
   await expect(page.locator('[role="menu"]')).toHaveCount(0);
 }
 

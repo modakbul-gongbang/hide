@@ -63,6 +63,7 @@ pub struct CoreOptions {
 #[derive(Clone, Debug, Serialize)]
 pub struct Snapshot {
     pub schema_version: u32,
+    pub delivery_watches: Vec<crate::delivery::watch::View>,
     pub navigator: NavigatorSnapshot,
     pub overlay: OverlaySnapshot,
     pub tab: TabSnapshot,
@@ -199,29 +200,35 @@ impl<T: Serialize> Serialize for Edited<T> {
     }
 }
 
-/// What the front Workspace shows: its side panel, the panel's tools and
-/// width, and its View area tree. The editor's `active_tab_id` is the
-/// document of the active area's active display.
+/// What the front Workspace shows: whether its File Views and Tools columns
+/// are on, the Tools column's tool, the two columns' widths, and its View
+/// area tree. The editor's `active_tab_id` is the document of the active
+/// area's active display.
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct WorkspaceViewSnapshot {
     pub device_id: String,
     pub path: String,
-    /// Whether and how the side panel shows (issue 170).
-    pub panel: crate::workspace_views::PanelState,
-    /// The panel docked beside the agents rather than over them.
-    pub pinned: bool,
-    /// The one tool the tool column holds, kept while the column is hidden.
-    pub tool: crate::workspace_views::Tool,
-    /// Whether the tool column shows.
+    /// Whether the File Views column is on (PRD three-column-panel D-08).
+    pub views: bool,
+    /// Whether the Tools column is on.
     pub tools: bool,
-    /// The open panel's width, as a share of the Workspace body's.
-    pub views_over_share: f32,
-    /// A panel holding only the tools: its width as a share of the body's,
-    /// or null for the tool column's own width until it is resized.
-    pub tools_share: Option<f32>,
-    /// The shell reported drawing this panel over the whole body (a narrow
-    /// window), so an agent chosen from elsewhere closes it even when pinned.
-    pub covered: bool,
+    /// The one tool the Tools column holds, kept while the column is off.
+    pub tool: crate::workspace_views::Tool,
+    /// The File Views column's width in CSS pixels, or null for the shell's
+    /// default until it is resized.
+    pub views_width: Option<u32>,
+    /// The Tools column's width, the same way.
+    pub tools_width: Option<u32>,
+    /// The last width request the core accepted for this Workspace. Runtime
+    /// only, so a shell can distinguish its latest intent from an older echo.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width_request_id: Option<String>,
+    /// The number of this Workspace's last File Views call, 0 for none since
+    /// the core started; a number past `views_calls` as the shell last read
+    /// it is a call the shell shows in a narrow body (D-07).
+    pub views_called: u64,
+    /// How many File Views calls the core has numbered, in any Workspace.
+    pub views_calls: u64,
     /// Whether this is the Workspace the operator last chose, now or before a
     /// restart, which the shell opens on; any other front starts on Main
     /// (D-11).
@@ -622,6 +629,7 @@ pub struct KitComponentSnapshot {
     pub state: hide_kit::ComponentState,
     pub reason: Option<String>,
     pub location: Option<String>,
+    pub codex_daemon: Option<bool>,
 }
 
 impl KitSnapshot {
@@ -635,6 +643,7 @@ impl KitSnapshot {
                 state: part.state,
                 reason: part.reason.clone(),
                 location: part.location.clone(),
+                codex_daemon: part.codex_daemon,
             })
             .collect::<Vec<_>>();
         Self {
@@ -891,6 +900,15 @@ pub struct SidebarAgentSnapshot {
     /// the agent is awake, so an awake row keeps exactly its keys (PRD D-16).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sleep: Option<AgentSleepSnapshot>,
+    /// What the label worker read of this agent's session, which the request
+    /// block is built from (PRD overview-request-view D-14).
+    #[serde(skip_serializing)]
+    pub(crate) row_facts: Option<crate::request_view::RowFacts>,
+    /// The request view's part of the row: the verb and since when, the
+    /// request and reply lines, the pull requests (`request_view.rs`).
+    /// Absent until the core has built it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request: Option<crate::request_view::AgentRequestSnapshot>,
 }
 
 /// What a sleeping agent's row and pane say about it.
@@ -2294,6 +2312,11 @@ pub struct UiStateSnapshot {
     // The store owns persistence; the shell only reads the derived unread axis.
     #[serde(default, skip_serializing)]
     pub pane_read_records: BTreeMap<String, PaneReadRecord>,
+    /// Each agent pane's request-view verb and when it took it, so the time
+    /// a row has waited survives a restart (PRD overview-request-view D-40).
+    /// The store owns it; the shell reads it on the row.
+    #[serde(default, skip_serializing)]
+    pub request_verbs: BTreeMap<String, crate::request_view::VerbRecord>,
     /// How long an agent may go untouched before Hide ends its process and
     /// keeps its conversation to resume: 12, 24 or 72 hours, or `None` for
     /// never, the default (PRD D-10).
@@ -2709,6 +2732,7 @@ impl Default for UiStateSnapshot {
             editor_text_scale: DEFAULT_PANE_TEXT_SCALE,
             conversation_pane_ids: BTreeSet::new(),
             pane_read_records: BTreeMap::new(),
+            request_verbs: BTreeMap::new(),
             agent_sleep_after_hours: None,
             project_issue_sources: BTreeMap::new(),
             issue_settings: IssueSettingsSnapshot::default(),
@@ -3029,6 +3053,13 @@ pub struct PullRequestSnapshot {
     pub is_draft: bool,
     pub merged_at_unix_ms: Option<u64>,
     pub updated_at_unix_ms: Option<u64>,
+    /// When GitHub made the pull request, which ties it to the session whose
+    /// tool printed its address then (PRD overview-request-view D-31).
+    #[serde(skip_serializing)]
+    pub created_at_unix_ms: Option<u64>,
+    /// When it was closed or merged, for a row's chip after the request.
+    #[serde(skip_serializing)]
+    pub closed_at_unix_ms: Option<u64>,
 }
 
 /// How a repository's `gh` lookup is doing, independent of what it found.
@@ -3096,6 +3127,9 @@ pub struct UnpushedSnapshot {
 /// counts the row badge and the card show.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct WorktreeSnapshot {
+    pub lock_reason: Option<String>,
+    pub ignored_repositories: Vec<String>,
+    pub ignored_scan_unavailable: Option<String>,
     pub head_sha: Option<String>,
     pub last_commit_subject: Option<String>,
     pub last_commit_unix_seconds: Option<u64>,
@@ -3167,7 +3201,7 @@ pub struct WorktreeAgentLineSnapshot {
 /// One policy shared by all worktree deletion surfaces.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct WorktreeDeletionGateSnapshot {
-    /// Why nothing can be deleted: only ever the main worktree.
+    /// Why deletion cannot start: main, locked or unmeasured ignored folders.
     pub blocked_reason: Option<String>,
     /// What the operator should know before deleting, in the order shown.
     pub warnings: Vec<String>,
@@ -3184,7 +3218,8 @@ pub struct WorktreeDeletionGateSnapshot {
     pub discard_label: Option<String>,
 }
 
-/// Shell authorization issued only after Herdr confirms every pane is gone.
+/// The accepted deletion, measured before any pane closes and executed by
+/// the worker only after Herdr confirms every pane is gone.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct WorktreeRemovalSnapshot {
     pub id: u64,
@@ -3204,6 +3239,7 @@ pub struct WorktreeRemovalSnapshot {
     /// The operator accepted losing the folder's changes, so the recheck
     /// lets dirt through and Git removes with `--force`.
     pub discard_changes: bool,
+    pub expected_ignored_repositories: Vec<String>,
     pub phase: String,
     pub message: Option<String>,
 }
@@ -3454,6 +3490,8 @@ pub struct BackgroundAiSnapshot {
     pub provider: String,
     /// Whether `provider` is a saved choice rather than the default.
     pub chosen: bool,
+    /// The `에이전트 요약` switch: agent labels are asked for and shown.
+    pub agent_summary: bool,
     /// One row per provider Hide can route to, in the offered order. A
     /// provider that is not on this Mac is still a row, because "not here"
     /// and "not signed in" are different answers.
@@ -3484,6 +3522,7 @@ impl BackgroundAiSnapshot {
                     models_unavailable_reason: None,
                 })
                 .collect(),
+            agent_summary: true,
             ..Self::default()
         }
     }
@@ -3701,6 +3740,7 @@ impl Snapshot {
 
         Self {
             schema_version: SCHEMA_VERSION,
+            delivery_watches: Vec::new(),
             navigator: NavigatorSnapshot {
                 root_path: None,
                 changes_root_path: None,
@@ -3841,6 +3881,7 @@ impl PetSnapshot {
 /// no mutation site needs dirty-tracking discipline.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RestSections {
+    pub delivery_watches: Vec<crate::delivery::watch::View>,
     pub navigator: NavigatorSnapshot,
     pub sessions: SessionsSnapshot,
     pub card: CheckoutCardSnapshot,
@@ -3876,6 +3917,7 @@ pub struct RestSections {
 impl RestSections {
     pub fn capture(snapshot: &Snapshot) -> Self {
         Self {
+            delivery_watches: snapshot.delivery_watches.clone(),
             navigator: snapshot.navigator.clone(),
             sessions: snapshot.sessions.clone(),
             card: snapshot.card.clone(),
@@ -3912,7 +3954,8 @@ impl RestSections {
     /// Field-by-field equality against the live snapshot, so the unchanged
     /// case costs a comparison instead of a clone.
     pub fn matches(&self, snapshot: &Snapshot) -> bool {
-        self.navigator == snapshot.navigator
+        self.delivery_watches == snapshot.delivery_watches
+            && self.navigator == snapshot.navigator
             && self.sessions == snapshot.sessions
             && self.card == snapshot.card
             && self.git_worktrees == snapshot.git_worktrees
@@ -4060,6 +4103,7 @@ pub struct ChangedDocumentWire<'a> {
 
 #[derive(Serialize)]
 pub struct RestWire<'a> {
+    pub delivery_watches: &'a [crate::delivery::watch::View],
     pub navigator: &'a NavigatorSnapshot,
     pub sessions: &'a SessionsSnapshot,
     pub card: &'a CheckoutCardSnapshot,
@@ -4092,6 +4136,7 @@ pub struct RestWire<'a> {
 impl<'a> RestWire<'a> {
     fn borrow(rest: &'a RestSections) -> Self {
         Self {
+            delivery_watches: &rest.delivery_watches,
             navigator: &rest.navigator,
             sessions: &rest.sessions,
             card: &rest.card,
@@ -4258,6 +4303,52 @@ mod wire_enum_tests {
         assert_wire(&contract, "pull_request_checks", &checks);
         checked.insert("pull_request_checks");
 
+        use crate::request_view::RequestVerb;
+        let verbs = [
+            RequestVerb::Answer,
+            RequestVerb::Fix,
+            RequestVerb::Review,
+            RequestVerb::Stopped,
+            RequestVerb::Result,
+            RequestVerb::Working,
+            RequestVerb::Waiting,
+            RequestVerb::Idle,
+        ];
+        for variant in verbs {
+            match variant {
+                RequestVerb::Answer
+                | RequestVerb::Fix
+                | RequestVerb::Review
+                | RequestVerb::Stopped
+                | RequestVerb::Result
+                | RequestVerb::Working
+                | RequestVerb::Waiting
+                | RequestVerb::Idle => {}
+            }
+        }
+        assert_wire(&contract, "request_verb", &verbs);
+        checked.insert("request_verb");
+
+        use crate::labels::analysis::LabelEnd;
+        let ends = [
+            LabelEnd::Working,
+            LabelEnd::Question,
+            LabelEnd::Done,
+            LabelEnd::Waiting,
+            LabelEnd::Unfinished,
+        ];
+        for variant in ends {
+            match variant {
+                LabelEnd::Working
+                | LabelEnd::Question
+                | LabelEnd::Done
+                | LabelEnd::Waiting
+                | LabelEnd::Unfinished => {}
+            }
+        }
+        assert_wire(&contract, "label_end", &ends);
+        checked.insert("label_end");
+
         let statuses = [
             ChangedFileStatus::Modified,
             ChangedFileStatus::Added,
@@ -4366,7 +4457,8 @@ mod wire_enum_tests {
                 hide_kit::ComponentId::Cli
                 | hide_kit::ComponentId::ClaudeCodeHook
                 | hide_kit::ComponentId::CodexHook
-                | hide_kit::ComponentId::Hcoord => {}
+                | hide_kit::ComponentId::Hcoord
+                | hide_kit::ComponentId::CodexPerPane => {}
             }
         }
         assert_wire(&contract, "kit_component_id", &kit_parts);
@@ -4379,6 +4471,7 @@ mod wire_enum_tests {
             hide_kit::ComponentState::Removed,
             hide_kit::ComponentState::Failed,
             hide_kit::ComponentState::Absent,
+            hide_kit::ComponentState::Off,
         ];
         for variant in kit_states {
             match variant {
@@ -4387,7 +4480,8 @@ mod wire_enum_tests {
                 | hide_kit::ComponentState::NotInstalled
                 | hide_kit::ComponentState::Removed
                 | hide_kit::ComponentState::Failed
-                | hide_kit::ComponentState::Absent => {}
+                | hide_kit::ComponentState::Absent
+                | hide_kit::ComponentState::Off => {}
             }
         }
         assert_wire(&contract, "kit_component_state", &kit_states);

@@ -56,7 +56,19 @@ A check script calls these scripts rather than cargo or pnpm directly, so the ta
 
 The Cargo `test` mode forwards trailing test arguments, so an explicitly configured live probe can run as `verify-cargo.sh test <test-name> -- --ignored` without bypassing worktree isolation or toolchain ownership.
 The no-argument `test` mode remains the full locked workspace gate.
+Focused delivery and session-activity filters and their nonzero-test prerequisite are listed in [delivery.md: Verification](delivery.md#verification).
 Each compiler or test process's failure reaches the caller.
+
+CI uses scoped Cargo modes `test-scoped`, `check`, `build` and `clippy` with trailing Cargo arguments, for example `bash scripts/verify-cargo.sh test-scoped -p hide-platform -p hide-herdr-client`.
+Each adds `--locked`, reuses the installed toolchain, clears `HERDR_*`, and fixes output to this worktree's `target/`.
+Scoped modes accept at most 128 arguments and refuse `--target-dir`, `--manifest-path` and `--config`; an unknown mode exits 2.
+The sealed `test`, `lint`, `release` and `cli` invocations keep their existing behavior.
+`verify-web.sh install [--ignore-scripts]` locks dependency installation; `verify-web.sh <web|desktop|hcoord> <typecheck|lint|test|build>` runs one package step.
+`web e2e` runs Playwright against the web output already built; `desktop e2e` rebuilds the desktop host before Playwright.
+Both forward the test arguments and their exit status, so a missing test filter fails the caller.
+`playwright-install` installs Chromium for web or desktop, `desktop package` packages this runner's app, and `hcoord test:e2e` runs its isolated coordination suite.
+An invalid package/action pair or more than 128 trailing arguments exits 2; the no-argument full web gate stays unchanged.
+`test_ci_verification_entrypoints.py` checks this external command boundary without building or installing; it complements the real build tests below.
 
 The build regression tests in `test_verification_builds.py` use a tiny real Cargo workspace, not compiler mocks.
 They check that a caller's `CARGO_TARGET_DIR` cannot move the release binaries, that output stays in the checkout, warm build reuse, a core value change, a changed failing test, and compiler and prerequisite failure propagation.
@@ -91,3 +103,37 @@ The fixture also preloads `desktop/e2e/focus-guard.cjs` into the app, which reco
 The guard sees only this app, so a spec that could reach another program (a browser, Finder, the folder picker) stubs it, as the existing ones do.
 A spec that needs the key window or native input (a page holding the keyboard, a pinch, a native drag) carries the `@needs-focus` tag (`NEEDS_FOCUS` in the fixture) and focuses the window itself; `pnpm --dir desktop e2e --grep-invert @needs-focus` runs everything that leaves the operator's keyboard alone, and CI runs the whole suite.
 The suite runs the focus tests after every other one (`desktop/playwright.config.ts` puts them in a project that depends on the rest): a focus test brings its app forward and quits it, and on a machine with no other app in front, a CI runner, macOS then activates the next app that opens, which failed every background test after the first focus test.
+
+## Release asset gate
+
+The release workflow accepts only a stable `vX.Y.Z` tag whose commit is already an ancestor of protected `main`.
+It serializes runs of the same tag and waits for all three packaging jobs before `node scripts/release-draft.mjs <tag> <event-commit-sha> <directory>` prepares the draft.
+The file-only entrypoint is `node scripts/check-release-assets.mjs <tag> <directory> [release-pages.json]`.
+The directory must contain exactly that tag's macOS ARM64 ZIP, Windows x64 ZIP and Linux x64 TAR.GZ, and one SHA-256 sidecar per archive.
+The gate rejects a missing target, extra or mixed-version files, symbolic links, empty archives, an incorrectly named sidecar, and a mismatched digest; archive hashing streams bytes rather than retaining each package in memory.
+Before any release write, the writer requires GitHub's immutable-release policy to report both `enabled: true` and `enforced_by_owner: true`, and checks that the current tag still resolves to the event commit.
+The workflow passes its contents-write token as `GH_TOKEN` and a separate `RELEASE_POLICY_TOKEN` repository secret as `HIDE_RELEASE_POLICY_TOKEN`; that credential needs Administration read access for the [policy endpoint](https://docs.github.com/en/rest/repos/repos#check-if-immutable-releases-are-enabled-for-a-repository).
+A missing credential, disabled or unenforced policy, moved tag, or failed initial API read blocks preparation before writes; package workflow artifacts remain available.
+An API failure after an append may leave a partial or complete draft, including an upload whose success response was lost.
+The writer stops further preparation and preserves accepted assets; a retry validates those bytes before skipping them.
+Policy setup and credentials are operator work, and must be complete before attempting a release.
+
+The authenticated release and asset inventories are fully paginated, with a 100-page and 16 MiB limit; a tag lookup alone cannot establish that a draft is absent.
+Multiple releases for the same tag, an invalid inventory, or a published release block the run.
+A new draft records its event commit and enforced-policy origin in its body; an existing draft must have that exact provenance record.
+Legacy drafts are not automatically reused because enabling immutability does not prove coverage of an older release.
+The provenance record describes this controlled writer's origin; it is not a cryptographic attestation or a defense against administrative bypass.
+
+The writer binds to that checked release ID, uploads only missing names, and skips an existing asset only when its uploaded state, size and SHA-256 digest match the local file.
+It never changes an existing release's metadata, deletes an asset, or overwrites a name.
+Mismatched assets, incomplete `starter` uploads and duplicate-name races stop for review; a retry resumes a matching partial draft without replacing completed bytes.
+The final read must still show the complete unpublished draft and matching bytes.
+[GitHub immutability](https://docs.github.com/en/code-security/concepts/supply-chain-security/immutable-releases) supplies the server protection if publication happens between a read and upload; a GET alone is not an atomic draft-state condition.
+The operational contract excludes concurrent owner-policy disabling, manual changes to the draft, and tag moves during preparation and publication.
+Repeated tag reads do not make prepublication provenance atomic; the maintainer must confirm that the tag and draft source record still identify the tested commit before publishing.
+Each request has a 30-second bound, JSON responses are limited to 8 MiB, and the workflow job has a ten-minute bound.
+
+This gate proves the asset set and digests, not installation, terminal input/output, native first launch, signing or notarization.
+The Windows and Linux package smoke checks cover bundled tools, daemon startup, the embedded shell and daemon shutdown; actual desktop and terminal checks on each supported system still need their own evidence before a maintainer publishes the draft.
+The release workflow prepares a draft only and never publishes it automatically.
+Its source guard does not establish that policy credentials are provisioned or that any current release is immutable; verify those live operational prerequisites before release work.
