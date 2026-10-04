@@ -46,6 +46,11 @@ on:
         type: string
         required: false
         default: ""
+      control-batches:
+        description: Six prepared shards of five fresh repetitions, with one complete thirty-result receipt.
+        type: boolean
+        required: false
+        default: false
       shards:
         description: How many shards deal the tests out.
         type: number
@@ -79,11 +84,14 @@ jobs:
           MAX_PARALLEL: ${{ inputs.max-parallel }}
           REPEATS: ${{ inputs.repeat-each }}
           CONTROL: ${{ inputs.control-scenario }}
+          BATCHES: ${{ inputs.control-batches }}
         run: |
           python3 - <<'PYPLAN'
           import json, os
           shards = int(os.environ['SHARDS'])
-          if int(os.environ['REPEATS']) not in (1, 30):
+          repeats = int(os.environ['REPEATS'])
+          batches = os.environ['BATCHES'] == 'true'
+          if not (repeats in (1, 30) and not batches or repeats == 5 and batches and shards == 6 and os.environ['CONTROL']):
               raise ValueError('repetitions must preserve the ordinary or thirty-fixture contract')
           if int(os.environ['MAX_PARALLEL']) not in (4, 6):
               raise ValueError('capacity trial must be 4 or 6')
@@ -121,9 +129,7 @@ jobs:
           if-no-files-found: error
           retention-days: 1
 
-  # One cargo build for the whole lane. The debug `hided` reads `web/dist` from
-  # disk at run time, so the binaries are all a shard needs from cargo; the
-  # `hide` CLI comes from the same package and `workspace-cli.spec.ts` runs it.
+  # One native debug build and web/hcoord preparation for the whole lane.
   build:
     name: build hided ${{ inputs.lane }}
     if: ${{ inputs.shards > 1 }}
@@ -137,6 +143,14 @@ jobs:
         run: git config --global core.autocrlf false
       - uses: actions/checkout@v7
         timeout-minutes: 5
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
       - uses: Swatinem/rust-cache@v2
         timeout-minutes: 5
         with:
@@ -146,14 +160,25 @@ jobs:
       - name: Build hided for Playwright
         timeout-minutes: 20
         run: bash scripts/verify-cargo.sh build -p hided
-      - name: Keep the binaries for the shards
+      - name: Prepare the shared shell and coordination output
+        timeout-minutes: 5
+        run: |
+          bash scripts/verify-web.sh install
+          bash scripts/verify-web.sh web build
+          bash scripts/verify-web.sh hcoord build
+          node scripts/ci-preparation.cjs create
+      - name: Keep the checked preparation for the shards
         uses: actions/upload-artifact@v7
         timeout-minutes: 5
         with:
-          name: hided-debug-${{ inputs.lane }}
+          name: prepared-debug-${{ inputs.lane }}
           path: |
             target/debug/hided${{ runner.os == 'Windows' && '.exe' || '' }}
             target/debug/hide${{ runner.os == 'Windows' && '.exe' || '' }}
+            web/dist
+            plugins/hcoord/dist
+            agents/runs/ci-preparation/manifest.json
+          include-hidden-files: true
           if-no-files-found: error
           retention-days: 1
 
@@ -199,13 +224,16 @@ jobs:
         if: ${{ inputs.shards == 1 }}
         timeout-minutes: 20
         run: bash scripts/verify-cargo.sh build -p hided
-      - name: Fetch hided from the build job
+      - name: Fetch preparation from the build job
         if: ${{ inputs.shards > 1 }}
         uses: actions/download-artifact@v8
         timeout-minutes: 5
         with:
-          name: hided-debug-${{ inputs.lane }}
-          path: target/debug
+          name: prepared-debug-${{ inputs.lane }}
+          path: .
+      - name: Verify the exact native preparation boundary
+        if: ${{ inputs.shards > 1 }}
+        run: node scripts/ci-preparation.cjs verify
       - name: Mark the binaries executable
         if: ${{ inputs.shards > 1 && runner.os != 'Windows' }}
         # An artifact does not keep the executable bit.
@@ -214,8 +242,13 @@ jobs:
         timeout-minutes: 5
         run: bash scripts/verify-web.sh install
       - name: Build the web shell
+        if: ${{ inputs.shards == 1 }}
         timeout-minutes: 5
         run: bash scripts/verify-web.sh web build
+      - name: Build coordination output
+        if: ${{ inputs.shards == 1 }}
+        timeout-minutes: 5
+        run: bash scripts/verify-web.sh hcoord build
       - name: Fetch zsh from the zsh job
         if: runner.os == 'Linux'
         uses: actions/download-artifact@v8
@@ -267,9 +300,16 @@ jobs:
           FULL_SUITE: ${{ inputs.full-suite }}
           REPEATS: ${{ inputs.repeat-each }}
           CONTROL: ${{ inputs.control-scenario }}
+          BATCHES: ${{ inputs.control-batches }}
+          SHARD_NUMBER: ${{ matrix.shard }}
         run: |
           mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
-          args=(--shard="$SHARD" --repeat-each="$REPEATS" --retries=0)
+          args=(--repeat-each="$REPEATS" --retries=0)
+          if [ "$BATCHES" = true ]; then
+            export CI_REPEAT_OFFSET=$(((SHARD_NUMBER - 1) * 5))
+          else
+            args+=(--shard="$SHARD")
+          fi
           if [ -n "$CONTROL" ]; then
             node scripts/ci-controls.cjs select "$CONTROL" "$RUNNER_OS" "$RUNNER_TEMP/controls-list.txt"
             args+=(--test-list "$RUNNER_TEMP/controls-list.txt")
@@ -284,7 +324,11 @@ jobs:
         if: ${{ always() && inputs.control-scenario != '' }}
         env:
           CONTROL: ${{ inputs.control-scenario }}
-        run: node scripts/ci-controls.cjs results "$CONTROL" "$RUNNER_OS" "$RUNNER_TEMP/hide-e2e/ledger-${{ matrix.shard }}.json" "$RUNNER_TEMP/hide-e2e/control-receipt.json"
+          BATCHES: ${{ inputs.control-batches }}
+          SHARD_NUMBER: ${{ matrix.shard }}
+        run: |
+          if [ "$BATCHES" = true ]; then export CI_CONTROL_BATCH=$((SHARD_NUMBER - 1)); fi
+          node scripts/ci-controls.cjs results "$CONTROL" "$RUNNER_OS" "$RUNNER_TEMP/hide-e2e/ledger-${{ matrix.shard }}.json" "$RUNNER_TEMP/hide-e2e/control-receipt.json"
       - name: Keep the e2e run's logs
         # The daemon, Herdr server and PTY input logs behind a failed flow
         # (with the screenshots the specs take, under the same directory),

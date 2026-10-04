@@ -4,7 +4,9 @@ import json
 import os
 from pathlib import Path
 import subprocess
+import signal
 import tempfile
+import time
 import unittest
 
 ROOT = Path(__file__).resolve().parents[2]
@@ -14,6 +16,60 @@ spec.loader.exec_module(quarantine)
 
 
 class PlaywrightContracts(unittest.TestCase):
+    def test_killed_reporter_preserves_completed_and_in_flight_results(self):
+        artifacts = ROOT / 'agents/runs/ci-test-refactor/reporter-controls'
+        artifacts.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=artifacts) as directory:
+            root = Path(directory)
+            tests = root / 'web/e2e'
+            tests.mkdir(parents=True)
+            package = (ROOT / 'web/node_modules/@playwright/test').as_posix()
+            config = root / 'playwright.config.ts'
+            config.write_text(f"""import {{ defineConfig }} from {json.dumps(package)};
+export default defineConfig({{testDir:{json.dumps(str(tests))},workers:1,retries:0,
+reporter:[[{json.dumps(str(ROOT / 'scripts/ci-reporter.ts'))}]]}});
+""")
+            (tests / 'interrupted.spec.ts').write_text(f"""import {{ test }} from {json.dumps(package)};
+test('completed before termination', () => {{}});
+test('in flight at termination', async () => {{ await new Promise(() => {{}}); }});
+test('never started', () => {{}});
+""")
+            for termination in (signal.SIGKILL, signal.SIGINT):
+                filename = root / f'{termination.name}.json'
+                with (artifacts / f'{termination.name}.log').open('w') as output:
+                    process = subprocess.Popen(['bash', 'scripts/verify-web.sh', 'web', 'e2e', '--config', str(config)], cwd=ROOT,
+                        env={**os.environ, 'CI_LEDGER_PATH': str(filename)}, stdout=output, stderr=subprocess.STDOUT, start_new_session=True)
+                    try:
+                        deadline = time.monotonic() + 30
+                        while time.monotonic() < deadline:
+                            if filename.exists():
+                                value = json.loads(filename.read_text())
+                                phases = {r['test']: (r['status'], r['phase']) for r in value['records']}
+                                if phases.get('completed before termination') == ('passed', 'completed') and phases.get('in flight at termination') == ('unknown', 'in-flight'):
+                                    break
+                            if process.poll() is not None:
+                                self.fail('Playwright exited before the controlled interruption')
+                            time.sleep(.01)
+                        else:
+                            self.fail('Playwright did not reach the controlled in-flight boundary')
+                        os.killpg(process.pid, termination)
+                        self.assertNotEqual(process.wait(timeout=10), 0)
+                    finally:
+                        if process.poll() is None:
+                            os.killpg(process.pid, signal.SIGKILL)
+                            process.wait(timeout=5)
+                value = json.loads(filename.read_text())
+                (artifacts / f'{termination.name}.ledger.json').write_text(filename.read_text())
+                rows = {r['test']: r for r in value['records']}
+                self.assertEqual(rows['completed before termination']['status'], 'passed')
+                self.assertIn(rows['in flight at termination']['status'], ('unknown', 'interrupted'))
+                self.assertNotEqual(rows['never started']['status'], 'passed')
+                self.assertEqual(value['summary']['firstPass'], 1)
+                if termination == signal.SIGKILL:
+                    self.assertEqual(value['collection'], 'partial-or-unknown')
+                    self.assertEqual(rows['in flight at termination']['phase'], 'in-flight')
+                    self.assertEqual(rows['never started']['phase'], 'scheduled')
+
     def test_serialized_primary_and_cleanup_and_exact_selection(self):
         artifacts = ROOT / 'agents/runs/ci-test-refactor/reporter-controls'
         artifacts.mkdir(parents=True, exist_ok=True)

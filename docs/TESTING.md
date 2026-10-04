@@ -133,6 +133,14 @@ The first Windows runs of the web e2e fixtures found three differences the helpe
   `scripts/tests/test_playwright_contracts.py` checks the actual JSON reporter and failure ledger, including cleanup-only failure.
   An `AggregateError.errors` array alone is insufficient because Playwright does not serialize it.
 
+### Interrupted execution retains its partial results
+
+`scripts/ci-reporter.ts` records scheduled identities at suite start and atomically replaces its bounded ledger at every test start and completion.
+Completed results keep their original error and signature; an interrupted in-flight test or an unstarted identity cannot count as passed.
+A hard process death leaves `partial-or-unknown` with the last completed results and the in-flight/scheduled identities, even when Playwright never reaches `onEnd`.
+The real-process controls in `scripts/tests/test_playwright_contracts.py` terminate Playwright with SIGKILL and SIGINT after one completed test and during the next test.
+The ledger caps remain 20,000 rows and 16 MiB; overflow fails the caller and retains the previous complete JSON.
+
 ## Flaky tests
 
 A test is flaky when it both fails and passes on the same SHA; Playwright retries are off, so this shows up as a rerun or a nightly that disagrees with the pull request.

@@ -2,6 +2,17 @@ const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { merge, category, signature, jobs, quarantine } = require('../ci-ledger.cjs');
 const row = {sha:'head',os:'Linux',run:1,runAttempt:1,job:'web',shard:'1/6',suite:'suite',test:'test',repeat:0,retry:0,status:'failed'};
+test('atomic bounded publication keeps the previous ledger on byte overflow', () => {
+  const fs=require('node:fs'),path=require('node:path'),{write,MAX_BYTES}=require('../ci-ledger.cjs');
+  const root=path.resolve('agents/runs/ci-test-refactor/reporter-controls'); fs.mkdirSync(root,{recursive:true});
+  const file=path.join(root,'atomic-control.json');
+  write(file,{version:1,records:[row]});
+  const before=fs.readFileSync(file,'utf8');
+  assert.throws(()=>write(file,{value:'x'.repeat(MAX_BYTES)}),/byte cap/);
+  assert.equal(fs.readFileSync(file,'utf8'),before);
+  assert.equal(fs.existsSync(file+'.'+process.pid+'.tmp'),false);
+  assert.equal(merge([row,{...row,project:'another project'}]).records.length,2);
+});
 test('thirty repetitions mean every exact focus identity, with the original suite independently present', () => {
   const controls=require('../ci-controls.cjs');
   const contract=require('../../contracts/ci-failure-controls.json');
@@ -9,12 +20,27 @@ test('thirty repetitions mean every exact focus identity, with the original suit
   const records=contract.scenarios.focus.tests.flatMap(([suite,test])=>Array.from({length:30},(_,repeat)=>({...row,os:'Windows',suite,test,repeat,status:'passed'})));
   const value={version:1,records};
   const original={version:1,records:records.filter(r=>r.repeat===0).map(r=>({...r,run:2}))};
+  for(let batch=0;batch<6;batch++) {
+    const subset={version:1,records:records.filter(r=>r.repeat>=batch*5 && r.repeat<(batch+1)*5)};
+    assert.equal(controls.results('focus','Windows',subset,source,undefined,batch).complete,false);
+    assert.throws(()=>controls.results('focus','Windows',subset,source),/incomplete controls/);
+  }
   assert.equal(controls.results('focus','Windows',value,source,original).checks.length,2);
   for (const changed of [records.slice(0,30),records.slice(1),[...records,records[0]],records.map(r=>r.repeat===29?{...r,repeat:28}:r),
     records.map(r=>({...r,os:'macOS'})),records.map(r=>({...r,retry:1})),records.map(r=>({...r,sha:'other'})),records.map(r=>({...r,status:'skipped'}))]) {
     assert.throws(()=>controls.results('focus','Windows',{version:1,records:changed},source,original),/incomplete controls/);
   }
   assert.throws(()=>controls.results('focus','Windows',value,source,{version:1,records:original.records.slice(0,1)}),/original suite/);
+});
+test('reused preparation refuses source, build, toolchain or byte differences', () => {
+  const {verify}=require('../ci-preparation.cjs');
+  const identity={sha:'tested',profile:'dev',features:'default',os:'linux',arch:'x64',rust:'rustc version',node:'v22.12.0'};
+  const files={'target/debug/hide':{size:3,sha256:'abc'}};
+  const value={version:1,identity,files};
+  verify(value,identity,files);
+  for(const key of Object.keys(identity)) assert.throws(()=>verify({...value,identity:{...identity,[key]:'different'}},identity,files),/mismatch/);
+  assert.throws(()=>verify({...value,files:{}},identity,files),/inventory/);
+  assert.throws(()=>verify(value,identity,{'target/debug/hide':{size:3,sha256:'changed'}}),/digest/);
 });
 test('a later pass cannot replace the first failure, and repeated upload deduplicates', () => {
   const ledger = merge([row,row,{...row,retry:1,status:'passed'}]);

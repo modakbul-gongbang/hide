@@ -180,6 +180,9 @@ The nightly manual input `mode=full` keeps the complete scheduled matrix.
 `mode=failure-controls` runs thirty fresh, retry-zero fixtures per selected native/browser failure case with each test's ordinary deadline, plus the original platform and kit suites.
 The exact file/title contract in `contracts/ci-failure-controls.json` includes both pane-focus-ordering scenarios on macOS and Windows.
 Each required identity must report all thirty distinct repeat indices, with no skipped result or retry; a partially executed grep group fails the receipt check.
+Browser controls divide the observed workload into six prepared shards of five fresh fixtures without changing test deadlines or retries.
+Each shard receipt explicitly remains partial; the final receipt requires all thirty indices for every exact file/title/OS/source identity across all six shards.
+Native controls select the needs-focus project without running unrelated project dependencies; the original full desktop suite retains its background-before-focus ordering.
 Final acceptance also compares those identities with the original full web and desktop suites from `mode=full` on the same SHA and OS.
 These diagnostics do not replace required PR lanes or full nightly coverage.
 `mode=capacity` compares `max-parallel=4` and `6` on the same pushed SHA while preserving all six Linux shards and their full suites.

@@ -132,10 +132,11 @@ jobs:
       herdr-platform: ${{ matrix.platform }}
       ledger-lane: web-controls
       control-scenario: ${{ matrix.scenario.name }}
-      shards: 1
+      control-batches: true
+      shards: 6
       grep: ${{ matrix.scenario.grep }}
       full-suite: true
-      repeat-each: 30
+      repeat-each: 5
   desktop:
     name: Desktop boundary controls (${{ matrix.scenario }})
     runs-on: macos-15
@@ -188,7 +189,8 @@ jobs:
         run: |
           mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
           node scripts/ci-controls.cjs select "$SCENARIO" "$RUNNER_OS" "$RUNNER_TEMP/controls-list.txt"
-          bash scripts/verify-web.sh desktop e2e --test-list "$RUNNER_TEMP/controls-list.txt" --repeat-each=30 --retries=0
+          if [ "$SCENARIO" = native ]; then project=needs-focus; else project=background; fi
+          bash scripts/verify-web.sh desktop e2e --project "$project" --no-deps --test-list "$RUNNER_TEMP/controls-list.txt" --repeat-each=30 --retries=0
       - name: Check every required repetition identity
         if: always()
         env:
@@ -211,3 +213,45 @@ jobs:
             agents/runs/terminal-input-diagnosis
           retention-days: 14
           if-no-files-found: error
+  receipts:
+    name: Complete thirty-result browser identities
+    needs: [web, desktop]
+    if: always()
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: ci-ledger-web-controls-*
+          path: control-ledgers/web
+      - uses: actions/download-artifact@v8
+        with:
+          pattern: ci-ledger-desktop-controls-*
+          path: control-ledgers/desktop
+      - name: Require every exact test and OS identity, including all six batches
+        run: |
+          node - <<'JS'
+          const fs=require('node:fs'), ledger=require('./scripts/ci-ledger.cjs');
+          const controls=require('./scripts/ci-controls.cjs'), history=require('./scripts/ci-history.cjs');
+          const contract=require('./contracts/ci-failure-controls.json'), source=ledger.identity();
+          const records=history.readRecords('control-ledgers');
+          const receipt={version:1,source,checks:[],complete:false};
+          try {
+            for(const [name,scenario] of Object.entries(contract.scenarios)) for(const os of scenario.oses) {
+              const selected=records.filter(row=>row.os===os && scenario.tests.some(([suite,test])=>row.suite===suite && row.test===test));
+              receipt.checks.push(controls.results(name,os,{version:1,records:selected},source));
+            }
+            receipt.complete=true;
+          } finally { ledger.write('control-receipt.json',receipt); }
+          JS
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: complete-control-receipt
+          path: control-receipt.json
+          if-no-files-found: error
+          retention-days: 30

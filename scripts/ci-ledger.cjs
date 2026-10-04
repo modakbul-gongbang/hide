@@ -39,7 +39,7 @@ function merge(rows) {
   if (rows.length > MAX_ROWS) throw new Error('ledger row cap exceeded');
   const seen = new Map();
   for (const row of rows) {
-    const key = JSON.stringify([row.sha,row.os,row.run,row.runAttempt,row.job,row.shard,row.suite,row.test,row.repeat,row.retry]);
+    const key = JSON.stringify([row.sha,row.os,row.run,row.runAttempt,row.job,row.shard,row.project,row.suite,row.test,row.repeat,row.retry]);
     const previous = seen.get(key);
     if (previous && JSON.stringify(previous) !== JSON.stringify(row)) throw new Error('conflicting duplicate attempt');
     seen.set(key, row);
@@ -53,7 +53,22 @@ function write(filename, value) {
   const bytes = JSON.stringify(value, null, 2) + '\n';
   if (Buffer.byteLength(bytes) > MAX_BYTES) throw new Error('ledger byte cap exceeded');
   fs.mkdirSync(require('node:path').dirname(filename), { recursive: true });
-  fs.writeFileSync(filename, bytes);
+  // One namespace replacement leaves complete JSON even if the writer dies.
+  const temporary = filename + '.' + process.pid + '.tmp';
+  let primary;
+  try {
+    fs.writeFileSync(temporary, bytes, {flag:'wx'});
+    fs.renameSync(temporary, filename);
+  } catch (error) { primary = error; throw error; }
+  finally {
+    try { fs.unlinkSync(temporary); }
+    catch (error) {
+      if (error.code !== 'ENOENT') {
+        if (primary) primary.cause = error;
+        else throw error;
+      }
+    }
+  }
 }
 async function jobs(github, context) {
   const parameters = { ...context.repo, run_id: context.runId, attempt_number: Number(process.env.GITHUB_RUN_ATTEMPT || 1), per_page: 100 };
