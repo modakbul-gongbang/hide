@@ -261,7 +261,10 @@ test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" },
     expect(sent.get("focus_pane")).toBe(focusBefore + 2);
     const shellGrid = (await page.evaluate((id) => window.__hideProbe?.paneGrid(id) ?? null, shellPaneId))!;
     const wrapped = "w".repeat(shellGrid.cols + 7);
-    await page.keyboard.type(`clear; echo ${wrapped}; echo short; echo; echo '  in'; echo '    deeper'; echo end\n`);
+    // The fixture selects ComSpec on Windows and zsh on Unix.
+    await page.keyboard.type(process.platform === "win32"
+      ? `cls&echo:${wrapped}&echo:short&echo:&echo:  in&echo:    deeper&echo:end\n`
+      : `clear; echo ${wrapped}; echo short; echo; echo '  in'; echo '    deeper'; echo end\n`);
     await expect.poll(() => screen(page), { timeout: 15_000 }).toMatch(/^w+\s*\n\s*w+\s*\n\s*short\s*\n\s*\n\s+in\s*\n\s+deeper\s*\n\s*end/);
     const shellScreen = (await shellView.locator(".xterm-screen").boundingBox())!;
     const shellCell = (column: number, row: number) => ({
