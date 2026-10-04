@@ -33,6 +33,8 @@ fn pull_request(number: u32, branch: &str, badge: PullRequestBadge) -> PullReque
         updated_at_unix_ms: Some(5),
         created_at_unix_ms: Some(2),
         closed_at_unix_ms: Some(3),
+        head_oid: Some(format!("{number:040x}")),
+        cross_repository: false,
     }
 }
 
@@ -242,7 +244,7 @@ fn projects_past_the_limit_are_not_read_and_do_not_load() {
 fn a_restart_draws_the_last_answer_as_stale_and_a_failed_read_keeps_it() {
     let folder = tempfile::tempdir().unwrap();
     let file = folder.path().join("github-snapshot.json");
-    let merged = pull_request(7, "feature", PullRequestBadge::Merged);
+    let merged = pull_request(7, "feature", PullRequestBadge::Open);
 
     // The first run reads, saves and quits.
     let mut first = runtime();

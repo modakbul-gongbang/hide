@@ -3098,7 +3098,7 @@ pub struct PullRequestSnapshot {
     pub head_oid: Option<String>,
     /// The head branch lives in another repository (a fork), so its name says
     /// nothing about this repository's branch of the same name.
-    #[serde(skip_serializing)]
+    #[serde(skip_serializing, default)]
     pub cross_repository: bool,
 }
 

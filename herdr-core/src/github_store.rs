@@ -30,20 +30,25 @@ struct Stored {
     projects: Vec<StoredProject>,
 }
 
-/// A project as the wire carries it, plus the two pull request times the wire
-/// leaves out. They sit beside it, one entry per pull request, so a field
-/// added to the wire type is stored without a change here.
+/// A project as the wire carries it, plus what the wire leaves out of each pull
+/// request (`skip_serializing`): its times and the commit and repository that
+/// decide which checkout it belongs to. They sit beside it, one entry per pull
+/// request, so a field the wire does carry is stored without a change here; a
+/// new field the wire omits must be added to `PullRequestExtras`, which the
+/// round-trip test in this file catches by building a pull request literally.
 #[derive(Deserialize, Serialize)]
 struct StoredProject {
     #[serde(flatten)]
     project: GithubProjectSnapshot,
-    pull_request_times: Vec<PullRequestTimes>,
+    pull_request_extras: Vec<PullRequestExtras>,
 }
 
 #[derive(Deserialize, Serialize)]
-struct PullRequestTimes {
+struct PullRequestExtras {
     created_at_unix_ms: Option<u64>,
     closed_at_unix_ms: Option<u64>,
+    head_oid: Option<String>,
+    cross_repository: bool,
 }
 
 fn encode(github: &GithubSnapshot) -> Result<Vec<u8>, String> {
@@ -56,12 +61,14 @@ fn encode(github: &GithubSnapshot) -> Result<Vec<u8>, String> {
             .iter()
             .filter(|project| project.status.last_success_at_unix_ms.is_some())
             .map(|project| StoredProject {
-                pull_request_times: project
+                pull_request_extras: project
                     .pull_requests
                     .iter()
-                    .map(|pull_request| PullRequestTimes {
+                    .map(|pull_request| PullRequestExtras {
                         created_at_unix_ms: pull_request.created_at_unix_ms,
                         closed_at_unix_ms: pull_request.closed_at_unix_ms,
+                        head_oid: pull_request.head_oid.clone(),
+                        cross_repository: pull_request.cross_repository,
                     })
                     .collect(),
                 project: project.clone(),
@@ -85,19 +92,21 @@ fn decode(bytes: &[u8]) -> Result<GithubSnapshot, String> {
     for stored in stored.projects {
         let StoredProject {
             mut project,
-            pull_request_times,
+            pull_request_extras,
         } = stored;
-        if pull_request_times.len() != project.pull_requests.len() {
+        if pull_request_extras.len() != project.pull_requests.len() {
             return Err(format!(
-                "lists {} pull request times for {} pull requests in {}",
-                pull_request_times.len(),
+                "lists {} pull request extras for {} pull requests in {}",
+                pull_request_extras.len(),
                 project.pull_requests.len(),
                 project.root_path
             ));
         }
-        for (pull_request, times) in project.pull_requests.iter_mut().zip(pull_request_times) {
-            pull_request.created_at_unix_ms = times.created_at_unix_ms;
-            pull_request.closed_at_unix_ms = times.closed_at_unix_ms;
+        for (pull_request, extras) in project.pull_requests.iter_mut().zip(pull_request_extras) {
+            pull_request.created_at_unix_ms = extras.created_at_unix_ms;
+            pull_request.closed_at_unix_ms = extras.closed_at_unix_ms;
+            pull_request.head_oid = extras.head_oid;
+            pull_request.cross_repository = extras.cross_repository;
         }
         if project.status.last_success_at_unix_ms.is_none() {
             return Err(format!(
@@ -302,6 +311,8 @@ mod tests {
                 updated_at_unix_ms: Some(9),
                 created_at_unix_ms: Some(4),
                 closed_at_unix_ms: Some(8),
+                head_oid: Some("0123456789abcdef".to_owned()),
+                cross_repository: true,
             }],
             pull_requests_read: true,
             issues_read: true,
@@ -319,7 +330,7 @@ mod tests {
     }
 
     #[test]
-    fn a_saved_answer_comes_back_stale_with_every_pull_request_time() {
+    fn a_saved_answer_comes_back_stale_with_every_pull_request_field() {
         let sent = GithubSnapshot {
             projects: vec![answer("/repo", Some(100))],
         };
@@ -391,8 +402,8 @@ mod tests {
         );
         let torn = &good[..good.len() / 2];
         let mismatched_times = String::from_utf8(good.clone()).unwrap().replacen(
-            "\"pull_request_times\":[{",
-            "\"pull_request_times\":[{},{",
+            "\"pull_request_extras\":[{",
+            "\"pull_request_extras\":[{},{",
             1,
         );
         for bytes in [

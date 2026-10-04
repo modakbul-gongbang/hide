@@ -55,7 +55,10 @@ function fakeGh(dir: string): { bin: string; down: string } {
         closingIssuesReferences: [],
       },
     ]);
-  const byRepository = REPOSITORIES.map((repository) => `    *"/${repository.name}") echo '${answer(repository)}' ;;`).join("\n");
+  // The reader asks twice at once: every state without checks, and the open ones with only their number and checks.
+  const openChecks = (repository: (typeof REPOSITORIES)[number]) =>
+    JSON.stringify([{ number: repository.number, statusCheckRollup: [{ __typename: "CheckRun", status: "COMPLETED", conclusion: "SUCCESS", name: "verify" }] }]);
+  const byRepository = REPOSITORIES.map((repository) => `    *"/${repository.name}") case "$*" in *"--state open"*) echo '${openChecks(repository)}' ;; *) echo '${answer(repository)}' ;; esac ;;`).join("\n");
   fs.writeFileSync(
     path.join(bin, "gh"),
     `#!/bin/sh
