@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Checkout, TaskOperation, Workspace } from "./snapshot";
-import { agentMenu, branchProblem, checkoutMenu, checkoutRemoving, deletionFacts, factsLine, folderMenu, normalizePurpose, projectMenu, projectRemovalFacts, purposeCountLabel, purposeIsLong, purposeScope, removalFor, scalarCount, taskFor } from "./workspaceManage";
+import { agentMenu, branchProblem, checkoutMenu, checkoutRemoving, deletionFacts, discardConfirmationKey, factsLine, folderMenu, normalizePurpose, projectMenu, projectRemovalFacts, purposeCountLabel, purposeIsLong, purposeScope, removalFor, scalarCount, taskFor } from "./workspaceManage";
 
 const workspace = (patch: Partial<Workspace> = {}): Workspace => ({
   id: "w1",
@@ -258,9 +258,10 @@ describe("receipts", () => {
     expect(removalFor({ ...removal, device_id: "studio" }, "studio", "/r-feature", 2)?.id).toBe(3);
   });
 
-  it("marks a checkout as being deleted only while its removal closes panes or runs Git", () => {
+  it("marks a checkout as being deleted while checking, closing panes or running Git", () => {
     const removal = { id: 3, repository_root: "/r", checkout_path: "/r-feature", branch: "feature", delete_branch: false, phase: "closing", message: null };
     expect(checkoutRemoving(removal, "local", "/r-feature")).toBe(true);
+    expect(checkoutRemoving({ ...removal, phase: "checking" }, "local", "/r-feature")).toBe(true);
     expect(checkoutRemoving({ ...removal, phase: "removing" }, "local", "/r-feature")).toBe(true);
     // A finished removal took the row away; a failed one gives it back as it was.
     expect(checkoutRemoving({ ...removal, phase: "finished" }, "local", "/r-feature")).toBe(false);
@@ -269,6 +270,15 @@ describe("receipts", () => {
     expect(checkoutRemoving(removal, "studio", "/r-feature")).toBe(false);
     expect(checkoutRemoving(null, "local", "/r-feature")).toBe(false);
   });
+});
+
+it("requires a new Discard choice when the measured repository names change", () => {
+  const target = checkout();
+  const selected = discardConfirmationKey(target);
+  const same = checkout({ worktree: { ...target.worktree!, ignored_repositories: [] } });
+  expect(discardConfirmationKey(same)).toBe(selected);
+  const changed = checkout({ worktree: { ...target.worktree!, ignored_repositories: ["target/vendor/alpha", "node_modules/beta"] } });
+  expect(discardConfirmationKey(changed)).not.toBe(selected);
 });
 
 describe("purposeScope", () => {

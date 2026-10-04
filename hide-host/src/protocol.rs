@@ -25,7 +25,10 @@ use crate::root::RootIdentity;
 /// the old layout's helper root and bridge folder off the device in its
 /// `kit` apply, and its report carries `legacy_retirement` (PRD
 /// hide-home-layout D-13); a helper on 12 would leave them.
-pub const PROTOCOL_VERSION: u32 = 13;
+/// 16: worktree facts carry lock reasons and measured ignored repositories;
+/// `worktree_removal_check` measures the exact accepted deletion before any
+/// pane closes. A helper without this preflight must never remove instead.
+pub const PROTOCOL_VERSION: u32 = 16;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Request {
@@ -166,6 +169,10 @@ pub enum Call {
     /// only as far as the operator accepted
     /// (`hide_host::worktrees::remove_confirmed`).
     WorktreeRemove {
+        removal: crate::worktrees::ConfirmedRemoval,
+    },
+    /// Non-mutating authoritative check before any pane is closed.
+    WorktreeRemovalCheck {
         removal: crate::worktrees::ConfirmedRemoval,
     },
     /// The device's install kit (`hide_host::kit`): the helper acts on the

@@ -3169,6 +3169,7 @@ fn a_client_cannot_claim_a_worktree_removal_finished() {
         delete_branch: false,
         force_delete_branch: false,
         discard_changes: false,
+        expected_ignored_repositories: Vec::new(),
         phase: "removing".into(),
         message: None,
     });
@@ -3267,6 +3268,7 @@ fn a_closed_pane_still_listed_does_not_stop_the_removal_but_a_new_one_does() {
         delete_branch: false,
         force_delete_branch: false,
         discard_changes: false,
+        expected_ignored_repositories: Vec::new(),
         phase: "closing".into(),
         message: None,
     };
@@ -3361,6 +3363,7 @@ fn a_finished_removal_drops_its_row_at_once_and_an_older_read_cannot_bring_it_ba
         delete_branch: false,
         force_delete_branch: false,
         discard_changes: false,
+        expected_ignored_repositories: Vec::new(),
         phase: "removing".into(),
         message: None,
     });
@@ -3426,6 +3429,7 @@ fn a_failed_removal_keeps_its_row_and_rereads() {
         delete_branch: false,
         force_delete_branch: false,
         discard_changes: false,
+        expected_ignored_repositories: Vec::new(),
         phase: "removing".into(),
         message: None,
     });

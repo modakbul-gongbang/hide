@@ -89,6 +89,31 @@ impl TabTarget {
     }
 }
 
+/// One off-lock host check admits the entire close sequence, including
+/// descendants outside the checkout. A refused or unavailable check closes none.
+pub fn spawn_worktree_preflight(
+    target: WorktreeTarget,
+    id: u64,
+    outside: Vec<String>,
+) -> Result<(), String> {
+    thread::Builder::new().name("herdr-core-worktree-preflight".into()).spawn(move || {
+        let Some(runtime) = target.runtime.upgrade() else { return; };
+        let request = match runtime.lock() {
+            Ok(guard) => guard.worktree_preflight_request(id),
+            Err(_) => return,
+        };
+        let Some(removal) = request else { return; };
+        let result = crate::host_access::call_as::<()>(target.host.as_ref(),
+            hide_host::protocol::Call::WorktreeRemovalCheck { removal }, HOST_REMOVE_TIMEOUT)
+            .map_err(|error| format!("{}. No panes were closed.", error.to_string().trim_end_matches('.')));
+        crate::diagnostic!(serde_json::json!({"component":"worktree_removal", "kind":"preflight_finished", "id":id, "accepted":result.is_ok()}));
+        if let Ok(mut guard) = runtime.lock() {
+            guard.ingest_worktree_preflight_result(id, outside, result);
+        }
+        target.notifier.notify();
+    }).map(|_| ()).map_err(|_| "Worktree preflight worker could not start. No panes were closed; retry the review.".to_owned())
+}
+
 pub fn spawn_worktree_close(
     target: WorktreeTarget,
     id: u64,
@@ -1612,10 +1637,10 @@ fn migrate_branch(
     }
 }
 
-fn trace(path: &str, pane_ids: &[String], stage: &str, error: Option<&str>) {
+fn trace(_path: &str, pane_ids: &[String], stage: &str, error: Option<&str>) {
     eprintln!(
         "{}",
-        json!({"event":"worktree.control", "path":path, "pane_ids":pane_ids, "stage":stage, "error":error})
+        json!({"event":"worktree.control", "pane_ids":pane_ids, "stage":stage, "failed":error.is_some()})
     );
 }
 
