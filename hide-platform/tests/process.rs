@@ -181,6 +181,35 @@ fn gone_within(pid: u32, bound: Duration) -> bool {
     true
 }
 
+/// Failure recovery names only a child this fixture announced while live,
+/// and only while the kernel still reports the same process identity.
+struct FixtureProcess {
+    pid: u32,
+    started: u64,
+}
+
+impl FixtureProcess {
+    fn live(pid: u32) -> Self {
+        Self {
+            pid,
+            started: start_time(pid).unwrap(),
+        }
+    }
+}
+
+impl Drop for FixtureProcess {
+    fn drop(&mut self) {
+        if start_time(self.pid).ok() == Some(self.started) {
+            if let Err(source) = kill_tree(self.pid) {
+                eprintln!(
+                    "process.fixture_cleanup_failed pid={} error={source}",
+                    self.pid
+                );
+            }
+        }
+    }
+}
+
 #[test]
 fn guarded_capture_keeps_stdin_payload_and_both_output_streams() {
     let _serial = serial();
@@ -307,6 +336,10 @@ fn abrupt_owner_death_ends_guarded_child_and_helper_outside_its_group() {
         }
     });
     let ready = recv.recv_timeout(Duration::from_secs(5));
+    let identities = ready
+        .as_ref()
+        .ok()
+        .map(|(child, helper)| (FixtureProcess::live(*child), FixtureProcess::live(*helper)));
     owner.kill().unwrap();
     owner.wait().unwrap();
     reader.join().unwrap();
@@ -319,6 +352,7 @@ fn abrupt_owner_death_ends_guarded_child_and_helper_outside_its_group() {
         gone_within(helper, Duration::from_secs(5)),
         "helper outside child group survived"
     );
+    drop(identities);
 }
 
 #[test]
