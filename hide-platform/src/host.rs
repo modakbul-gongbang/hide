@@ -309,13 +309,78 @@ mod sys {
                 output.status
             )));
         }
-        String::from_utf8_lossy(&output.stdout)
+        machine_id_from_ioreg(&String::from_utf8_lossy(&output.stdout))
+    }
+
+    #[cfg(target_os = "macos")]
+    fn machine_id_from_ioreg(output: &str) -> io::Result<String> {
+        let value = output
             .lines()
             .find_map(|line| {
-                let (_, value) = line.split_once("IOPlatformUUID")?;
-                value.split('"').nth(1).map(str::to_owned)
+                let (key, value) = line.split_once('=')?;
+                (key.trim() == "\"IOPlatformUUID\"").then(|| value.trim())
             })
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "ioreg names no IOPlatformUUID"))
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::NotFound, "ioreg names no IOPlatformUUID")
+            })?;
+        value
+            .strip_prefix('"')
+            .and_then(|value| value.strip_suffix('"'))
+            .filter(|value| !value.trim().is_empty() && !value.contains('"'))
+            .map(str::to_owned)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "ioreg reports an invalid IOPlatformUUID string",
+                )
+            })
+    }
+
+    #[cfg(all(test, target_os = "macos"))]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn ioreg_machine_identity_is_the_quoted_property_value() {
+            let output = r#"+-o platform
+    {
+      "IOPlatformSerialNumber" = "fixture-serial"
+      "IOPlatformUUID" = "ABCDEF12-3456-7890-ABCD-EF1234567890"
+    }
+"#;
+            assert_eq!(
+                machine_id_from_ioreg(output).unwrap(),
+                "ABCDEF12-3456-7890-ABCD-EF1234567890"
+            );
+        }
+
+        #[test]
+        fn ioreg_machine_identity_refuses_missing_and_malformed_properties() {
+            for output in [
+                "",
+                "\"OtherIOPlatformUUID\" = \"fixture\"",
+                "\"name\" = \"IOPlatformUUID\"",
+            ] {
+                assert_eq!(
+                    machine_id_from_ioreg(output).unwrap_err().kind(),
+                    io::ErrorKind::NotFound
+                );
+            }
+            for value in [
+                "unquoted",
+                "\"unterminated",
+                "\"\"",
+                "\"   \"",
+                "\"fixture\" \"extra\"",
+            ] {
+                assert_eq!(
+                    machine_id_from_ioreg(&format!("\"IOPlatformUUID\" = {value}"))
+                        .unwrap_err()
+                        .kind(),
+                    io::ErrorKind::InvalidData
+                );
+            }
+        }
     }
 
     #[cfg(not(target_os = "macos"))]
