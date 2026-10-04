@@ -291,6 +291,59 @@ fn failures_in_a_row_wait_longer_up_to_five_minutes_and_a_success_starts_the_cou
 }
 
 #[test]
+fn a_neighbours_retry_does_not_restart_a_healthy_projects_wait() {
+    let mut runtime = runtime();
+    runtime.snapshot.navigator.workspaces = vec![
+        git_project("a", "/tmp/a", "main"),
+        git_project("b", "/tmp/b", "main"),
+    ];
+    let start = Instant::now();
+    runtime.reread_stale_github(start);
+    answer_with(&mut runtime, &["/tmp/a"]);
+    runtime.reread_stale_github(start + Duration::from_secs(1));
+
+    // The retry of `a` is answered; the reader hands back its cached entry for `b`.
+    runtime.reread_stale_github(start + Duration::from_secs(31));
+    assert_eq!(generation_of(&runtime, "/tmp/a"), 1);
+    answer_with(&mut runtime, &["/tmp/a"]);
+    runtime.reread_stale_github(start + Duration::from_secs(32));
+
+    runtime.reread_stale_github(start + Duration::from_secs(300));
+    assert_eq!(generation_of(&runtime, "/tmp/b"), 0);
+    runtime.reread_stale_github(start + Duration::from_secs(301));
+    assert_eq!(
+        generation_of(&runtime, "/tmp/b"),
+        1,
+        "five minutes from its own answer, not from the neighbour's retry"
+    );
+}
+
+#[test]
+fn a_refresh_of_one_project_does_not_climb_a_failed_neighbours_backoff() {
+    let mut runtime = runtime();
+    runtime.snapshot.navigator.workspaces = vec![
+        git_project("a", "/tmp/a", "main"),
+        git_project("b", "/tmp/b", "main"),
+    ];
+    let start = Instant::now();
+    runtime.reread_stale_github(start);
+    answer_with(&mut runtime, &["/tmp/a"]);
+    runtime.reread_stale_github(start);
+
+    // The operator refreshes `b`; the answer carries `a`'s cached failure again.
+    runtime.refresh_pull_requests("/tmp/b");
+    answer_with(&mut runtime, &["/tmp/a"]);
+    runtime.reread_stale_github(start + Duration::from_secs(10));
+
+    runtime.reread_stale_github(start + Duration::from_secs(30));
+    assert_eq!(
+        generation_of(&runtime, "/tmp/a"),
+        1,
+        "still the first failure's thirty seconds, not a second failure"
+    );
+}
+
+#[test]
 fn a_failed_first_read_with_a_restored_answer_is_asked_again_soon() {
     let mut runtime = runtime();
     runtime.snapshot.navigator.workspaces = vec![git_project("a", "/tmp/a", "main")];

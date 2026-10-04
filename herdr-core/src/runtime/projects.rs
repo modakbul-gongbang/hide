@@ -973,6 +973,7 @@ impl Runtime {
         let known = |path: &String| paths.contains(path);
         self.github_clock.retain(|path, _| known(path));
         self.github_answered.retain(|path, _| known(path));
+        self.github_read_generation.retain(|path, _| known(path));
         self.github_settled.retain(known);
         for path in paths {
             let before = self.github_clock.get(&path).copied();
@@ -1066,7 +1067,18 @@ impl Runtime {
             let failed = github
                 .project(&path)
                 .is_some_and(|read| !read.pull_requests_read);
-            self.github_answered.insert(path.clone(), failed);
+            // The reader hands back its cached entry for every project in the
+            // request, so only a project whose generation moved since the
+            // last answer was actually read; counting the others would
+            // restart their wait, or climb a failing project's backoff,
+            // because a neighbour was asked.
+            if self
+                .github_read_generation
+                .insert(path.clone(), project.generation)
+                != Some(project.generation)
+            {
+                self.github_answered.insert(path.clone(), failed);
+            }
             newly_settled |= self.github_settled.insert(path);
         }
         // A failed lookup must not erase the answer it failed to replace: the

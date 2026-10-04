@@ -1375,6 +1375,10 @@ pub struct Runtime {
     /// whether that read failed to get its pull requests; the next wake starts
     /// their wait.
     github_answered: HashMap<String, bool>,
+    /// The generation each project was last answered for: the reader returns
+    /// its cached entry for every project in a request, and only a moved
+    /// generation is a read.
+    github_read_generation: HashMap<String, u64>,
     /// Local projects whose first read has been answered, with or without a
     /// result; until then a project without an answer is loading.
     github_settled: HashSet<String>,
@@ -1771,6 +1775,7 @@ impl Runtime {
             github_clock: HashMap::new(),
             github_wanted: HashSet::new(),
             github_answered: HashMap::new(),
+            github_read_generation: HashMap::new(),
             github_settled: HashSet::new(),
             github_over_limit: 0,
             github_store: None,
