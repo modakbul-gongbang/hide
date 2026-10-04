@@ -4,8 +4,8 @@
 Default scope is tracked checkout files, including unstaged edits, not the staged
 blobs. Use --scope index to inspect exactly the staged blobs, including new files.
 Neither scope inspects untracked files, history, releases, image metadata or
-pixels. Generic home/workstation shapes cannot prove arbitrary names, account
-aliases, email addresses or credentials absent. Keep those separate audit tasks.
+pixels. Home/workstation and email shapes cannot prove arbitrary names, account
+aliases, encoded content or credentials absent. Keep those separate audit tasks.
 """
 
 import argparse
@@ -49,6 +49,22 @@ PROFILE = re.compile(
     r"|(?:^|/)(?:Local State|Preferences|Secure Preferences)$"
     r"|\.pma$|(?:^|/)(?:Session_|Tabs_)[0-9]+$"
     r"|(?:^|/)(?:browser-profile|chromium-profile|chrome-profile)(?:/|$)", re.I)
+
+EMAIL = re.compile(r"(?<![\w.+-])[A-Za-z0-9][A-Za-z0-9._%+-]*@"
+                   r"(?P<domain>(?:[A-Za-z0-9-]+\.)+[A-Za-z]{2,})(?![\w.-])")
+
+
+def email_findings(text):
+    for match in EMAIL.finditer(text):
+        domain = match.group("domain").lower()
+        if domain in {"example.com", "example.net", "example.org"} or domain.endswith(
+                (".example", ".invalid", ".test")):
+            continue
+        # A URL authority or scp-style remote is not a contact address.
+        token_start = max(text.rfind(char, 0, match.start()) for char in " \t\r\n\"'<>") + 1
+        if "://" in text[token_start:match.start()] or text[match.end():].startswith(":"):
+            continue
+        yield match
 
 
 class ScanError(Exception):
@@ -149,7 +165,7 @@ def safe_path(path):
         pieces.extend((path[cursor:match.end()], "[redacted]"))
         cursor = end
     pieces.append(path[cursor:])
-    return WORKSTATION.sub("[redacted-workstation]", "".join(pieces))
+    return EMAIL.sub("[redacted-email]", WORKSTATION.sub("[redacted-workstation]", "".join(pieces)))
 
 
 def diagnostic(path, line, classification, scope):
@@ -319,7 +335,9 @@ def checkout_bytes(root, path):
 
 
 def content_findings(data):
-    text = data.decode("utf-8", errors="replace")
+    # Windows text files may carry UTF-16; a BOM makes that interpretation exact.
+    encoding = "utf-16" if data.startswith((b"\xff\xfe", b"\xfe\xff")) else "utf-8"
+    text = data.decode(encoding, errors="replace")
     for match, end, proven in home_components(text):
         account = text[match.end():end]
         if proven and (account in NEUTRAL_ACCOUNTS or DYNAMIC_ACCOUNT.fullmatch(account)):
@@ -328,6 +346,11 @@ def content_findings(data):
     for match in WORKSTATION.finditer(text):
         if match.group("account") not in NEUTRAL_ACCOUNTS:
             yield text.count("\n", 0, match.start()) + 1, "named_workstation"
+
+    # Contact addresses are checked in text, avoiding random binary byte matches.
+    if "\x00" not in text:
+        for match in email_findings(text):
+            yield text.count("\n", 0, match.start()) + 1, "contact_email"
 
 
 def index_bytes(batch, path, oid):

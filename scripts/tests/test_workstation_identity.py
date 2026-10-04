@@ -18,7 +18,9 @@ def home(platform, account):
 
 class WorkstationIdentityTests(unittest.TestCase):
     def setUp(self):
-        temporary = tempfile.TemporaryDirectory()
+        runs = CHECK.parent.parent / "agents" / "runs" / "privacy-tests"
+        runs.mkdir(parents=True, exist_ok=True)
+        temporary = tempfile.TemporaryDirectory(dir=runs)
         self.addCleanup(temporary.cleanup)
         self.root = Path(temporary.name)
         self.git("init", "--quiet")
@@ -39,7 +41,9 @@ class WorkstationIdentityTests(unittest.TestCase):
 
     def checker_with_limit(self, name, value):
         """Exercise declared caps with small real fixtures, not huge allocations."""
-        temporary = tempfile.TemporaryDirectory()
+        runs = CHECK.parent.parent / "agents" / "runs" / "privacy-tests"
+        runs.mkdir(parents=True, exist_ok=True)
+        temporary = tempfile.TemporaryDirectory(dir=runs)
         self.addCleanup(temporary.cleanup)
         checker = Path(temporary.name) / "checker.py"
         lines = CHECK.read_text().splitlines(keepends=True)
@@ -51,6 +55,40 @@ class WorkstationIdentityTests(unittest.TestCase):
 
     def classes(self, result):
         return [json.loads(line)["class"] for line in result.stderr.splitlines()]
+
+    def test_contact_address_is_rejected_without_disclosing_it(self):
+        address = "private-fixture-person" + "@" + "mail.vendor.com"
+        self.tracked("contact.txt", "contact: " + address)
+        for scope in ("checkout", "index"):
+            result = self.check(scope)
+            self.assertEqual(result.returncode, 1)
+            self.assertEqual(self.classes(result), ["contact_email"])
+            self.assertNotIn(address, result.stdout + result.stderr)
+
+    def test_contact_address_in_a_filename_is_redacted(self):
+        address = "private-fixture-person" + "@" + "mail.vendor.com"
+        self.tracked(address + ".txt", address)
+        result = self.check()
+        self.assertEqual(result.returncode, 1)
+        self.assertNotIn(address, result.stdout + result.stderr)
+        self.assertIn("[redacted-email]", result.stderr)
+
+    def test_reserved_addresses_and_remote_authorities_are_not_contacts(self):
+        values = ["a@example.com", "a@example.net", "a@example.org", "a@fixture.invalid",
+                  "a@fixture.test", "a@fixture.example", "https://user@host.vendor.com/a",
+                  "git@host.vendor.com:repo.git", "package@1.2.3", "org/repo@v2.1.0"]
+        self.tracked("remotes.txt", "\n".join(values))
+        self.assertEqual(self.check().returncode, 0)
+
+    def test_utf16_bom_home_path_is_rejected_in_both_scopes(self):
+        for encoding in ("utf-16-le", "utf-16-be"):
+            bom = b"\xff\xfe" if encoding.endswith("le") else b"\xfe\xff"
+            self.tracked("windows.txt", bom + home("windows", "private-fixture-person").encode(encoding))
+            for scope in ("checkout", "index"):
+                result = self.check(scope)
+                self.assertEqual(result.returncode, 1)
+                self.assertEqual(self.classes(result), ["windows_home"])
+                self.assertNotIn("private-fixture-person", result.stderr)
 
     def test_explicit_neutral_accounts_pass_both_scopes(self):
         accounts = ("example", "alice", "al", "me", "remote", "u")
