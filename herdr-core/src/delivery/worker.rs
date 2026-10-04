@@ -16,6 +16,7 @@ use serde_json::{Value, json};
 use crate::handle::ChangeNotifier;
 use crate::runtime::Runtime;
 use crate::runtime::delivery::Observation;
+use crate::workspace_control::{Context, Query};
 
 use super::ledger::{self, Ledger};
 use super::{Actor, Command, mailbox, watch};
@@ -30,20 +31,28 @@ pub(crate) struct Client {
 
 pub struct Prepared {
     client: Client,
+    authority: Authority,
     actor: Actor,
     target: Option<Observation>,
     command: Command,
 }
 
+pub(crate) struct Authority {
+    pub caller: String,
+    pub context: Context,
+}
+
 impl Prepared {
     pub(crate) fn new(
         client: Client,
+        authority: Authority,
         actor: Actor,
         target: Option<Observation>,
         command: Command,
     ) -> Self {
         Self {
             client,
+            authority,
             actor,
             target,
             command,
@@ -66,6 +75,7 @@ impl Prepared {
         }
         self.client.submit(
             Effect::Command {
+                authority: self.authority,
                 actor: self.actor,
                 target: self.target.map(Box::new),
                 command: self.command,
@@ -98,6 +108,7 @@ struct Request {
 
 pub(crate) enum Effect {
     Command {
+        authority: Authority,
         actor: Actor,
         target: Option<Box<Observation>>,
         command: Command,
@@ -444,6 +455,7 @@ fn apply(ledger: &mut Ledger, request: &Request, now: u64) -> Result<(Value, boo
             actor,
             target,
             command,
+            ..
         } => (actor, target, command),
     };
     let value = match command {
@@ -557,6 +569,7 @@ fn run(
             let before = candidate.clone();
             let current = match &request.effect {
                 Effect::Command {
+                    authority,
                     actor,
                     target,
                     command,
@@ -570,6 +583,15 @@ fn run(
                         .lock()
                         .map_err(|_| "delivery_unavailable".to_owned())
                         .and_then(|guard| {
+                            for caller in [&authority.caller, &actor.pane_id] {
+                                let current = guard
+                                    .workspace_control_query(&actor.device_id, caller, Query::Info)
+                                    .map_err(|_| "caller_context_changed")?
+                                    .context;
+                                if current != authority.context {
+                                    return Err("caller_context_changed".into());
+                                }
+                            }
                             actor.require_native_identity()?;
                             if !guard.delivery_identity_current(actor) {
                                 return Err("caller_identity_changed".into());
@@ -1001,6 +1023,7 @@ mod tests {
         let options: CoreOptions = serde_json::from_value(json!({
             "schema_version":SCHEMA_VERSION,"home":root,"herdr_socket_path":null,
             "app_state_path":state.join("app.json"),
+            "workspace_views_path":root.join("views.json"),
         }))
         .unwrap();
         let mut runtime = Runtime::new(
@@ -1016,6 +1039,72 @@ mod tests {
             {"id":"recipient","pane_id":"recipient","agent":"codex","agent_status":"working","state_change_seq":1,"lineage_session":"recipient-session"},
         ]})).unwrap();
         runtime.observe_delivery("local", &payload, None);
+        runtime.snapshot.status.herdr.state = "connected".into();
+        let panes = ["sender", "recipient"]
+            .into_iter()
+            .map(|id| crate::model::PaneSnapshot {
+                id: id.into(),
+                herdr_label: None,
+                terminal_title: None,
+                cwd: "/checkouts/fixture".into(),
+                status_label: "Attached".into(),
+                requires_close_confirmation: false,
+                requires_close_status_check: false,
+                identity_label: None,
+                activity_at_unix_ms: None,
+                fork: Default::default(),
+                ports: Vec::new(),
+                servers: Vec::new(),
+                children: None,
+                lineage_path: Vec::new(),
+                sleep: None,
+                sleep_action: None,
+            })
+            .collect();
+        runtime.snapshot.navigator.workspaces = vec![crate::model::WorkspaceSnapshot {
+            home_issues: Default::default(),
+            tasks: Default::default(),
+            pull_requests: Vec::new(),
+            id: "workspace".into(),
+            label: "Fixture".into(),
+            path: "/checkouts/fixture".into(),
+            remote_target_id: None,
+            expanded: true,
+            device_id: "local".into(),
+            repo_name: "fixture".into(),
+            is_git: false,
+            default_branch: None,
+            branches: Vec::new(),
+            registered: true,
+            temporary: false,
+            session_workspace_ids: Vec::new(),
+            last_activity_unix_ms: None,
+            pinned: false,
+            is_home: false,
+            checkouts: vec![crate::model::CheckoutSnapshot {
+                id: "checkout".into(),
+                workspace_id: "workspace".into(),
+                path: "/checkouts/fixture".into(),
+                exists: true,
+                has_panes: true,
+                tabs: vec![crate::model::TabSnapshot {
+                    naming: Default::default(),
+                    agent: None,
+                    id: Some("tab".into()),
+                    workspace_id: Some("workspace".into()),
+                    checkout_id: Some("checkout".into()),
+                    label: None,
+                    empty: false,
+                    delegated: false,
+                    panes,
+                }],
+                ..Default::default()
+            }],
+            inactive_checkouts: Default::default(),
+            removal: Default::default(),
+            disk: Default::default(),
+            cleanup: None,
+        }];
         let actor = Actor {
             pane_id: "sender".into(),
             name: "sender".into(),
@@ -1038,6 +1127,85 @@ mod tests {
             target,
             hide_kit::layout::delivery_ledger(&state),
         )
+    }
+
+    fn authority(actor: &Actor) -> Authority {
+        Authority {
+            caller: actor.pane_id.clone(),
+            context: Context {
+                device_id: "local".into(),
+                workspace_id: "workspace".into(),
+                checkout_id: "checkout".into(),
+                checkout_path: "/checkouts/fixture".into(),
+            },
+        }
+    }
+
+    #[test]
+    fn prepared_command_refuses_changed_pane_or_checkout_capability_context_without_saving() {
+        for checkout_bound in [false, true] {
+            let root = tempfile::tempdir().unwrap();
+            let (runtime, actor, _, path) = fixture(root.path());
+            let before = std::fs::read(&path).unwrap();
+            let (worker, client) = Worker::spawn(
+                Arc::downgrade(&runtime),
+                ChangeNotifier::noop(),
+                path.clone(),
+            )
+            .unwrap();
+            let context = authority(&actor).context;
+            let caller = if checkout_bound {
+                crate::workspace_control::checkout_caller_id("cap", "/checkouts/fixture/sub")
+            } else {
+                actor.pane_id.clone()
+            };
+            let prepared = {
+                let mut guard = runtime.lock().unwrap();
+                guard.install_delivery_client(client);
+                guard
+                    .prepare_delivery(
+                        "local",
+                        &caller,
+                        &context,
+                        checkout_bound.then_some(actor.pane_id.as_str()),
+                        Command::Send {
+                            target: "recipient".into(),
+                            intent: "must-refuse".into(),
+                            body: "private".into(),
+                        },
+                    )
+                    .unwrap()
+            };
+            {
+                let mut guard = runtime.lock().unwrap();
+                let checkouts = &mut guard.snapshot.navigator.workspaces[0].checkouts;
+                if checkout_bound {
+                    let mut narrower = checkouts[0].clone();
+                    narrower.id = "nested".into();
+                    narrower.path = "/checkouts/fixture/sub".into();
+                    narrower.tabs.clear();
+                    narrower.has_panes = false;
+                    checkouts.push(narrower);
+                } else {
+                    checkouts[0].path = "/checkouts/moved".into();
+                }
+            }
+            assert_eq!(
+                prepared.run(Duration::from_secs(5)).unwrap_err(),
+                "caller_context_changed"
+            );
+            assert!(
+                runtime
+                    .lock()
+                    .unwrap()
+                    .delivery_state()
+                    .unwrap()
+                    .letters
+                    .is_empty()
+            );
+            assert_eq!(std::fs::read(&path).unwrap(), before);
+            drop(worker);
+        }
     }
 
     #[test]
@@ -1087,6 +1255,7 @@ mod tests {
                 client
                     .submit(
                         Effect::Command {
+                            authority: authority(&target.actor),
                             actor: target.actor.clone(),
                             target: Some(Box::new(target.clone())),
                             command
@@ -1140,6 +1309,7 @@ mod tests {
                 client
                     .submit(
                         Effect::Command {
+                            authority: authority(&actor),
                             actor: actor.clone(),
                             target: Some(Box::new(target.clone())),
                             command: command.clone()
@@ -1170,6 +1340,7 @@ mod tests {
             let first = client
                 .submit(
                     Effect::Command {
+                        authority: authority(&actor),
                         actor: actor.clone(),
                         target: Some(Box::new(target)),
                         command: command.clone(),
@@ -1186,6 +1357,7 @@ mod tests {
             let replay = client
                 .submit(
                     Effect::Command {
+                        authority: authority(&actor),
                         actor,
                         target: None,
                         command,
@@ -1219,6 +1391,7 @@ mod tests {
             .unwrap();
             let result = client.submit(
                 Effect::Command {
+                    authority: authority(&actor),
                     actor,
                     target: Some(Box::new(target)),
                     command: Command::Send {

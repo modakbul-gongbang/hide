@@ -5,7 +5,7 @@ use std::collections::HashSet;
 use std::sync::Arc;
 
 use crate::delivery::ledger::Ledger;
-use crate::delivery::worker::{Client, Prepared};
+use crate::delivery::worker::{Authority, Client, Prepared};
 use crate::delivery::{Actor, Command};
 use crate::sidebar::SessionSnapshotPayload;
 use crate::workspace_control::{Caller, Context, Query};
@@ -211,6 +211,10 @@ impl Runtime {
         }
         Ok(Prepared::new(
             self.delivery_client.clone().ok_or("delivery_unavailable")?,
+            Authority {
+                caller: caller.to_owned(),
+                context,
+            },
             actor,
             target,
             command,

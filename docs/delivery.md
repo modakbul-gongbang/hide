@@ -9,6 +9,7 @@ Remote recipients, hcoord retirement, human Inbox UI and automatic draft clearin
 These commands need the running daemon and a current agent pane in a registered checkout; they work without an open renderer.
 The daemon binds the caller through the existing Workspace credential boundary and resolves the actual pane, provider and native-session identity from Herdr.
 A pane hint cannot replace that binding, and an absent, ambiguous or changed occupant returns an explicit error.
+Each queued command revalidates both its original capability caller and the agent pane against the prepared Workspace and checkout context before applying or saving; a moved checkout or newly narrower caller binding returns `caller_context_changed`.
 Mailbox callers and new recipients require a positive native-session binding; a missing binding returns `native_identity_required`.
 Two missing native references in the same pane never authorize retained mail.
 Target names and pane IDs resolve against the daemon's current observations.
