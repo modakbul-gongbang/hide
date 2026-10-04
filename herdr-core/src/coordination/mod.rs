@@ -496,11 +496,7 @@ pub(crate) fn apply(
                 letter.kind == "report"
                     && letter.sender.same_identity(&child.actor)
                     && letter.recipient.same_identity(&parent)
-                    && matches!(
-                        letter.state,
-                        crate::delivery::ledger::State::Delivered
-                            | crate::delivery::ledger::State::Acknowledged
-                    )
+                    && letter.intake_confirmed()
             });
             let auto_watch_id = if !spawn.no_watch && !child.ended && !reported_complete {
                 Some(watch::start(ledger, &parent, &child.actor, now)?.id)
@@ -978,5 +974,72 @@ mod tests {
         let before = restored.clone();
         assert_eq!(apply(&mut restored, &actor, &complete, 7).unwrap(), receipt);
         assert_eq!(restored, before);
+    }
+
+    #[test]
+    fn ack_only_report_installs_initial_watch_until_actual_confirmation_and_replays_once() {
+        use crate::delivery::mailbox;
+        for legacy in [false, true] {
+            let (mut ledger, parent, _, spawn, child) = pending_spawn();
+            let child_actor = child.actor.clone();
+            apply(
+                &mut ledger,
+                &parent,
+                &Mutation::BindChild {
+                    id: spawn.clone(),
+                    record: child,
+                },
+                3,
+            )
+            .unwrap();
+            let report = mailbox::send(
+                &mut ledger,
+                &child_actor,
+                &parent,
+                "done",
+                "completed",
+                "report",
+                None,
+                4,
+            )
+            .unwrap();
+            let intake = mailbox::pull(&ledger, &parent).unwrap();
+            assert_eq!(intake.ids.as_slice(), std::slice::from_ref(&report.id));
+            assert_eq!(
+                mailbox::apply(
+                    &mut ledger,
+                    &parent,
+                    None,
+                    &mailbox::Command::Ack {
+                        id: report.id.clone()
+                    },
+                    5,
+                )
+                .unwrap()["state"],
+                "acknowledged"
+            );
+            if legacy {
+                ledger.letters[0].hook_confirmed = None;
+                ledger.letters[0].finished_at_unix_ms = Some(5);
+            }
+            let mut restored: Ledger = serde_json::from_slice(&ledger.bytes().unwrap()).unwrap();
+            let complete = Mutation::Complete { id: spawn };
+            let receipt = apply(&mut restored, &parent, &complete, 6).unwrap();
+            assert_eq!(restored.watches.len(), 1);
+            assert_eq!(receipt["auto_watch_id"], restored.watches[0].id);
+            let confirm = mailbox::Command::Confirm { ids: intake.ids };
+            mailbox::apply(&mut restored, &parent, None, &confirm, 7).unwrap();
+            assert!(restored.watches.is_empty());
+            let rearmed = watch::start(&mut restored, &parent, &child_actor, 8).unwrap();
+            let mut restored: Ledger = serde_json::from_slice(&restored.bytes().unwrap()).unwrap();
+            let before = restored.clone();
+            assert_eq!(
+                apply(&mut restored, &parent, &complete, 9).unwrap(),
+                receipt
+            );
+            mailbox::apply(&mut restored, &parent, None, &confirm, 10).unwrap();
+            assert_eq!(restored, before);
+            assert_eq!(restored.watches[0].id, rearmed.id);
+        }
     }
 }

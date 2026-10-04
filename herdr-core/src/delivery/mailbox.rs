@@ -119,6 +119,7 @@ pub(crate) fn send(
         kind: kind.to_owned(),
         body: body.to_owned(),
         state: State::Pending,
+        hook_confirmed: Some(false),
         waiting_answer: matches!(kind, "request" | "block"),
         reply_to,
         created_at_unix_ms: now,
@@ -239,11 +240,17 @@ pub fn apply(
                     .iter_mut()
                     .find(|letter| letter.id == *id)
                     .ok_or("letter_unavailable")?;
-                if letter.state == State::Pending {
+                if !letter.intake_confirmed() {
                     if letter.kind == "report" {
                         reports.push((letter.sender.clone(), letter.recipient.clone()));
                     }
-                    letter.state = State::Delivered;
+                    letter.hook_confirmed = Some(true);
+                    if matches!(
+                        letter.state,
+                        State::Pending | State::Undelivered | State::Expired
+                    ) {
+                        letter.state = State::Delivered;
+                    }
                     if !letter.waiting_answer {
                         letter.finished_at_unix_ms = Some(now);
                     }
@@ -288,7 +295,7 @@ pub fn pull(ledger: &Ledger, actor: &Actor) -> Result<Intake, String> {
     let mut pending: Vec<_> = ledger
         .letters
         .iter()
-        .filter(|letter| letter.recipient.same_identity(actor) && letter.state == State::Pending)
+        .filter(|letter| letter.recipient.same_identity(actor) && letter.awaiting_intake())
         .collect();
     pending.sort_by_key(|letter| letter.created_at_unix_ms);
     let mut context = String::new();
@@ -742,6 +749,337 @@ mod tests {
             .unwrap();
             assert_eq!(ledger.watches.len(), 1);
         }
+    }
+
+    #[test]
+    fn ack_between_pull_and_confirmation_ends_only_matching_watch_once_across_restart() {
+        let mut ledger = Ledger::default();
+        let child = actor("child");
+        let parent = actor("parent");
+        let other = actor("other");
+        super::super::watch::start(&mut ledger, &parent, &child, 1).unwrap();
+        let unrelated = super::super::watch::start(&mut ledger, &other, &child, 1).unwrap();
+        let report = send(
+            &mut ledger,
+            &child,
+            &parent,
+            "report",
+            "done",
+            "report",
+            None,
+            2,
+        )
+        .unwrap();
+        let intake = pull(&ledger, &parent).unwrap();
+        assert_eq!(intake.ids.as_slice(), std::slice::from_ref(&report.id));
+        // An interruption after Pull leaves the same report and both watches.
+        let mut restored: Ledger = serde_json::from_slice(&ledger.bytes().unwrap()).unwrap();
+        assert_eq!(pull(&restored, &parent).unwrap().ids, intake.ids);
+        assert_eq!(restored.watches.len(), 2);
+        let acknowledged = apply(
+            &mut restored,
+            &parent,
+            None,
+            &Command::Ack {
+                id: report.id.clone(),
+            },
+            3,
+        )
+        .unwrap();
+        assert_eq!(acknowledged["state"], "acknowledged");
+        assert_eq!(acknowledged["hook_confirmed"], false);
+        assert_eq!(restored.watches.len(), 2);
+        let mut restored: Ledger = serde_json::from_slice(&restored.bytes().unwrap()).unwrap();
+        let confirm = Command::Confirm { ids: intake.ids };
+        assert_eq!(
+            apply(&mut restored, &parent, None, &confirm, 4).unwrap()["confirmed"],
+            json!([report.id.clone()])
+        );
+        assert_eq!(restored.watches.len(), 1);
+        assert_eq!(restored.watches[0].id, unrelated.id);
+        let shown = apply(
+            &mut restored,
+            &parent,
+            None,
+            &Command::Show {
+                id: report.id.clone(),
+            },
+            4,
+        )
+        .unwrap();
+        assert_eq!(shown["state"], "acknowledged");
+        assert_eq!(shown["hook_confirmed"], true);
+        let rearmed = super::super::watch::start(&mut restored, &parent, &child, 5).unwrap();
+        let mut restored: Ledger = serde_json::from_slice(&restored.bytes().unwrap()).unwrap();
+        let before = restored.clone();
+        apply(&mut restored, &parent, None, &confirm, 6).unwrap();
+        assert_eq!(restored, before);
+        assert!(restored.watches.iter().any(|watch| watch.id == rearmed.id));
+        assert_eq!(
+            send(
+                &mut restored,
+                &child,
+                &parent,
+                "report",
+                "different",
+                "report",
+                None,
+                7
+            )
+            .unwrap()
+            .id,
+            report.id
+        );
+        assert_eq!(restored.letters.len(), 1);
+    }
+
+    #[test]
+    fn confirmation_then_ack_preserves_rearmed_watch_on_replay_after_restart() {
+        let mut ledger = Ledger::default();
+        let child = actor("child");
+        let parent = actor("parent");
+        super::super::watch::start(&mut ledger, &parent, &child, 1).unwrap();
+        let report = send(
+            &mut ledger,
+            &child,
+            &parent,
+            "report",
+            "done",
+            "report",
+            None,
+            2,
+        )
+        .unwrap();
+        let confirm = Command::Confirm {
+            ids: pull(&ledger, &parent).unwrap().ids,
+        };
+        apply(&mut ledger, &parent, None, &confirm, 3).unwrap();
+        assert!(ledger.watches.is_empty());
+        let acknowledged = apply(
+            &mut ledger,
+            &parent,
+            None,
+            &Command::Ack { id: report.id },
+            4,
+        )
+        .unwrap();
+        assert_eq!(acknowledged["state"], "acknowledged");
+        assert_eq!(acknowledged["hook_confirmed"], true);
+        let rearmed = super::super::watch::start(&mut ledger, &parent, &child, 5).unwrap();
+        let mut restored: Ledger = serde_json::from_slice(&ledger.bytes().unwrap()).unwrap();
+        let before = restored.clone();
+        apply(&mut restored, &parent, None, &confirm, 6).unwrap();
+        assert_eq!(restored, before);
+        assert_eq!(restored.watches[0].id, rearmed.id);
+    }
+
+    #[test]
+    fn ack_only_intake_reinjects_the_same_id_after_interruption_until_actual_confirmation() {
+        for kind in ["request", "report"] {
+            let mut ledger = Ledger::default();
+            let sender = actor("sender");
+            let recipient = actor("recipient");
+            let letter = send(
+                &mut ledger,
+                &sender,
+                &recipient,
+                "once",
+                "body",
+                kind,
+                None,
+                1,
+            )
+            .unwrap();
+            let intake = pull(&ledger, &recipient).unwrap();
+            assert_eq!(intake.ids.as_slice(), std::slice::from_ref(&letter.id));
+            apply(
+                &mut ledger,
+                &recipient,
+                None,
+                &Command::Ack { id: letter.id },
+                2,
+            )
+            .unwrap();
+            let mut restored: Ledger = serde_json::from_slice(&ledger.bytes().unwrap()).unwrap();
+            assert_eq!(pull(&restored, &recipient).unwrap().ids, intake.ids);
+            apply(
+                &mut restored,
+                &recipient,
+                None,
+                &Command::Confirm { ids: intake.ids },
+                3,
+            )
+            .unwrap();
+            assert!(pull(&restored, &recipient).unwrap().ids.is_empty());
+        }
+    }
+
+    #[test]
+    fn actual_confirmation_after_cancel_or_deadline_ends_watch_once_and_survives_restart() {
+        for cancel in [false, true] {
+            let mut ledger = Ledger::default();
+            let child = actor("child");
+            let parent = actor("parent");
+            super::super::watch::start(&mut ledger, &parent, &child, 1).unwrap();
+            let report = send(
+                &mut ledger,
+                &child,
+                &parent,
+                "report",
+                "done",
+                "report",
+                None,
+                2,
+            )
+            .unwrap();
+            let confirm = Command::Confirm {
+                ids: pull(&ledger, &parent).unwrap().ids,
+            };
+            let now = 2 + super::super::DELIVERY_EXPIRY_MS;
+            if cancel {
+                assert_eq!(
+                    apply(
+                        &mut ledger,
+                        &child,
+                        None,
+                        &Command::Cancel {
+                            id: report.id.clone()
+                        },
+                        now
+                    )
+                    .unwrap()["state"],
+                    "cancelled"
+                );
+            } else {
+                assert!(ledger.expire(now));
+                assert_eq!(
+                    apply(
+                        &mut ledger,
+                        &parent,
+                        None,
+                        &Command::Show {
+                            id: report.id.clone()
+                        },
+                        now
+                    )
+                    .unwrap()["state"],
+                    "undelivered"
+                );
+            }
+            assert_eq!(ledger.watches.len(), 1);
+            assert!(pull(&ledger, &parent).unwrap().ids.is_empty());
+            let mut restored: Ledger = serde_json::from_slice(&ledger.bytes().unwrap()).unwrap();
+            assert_eq!(
+                apply(&mut restored, &parent, None, &confirm, now + 1).unwrap()["confirmed"],
+                json!([report.id.clone()])
+            );
+            assert!(restored.watches.is_empty());
+            let shown = apply(
+                &mut restored,
+                &parent,
+                None,
+                &Command::Show { id: report.id },
+                now + 1,
+            )
+            .unwrap();
+            assert_eq!(
+                shown["state"],
+                if cancel { "cancelled" } else { "delivered" }
+            );
+            assert_eq!(shown["hook_confirmed"], true);
+            let rearmed =
+                super::super::watch::start(&mut restored, &parent, &child, now + 2).unwrap();
+            let mut restored: Ledger = serde_json::from_slice(&restored.bytes().unwrap()).unwrap();
+            let before = restored.clone();
+            apply(&mut restored, &parent, None, &confirm, now + 3).unwrap();
+            assert_eq!(restored, before);
+            assert_eq!(restored.watches[0].id, rearmed.id);
+        }
+    }
+
+    #[test]
+    fn acknowledged_unconfirmed_reports_retain_ids_and_consume_open_capacity_until_intake() {
+        let mut ledger = Ledger::default();
+        let sender = actor("sender");
+        let recipient = actor("recipient");
+        let mut first_id = String::new();
+        for index in 0..OPEN_LIMIT {
+            let letter = send(
+                &mut ledger,
+                &sender,
+                &recipient,
+                &format!("receipt-{index}"),
+                "body",
+                "report",
+                None,
+                1,
+            )
+            .unwrap();
+            if index == 0 {
+                first_id = letter.id.clone();
+            }
+            apply(
+                &mut ledger,
+                &recipient,
+                None,
+                &Command::Ack { id: letter.id },
+                2,
+            )
+            .unwrap();
+        }
+        let now = RETENTION_MS + 3;
+        let mut restored: Ledger = serde_json::from_slice(&ledger.bytes().unwrap()).unwrap();
+        assert!(!restored.expire(now));
+        assert_eq!(restored.letters.len(), OPEN_LIMIT);
+        assert_eq!(
+            send(
+                &mut restored,
+                &sender,
+                &recipient,
+                "receipt-0",
+                "changed",
+                "report",
+                None,
+                now
+            )
+            .unwrap()
+            .id,
+            first_id
+        );
+        assert_eq!(
+            send(
+                &mut restored,
+                &sender,
+                &recipient,
+                "overflow",
+                "body",
+                "report",
+                None,
+                now
+            )
+            .unwrap_err(),
+            "capacity"
+        );
+        let intake = pull(&restored, &recipient).unwrap();
+        assert_eq!(intake.ids.len(), HOOK_LETTERS);
+        assert_eq!(intake.remaining, OPEN_LIMIT - HOOK_LETTERS);
+        assert_eq!(intake.ids[0], first_id);
+        assert!(intake.context.len() <= HOOK_LIMIT);
+        apply(
+            &mut restored,
+            &recipient,
+            None,
+            &Command::Confirm { ids: intake.ids },
+            now,
+        )
+        .unwrap();
+        assert!(!restored.cleanup(now));
+        assert!(restored.cleanup(now + RETENTION_MS));
+        assert_eq!(restored.letters.len(), OPEN_LIMIT - HOOK_LETTERS);
+        assert_eq!(
+            pull(&restored, &recipient).unwrap().remaining,
+            OPEN_LIMIT - HOOK_LETTERS * 2
+        );
     }
 
     #[test]

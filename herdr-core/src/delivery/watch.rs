@@ -692,6 +692,7 @@ mod tests {
             } else {
                 super::super::ledger::State::Acknowledged
             },
+            hook_confirmed: Some(true),
             waiting_answer: open,
             reply_to: None,
             created_at_unix_ms: now,
