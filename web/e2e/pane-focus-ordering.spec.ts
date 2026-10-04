@@ -10,6 +10,9 @@ import { enterWorkspace, screenshot } from "./wire";
  * completed user-click burst. Every response still comes from pinned Herdr. */
 async function focusGate(herdr: HerdrFixture) {
   const socket = path.join(herdr.root, "focus.sock");
+  // Herdr maps a filesystem path to the Windows named-pipe namespace.
+  const endpoint = (address: string) => process.platform === "win32" ? `\\\\.\\pipe\\${address}` : address;
+  const clientSocket = socket.replace(/\.sock$/, "-client.sock");
   const peers = new Set<net.Socket>();
   const requests: string[] = [];
   let armed = false;
@@ -36,7 +39,7 @@ async function focusGate(herdr: HerdrFixture) {
         maximum = Math.max(maximum, ++active);
       }
       const forward = (received?: () => void, failed?: (error: Error) => void) => {
-        const upstream = net.connect(herdr.socket, () => upstream.write(buffer));
+        const upstream = net.connect(endpoint(herdr.socket), () => upstream.write(buffer));
         peers.add(upstream);
         upstream.on("close", () => peers.delete(upstream));
         upstream.on("error", (error) => { client.destroy(); failed?.(error); });
@@ -57,15 +60,47 @@ async function focusGate(herdr: HerdrFixture) {
     client.on("data", first);
   });
   server.maxConnections = 64;
+  const listeners = [server];
+  const markers: string[] = [];
+  const listen = (listener: net.Server, address: string) => new Promise<void>((resolve, reject) => {
+    listener.once("error", reject);
+    listener.listen(endpoint(address), resolve);
+  });
+  const stop = async () => {
+    for (const peer of peers) peer.destroy();
+    await Promise.all(listeners.map((listener) => new Promise<void>((resolve) => listener.close(() => resolve()))));
+    for (const marker of markers) fs.rmSync(marker, { force: true });
+  };
   try {
     // Herdr's terminal CLI uses the separate client socket, not JSON control.
-    fs.symlinkSync(herdr.socket.replace(/\.sock$/, "-client.sock"), socket.replace(/\.sock$/, "-client.sock"));
-    await new Promise<void>((resolve, reject) => {
-      server.once("error", reject);
-      server.listen(socket, resolve);
-    });
+    if (process.platform === "win32") {
+      // HERDR_SOCKET_PATH takes precedence over a client-only override.
+      // Forward the CLI's derived endpoint as bytes, without JSON gating.
+      const clientServer = net.createServer((client) => {
+        const upstream = net.connect(endpoint(herdr.socket.replace(/\.sock$/, "-client.sock")));
+        for (const peer of [client, upstream]) {
+          peers.add(peer);
+          peer.on("close", () => { peers.delete(peer); client.destroy(); upstream.destroy(); });
+          peer.on("error", () => { client.destroy(); upstream.destroy(); });
+        }
+        client.pipe(upstream).pipe(client);
+      });
+      clientServer.maxConnections = 64;
+      listeners.push(clientServer);
+      await listen(clientServer, clientSocket);
+    } else {
+      fs.symlinkSync(herdr.socket.replace(/\.sock$/, "-client.sock"), clientSocket);
+    }
+    await listen(server, socket);
+    if (process.platform === "win32") {
+      // The core checks these marker paths before connecting to the pipes.
+      for (const marker of [socket, clientSocket]) {
+        fs.writeFileSync(marker, `${process.pid}:${Date.now()}`, { flag: "wx" });
+        markers.push(marker);
+      }
+    }
   } catch (error) {
-    server.close();
+    await stop();
     throw error;
   }
   return {
@@ -77,10 +112,7 @@ async function focusGate(herdr: HerdrFixture) {
       return new Promise<void>((resolve) => { held = resolve; });
     },
     release: async () => { const forward = release; release = undefined; await forward?.(); },
-    stop: async () => {
-      for (const peer of peers) peer.destroy();
-      await new Promise<void>((resolve) => server.close(() => resolve()));
-    },
+    stop,
   };
 }
 
