@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { CHILD, RICH } from "./gallery/cmdkSceneData";
+import { initializeInterfaceI18n } from "./i18n/instance";
 import { filterEntries, fuzzyScore, groupEntries, numberQuery, recentEntries, searchEntries, type SearchEntry } from "./search";
 import type { SnapshotRest } from "./snapshot";
+
+const { t } = initializeInterfaceI18n("en");
+const ko = initializeInterfaceI18n("ko").t;
 
 describe("fuzzy score", () => {
   it("needs the query's characters in order", () => {
@@ -43,14 +47,14 @@ const without = (entries: SearchEntry[]) => entries.filter((entry) => entry.id !
 
 describe("search entries", () => {
   it("lists agents, projects and checkouts with the ids that activate them", () => {
-    const entries = without(searchEntries(REST));
+    const entries = without(searchEntries(REST, t));
     expect(entries.map((entry) => entry.kind)).toEqual(["agent", "agent", "project", "checkout"]);
     expect(entries[0]).toMatchObject({ kind: "agent", paneId: "p1" });
     expect(entries[3]).toMatchObject({ kind: "checkout", workspaceId: "w1", checkoutId: "c1" });
   });
 
   it("heads each entry under its kind: Agents, Projects, Checkouts (PRD cmdk-navigation B11)", () => {
-    const heads = Object.fromEntries(without(searchEntries(REST)).map((entry) => [entry.id, entry.group.label]));
+    const heads = Object.fromEntries(without(searchEntries(REST, t)).map((entry) => [entry.id, t(entry.group.label)]));
     expect(heads).toEqual({
       "agent:p1": "Agents",
       "agent:p9": "Agents",
@@ -59,19 +63,20 @@ describe("search entries", () => {
     });
   });
 
-  it("offers 에이전트 시작… as the only command, on every snapshot (B22)", () => {
-    expect(searchEntries(REST).filter((entry) => entry.kind === "command")).toEqual([expect.objectContaining({ id: START_AGENT, title: "에이전트 시작…", command: "start_agent" })]);
+  it("offers Start an agent… as the only command, on every snapshot (B22)", () => {
+    expect(searchEntries(REST, t).filter((entry) => entry.kind === "command")).toEqual([expect.objectContaining({ id: START_AGENT, title: "Start an agent…", subtitle: "Start an agent", command: "start_agent" })]);
+    expect(searchEntries(REST, ko).find((entry) => entry.id === START_AGENT)).toMatchObject({ title: "에이전트 시작…", subtitle: "에이전트 시작" });
   });
 
   it("gives an agent row its mark's kind, where it works and its state sentence, else the status word", () => {
-    const [one, elsewhere] = without(searchEntries(REST));
+    const [one, elsewhere] = without(searchEntries(REST, t));
     expect(one).toMatchObject({ agentKind: "claude", subtitle: "fixture · Working" });
     // A pane no checkout holds has no place, and none is made up.
     expect(elsewhere).toMatchObject({ agentKind: "codex", subtitle: "Waiting for review" });
   });
 
   it("filters by the fuzzy score and keeps the best first", () => {
-    const group = { id: "projects", label: "Projects" };
+    const group = { id: "projects", label: "overview.projects" } as const;
     const entries: SearchEntry[] = [
       { id: "1", title: "Alpha", subtitle: "/a", kind: "project", group },
       { id: "2", title: "Beta", subtitle: "/b", kind: "project", group },
@@ -120,7 +125,7 @@ const TWO_DEVICES = {
 
 describe("search entries across devices (PRD home-device-rail B40)", () => {
   it("finds every connected device's agents, projects and checkouts and the devices themselves", () => {
-    const entries = searchEntries(TWO_DEVICES);
+    const entries = searchEntries(TWO_DEVICES, t);
     expect(entries.filter((entry) => entry.kind === "agent").map((entry) => entry.title)).toEqual(["Agent one", "Agent elsewhere", "배치 감시"]);
     expect(entries.filter((entry) => entry.kind === "project").map((entry) => entry.title)).toEqual(["fixture", "web"]);
     expect(entries.filter((entry) => entry.kind === "checkout").map((entry) => entry.checkoutId)).toEqual(["c1", "remote:mini:checkout:web"]);
@@ -128,31 +133,31 @@ describe("search entries across devices (PRD home-device-rail B40)", () => {
   });
 
   it("chips a result only while its device is not the one in front, and never lists a device's Home as a project", () => {
-    const fromLocal = searchEntries(TWO_DEVICES);
+    const fromLocal = searchEntries(TWO_DEVICES, t);
     expect(fromLocal.find((entry) => entry.id === "agent:p1")?.chip).toBeUndefined();
     expect(fromLocal.find((entry) => entry.id === "agent:remote:mini:pane:1")?.chip).toEqual({ label: "mini", local: false });
     expect(fromLocal.some((entry) => entry.title === "hide")).toBe(false);
-    const fromMini = searchEntries({ ...TWO_DEVICES, navigator: { ...TWO_DEVICES.navigator, focused_device_id: "mini" } } as SnapshotRest);
+    const fromMini = searchEntries({ ...TWO_DEVICES, navigator: { ...TWO_DEVICES.navigator, focused_device_id: "mini" } } as SnapshotRest, t);
     expect(fromMini.find((entry) => entry.id === "agent:p1")?.chip).toEqual({ label: "This Mac", local: true });
     expect(fromMini.find((entry) => entry.id === "agent:remote:mini:pane:1")?.chip).toBeUndefined();
   });
 
   it("lists nothing current from a device that is not connected, beyond the device itself", () => {
-    const entries = searchEntries(TWO_DEVICES);
+    const entries = searchEntries(TWO_DEVICES, t);
     expect(entries.some((entry) => entry.deviceId === "build-box" && entry.kind !== "device")).toBe(false);
   });
 });
 
 describe("grouping (issue 154)", () => {
-  const agentsHere = { id: "agents:w1", label: "herdr-ide > AGENTS" };
-  const agentsThere = { id: "agents:w2", label: "sasu > AGENTS" };
-  const projects = { id: "projects", label: "Projects" };
+  const agentsHere = { id: "agents:w1", label: "overview.agents" } as const;
+  const agentsThere = { id: "agents:w2", label: "overview.issues" } as const;
+  const projects = { id: "projects", label: "overview.projects" } as const;
   const entry = (id: string, group: SearchEntry["group"]): SearchEntry => ({ id, title: id, subtitle: "", kind: "agent", group });
 
   it("stands each group where its best entry ranked and keeps the rank inside it", () => {
     const ranked = [entry("a", agentsHere), entry("p", projects), entry("b", agentsThere), entry("c", agentsHere), entry("q", projects)];
     const sections = groupEntries(ranked);
-    expect(sections.map((section) => section.group.label)).toEqual(["herdr-ide > AGENTS", "Projects", "sasu > AGENTS"]);
+    expect(sections.map((section) => section.group.id)).toEqual(["agents:w1", "projects", "agents:w2"]);
     expect(sections.map((section) => section.entries.map((row) => row.id))).toEqual([["a", "c"], ["p", "q"], ["b"]]);
   });
 
@@ -161,16 +166,16 @@ describe("grouping (issue 154)", () => {
   });
 
   it("keeps the best match first once grouped", () => {
-    const ranked = filterEntries(searchEntries(REST), "fixture");
+    const ranked = filterEntries(searchEntries(REST, t), "fixture");
     expect(groupEntries(ranked)[0]?.entries[0]?.id).toBe(ranked[0]?.id);
   });
 });
 
 describe("issues and pull requests (PRD cmdk-navigation B11-B13, D-14)", () => {
-  const found = (query: string) => filterEntries(searchEntries(RICH), query).map((entry) => entry.id);
+  const found = (query: string) => filterEntries(searchEntries(RICH, t), query).map((entry) => entry.id);
 
   it("holds this Mac's issues and pull requests, a pull request once however many places name it", () => {
-    const entries = searchEntries(RICH);
+    const entries = searchEntries(RICH, t);
     expect(entries.filter((entry) => entry.kind === "pr").map((entry) => entry.id)).toEqual(["pr:w1:275", "pr:w1:260"]);
     expect(entries.filter((entry) => entry.kind === "issue").map((entry) => entry.id)).toEqual(["issue:github:acme/herdr-ide#273"]);
   });
@@ -187,10 +192,10 @@ describe("issues and pull requests (PRD cmdk-navigation B11-B13, D-14)", () => {
   it("puts the exact number first, an issue and a pull request of the same number each as its own row (B12)", () => {
     const withTwin = structuredClone(RICH) as typeof RICH;
     withTwin.navigator!.workspaces![0]!.pull_requests = [{ ...(RICH.navigator!.workspaces![0]!.pull_requests![0]!), number: 273, title: "Unrelated 275 title" }];
-    const ranked = filterEntries(searchEntries(withTwin), "#273").map((entry) => entry.id);
+    const ranked = filterEntries(searchEntries(withTwin, t), "#273").map((entry) => entry.id);
     expect(ranked.slice(0, 2)).toEqual(["issue:github:acme/herdr-ide#273", "pr:w1:273"]);
     // A bare number holds only rows whose text holds the digits.
-    expect(filterEntries(searchEntries(RICH), "273").every((entry) => `${entry.title} ${entry.subtitle}`.includes("273"))).toBe(true);
+    expect(filterEntries(searchEntries(RICH, t), "273").every((entry) => `${entry.title} ${entry.subtitle}`.includes("273"))).toBe(true);
   });
 
   it("reads #273 and 273 as numbers and nothing else", () => {
@@ -201,18 +206,21 @@ describe("issues and pull requests (PRD cmdk-navigation B11-B13, D-14)", () => {
   });
 
   it("carries the pull request's CI rollup only when it has one", () => {
-    const [open, merged] = searchEntries(RICH).filter((entry) => entry.kind === "pr");
-    expect(open?.ci).toEqual({ tone: "pending", label: "CI 진행 중" });
-    expect(merged?.ci).toEqual({ tone: "done", label: "CI 통과" });
+    const [open, merged] = searchEntries(RICH, t).filter((entry) => entry.kind === "pr");
+    expect(open?.ci).toEqual({ tone: "pending", label: "CI running" });
+    expect(merged?.ci).toEqual({ tone: "done", label: "CI passed" });
+    const koEntries = searchEntries(RICH, ko).filter((entry) => entry.kind === "pr");
+    expect(koEntries[0]?.ci).toEqual({ tone: "pending", label: "CI 진행 중" });
+    expect(koEntries[1]?.ci).toEqual({ tone: "done", label: "CI 통과" });
     const unknown = structuredClone(RICH) as typeof RICH;
     unknown.navigator!.workspaces![0]!.pull_requests![0]!.checks = "unknown";
-    expect(searchEntries(unknown).find((entry) => entry.id === "pr:w1:275")?.ci).toBeUndefined();
+    expect(searchEntries(unknown, t).find((entry) => entry.id === "pr:w1:275")?.ci).toBeUndefined();
   });
 
   it("keeps the 80 row cap", () => {
     const many = structuredClone(RICH) as typeof RICH;
     many.navigator!.workspaces![0]!.tasks!.tasks = Array.from({ length: 120 }, (_, index) => ({ key: `github:acme/herdr-ide#${index + 1000}`, source: "github", id: `#${index + 1000}`, url: null, title: `sandbox issue ${index}`, open: true }));
-    expect(filterEntries(searchEntries(many), "sandbox").length).toBe(80);
+    expect(filterEntries(searchEntries(many, t), "sandbox").length).toBe(80);
   });
 
   it("finds an agent by where it works", () => {
@@ -230,7 +238,7 @@ describe("recent entries (PRD cmdk-recent)", () => {
   it("lists the record's checkouts newest first, as the checkout rows, under Recent (B1, B2)", () => {
     const entries = recentEntries(withRecent([record("mini", "remote:mini:checkout:web"), record("local", "c1")]), new Set());
     expect(ids(entries)).toEqual(["remote:mini:checkout:web", "c1"]);
-    expect(entries.every((entry) => entry.group.label === "Recent" && entry.kind === "checkout")).toBe(true);
+    expect(entries.every((entry) => entry.group.id === "recent" && entry.kind === "checkout")).toBe(true);
     // Branch over project, the device's chip only off the device in front.
     expect(entries[0]).toMatchObject({ title: "main", subtitle: "web", chip: { label: "mini", local: false } });
     expect(entries[1]).toMatchObject({ title: "main", subtitle: "fixture", chip: undefined });

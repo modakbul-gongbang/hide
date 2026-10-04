@@ -3,17 +3,69 @@
 // so a label never names a key the window listener does not answer.
 
 import { hostKind, keySystem } from "./host";
-import { displayChord, displayCommand, fieldChord, hostRegistry, type Chord, type CommandId, type StoredShortcutSets } from "./shortcuts";
+import {
+  displayChord,
+  displayCommand,
+  fieldChord,
+  hostRegistry,
+  isNumberedCommand,
+  numberedCommand,
+  type BindingProblem,
+  type Chord,
+  type Command,
+  type CommandId,
+  type Passthrough,
+  type SheetRow,
+  type StoredShortcutSets,
+} from "./shortcuts";
 import { useShellStore } from "./store";
 import type { TFunction } from "i18next";
 
-/** Shared Overview navigation labels; other command surfaces await issue 339. */
-export function overviewCommandTitle(id: string, title: string, t: TFunction<"translation">): string {
-  switch (id) {
-    case "overview": return t("commands.overview");
-    case "sidebar_projects": return t("commands.sidebar_projects");
-    case "sidebar_agents": return t("commands.sidebar_agents");
-    default: return title;
+/** A command's title in the operator's language; the registry's `title` stays the English the desktop menu reads. */
+export function commandTitle(id: CommandId, t: TFunction<"translation">): string {
+  if (isNumberedCommand(id)) {
+    const { family, number } = numberedCommand(id)!;
+    return t(family === "tabs" ? "commands.select_tab" : "commands.select_agent", { number });
+  }
+  return t(`commands.${id}`);
+}
+
+/** A sheet row's title: a folded numbered family reads with its range ("1-9"). */
+export function sheetRowTitle(row: SheetRow, t: TFunction<"translation">): string {
+  if (!row.range) return commandTitle(row.id, t);
+  return t(numberedCommand(row.id)!.family === "tabs" ? "commands.select_tab" : "commands.select_agent", { number: row.range });
+}
+
+export function commandGroupTitle(group: Command["group"], t: TFunction<"translation">): string {
+  return t(`commands.group.${group.toLowerCase() as Lowercase<Command["group"]>}`);
+}
+
+export function passthroughText(passthrough: Passthrough, t: TFunction<"translation">): string {
+  return t(passthrough === "explorer" ? "commands.explorerOnly" : "commands.trashMacHint");
+}
+
+/** Why a chord is refused, in the operator's language. */
+export function bindingProblemText(problem: BindingProblem, t: TFunction<"translation">): string {
+  switch (problem.code) {
+    case "system_key": return t("commands.binding.systemKey");
+    case "native_key": return t("commands.binding.nativeKey");
+    case "browser_key": return t("commands.binding.browserKey");
+    case "modifier": return t("commands.binding.modifier", { modifier: modifierText(problem.modifier, t) });
+    case "mac_reserved": return t("commands.binding.macReserved", { chord: problem.chord });
+    case "system_reserved": return t("commands.binding.systemReserved", { chord: problem.chord });
+    case "browser_reserved": return t("commands.binding.browserReserved", { chord: problem.chord, system: problem.macos ? "macOS" : t("commands.binding.system") });
+    case "terminal_copy": return t("commands.binding.terminalCopy", { chord: problem.chord });
+    case "terminal_paste": return t("commands.binding.terminalPaste", { chord: problem.chord });
+    case "conflict": return t("commands.binding.conflict", { chord: problem.chord, command: commandTitle(problem.commandId, t) });
+  }
+}
+
+function modifierText(modifier: Extract<BindingProblem, { code: "modifier" }>["modifier"], t: TFunction<"translation">): string {
+  switch (modifier) {
+    case "desktop_mac": return "⌘";
+    case "desktop_pc": return t("commands.binding.modifierDesktopPc");
+    case "browser_mac": return t("commands.binding.modifierBrowserMac");
+    case "browser_pc": return t("commands.binding.modifierBrowserPc");
   }
 }
 

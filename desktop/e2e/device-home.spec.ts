@@ -57,7 +57,7 @@ function paneRunning(herdr: HerdrFixture, text: string): { pane: string; info: s
 async function openStartPanel(page: Page): Promise<void> {
   await page.keyboard.press("Meta+KeyK");
   await expect(page.locator('[data-palette="Search"] [data-palette-input]')).toBeFocused();
-  await page.keyboard.type("에이전트");
+  await page.keyboard.type("Start an agent");
   await page.locator('[data-palette-row="command:start-agent"]').click();
   await expect(page.locator("[data-start-panel]")).toBeVisible();
   await expect(page.locator("[data-start-text]")).toBeFocused();

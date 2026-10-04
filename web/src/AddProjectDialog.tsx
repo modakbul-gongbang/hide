@@ -17,6 +17,8 @@ import { Input } from "./components/ui/input";
 import { Kbd } from "./components/ui/kbd";
 import { Select, SelectContent, SelectItem, SelectSeparator, SelectTrigger, SelectValue } from "./components/ui/select";
 import { RegistrationStatus, useRegistration } from "./registration";
+import type { MessageKey } from "./i18n/catalogs";
+import { useInterfaceTranslation } from "./i18n/client";
 import type { WorkspaceRegistration } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
@@ -30,22 +32,23 @@ export function AddProjectDialog({ actions }: { actions: Actions }) {
 }
 
 /** The other ways to add on this Mac, each a view of this dialog. */
-type OtherWay = { id: "clone" | "create"; label: string; detail: string; icon: LucideIcon };
+type OtherWay = { id: "clone" | "create"; label: MessageKey; detail: MessageKey; icon: LucideIcon };
 
 const OTHER_WAYS: readonly OtherWay[] = [
-  { id: "clone", label: "Clone from URL", detail: "A Git repository copied into a new folder", icon: LinkIcon },
-  { id: "create", label: "Create new project", detail: "A new folder with its own Git repository", icon: FolderPlusIcon },
+  { id: "clone", label: "addProject.wayClone", detail: "addProject.wayCloneDetail", icon: LinkIcon },
+  { id: "create", label: "addProject.wayCreate", detail: "addProject.wayCreateDetail", icon: FolderPlusIcon },
 ];
 
 /** The Host list's last entry; it opens Add device instead of choosing a host. */
 const ADD_DEVICE = "__add_device__";
 
 function AddProject({ actions }: { actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const close = () => useUiStore.getState().closeOverlay("add_project");
   const devices = useShellStore((s) => s.rest?.navigator?.devices);
   const focused = useShellStore((s) => s.rest?.navigator?.focused_device_id);
   const registrations = useShellStore((s) => s.rest?.ui_state?.workspace_registrations ?? NO_REGISTRATIONS);
-  const hosts = addProjectHosts(devices);
+  const hosts = addProjectHosts(devices, t);
   const [chosen, setChosen] = useState(() => initialHost(hosts, focused));
   const host = hosts.find((row) => row.id === chosen) ?? hosts[0]!;
   // A clone still running when the dialog opens is shown where it started.
@@ -104,11 +107,11 @@ function AddProject({ actions }: { actions: Actions }) {
         ) : (
           <>
             <DialogHeader>
-              <DialogTitle>Add a project</DialogTitle>
+              <DialogTitle>{t("addProject.title")}</DialogTitle>
             </DialogHeader>
             <DialogBody className="flex flex-col gap-md">
               <div className="flex items-center gap-sm">
-                <span className="text-body text-subtle-foreground">Host</span>
+                <span className="text-body text-subtle-foreground">{t("addProject.host")}</span>
                 <Select
                   value={host.id}
                   onValueChange={(next) => {
@@ -123,7 +126,7 @@ function AddProject({ actions }: { actions: Actions }) {
                     hostChanged.current = true;
                   }}
                 >
-                  <SelectTrigger size="sm" className="w-auto" aria-label="Host" data-add-project-host="true">
+                  <SelectTrigger size="sm" className="w-auto" aria-label={t("addProject.host")} data-add-project-host="true">
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent
@@ -142,7 +145,7 @@ function AddProject({ actions }: { actions: Actions }) {
                     ))}
                     <SelectSeparator />
                     <SelectItem value={ADD_DEVICE} data-host-option-add-device="true">
-                      기기 추가…
+                      {t("sidebar.addDevice")}
                     </SelectItem>
                   </SelectContent>
                 </Select>
@@ -160,8 +163,8 @@ function AddProject({ actions }: { actions: Actions }) {
                     <FolderOpenIcon />
                   </span>
                   <span className="flex min-w-0 flex-1 flex-col">
-                    <span className="text-subhead font-medium text-foreground">Browse folder</span>
-                    <span className="text-body text-muted-foreground">A project, a Git repository, or a folder of repositories</span>
+                    <span className="text-subhead font-medium text-foreground">{t("addProject.browseTitle")}</span>
+                    <span className="text-body text-muted-foreground">{t("addProject.browseDetail")}</span>
                   </span>
                   <Kbd aria-hidden="true">
                     <CornerDownLeftIcon />
@@ -175,7 +178,7 @@ function AddProject({ actions }: { actions: Actions }) {
                       mono
                       value={text}
                       placeholder="~/…"
-                      aria-label={`Folder on ${host.label}`}
+                      aria-label={t("addProject.folderOn", { host: host.label })}
                       data-add-project-path="true"
                       onChange={(event) => setText(event.target.value)}
                       onKeyDown={(event) => {
@@ -185,16 +188,16 @@ function AddProject({ actions }: { actions: Actions }) {
                       }}
                     />
                     <Button variant="secondary" disabled={pending} onClick={submitField} data-add-project-submit="true">
-                      Add
+                      {t("common.add")}
                     </Button>
                   </div>
-                  <p className="text-body text-muted-foreground">A folder inside {host.label}&apos;s home; that device checks it.</p>
+                  <p className="text-body text-muted-foreground">{t("addProject.homeNote", { host: host.label })}</p>
                 </div>
               )}
               <RegistrationStatus registration={registration} />
               {host.id === "local" ? (
                 <div className="flex flex-col gap-xs" data-add-project-other-ways="true">
-                  <span className="text-caption text-muted-foreground">Other ways to add</span>
+                  <span className="text-caption text-muted-foreground">{t("addProject.otherWays")}</span>
                   {OTHER_WAYS.map((way) => (
                     <button
                       key={way.id}
@@ -214,8 +217,8 @@ function AddProject({ actions }: { actions: Actions }) {
                         <way.icon />
                       </span>
                       <span className="flex min-w-0 flex-1 flex-col">
-                        <span className="text-subhead font-medium text-foreground">{way.label}</span>
-                        <span className="text-body text-muted-foreground">{way.detail}</span>
+                        <span className="text-subhead font-medium text-foreground">{t(way.label)}</span>
+                        <span className="text-body text-muted-foreground">{t(way.detail)}</span>
                       </span>
                     </button>
                   ))}

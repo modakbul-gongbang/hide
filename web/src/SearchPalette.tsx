@@ -15,14 +15,16 @@ import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 import { remoteRequestId } from "./remote";
 import { keyboardOwner } from "./viewFocus";
+import { useInterfaceTranslation } from "./i18n/client";
+import { requireInterfaceLanguage } from "./i18n/locale";
 
 // ⌘K (PRD cmdk-navigation): a palette that goes to things. A query finds an
 // agent, project, checkout, device, issue or pull request by name or #number;
 // an empty one lists what is connected to the thing in front, drawn as a
 // Project's Overview groups it; the highlighted row's detail is the right
-// half. Nothing here runs a command but `에이전트 시작…`. GitHub is read only
+// half. Nothing here runs a command but `Start an agent…`. GitHub is read only
 // by the one project read ⌘K asks for when it opens and by the explicit
-// `GitHub에서 "…" 검색` row; typing never calls it.
+// `Search GitHub for "…"` row; typing never calls it.
 
 /** The window is too narrow for a list and a detail below this width; the detail is not drawn then (B26). */
 const DETAIL_MIN_WIDTH = 800;
@@ -53,6 +55,8 @@ const TONE_CLASS: Record<Tone, string> = {
 };
 
 export function SearchPalette({ actions }: { actions: Actions }) {
+  const { t, i18n } = useInterfaceTranslation();
+  const language = requireInterfaceLanguage(i18n.language);
   const rest = useShellStore((s) => s.rest);
   const close = useUiStore((s) => s.closeOverlay);
   const [query, setQuery] = useState("");
@@ -90,19 +94,19 @@ export function SearchPalette({ actions }: { actions: Actions }) {
     return () => observer.disconnect();
   }, [box]);
 
-  const entries = useMemo(() => searchEntries(rest), [rest]);
-  const related = useMemo<Relations | null>(() => (front.target ? relationsOf(rest, front.target, true) : null), [rest, front]);
+  const entries = useMemo(() => searchEntries(rest, t), [rest, t]);
+  const related = useMemo<Relations | null>(() => (front.target ? relationsOf(rest, front.target, t, true) : null), [rest, front, t]);
   const trimmed = query.trim();
   const answer = ownAnswer(rest?.issue_work?.search, asked, trimmed);
-  const row = githubRow(trimmed, answer);
+  const row = githubRow(trimmed, answer, t);
   const showGithub = trimmed.length > 0 && hasGithubProject(rest);
 
   const sections: SearchSection[] = useMemo(() => {
     if (!trimmed) return [];
     const found = groupEntries(filterEntries(entries, trimmed));
-    const searched = answer?.phase === "ready" ? githubEntries(answer.results, entries) : [];
+    const searched = answer?.phase === "ready" ? githubEntries(answer.results, entries, t) : [];
     return searched.length > 0 ? [...found, { group: GITHUB_GROUP, entries: searched }] : found;
-  }, [entries, trimmed, answer]);
+  }, [entries, trimmed, answer, t]);
 
   const relatedRows = useMemo(() => (trimmed || !related ? [] : relationRows(related)), [trimmed, related]);
   // Recent follows Related on the empty query and leaves out the checkouts already on screen: the one in front and every one Related lists (PRD cmdk-recent B4).
@@ -163,25 +167,25 @@ export function SearchPalette({ actions }: { actions: Actions }) {
     if (entry) activate(entry);
   };
 
-  const reads = (entry: SearchEntry): ProjectRead => (entry.kind === "checkout" && entry.workspace ? projectRead(entry.workspace, askedProjects, now) : null);
+  const reads = (entry: SearchEntry): ProjectRead => (entry.kind === "checkout" && entry.workspace ? projectRead(entry.workspace, askedProjects, now, t, language) : null);
 
-  const detail: Detail | null = selectedEntry ? detailOf(rest, selectedEntry, now) : null;
+  const detail: Detail | null = selectedEntry ? detailOf(rest, selectedEntry, now, t, language) : null;
 
   return (
     <CommandDialog
       open
-      title="Search"
-      description="Go to an agent, project, checkout, device, issue or pull request"
+      title={t("commands.search")}
+      description={t("search.description")}
       className="w-[calc(var(--size-search-sheet-w)*1.5)]"
       onOpenChange={(open) => {
         if (!open) close();
       }}
     >
       <div ref={setBox} className="flex min-w-0 flex-col" data-cmdk={collapsed ? "collapsed" : "open"}>
-        <Command shouldFilter={false} label="Search" data-palette="Search" value={selected} onValueChange={setHighlighted}>
+        <Command shouldFilter={false} label={t("commands.search")} data-palette="Search" value={selected} onValueChange={setHighlighted}>
           <CommandInput
             value={query}
-            placeholder="이름이나 #번호를 입력하세요"
+            placeholder={t("search.placeholder")}
             maxLength={SEARCH_QUERY_LIMIT}
             data-palette-input="true"
             onValueChange={(value) => setQuery(value)}
@@ -195,11 +199,11 @@ export function SearchPalette({ actions }: { actions: Actions }) {
                   <>
                     {sections.length === 0 ? (
                       <div className="px-md py-sm text-caption text-muted-foreground" data-palette-state="no-match">
-                        일치하는 항목 없음
+                        {t("search.noMatch")}
                       </div>
                     ) : null}
                     {sections.map((section) => (
-                      <CommandGroup key={section.group.id} heading={section.group.label} data-palette-group={section.group.id}>
+                      <CommandGroup key={section.group.id} heading={t(section.group.label)} data-palette-group={section.group.id}>
                         {section.entries.map((entry) => (
                           <SearchRow key={entry.id} entry={entry} read={reads(entry)} onSelect={() => onSelect(entry.id)} />
                         ))}
@@ -210,14 +214,14 @@ export function SearchPalette({ actions }: { actions: Actions }) {
                 ) : (
                   <>
                     {relatedRows.length > 0 ? (
-                      <CommandGroup heading={RELATED_GROUP.label} data-palette-group={RELATED_GROUP.id}>
+                      <CommandGroup heading={t(RELATED_GROUP.label)} data-palette-group={RELATED_GROUP.id}>
                         {relatedRows.map((entry) => (
                           <SearchRow key={entry.id} entry={entry} read={reads(entry)} onSelect={() => onSelect(entry.id)} />
                         ))}
                       </CommandGroup>
                     ) : null}
                     {recentRows.length > 0 ? (
-                      <CommandGroup heading={RECENT_GROUP.label} data-palette-group={RECENT_GROUP.id}>
+                      <CommandGroup heading={t(RECENT_GROUP.label)} data-palette-group={RECENT_GROUP.id}>
                         {recentRows.map((entry) => (
                           <SearchRow key={entry.id} entry={entry} read={reads(entry)} onSelect={() => onSelect(entry.id)} />
                         ))}
@@ -231,9 +235,9 @@ export function SearchPalette({ actions }: { actions: Actions }) {
           )}
           {collapsed ? null : (
             <div className="flex items-center gap-md border-t border-border px-md py-xxs text-caption text-muted-foreground" data-palette-footer="true">
-              <span className="flex items-center gap-xxs"><Kbd>↑</Kbd><Kbd>↓</Kbd> 이동</span>
-              <span className="flex items-center gap-xxs"><Kbd>↵</Kbd> 열기</span>
-              <span className="flex items-center gap-xxs"><Kbd>Esc</Kbd> 닫기</span>
+              <span className="flex items-center gap-xxs"><Kbd>↑</Kbd><Kbd>↓</Kbd> {t("search.navigate")}</span>
+              <span className="flex items-center gap-xxs"><Kbd>↵</Kbd> {t("common.open")}</span>
+              <span className="flex items-center gap-xxs"><Kbd>Esc</Kbd> {t("common.close")}</span>
             </div>
           )}
         </Command>
@@ -260,6 +264,7 @@ function StatusText({ status }: { status: { tone: Tone; label: string } }) {
 
 /** One result or relation row: its mark, the title and the line under it, and the state at its end. */
 function SearchRow({ entry, read, onSelect }: { entry: SearchEntry; read: ProjectRead; onSelect: () => void }) {
+  const { t } = useInterfaceTranslation();
   const depth = entry.depth ?? 0;
   return (
     <CommandItem asChild value={entry.id} onSelect={onSelect}>
@@ -267,7 +272,7 @@ function SearchRow({ entry, read, onSelect }: { entry: SearchEntry; read: Projec
         <EntryIcon entry={entry} />
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="flex min-w-0 items-center gap-xs">
-            {entry.tag === "parent" ? <span className="shrink-0 text-caption text-muted-foreground">↑ 부모</span> : null}
+            {entry.tag === "parent" ? <span className="shrink-0 text-caption text-muted-foreground">{t("search.parent")}</span> : null}
             <span className="min-w-0 truncate font-medium">{entry.title}</span>
             {entry.chip ? <DeviceChip label={entry.chip.label} local={entry.chip.local} className="max-w-2/5" /> : null}
           </span>
@@ -275,10 +280,10 @@ function SearchRow({ entry, read, onSelect }: { entry: SearchEntry; read: Projec
         </span>
         {entry.tag === "here" ? (
           <span className="shrink-0 rounded-full border border-border px-xs text-caption text-subtle-foreground" data-palette-here="true">
-            여기
+            {t("search.here")}
           </span>
         ) : null}
-        {read?.state === "reading" ? <LoaderCircleIcon aria-label="GitHub 읽는 중" className="size-(--size-icon-sm) shrink-0 animate-spin text-muted-foreground" data-palette-read="reading" /> : null}
+        {read?.state === "reading" ? <LoaderCircleIcon aria-label={t("search.readingGitHub")} className="size-(--size-icon-sm) shrink-0 animate-spin text-muted-foreground" data-palette-read="reading" /> : null}
         {read?.state === "failed" ? (
           <span title={read.tooltip} aria-label={read.tooltip} className="shrink-0 text-warning" data-palette-read="failed">
             <TriangleAlertIcon className="size-(--size-icon-sm)" />
@@ -297,6 +302,7 @@ function SearchRow({ entry, read, onSelect }: { entry: SearchEntry; read: Projec
 
 /** The last row of a search: the explicit GitHub search, never run while typing (B16-B19). */
 function GithubSearchRow({ row, onSelect }: { row: GithubRow; onSelect: () => void }) {
+  const { t } = useInterfaceTranslation();
   return (
     <CommandGroup data-palette-group="github-search">
       <CommandItem asChild value={GITHUB_ROW_ID} onSelect={onSelect}>
@@ -305,7 +311,7 @@ function GithubSearchRow({ row, onSelect }: { row: GithubRow; onSelect: () => vo
             {row.state === "failed" ? <TriangleAlertIcon className="text-warning" /> : <SearchIcon />}
           </span>
           <span className={`min-w-0 flex-1 truncate ${row.state === "none" ? "text-muted-foreground" : "font-medium"}`}>{row.label}</span>
-          {row.state === "working" ? <LoaderCircleIcon aria-label="GitHub 검색 중" className="size-(--size-icon-sm) shrink-0 animate-spin text-muted-foreground" data-palette-read="searching" /> : null}
+          {row.state === "working" ? <LoaderCircleIcon aria-label={t("search.searchingGitHub")} className="size-(--size-icon-sm) shrink-0 animate-spin text-muted-foreground" data-palette-read="searching" /> : null}
           <span aria-hidden="true" data-palette-enter="true" className="invisible shrink-0 text-caption text-muted-foreground group-data-[selected=true]/palette-row:visible">
             ↵
           </span>
@@ -316,15 +322,16 @@ function GithubSearchRow({ row, onSelect }: { row: GithubRow; onSelect: () => vo
 }
 
 function RelationBlock({ relations, on }: { relations: Relations; on: string }) {
+  const { t } = useInterfaceTranslation();
   const line = (entry: SearchEntry, depth: number) => (
     <div key={entry.id} data-relation-row={entry.id} data-relation-on={entry.id === on ? "true" : undefined} className={`flex items-center gap-xs py-xxs text-caption ${entry.id === on ? "font-semibold text-foreground" : "text-subtle-foreground"}`} style={depth > 0 ? { paddingLeft: `calc(${depth} * var(--spacing-md))` } : undefined}>
       <span className="flex w-(--size-icon-sm) shrink-0 justify-center [&_svg]:size-(--size-icon-sm)"><EntryIcon entry={entry} /></span>
-      <span className="min-w-0 break-words">{entry.tag === "parent" ? "↑ 부모 " : ""}{entry.title}</span>
+      <span className="min-w-0 break-words">{entry.tag === "parent" ? `${t("search.parent")} ` : ""}{entry.title}</span>
     </div>
   );
   return (
     <div className="mt-md border-t border-border pt-md" data-detail-relations="true">
-      <h4 className="mb-xs text-caption font-semibold text-muted-foreground">관계</h4>
+      <h4 className="mb-xs text-caption font-semibold text-muted-foreground">{t("search.relations")}</h4>
       {relations.issues.map((entry) => line(entry, 0))}
       {relations.groups.map((group) => (
         <div key={group.head.id}>
@@ -338,13 +345,14 @@ function RelationBlock({ relations, on }: { relations: Relations; on: string }) 
 
 /** The highlighted row, said in full: its state, its facts and the relations it belongs to. */
 function DetailPane({ detail, entry, githubRow: row, query }: { detail: Detail | null; entry: SearchEntry | null; githubRow: GithubRow | null; query: string }) {
+  const { t } = useInterfaceTranslation();
   if (row) {
     return (
       <aside className="flex min-w-0 flex-1 flex-col overflow-y-auto p-md" data-palette-detail-pane="github">
         <div className="text-caption font-semibold text-muted-foreground">GitHub</div>
         <div className="mt-xs break-words text-subhead font-semibold">{`"${query}"`}</div>
-        <p className="mt-sm text-caption text-muted-foreground">이 Mac의 GitHub 프로젝트 저장소에서 PR과 이슈를 한 번 검색합니다. 입력하는 동안에는 GitHub를 부르지 않습니다.</p>
-        <ActionLine text={row.state === "failed" ? "다시 시도" : row.state === "none" ? "찾은 결과가 없습니다" : "GitHub에서 검색"} key_={row.state !== "none"} />
+        <p className="mt-sm text-caption text-muted-foreground">{t("search.githubDescription")}</p>
+        <ActionLine text={row.state === "failed" ? t("common.retry") : row.state === "none" ? t("search.noResults") : t("search.searchGitHub")} key_={row.state !== "none"} />
       </aside>
     );
   }
@@ -377,7 +385,7 @@ function DetailPane({ detail, entry, githubRow: row, query }: { detail: Detail |
         ) : null}
         {detail.relations ? <RelationBlock relations={detail.relations} on={entry.id} /> : null}
       </div>
-      {detail.action ? <ActionLine text={here ? "지금 보고 있는 에이전트" : detail.action} key_={!here} /> : null}
+      {detail.action ? <ActionLine text={here ? t("search.currentAgent") : detail.action} key_={!here} /> : null}
     </aside>
   );
 }

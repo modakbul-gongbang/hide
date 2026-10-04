@@ -9,7 +9,8 @@ export type StartAnswer =
   | { phase: "pending" }
   /** The core refused the request before any work: the reason is the operator's to act on. */
   | { phase: "refused"; message: string }
-  | { phase: "failed"; message: string }
+  /** `message` is the core's reason, null when it sent none. */
+  | { phase: "failed"; message: string | null }
   /** The tab exists; `agentPhase` says whether the agent behind it started (`starting`, `started`, `failed`). */
   | { phase: "ready"; taskId: number; paneId: string | null; agentPhase: string | null; agentMessage: string | null };
 
@@ -24,7 +25,7 @@ export function startAnswer(rest: SnapshotRest | null, requestId: string): Start
   if (error?.request_id === requestId) return { phase: "refused", message: error.message };
   const operation = rest?.task_operation;
   if (operation?.request_id !== requestId || operation.kind !== "agent_start") return { phase: "pending" };
-  if (operation.phase === "failed") return { phase: "failed", message: operation.message ?? "에이전트를 시작하지 못했습니다." };
+  if (operation.phase === "failed") return { phase: "failed", message: operation.message };
   if (operation.phase !== "ready") return { phase: "pending" };
   return { phase: "ready", taskId: operation.id, paneId: operation.pane_id, agentPhase: operation.agent_phase, agentMessage: operation.agent_message };
 }
