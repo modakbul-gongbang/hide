@@ -120,6 +120,19 @@ async function fromPane(args: string[], succeeds = true): Promise<Record<string,
   const reply = parsed as Record<string, unknown>;
   // Report only the finite reason identifier, never capability-bearing output.
   const reason = typeof reply.reason === "string" && /^[a-z_]{1,64}$/.test(reply.reason) ? reply.reason : "unclassified";
+  if (succeeds && Number(fs.readFileSync(status, "utf8")) !== 0 && app) {
+    const native = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()
+      .filter((window) => window.getParentWindow() === null)
+      .flatMap((window) => window.contentView.children.slice(0, 12).map((view) => {
+        const contents = (view as { webContents?: Electron.WebContents }).webContents;
+        if (!contents || contents.isDestroyed()) return { destroyed: true };
+        const url = contents.getURL();
+        return { protocol: url.split(":", 1)[0], loading: contents.isLoading(), manual: contents.getTitle() === "Manual local file" };
+      }))).catch(() => [{ unavailable: true }]);
+    const page = reply.page as { state?: string; load?: number } | undefined;
+    console.log("Workspace page failure", JSON.stringify({ reason, state: page?.state, load: page?.load, native,
+      events: hostLog(run.env).filter((row) => row.event.startsWith("browser.")).slice(-12).map((row) => ({ event: row.event, reason: row.reason, protocol: row.protocol })) }));
+  }
   expect(Number(fs.readFileSync(status, "utf8")) === 0, `isolated Workspace command result (${reason})`).toBe(succeeds);
   return reply;
 }
