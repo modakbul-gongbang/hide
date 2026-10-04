@@ -242,3 +242,37 @@ test('the following successful collector includes an earlier unknown artifact in
   assert.equal(Object.values(window.suites).reduce((count,s)=>count+s.unknown,0),1);
   assert.equal(JSON.parse(fs.readFileSync(path.join(directory,'ci-history.json'))).collection.status,'complete');
 });
+
+test('actual collector keeps bounded cap failures and independent identified rows at 256 and 257 errors', () => {
+  const fs=require('node:fs'),path=require('node:path'),{spawnSync}=require('node:child_process');
+  const root=path.resolve('agents/runs/ci-test-refactor/history-controls'); fs.mkdirSync(root,{recursive:true});
+  for(const kind of ['producer','identity']) for(const count of [256,257]) {
+    const directory=fs.mkdtempSync(path.join(root,`cap-${kind}-${count}-`));
+    const input=path.join(directory,'input'); fs.mkdirSync(input);
+    const completed={...row,sha:'tested',run:'7',jobLabel:'independent completed producer',test:'readable-independent',status:'passed'};
+    if(kind==='producer') for(let i=0;i<count;i++) fs.writeFileSync(path.join(input,`${String(i).padStart(3,'0')}.json`),'{invalid');
+    else fs.writeFileSync(path.join(input,'000.json'),JSON.stringify({version:1,records:Array.from({length:count},(_,i)=>({...completed,jobLabel:'missing actual job',test:`unresolved-${i}`}))}));
+    fs.writeFileSync(path.join(input,'zzz-readable.json'),JSON.stringify({version:1,records:[completed]}));
+    const code=`const collect=require('./scripts/ci-history.cjs');
+      collect({directory:process.argv[1],outputDirectory:process.argv[2],context:{repo:{},runId:7,sha:'tested'},
+        github:{rest:{actions:{listJobsForWorkflowRunAttempt:async()=>({data:{jobs:[{id:77,name:'independent completed producer',steps:[],conclusion:'success'}]}})}}},
+        core:{summary:{addRaw:()=>({write:async()=>{}})}}}).catch(error=>{console.error(error.message);process.exitCode=1;});`;
+    const result=spawnSync(process.execPath,['-e',code,input,directory],{encoding:'utf8'});
+    assert.notEqual(result.status,0);
+    const attempt=JSON.parse(fs.readFileSync(path.join(directory,'ci-history.json')));
+    const window=JSON.parse(fs.readFileSync(path.join(directory,'ci-history-window.json')));
+    assert.equal(attempt.collection.status,'partial-or-unknown');
+    assert.equal(window.collection.status,'partial-or-unknown');
+    assert.equal(attempt.collection.errors.length,256);
+    assert.ok(attempt.summary.unknown>=256);
+    const independent=attempt.records.find(value=>value.test==='readable-independent');
+    assert.equal(independent.status,'passed'); assert.equal(independent.jobId,77);
+    if(count===257) {
+      assert.match(result.stderr,/collection error inventory cap exceeded/);
+      const cap=attempt.collection.errors.at(-1);
+      assert.equal(cap.stage,'collection-error-cap'); assert.equal(cap.observed,257); assert.equal(cap.omitted,2);
+      assert.ok(attempt.records.some(value=>value.status==='unknown' && value.assertion==='collection error inventory cap exceeded'));
+    } else assert.doesNotMatch(result.stderr,/inventory cap exceeded/);
+    assert.ok(fs.statSync(path.join(directory,'ci-history.json')).size<require('../ci-ledger.cjs').MAX_BYTES);
+  }
+});

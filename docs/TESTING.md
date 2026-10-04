@@ -143,6 +143,7 @@ Global Playwright discovery/setup/runner errors retain their own message, stack 
 Execution identity includes the actual Actions job, consumer lane and invocation, because reusable workflows can share a local `GITHUB_JOB` id.
 Only identical observations of the same attempt are deduplicated; contradictory observations fail collection and retain both original rows and an unknown conflict outcome.
 An interrupted or malformed producer fails collection after the bounded input inventory is read, preserving other producers' completed rows and each available actual job identity.
+The 256-error inventory reserves a cap outcome when it overflows, continues bounded independent input and identity resolution, and saves a failing partial attempt with the cap cause and omitted-error count.
 The real-process controls in `scripts/tests/test_playwright_contracts.py` terminate Playwright with SIGKILL and SIGINT after one completed test and during the next test.
 The ledger caps remain 20,000 rows and 16 MiB; overflow fails the caller and retains the previous complete JSON.
 The complete repetition receipt reads all six five-result batch artifacts through `scripts/ci-controls.cjs collect` and requires every registered test/OS/repeat identity.

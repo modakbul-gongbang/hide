@@ -5,13 +5,30 @@ const {execFileSync} = require('node:child_process');
 const ledger = require('./ci-ledger.cjs');
 const HISTORY_DAYS = 30;
 const MAX_HISTORY_RUNS = 30;
+const MAX_COLLECTION_ERRORS = 256;
+
+// Keep the cap outcome inside the same bounded inventory. Continue reading
+// independent producers and resolving identities after diagnostic saturation.
+function addIssue(issues, issue) {
+  if (issues.length < MAX_COLLECTION_ERRORS) issues.push(issue);
+  else {
+    const last=issues[MAX_COLLECTION_ERRORS-1];
+    if (last.stage === 'collection-error-cap') { last.observed++; last.omitted++; }
+    else issues[MAX_COLLECTION_ERRORS-1]={stage:'collection-error-cap',
+      message:'collection error inventory cap exceeded',cap:MAX_COLLECTION_ERRORS,
+      observed:MAX_COLLECTION_ERRORS+1,omitted:2,lastRetained:last,firstOverflow:issue};
+  }
+}
+function issueFailure(issues) {
+  const cap=issues.find(issue=>issue.stage==='collection-error-cap');
+  const error=new Error((cap || issues[0]).message); error.issues=issues; return error;
+}
 
 function readRecords(directory, records=[], deferredErrors) {
   const errors=deferredErrors || [];
   let files=0;
   function report(error,file) {
-    if(errors.length>=256) throw Error('producer error inventory cap exceeded');
-    errors.push({stage:'input',file:path.relative(directory,file),message:String(error.message).slice(0,16000)});
+    addIssue(errors,{stage:'input',file:path.relative(directory,file),message:String(error.message).slice(0,16000)});
   }
   function visit(at, depth=0) {
     if (depth>3) throw new Error('ledger directory depth cap exceeded');
@@ -34,7 +51,7 @@ function readRecords(directory, records=[], deferredErrors) {
   }
   visit(directory);
   if(errors.length && !deferredErrors) {
-    const error=new Error(errors[0].message); error.issues=errors; throw error;
+    throw issueFailure(errors);
   }
   return records;
 }
@@ -89,18 +106,18 @@ async function collectInto(options, state) {
   state.stage='inventory';
   if (!plan && !current.length) throw new Error('no observed suite collection');
   if (plan) try { confirmInventory(plan,current); }
-  catch(error) { pending.push({stage:state.stage,message:String(error.message)}); }
+  catch(error) { addIssue(pending,{stage:state.stage,message:String(error.message)}); }
   state.stage='source-and-job-identity';
   for (const row of current) {
     if (row.sha!==context.sha || String(row.run)!==String(context.runId) || row.runAttempt!==Number(process.env.GITHUB_RUN_ATTEMPT||1)) {
-      pending.push({stage:state.stage,message:'ledger source identity mismatch'}); continue;
+      addIssue(pending,{stage:state.stage,message:'ledger source identity mismatch'}); continue;
     }
     const matching=inventory.filter(job=>job.name===row.jobLabel || job.name.endsWith(' / '+row.jobLabel));
-    if (matching.length!==1) { pending.push({stage:state.stage,message:`missing/ambiguous Actions job identity: ${row.jobLabel}`}); continue; }
+    if (matching.length!==1) { addIssue(pending,{stage:state.stage,message:`missing/ambiguous Actions job identity: ${row.jobLabel}`}); continue; }
     row.jobId=matching[0].id; row.jobUrl=matching[0].url;
   }
   if(pending.length) {
-    const error=new Error(pending[0].message); error.issues=pending; throw error;
+    throw issueFailure(pending);
   }
   state.stage='history-api';
   const cutoff=Date.now()-HISTORY_DAYS*86400000;
@@ -151,21 +168,18 @@ module.exports=async function collect(options) {
   let failure;
   function unknown(error) {
     const issues=error.issues || [...(state.pendingErrors || []),{stage:state.stage,message:String(error.message)}];
-    if(issues.length>256) throw Error('collection error inventory cap exceeded');
-    for(const issue of issues) {
-      state.errors.push({...issue,message:issue.message.slice(0,16000)});
-      state.records.push({...ledger.identity(),sha:context.sha,run:String(context.runId),
-        suite:'CI collection',test:`${issue.stage} ${issue.file || state.errors.length}`,repeat:0,retry:0,status:'unknown',category:'collection',
-        assertion:issue.message.slice(0,16000),signature:ledger.signature(issue.message)});
-    }
+    for(const issue of issues) addIssue(state.errors,{...issue,message:issue.message.slice(0,16000)});
   }
   function save() {
     const collection={status:state.errors.length?'partial-or-unknown':'complete',errors:state.errors};
-    const current=ledger.merge(state.records,{allowConflicts:Boolean(failure)});
+    const rows=[...state.records,...state.errors.map((issue,index)=>({...ledger.identity(),sha:context.sha,run:String(context.runId),
+      suite:'CI collection',test:`${issue.stage} ${issue.file || index+1}`,repeat:0,retry:0,status:'unknown',category:'collection',
+      assertion:issue.message,signature:ledger.signature(issue.message)}))];
+    const current=ledger.merge(rows,{allowConflicts:Boolean(failure)});
     // The current attempt is saved even when a remote API or required
     // inventory fails. Its unknown result remains visible to later windows.
     ledger.write(path.join(outputDirectory,'ci-history.json'),{...current,jobs:state.jobs,source:{sha:context.sha,run:String(context.runId),attempt:Number(process.env.GITHUB_RUN_ATTEMPT||1)},collection,windowDays:HISTORY_DAYS});
-    const currentSuites=suiteSummaries(state.records,{allowConflicts:Boolean(failure)});
+    const currentSuites=suiteSummaries(rows,{allowConflicts:Boolean(failure)});
     const suites={...state.suites};
     // Prior summaries already contain current test rows; add only collection
     // errors after a partial history read, otherwise summarize all retained rows.
@@ -187,7 +201,7 @@ module.exports=async function collect(options) {
     // Keep a bounded unknown receipt, naming why the partial rows could not be saved.
     failure ||= error;
     state.stage='attempt-save'; unknown(error);
-    state.records=state.records.filter(row=>row.suite==='CI collection');
+    state.records=[];
     state.suites={}; suites=save();
   }
   try { await core.summary.addRaw(summary(suites,state.jobs)).write(); }
