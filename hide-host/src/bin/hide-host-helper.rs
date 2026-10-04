@@ -6,6 +6,26 @@ use std::io::{self, BufReader};
 use std::process::ExitCode;
 
 fn main() -> ExitCode {
+    // Acquire ownership before arguments, input or filesystem work. A standalone
+    // launch has no watch; a protected launch must prove it can observe its owner.
+    let owner_watch = match hide_platform::process::OwnerWatch::from_launch() {
+        Ok(watch) => watch,
+        Err(error) => {
+            eprintln!("hide-host-helper: owner watch acquisition failed: {error}");
+            return ExitCode::FAILURE;
+        }
+    };
+    let result = run();
+    if let Some(watch) = owner_watch
+        && let Err(error) = watch.close()
+    {
+        eprintln!("hide-host-helper: owner watch cleanup failed: {error}");
+        return ExitCode::FAILURE;
+    }
+    result
+}
+
+fn run() -> ExitCode {
     let mut arguments = std::env::args().skip(1);
     match (arguments.next().as_deref(), arguments.next()) {
         (Some("serve"), None) => {
