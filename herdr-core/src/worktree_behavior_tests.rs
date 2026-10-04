@@ -268,6 +268,40 @@ fn ancestry_does_not_mistake_a_squash_merge_for_a_merged_tip() {
 }
 
 #[test]
+fn a_tip_in_the_fetched_origin_base_is_merged_while_the_local_base_lags() {
+    let repo = Repository::new();
+    let landed = repo.linked("landed");
+    git(
+        &landed,
+        &["commit", "--allow-empty", "-m", "landed on origin"],
+    )
+    .unwrap();
+    let landed_head = git(&landed, &["rev-parse", "HEAD"]).unwrap();
+    git(
+        &repo.0,
+        &["update-ref", "refs/remotes/origin/main", landed_head.trim()],
+    )
+    .unwrap();
+    let unlanded = repo.linked("unlanded");
+    git(
+        &unlanded,
+        &["commit", "--allow-empty", "-m", "never landed"],
+    )
+    .unwrap();
+    let result = repo.read(None);
+    let merged = |branch: &str| {
+        result
+            .worktrees
+            .iter()
+            .find(|w| w.branch.as_deref() == Some(branch))
+            .unwrap()
+            .merged
+    };
+    assert_eq!(merged("landed"), Some(true));
+    assert_eq!(merged("unlanded"), Some(false));
+}
+
+#[test]
 fn configured_missing_upstream_is_distinct_from_no_upstream_and_pushed() {
     let repo = Repository::new();
     let feature = repo.linked("feature");

@@ -1,5 +1,5 @@
 //! Reviewed cleanup of a project's disk: the build caches and dependencies a
-//! tool makes again, and clean linked worktrees merged into local main.
+//! tool makes again, and clean linked worktrees merged into main.
 //! All inspection and filesystem effects run on the existing action-worker
 //! path, never under the runtime lock.
 use super::{LiveContext, control_request};
@@ -380,38 +380,51 @@ fn verified_pane_paths(paths: Vec<Option<String>>) -> Result<Vec<PathBuf>, Strin
         .collect()
 }
 
+fn ref_commit(root: &Path, name: &str) -> Option<String> {
+    git(
+        root,
+        &["rev-parse", "--verify", &format!("{name}^{{commit}}")],
+    )
+    .ok()
+    .map(|oid| oid.trim().to_owned())
+}
+
+/// A worktree is merged when its HEAD is in a main commit, or when GitHub
+/// answers that a pull request into `main` merged exactly this HEAD.
+/// A squash or rebase merge leaves the head out of main's history, so GitHub's
+/// answer is the only proof then; it needs no merge commit in any local ref.
 fn verified_merge(
     root: &Path,
-    main: &str,
+    mains: &[String],
     branch: &str,
     head: &str,
     merged_proofs: &mut impl FnMut(&str) -> Result<Vec<github::MergedPullRequestProof>, String>,
 ) -> Result<(), Exclusion> {
-    let unverified = |message: &str| Exclusion::new("merge_unverified", message);
-    let range = format!("{main}..{head}");
-    let count = git(root, &["rev-list", "--count", &range, "--"])?;
-    match count.trim().parse::<u64>() {
-        Ok(0) => return Ok(()),
-        Err(_) => return Err(unverified("Merge status could not be verified")),
-        Ok(_) => {}
+    for main in mains {
+        let range = format!("{main}..{head}");
+        let count = git(root, &["rev-list", "--count", &range, "--"])?;
+        match count.trim().parse::<u64>() {
+            Ok(0) => return Ok(()),
+            Err(_) => {
+                return Err(Exclusion::new(
+                    "merge_unverified",
+                    "Merge status could not be verified",
+                ));
+            }
+            Ok(_) => {}
+        }
     }
-
     let proofs = merged_proofs(branch)?;
-    let Some(proof) = proofs.iter().find(|proof| proof.head_oid == head) else {
-        return Err(Exclusion::new(
-            "not_merged",
-            "Not merged into local main, and no merged pull request exactly matches this worktree HEAD",
-        ));
-    };
-    let merge_oid = proof.merge_oid.as_deref().ok_or_else(|| {
-        unverified("The matching merged pull request has no merge commit identity")
-    })?;
-    git(root, &["merge-base", "--is-ancestor", merge_oid, main]).map_err(|_| {
-        unverified(
-            "The matching pull request is merged on GitHub but its merge commit is not in local main. Update main and review again.",
-        )
-    })?;
-    Ok(())
+    if proofs
+        .iter()
+        .any(|proof| proof.base_ref == "main" && proof.head_oid == head)
+    {
+        return Ok(());
+    }
+    Err(Exclusion::new(
+        "not_merged",
+        "Not merged into main: HEAD is in neither local main nor origin/main, and no pull request merged into main exactly matches it",
+    ))
 }
 
 /// The registered worktrees with the reason each may not be removed. `only`
@@ -438,8 +451,17 @@ fn inspect_with_merge_proofs(
     mut merged_proofs: impl FnMut(&str) -> Result<Vec<github::MergedPullRequestProof>, String>,
 ) -> Result<CleanupSnapshot, String> {
     let mut rows = listed(root)?;
-    let main_head = git(root, &["rev-parse", "--verify", "refs/heads/main^{commit}"])
-        .map(|v| v.trim().to_owned());
+    // Review never fetches, and a local main that nothing keeps current is one
+    // of two answers, not the only one: the remote-tracking copy of the last
+    // fetch is the other.
+    let local_main = ref_commit(root, "refs/heads/main");
+    let mains: Vec<String> = [
+        local_main.clone(),
+        ref_commit(root, "refs/remotes/origin/main"),
+    ]
+    .into_iter()
+    .flatten()
+    .collect();
     let canonical_current =
         current.and_then(|current| hide_platform::fs::identity::canonical(current).ok());
     let paths: Vec<PathBuf> = rows.iter().map(|r| PathBuf::from(&r.path)).collect();
@@ -484,7 +506,12 @@ fn inspect_with_merge_proofs(
                     "In use by a live pane or agent. Close or move it, then review again.",
                 ));
             }
-            let main = main_head.as_ref().map_err(|_| Exclusion::new("main_unavailable", "Local main is unavailable. Fetching or another base cannot establish eligibility."))?;
+            if mains.is_empty() {
+                return Err(Exclusion::new(
+                    "main_unavailable",
+                    "Neither local main nor origin/main exists, so no base can establish eligibility.",
+                ));
+            }
             let head = row
                 .head
                 .as_ref()
@@ -509,7 +536,7 @@ fn inspect_with_merge_proofs(
             }
             verified_merge(
                 root,
-                main,
+                &mains,
                 row.branch.as_deref().expect("branch checked above"),
                 head,
                 &mut merged_proofs,
@@ -532,7 +559,7 @@ fn inspect_with_merge_proofs(
     }
     Ok(CleanupSnapshot {
         repository_root: hide_platform::path::to_wire_lossy(root),
-        main_head: main_head.ok(),
+        main_head: local_main,
         rows,
         phase: "review".into(),
         usage_ready: true,
@@ -1584,65 +1611,93 @@ mod tests {
         );
     }
 
-    #[test]
-    fn squash_merge_requires_the_exact_pr_head_and_a_merge_commit_in_local_main() {
-        let f = Fixture::new();
-        let squashed = f.add("squashed");
-        std::fs::write(squashed.join("feature"), "merged through a squash").unwrap();
-        git(&squashed, &["add", "."]).unwrap();
-        git(
-            &squashed,
-            &[
-                "-c",
-                "commit.gpgsign=false",
-                "-c",
-                "user.name=Fixture",
-                "-c",
-                "user.email=fixture@example.invalid",
-                "commit",
-                "-m",
-                "Feature",
-            ],
-        )
-        .unwrap();
-        let feature_head = git(&squashed, &["rev-parse", "HEAD"])
-            .unwrap()
-            .trim()
-            .to_owned();
-        git(&f.main, &["merge", "--squash", "squashed"]).unwrap();
-        git(
-            &f.main,
-            &[
-                "-c",
-                "commit.gpgsign=false",
-                "-c",
-                "user.name=Fixture",
-                "-c",
-                "user.email=fixture@example.invalid",
-                "commit",
-                "-m",
-                "Squash feature",
-            ],
-        )
-        .unwrap();
-        let merge_head = git(&f.main, &["rev-parse", "HEAD"])
-            .unwrap()
-            .trim()
-            .to_owned();
-
-        let matching = f.review_with_proofs(
-            &f.main,
-            vec![github::MergedPullRequestProof {
-                head_oid: feature_head.clone(),
-                merge_oid: Some(merge_head),
-            }],
-        );
-        let row = matching
+    fn code_of<'a>(review: &'a CleanupSnapshot, path: &Path) -> Option<&'a str> {
+        review
             .rows
             .iter()
-            .find(|row| Path::new(&row.path) == squashed)
-            .unwrap();
-        assert_eq!(row.exclusion, None);
+            .find(|row| Path::new(&row.path) == path)
+            .unwrap()
+            .exclusion_code
+    }
+
+    fn head_of(path: &Path) -> String {
+        git(path, &["rev-parse", "HEAD"]).unwrap().trim().to_owned()
+    }
+
+    /// What `git fetch` leaves behind for a remote main, without a network.
+    fn set_origin_main(f: &Fixture, oid: &str) {
+        git(&f.main, &["update-ref", "refs/remotes/origin/main", oid]).unwrap();
+    }
+
+    fn proof(head_oid: &str, base_ref: &str) -> github::MergedPullRequestProof {
+        github::MergedPullRequestProof {
+            head_oid: head_oid.into(),
+            base_ref: base_ref.into(),
+        }
+    }
+
+    #[test]
+    fn a_head_in_origin_main_is_chosen_while_local_main_lags_behind() {
+        let f = Fixture::new();
+        let landed = f.add("landed");
+        let unlanded = f.add("unlanded");
+        commit(&landed, "Landed on origin");
+        commit(&unlanded, "Never landed");
+        set_origin_main(&f, &head_of(&landed));
+
+        let review = f.review(&f.main, Ok(Vec::new()));
+
+        assert_eq!(code_of(&review, &landed), None);
+        assert_eq!(code_of(&review, &unlanded), Some("not_merged"));
+        assert_eq!(review.main_head, Some(head_of(&f.main)));
+    }
+
+    #[test]
+    fn origin_main_decides_when_local_main_is_gone() {
+        let f = Fixture::new();
+        let landed = f.add("landed");
+        let unlanded = f.add("unlanded");
+        commit(&landed, "Landed on origin");
+        commit(&unlanded, "Never landed");
+        set_origin_main(&f, &head_of(&landed));
+        git(&f.main, &["branch", "-m", "main", "trunk"]).unwrap();
+
+        let review = f.review(&f.main, Ok(Vec::new()));
+
+        assert_eq!(code_of(&review, &landed), None);
+        assert_eq!(code_of(&review, &unlanded), Some("not_merged"));
+    }
+
+    #[test]
+    fn with_neither_local_main_nor_origin_main_nothing_can_be_judged() {
+        let f = Fixture::new();
+        let worktree = f.add("worktree");
+        commit(&worktree, "Merged on GitHub");
+        git(&f.main, &["branch", "-m", "main", "trunk"]).unwrap();
+
+        // Even a matching pull request cannot stand in for a base.
+        let review = f.review_with_proofs(&f.main, vec![proof(&head_of(&worktree), "main")]);
+
+        assert_eq!(code_of(&review, &worktree), Some("main_unavailable"));
+        assert_eq!(review.main_head, None);
+    }
+
+    #[test]
+    fn a_squash_merge_is_proved_by_a_main_pull_request_with_exactly_this_head() {
+        let f = Fixture::new();
+        let squashed = f.add("squashed");
+        commit(&squashed, "Feature");
+        let feature_head = head_of(&squashed);
+
+        // The squash commit is in no local ref, and the proof names none.
+        let matching = f.review_with_proofs(&f.main, vec![proof(&feature_head, "main")]);
+        assert_eq!(code_of(&matching, &squashed), None);
+
+        let reused_branch = f.review_with_proofs(&f.main, vec![proof("a-different-head", "main")]);
+        assert_eq!(code_of(&reused_branch, &squashed), Some("not_merged"));
+
+        let no_proof = f.review_with_proofs(&f.main, Vec::new());
+        assert_eq!(code_of(&no_proof, &squashed), Some("not_merged"));
 
         let unavailable = inspect_with_merge_proofs(
             &f.main,
@@ -1653,55 +1708,23 @@ mod tests {
             |_| Err("GitHub merge proof is unavailable".into()),
         )
         .unwrap();
-        assert!(
-            unavailable
-                .rows
-                .iter()
-                .find(|row| Path::new(&row.path) == squashed)
-                .unwrap()
-                .exclusion
-                .as_deref()
-                .unwrap()
-                .contains("unavailable")
-        );
+        assert_eq!(code_of(&unavailable, &squashed), Some("unverified"));
+    }
 
-        let reused_branch = f.review_with_proofs(
-            &f.main,
-            vec![github::MergedPullRequestProof {
-                head_oid: "a-different-head".into(),
-                merge_oid: Some(feature_head.clone()),
-            }],
-        );
-        assert!(
-            reused_branch
-                .rows
-                .iter()
-                .find(|row| Path::new(&row.path) == squashed)
-                .unwrap()
-                .exclusion
-                .as_deref()
-                .unwrap()
-                .contains("exactly matches")
-        );
+    #[test]
+    fn a_pull_request_merged_into_another_branch_is_no_proof_until_that_branch_lands() {
+        let f = Fixture::new();
+        let stacked = f.add("stacked");
+        commit(&stacked, "Stacked work");
+        let stacked_head = head_of(&stacked);
+        let proofs = vec![proof(&stacked_head, "ci/platform-completion")];
 
-        let local_main_behind = f.review_with_proofs(
-            &f.main,
-            vec![github::MergedPullRequestProof {
-                head_oid: feature_head.clone(),
-                merge_oid: Some(feature_head),
-            }],
-        );
-        assert!(
-            local_main_behind
-                .rows
-                .iter()
-                .find(|row| Path::new(&row.path) == squashed)
-                .unwrap()
-                .exclusion
-                .as_deref()
-                .unwrap()
-                .contains("not in local main")
-        );
+        let before = f.review_with_proofs(&f.main, proofs.clone());
+        assert_eq!(code_of(&before, &stacked), Some("not_merged"));
+
+        set_origin_main(&f, &stacked_head);
+        let after = f.review_with_proofs(&f.main, proofs);
+        assert_eq!(code_of(&after, &stacked), None);
     }
 
     #[test]
