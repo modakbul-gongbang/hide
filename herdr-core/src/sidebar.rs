@@ -171,6 +171,10 @@ pub struct SessionAgentPayload {
     /// When the core last saw this agent change state, in epoch ms.
     #[serde(default)]
     pub changed_at_unix_ms: Option<u64>,
+    /// What the label worker read of the current session, if proven; laid
+    /// on by the label overlay, never read from Herdr.
+    #[serde(skip)]
+    pub(crate) facts: Option<crate::request_view::RowFacts>,
 }
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -1308,6 +1312,7 @@ pub(crate) fn provider_name(kind: Option<&str>) -> String {
     match non_empty(kind) {
         Some("claude") => "Claude".to_owned(),
         Some("codex") => "Codex".to_owned(),
+        Some("opencode") => "OpenCode".to_owned(),
         Some(kind) => kind.to_owned(),
         None => "Agent".to_owned(),
     }
@@ -1348,10 +1353,18 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
     let message = label.and_then(agent_message);
 
     let agent_kind = non_empty(agent.agent.as_deref()).unwrap_or("unknown");
-    // Until its first task, an agent is named by what it is, never by the
-    // Herdr workspace it happens to run in (PRD checkout-workspace-binding
-    // D-09): that label names another checkout as often as this one.
-    let identity_label = task.unwrap_or_else(|| provider_name(agent.agent.as_deref()));
+    // The name every surface uses (PRD overview-request-view D-13): the
+    // label's task, else the agent's own title for the session, else what it
+    // is, never the Herdr workspace it happens to run in (PRD
+    // checkout-workspace-binding D-09), which names another checkout as often
+    // as this one.
+    let native_title = agent
+        .facts
+        .as_ref()
+        .and_then(|facts| line_text(facts.native_title.as_deref(), MAX_LABEL_TEXT_CHARS));
+    let identity_label = task
+        .or(native_title)
+        .unwrap_or_else(|| provider_name(agent.agent.as_deref()));
     let projected = SidebarAgentSnapshot {
         id: agent.id.unwrap_or_else(|| pane_id.clone()),
         pane_id,
@@ -1414,6 +1427,8 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         spawn_origin_pane_id: None,
         lineage_collapsed: false,
         sleep: None,
+        row_facts: agent.facts,
+        request: None,
     };
     Ok(projected)
 }
@@ -1692,10 +1707,7 @@ fn projected_last_activity(agent: &SessionAgentPayload, pane_id: &str) -> Result
 /// One line of label text: whitespace collapsed, empty dropped, cut at
 /// `max_chars`.
 fn line_text(value: Option<&str>, max_chars: usize) -> Option<String> {
-    value
-        .map(|value| collapse_whitespace(value.trim().to_owned()))
-        .filter(|value| !value.is_empty())
-        .map(|value| value.chars().take(max_chars).collect())
+    value.and_then(|value| crate::display_text::one_line(value, max_chars))
 }
 
 /// What the agent's label last said (PRD overview-lenses-tiles-agents
@@ -1721,10 +1733,6 @@ fn agent_message(label: &AgentLabel) -> Option<String> {
 
 fn non_empty(value: Option<&str>) -> Option<&str> {
     value.map(str::trim).filter(|value| !value.is_empty())
-}
-
-fn collapse_whitespace(value: String) -> String {
-    value.split_whitespace().collect::<Vec<_>>().join(" ")
 }
 
 /// The session every fixture row runs and every fixture declaration was
@@ -1872,6 +1880,8 @@ mod tests {
                 is_draft: false,
                 merged_at_unix_ms: None,
                 updated_at_unix_ms: None,
+                created_at_unix_ms: None,
+                closed_at_unix_ms: None,
             }),
             ..Default::default()
         };

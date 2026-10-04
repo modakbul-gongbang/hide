@@ -2270,12 +2270,20 @@ impl Runtime {
                 }
             }
         }
+        let times = pull_request_times(&github);
+        if *self.pull_request_times != times {
+            self.pull_request_times = std::sync::Arc::new(times);
+            if let Some(services) = self.label_services.as_ref() {
+                services.wake_local();
+            }
+        }
         changed |= crate::sidebar::sync_checkout_purposes(
             &mut self.snapshot.navigator.workspaces,
             &self.snapshot.navigator.agents,
         );
         changed |= self.sync_issues();
         changed |= self.sync_tasks();
+        changed |= self.sync_request_rows();
         changed
     }
 
@@ -3148,6 +3156,25 @@ pub(super) fn owner_open(
         project.is_git,
         label,
     )
+}
+
+/// When GitHub made each pull request read, by the address's lowercase
+/// `owner/name` and number.
+fn pull_request_times(
+    github: &crate::model::GithubSnapshot,
+) -> crate::labels::facts::PullRequestTimes {
+    github
+        .projects
+        .iter()
+        .flat_map(|project| project.pull_requests.iter())
+        .filter_map(|pull_request| {
+            let created = pull_request.created_at_unix_ms?;
+            let (repository, number) = hide_session::pull_request_addresses(&pull_request.url)
+                .into_iter()
+                .next()?;
+            Some(((repository.to_ascii_lowercase(), number), created))
+        })
+        .collect()
 }
 
 #[cfg(test)]

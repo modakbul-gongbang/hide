@@ -1722,6 +1722,7 @@ fn recent_closed_failure_retains_and_missing_file_consumes() {
     let item = closed_file("reopen-fixture", "/repo/gone.rs");
     runtime.push_recent_closed(item.clone());
     let request = live::ReopenRequest {
+        codex_daemon: Default::default(),
         item,
         workspace_exists: true,
         tab_exists: true,
@@ -1762,6 +1763,7 @@ fn reopen_completion_preserves_a_newer_close() {
     runtime.reopen_in_flight = Some("first".to_owned());
     runtime.push_recent_closed(closed_file("second", "/repo/second.rs"));
     let request = live::ReopenRequest {
+        codex_daemon: Default::default(),
         item: first,
         workspace_exists: true,
         tab_exists: true,
@@ -1797,6 +1799,7 @@ fn every_consuming_reopen_result_removes_only_its_request_key() {
         runtime.reopen_in_flight = Some("first".to_owned());
         runtime.push_recent_closed(closed_file("second", "/repo/second.rs"));
         let request = live::ReopenRequest {
+            codex_daemon: Default::default(),
             item: first,
             workspace_exists: true,
             tab_exists: true,
@@ -1853,6 +1856,7 @@ fn completion_is_safe_after_the_in_flight_item_was_evicted() {
         ));
     }
     let request = live::ReopenRequest {
+        codex_daemon: Default::default(),
         item: first,
         workspace_exists: true,
         tab_exists: true,

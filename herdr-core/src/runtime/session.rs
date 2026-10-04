@@ -1599,6 +1599,7 @@ impl Runtime {
             let mut derived = self.derive_device_session(target_id, &raw);
             self.device_raw_sessions.insert(target_id.to_owned(), raw);
             self.place_device_strips(target_id, &mut derived, &mut dropped_moves);
+            self.lay_remote_requests(target_id, &mut derived.agents, true);
             derived
         });
         if !dropped_moves.is_empty() {
@@ -2231,6 +2232,7 @@ impl Runtime {
                 live_pane_ids.as_ref(),
             );
             changed |= self.sync_conversation_modes(&agents);
+            self.lay_local_requests(&mut agents, live_pane_ids.as_ref());
             if self.snapshot.navigator.agents != agents {
                 Self::log_unknown_descendants(&self.snapshot.navigator.agents, &agents);
                 self.snapshot.navigator.agents = agents;
@@ -3554,6 +3556,12 @@ impl Runtime {
             kind: operation.agent_kind.clone()?,
             prompt: launch.and_then(|launch| launch.prompt.clone()),
             args: launch.map(|launch| launch.args.clone()).unwrap_or_default(),
+            codex_daemon: self.codex_daemon(
+                operation
+                    .device_id
+                    .as_deref()
+                    .unwrap_or(crate::workspace::LOCAL_DEVICE_ID),
+            ),
         })
     }
 

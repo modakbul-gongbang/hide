@@ -733,6 +733,7 @@ fn reopen_unknown_claim_survives_error_and_retry_launch_failure_then_transfers_t
     };
     runtime.push_recent_closed(item.clone());
     let request = live::ReopenRequest {
+        codex_daemon: Default::default(),
         item,
         workspace_exists: true,
         tab_exists: false,

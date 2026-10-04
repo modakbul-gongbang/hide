@@ -597,6 +597,41 @@ fn a_chosen_agent_and_model_move_the_snapshot_and_queue_one_write() {
     );
 }
 
+/// PRD overview-request-view D-11, B21: the agent-summary switch moves the
+/// snapshot at once, keeps the provider choice, and is queued to be kept.
+#[test]
+fn the_agent_summary_switch_moves_the_snapshot_and_queues_one_write() {
+    let mut runtime = runtime();
+    let event = |payload: serde_json::Value| {
+        serde_json::to_vec(&serde_json::json!({
+            "schema_version": 2, "kind": "ai_settings", "payload": payload
+        }))
+        .expect("the event encodes")
+    };
+    assert!(
+        runtime.agent_summary(),
+        "on until the operator turns it off"
+    );
+    assert!(runtime.snapshot.status.background_ai.agent_summary);
+
+    assert!(runtime.dispatch_json(&event(serde_json::json!({"provider": "claude"}))));
+    runtime.take_ai_settings_save();
+    assert!(runtime.dispatch_json(&event(serde_json::json!({"agent_summary": false}))));
+    assert!(!runtime.agent_summary());
+    assert!(!runtime.snapshot.status.background_ai.agent_summary);
+    let saved = runtime
+        .take_ai_settings_save()
+        .expect("the switch is queued for the coordinator to write");
+    assert!(!saved.agent_summary);
+    assert_eq!(saved.provider, hide_ai::ProviderId::Claude);
+
+    runtime.dispatch_json(&event(serde_json::json!({"agent_summary": false})));
+    assert!(
+        runtime.take_ai_settings_save().is_none(),
+        "the same position writes nothing"
+    );
+}
+
 /// PRD home-device-rail D-18: a start surface's model menu reads the provider
 /// catalog while it shows, without the Settings tab's hook diagnosis, and the
 /// two demands stop independently.

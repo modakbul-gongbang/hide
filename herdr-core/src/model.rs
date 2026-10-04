@@ -622,6 +622,7 @@ pub struct KitComponentSnapshot {
     pub state: hide_kit::ComponentState,
     pub reason: Option<String>,
     pub location: Option<String>,
+    pub codex_daemon: Option<bool>,
 }
 
 impl KitSnapshot {
@@ -635,6 +636,7 @@ impl KitSnapshot {
                 state: part.state,
                 reason: part.reason.clone(),
                 location: part.location.clone(),
+                codex_daemon: part.codex_daemon,
             })
             .collect::<Vec<_>>();
         Self {
@@ -891,6 +893,15 @@ pub struct SidebarAgentSnapshot {
     /// the agent is awake, so an awake row keeps exactly its keys (PRD D-16).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub sleep: Option<AgentSleepSnapshot>,
+    /// What the label worker read of this agent's session, which the request
+    /// block is built from (PRD overview-request-view D-14).
+    #[serde(skip_serializing)]
+    pub(crate) row_facts: Option<crate::request_view::RowFacts>,
+    /// The request view's part of the row: the verb and since when, the
+    /// request and reply lines, the pull requests (`request_view.rs`).
+    /// Absent until the core has built it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub request: Option<crate::request_view::AgentRequestSnapshot>,
 }
 
 /// What a sleeping agent's row and pane say about it.
@@ -2294,6 +2305,11 @@ pub struct UiStateSnapshot {
     // The store owns persistence; the shell only reads the derived unread axis.
     #[serde(default, skip_serializing)]
     pub pane_read_records: BTreeMap<String, PaneReadRecord>,
+    /// Each agent pane's request-view verb and when it took it, so the time
+    /// a row has waited survives a restart (PRD overview-request-view D-40).
+    /// The store owns it; the shell reads it on the row.
+    #[serde(default, skip_serializing)]
+    pub request_verbs: BTreeMap<String, crate::request_view::VerbRecord>,
     /// How long an agent may go untouched before Hide ends its process and
     /// keeps its conversation to resume: 12, 24 or 72 hours, or `None` for
     /// never, the default (PRD D-10).
@@ -2709,6 +2725,7 @@ impl Default for UiStateSnapshot {
             editor_text_scale: DEFAULT_PANE_TEXT_SCALE,
             conversation_pane_ids: BTreeSet::new(),
             pane_read_records: BTreeMap::new(),
+            request_verbs: BTreeMap::new(),
             agent_sleep_after_hours: None,
             project_issue_sources: BTreeMap::new(),
             issue_settings: IssueSettingsSnapshot::default(),
@@ -3029,6 +3046,13 @@ pub struct PullRequestSnapshot {
     pub is_draft: bool,
     pub merged_at_unix_ms: Option<u64>,
     pub updated_at_unix_ms: Option<u64>,
+    /// When GitHub made the pull request, which ties it to the session whose
+    /// tool printed its address then (PRD overview-request-view D-31).
+    #[serde(skip_serializing)]
+    pub created_at_unix_ms: Option<u64>,
+    /// When it was closed or merged, for a row's chip after the request.
+    #[serde(skip_serializing)]
+    pub closed_at_unix_ms: Option<u64>,
 }
 
 /// How a repository's `gh` lookup is doing, independent of what it found.
@@ -3454,6 +3478,8 @@ pub struct BackgroundAiSnapshot {
     pub provider: String,
     /// Whether `provider` is a saved choice rather than the default.
     pub chosen: bool,
+    /// The `에이전트 요약` switch: agent labels are asked for and shown.
+    pub agent_summary: bool,
     /// One row per provider Hide can route to, in the offered order. A
     /// provider that is not on this Mac is still a row, because "not here"
     /// and "not signed in" are different answers.
@@ -3484,6 +3510,7 @@ impl BackgroundAiSnapshot {
                     models_unavailable_reason: None,
                 })
                 .collect(),
+            agent_summary: true,
             ..Self::default()
         }
     }
@@ -4258,6 +4285,52 @@ mod wire_enum_tests {
         assert_wire(&contract, "pull_request_checks", &checks);
         checked.insert("pull_request_checks");
 
+        use crate::request_view::RequestVerb;
+        let verbs = [
+            RequestVerb::Answer,
+            RequestVerb::Fix,
+            RequestVerb::Review,
+            RequestVerb::Stopped,
+            RequestVerb::Result,
+            RequestVerb::Working,
+            RequestVerb::Waiting,
+            RequestVerb::Idle,
+        ];
+        for variant in verbs {
+            match variant {
+                RequestVerb::Answer
+                | RequestVerb::Fix
+                | RequestVerb::Review
+                | RequestVerb::Stopped
+                | RequestVerb::Result
+                | RequestVerb::Working
+                | RequestVerb::Waiting
+                | RequestVerb::Idle => {}
+            }
+        }
+        assert_wire(&contract, "request_verb", &verbs);
+        checked.insert("request_verb");
+
+        use crate::labels::analysis::LabelEnd;
+        let ends = [
+            LabelEnd::Working,
+            LabelEnd::Question,
+            LabelEnd::Done,
+            LabelEnd::Waiting,
+            LabelEnd::Unfinished,
+        ];
+        for variant in ends {
+            match variant {
+                LabelEnd::Working
+                | LabelEnd::Question
+                | LabelEnd::Done
+                | LabelEnd::Waiting
+                | LabelEnd::Unfinished => {}
+            }
+        }
+        assert_wire(&contract, "label_end", &ends);
+        checked.insert("label_end");
+
         let statuses = [
             ChangedFileStatus::Modified,
             ChangedFileStatus::Added,
@@ -4366,7 +4439,8 @@ mod wire_enum_tests {
                 hide_kit::ComponentId::Cli
                 | hide_kit::ComponentId::ClaudeCodeHook
                 | hide_kit::ComponentId::CodexHook
-                | hide_kit::ComponentId::Hcoord => {}
+                | hide_kit::ComponentId::Hcoord
+                | hide_kit::ComponentId::CodexPerPane => {}
             }
         }
         assert_wire(&contract, "kit_component_id", &kit_parts);
@@ -4379,6 +4453,7 @@ mod wire_enum_tests {
             hide_kit::ComponentState::Removed,
             hide_kit::ComponentState::Failed,
             hide_kit::ComponentState::Absent,
+            hide_kit::ComponentState::Off,
         ];
         for variant in kit_states {
             match variant {
@@ -4387,7 +4462,8 @@ mod wire_enum_tests {
                 | hide_kit::ComponentState::NotInstalled
                 | hide_kit::ComponentState::Removed
                 | hide_kit::ComponentState::Failed
-                | hide_kit::ComponentState::Absent => {}
+                | hide_kit::ComponentState::Absent
+                | hide_kit::ComponentState::Off => {}
             }
         }
         assert_wire(&contract, "kit_component_state", &kit_states);

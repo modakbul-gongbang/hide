@@ -181,7 +181,7 @@ mod tests {
         assert!(matches!(observe(&first), Observed::Missing));
         install(&first).unwrap();
         assert_eq!(
-            crate::apply(&first, &crate::Scope::Automatic).components[0].state,
+            crate::apply(&first, &crate::Scope::automatic()).components[0].state,
             crate::ComponentState::Installed
         );
         let status = std::process::Command::new("cmd.exe")

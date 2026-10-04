@@ -139,8 +139,12 @@ pub fn run(
             point_current(&placement.root, &placement.version)?;
             remove_other_builds(&placement.root, &placement.version);
             let scope = match action {
-                KitAction::Reinstall { components } => hide_kit::Scope::Reinstall(components),
-                _ => hide_kit::Scope::Automatic,
+                KitAction::Reinstall {
+                    components,
+                    turn_off,
+                } => hide_kit::Scope::reinstall(components)
+                    .merge(hide_kit::Scope::turn_off(turn_off)),
+                _ => hide_kit::Scope::automatic(),
             };
             to_value(hide_kit::apply(&target(), &scope))
         }

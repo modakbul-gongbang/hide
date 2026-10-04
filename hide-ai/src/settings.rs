@@ -33,6 +33,10 @@ pub struct AiSettings {
     /// asked for its own `DEFAULT_MODEL`.
     #[serde(default)]
     pub models: BTreeMap<ProviderId, String>,
+    /// Whether agent labels are asked of a provider (Settings › Background
+    /// AI `에이전트 요약`). On unless the operator turned it off.
+    #[serde(default = "on")]
+    pub agent_summary: bool,
 }
 
 impl Default for AiSettings {
@@ -43,8 +47,13 @@ impl Default for AiSettings {
                 .iter()
                 .map(|provider| (*provider, default_model(*provider).to_owned()))
                 .collect(),
+            agent_summary: on(),
         }
     }
+}
+
+fn on() -> bool {
+    true
 }
 
 fn default_provider() -> ProviderId {
@@ -230,6 +239,10 @@ mod tests {
         );
         let settings = load(&home).expect("an unknown field does not make the file unreadable");
         assert_eq!(settings.provider, ProviderId::Claude);
+        assert!(
+            settings.agent_summary,
+            "a file written before the switch existed leaves summaries on"
+        );
         assert_eq!(
             settings.model(ProviderId::Claude),
             crate::claude::DEFAULT_MODEL,
@@ -259,6 +272,7 @@ mod tests {
             ..AiSettings::default()
         };
         settings.set_model(ProviderId::Claude, "sonnet");
+        settings.agent_summary = false;
         save(&home, &settings).expect("the settings file is writable");
         assert_eq!(load(&home).expect("the saved file is readable"), settings);
         assert!(

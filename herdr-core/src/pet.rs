@@ -308,6 +308,8 @@ mod tests {
             spawn_origin_pane_id: None,
             lineage_collapsed: false,
             sleep: None,
+            row_facts: None,
+            request: None,
         }
     }
 

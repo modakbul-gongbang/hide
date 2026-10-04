@@ -112,6 +112,7 @@ impl ProjectionState {
                     // The coordinator's label worker lays these on.
                     label: None,
                     changed_at_unix_ms: None,
+                    facts: None,
                 }
             })
             .collect();
