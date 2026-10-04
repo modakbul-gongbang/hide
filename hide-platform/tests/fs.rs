@@ -36,6 +36,67 @@ fn folder() -> tempfile::TempDir {
     tempfile::tempdir().unwrap()
 }
 
+#[cfg(unix)]
+#[test]
+fn an_existing_private_anchor_establishes_sibling_home_and_state_chains() {
+    let outer = folder();
+    let anchor = outer.path().join("anchor");
+    private::create_dir(&anchor).unwrap();
+    let before = identity::file_id(&anchor).unwrap();
+    let canonical = private::establish_dir_durability(&anchor).unwrap();
+    assert_eq!(identity::file_id(&canonical).unwrap(), before);
+    assert!(names(&anchor).is_empty());
+    let home = canonical.join("home");
+    let state = canonical.join("state");
+    private::create_dir_all_durable(&home, &canonical).unwrap();
+    private::create_dir_all_durable(&state, &canonical).unwrap();
+    for path in [&home, &state] {
+        assert!(private::is_private(path).unwrap());
+        assert!(names(path).is_empty());
+    }
+    assert_eq!(
+        private::establish_dir_durability(&anchor).unwrap(),
+        canonical
+    );
+    assert_eq!(names(&anchor), ["home", "state"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn an_existing_anchor_refuses_links_files_and_modifiable_leaves_without_mutation() {
+    let outer = folder();
+    let anchor = outer.path().join("anchor");
+    private::create_dir(&anchor).unwrap();
+    let alias = outer.path().join("alias");
+    link::create_link(&anchor, &alias).unwrap();
+    let file = outer.path().join("file");
+    fs::write(&file, b"kept").unwrap();
+    for path in [&alias, &file] {
+        assert!(private::establish_dir_durability(path).is_err());
+    }
+    widen(&anchor, true);
+    assert!(private::establish_dir_durability(&anchor).is_err());
+    assert!(alias.is_dir());
+    assert_eq!(read(&file), "kept");
+    assert!(names(&anchor).is_empty());
+}
+
+#[cfg(windows)]
+#[test]
+fn an_existing_anchor_reports_unsupported_without_changing_the_namespace() {
+    let outer = folder();
+    let anchor = outer.path().join("anchor");
+    private::create_dir(&anchor).unwrap();
+    let before = identity::file_id(&anchor).unwrap();
+    assert!(matches!(
+        private::establish_dir_durability(&anchor),
+        Err(private::DirectoryDurabilityError::BeforeCreate { source })
+            if source.kind() == ErrorKind::Unsupported
+    ));
+    assert_eq!(identity::file_id(&anchor).unwrap(), before);
+    assert!(names(&anchor).is_empty());
+}
+
 /// An open folder, the way a caller that holds folders (not names) has one.
 fn open_dir(path: &Path) -> File {
     hide_platform::fs::open_dir(path).unwrap()
