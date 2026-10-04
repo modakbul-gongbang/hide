@@ -100,6 +100,8 @@ Session lookup has one total budget of 10000 directory entries, including skippe
 Crossing a limit returns the path-free `session_capacity` outcome; the watch uses its existing status fallback and records the failure.
 Below those limits, reported identity and provider ownership take precedence over cwd fallback, and each tick samples fresh metadata.
 The helper returns only modification time and file size; conversation text, paths and native IDs do not appear in the activity answer.
+The helper acquires the platform's `OwnerWatch` before reading arguments, stdin or files and retains it through shutdown.
+A protected launch ends with its owner even while stdin stays open; a standalone launch without ownership metadata keeps its existing contract.
 A missing reference or failed helper read falls back to the current status-transition evidence, includes the reason in the digest and does not suppress warnings.
 That status must still be attributable to the watch's original native binding.
 An uncertain acquisition or loss of native identity preserves the original watch and clocks without rebinding or accepting new file metadata.
@@ -129,14 +131,17 @@ The helper protocol addition must inherit the preceding request-view contract; t
 ## Verification
 
 Use the worktree-owned entrypoints described in [BUILD.md](BUILD.md#two-entrypoints).
-Focused library checks are:
+Focused checks are:
 
 ```sh
 bash scripts/verify-cargo.sh test-scoped -p herdr-core --lib delivery:: -- --nocapture
 bash scripts/verify-cargo.sh test-scoped -p hide-session --lib session_activity -- --nocapture
+bash scripts/verify-cargo.sh test-scoped -p hide-host --test session_activity
 ```
 
 A filtered run must execute the expected named tests; zero selected tests is a failed check.
+The helper executable tests use private homes and fixture transcripts, pair JSON-line responses by request ID, and cover activity success/refusal, privacy, kit coexistence, normal exit and abrupt owner loss.
+Each fixture launch and capture shares an absolute five-second deadline and a combined 64 KiB output cap; provider sessions and the installed helper are never used.
 The full Rust test and lint lanes still apply to the final committed head.
 Actual Linux and Windows OS-contract runner results are required for the state-machine, ledger and activity portability claim; declaring a workflow does not prove it passed.
 Real TUI delivery requires an isolated Herdr server, private HOME/state/HCOORD_HOME, precisely identified candidate processes and disposable provider sessions with observed native identity and hcoord lineage.
