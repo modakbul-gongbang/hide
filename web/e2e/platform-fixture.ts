@@ -6,6 +6,7 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
 import { cleanupAfterFailure, throwFixtureFailures } from "./worker-owned";
+import { run as runOwnedCommand } from "../../scripts/ci-owned-command.cjs";
 
 export const fixtureExecutable = (name: string): string => `${name}${process.platform === "win32" ? ".exe" : ""}`;
 
@@ -36,6 +37,20 @@ const pause = () => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0,
 // existing binary fixtures do; this shared module can be ESM or CommonJS.
 const repository = path.resolve("..");
 const receiptDirectory = path.join(repository, "agents/runs/ci-fixture-owners");
+const nativeFixtureOwner = () => path.join(repository, "target/debug/examples", fixtureExecutable("fixture-owner"));
+
+/** Native inventory observes the same launch identity before and after the
+ * walk. A subsequent observation cannot silently adopt a reused shell PID. */
+export async function fixtureProcessTree(pid: number, timeout: number, env: NodeJS.ProcessEnv, birth?: string): Promise<{ birth: string; descendants: number }> {
+  if (!Number.isSafeInteger(pid) || pid <= 1 || timeout <= 0) throw new Error("fixture process inventory needs a live PID and remaining deadline");
+  const args = ["--probe-tree", String(pid), ...(birth === undefined ? [] : [birth])];
+  const output = (await runOwnedCommand(repository, nativeFixtureOwner(), args, { timeout, env, maxBuffer: 1024, subject: "fixture-shell-inventory" })).stdout;
+  const fields = output.trimEnd().split("\t");
+  if (fields.length !== 5 || fields[0] !== "v1" || fields[1] !== String(pid)
+    || !/^\d{1,20}$/.test(fields[2]!) || !/^\d{1,3}$/.test(fields[3]!) || !/^\d{1,20}$/.test(fields[4]!)
+    || Number(fields[3]) > 256 || (birth !== undefined && fields[2] !== birth)) throw new Error("invalid native fixture process inventory");
+  return { birth: fields[2]!, descendants: Number(fields[3]) };
+}
 
 function readReceipt(owner: Owner): NativeReceipt | undefined {
   let stat: fs.Stats;
@@ -57,7 +72,7 @@ export function spawnFixtureProcess(executable: string, args: string[], root: st
   fs.mkdirSync(receiptDirectory, { recursive: true });
   if (fs.readdirSync(receiptDirectory).length >= MAX_RECEIPTS) throw new Error("native fixture receipt file cap exceeded");
   const file = path.join(receiptDirectory, `${crypto.randomBytes(16).toString("hex")}.receipt`);
-  const helper = path.join(repository, "target/debug/examples", fixtureExecutable("fixture-owner"));
+  const helper = nativeFixtureOwner();
   if (!fs.existsSync(helper)) throw new Error("native fixture owner is missing; build this worktree's fixture-owner example");
   const stdio = options.stdio === undefined || options.stdio === "pipe" ? ["pipe", "pipe", "pipe"]
     : options.stdio === "ignore" ? ["pipe", "ignore", "ignore"]

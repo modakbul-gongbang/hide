@@ -91,7 +91,8 @@ When the behavior depends on the order of two events, the test fixes that order;
   The fixture uses `/bin/zsh` with its private `.zshrc` on Unix and the native `ComSpec` cmd shell with a controlled `PROMPT` on Windows.
   A missing native shell fails fixture setup before starting the server.
   Before each initial agent start, the fixture waits for the prompt and the shell to hold the foreground within the existing ten-second setup bound.
-  On Windows, the pinned Herdr can report the shell as foreground while a non-agent child remains, so one bounded, noninteractive PowerShell read also waits for that shell to have no children; a missing shell or failed read fails setup.
+  On Windows, the pinned Herdr can report the shell as foreground while a non-agent child remains, so the shared fixture observes that shell's native process tree through the existing owned command and platform process boundary until it has no descendants.
+  Observations retain the original birth identity, reject PID reuse and keep the same ten-second setup budget; a missing shell or failed inventory fails setup.
   The fixture sends each `agent.start` once and retains the original input and PTY-log assertions.
 - Use `fixtureHomeEnv` from `web/e2e/platform-fixture.ts` to move `HOME`, provider config homes and, on Windows, `USERPROFILE`, `APPDATA` and `LOCALAPPDATA` together into the private fixture.
   The fixtures run a compiled `claude` shim instead, which proves the pipeline and not an agent or physical IME.

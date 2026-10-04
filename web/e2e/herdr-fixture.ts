@@ -29,7 +29,7 @@ import os from "node:os";
 import path from "node:path";
 import { run as runOwnedCommand, type NativeCommandOwner } from "../../scripts/ci-owned-command.cjs";
 import { cleanupAfterFailure, ownUntilWorkerExit } from "./worker-owned";
-import { spawnFixtureProcess, fixtureProcessFailure, fixtureProcessId, assertFixtureRootReleased, releaseFixtureRoot, stopFixtureProcess, compileFixtureC, fixtureExecutable, fixtureHomeEnv, fixtureToolPath, inheritedFixtureEnv } from "./platform-fixture";
+import { spawnFixtureProcess, fixtureProcessFailure, fixtureProcessId, fixtureProcessTree, assertFixtureRootReleased, releaseFixtureRoot, stopFixtureProcess, compileFixtureC, fixtureExecutable, fixtureHomeEnv, fixtureToolPath, inheritedFixtureEnv } from "./platform-fixture";
 
 export type HerdrFixture = {
   /** The actual pinned server process, distinct from its native supervisor. */
@@ -786,19 +786,15 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
         // directly, with one bounded child and no retry of agent.start.
         const shell = (processInfo as ShellProcessInfo | null)?.shell_pid;
         if (!Number.isSafeInteger(shell) || !shell || shell <= 1) throw new Error(`fixture shell PID is unavailable in pane ${pane}`);
-        const remaining = deadline - Date.now();
-        if (remaining <= 0) throw new Error(`timed out waiting for shell children in pane ${pane}`);
-        execFileSync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", `
-          $ErrorActionPreference = 'Stop'
-          $fixtureUntil = [DateTime]::UtcNow.AddMilliseconds(${remaining})
-          do {
-            $fixtureProcesses = @(Get-CimInstance -ClassName Win32_Process -Filter 'ProcessId = ${shell} OR ParentProcessId = ${shell}' -Property ProcessId, ParentProcessId)
-            if (@($fixtureProcesses | Where-Object { $_.ProcessId -eq ${shell} }).Count -ne 1) { throw 'fixture shell exited before agent start' }
-            if (@($fixtureProcesses | Where-Object { $_.ParentProcessId -eq ${shell} }).Count -eq 0) { exit 0 }
-            Start-Sleep -Milliseconds 100
-          } while ([DateTime]::UtcNow -lt $fixtureUntil)
-          throw 'fixture shell still has child processes before agent start'
-        `], { env, encoding: "utf8", timeout: remaining, maxBuffer: 64 * 1024, windowsHide: true });
+        let birth: string | undefined;
+        await waitFor(async () => {
+          if (!fixtureProcessFailure(server)) throw new Error("fixture server ended before shell inventory");
+          const remaining = deadline - Date.now();
+          if (remaining <= 0) return false;
+          const observed = await fixtureProcessTree(shell, remaining, env, birth);
+          birth = observed.birth;
+          return observed.descendants === 0;
+        }, `native shell children in pane ${pane}`, Math.max(1, deadline - Date.now()));
       }
       if (agents) herdr(env, bin, ["agent", "start", name, "--kind", "claude", "--pane", pane]);
     }

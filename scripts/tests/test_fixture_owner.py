@@ -172,6 +172,22 @@ while time.monotonic() < deadline:
                     owner_id = until(lambda: json.loads(worker_identity.read_text()) if worker_identity.exists() else None)
                     observations = [ProcessObservation(ids[key]) for key in ('root', 'child')] + [ProcessObservation(owner_id['helper'])]
                     self.assertTrue(all(not observed.exited() for observed in observations))
+                    if mode == 'process-inventory':
+                        command = [str(HELPER), '--probe-tree', str(running['pid'])]
+                        queried = subprocess.run(command, check=True, capture_output=True, text=True, timeout=5)
+                        fields = queried.stdout.strip().split('\t')
+                        self.assertEqual(fields[:3], ['v1', str(running['pid']), running['birth']])
+                        self.assertEqual(int(fields[3]), 1)
+                        self.assertGreater(int(fields[4]), 0)
+                        again = subprocess.run(command + [running['birth']], check=True, capture_output=True, text=True, timeout=5)
+                        self.assertEqual(again.stdout.strip().split('\t')[:4], fields[:4])
+                        refused = subprocess.run(command + [str(int(running['birth']) + 1)], capture_output=True, text=True, timeout=5)
+                        self.assertNotEqual(refused.returncode, 0)
+                        self.assertIn('fixture probe launch identity changed', refused.stderr)
+                        self.assertTrue(all(not observed.exited() for observed in observations))
+                        (artifacts / 'process-inventory-probe.json').write_text(json.dumps({
+                            'original': running, 'inventory': fields, 'refused': refused.stderr,
+                            'status': refused.returncode, 'ownedProcessesStillLive': True}, indent=2)+'\n')
                     if mode == 'identity-refusal':
                         publish(state.with_suffix('.stop'), f"{running['pid']} {int(running['birth']) + 1}")
                         refused = until(lambda: (value if value['phase'] == 'stop-refused' else None) if (value := receipt(state)) else None)
@@ -225,6 +241,9 @@ while time.monotonic() < deadline:
                                 raise
                     for observed in observations:
                         observed.close()
+
+    def test_native_process_inventory_refuses_reused_identity_without_signalling(self):
+        self.exercise('process-inventory')
 
     def test_worker_only_hard_kill_confirms_zero_owned_survivors(self):
         self.exercise('worker-hard-kill')
@@ -683,10 +702,13 @@ else:
             filename = ROOT / 'web/e2e' / ('ci-native-input-' + Path(directory).name + '.spec.ts')
             filename.write_text("import {test,expect} from '@playwright/test';\n"
                 "import fs from 'node:fs'; import {execFileSync} from 'node:child_process'; import {startHerdr} from './herdr-fixture';\n"
-                "import {nativeInputReceivers} from './native-input-receiver'; import {finishFixture} from './worker-owned';\n"
+                "import {nativeInputReceivers} from './native-input-receiver'; import {fixtureProcessTree} from './platform-fixture'; import {finishFixture} from './worker-owned';\n"
                 "for(const mode of ['missing','duplicate','wrong-pane','exact']) test('native receipt '+mode,async()=>{\n"
                 " const herdr=await startHerdr({agents:false});let primary:unknown;\n"
-                " try {const receivers=await nativeInputReceivers(herdr,herdr.panes);\n"
+                " try {const inventory=await fixtureProcessTree(herdr.pid,5000,herdr.env);expect(inventory.descendants).toBeGreaterThanOrEqual(2);\n"
+                " expect(await fixtureProcessTree(herdr.pid,5000,herdr.env,inventory.birth)).toEqual(inventory);\n"
+                " if(mode==='wrong-pane')await expect(fixtureProcessTree(herdr.pid,5000,herdr.env,String(BigInt(inventory.birth)+1n))).rejects.toThrow('fixture probe launch identity changed');\n"
+                " const receivers=await nativeInputReceivers(herdr,herdr.panes);\n"
                 " const line='printf receiver-control'; const bytes=Buffer.from(line+'\\r');\n"
                 " const received=new Map(herdr.panes.map(pane=>[pane,Buffer.alloc(0)]));\n"
                 " const expected=new Map(received);expected.set(herdr.panes[0],bytes);\n"

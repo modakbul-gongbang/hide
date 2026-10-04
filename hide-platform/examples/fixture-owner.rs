@@ -1,7 +1,7 @@
 //! Test-only supervisor of a fixture's native process namespace.
 //! stdin is a dedicated owner pipe; EOF means the worker itself has ended.
 use hide_platform::fs::{Access, atomic, identity};
-use hide_platform::process::{OwnedChild, start_time};
+use hide_platform::process::{OwnedChild, measure_tree, start_time};
 use std::io::{self, Read};
 use std::path::PathBuf;
 use std::process::{Command, Stdio};
@@ -43,10 +43,47 @@ impl Receipt {
 
 fn run() -> io::Result<i32> {
     let mut args = std::env::args_os().skip(1);
-    let file = PathBuf::from(
-        args.next()
-            .ok_or_else(|| io::Error::other("fixture receipt path missing"))?,
-    );
+    let first = args
+        .next()
+        .ok_or_else(|| io::Error::other("fixture receipt path missing"))?;
+    if first == "--probe-tree" {
+        let pid: u32 = args
+            .next()
+            .and_then(|value| value.to_str()?.parse().ok())
+            .filter(|pid| *pid > 1)
+            .ok_or_else(|| io::Error::other("fixture probe PID missing or invalid"))?;
+        let expected = args
+            .next()
+            .map(|value| {
+                value
+                    .to_str()
+                    .and_then(|text| text.parse::<u64>().ok())
+                    .ok_or_else(|| io::Error::other("fixture probe birth is invalid"))
+            })
+            .transpose()?;
+        if args.next().is_some() {
+            return Err(io::Error::other("fixture probe has extra arguments"));
+        }
+        let birth = start_time(pid)?;
+        if expected.is_some_and(|expected| expected != birth) {
+            return Err(io::Error::other("fixture probe launch identity changed"));
+        }
+        let measure = measure_tree(pid)?;
+        if measure.descendants > MEMBERS {
+            return Err(io::Error::other("fixture probe descendant cap exceeded"));
+        }
+        if start_time(pid)? != birth {
+            return Err(io::Error::other(
+                "fixture probe launch identity changed during inventory",
+            ));
+        }
+        println!(
+            "v1\t{pid}\t{birth}\t{}\t{}",
+            measure.descendants, measure.rss_bytes
+        );
+        return Ok(0);
+    }
+    let file = PathBuf::from(first);
     let root = PathBuf::from(
         args.next()
             .ok_or_else(|| io::Error::other("fixture home missing"))?,
