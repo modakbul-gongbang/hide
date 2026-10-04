@@ -167,6 +167,7 @@ impl Core {
             _kit: None,
             _session_sync: None,
             _session_search: None,
+            _delivery: None,
             labels: None,
             runtime,
             notifier: notifier.clone(),
