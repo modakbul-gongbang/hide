@@ -140,7 +140,19 @@ impl SessionReplica {
                         .iter()
                         .find(|tab| &tab.tab_id == tab_id)
                 })
-                .map(|tab| blocked.insert(tab.workspace_id.clone()));
+                .map(|tab| tab.workspace_id.as_str())
+                .or_else(|| {
+                    // workspace_created names its first active tab before
+                    // tab_created supplies membership. Its workspace is
+                    // already known and must wait for that tab's layout too.
+                    self.state
+                        .workspaces
+                        .iter()
+                        .chain(&self.published_state.workspaces)
+                        .find(|workspace| &workspace.active_tab_id == tab_id)
+                        .map(|workspace| workspace.workspace_id.as_str())
+                })
+                .map(|workspace_id| blocked.insert(workspace_id.to_owned()));
         }
         blocked
     }
