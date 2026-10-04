@@ -11,6 +11,7 @@ mod agent_sleep;
 mod agents;
 mod attachments;
 mod clone;
+pub(crate) mod delivery;
 mod device_catalog;
 mod devices;
 mod documents;
@@ -952,6 +953,11 @@ pub(crate) struct TaskAgentLaunch {
 
 pub struct Runtime {
     snapshot: Snapshot,
+    delivery_ledger: Result<Arc<crate::delivery::ledger::Ledger>, String>,
+    delivery_client: Option<crate::delivery::worker::Client>,
+    delivery_observations: HashMap<String, delivery::Observation>,
+    delivery_overflow: HashSet<String>,
+    delivery_connected: HashSet<String>,
     /// Stable identities are separate from device labels: labels are mutable
     /// presentation, while hcoord lineage is keyed by operating-system id.
     local_machine_id: Option<String>,
@@ -1427,8 +1433,22 @@ struct RuntimeWorkerContext {
 impl Runtime {
     pub fn new(options: CoreOptions, environment: environment::EnvironmentReport) -> Self {
         let state_path = PathBuf::from(&options.app_state_path);
+        let delivery_path =
+            hide_kit::layout::delivery_ledger(state_path.parent().unwrap_or(Path::new(".")));
+        let delivery_ledger = crate::delivery::ledger::recover(&delivery_path)
+            .map(Arc::new)
+            .map_err(|error| {
+                crate::diagnostic!(serde_json::json!({
+                    "component":"delivery","kind":"ledger.load_failed",
+                    "code":error.code(),"persistence":error.diagnostic(),
+                }));
+                error.code().to_owned()
+            });
         let (host_packages, host_helper_root, host_cli_dir) = Self::helper_packages_from(&options);
         let mut snapshot = Snapshot::initial(&options);
+        if let Ok(ledger) = &delivery_ledger {
+            snapshot.delivery_watches = ledger.watches.iter().map(|watch| watch.view()).collect();
+        }
         snapshot.status.environment = environment.statuses;
         let (ui_state, pane_terminal_sizes, disposition) = persistence::load(&state_path);
         let local_issues_path = options.local_issues_path.as_ref().map(PathBuf::from);
@@ -1536,6 +1556,11 @@ impl Runtime {
         });
         let mut runtime = Self {
             snapshot,
+            delivery_ledger,
+            delivery_client: None,
+            delivery_observations: HashMap::new(),
+            delivery_overflow: HashSet::new(),
+            delivery_connected: HashSet::new(),
             local_machine_id: options.machine_id.clone(),
             device_machine_ids: HashMap::new(),
             unresolved_machine_lineage: HashSet::new(),

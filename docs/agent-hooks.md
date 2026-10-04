@@ -70,7 +70,13 @@ Claude Code and Codex currently accept the same envelope, but the installed runt
 `SubagentStart`, `SubagentStop`, and `Stop` write nothing to stdout, preserving their existing silent behavior.
 This stdout is advisory context for the agent and is independent of the best-effort metadata report described below.
 
-The prompt path performs no provider or embedding call, transcript scan, child-process launch, or database write.
+For local agent delivery, `UserPromptSubmit` also pulls at most five pending letters and 8 KiB of letter context from the sibling `hide` CLI within one total two-second budget.
+Only a successful stdout flush permits confirmation, so pre-confirm interruption can repeat an ID and confirmed letters do not repeat.
+The doorbell itself carries manual `hide inbox` guidance; a missing or failed hook leaves pending letters available through `hide inbox` and `hide request show`.
+This delivery path has its own bounded private diagnostics and does not extend Memory's in-process budget described below.
+[delivery.md](delivery.md#safe-intake-and-manual-fallback) owns these intake, failure and confirmation rules.
+
+The Memory lookup itself performs no provider or embedding call, transcript scan, child-process launch, or database write.
 Missing, locked, corrupt, stale, over-limit, unresolved-Project, and over-deadline stores return no Memory context and still exit zero.
 The caller-visible deadline is 100 ms from process launch, including stdin collection and SQLite work, and candidate, item, and token counts are hard bounded.
 The helper gives its in-process work 75 ms so process startup, scheduling, stdout flush, and teardown stay inside that caller-visible limit.

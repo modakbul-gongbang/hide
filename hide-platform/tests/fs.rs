@@ -36,6 +36,67 @@ fn folder() -> tempfile::TempDir {
     tempfile::tempdir().unwrap()
 }
 
+#[cfg(unix)]
+#[test]
+fn an_existing_private_anchor_establishes_sibling_home_and_state_chains() {
+    let outer = folder();
+    let anchor = outer.path().join("anchor");
+    private::create_dir(&anchor).unwrap();
+    let before = identity::file_id(&anchor).unwrap();
+    let canonical = private::establish_dir_durability(&anchor).unwrap();
+    assert_eq!(identity::file_id(&canonical).unwrap(), before);
+    assert!(names(&anchor).is_empty());
+    let home = canonical.join("home");
+    let state = canonical.join("state");
+    private::create_dir_all_durable(&home, &canonical).unwrap();
+    private::create_dir_all_durable(&state, &canonical).unwrap();
+    for path in [&home, &state] {
+        assert!(private::is_private(path).unwrap());
+        assert!(names(path).is_empty());
+    }
+    assert_eq!(
+        private::establish_dir_durability(&anchor).unwrap(),
+        canonical
+    );
+    assert_eq!(names(&anchor), ["home", "state"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn an_existing_anchor_refuses_links_files_and_modifiable_leaves_without_mutation() {
+    let outer = folder();
+    let anchor = outer.path().join("anchor");
+    private::create_dir(&anchor).unwrap();
+    let alias = outer.path().join("alias");
+    link::create_link(&anchor, &alias).unwrap();
+    let file = outer.path().join("file");
+    fs::write(&file, b"kept").unwrap();
+    for path in [&alias, &file] {
+        assert!(private::establish_dir_durability(path).is_err());
+    }
+    widen(&anchor, true);
+    assert!(private::establish_dir_durability(&anchor).is_err());
+    assert!(alias.is_dir());
+    assert_eq!(read(&file), "kept");
+    assert!(names(&anchor).is_empty());
+}
+
+#[cfg(windows)]
+#[test]
+fn an_existing_anchor_reports_unsupported_without_changing_the_namespace() {
+    let outer = folder();
+    let anchor = outer.path().join("anchor");
+    private::create_dir(&anchor).unwrap();
+    let before = identity::file_id(&anchor).unwrap();
+    assert!(matches!(
+        private::establish_dir_durability(&anchor),
+        Err(private::DirectoryDurabilityError::BeforeCreate { source })
+            if source.kind() == ErrorKind::Unsupported
+    ));
+    assert_eq!(identity::file_id(&anchor).unwrap(), before);
+    assert!(names(&anchor).is_empty());
+}
+
 /// An open folder, the way a caller that holds folders (not names) has one.
 fn open_dir(path: &Path) -> File {
     hide_platform::fs::open_dir(path).unwrap()
@@ -123,6 +184,141 @@ fn private_folders_are_made_down_to_the_last_and_an_existing_one_is_left_alone()
     assert!(!private::is_private(&shared).unwrap());
     fs::write(outer.path().join("file"), "").unwrap();
     assert!(private::create_dir_all(&outer.path().join("file")).is_err());
+}
+
+#[test]
+fn durable_bootstrap_refuses_escape_and_over_budget_paths_before_creation() {
+    use private::DirectoryDurabilityError;
+
+    let outer = folder();
+    let mut too_deep = outer.path().to_path_buf();
+    for _ in 0..65 {
+        too_deep.push("child");
+    }
+    for invalid in [
+        too_deep,
+        outer.path().join("first").join("..").join("escape"),
+        outer.path().parent().unwrap().join("outside"),
+    ] {
+        assert!(matches!(
+            private::create_dir_all_durable(&invalid, outer.path()),
+            Err(DirectoryDurabilityError::BeforeCreate { source })
+                if source.kind() == ErrorKind::InvalidInput
+        ));
+        assert!(names(outer.path()).is_empty());
+    }
+    assert!(matches!(
+        private::create_dir_all_durable(Path::new("relative/child"), Path::new("relative")),
+        Err(DirectoryDurabilityError::BeforeCreate { source })
+            if source.kind() == ErrorKind::InvalidInput
+    ));
+}
+
+#[cfg(unix)]
+#[test]
+fn durable_bootstrap_creates_a_private_chain_up_to_its_bound_and_rechecks_it() {
+    let outer = folder();
+    let mut deepest = outer.path().to_path_buf();
+    for _ in 0..64 {
+        deepest.push("d");
+    }
+    // The supplied ancestor boundary is the caller's precondition. These
+    // outcomes establish checked OS operations, not physical power loss.
+    private::create_dir_all_durable(&deepest, outer.path()).unwrap();
+    let mut checked = deepest.as_path();
+    while checked != outer.path() {
+        assert!(private::is_private(checked).unwrap());
+        assert!(private::owned_by_current_user(checked).unwrap());
+        checked = checked.parent().unwrap();
+    }
+    private::create_dir_all_durable(&deepest, outer.path()).unwrap();
+    private::create_dir_all_durable(outer.path(), outer.path()).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn durable_bootstrap_preserves_existing_permissions_and_refuses_untrusted_directories() {
+    use private::DirectoryDurabilityError;
+
+    let outer = folder();
+    let shared_read = outer.path().join("readable");
+    private::create_dir(&shared_read).unwrap();
+    widen(&shared_read, false);
+    let child = shared_read.join("private");
+    private::create_dir_all_durable(&child, outer.path()).unwrap();
+    assert!(!private::is_private(&shared_read).unwrap());
+    assert!(private::is_private(&child).unwrap());
+    let writable = outer.path().join("writable");
+    private::create_dir(&writable).unwrap();
+    widen(&writable, true);
+    assert!(matches!(
+        private::create_dir_all_durable(&writable.join("refused"), outer.path()),
+        Err(DirectoryDurabilityError::Uncertain { path, source, .. })
+            if path == writable && source.kind() == ErrorKind::PermissionDenied
+    ));
+    assert!(names(&writable).is_empty());
+    assert!(private::others_can_modify(&writable).unwrap());
+}
+
+#[cfg(unix)]
+#[test]
+fn durable_bootstrap_never_follows_a_link_or_removes_existing_entries_on_failure() {
+    use private::DirectoryDurabilityError;
+
+    let outer = folder();
+    let target = outer.path().join("target");
+    private::create_dir(&target).unwrap();
+    let planted = outer.path().join("link");
+    link::create_link(&target, &planted).unwrap();
+    assert!(matches!(
+        private::create_dir_all_durable(&planted.join("refused"), outer.path()),
+        Err(DirectoryDurabilityError::Uncertain { path, source, .. })
+            if path == planted && source.kind() == ErrorKind::PermissionDenied
+    ));
+    assert!(names(&target).is_empty());
+    assert!(
+        fs::symlink_metadata(&planted)
+            .unwrap()
+            .file_type()
+            .is_symlink()
+    );
+    let file = outer.path().join("file");
+    fs::write(&file, "kept").unwrap();
+    assert!(matches!(
+        private::create_dir_all_durable(&file.join("refused"), outer.path()),
+        Err(DirectoryDurabilityError::Uncertain { source, .. })
+            if source.kind() == ErrorKind::PermissionDenied
+    ));
+    assert_eq!(read(&file), "kept");
+    assert!(matches!(
+        private::create_dir_all_durable(&planted, &planted),
+        Err(DirectoryDurabilityError::BeforeCreate { source })
+            if source.kind() == ErrorKind::PermissionDenied
+    ));
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_durable_bootstrap_reports_unsupported_without_creating_a_chain() {
+    use private::DirectoryDurabilityError;
+
+    let outer = folder();
+    let end = outer.path().join("first").join("second");
+    assert!(matches!(
+        private::create_dir_all_durable(&end, outer.path()),
+        Err(DirectoryDurabilityError::BeforeCreate { source })
+            if source.kind() == ErrorKind::Unsupported
+    ));
+    assert!(names(outer.path()).is_empty());
+    private::create_dir_all(&end).unwrap();
+    let kept = end.join("kept");
+    fs::write(&kept, "kept").unwrap();
+    assert!(matches!(
+        private::create_dir_all_durable(&end, outer.path()),
+        Err(DirectoryDurabilityError::BeforeCreate { source })
+            if source.kind() == ErrorKind::Unsupported
+    ));
+    assert_eq!(read(&kept), "kept");
 }
 
 #[test]
@@ -467,6 +663,133 @@ fn a_lock_held_by_another_process_ends_with_that_process() {
 }
 
 // ---- atomic -------------------------------------------------------------
+
+#[test]
+fn a_durable_private_write_acknowledges_whole_bytes_and_the_installed_identity() {
+    let outer = folder();
+    let path = outer.path().join("ledger.json");
+    // This contract observes the file operation's OS acknowledgement, not
+    // power-loss persistence of the test's newly created ancestor chain.
+    let first = atomic::write_file_durable(&path, b"first intent", Access::Private).unwrap();
+    assert_eq!(read(&path), "first intent");
+    assert_eq!(first, identity::file_id(&path).unwrap());
+    assert!(private::is_private(&path).unwrap());
+    assert!(private::owned_by_current_user(&path).unwrap());
+
+    let second = atomic::write_file_durable(&path, b"second intent", Access::Private).unwrap();
+    assert_eq!(read(&path), "second intent");
+    assert_eq!(second, identity::file_id(&path).unwrap());
+    assert_ne!(first, second);
+    assert!(private::is_private(&path).unwrap());
+    assert_eq!(names(outer.path()), ["ledger.json"]);
+}
+
+#[test]
+fn a_durable_write_with_no_parent_fails_before_replacement_without_making_state() {
+    let outer = folder();
+    let old = outer.path().join("kept");
+    fs::write(&old, b"old").unwrap();
+    let path = outer.path().join("missing").join("ledger.json");
+
+    let error = atomic::write_file_durable(&path, b"new", Access::Private).unwrap_err();
+
+    match error {
+        atomic::DurableWriteError::BeforeReplace { source, cleanup } => {
+            assert_eq!(source.kind(), ErrorKind::NotFound);
+            assert!(cleanup.is_none());
+        }
+        other => panic!("expected failure before replacement: {other}"),
+    }
+    assert!(!path.exists());
+    assert_eq!(read(&old), "old");
+    assert_eq!(names(outer.path()), ["kept"]);
+}
+
+#[test]
+fn a_real_failed_durable_replacement_reports_uncertainty_and_cleans_only_its_temp() {
+    let outer = folder();
+    let target = outer.path().join("directory");
+    fs::create_dir(&target).unwrap();
+    fs::write(target.join("keep"), b"existing child").unwrap();
+
+    let error = atomic::write_file_durable(&target, b"new", Access::Private).unwrap_err();
+
+    match error {
+        atomic::DurableWriteError::ReplacementUncertain { source, cleanup } => {
+            assert!(source.raw_os_error().is_some());
+            assert!(cleanup.is_none());
+        }
+        other => panic!("expected uncertain replacement: {other}"),
+    }
+    assert_eq!(read(&target.join("keep")), "existing child");
+    assert_eq!(names(outer.path()), ["directory"]);
+}
+
+#[cfg(windows)]
+#[test]
+fn unsupported_durable_access_preserves_existing_bytes_acl_and_the_namespace() {
+    let outer = folder();
+    let path = outer.path().join("kept");
+    fs::write(&path, b"old").unwrap();
+    widen(&path, false);
+    let before = Permissions::of(&File::open(&path).unwrap()).unwrap();
+    let before_id = identity::file_id(&path).unwrap();
+
+    for access in [Access::KeepOrPrivate, Access::PrivateExecutable] {
+        let error = atomic::write_file_durable(&path, b"new", access).unwrap_err();
+        match error {
+            atomic::DurableWriteError::BeforeReplace { source, cleanup } => {
+                assert_eq!(source.kind(), ErrorKind::Unsupported);
+                assert!(cleanup.is_none());
+            }
+            other => panic!("expected unsupported access before mutation: {other}"),
+        }
+        assert_eq!(read(&path), "old");
+        assert_eq!(identity::file_id(&path).unwrap(), before_id);
+        assert_eq!(
+            Permissions::of(&File::open(&path).unwrap()).unwrap(),
+            before
+        );
+    }
+    let fresh = outer.path().join("fresh");
+    assert!(matches!(
+        atomic::write_file_durable(&fresh, b"new", Access::KeepOrPrivate),
+        Err(atomic::DurableWriteError::BeforeReplace { source, cleanup: None })
+            if source.kind() == ErrorKind::Unsupported
+    ));
+    assert!(!fresh.exists());
+    assert_eq!(names(outer.path()), ["kept"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_durable_unix_write_preserves_kept_permissions_and_private_executable_access() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let outer = folder();
+    let path = outer.path().join("kept");
+    fs::write(&path, b"old").unwrap();
+    fs::set_permissions(&path, fs::Permissions::from_mode(0o640)).unwrap();
+    let before = Permissions::of(&File::open(&path).unwrap()).unwrap();
+
+    atomic::write_file_durable(&path, b"new", Access::KeepOrPrivate).unwrap();
+
+    assert_eq!(read(&path), "new");
+    assert_eq!(
+        Permissions::of(&File::open(&path).unwrap()).unwrap(),
+        before
+    );
+    let program = outer.path().join("program");
+    atomic::write_file_durable(&program, b"private program", Access::PrivateExecutable).unwrap();
+    assert_eq!(read(&program), "private program");
+    assert_eq!(
+        Permissions::of(&File::open(&program).unwrap())
+            .unwrap()
+            .unix_mode(),
+        Some(0o700)
+    );
+    assert_eq!(names(outer.path()), ["kept", "program"]);
+}
 
 #[test]
 fn a_written_file_replaces_the_old_one_whole_and_leaves_nothing_beside_it() {

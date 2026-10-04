@@ -7,6 +7,7 @@ mod ai;
 mod changes;
 mod checkout_owner;
 mod codex_launch;
+pub mod delivery;
 mod device_catalog;
 pub mod diagnostics;
 mod disk;
