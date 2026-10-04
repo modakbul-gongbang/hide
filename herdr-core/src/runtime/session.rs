@@ -1259,8 +1259,34 @@ impl Runtime {
                         .iter()
                         .any(|tab| tab.id.as_deref() == Some(tab_id))
                 });
+                // Herdr arriving at a tab Hide asked for and has since moved
+                // off is that request's answer. It is consumed, so the same
+                // tab focused again later is followed like any outside move.
+                let answers_superseded = herdr_tab.as_deref().is_some_and(|tab_id| {
+                    self.superseded_tab_focus
+                        .iter()
+                        .any(|held| held.scope_id == checkout.id && held.target_id == tab_id)
+                });
+                if answers_superseded && let Some(tab_id) = herdr_tab.as_deref() {
+                    self.superseded_tab_focus
+                        .retain(|held| held.scope_id != checkout.id || held.target_id != tab_id);
+                    // Recorded only where the answer would have been followed.
+                    if hide_tab
+                        .as_deref()
+                        .is_some_and(|hide_tab| hide_tab != tab_id)
+                    {
+                        crate::diagnostic!(serde_json::json!({
+                            "component": "view_state",
+                            "kind": "tab.focus.late_answer",
+                            "checkout_id": checkout.id,
+                            "from_tab_id": hide_tab,
+                            "tab_id": tab_id,
+                        }));
+                    }
+                }
                 let visible = match (hide_tab, herdr_tab) {
                     (Some(hide_tab), Some(herdr_tab)) if hide_tab == herdr_tab => Some(hide_tab),
+                    (Some(hide_tab), Some(_)) if answers_superseded => Some(hide_tab),
                     (Some(hide_tab), Some(herdr_tab)) => {
                         if pending_tab.as_deref() == Some(hide_tab.as_str()) {
                             Some(hide_tab)
@@ -1449,6 +1475,11 @@ impl Runtime {
     /// screen out from under them. Dropping the wait is what lets the next
     /// Herdr event be read as an external focus rather than as a late answer.
     pub(super) fn expire_pending_view_focus(&mut self, now_unix_ms: u64) -> bool {
+        // A superseded request Herdr never visibly answered (its event was
+        // folded into the next one) stops claiming that tab with the same
+        // bound; Hide's value never depended on it, so nothing is reported.
+        self.superseded_tab_focus
+            .retain(|held| !held.expired_at(now_unix_ms));
         let mut expired = Vec::new();
         for slot in ViewFocusSlot::ALL {
             // A socket control already has its own bounded transport wait.
@@ -2948,6 +2979,31 @@ impl Runtime {
             ),
         );
     }
+    /// Waits on a new tab notification. One still unanswered is remembered
+    /// as superseded rather than forgotten: Herdr applies it anyway, and its
+    /// answer can arrive after the new request has already been confirmed by
+    /// a session that predates both.
+    pub(super) fn await_tab_focus(&mut self, next: PendingViewFocus) {
+        let next_target_id = next.target_id.clone();
+        if let Some(previous) = self.pending_tab_focus.replace(next)
+            && previous.target_id != next_target_id
+        {
+            self.superseded_tab_focus.retain(|held| {
+                held.scope_id != previous.scope_id || held.target_id != previous.target_id
+            });
+            self.superseded_tab_focus.push(previous);
+        }
+        if self.superseded_tab_focus.len() > SUPERSEDED_TAB_FOCUS_LIMIT {
+            let evicted = self.superseded_tab_focus.remove(0);
+            crate::diagnostic!(serde_json::json!({
+                "component": "view_state",
+                "kind": "tab.focus.superseded_evicted",
+                "checkout_id": evicted.scope_id,
+                "tab_id": evicted.target_id,
+                "limit": SUPERSEDED_TAB_FOCUS_LIMIT,
+            }));
+        }
+    }
     /// Rule 11: whether repeating this view-state change would converge on
     /// what the core already holds, so Herdr needs no second notification.
     /// True when nothing is in flight for the slot, or what is in flight is
@@ -3976,8 +4032,7 @@ impl Runtime {
                     ) {
                         self.visible_tab_ids
                             .insert(checkout_id.clone(), tab_id.clone());
-                        self.pending_tab_focus =
-                            Some(PendingViewFocus::new(checkout_id, tab_id.clone()));
+                        self.await_tab_focus(PendingViewFocus::new(checkout_id, tab_id.clone()));
                     }
                     self.yield_surface_to_terminal();
                     self.persist_current_ui_state();
@@ -4023,6 +4078,13 @@ impl Runtime {
                 // and the wait ends, so the next Herdr event naming another
                 // tab is read as an external focus rather than a late answer.
                 if let RemoteControlAction::FocusTab { tab_id } = &action {
+                    // A refused superseded request will never be answered.
+                    // One whose result was lost may still have been applied,
+                    // so it keeps waiting for its answer until it expires.
+                    if !error.is_ambiguous() {
+                        self.superseded_tab_focus
+                            .retain(|held| held.target_id != *tab_id);
+                    }
                     self.clear_refused_view_focus(ViewFocusSlot::Tab, tab_id, &message);
                 }
                 self.set_error(

@@ -2112,8 +2112,7 @@ impl Runtime {
                 // unconfirmed replaces it, so Herdr's answer to the first
                 // cannot pull the canvas back off the tab the operator is
                 // now on.
-                self.pending_tab_focus =
-                    Some(PendingViewFocus::new(payload.checkout_id, payload.tab_id));
+                self.await_tab_focus(PendingViewFocus::new(payload.checkout_id, payload.tab_id));
                 true
             }
             Event::RenameTab(payload) => self.rename_tab(payload),
