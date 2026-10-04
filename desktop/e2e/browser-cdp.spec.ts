@@ -36,7 +36,7 @@ type CoreView = { view_id: string; area_id: string; kind: string; target: string
 type AuthoritySync = BrowserSync & { authorized_scopes: { workspace: string; area_id: string; incarnation: number }[] };
 type Send = (method: string, params?: Record<string, unknown>, sessionId?: string) => Promise<Reply>;
 type TargetEvent = { method: string; parentSessionId: string | null; sessionId: string; targetId: string; type: string | null; url: string | null };
-type FrameTree = { frame: { id: string; name?: string; url: string }; childFrames?: FrameTree[] };
+type FrameTree = { frame: { id: string; name?: string; url: string } };
 
 function quote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }
 /** Each raw connection and request has a deadline and closes on every path. */
@@ -154,7 +154,7 @@ async function excludedRendererIds(foreignUrl: string): Promise<string[]> {
 }
 
 async function ownedFrameProvenance(parentUrl: string, childUrl: string) {
-  return app!.evaluate(({ BrowserWindow }, { parentUrl, childUrl }) => {
+  return app!.evaluate(async ({ BrowserWindow }, { parentUrl, childUrl }) => {
     const windows = BrowserWindow.getAllWindows().filter((window) => window.getParentWindow() === null);
     if (windows.length !== 1) throw new Error("Expected exactly one candidate main window");
     const contents = windows[0]!.contentView.children.flatMap((view) => {
@@ -165,8 +165,21 @@ async function ownedFrameProvenance(parentUrl: string, childUrl: string) {
     const parent = contents[0]!.mainFrame;
     const children = parent.framesInSubtree.filter((frame) => !frame.isDestroyed() && frame.url === childUrl);
     if (children.length !== 1 || !children[0]!.parent) throw new Error("Expected exactly one owned cross-site child frame");
+    // Page.getFrameTree contains local frames only. The parent's actual DOM
+    // owner supplies the remote child's ID independently of the gateway.
+    const debugger_ = contents[0]!.debugger;
+    if (!debugger_.isAttached()) throw new Error("The owned page must have an active debugger lease");
+    const document = await debugger_.sendCommand("DOM.getDocument", { depth: 0 }) as { root: { nodeId: number } };
+    const selected = await debugger_.sendCommand("DOM.querySelector", { nodeId: document.root.nodeId, selector: "#cross-site" }) as { nodeId: number };
+    if (!Number.isInteger(selected.nodeId) || selected.nodeId <= 0) throw new Error("The owned iframe DOM node is absent");
+    const described = await debugger_.sendCommand("DOM.describeNode", { nodeId: selected.nodeId, depth: 0 }) as { node: { nodeName: string; frameId?: string; attributes?: string[] } };
+    const owner = described.node;
+    if (owner.nodeName !== "IFRAME" || typeof owner.frameId !== "string" || owner.frameId.length === 0
+      || !owner.attributes || owner.attributes.length > 64 || owner.attributes.length % 2 !== 0) throw new Error("The owned iframe has no native frame identity");
+    const attributes = Object.fromEntries(Array.from({ length: owner.attributes.length / 2 }, (_, index) => [owner.attributes![index * 2]!, owner.attributes![index * 2 + 1]!]));
+    if (attributes.id !== "cross-site" || attributes.name !== children[0]!.name || attributes.src !== childUrl) throw new Error("The native DOM owner does not identify the expected child");
     const identity = (frame: Electron.WebFrameMain) => ({ processId: frame.processId, routingId: frame.routingId, osProcessId: frame.osProcessId, name: frame.name });
-    return { contentsId: contents[0]!.id, parent: identity(parent), child: identity(children[0]!), childParent: identity(children[0]!.parent!) };
+    return { contentsId: contents[0]!.id, frameOwner: { frameId: owner.frameId, attributes }, parent: identity(parent), child: identity(children[0]!), childParent: identity(children[0]!.parent!) };
   }, { parentUrl, childUrl });
 }
 
@@ -242,6 +255,7 @@ test("browser CDP: standard Playwright controls the scoped native page and disco
   const cdp = await context.newCDPSession(page);
   const childUrl = `${origin.replace("127.0.0.1", "localhost")}/cross-site`;
   const childName = "scoped-oopif-child";
+  let oopifEvidence: string | undefined;
   try {
     await page.evaluate(({ url, name }) => {
       const frame = document.createElement("iframe");
@@ -258,9 +272,11 @@ test("browser CDP: standard Playwright controls the scoped native page and disco
     // actual frame tree of this exact candidate WebContents before claiming
     // an OOPIF, without adding site-isolation flags or touching another app.
     const provenance = await ownedFrameProvenance(`${origin}/fixture`, childUrl);
-    const evidenceDir = path.join(REPO, "agents", "runs", "browser-control");
+    const evidenceDir = process.env.HIDE_E2E_SCREENSHOT_DIR ?? path.join(REPO, "agents", "runs", "browser-control");
     fs.mkdirSync(evidenceDir, { recursive: true });
-    fs.writeFileSync(path.join(evidenceDir, "oopif-renderer-provenance.json"), JSON.stringify({ candidatePid: app.process().pid, ...provenance }, null, 2));
+    const evidence = path.join(fs.mkdtempSync(path.join(evidenceDir, "oopif-")), "renderer-provenance.json");
+    fs.writeFileSync(evidence, JSON.stringify({ candidatePid: app.process().pid, ...provenance }, null, 2));
+    oopifEvidence = evidence;
     expect(provenance.childParent).toEqual(provenance.parent);
     expect(provenance.child.name).toBe(childName);
     expect(provenance.contentsId).toBe(Number(inventory[0]!.id.slice("page-".length)));
@@ -308,7 +324,8 @@ test("browser CDP: standard Playwright controls the scoped native page and disco
         events.push({ method: event.method, parentSessionId: event.sessionId ?? null, sessionId: params.sessionId, targetId, type: params.targetInfo?.type ?? null, url: params.targetInfo?.url ?? null });
       } catch { malformed = true; }
     };
-    const evidence = path.join(REPO, "agents", "runs", "browser-control", "oopif-renderer-provenance.json");
+    if (!oopifEvidence) throw new Error("Native OOPIF provenance was not recorded");
+    const evidence = oopifEvidence;
     const native = JSON.parse(fs.readFileSync(evidence, "utf8")) as Record<string, unknown>;
     const record = () => fs.writeFileSync(evidence, JSON.stringify({ ...native, scoped: { events, overflow, malformed, ...proof } }, null, 2));
     socket.on("message", observed);
@@ -350,12 +367,11 @@ test("browser CDP: standard Playwright controls the scoped native page and disco
       const childTree = await send("Page.getFrameTree", {}, child.sessionId);
       expect(parentTree.error).toBeUndefined();
       expect(childTree.error).toBeUndefined();
-      const owned = (parentTree.result as { frameTree: FrameTree }).frameTree.childFrames?.filter((frame) => frame.frame.name === childName && frame.frame.url === childUrl);
-      expect(owned).toHaveLength(1);
+      expect((parentTree.result as { frameTree: FrameTree }).frameTree.frame).toMatchObject({ id: inventory[0]!.id, url: `${origin}/fixture` });
       const childFrame = (childTree.result as { frameTree: FrameTree }).frameTree.frame;
-      expect(childFrame).toMatchObject({ id: owned![0]!.frame.id, name: childName, url: childUrl });
-      expect(child.targetId).toBe(owned![0]!.frame.id);
-      proof.frameMapping = { parentFrameId: (parentTree.result as { frameTree: FrameTree }).frameTree.frame.id, childFrameId: childFrame.id, childTargetId: child.targetId, childSessionId: child.sessionId, parentSessionId };
+      expect(childFrame).toMatchObject({ id: nativeDuringChildSession.frameOwner.frameId, name: childName, url: childUrl });
+      expect(child.targetId).toBe(nativeDuringChildSession.frameOwner.frameId);
+      proof.frameMapping = { parentFrameId: (parentTree.result as { frameTree: FrameTree }).frameTree.frame.id, nativeChildFrameId: nativeDuringChildSession.frameOwner.frameId, childFrameId: childFrame.id, childTargetId: child.targetId, childSessionId: child.sessionId, parentSessionId };
       record();
       const removed = await send("Runtime.evaluate", { expression: "document.querySelector('#cross-site').remove(); 'removed'", returnByValue: true }, parentSessionId);
       expect(removed.result).toMatchObject({ result: { value: "removed" } });
@@ -608,11 +624,13 @@ test("browser CDP: native files cannot be read through runtime, frames, redirect
   // resolved request/navigation; the gateway never parses JavaScript.
   const encoded = [...fileUrl].map((letter) => letter.charCodeAt(0));
   const navigationRefusals = () => hostLog(run.env).filter((line) => line.event === "browser.navigation_refused" && line.reason === "cdp_file_boundary" && line.display_id === displayId);
-  const beforeNavigation = navigationRefusals().length;
   await cdp.send("Runtime.evaluate", { expression: `location.assign(String.fromCharCode(...${JSON.stringify(encoded)})); 'attempted'` });
-  await expect.poll(() => navigationRefusals().length).toBeGreaterThan(beforeNavigation);
+  await expect(page.getByRole("heading")).toHaveText("Scoped browser fixture");
+  expect(page.url()).toBe(`${origin}/protected`);
   await cdp.send("Runtime.evaluate", { expression: `for(let attempt=0;attempt<20;attempt++) location.assign(String.fromCharCode(...${JSON.stringify(encoded)})); 'attempted'` });
-  expect(navigationRefusals()).toHaveLength(1);
+  // Chromium can preempt an HTTP-to-file attempt before the app sees it.
+  // Separate app-owned main-frame and iframe cases require guard causality.
+  expect(navigationRefusals().length).toBeLessThanOrEqual(1);
   await cdp.send("Runtime.evaluate", { expression: `for(let attempt=0;attempt<20;attempt++) window.open(String.fromCharCode(...${JSON.stringify(encoded)})); 'attempted'` });
   const popupRefusals = hostLog(run.env).filter((line) => line.event === "browser.window_open_refused" && line.reason === "cdp_file_boundary" && line.display_id === displayId);
   // Chromium may reject a popup before Electron receives it. When the
@@ -661,22 +679,41 @@ test("browser CDP: native files cannot be read through runtime, frames, redirect
   await expect(browser.contexts()[0]!.pages()[0]!.getByRole("heading")).toHaveText("Scoped browser fixture");
   await browser.close();
   browser = null;
-  // The first-refusal categories are already spent above. A fresh native
-  // generation provides a causal redirect witness without resetting them.
+  // A fresh native generation records redirect denial without sharing the
+  // earlier attempts' finite diagnostic categories.
   const redirectOpened = await fromPane(["browser", "open", `${origin}/redirect-guard`, "--reveal", "--wait"]);
   const redirectId = (redirectOpened.result as { view_id: string }).view_id;
   const redirectCapability = (await fromPane(["browser", "connect", "--display", redirectId])).result as Capability;
+  const redirectInventory = await targets(redirectCapability);
+  expect(redirectInventory).toHaveLength(1);
+  expect(redirectInventory[0]!.id).toMatch(/^page-\d+$/);
+  const redirectContents = Number(redirectInventory[0]!.id.slice("page-".length));
   try { browser = await chromium.connectOverCDP(redirectCapability.browser_ws_url, { noDefaults: true, timeout: 20_000 }); }
   catch { throw new Error("The scoped redirect proof connection could not initialize"); }
   const nativeRefusals = () => hostLog(run.env).filter((line) => ["browser.navigation_refused", "browser.request_refused"].includes(line.event as string) && line.reason === "cdp_file_boundary" && line.display_id === redirectId).length;
   expect(nativeRefusals()).toBe(0);
-  await browser.contexts()[0]!.pages()[0]!.goto(`${origin}/file-redirect`).catch(() => undefined);
-  await expect.poll(nativeRefusals).toBeGreaterThan(0);
+  const redirectPage = browser.contexts()[0]!.pages()[0]!;
+  await expect(redirectPage.goto(`${origin}/file-redirect`)).rejects.toThrow();
+  expect(nativeRefusals()).toBeLessThanOrEqual(2);
+  for (const event of ["browser.navigation_refused", "browser.request_refused"]) {
+    expect(hostLog(run.env).filter((line) => line.event === event && line.reason === "cdp_file_boundary" && line.display_id === redirectId).length).toBeLessThanOrEqual(1);
+  }
+  const redirectNative = await app.evaluate(async ({ webContents }, id) => {
+    const contents = webContents.fromId(id);
+    if (!contents || contents.isDestroyed()) throw new Error("The redirect page's native generation ended");
+    return { urls: contents.mainFrame.framesInSubtree.map((frame) => frame.url), body: await contents.executeJavaScript("document.body?.innerText ?? ''") as string };
+  }, redirectContents);
+  expect(redirectNative.urls.some((url) => url.startsWith("file:"))).toBe(false);
+  expect(redirectNative.body).not.toContain("FORBIDDEN_CDP_FILE_CONTENT");
   const urls = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.contentView.children.flatMap((view) => {
     const contents = (view as { webContents?: Electron.WebContents }).webContents;
     return contents ? contents.mainFrame.framesInSubtree.map((frame) => frame.url) : [];
   }));
   expect(urls).not.toContain(fileUrl);
+  await redirectPage.goto(`${origin}/redirect-guard`);
+  await expect(redirectPage.getByRole("heading")).toHaveText("Scoped browser fixture");
+  expect(redirectPage.url()).toBe(`${origin}/redirect-guard`);
+  expect(await redirectPage.locator("body").innerText()).not.toContain("FORBIDDEN_CDP_FILE_CONTENT");
 });
 
 test("browser CDP: the owned native iframe request is causally canceled before file content", async () => {

@@ -310,8 +310,14 @@ The test window never activates the app or takes the keyboard, because the e2e f
 The zoom test needs the key window: it is tagged `@needs-focus` and brings its window to the front itself.
 Keep screenshots and logs under local-only `agents/runs/`.
 `desktop/e2e/browser-cdp.spec.ts` exercises the scoped native gateway against its own candidate, including pre-attachment native file-request cancellation and persistent download cancellation after client disconnect.
-Its iframe proof correlates exact scoped parent and child target/session IDs with the candidate's native frame tree and distinct renderer processes, then retires the child and requires stale commands to fail while the parent remains usable.
+Its iframe proof obtains the cross-site iframe's frame-owner ID directly from the candidate WebContents' native DOM, independently of the scoped gateway, and requires both the scoped child frame ID and attached target ID to equal it.
+Chromium's `Page.getFrameTree` includes local children only, so an out-of-process child's identity cannot be inferred from the parent session's frame tree.
+The proof retains exact parent identity, native frame parentage, distinct renderer processes and child-session runtime execution, then retires the child and requires stale commands to fail while the parent remains usable.
 A same-renderer cross-site frame fails that OOPIF proof instead of substituting an in-process interaction or forcing launch flags.
+JavaScript and HTTP redirect file attempts must leave native file content unreadable and permit the authorized HTTP page to remain usable; a redirect must reject its navigation caller.
+Chromium may preempt these attempts before the host receives them, so each diagnostic category is capped at one rather than required for those attempts.
+The separate app-owned pre-first-load, post-disconnect and native iframe file attempts must each prove guard-caused cancellation with exactly one refusal diagnostic per generation and no file content.
+Each run stores its iframe provenance in a new private evidence directory, preserving earlier results.
 Its download witness confines the candidate app and owned page session to a private sink before every attempt, observes production cancellation on every native callback, and requires one refusal diagnostic and an empty sink.
 `desktop/e2e/remote-workspace.spec.ts` additionally uses an isolated SSH server, whose sessions get the private HOME `desktop/e2e/device-home.ts` proves because connecting installs Hide's kit there, and two private Herdr servers to prove remote CLI origin, HTTP and WebSocket forwarding, absolute loopback subrequests, local and remote cookie separation, remote popup address ownership, relative HTML assets, refusal of undeclared files and external requests, explicit reveal, background View cleanup, route cleanup on close and forced candidate exit, and a return route that comes back after the device's helper connection ends and reconnects, with every remote command run through the `hide` Hide installed and linked on the device.
 
