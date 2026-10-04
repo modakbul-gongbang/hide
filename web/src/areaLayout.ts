@@ -1,11 +1,14 @@
 // Shared geometry, tree queries and drop decisions. Column adapters supply
 // vocabulary and item equivalence; this module has no document or terminal policy.
+import { translate } from "./i18n/client";
+import type { MessageKey } from "./i18n/catalogs";
 export type AreaItem = { id: string };
 export type Area<I extends AreaItem> = { id: string; active: string | null; displays: I[] };
 export type AreaSplit<I extends AreaItem> = { id: string; axis: "row" | "column"; ratio: number; first: AreaNode<I>; second: AreaNode<I> };
 export type AreaNode<I extends AreaItem> = { area: Area<I> } | { split: AreaSplit<I> };
 export type AreaLayout<I extends AreaItem> = { root: AreaNode<I>; active_area: string; limits: { areas: number; depth: number; displays: number }; display_count: number };
-export type AreaWords = { item: string; area: string; plural: string };
+/** Which column an area tree draws, which picks the wording of every sentence about it. */
+export type AreaWords = { kind: "agent" | "view" };
 
 export type Rect = { x: number; y: number; width: number; height: number };
 export type Point = { x: number; y: number };
@@ -31,7 +34,25 @@ export const RESIZE_STEP = 0.05;
 /** How far into an area's content, as a share of its size, an edge's drop zone reaches. */
 export const EDGE_ZONE = 0.3;
 
-const EDGE_NAME: Record<Edge, string> = { right: "right", left: "left", up: "up", down: "down" };
+const SPLIT_LABEL = { right: "panes.area.splitRight", left: "panes.area.splitLeft", up: "panes.area.splitUp", down: "panes.area.splitDown" } as const satisfies Record<Edge, MessageKey>;
+const MOVE_LABEL = { right: "panes.area.moveRight", left: "panes.area.moveLeft", up: "panes.area.moveUp", down: "panes.area.moveDown" } as const satisfies Record<Edge, MessageKey>;
+
+/** The menu item and the drop preview that split toward `edge`. */
+export function splitLabel(edge: Edge): string {
+  return translate(SPLIT_LABEL[edge]);
+}
+
+/** The menu item that moves a tab into the neighbouring area toward `edge`. */
+export function moveLabel(edge: Edge): string {
+  return translate(MOVE_LABEL[edge]);
+}
+
+type AreaSentence = "itemGone" | "areaGone" | "onlyItem" | "tooSmall" | "notOnScreen" | "tooNarrow" | "tooShort" | "dropHint" | "onlyOne" | "cannotGrow" | "cannotShrink";
+
+/** A sentence about one column's areas, worded for that column. */
+export function areaSentence(words: AreaWords, name: AreaSentence): string {
+  return translate(`panes.area.${name}.${words.kind}` as const);
+}
 // --- tree queries ------------------------------------------------------------
 
 /** Every area, in tree order: first child before second, depth first. */
@@ -358,10 +379,10 @@ export function splitEligibility<I extends AreaItem>(
   words: AreaWords,
 ): Eligibility {
   const located = locateDisplay(layout.root, displayId);
-  if (!located) return refuse(`This ${words.item} is no longer open.`);
+  if (!located) return refuse(areaSentence(words, "itemGone"));
   const target = findArea(layout.root, areaId);
-  if (!target) return refuse(`That ${words.area} is gone.`);
-  if (located.area.id === areaId && located.area.displays.length === 1) return refuse(`This is the only ${words.item} in its area.`);
+  if (!target) return refuse(areaSentence(words, "areaGone"));
+  if (located.area.id === areaId && located.area.displays.length === 1) return refuse(areaSentence(words, "onlyItem"));
   return roomToSplit(layout, geometry, sizes, areaId, edge, words);
 }
 
@@ -369,15 +390,15 @@ export function splitEligibility<I extends AreaItem>(
 
 /** The caps, the depth and the pixel room a new area at `edge` of `areaId` needs. */
 export function roomToSplit<I extends AreaItem>(layout: AreaLayout<I>, geometry: Geometry, sizes: LayoutSizes, areaId: string, edge: Edge, words: AreaWords): Eligibility {
-  if (areasOf(layout.root).length >= layout.limits.areas) return refuse(`This Workspace already shows ${count(layout.limits.areas, words.area)}, the most it can.`);
-  if ((areaDepth(layout.root, areaId) ?? 0) >= layout.limits.depth) return refuse(`${words.plural} can be split only ${count(layout.limits.depth, "level")} deep.`);
-  if (!geometry.fits) return refuse(`The window is too small to show more ${words.area}s.`);
+  if (areasOf(layout.root).length >= layout.limits.areas) return refuse(translate(`panes.area.maxAreas.${words.kind}` as const, { count: layout.limits.areas }));
+  if ((areaDepth(layout.root, areaId) ?? 0) >= layout.limits.depth) return refuse(translate(`panes.area.maxDepth.${words.kind}` as const, { count: layout.limits.depth }));
+  if (!geometry.fits) return refuse(areaSentence(words, "tooSmall"));
   const box = geometry.areas.find((area) => area.id === areaId);
-  if (!box) return refuse(`That ${words.area} is not on screen.`);
+  if (!box) return refuse(areaSentence(words, "notOnScreen"));
   const across = edge === "left" || edge === "right";
   const needed = across ? 2 * sizes.areaMinWidth + sizes.divider : 2 * sizes.areaMinHeight + sizes.divider;
   if ((across ? box.rect.width : box.rect.height) < needed) {
-    return refuse(`This ${words.area} is too ${across ? "narrow" : "short"} to split.`);
+    return refuse(areaSentence(words, across ? "tooNarrow" : "tooShort"));
   }
   return { ok: true };
 }
@@ -415,9 +436,9 @@ export function dropTarget<I extends AreaItem>(input: {
   sameContent: (a: I, b: I) => boolean;
 }): DropTarget {
   const { layout, geometry, sizes, tabs, displayId, point, words, sameContent } = input;
-  const nowhere = `Drop on a tab bar to move this ${words.item}, or near an area's edge to split it.`;
+  const nowhere = areaSentence(words, "dropHint");
   const located = locateDisplay(layout.root, displayId);
-  if (!located) return { kind: "none", reason: `This ${words.item} is no longer open.` };
+  if (!located) return { kind: "none", reason: areaSentence(words, "itemGone") };
   for (const box of geometry.areas) {
     if (contains(box.bar, point)) return barTarget(box, findArea(layout.root, box.id), tabs[box.id] ?? [], located, point, sameContent);
   }
@@ -427,7 +448,7 @@ export function dropTarget<I extends AreaItem>(input: {
     if (!edge) return { kind: "none", reason: nowhere };
     const eligibility = splitEligibility(layout, geometry, sizes, displayId, box.id, edge, words);
     if (!eligibility.ok) return { kind: "none", reason: eligibility.reason };
-    return { kind: "edge", areaId: box.id, edge, preview: half(box.rect, edge), label: `Split ${EDGE_NAME[edge]}` };
+    return { kind: "edge", areaId: box.id, edge, preview: half(box.rect, edge), label: splitLabel(edge) };
   }
   return { kind: "none", reason: nowhere };
 }
@@ -490,20 +511,16 @@ export function sameTarget(a: DropTarget, b: DropTarget): boolean {
 
 export function resizeTarget<I extends AreaItem>(layout: AreaLayout<I>, geometry: Geometry | null, grow: boolean, words: AreaWords): { splitId: string; ratio: number } | { reason: string } {
   const parent = parentSplit(layout.root, layout.active_area);
-  if (!parent) return { reason: `There is only one ${words.area}.` };
+  if (!parent) return { reason: areaSentence(words, "onlyOne") };
   const delta = (grow ? 1 : -1) * (parent.side === "first" ? RESIZE_STEP : -RESIZE_STEP);
   const divider = geometry?.dividers.find((box) => box.id === parent.split.id);
   const ratio = divider ? steppedRatio(divider, delta) : moved(parent.split.ratio, clamp(parent.split.ratio + delta, RATIO_MIN, RATIO_MAX));
-  if (ratio === null) return { reason: `This ${words.area} cannot ${grow ? "grow" : "shrink"} any further.` };
+  if (ratio === null) return { reason: areaSentence(words, grow ? "cannotGrow" : "cannotShrink") };
   return { splitId: parent.split.id, ratio };
 }
 
 function moved(before: number, after: number): number | null {
   return Math.abs(after - before) < 1e-6 ? null : after;
-}
-
-function count(n: number, noun: string): string {
-  return `${n} ${noun}${n === 1 ? "" : "s"}`;
 }
 
 function contains(rect: Rect, point: Point): boolean {

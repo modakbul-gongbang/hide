@@ -12,7 +12,6 @@ import { expect, type ElectronApplication, type Locator, type Page } from "@play
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { revealLabel } from "../../web/src/revealExternal";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace, showTool } from "../../web/e2e/wire";
 import { hostLog, isolate, launch, screenshot, shellPage, test, type Isolated } from "./fixture";
@@ -90,7 +89,7 @@ test("reveal: Explorer, History, a View tab and a sidebar row hand the item to t
   git("-c", "user.email=e2e@example.com", "-c", "user.name=e2e", "-c", "commit.gpgsign=false", "commit", "-qm", "base");
   fs.appendFileSync(path.join(checkout, "src", "a.txt"), "changed\n");
   fs.rmSync(path.join(checkout, "gone.txt"));
-  const label = revealLabel(process.platform);
+  const label = ({ darwin: "Reveal in Finder", win32: "Reveal in File Explorer", linux: "Open Containing Folder" } as Record<string, string>)[process.platform] ?? "Show in File Manager";
 
   ({ app } = await launch(run.env));
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1024, 681));

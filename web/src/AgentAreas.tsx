@@ -2,7 +2,7 @@ import { useMemo, useState } from "react";
 import type { Actions } from "./actions";
 import { AreaEmpty } from "./AreaEmpty";
 import { createAreaTree, type AreaAdapter } from "./AreaTree";
-import { AGENT_WORDS, REMOTE_GROUP_REASON, agentMenu, type AgentCommand, type AgentItem, type AgentLayout } from "./agentLayout";
+import { AGENT_WORDS, agentMenu, remoteGroupReason, type AgentCommand, type AgentItem, type AgentLayout } from "./agentLayout";
 import { noteAreaFrame } from "./areaFrames";
 import { Button } from "./components/ui/button";
 import { FindBar } from "./Overlays";
@@ -17,9 +17,11 @@ import { AgentTab } from "./TabBar";
 import { agentEntries, workspaceViewOf } from "./workspace";
 import { areasOf } from "./areaLayout";
 import { useKeyboardOwner } from "./viewFocus";
+import { useInterfaceTranslation } from "./i18n/client";
 
 const SharedAgentTree = createAreaTree<AgentItem>("agent");
 export function AgentAreas({ checkout, actions, deviceId = "local", remoteBody }: { checkout: Checkout; actions: Actions; deviceId?: string; remoteBody?: React.ReactNode }) {
+  const { t } = useInterfaceTranslation();
   const [renaming, setRenaming] = useState<string | null>(null);
   const saved = useShellStore((s) => workspaceViewOf(s.rest)?.agent_layout);
   const numbered = useUiStore((s) => s.hint === "tabs");
@@ -31,7 +33,7 @@ export function AgentAreas({ checkout, actions, deviceId = "local", remoteBody }
     active_area: "a1", canvases: {}, limits: { areas: 1, depth: 0, displays: 64 }, display_count: agentEntries(checkout).length,
   }), [checkout]);
   const layout = remote ? remoteLayout : saved;
-  if (!layout) return <AreaEmpty state="agent-layout-missing" text="Waiting for Agent areas…" />;
+  if (!layout) return <AreaEmpty state="agent-layout-missing" text={t("panes.agent.waiting")} />;
   const numbers = numbered ? numberedTabs(checkout, layout) : null;
   const workspace = { device_id: deviceId, path: checkout.path };
   const label = (id: string) => entries.find((entry) => entry.source_id === id)?.label ?? id;
@@ -45,7 +47,7 @@ export function AgentAreas({ checkout, actions, deviceId = "local", remoteBody }
         })?.id ?? null : null
       : null,
     barAttributes: { "data-tab-bar": checkout.id, ...(remote ? { "data-remote-tab-bar": "true" } : {}) },
-    splitUnavailable: remote ? REMOTE_GROUP_REASON : undefined,
+    splitUnavailable: remote ? remoteGroupReason() : undefined,
     label: (item) => label(item.id),
     sameContent: (a, b) => a.id === b.id,
     shown: (area) => {
@@ -60,7 +62,7 @@ export function AgentAreas({ checkout, actions, deviceId = "local", remoteBody }
       {area.id === layout.active_area ? <><RelationStatus actions={actions} /><FindBar actions={actions} /></> : null}
       {remote ? remoteBody : <PaneCanvas key={item.id} tab={checkout.tabs.find((tab) => tab.id === item.id) ?? null} actions={actions} />}
     </>,
-    empty: (area) => <AreaEmpty state="no-agent-tab" text="No agent tab is open"><Button variant="secondary" onClick={() => actions.createTab(area.id)} data-empty-new-tab="true">New tab</Button></AreaEmpty>,
+    empty: (area) => <AreaEmpty state="no-agent-tab" text={t("panes.agent.noTab")}><Button variant="secondary" onClick={() => actions.createTab(area.id)} data-empty-new-tab="true">{t("panes.area.newTab")}</Button></AreaEmpty>,
     floating: (item) => <span className="truncate">{label(item.id)}</span>,
     menu: (id, geometry, sizes) => agentMenu({ workspace, layout, geometry, sizes }, id),
     runMenu: (command, id) => command === "rename_tab" ? setRenaming(id) : actions.runAgentCommand(command as AgentCommand, id),
@@ -80,8 +82,8 @@ export function AgentAreas({ checkout, actions, deviceId = "local", remoteBody }
     split: (id, areaId, edge) => actions.agentLayout({ action: "split", tab_id: id, area_id: areaId, edge, request_id: crypto.randomUUID() }),
     resize: (id, ratio) => actions.agentLayout({ action: "resize", split_id: id, ratio }),
     newTab: (areaId) => actions.createTab(areaId),
-    newTabLabel: `New tab ${checkout.next_tab_label}`,
-    tabListLabel: "Agent tabs", actionsLabel: "Agent tab actions",
+    newTabLabel: t("panes.agent.newTabNamed", { label: checkout.next_tab_label }),
+    tabListLabel: t("panes.agent.tabList"), actionsLabel: t("panes.agent.tabActions"),
     newTabShortcut: commandLabel("new_tab"),
     onDraw: (frame) => noteAreaFrame("agent", frame ? { ...frame, layout, workspace } : null),
   };

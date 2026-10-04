@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
+import type { TFunction } from "i18next";
+import { createInterfaceI18n } from "./i18n/instance";
 import type { ViewDisplaySnapshot, ViewLayoutSnapshot, ViewNode } from "./snapshot";
 import {
   RATIO_MIN,
@@ -45,6 +47,13 @@ function layout(root: ViewNode, limits: Partial<ViewLayoutSnapshot["limits"]> = 
 }
 
 const body = (width: number, height = 600): Rect => ({ x: 0, y: 0, width, height });
+
+let t: TFunction<"translation">;
+let ko: TFunction<"translation">;
+beforeAll(async () => {
+  t = (await createInterfaceI18n("en")).t;
+  ko = (await createInterfaceI18n("ko")).t;
+});
 
 describe("geometry", () => {
   it("keeps the stored ratio while both sides get their minimum, and a divider between them", () => {
@@ -176,7 +185,7 @@ describe("split eligibility", () => {
 describe("a display's menu", () => {
   const tree = split("s1", "row", 0.5, area("a1", [display("d1", { preview: true }), "d2"]), area("a2", ["d3"]));
   const g = viewGeometry(tree, body(2000), SIZES);
-  const desktop: ExternalReveal = { host: { label: "Reveal in Finder" }, device: "local" };
+  const desktop: ExternalReveal = { host: { label: "explorer.revealFinder" }, device: "local" };
   const browser: ExternalReveal = { host: null, device: "local" };
   const ids = (displayId: string, external = desktop) => displayMenu(layout(tree), g, SIZES, displayId, external).map((entry) => entry.id);
 
@@ -195,7 +204,7 @@ describe("a display's menu", () => {
       ["Close view", null, true],
     ]);
     expect(ids("d3", browser).slice(-3)).toEqual(["copy_path", "select_in_tree", "close_view"]);
-    const remote = displayMenu(layout(tree), g, SIZES, "d3", { host: { label: "Reveal in File Explorer" }, device: "studio" }).find((entry) => entry.id === "reveal_external");
+    const remote = displayMenu(layout(tree), g, SIZES, "d3", { host: { label: "explorer.revealFileExplorer" }, device: "studio" }).find((entry) => entry.id === "reveal_external");
     expect(remote).toMatchObject({ label: "Reveal in File Explorer", unavailable: "Only for files and folders on this computer." });
     const page = split("s1", "row", 0.5, area("a1", [display("d1", { kind: "browser", path: "", url: "https://example.invalid/" }), "d2"]), area("a2", ["d3"]));
     expect(displayMenu(layout(page), g, SIZES, "d1", desktop).map((entry) => entry.id)).not.toContain("reveal_external");
@@ -351,9 +360,13 @@ describe("area commands", () => {
 
 describe("a display's identity", () => {
   it("names the kind, the full path and the state", () => {
-    expect(displayIdentity(display("d1", { preview: true }))).toBe("File: /repo/d1.md · Preview");
-    expect(displayIdentity(display("d1", { state: "unavailable", reason: "No such file" }))).toBe("File: /repo/d1.md · Unavailable: No such file");
-    expect(displayIdentity(display("d1", { kind: "diff", committed: true }))).toBe("Branch diff: /repo/d1.md");
-    expect(displayIdentity(display("d1", { state: "waiting", reason: "Waiting for mini to connect" }))).toBe("File: /repo/d1.md · Waiting: Waiting for mini to connect");
+    expect(displayIdentity(display("d1", { preview: true }), t)).toBe("File: /repo/d1.md · Preview");
+    expect(displayIdentity(display("d1", { state: "unavailable", reason: "No such file" }), t)).toBe("File: /repo/d1.md · Unavailable: No such file");
+    expect(displayIdentity(display("d1", { kind: "diff", committed: true }), t)).toBe("Branch diff: /repo/d1.md");
+    expect(displayIdentity(display("d1", { state: "waiting", reason: "Waiting for mini to connect" }), t)).toBe("File: /repo/d1.md · Waiting: Waiting for mini to connect");
+  });
+
+  it("names the kind and the state in the chosen language", () => {
+    expect(displayIdentity(display("d1", { kind: "diff", committed: true, preview: true }), ko)).toBe("브랜치 변경 비교: /repo/d1.md · 미리보기");
   });
 });
