@@ -56,6 +56,11 @@ Keep one representative journey per user-visible flow; when a long spec carries 
 It holds the first focus request, whose transport deadline is five seconds, while it sends forty clicks.
 Between holding and releasing, it detached a CDP session (about 2.1 seconds on a loaded macOS runner) and waited out an `expect.poll` default backoff (about 0.9 seconds), so the held request was released only at about 4.4 seconds and the test failed intermittently on macOS CI.
 The cause was found by timestamping each stage against the first request, not by rerunning it.
+A second cost was the page's own rendering: headless Chromium composites in software, so every frame of xterm's WebGL canvas is read back synchronously on the page's main thread.
+A local trace of the held window showed long tasks of 250 to 500 ms, most of them in `GLES2::ReadPixels`, which delayed both the clicks and the snapshot frames the test observes.
+On the failing macOS run, the stage timings and the hided log showed the first diagnostic taking 2.5 seconds to reach the page and the forty clicks another 2.3 seconds, so the held request hit its deadline before the test could release it.
+The spec now launches Chromium with `--disable-webgl`, so the shell uses xterm's DOM renderer, its existing fallback, and the held window stays near 0.2 seconds.
+A spec that holds a product deadline and does not test the terminal renderer should do the same.
 
 ## The test decides the order
 
