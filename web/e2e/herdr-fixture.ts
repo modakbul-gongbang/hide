@@ -22,15 +22,18 @@
 // core's own transcript read and analysis, never from a token (PRD
 // labels-in-hided).
 
-import { execFileSync, spawn, spawnSync, type ChildProcess } from "node:child_process";
+import { execFileSync, spawnSync, type ChildProcess } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { cleanupAfterFailure, ownUntilWorkerExit } from "./worker-owned";
-import { stopFixtureProcess, compileFixtureC, fixtureExecutable, fixtureHomeEnv, fixtureToolPath, inheritedFixtureEnv } from "./platform-fixture";
+import { spawnFixtureProcess, fixtureProcessFailure, fixtureProcessId, assertFixtureRootReleased, stopFixtureProcess, compileFixtureC, fixtureExecutable, fixtureHomeEnv, fixtureToolPath, inheritedFixtureEnv } from "./platform-fixture";
 
 export type HerdrFixture = {
+  /** The actual pinned server process, distinct from its native supervisor. */
+  pid: number;
+  supervisorPid: number;
   bin: string;
   socket: string;
   env: NodeJS.ProcessEnv;
@@ -529,15 +532,20 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
     // Keep host-installed providers out while retaining system tools.
     fixturePath = fixtureToolPath(path.join(root, "bin"));
   } catch (error) {
-    cleanupAfterFailure(error, () => fs.rmSync(root, { recursive: true, force: true }));
+    cleanupAfterFailure(error, () => {
+      assertFixtureRootReleased(root);
+      fs.rmSync(root, { recursive: true, force: true });
+    });
   }
   // Workspaces created later inherit the server's PATH, not hided's PATH.
   // Keep every pane on the same fake agent binary, including new workspaces.
   env.PATH = fixturePath;
 
   const log = fs.openSync(path.join(root, "herdr-server.log"), "w");
-  const server: ChildProcess = spawn(bin, ["server"], { env, stdio: ["ignore", log, log], detached: process.platform !== "win32" });
-  fs.closeSync(log);
+  let server: ChildProcess;
+  try { server = spawnFixtureProcess(bin, ["server"], root, { env, stdio: ["ignore", log, log] }); }
+  catch (error) { cleanupAfterFailure(error, () => fs.rmSync(root, { recursive: true, force: true })); }
+  finally { fs.closeSync(log); }
   let spawnFailed: Error | null = null;
   server.once("error", (error) => { spawnFailed = error; });
   const { stop } = ownUntilWorkerExit(() => {
@@ -572,6 +580,7 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
   try {
     await waitFor(() => {
       if (spawnFailed) throw spawnFailed;
+      fixtureProcessFailure(server);
       return fs.existsSync(socket);
     }, `herdr socket ${socket}`);
     const snapshot = herdr(env, bin, ["api", "snapshot"]) as {
@@ -670,6 +679,8 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
       }
     }
     return {
+      pid: fixtureProcessId(server),
+      supervisorPid: server.pid!,
       bin,
       socket,
       env,

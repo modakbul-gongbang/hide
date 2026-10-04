@@ -1,11 +1,11 @@
 import { expect, test, type Page } from "@playwright/test";
-import { spawn, type ChildProcess } from "node:child_process";
+import { type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { herdrBinary, linkFixtureTranscripts, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { enterWorkspace } from "./wire";
-import { fixtureExecutable, fixtureHomeEnv, fixtureOpenCommand, fixtureToolPath, inheritedFixtureEnv, stopFixtureProcess } from "./platform-fixture";
+import { spawnFixtureProcess, fixtureProcessFailure, fixtureExecutable, fixtureHomeEnv, fixtureOpenCommand, fixtureToolPath, inheritedFixtureEnv, stopFixtureProcess } from "./platform-fixture";
 import { cleanupAfterFailure, ownUntilWorkerExit } from "./worker-owned";
 
 type Daemon = {
@@ -49,7 +49,7 @@ async function startHided(extra: Record<string, string> = {}, herdr?: HerdrFixtu
       ...extra,
     };
     spawnAttempted = true;
-    child = spawn(bin, [], { env, stdio: ["ignore", "pipe", "pipe"], detached: process.platform !== "win32" });
+    child = spawnFixtureProcess(bin, [], dir, { env, stdio: ["ignore", "pipe", "pipe"] });
     child.once("error", (error) => { spawnFailed = error; });
     let closeLog = () => {};
     child.once("close", () => closeLog());
@@ -62,6 +62,7 @@ async function startHided(extra: Record<string, string> = {}, herdr?: HerdrFixtu
       child.stderr?.pipe(log, { end: false });
     }
     for (let i = 0; i < 50; i += 1) {
+      fixtureProcessFailure(child);
       if (spawnFailed) throw new Error(`hided did not start from ${bin}: ${(spawnFailed as Error).message}`, { cause: spawnFailed });
       const statePath = path.join(dir, "hide", "hided.json");
       if (fs.existsSync(statePath)) {

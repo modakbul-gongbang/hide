@@ -68,7 +68,7 @@ case "${1:-}" in
         exec cargo build --release --locked -p hided --bins -p hide-host --bin hide-host-helper -p hide-agent-hooks --bin hide-agent-hooks
         ;;
     cli)
-        exec cargo build --locked -p hided --bins -p hide-host --bin hide-host-helper -p hide-agent-hooks --bin hide-agent-hooks
+        exec cargo build --locked -p hided --bins -p hide-host --bin hide-host-helper -p hide-agent-hooks --bin hide-agent-hooks -p hide-platform --example fixture-owner
         ;;
     *)
         printf 'usage: %s test [args...]|lint|release|cli|test-scoped|check|build|clippy [args...]\n' "$0" >&2

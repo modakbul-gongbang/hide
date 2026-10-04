@@ -113,6 +113,12 @@ When the behavior depends on the order of two events, the test fixes that order;
 `hide-platform` owns what differs between systems in the product; the e2e fixtures need the same for their own resources: the endpoint they listen on, how they spell a path the core compares, the programs they copy and run, and how they clean up.
 That belongs in one shared fixture helper under `web/e2e/`, which the specs and both fixtures call, not in a `process.platform` branch per spec.
 `web/e2e/platform-fixture.ts` owns native executable names, isolated home variables, system-tool paths and confirmed process-tree exit.
+Herdr, hided, shell fixtures and the C compiler launch through its native `fixture-owner` supervisor, built in this worktree by the CLI preparation and included in the checked shard artifact.
+Its dedicated stdin pipe belongs only to the Playwright worker; worker loss ends the original native process group/job, records confirmed or unconfirmed exit outside the private home, and removes that same home only after confirmed exit.
+Target PID and birth identity come from launch, while measurements use the target PID rather than the supervisor PID.
+Normal stop uses that launch identity and keeps the existing two-second termination bound; callback, native observation and cleanup failures remain failures with their original phase and secondary cause chain.
+The supervisor has 256 owned-member, 16 KiB receipt and 128-byte stop-request bounds; the worker has 256 active owners and a 10,000-file receipt bound.
+The isolated failure-controls workflow runs real native refusal/I/O controls and an actual ordinary Playwright worker-only hard kill on each OS; a missing result is unverified, and helper-only controls do not substitute for those consumer results.
 Put a new difference in that shared owner when it fits, or beside the fixture that owns the resource, rather than in a spec.
 The first Windows runs of the web e2e fixtures found three differences the helper has to own:
 

@@ -2,13 +2,12 @@
 // lanes. It reads the daemon's state file for the loopback origin and token,
 // so nothing here touches the operator's running daemon.
 
-import { spawn } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { linkFixtureTranscripts, type HerdrFixture } from "./herdr-fixture";
 import { cleanupAfterFailure, ownUntilWorkerExit } from "./worker-owned";
-import { stopFixtureProcess, fixtureExecutable, fixtureHomeEnv, fixtureOpenCommand, inheritedFixtureEnv } from "./platform-fixture";
+import { spawnFixtureProcess, fixtureProcessFailure, fixtureProcessId, stopFixtureProcess, fixtureExecutable, fixtureHomeEnv, fixtureOpenCommand, inheritedFixtureEnv } from "./platform-fixture";
 
 /**
  * `restart` stops the daemon and starts it again on the same state directory
@@ -18,6 +17,7 @@ import { stopFixtureProcess, fixtureExecutable, fixtureHomeEnv, fixtureOpenComma
 export type Daemon = {
   /** Owned fixture process, used for isolated resource measurements. */
   pid: number;
+  supervisorPid: number;
   origin: string;
   token: string;
   home: string;
@@ -46,7 +46,7 @@ async function launch(herdr: HerdrFixture, label: string, dir: string, home: str
   const statePath = path.join(dir, "hide", "hided.json");
   fs.rmSync(statePath, { force: true });
   const binary = path.resolve("..", "target", "debug", fixtureExecutable("hided"));
-  const child = spawn(binary, [], {
+  const child = spawnFixtureProcess(binary, [], dir, {
     env: {
       ...env,
       ...fixtureHomeEnv(home),
@@ -90,6 +90,7 @@ async function launch(herdr: HerdrFixture, label: string, dir: string, home: str
     fs.rmSync(dir, { recursive: true, force: true });
   });
   for (let i = 0; i < 50; i += 1) {
+    try { fixtureProcessFailure(child); } catch (error) { cleanupAfterFailure(error, stop); }
     if (spawnFailed) {
       cleanupAfterFailure(new Error(`hided did not start from ${binary}: ${spawnFailed.message}; build hided in this worktree`, { cause: spawnFailed }), stop);
     }
@@ -108,7 +109,7 @@ async function launch(herdr: HerdrFixture, label: string, dir: string, home: str
             disown();
             return launch(herdr, label, dir, home, String(state.port), extraEnv);
           };
-          return { pid: child.pid!, origin, token: state.token, home: fs.realpathSync(home), stateDir: path.join(dir, "hide"), hostId, stop, restart };
+          return { pid: fixtureProcessId(child), supervisorPid: child.pid!, origin, token: state.token, home: fs.realpathSync(home), stateDir: path.join(dir, "hide"), hostId, stop, restart };
         }
       } catch {
         /* still starting */

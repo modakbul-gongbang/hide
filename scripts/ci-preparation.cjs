@@ -4,7 +4,8 @@ const {execFileSync}=require('node:child_process');
 const ledger=require('./ci-ledger.cjs');
 const MANIFEST='agents/runs/ci-preparation/manifest.json';
 const BUILD='agents/runs/ci-preparation/build.json';
-const COMMAND=['build','-p','hided','--bins','--message-format=json-render-diagnostics'];
+const COMMAND=['build','-p','hided','--bins','-p','hide-platform','--example','fixture-owner','--message-format=json-render-diagnostics'];
+const TARGETS=[['hided','bin'],['hide','bin'],['fixture-owner','example']];
 const MAX_FILES=10000, MAX_FILE_BYTES=512*1024*1024, MAX_TOTAL_BYTES=2*1024*1024*1024;
 function digest(file) {
   const stat=fs.lstatSync(file);
@@ -47,6 +48,7 @@ function inventory(root) {
     }
   }
   for(const name of ['hided','hide']) visit('target/debug/'+name+(process.platform==='win32'?'.exe':''));
+  visit('target/debug/examples/fixture-owner'+(process.platform==='win32'?'.exe':''));
   for(const directory of ['web/dist','plugins/hcoord/dist']) {
     visit(directory);
     if(!Object.keys(files).some(name=>name.startsWith(directory+'/'))) throw Error('empty preparation output: '+directory);
@@ -64,9 +66,9 @@ if(require.main===module) {
   if(mode==='build') {
     const boundary=identity(root);
     const output=execFileSync('bash',['scripts/verify-cargo.sh',...COMMAND],{cwd:root,encoding:'utf8',timeout:20*60*1000,maxBuffer:ledger.MAX_BYTES,stdio:['ignore','pipe','inherit']});
-    const compiled=output.split('\n').filter(line=>line.startsWith('{')).map(line=>JSON.parse(line)).filter(value=>value.reason==='compiler-artifact' && value.executable && value.target.kind.includes('bin'));
-    const binaries=['hided','hide'].map(name=>{
-      const matches=compiled.filter(value=>value.target.name===name);
+    const compiled=output.split('\n').filter(line=>line.startsWith('{')).map(line=>JSON.parse(line)).filter(value=>value.reason==='compiler-artifact' && value.executable);
+    const binaries=TARGETS.map(([name,kind])=>{
+      const matches=compiled.filter(value=>value.target.name===name && value.target.kind.includes(kind));
       if(matches.length!==1) throw Error('missing/ambiguous compiled preparation binary: '+name);
       const value=matches[0];
       return {name,profile:value.profile,features:value.features,executable:path.relative(root,value.executable).replace(/\\/g,'/'),digest:digest(value.executable)};
@@ -75,7 +77,7 @@ if(require.main===module) {
   }
   else if(mode==='create') {
     const boundary=identity(root),build=JSON.parse(fs.readFileSync(buildFile));
-    if(build.version!==1 || JSON.stringify(build.identity)!==JSON.stringify(boundary) || build.binaries?.length!==2) throw Error('preparation build invocation mismatch');
+    if(build.version!==1 || JSON.stringify(build.identity)!==JSON.stringify(boundary) || build.binaries?.length!==TARGETS.length || !TARGETS.every(([name],index)=>build.binaries[index].name===name)) throw Error('preparation build invocation mismatch');
     for(const binary of build.binaries) if(JSON.stringify(binary.digest)!==JSON.stringify(digest(path.join(root,binary.executable)))) throw Error('preparation compiled binary changed');
     ledger.write(file,{version:1,identity:boundary,compiled:build.binaries,files:inventory(root)});
   }

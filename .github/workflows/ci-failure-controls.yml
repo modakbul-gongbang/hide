@@ -6,6 +6,71 @@ on:
 permissions:
   contents: read
 jobs:
+  fixture-owner:
+    name: Ordinary fixture ownership (${{ matrix.system }})
+    runs-on: ${{ matrix.runner }}
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - system: linux
+            runner: ubuntu-latest
+            platform: linux-x86_64
+          - system: macos
+            runner: macos-15
+            platform: macos-aarch64
+          - system: windows
+            runner: windows-latest
+            platform: windows-x86_64
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - run: git config --global core.autocrlf false
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: '. -> target'
+          save-if: false
+      - name: Prepare ordinary fixture consumers
+        timeout-minutes: 20
+        run: |
+          bash scripts/verify-cargo.sh cli
+          bash scripts/verify-web.sh install
+          bash scripts/verify-web.sh web build
+          bash scripts/verify-web.sh hcoord build
+          if [ "$RUNNER_OS" = Linux ]; then sudo apt-get update && sudo apt-get install -y zsh; fi
+      - id: herdr
+        env:
+          HERDR_PLATFORM: ${{ matrix.platform }}
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then
+            bin=$(pwsh -NoProfile -File scripts/fetch-herdr-runtime.ps1 | tr -d '\r')
+          else
+            bin=$(zsh scripts/fetch-herdr-runtime.sh --platform "$HERDR_PLATFORM")
+          fi
+          echo "bin=$bin" >> "$GITHUB_OUTPUT"
+      - name: Observe launch identity, refusal, native I/O failure and actual worker-only loss
+        timeout-minutes: 3
+        env:
+          HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
+        run: python3 scripts/tests/test_fixture_owner.py
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: fixture-owner-controls-${{ matrix.system }}
+          path: |
+            agents/runs/ci-test-refactor/fixture-owner-controls
+            agents/runs/ci-fixture-owners
+          retention-days: 14
+          if-no-files-found: error
   rust:
     name: Rust boundary controls (${{ matrix.system }})
     runs-on: ${{ matrix.runner }}

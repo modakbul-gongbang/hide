@@ -206,6 +206,65 @@ while time.monotonic() < deadline:
     def test_native_stop_request_error_preserves_primary_cleanup_and_home(self):
         self.exercise('stop-directory')
 
+    def test_actual_playwright_worker_loss_ends_ordinary_fixture_consumers(self):
+        artifacts = ROOT / 'agents/runs/ci-test-refactor/fixture-owner-controls'
+        artifacts.mkdir(parents=True, exist_ok=True)
+        with OwnedControlRoot(artifacts) as owned:
+            proof = owned.path / 'ordinary-worker.json'
+            filename = ROOT / 'web/e2e' / ('ci-owner-' + owned.path.name + '.spec.ts')
+            filename.write_text("import { test } from '@playwright/test';\n"
+                "import fs from 'node:fs'; import path from 'node:path';\n"
+                "import { startHerdr } from './herdr-fixture'; import { startHided } from './hided-fixture';\n"
+                "test('ordinary fixture worker loss', async () => {\n"
+                " const herdr = await startHerdr({agents:false}); const daemon = await startHided(herdr);\n"
+                " const directory = path.resolve('../agents/runs/ci-fixture-owners');\n"
+                " const native = fs.readdirSync(directory).filter(f=>f.endsWith('.receipt')).map(f=>({file:path.join(directory,f),fields:fs.readFileSync(path.join(directory,f),'utf8').trimEnd().split('\\t')})).filter(r=>r.fields[1]==='running');\n"
+                " const targets = native.filter(r=>Number(r.fields[2])===daemon.pid || Number(r.fields[2])===herdr.pid);\n"
+                " const shells = herdr.panes.map(pane=>(herdr.run(['pane','process-info','--pane',pane]) as {result:{process_info:{shell_pid:number}}}).result.process_info.shell_pid);\n"
+                " const value = {worker:process.pid,roots:[herdr.root,path.dirname(daemon.stateDir)],native:targets,shells,supervisors:[herdr.supervisorPid,daemon.supervisorPid]};\n"
+                " const file = " + json.dumps(str(proof)) + "; fs.writeFileSync(file+'.tmp',JSON.stringify(value)); fs.renameSync(file+'.tmp',file);\n"
+                " await new Promise(()=>{});\n});\n")
+            observations = []
+            process = None
+            try:
+                with (artifacts / 'ordinary-worker.log').open('w') as output:
+                    process = subprocess.Popen(['bash', 'scripts/verify-web.sh', 'web', 'e2e', filename.name,
+                        '--retries=0', '--workers=1'], cwd=ROOT, stdout=output, stderr=subprocess.STDOUT)
+                    data = until(lambda: json.loads(proof.read_text()) if proof.exists() else None, seconds=20)
+                    self.assertEqual(len(data['native']), 2)
+                    # Each root is emitted by its ordinary fixture, and both
+                    # original target PIDs are observed alive before the kill.
+                    observations = [ProcessObservation(int(row['fields'][2])) for row in data['native']]
+                    observations += [ProcessObservation(pid) for pid in data['shells']]
+                    observations += [ProcessObservation(pid) for pid in data['supervisors']]
+                    self.assertTrue(all(not target.exited() for target in observations))
+                    os.kill(data['worker'], 9) if os.name != 'nt' else subprocess.run(
+                        ['taskkill', '/PID', str(data['worker']), '/F'], check=True, capture_output=True, timeout=2)
+                    # Deliberately no /T or process-group signal: only the
+                    # actual Playwright worker is ended, not runner/helpers.
+                    finished = [until(lambda file=Path(row['file']): (value if value['phase']=='owner-lost-exited' else None)
+                        if (value:=receipt(file)) else None) for row in data['native']]
+                    self.assertTrue(all(row['survivors']==0 for row in finished))
+                    until(lambda: all(target.exited() for target in observations))
+                    self.assertTrue(all(not Path(root).exists() for root in data['roots']))
+                    self.assertNotEqual(process.wait(timeout=10), 0)
+                    (artifacts / 'ordinary-worker.json').write_text(json.dumps({**data, 'finished':finished}, indent=2))
+                    owned.confirmed = True
+            finally:
+                primary = sys.exc_info()[1]
+                filename.unlink(missing_ok=True)
+                if process is not None and process.poll() is None:
+                    process.terminate()
+                    process.wait(timeout=10)
+                if observations:
+                    try:
+                        until(lambda: all(target.exited() for target in observations))
+                        owned.confirmed = True
+                    except BaseException as cleanup:
+                        if primary is None: raise
+                        primary.add_note(f'Ordinary fixture cleanup also failed: {cleanup}')
+                for target in observations: target.close()
+
 
 if __name__ == '__main__':
     unittest.main()

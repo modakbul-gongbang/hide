@@ -3,82 +3,150 @@
 // on every OS and maps that path to a named pipe on Windows.
 import fs from "node:fs";
 import path from "node:path";
-import { execFileSync, type ChildProcess } from "node:child_process";
+import crypto from "node:crypto";
+import { spawn, type ChildProcess, type SpawnOptions } from "node:child_process";
+import { cleanupAfterFailure, throwFixtureFailures } from "./worker-owned";
 
 export const fixtureExecutable = (name: string): string => `${name}${process.platform === "win32" ? ".exe" : ""}`;
 
-/** Kill and confirm only the owned tree before deleting its executable/home.
- * Unix fixtures start a private process group. Windows captures descendants
- * and creation times before shutdown, because stopping the parent can orphan
- * a locked provider executable. The two-second cleanup bound is unchanged. */
+type NativeReceipt = { phase: string; pid: number; birth: string; code: number; survivors: number; error: string };
+type Owner = { root: string; file: string; spawnError?: Error; released: boolean; failures?: unknown[] };
+const owners = new WeakMap<ChildProcess, Owner>();
+const activeOwners = new Set<Owner>();
+const MAX_OWNERS = 256, MAX_RECEIPTS = 10_000, MAX_RECEIPT_BYTES = 16 * 1024;
+const pause = () => Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5);
+// Both ordinary package entrypoints run from web/ or desktop/, as the
+// existing binary fixtures do; this shared module can be ESM or CommonJS.
+const repository = path.resolve("..");
+const receiptDirectory = path.join(repository, "agents/runs/ci-fixture-owners");
+
+function readReceipt(owner: Owner): NativeReceipt | undefined {
+  let stat: fs.Stats;
+  try { stat = fs.lstatSync(owner.file); }
+  catch (error) { if ((error as NodeJS.ErrnoException).code === "ENOENT") return; throw error; }
+  if (!stat.isFile() || stat.size > MAX_RECEIPT_BYTES) throw new Error("native fixture receipt file/byte cap violated");
+  const [version, phase, pid, birth, code, survivors, detail, ...extra] = fs.readFileSync(owner.file, "utf8").replace(/\n$/, "").split("\t");
+  if (version !== "v1" || !phase || !/^\d+$/.test(pid ?? "") || !/^\d+$/.test(birth ?? "")
+    || !/^-?\d+$/.test(code ?? "") || !/^-?\d+$/.test(survivors ?? "") || detail === undefined
+    || !/^(?:[a-f0-9]{2})*$/.test(detail) || extra.length) throw new Error("invalid native fixture receipt");
+  return { phase, pid: Number(pid), birth: birth!, code: Number(code), survivors: Number(survivors), error: Buffer.from(detail, "hex").toString("utf8") };
+}
+
+/** The native owner captures the target identity at launch, before its parent
+ * can exit. Only the worker holds its stdin pipe; SIGKILL therefore still
+ * ends the original process group/job and preserves an unconfirmed home. */
+export function spawnFixtureProcess(executable: string, args: string[], root: string, options: SpawnOptions = {}): ChildProcess {
+  if (activeOwners.size >= MAX_OWNERS) throw new Error("worker exceeded 256 native fixture owners");
+  fs.mkdirSync(receiptDirectory, { recursive: true });
+  if (fs.readdirSync(receiptDirectory).length >= MAX_RECEIPTS) throw new Error("native fixture receipt file cap exceeded");
+  const file = path.join(receiptDirectory, `${crypto.randomBytes(16).toString("hex")}.receipt`);
+  const helper = path.join(repository, "target/debug/examples", fixtureExecutable("fixture-owner"));
+  if (!fs.existsSync(helper)) throw new Error("native fixture owner is missing; build this worktree's fixture-owner example");
+  const stdio = options.stdio === undefined || options.stdio === "pipe" ? ["pipe", "pipe", "pipe"]
+    : options.stdio === "ignore" ? ["pipe", "ignore", "ignore"]
+    : options.stdio === "inherit" ? ["pipe", "inherit", "inherit"] : ["pipe", ...options.stdio.slice(1)];
+  const child = spawn(helper, [file, root, executable, ...args], { ...options, stdio: stdio as SpawnOptions["stdio"], detached: process.platform !== "win32" });
+  const owner: Owner = { root, file, released: false };
+  owners.set(child, owner);
+  activeOwners.add(owner);
+  child.once("error", (error) => { owner.spawnError = error; });
+  return child;
+}
+
+/** Readiness and metrics address the launched target, never the supervisor. */
+export function fixtureProcessId(child: ChildProcess): number {
+  const owner = owners.get(child);
+  if (!owner) throw new Error("fixture process has no native launch owner");
+  if (owner.spawnError) throw owner.spawnError;
+  const value = readReceipt(owner);
+  if (!value || value.pid <= 0 || !Number.isSafeInteger(value.pid)) throw new Error("fixture target launch identity is not available");
+  if (value.error) throw new Error(value.error);
+  return value.pid;
+}
+
+export function fixtureProcessFailure(child: ChildProcess): void {
+  const owner = owners.get(child);
+  if (!owner) throw new Error("fixture process has no native launch owner");
+  if (owner.spawnError) throw owner.spawnError;
+  const value = readReceipt(owner);
+  if (value?.error) throw new Error(value.error);
+  if (value && value.phase !== "running") throw new Error(`fixture target ended during setup: ${value.phase}, code=${value.code}`);
+}
+
+/** Every callback failure still reaches native termination. The same launch
+ * receipt authorizes stop; a late PID lookup never authorizes a replacement. */
 export function stopFixtureProcess(child: ChildProcess, graceful?: () => void): void {
-  if (!child.pid) {
-    if (child.exitCode === null && child.signalCode === null) throw new Error("fixture child has no PID or confirmed exit");
+  const owner = owners.get(child);
+  if (!owner) throw new Error("fixture process has no native launch owner");
+  if (owner.released) {
+    if (owner.failures?.length) throwFixtureFailures(owner.failures);
     return;
   }
-  const pid = child.pid;
-  if (process.platform === "win32") {
-    // One bounded observer owns process enumeration, tree termination and
-    // identity-safe exit confirmation, even during synchronous worker exit.
-    execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `
-      $ErrorActionPreference = 'Stop'
-      $all = @(Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,CreationDate)
-      $ids = @(${pid})
-      $owned = @()
-      for ($depth=0; $depth -lt 64; $depth++) {
-        $next = @($all | Where-Object { $ids -contains $_.ProcessId -and $owned.ProcessId -notcontains $_.ProcessId })
-        if ($next.Count -eq 0) { break }
-        $owned += $next
-        if ($owned.Count -gt 256) { throw 'fixture tree exceeded 256 processes; preserve home' }
-        $ids = @($all | Where-Object { $next.ProcessId -contains $_.ParentProcessId } | ForEach-Object { $_.ProcessId })
+  const failures: unknown[] = [];
+  try { graceful?.(); } catch (error) { failures.push(error); }
+  const deadline = Date.now() + 2000;
+  let final: NativeReceipt | undefined;
+  try {
+    let value = readReceipt(owner);
+    while (!value && Date.now() < deadline && !owner.spawnError) { pause(); value = readReceipt(owner); }
+    if (owner.spawnError) throw owner.spawnError;
+    if (!value) throw new Error("fixture native launch/exit unconfirmed; preserve home");
+    if (value.phase === "running" || value.phase === "stop-refused") {
+      const request = owner.file.replace(/\.receipt$/, ".stop"), temporary = `${request}.tmp`;
+      fs.writeFileSync(temporary, `${value.pid} ${value.birth}`, { flag: "wx", mode: 0o600 });
+      fs.renameSync(temporary, request);
+      while (Date.now() < deadline) {
+        value = readReceipt(owner);
+        if (value && value.phase !== "running" && value.phase !== "stop-refused") break;
+        pause();
       }
-      foreach ($record in $owned) {
-        $live = Get-CimInstance Win32_Process -Filter "ProcessId = $($record.ProcessId)" -Property ProcessId,CreationDate
-        if ($live -and $live.CreationDate -eq $record.CreationDate) { Stop-Process -Id $record.ProcessId -Force -ErrorAction SilentlyContinue }
-      }
-      $until = [DateTime]::UtcNow.AddSeconds(2)
-      do {
-        $remaining = @($owned | Where-Object {
-          $live = Get-CimInstance Win32_Process -Filter "ProcessId = $($_.ProcessId)" -Property ProcessId,CreationDate
-          $live -and $live.CreationDate -eq $_.CreationDate
-        })
-        if ($remaining.Count -eq 0) { exit 0 }
-        Start-Sleep -Milliseconds 50
-      } while ([DateTime]::UtcNow -lt $until)
-      throw "fixture exit unconfirmed for owned PIDs $($remaining.ProcessId -join ','); preserve home"
-    `], { timeout: 10_000, maxBuffer: 64 * 1024, windowsHide: true });
-    // The endpoint stop may still be needed after its process has exited.
-    graceful?.();
-    return;
+    }
+    final = value;
+    if (!final || final.survivors !== 0) throw new Error(final?.error || "fixture exit unconfirmed; preserve home");
+    owner.released = true;
+    activeOwners.delete(owner);
+    if (final.error) throw new Error(final.error);
+    if (!failures.length) fs.unlinkSync(owner.file);
+  } catch (error) {
+    failures.push(error);
+    // Request I/O can fail too. EOF always addresses the original native
+    // owner, and still attempts termination before we report the failure.
+    child.stdin?.destroy();
+    while (Date.now() < deadline) {
+      try { final = readReceipt(owner); if (final?.survivors === 0) { owner.released = true; activeOwners.delete(owner); break; } }
+      catch (secondary) { failures.push(secondary); break; }
+      pause();
+    }
+    if (!owner.released) failures.push(new Error("fixture owned exit remains unconfirmed; preserve home"));
   }
-  graceful?.();
-  const liveMembers = () => {
-    const rows = execFileSync("ps", ["-axo", "pid=,pgid=,stat="], { encoding: "utf8", timeout: 1000, maxBuffer: 1024 * 1024 });
-    return rows.split("\n").some((row) => { const [, group, state] = row.trim().split(/\s+/); return Number(group) === pid && !state?.startsWith("Z"); });
-  };
-  if (!liveMembers()) return;
-  const killGroup = (signal: NodeJS.Signals) => {
-    try { process.kill(-pid, signal); } catch (error) { if (liveMembers()) throw error; }
-  };
-  killGroup("SIGTERM");
-  const until = Date.now() + 2000;
-  let forced = false;
-  while (Date.now() < until) {
-    if (!liveMembers()) return;
-    if (!forced && Date.now() >= until - 1000) { killGroup("SIGKILL"); forced = true; }
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
-  }
-  throw new Error(`fixture exit unconfirmed for owned process group ${pid}; preserve home`);
+  if (failures.length) { owner.failures = failures; throwFixtureFailures(failures); }
+}
+
+/** A failed compiler or setup must not remove a still-owned target's home. */
+export function assertFixtureRootReleased(root: string): void {
+  if ([...activeOwners].some(owner => owner.root === root)) throw new Error("fixture child exit unconfirmed; preserve home");
 }
 
 /** A fixture compiler is an owned, bounded child, separate from test deadlines. */
 export function compileFixtureC(source: string, executable: string): void {
   const compiler = process.platform === "win32" ? "clang.exe" : "cc";
+  const child = spawnFixtureProcess(compiler, ["-O1", "-o", executable, source], path.dirname(source), { stdio: "inherit" });
+  const owner = owners.get(child)!;
+  const deadline = Date.now() + 20_000;
   try {
-    execFileSync(compiler, ["-O1", "-o", executable, source], { timeout: 20_000 });
+    let result: NativeReceipt | undefined;
+    while (Date.now() < deadline) {
+      result = readReceipt(owner);
+      if (result && result.phase !== "running") break;
+      pause();
+    }
+    if (!result || result.phase === "running") throw new Error(`fixture C compiler ${compiler} timed out (20 second process bound)`);
+    if (result.error) throw new Error(result.error);
+    if (result.code !== 0) throw new Error(`fixture C compiler ${compiler} exited ${result.code}; the runner needs its native C toolchain`);
   } catch (error) {
-    throw new Error(`fixture C compiler ${compiler} failed (20 second process bound); the runner needs its native C toolchain: ${String(error)}`, { cause: error });
+    cleanupAfterFailure(error, () => stopFixtureProcess(child));
   }
+  stopFixtureProcess(child);
 }
 
 /** Windows environment keys are case-insensitive, including Path/PATH. */
