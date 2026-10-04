@@ -38,13 +38,13 @@ export default class LedgerReporter implements Reporter {
     this.flush();
   }
   onTestEnd(test: TestCase, result: TestResult) {
-    const assertion = result.errors.map(error => error.message || '').join('\n');
+    const assertion = result.errors[0]?.message || '';
     const row = { ...this.subject(test, result.retry), worker: result.workerIndex,
       status: result.status, phase: 'completed', durationMs: result.duration,
       startedAt: result.startTime.toISOString(), completedAt: new Date(result.startTime.getTime() + result.duration).toISOString(),
       category: result.status === 'skipped' ? 'skipped' : result.status === 'interrupted' ? 'cancelled' : ledger.category(assertion),
       assertion: assertion.slice(0, 16000), signature: assertion ? ledger.signature(assertion) : null,
-      causes: result.errors.flatMap(error => error.cause ? [error.cause] : []) };
+      causes: [...result.errors.slice(1), ...result.errors.flatMap(error => error.cause ? [error.cause] : [])] };
     this.set(test, result.retry, { ...row, quarantine: ledger.quarantine(row, registry) });
     this.flush();
   }

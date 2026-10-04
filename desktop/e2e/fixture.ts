@@ -9,7 +9,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { linkFixtureTranscripts, type HerdrFixture } from "../../web/e2e/herdr-fixture";
-import { ownUntilWorkerExit } from "../../web/e2e/worker-owned";
+import { cleanupAfterFailure, ownUntilWorkerExit, throwFixtureFailures } from "../../web/e2e/worker-owned";
 import { fixtureExecutable, fixtureHomeEnv, fixtureOpenCommand, fixtureToolPath, inheritedFixtureEnv } from "../../web/e2e/platform-fixture";
 import { bootoutTestLabel, hcoordLabel } from "./launchd";
 import { SHOW_INACTIVE_SWITCH } from "../src/main/launchSwitches";
@@ -58,8 +58,7 @@ export function isolate(herdr: Pick<HerdrFixture, "socket" | "bin"> & Partial<Pi
       HIDE_OPEN_COMMAND: fixtureOpenCommand(undefined, root),
     };
   } catch (error) {
-    fs.rmSync(root, { recursive: true, force: true });
-    throw error;
+    cleanupAfterFailure(error, () => fs.rmSync(root, { recursive: true, force: true }));
   }
   const cleanupEnv = { ...env };
   const hide = (args: string[]) => {
@@ -92,9 +91,8 @@ export function isolate(herdr: Pick<HerdrFixture, "socket" | "bin"> & Partial<Pi
         try { bootoutTestLabel(hcoordLabel(data)); } catch (error) { errors.push(error); }
       }
     }
-    if (errors.length) throw new AggregateError(errors, `fixture cleanup incomplete; preserve ${root} and resolve the reported stop/unload failure`);
-    // No process can recreate files now; only transient filesystem removal is retried.
-    fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    if (errors.length) throwFixtureFailures(errors);
+    fs.rmSync(root, { recursive: true, force: true });
     cleaned = true;
     isolations.delete(home);
     owned.disown();
@@ -182,7 +180,7 @@ export const test = base.extend<{ focusGuard: void }>({
           try { expect(reports, `the app came to the front in a test not tagged ${NEEDS_FOCUS}`).toEqual([]); } catch (error) { errors.push(error); }
         }
       }
-      if (errors.length) throw new AggregateError(errors, "desktop fixture teardown failed");
+      if (errors.length) throwFixtureFailures(errors);
     },
     { auto: true },
   ],

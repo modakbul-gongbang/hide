@@ -5,8 +5,8 @@ import os from "node:os";
 import path from "node:path";
 import { herdrBinary, linkFixtureTranscripts, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { enterWorkspace } from "./wire";
-import { fixtureExecutable, fixtureHomeEnv, fixtureOpenCommand, fixtureToolPath, inheritedFixtureEnv } from "./platform-fixture";
-import { ownUntilWorkerExit } from "./worker-owned";
+import { fixtureExecutable, fixtureHomeEnv, fixtureOpenCommand, fixtureToolPath, inheritedFixtureEnv, stopFixtureProcess } from "./platform-fixture";
+import { cleanupAfterFailure, ownUntilWorkerExit } from "./worker-owned";
 
 type Daemon = {
   origin: string;
@@ -21,42 +21,16 @@ async function startHided(extra: Record<string, string> = {}, herdr?: HerdrFixtu
   let child: ChildProcess | undefined;
   let spawnAttempted = false;
   let spawnFailed: Error | null = null;
-  let stopping = false;
   let cleaned = false;
-  const canRemove = () => !spawnAttempted || (child !== undefined &&
-    (child.exitCode != null || child.signalCode != null || (spawnFailed !== null && child.pid === undefined)));
   const incomplete = () => new Error(`hided fixture cleanup incomplete; preserve ${dir}: child exit unconfirmed (PID: ${child?.pid ?? "unavailable"}); wait for the recorded child's exit/close and owned cleanup, or confirm its exit before removing this retained root after worker loss`);
-  const cleanup = () => {
+  const owned = ownUntilWorkerExit(() => {
     if (cleaned) return;
-    if (!canRemove()) throw incomplete();
-    // The child has exited or was never started; retry only filesystem removal.
-    for (let attempt = 0; attempt < 40; attempt += 1) {
-      try {
-        fs.rmSync(dir, { recursive: true, force: true });
-        cleaned = true;
-        owned.disown();
-        return;
-      } catch {
-        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
-      }
-    }
+    if (spawnAttempted && !child) throw incomplete();
+    if (child && !(spawnFailed && child.pid === undefined)) stopFixtureProcess(child);
     fs.rmSync(dir, { recursive: true, force: true });
     cleaned = true;
-    owned.disown();
-  };
-  const stop = () => {
-    if (cleaned) return;
-    stopping = true;
-    if (spawnAttempted && !child) throw incomplete();
-    if (child && !canRemove()) {
-      try { child.kill(); } catch (error) { throw new Error(incomplete().message, { cause: error }); }
-    }
-    if (canRemove()) cleanup();
-    else console.error("hided fixture cleanup pending", { root: dir, pid: child?.pid, action: "wait for the recorded child's exit/close; its root remains owned" });
-  };
-  const owned = ownUntilWorkerExit(() => {
-    try { stop(); cleanup(); } catch (error) { process.exitCode = 1; throw error; }
   });
+  const stop = owned.stop;
   try {
     if (herdr) linkFixtureTranscripts(herdr, dir);
     const bin = path.resolve("..", "target", "debug", fixtureExecutable("hided"));
@@ -75,13 +49,10 @@ async function startHided(extra: Record<string, string> = {}, herdr?: HerdrFixtu
       ...extra,
     };
     spawnAttempted = true;
-    child = spawn(bin, [], { env, stdio: ["ignore", "pipe", "pipe"] });
+    child = spawn(bin, [], { env, stdio: ["ignore", "pipe", "pipe"], detached: process.platform !== "win32" });
     child.once("error", (error) => { spawnFailed = error; });
     let closeLog = () => {};
-    child.once("close", () => {
-      closeLog();
-      if (stopping) cleanup();
-    });
+    child.once("close", () => closeLog());
     // Two pipes share the evidence file; neither may end it before child close.
     const logDir = process.env.HIDE_E2E_SCREENSHOT_DIR;
     if (logDir) {
@@ -113,13 +84,7 @@ async function startHided(extra: Record<string, string> = {}, herdr?: HerdrFixtu
     }
     throw new Error("hided did not write a state file");
   } catch (error) {
-    try {
-      stop();
-      cleanup();
-    } catch (cleanupError) {
-      throw new AggregateError([error, cleanupError], `hided setup failed; cleanup incomplete; preserve ${dir}`);
-    }
-    throw error;
+    cleanupAfterFailure(error, stop);
   }
 }
 

@@ -165,10 +165,14 @@ test('primary native cause and every release', async () => {{
     if (released.join(',') !== 'daemon,server,socket') throw new Error('not all owned resources were released');
   }}
 }});
+test.describe('separate caller phases', () => {{
+  test.afterEach(() => {{ throw new Error('secondary teardown exit unconfirmed'); }});
+  test('separate primary and teardown', () => {{ throw new Error('Expected: separate primary assertion'); }});
+}});
 """)
             failures, report = run('errors', 'errors.spec.ts', expected=1)
             rows = failures['records']
-            self.assertEqual(len(rows), 4)
+            self.assertEqual(len(rows), 5)
             self.assertTrue(all(r['status'] == 'failed' for r in rows))
             primaries = [r for r in rows if r['test'] in ('primary A', 'primary B')]
             self.assertEqual(len({r['signature'] for r in primaries}), 2)
@@ -176,7 +180,10 @@ test('primary native cause and every release', async () => {{
                 self.assertEqual(row['category'], 'assertion')
                 self.assertIn('Expected: primary', row['assertion'])
                 self.assertIn('cleanup EBUSY owned executable', json.dumps(row['causes']))
-            errors = [s['tests'][0]['results'][0]['error'] for suite in report['suites'] for s in suite['specs']]
+            def results_in(suites):
+                return [s['tests'][0]['results'][0] for suite in suites for s in suite.get('specs', [])] + [result for suite in suites for result in results_in(suite.get('suites', []))]
+            actual_results = results_in(report['suites'])
+            errors = [result['error'] for result in actual_results]
             for error in errors[:2]:
                 self.assertIn('Expected: primary', error['message'])
                 self.assertIn('Expected: primary', error['stack'])
@@ -189,6 +196,10 @@ test('primary native cause and every release', async () => {{
             for detail in ('clang.exe ETIMEDOUT', 'daemon exit unconfirmed', 'server cleanup EBUSY'):
                 self.assertIn(detail, json.dumps(actual['cause']))
                 self.assertIn(detail, json.dumps(native['causes']))
+            separate = next(r for r in rows if r['test'] == 'separate primary and teardown')
+            self.assertEqual(separate['assertion'], 'Error: Expected: separate primary assertion')
+            self.assertIn('secondary teardown exit unconfirmed', json.dumps(separate['causes']))
+            self.assertIn('secondary teardown exit unconfirmed', json.dumps(actual_results[4]['errors']))
 
 
 if __name__ == '__main__':

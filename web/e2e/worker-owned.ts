@@ -44,15 +44,18 @@ export async function finishFixture(primary: unknown, releases: (() => void | Pr
   for (const release of releases) {
     try { await release(); } catch (error) { failures.push(error); }
   }
-  if (failures.length) {
-    let failure = failures.pop();
-    while (failures.length) {
-      const earlier = failures.pop();
-      try { cleanupAfterFailure(earlier, () => { throw failure; }); }
-      catch (reported) { failure = reported; }
-    }
-    throw failure;
+  if (failures.length) throwFixtureFailures(failures);
+}
+
+/** Synchronous owners use the same primary identity and serialized chain. */
+export function throwFixtureFailures(failures: unknown[]): never {
+  if (!failures.length || failures.length > 256) throw new Error("invalid fixture failure inventory");
+  let failure = failures[failures.length - 1];
+  for (let index = failures.length - 2; index >= 0; index--) {
+    try { cleanupAfterFailure(failures[index], () => { throw failure; }); }
+    catch (reported) { failure = reported; }
   }
+  throw failure;
 }
 
 /** Cleanup remains a failure without replacing the original stack/signature. */
