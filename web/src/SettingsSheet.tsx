@@ -4,7 +4,8 @@
 // a pending edit shows as pending until the snapshot says it landed.
 
 import { useInterfaceTranslation } from "./i18n/client";
-import { INTERFACE_LANGUAGES, LANGUAGE_NAMES, isInterfaceLanguage } from "./i18n/locale";
+import { formatDateTime } from "./i18n/format";
+import { INTERFACE_LANGUAGES, LANGUAGE_NAMES, isInterfaceLanguage, requireInterfaceLanguage } from "./i18n/locale";
 import { TriangleAlertIcon, XIcon } from "lucide-react";
 import { useEffect, useState, type KeyboardEvent } from "react";
 import type { Actions } from "./actions";
@@ -42,7 +43,9 @@ import {
   githubAccess,
   githubAccessLine,
   issueSourceChoices,
+  shownIn,
   sleepAfterChoice,
+  sleepAfterLabel,
   sleepingCount,
   aliasProblem,
   canRetryDevice,
@@ -65,7 +68,6 @@ import {
   offeredModels,
   providerLine,
   environmentTone,
-  shown,
   socketProblem,
   usableAccent,
   usableFontSize,
@@ -85,12 +87,13 @@ import {
   serializeStoredChord,
   storedBindings,
   storedKey,
+  type BindingProblem,
   type Chord,
   type CommandId,
   type KeySystem,
   sheetRows,
 } from "./shortcuts";
-import { commandLabel, overviewCommandTitle } from "./shortcutLabels";
+import { bindingProblemText, commandLabel, commandTitle, sheetRowTitle } from "./shortcutLabels";
 import type { Device, IssueSettings } from "./snapshot";
 import { latestDraft } from "./editor/draft";
 import { MobileTab } from "./MobileTab";
@@ -203,7 +206,7 @@ function GeneralTab({ actions }: { actions: Actions }) {
   const diagnostics = useShellStore((s) => s.rest?.status?.diagnostics);
   const lastError = useShellStore((s) => s.rest?.status?.last_error);
   const [copy, setCopy] = useState<"idle" | "copied" | "failed">("idle");
-  const line = herdrLine(herdr);
+  const line = herdrLine(herdr, t);
   const copyDiagnostics = () => {
     const text = diagnosticsText({
       daemon,
@@ -224,16 +227,16 @@ function GeneralTab({ actions }: { actions: Actions }) {
       <InterfaceLanguageRow actions={actions} />
       <Group title={t("settings.daemon")} note={t("settings.daemonDescription")}>
         <Row label={t("settings.version")}>
-          <Value>{daemon ? `hided ${daemon.version}` : t("common.unavailable")}</Value>
+          <Value>{daemon ? `hided ${daemon.version}` : t("settings.unavailable")}</Value>
         </Row>
         <Row label={t("settings.process")}>
-          <Value>{daemon ? t("settings.processValue", { pid: String(daemon.pid), schema: String(daemon.schema_version) }) : t("common.unavailable")}</Value>
+          <Value>{daemon ? t("settings.processValue", { pid: String(daemon.pid), schema: String(daemon.schema_version) }) : t("settings.unavailable")}</Value>
         </Row>
         <Row label={t("settings.lifetime")}>
-          <Value mono={false}>{daemon ? (daemon.keep_alive ? t("settings.keptAlive") : t("settings.exitsAfter", { minutes: Math.round(daemon.idle_secs / 60) })) : t("common.unavailable")}</Value>
+          <Value mono={false}>{daemon ? (daemon.keep_alive ? t("settings.keptAlive") : t("settings.exitsAfter", { minutes: Math.round(daemon.idle_secs / 60) })) : t("settings.unavailable")}</Value>
         </Row>
         <Row label={t("settings.stateFile")}>
-          <Value>{shown(daemon?.core_state_path)}</Value>
+          <Value>{shownIn(daemon?.core_state_path, t)}</Value>
         </Row>
         <Row label={t("settings.pageConnection")}>
           <Status tone={connection === "live" ? "ok" : "warn"} data-page-connection={connection}>
@@ -257,16 +260,16 @@ function GeneralTab({ actions }: { actions: Actions }) {
           </Status>
         </Row>
         <Row label={t("settings.version")}>
-          <Value>{shown(herdr?.received_version)}</Value>
+          <Value>{shownIn(herdr?.received_version, t)}</Value>
         </Row>
         <Row label={t("settings.protocol")}>
-          <Value>{herdr?.received_protocol != null ? t("settings.protocolValue", { received: String(herdr.received_protocol), expected: shown(herdr.expected_protocol) }) : t("common.unavailable")}</Value>
+          <Value>{herdr?.received_protocol != null ? t("settings.protocolValue", { received: String(herdr.received_protocol), expected: shownIn(herdr.expected_protocol, t) }) : t("settings.unavailable")}</Value>
         </Row>
         <Row label={t("settings.socket")}>
-          <Value>{shown(herdr?.socket_path ?? daemon?.herdr_socket_path)}</Value>
+          <Value>{shownIn(herdr?.socket_path ?? daemon?.herdr_socket_path, t)}</Value>
         </Row>
         <Row label={t("settings.binary")}>
-          <Value>{shown(daemon?.herdr_bin_path)}</Value>
+          <Value>{shownIn(daemon?.herdr_bin_path, t)}</Value>
         </Row>
       </Group>
       {environment && environment.length > 0 ? (
@@ -298,7 +301,8 @@ function GeneralTab({ actions }: { actions: Actions }) {
 }
 
 function DiagnosticList() {
-  const { t } = useInterfaceTranslation();
+  const { t, i18n } = useInterfaceTranslation();
+  const language = requireInterfaceLanguage(i18n.language);
   const diagnostics = useShellStore((s) => s.rest?.status?.diagnostics);
   const rows = (diagnostics ?? []).slice(-8).reverse();
   if (rows.length === 0) return <Note>{t("settings.noDiagnostics")}</Note>;
@@ -306,7 +310,7 @@ function DiagnosticList() {
     <ul className="space-y-xxs" data-diagnostics={rows.length}>
       {rows.map((row) => (
         <li key={`${row.occurred_at}-${row.kind}`} className="break-words font-mono text-caption text-subtle-foreground">
-          <span className="text-muted-foreground">{new Date(row.occurred_at).toLocaleTimeString()}</span> {row.kind}: {row.message}
+          <span className="text-muted-foreground">{formatDateTime(language, row.occurred_at, { timeStyle: "medium" })}</span> {row.kind}: {row.message}
         </li>
       ))}
     </ul>
@@ -320,18 +324,19 @@ function DiagnosticList() {
  * machine's agents sleep now so the effect of the choice is visible.
  */
 function PerformanceTab({ actions }: { actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const choice = useShellStore((s) => sleepAfterChoice(s.rest?.ui_state?.agent_sleep_after_hours));
   const sleeping = useShellStore((s) => sleepingCount(s.rest?.navigator?.agents));
   const [changedAt, setChangedAt] = useState<number | null>(null);
   const error = useErrorSince(changedAt, ["agent_sleep."]);
   return (
     <Group
-      title="Idle agents"
-      note="Working agents, unread results and the tab on screen never sleep. Delegated agents sleep too; opening one resumes its conversation."
+      title={t("settings.idleAgents")}
+      note={t("settings.idleAgentsDescription")}
       data-settings-group="idle-agents"
     >
-      <Row label="Sleep idle agents after" detail={error ? <Note tone="error" data-agent-sleep-error="true">Not saved: {error}</Note> : null}>
-        {sleeping > 0 ? <Value>{sleeping} sleeping</Value> : null}
+      <Row label={t("settings.sleepAfter")} detail={error ? <Note tone="error" data-agent-sleep-error="true">{t("settings.notSaved", { reason: error })}</Note> : null}>
+        {sleeping > 0 ? <Value>{t("settings.sleeping", { count: sleeping })}</Value> : null}
         <Select
           value={choice}
           onValueChange={(value) => {
@@ -341,13 +346,13 @@ function PerformanceTab({ actions }: { actions: Actions }) {
             actions.setAgentSleepAfter(next.hours);
           }}
         >
-          <SelectTrigger aria-label="Sleep idle agents after" data-agent-sleep-after={choice}>
+          <SelectTrigger aria-label={t("settings.sleepAfter")} data-agent-sleep-after={choice}>
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
             {SLEEP_AFTER_CHOICES.map((row) => (
               <SelectItem key={row.id} value={row.id} data-agent-sleep-option={row.id}>
-                {row.label}
+                {sleepAfterLabel(row, t)}
               </SelectItem>
             ))}
           </SelectContent>
@@ -358,6 +363,7 @@ function PerformanceTab({ actions }: { actions: Actions }) {
 }
 
 function AppearanceTab({ actions }: { actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const accent = useShellStore((s) => usableAccent(s.rest?.ui_state?.accent_hex));
   const theme = useShellStore((s) => readTheme(s.rest?.ui_state?.theme).choice);
   const fontSize = useShellStore((s) => usableFontSize(s.rest?.ui_state?.font_size)) ?? FONT_SIZE_BASE;
@@ -375,12 +381,12 @@ function AppearanceTab({ actions }: { actions: Actions }) {
   };
   return (
     <>
-      <Group title="Theme" note="System follows macOS as it changes. Accent tints primary buttons, focus rings and the editor caret; agent status colors keep their meaning whatever the accent.">
-        <Row label="Appearance">
+      <Group title={t("settings.theme")} note={t("settings.themeDescription")}>
+        <Row label={t("settings.tabs.appearance")}>
           <ToggleGroup
             type="single"
             value={theme}
-            aria-label="Theme"
+            aria-label={t("settings.theme")}
             data-theme-choice={theme}
             onValueChange={(value) => {
               // A second press on the chosen item would clear it; a theme is always chosen.
@@ -390,15 +396,15 @@ function AppearanceTab({ actions }: { actions: Actions }) {
             }}
           >
             {THEME_CHOICES.map((choice) => (
-              <ToggleGroupItem key={choice.id} value={choice.id} aria-label={choice.label} data-theme-option={choice.id}>
-                {choice.label}
+              <ToggleGroupItem key={choice.id} value={choice.id} aria-label={t(`settings.theme.${choice.id}`)} data-theme-option={choice.id}>
+                {t(`settings.theme.${choice.id}`)}
               </ToggleGroupItem>
             ))}
           </ToggleGroup>
         </Row>
-        <Row label="Accent" detail={error ? <Note tone="error" data-appearance-error="true">Not saved: {error}</Note> : null}>
+        <Row label={t("settings.accent")} detail={error ? <Note tone="error" data-appearance-error="true">{t("settings.notSaved", { reason: error })}</Note> : null}>
           <RadioGroup
-            aria-label="Accent"
+            aria-label={t("settings.accent")}
             value={chosenAccent ?? ""}
             className="flex items-center gap-sm"
             onValueChange={(name) => {
@@ -408,35 +414,35 @@ function AppearanceTab({ actions }: { actions: Actions }) {
             }}
           >
             {ACCENT_CHOICES.map((choice) => (
-              <Hint key={choice.name} label={`Accent ${choice.name}`}>
+              <Hint key={choice.id} label={t("settings.accentName", { name: t(`settings.accent.${choice.id}`) })}>
                 <RadioGroupItem
-                  value={choice.name.toLowerCase()}
-                  data-accent={choice.name.toLowerCase()}
+                  value={choice.id}
+                  data-accent={choice.id}
                   className={`border-0 ${choice.swatch} ring-1 ring-border data-[state=checked]:ring-2 data-[state=checked]:ring-foreground [&_svg]:hidden`}
                 />
               </Hint>
             ))}
           </RadioGroup>
-          <Value>{accent ? accent.toUpperCase() : "default"}</Value>
+          <Value>{accent ? accent.toUpperCase() : t("settings.defaultChoice")}</Value>
         </Row>
       </Group>
       <Group
-        title="Density"
-        note={`Terminal and editor text keep their own size (${textLarger} and ${textSmaller} in a pane or document).`}
+        title={t("settings.density")}
+        note={t("settings.densityDescription", { larger: textLarger, smaller: textSmaller })}
       >
-        <Row label="Interface font">
+        <Row label={t("settings.interfaceFont")}>
           <Slider
             min={FONT_SIZE_MIN}
             max={FONT_SIZE_MAX}
             step={1}
             value={[draftSize]}
-            aria-label="Interface font size"
+            aria-label={t("settings.interfaceFontSize")}
             data-font-size="true"
             className="w-(--size-settings-control-w)"
             onValueChange={([size]) => size !== undefined && setDraftSize(size)}
             onValueCommit={([size]) => size !== undefined && commitSize(size)}
           />
-          <Value>{draftSize} pt</Value>
+          <Value>{t("settings.fontPoints", { size: draftSize })}</Value>
         </Row>
       </Group>
     </>
@@ -446,6 +452,7 @@ function AppearanceTab({ actions }: { actions: Actions }) {
 // --- Agents --------------------------------------------------------------------
 
 function AgentsTab({ actions }: { actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const ai = useShellStore((s) => s.rest?.status?.background_ai);
   const hooks = useShellStore((s) => s.rest?.status?.agent_hooks);
   const devices = useShellStore((s) => s.rest?.navigator?.devices);
@@ -477,8 +484,8 @@ function AgentsTab({ actions }: { actions: Actions }) {
 
   return (
     <>
-      <Group title="Agent CLIs" note="Asked on the daemon's machine while this tab is open: installed, signed in, or why not.">
-        {(ai?.providers ?? []).length === 0 ? <Row label={<Note>Not read yet.</Note>} /> : null}
+      <Group title={t("settings.agentClis")} note={t("settings.agentClisDescription")}>
+        {(ai?.providers ?? []).length === 0 ? <Row label={<Note>{t("settings.notRead")}</Note>} /> : null}
         {(ai?.providers ?? []).map((provider) => {
           const line = providerLine(provider);
           return (
@@ -491,13 +498,10 @@ function AgentsTab({ actions }: { actions: Actions }) {
         })}
       </Group>
       <Group
-        title="Background AI"
-        note={
-          ai?.unavailable_reason ??
-          "Pane labels and other background features use this agent. Hide never asks for an API key and does not turn on Memory from here."
-        }
+        title={t("settings.backgroundAi")}
+        note={ai?.unavailable_reason ?? t("settings.backgroundAiDescription")}
       >
-        <Row label="Agent" detail={aiError ? <Note tone="error" data-ai-error="true">Not saved: {aiError}</Note> : null}>
+        <Row label={t("common.agent")} detail={aiError ? <Note tone="error" data-ai-error="true">{t("settings.notSaved", { reason: aiError })}</Note> : null}>
           <Select
             value={ai?.provider ?? undefined}
             disabled={!ai || ai.providers.length === 0}
@@ -506,7 +510,7 @@ function AgentsTab({ actions }: { actions: Actions }) {
               actions.chooseAi(value);
             }}
           >
-            <SelectTrigger aria-label="Background AI agent" data-ai-provider="true">
+            <SelectTrigger aria-label={t("settings.backgroundAgent")} data-ai-provider="true">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -517,15 +521,11 @@ function AgentsTab({ actions }: { actions: Actions }) {
               ))}
             </SelectContent>
           </Select>
-          <Status tone="muted">{ai?.chosen ? "chosen" : "default"}</Status>
+          <Status tone="muted">{ai?.chosen ? t("settings.chosen") : t("settings.defaultChoice")}</Status>
         </Row>
         <Row
-          label="Model"
-          detail={
-            selected?.models_unavailable_reason ? (
-              <Note>Models could not be listed ({selected.models_unavailable_reason}); only the configured one is offered.</Note>
-            ) : null
-          }
+          label={t("common.model")}
+          detail={selected?.models_unavailable_reason ? <Note>{t("settings.modelsUnavailable", { reason: selected.models_unavailable_reason })}</Note> : null}
         >
           <Select
             value={selected?.model ?? undefined}
@@ -536,7 +536,7 @@ function AgentsTab({ actions }: { actions: Actions }) {
               actions.chooseAi(selected.id, value);
             }}
           >
-            <SelectTrigger aria-label="Background AI model" data-ai-model="true">
+            <SelectTrigger aria-label={t("settings.backgroundModel")} data-ai-model="true">
               <SelectValue />
             </SelectTrigger>
             <SelectContent>
@@ -548,7 +548,7 @@ function AgentsTab({ actions }: { actions: Actions }) {
             </SelectContent>
           </Select>
         </Row>
-        <Row label="에이전트 요약" detail={<Note>꺼 두면 에이전트 제목과 한 줄이 AI 없이 세션 원문으로 보입니다.</Note>}>
+        <Row label={t("settings.agentSummary")} detail={<Note>{t("settings.agentSummaryDescription")}</Note>}>
           <Switch
             checked={ai?.agent_summary ?? true}
             disabled={!ai}
@@ -556,27 +556,27 @@ function AgentsTab({ actions }: { actions: Actions }) {
               setChangedAt(Date.now());
               actions.setAgentSummary(checked);
             }}
-            aria-label="에이전트 요약"
+            aria-label={t("settings.agentSummary")}
             data-ai-agent-summary={String(ai?.agent_summary ?? true)}
           />
         </Row>
         {selected && selected.state !== "ready" && selected.state !== "unread" ? (
-          <Row label={<Note tone="warn" data-ai-degraded="true">{selected.label}: {selected.headline || selected.state}. Background requests go to the other agent until {selected.label} can answer.</Note>} />
+          <Row label={<Note tone="warn" data-ai-degraded="true">{t("settings.backgroundDegraded", { agent: selected.label, status: selected.headline || selected.state })}</Note>} />
         ) : null}
       </Group>
       <Group
-        title="Agent hooks"
-        note="Hide installs its hook on every machine it runs agents on, This Mac and each device, and never touches another tool's entries. A hook you removed stays removed until you press Reinstall."
+        title={t("settings.agentHooks")}
+        note={t("settings.agentHooksDescription")}
         data-agent-hooks="true"
       >
         {machines.map(({ device, parts, unavailable }) => (
           <div key={device.id} data-hook-machine={device.id}>
             <Row
-              label={<span className="font-semibold">{device.id === "local" ? "This Mac" : device.label}</span>}
-              detail={unavailable ? <Note data-hook-unavailable={device.id}>{unavailable}</Note> : parts.length === 0 ? <Note>Not checked yet.</Note> : null}
+              label={<span className="font-semibold">{device.id === "local" ? t("common.thisMac") : device.label}</span>}
+              detail={unavailable ? <Note data-hook-unavailable={device.id}>{unavailable}</Note> : parts.length === 0 ? <Note>{t("settings.notChecked")}</Note> : null}
             />
             {parts.map((part) => {
-              const line = kitPartLine(part);
+              const line = kitPartLine(part, t);
               return (
                 <Row
                   key={part.id}
@@ -601,7 +601,7 @@ function AgentsTab({ actions }: { actions: Actions }) {
                       }}
                       data-hook-reinstall={`${device.id}:${part.id}`}
                     >
-                      {device.kit?.busy ? "Reinstalling…" : "Reinstall"}
+                      {device.kit?.busy ? t("settings.reinstalling") : t("settings.reinstall")}
                     </Button>
                   ) : null}
                 </Row>
@@ -627,6 +627,7 @@ function AgentsTab({ actions }: { actions: Actions }) {
  * operator's choice back as one event.
  */
 function IssuesTab({ actions }: { actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const workspaces = useShellStore((s) => s.rest?.navigator?.workspaces);
   const stored = useShellStore((s) => s.rest?.ui_state?.project_issue_sources);
   const settings = useShellStore((s) => s.rest?.ui_state?.issue_settings);
@@ -638,37 +639,37 @@ function IssuesTab({ actions }: { actions: Actions }) {
   // a device's projects keep their issues on that device, and the Home is no project.
   const projects = (workspaces ?? []).filter((workspace) => !workspace.remote_target_id && !workspace.is_home && workspace.tasks?.source != null);
   const access = githubAccess(projects);
-  const accessLine = access ? githubAccessLine(access) : null;
+  const accessLine = access ? githubAccessLine(access, t) : null;
   const change = (patch: Partial<IssueSettings>) => {
     setSettingsAt(Date.now());
     actions.setIssueSettings(patch);
   };
   return (
     <div data-settings-issues="true">
-      <Group title="이슈 출처" data-settings-group="issue-sources">
+      <Group title={t("issueSettings.sources")} data-settings-group="issue-sources">
         <Row
           label="GitHub"
           detail={access?.state === "failed" && access.reason ? <Note tone="warn" data-issue-github-reason="true">{access.reason}</Note> : null}
         >
-          <span className="text-body text-muted-foreground">gh로 읽고 씀</span>
+          <span className="text-body text-muted-foreground">{t("issueSettings.githubAccess")}</span>
           {accessLine ? (
             <Status tone={accessLine.tone} data-issue-source-github={access?.state === "failed" ? access.category : "connected"}>
               {accessLine.text}
             </Status>
           ) : null}
         </Row>
-        <Row label="Local">
-          <span className="text-body text-muted-foreground">이 Mac에 저장 · 언제나 사용 가능</span>
+        <Row label={t("issueSettings.local")}>
+          <span className="text-body text-muted-foreground">{t("issueSettings.localDescription")}</span>
         </Row>
       </Group>
       <Group
-        title="프로젝트별 출처"
-        note="한 프로젝트는 출처 하나입니다. 바꿔도 이미 있는 이슈는 옮기지 않고, 연결된 워크트리는 그대로 둡니다."
+        title={t("issueSettings.projects")}
+        note={t("issueSettings.projectsDescription")}
         data-settings-group="project-issue-sources"
       >
-        {projects.length === 0 ? <Row label={<Note>이 Mac의 프로젝트가 없습니다.</Note>} /> : null}
+        {projects.length === 0 ? <Row label={<Note>{t("issueSettings.noProjects")}</Note>} /> : null}
         {projects.map((workspace) => {
-          const { value, options } = issueSourceChoices(workspace, stored?.[workspace.path]);
+          const { value, options } = issueSourceChoices(workspace, stored?.[workspace.path], t);
           const failure = workspace.tasks?.source?.failure ?? null;
           return (
             <Row key={workspace.id} label={<span className="break-words">{workspace.label}</span>}>
@@ -688,7 +689,7 @@ function IssuesTab({ actions }: { actions: Actions }) {
                 }}
               >
                 <SelectTrigger
-                  aria-label={`${workspace.label} 이슈 출처`}
+                  aria-label={t("issueSettings.projectSource", { name: workspace.label })}
                   className="w-auto min-w-(--size-settings-control-w)"
                   data-issue-source-project={workspace.path}
                   data-issue-source={value}
@@ -706,32 +707,32 @@ function IssuesTab({ actions }: { actions: Actions }) {
             </Row>
           );
         })}
-        {sourceError ? <Row label={<Note tone="error" data-issue-source-error="true">저장되지 않음: {sourceError}</Note>} /> : null}
+        {sourceError ? <Row label={<Note tone="error" data-issue-source-error="true">{t("settings.notSaved", { reason: sourceError })}</Note>} /> : null}
       </Group>
-      <Group title="작업 시작" data-settings-group="issue-start">
+      <Group title={t("issueSettings.startWork")} data-settings-group="issue-start">
         {settings ? (
           <>
-            <Row label="AI가 워크트리 이름 짓기">
+            <Row label={t("issueSettings.aiNames")}>
               <Switch
                 checked={settings.ai_worktree_name}
                 onCheckedChange={(checked) => change({ ai_worktree_name: checked })}
-                aria-label="AI가 워크트리 이름 짓기"
+                aria-label={t("issueSettings.aiNames")}
                 data-issue-ai-worktree-name={String(settings.ai_worktree_name)}
               />
             </Row>
-            <Row label="PR 본문에 Closes 넣도록 지시">
+            <Row label={t("issueSettings.closesInstruction")}>
               <Switch
                 checked={settings.closes_instruction}
                 onCheckedChange={(checked) => change({ closes_instruction: checked })}
-                aria-label="PR 본문에 Closes 넣도록 지시"
+                aria-label={t("issueSettings.closesInstruction")}
                 data-issue-closes-instruction={String(settings.closes_instruction)}
               />
             </Row>
           </>
         ) : (
-          <Row label={<Note>아직 읽지 못했다.</Note>} />
+          <Row label={<Note>{t("settings.notRead")}</Note>} />
         )}
-        {settingsError ? <Row label={<Note tone="error" data-issue-settings-error="true">저장되지 않음: {settingsError}</Note>} /> : null}
+        {settingsError ? <Row label={<Note tone="error" data-issue-settings-error="true">{t("settings.notSaved", { reason: settingsError })}</Note>} /> : null}
       </Group>
     </div>
   );
@@ -740,6 +741,7 @@ function IssuesTab({ actions }: { actions: Actions }) {
 // --- Devices -------------------------------------------------------------------
 
 function DevicesTab({ actions }: { actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const devices = useShellStore((s) => s.rest?.navigator?.devices);
   const focused = useShellStore((s) => s.rest?.navigator?.focused_device_id ?? "local");
   const remote = useShellStore((s) => s.rest?.status?.remote);
@@ -768,27 +770,27 @@ function DevicesTab({ actions }: { actions: Actions }) {
   const bufferWarnings = useShellStore((s) => s.bufferWarnings);
   const released = draftExported(exportedDrafts, latestDraft);
   const removalLines = removing
-    ? deviceRemovalLines(removing.id, registrations ?? [], editorTabs ?? [], recoveryDrafts, (tabId) => bufferWarnings.has(tabId) && released(tabId))
+    ? deviceRemovalLines(removing.id, registrations ?? [], editorTabs ?? [], recoveryDrafts, (tabId) => bufferWarnings.has(tabId) && released(tabId), t)
     : [];
   const unstored = removing ? unstoredDeviceDrafts(removing.id, editorTabs ?? [], bufferWarnings, released) : [];
   return (
     <>
-      <Group title="Devices" note="Hide stores only a label and an SSH alias. Authentication stays in the daemon machine's SSH environment; no password or key is asked for.">
+      <Group title={t("settings.tabs.devices")} note={t("devices.description")}>
         {rows.map((device) => {
           const status = remote?.find((row) => row.target_id === device.id);
-          const line = deviceLine(device, status);
+          const line = deviceLine(device, status, t);
           return (
             <Row
               key={device.id}
               label={
                 <span className="flex min-w-0 flex-col">
                   <span className="break-words font-semibold">{device.label}</span>
-                  <span className="break-all font-mono text-caption text-muted-foreground">{device.kind === "remote" ? device.ssh_alias : "local, no SSH alias"}</span>
+                  <span className="break-all font-mono text-caption text-muted-foreground">{device.kind === "remote" ? device.ssh_alias : t("devices.localAlias")}</span>
                 </span>
               }
               detail={
                 <>
-                  <DeviceConnection device={device} facts={deviceFacts(device, status)} />
+                  <DeviceConnection device={device} facts={deviceFacts(device, status, t)} />
                   {device.kind === "remote" ? <DeviceHelper device={device} /> : null}
                   <MachineKit device={device} actions={actions} />
                   {device.test ? <DeviceTest test={device.test} /> : null}
@@ -808,14 +810,14 @@ function DevicesTab({ actions }: { actions: Actions }) {
                   }}
                   data-kit-reinstall={device.id}
                 >
-                  {device.kit.busy ? "Reinstalling…" : "Reinstall"}
+                  {device.kit.busy ? t("settings.reinstalling") : t("settings.reinstall")}
                 </Button>
               ) : null}
               {focused === device.id ? (
-                <Status tone="muted">selected</Status>
+                <Status tone="muted">{t("devices.selected")}</Status>
               ) : (
                 <Button variant="ghost" onClick={() => actions.focusDevice(device.id)} data-device-select={device.id}>
-                  Select
+                  {t("common.select")}
                 </Button>
               )}
               {device.kind === "remote" ? (
@@ -829,7 +831,7 @@ function DevicesTab({ actions }: { actions: Actions }) {
                     }}
                     data-device-test={device.id}
                   >
-                    {device.test?.state === "running" ? "Testing…" : "Test"}
+                    {device.test?.state === "running" ? t("devices.testing") : t("devices.test")}
                   </Button>
                   {canRetryDevice(device, status) ? (
                     <Button
@@ -840,7 +842,7 @@ function DevicesTab({ actions }: { actions: Actions }) {
                       }}
                       data-device-retry={device.id}
                     >
-                      Retry
+                      {t("common.retry")}
                     </Button>
                   ) : null}
                   {device.host?.consent === "granted" && device.host.state !== "identity_changed" ? (
@@ -854,27 +856,27 @@ function DevicesTab({ actions }: { actions: Actions }) {
                           }}
                           data-device-host-retry={device.id}
                         >
-                          Retry helper
+                          {t("devices.retryHelper")}
                         </Button>
                       ) : null}
                       <Button variant="ghost" onClick={() => setRevoking(device)} data-device-host-revoke={device.id}>
-                        Revoke helper…
+                        {t("devices.revokeHelperMenu")}
                       </Button>
                     </>
                   ) : (
                     <Button variant="secondary" onClick={() => setAllowing(device)} data-device-host-allow={device.id}>
-                      Allow and install…
+                      {t("devices.allowInstallMenu")}
                     </Button>
                   )}
                   <Button variant="ghost" onClick={() => setRemoving(device)} data-device-remove={device.id}>
-                    Remove…
+                    {t("devices.removeMenu")}
                   </Button>
                 </>
               ) : null}
             </Row>
           );
         })}
-        {remoteRows.length === 0 ? <Row label={<Note>No SSH device is registered. The daemon's own machine is always available.</Note>} /> : null}
+        {remoteRows.length === 0 ? <Row label={<Note>{t("devices.noRemote")}</Note>} /> : null}
         {deviceError ? <Row label={<Note tone="error" data-device-error="true">{deviceError}</Note>} /> : null}
       </Group>
       <AddDevice actions={actions} devices={rows} helperRoot={localRoot} cliDir={localCliDir} />
@@ -882,18 +884,18 @@ function DevicesTab({ actions }: { actions: Actions }) {
         <Dialog open onOpenChange={(next) => { if (!next) setAllowing(null); }}>
           <DialogContent data-device-host-allow-confirm={allowing.id}>
             <DialogHeader>
-              <DialogTitle>Install Hide on {allowing.label}?</DialogTitle>
+              <DialogTitle>{t("devices.installTitle", { name: allowing.label })}</DialogTitle>
             </DialogHeader>
             <DialogBody className="space-y-sm">
               {allowing.host?.state === "identity_changed" ? (
                 <p className="text-body text-warning">
-                  {allowing.ssh_alias} now answers as a different SSH identity than the one this consent was given to. Allow only if you expect that change.
+                  {t("devices.identityChangedDescription", { alias: allowing.ssh_alias ?? allowing.label })}
                 </p>
               ) : null}
               <KitTerms helperRoot={allowing.host?.helper_root ?? localRoot} cliDir={allowing.host?.cli_dir ?? localCliDir} />
             </DialogBody>
             <DialogFooter>
-              <Button variant="secondary" onClick={() => setAllowing(null)}>Not now</Button>
+              <Button variant="secondary" onClick={() => setAllowing(null)}>{t("devices.notNow")}</Button>
               <Button
                 data-device-host-allow-go="true"
                 onClick={() => {
@@ -902,7 +904,7 @@ function DevicesTab({ actions }: { actions: Actions }) {
                   setAllowing(null);
                 }}
               >
-                Allow and install
+                {t("devices.allowInstall")}
               </Button>
             </DialogFooter>
           </DialogContent>
@@ -912,13 +914,11 @@ function DevicesTab({ actions }: { actions: Actions }) {
         <AlertDialog open onOpenChange={(next) => { if (!next) setRevoking(null); }}>
           <AlertDialogContent data-device-host-revoke-confirm={revoking.id}>
             <AlertDialogHeader>
-              <AlertDialogTitle>Revoke Hide&apos;s helper on {revoking.label}?</AlertDialogTitle>
-              <AlertDialogDescription>
-                Hide stops starting new file, Git and worktree work on {revoking.ssh_alias}. A save already sent is read back before its tab says anything; your drafts and the files on the device are not deleted, and neither is Hide&apos;s installed kit.
-              </AlertDialogDescription>
+              <AlertDialogTitle>{t("devices.revokeTitle", { name: revoking.label })}</AlertDialogTitle>
+              <AlertDialogDescription>{t("devices.revokeDescription", { alias: revoking.ssh_alias ?? revoking.label })}</AlertDialogDescription>
             </AlertDialogHeader>
             <AlertDialogFooter>
-              <AlertDialogCancel>Keep allowed</AlertDialogCancel>
+              <AlertDialogCancel>{t("devices.keepAllowed")}</AlertDialogCancel>
               <AlertDialogAction
                 data-device-host-revoke-go="true"
                 onClick={() => {
@@ -926,7 +926,7 @@ function DevicesTab({ actions }: { actions: Actions }) {
                   actions.setDeviceHostConsent(revoking.id, false);
                 }}
               >
-                Revoke helper
+                {t("devices.revokeHelper")}
               </AlertDialogAction>
             </AlertDialogFooter>
           </AlertDialogContent>
@@ -936,13 +936,11 @@ function DevicesTab({ actions }: { actions: Actions }) {
         <AlertDialog open onOpenChange={(next) => { if (!next && !removalBusy) setRemoving(null); }}>
           <AlertDialogContent data-device-remove-confirm={removing.id}>
             <AlertDialogHeader>
-              <AlertDialogTitle>Remove {removing.label}?</AlertDialogTitle>
-              <AlertDialogDescription>
-                Hide forgets this device's registration and closes its connection here. Files, the Herdr server and any agents running on {removing.ssh_alias} keep running untouched.
-              </AlertDialogDescription>
+              <AlertDialogTitle>{t("devices.removeTitle", { name: removing.label })}</AlertDialogTitle>
+              <AlertDialogDescription>{t("devices.removeDescription", { alias: removing.ssh_alias ?? removing.label })}</AlertDialogDescription>
             </AlertDialogHeader>
             <p className="text-body text-subtle-foreground" data-device-remove-kit={removing.id}>
-              {kitRemovalLine(removing)}
+              {kitRemovalLine(removing, t)}
             </p>
             {removalLines.map((line) => (
               <p key={line} className="text-body text-subtle-foreground" data-device-remove-effect="true">
@@ -951,15 +949,14 @@ function DevicesTab({ actions }: { actions: Actions }) {
             ))}
             {unstored.length > 0 ? (
               <Note tone="warn" data-device-remove-unstored="true">
-                {unstored.length === 1 ? "This draft is" : "These drafts are"} not stored in this browser, so removing the device would lose{" "}
-                {unstored.length === 1 ? "it" : "them"}. Export or save {unstored.length === 1 ? "it" : "each"} first: {unstored.join(", ")}
+                {t("devices.unstored", { count: unstored.length, paths: unstored.join(", ") })}
               </Note>
             ) : null}
             <AlertDialogFooter>
               {/* A removal already storing drafts goes out when they land, so it
                   cannot be kept from here. Plain Button, not AlertDialogAction:
                   it has to stay open through the async removal. */}
-              <Button variant="secondary" disabled={removalBusy} onClick={() => setRemoving(null)}>Keep device</Button>
+              <Button variant="secondary" disabled={removalBusy} onClick={() => setRemoving(null)}>{t("devices.keepDevice")}</Button>
               <Button
                 variant="destructive"
                 disabled={unstored.length > 0 || removalBusy}
@@ -978,7 +975,7 @@ function DevicesTab({ actions }: { actions: Actions }) {
                     .finally(() => setRemovalBusy(false));
                 }}
               >
-                {removalBusy ? "Storing drafts…" : `Remove ${removing.label}`}
+                {removalBusy ? t("devices.storingDrafts") : t("devices.removeNamed", { name: removing.label })}
               </Button>
             </AlertDialogFooter>
           </AlertDialogContent>
@@ -993,8 +990,9 @@ function DevicesTab({ actions }: { actions: Actions }) {
  * when the connection failed, which step refused it and what to do (B36, B38).
  */
 function DeviceConnection({ device, facts }: { device: Device; facts: string[] }) {
+  const { t } = useInterfaceTranslation();
   if (device.kind !== "remote") return null;
-  const problem = device.state !== "ready" ? deviceProblemLine(device.problem, device.ssh_alias) : null;
+  const problem = device.state !== "ready" ? deviceProblemLine(device.problem, device.ssh_alias, t) : null;
   return (
     <>
       {facts.length > 0 ? (
@@ -1021,22 +1019,24 @@ function DeviceConnection({ device, facts }: { device: Device; facts: string[] }
 
 /** Whether file and Git work may run on a device, where its helper lives, and the identity the consent is bound to. */
 function DeviceHelper({ device }: { device: Device }) {
+  const { t } = useInterfaceTranslation();
   const host = device.host;
-  const line = hostLine(host);
+  const line = hostLine(host, t);
   return (
     <div className="mt-xs space-y-xxs" data-device-host={`${device.id}:${host?.state ?? "unknown"}`}>
       <Status tone={line.tone}>{line.text}</Status>
-      {host?.consent === "granted" && host.helper_root ? <p className="break-all font-mono text-caption text-muted-foreground">installs to {host.helper_root}</p> : null}
-      {host?.bound_identity ? <p className="break-all font-mono text-caption text-muted-foreground">bound to {host.bound_identity}</p> : null}
+      {host?.consent === "granted" && host.helper_root ? <p className="break-all font-mono text-caption text-muted-foreground">{t("devices.installsTo", { path: host.helper_root })}</p> : null}
+      {host?.bound_identity ? <p className="break-all font-mono text-caption text-muted-foreground">{t("devices.boundTo", { identity: host.bound_identity })}</p> : null}
       {host && host.state !== "ready" && host.message ? <Note tone={line.tone === "muted" ? "muted" : "warn"}>{host.message}</Note> : null}
     </div>
   );
 }
 
 function KitTerms({ helperRoot, cliDir }: { helperRoot: string | null; cliDir: string | null }) {
+  const { t } = useInterfaceTranslation();
   return (
     <ul className="list-disc space-y-xs pl-md text-body text-subtle-foreground" data-kit-terms="true">
-      {kitConsentTerms(helperRoot, cliDir).map((term) => (
+      {kitConsentTerms(helperRoot, cliDir, t).map((term) => (
         <li key={term}>{term}</li>
       ))}
     </ul>
@@ -1049,6 +1049,7 @@ function KitTerms({ helperRoot, cliDir }: { helperRoot: string | null; cliDir: s
  * why it is not. A machine whose kit does not run says why instead.
  */
 function MachineKit({ device, actions }: { device: Device; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const kit = device.kit;
   if (!kit) return null;
   if (kit.unavailable) {
@@ -1061,14 +1062,14 @@ function MachineKit({ device, actions }: { device: Device; actions: Actions }) {
   if (kit.components.length === 0) {
     return (
       <div className="mt-xs" data-machine-kit={`${device.id}:${kit.busy ? "busy" : "unread"}`}>
-        <Status tone="pending">{kit.busy ? "Installing Hide's kit…" : "Hide's kit is checked when the device connects"}</Status>
+        <Status tone="pending">{kit.busy ? t("devices.installingKit") : t("devices.kitOnConnection")}</Status>
       </div>
     );
   }
   return (
     <div className="mt-xs grid grid-cols-[auto_auto_minmax(0,1fr)_auto] gap-x-xs gap-y-xxs" data-machine-kit={`${device.id}:${kit.busy ? "busy" : "read"}`}>
       {kit.components.map((part) => {
-        const line = kitPartLine(part);
+        const line = kitPartLine(part, t);
         const switched = kitPartSwitch(part);
         const mark = part.state === "installed" ? "✓" : part.state === "absent" ? "–" : part.state === "off" ? "○" : part.state === "failed" ? "✕" : "!";
         const markTone = line.tone === "ok" ? "text-success" : line.tone === "muted" ? "text-muted-foreground" : line.tone === "error" ? "text-destructive" : "text-warning";
@@ -1089,7 +1090,7 @@ function MachineKit({ device, actions }: { device: Device; actions: Actions }) {
                 checked={switched.on}
                 disabled={kit.busy}
                 onCheckedChange={(checked) => actions.setKitComponent(device.id, part.id, checked)}
-                aria-label={`${part.label} ${switched.on ? "끄기" : "켜기"}`}
+                aria-label={t(switched.on ? "devices.kitSwitchOff" : "devices.kitSwitchOn", { part: part.label })}
                 data-kit-part-switch={`${device.id}:${part.id}:${switched.on ? "on" : "off"}`}
               />
             ) : (
@@ -1103,11 +1104,18 @@ function MachineKit({ device, actions }: { device: Device; actions: Actions }) {
 }
 
 function DeviceTest({ test }: { test: NonNullable<Device["test"]> }) {
+  const { t, i18n } = useInterfaceTranslation();
+  const language = requireInterfaceLanguage(i18n.language);
   const tone = test.state === "running" ? "pending" : test.state === "passed" ? "ok" : "warn";
   // A finished test names when it ran: it is that attempt's result, and it
   // stays beside the row after the connection itself has changed.
-  const at = test.checked_at_unix_ms === null ? "" : ` at ${new Date(test.checked_at_unix_ms).toLocaleTimeString()}`;
-  const headline = test.state === "running" ? "Testing the connection…" : `Connection test ${test.state === "passed" ? "passed" : "failed"}${at}`;
+  const time = test.checked_at_unix_ms === null ? null : formatDateTime(language, test.checked_at_unix_ms, { timeStyle: "medium" });
+  const headline =
+    test.state === "running"
+      ? t("devices.testRunning")
+      : test.state === "passed"
+        ? time === null ? t("devices.testPassed") : t("devices.testPassedAt", { time })
+        : time === null ? t("devices.testFailed") : t("devices.testFailedAt", { time });
   return (
     <div className="mt-xs space-y-xxs" data-device-test-state={test.state}>
       <Status tone={tone}>{headline}</Status>
@@ -1116,7 +1124,7 @@ function DeviceTest({ test }: { test: NonNullable<Device["test"]> }) {
           <span className={stage.state === "passed" ? "text-success" : stage.state === "pending" ? "text-muted-foreground" : "text-warning"} aria-hidden="true">
             {stage.state === "passed" ? "✓" : stage.state === "pending" ? "…" : "✕"}
           </span>
-          <span className="sr-only">{stage.state === "passed" ? "passed" : stage.state === "pending" ? "not run" : "failed"}</span>
+          <span className="sr-only">{stage.state === "passed" ? t("devices.stage.passed") : stage.state === "pending" ? t("devices.stage.notRun") : t("devices.stage.failed")}</span>
           <span className="w-[var(--size-device-test-stage-col)] shrink-0 font-mono text-foreground">{stage.stage}</span>
           <span className="min-w-0 break-words text-subtle-foreground">{stage.detail}</span>
         </div>
@@ -1126,12 +1134,13 @@ function DeviceTest({ test }: { test: NonNullable<Device["test"]> }) {
 }
 
 function AddDevice({ actions, devices, helperRoot, cliDir }: { actions: Actions; devices: Device[]; helperRoot: string | null; cliDir: string | null }) {
+  const { t } = useInterfaceTranslation();
   const [label, setLabel] = useState("");
   const [alias, setAlias] = useState("");
   const [socket, setSocket] = useState("");
   const [submitted, setSubmitted] = useState<{ id: string; at: number } | null>(null);
   const error = useErrorSince(submitted?.at ?? null, ["device."]);
-  const problem = alias ? aliasProblem(alias) : null;
+  const problem = alias ? aliasProblem(alias, t) : null;
   const added = submitted ? devices.some((device) => device.id === submitted.id) : false;
   useEffect(() => {
     if (!added) return;
@@ -1141,7 +1150,7 @@ function AddDevice({ actions, devices, helperRoot, cliDir }: { actions: Actions;
     setSubmitted(null);
   }, [added]);
   const pending = submitted !== null && !added && error === null;
-  const blocked = pending || !label.trim() || !alias.trim() || problem !== null || socketProblem(socket) !== null;
+  const blocked = pending || !label.trim() || !alias.trim() || problem !== null || socketProblem(socket, t) !== null;
   // Adding is where the whole kit is agreed to, once (PRD device-parity
   // D-12): the terms are on the form and there is one way to add.
   const submit = () => {
@@ -1151,38 +1160,38 @@ function AddDevice({ actions, devices, helperRoot, cliDir }: { actions: Actions;
     actions.registerDevice(id, label.trim(), alias.trim(), { hostConsent: true, herdrSocketPath: socket.trim() || null });
   };
   return (
-    <Group title="Add device" note="Use an alias already in the daemon machine's ~/.ssh/config. Hide connects right away and shows the result on the row.">
-      <Row label="Label">
-        <Input value={label} disabled={pending} placeholder="Studio" aria-label="Device label" className="w-(--size-settings-control-w)" onChange={(event) => setLabel(event.target.value)} data-device-label="true" />
+    <Group title={t("devices.addTitle")} note={t("devices.addDescription")}>
+      <Row label={t("devices.label")}>
+        <Input value={label} disabled={pending} placeholder={t("devices.labelPlaceholder")} aria-label={t("devices.labelAria")} className="w-(--size-settings-control-w)" onChange={(event) => setLabel(event.target.value)} data-device-label="true" />
       </Row>
-      <Row label="SSH alias" detail={problem ? <Note tone="warn">{problem}</Note> : error ? <Note tone="error" data-add-device-error="true">{error}</Note> : null}>
+      <Row label={t("devices.sshAlias")} detail={problem ? <Note tone="warn">{problem}</Note> : error ? <Note tone="error" data-add-device-error="true">{error}</Note> : null}>
         <Input
           mono
           value={alias}
           disabled={pending}
           placeholder="studio"
-          aria-label="SSH alias"
+          aria-label={t("devices.sshAlias")}
           className="w-(--size-settings-control-w)"
           onChange={(event) => setAlias(event.target.value)}
           data-device-alias="true"
         />
       </Row>
-      <Row label="Herdr socket" detail={socketProblem(socket) ? <Note tone="warn">{socketProblem(socket)}</Note> : <Note>Optional. Leave empty for the device's default Herdr server.</Note>}>
+      <Row label={t("devices.herdrSocket")} detail={socketProblem(socket, t) ? <Note tone="warn">{socketProblem(socket, t)}</Note> : <Note>{t("devices.socketDescription")}</Note>}>
         <Input
           mono
           value={socket}
           disabled={pending}
-          placeholder="default server"
-          aria-label="Herdr socket on the device"
+          placeholder={t("devices.defaultServer")}
+          aria-label={t("devices.socketAria")}
           className="w-(--size-settings-control-w)"
           onChange={(event) => setSocket(event.target.value)}
           data-device-socket="true"
         />
       </Row>
-      <Row label={<span className="text-subtle-foreground">What Hide installs</span>} detail={<KitTerms helperRoot={helperRoot} cliDir={cliDir} />} />
+      <Row label={<span className="text-subtle-foreground">{t("devices.whatInstalls")}</span>} detail={<KitTerms helperRoot={helperRoot} cliDir={cliDir} />} />
       <Row label="">
         <Button disabled={blocked} onClick={submit} data-add-device="true">
-          {pending ? "Adding…" : "Add"}
+          {pending ? t("devices.adding") : t("common.add")}
         </Button>
       </Row>
     </Group>
@@ -1192,6 +1201,7 @@ function AddDevice({ actions, devices, helperRoot, cliDir }: { actions: Actions;
 // --- Shortcuts -----------------------------------------------------------------
 
 function ShortcutsTab({ actions }: { actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   // Each host edits its own set: the desktop app the macOS set, the browser
   // its own (user decision 2026-09-26).
   const host = hostKind();
@@ -1240,37 +1250,27 @@ function ShortcutsTab({ actions }: { actions: Actions }) {
   return (
     <>
       <Group
-        title="Pane and navigation chords"
-        note={
-          host === "electron"
-            ? system === "mac"
-              ? "The macOS app's pane chords: this desktop app and the macOS app share them. Pane chords need ⌘; navigation can use ⌃ or ⌥ as well. A chord that macOS or the app menu keeps is refused before it is saved."
-              : "This desktop app's pane chords. Pane chords need Ctrl+Shift or Alt+Shift, so a plain Ctrl key stays the terminal's; navigation can use Ctrl or Alt as well. A chord the system keeps is refused before it is saved."
-            : system === "mac"
-              ? "These chords are this browser host's own; the macOS and desktop apps keep their own set. A chord needs ⌘, ⌥ or ⌃, and one Chrome keeps is refused before it is saved."
-              : "These chords are this browser host's own; the desktop app keeps its own set. A chord needs Ctrl or Alt, and one Chrome or the system keeps is refused before it is saved."
-        }
+        title={t("settings.shortcuts.paneAndNavigation")}
+        note={t(host === "electron" ? (system === "mac" ? "settings.shortcuts.desktopMac" : "settings.shortcuts.desktopPc") : system === "mac" ? "settings.shortcuts.browserMac" : "settings.shortcuts.browserPc")}
       >
         {rowsFor(EDITABLE_PANE_COMMANDS.filter((id) => !(AREA_COMMANDS as readonly CommandId[]).includes(id)))}
-        <Row label={<span className="text-subtle-foreground">Toggle Conversation</span>}>
-          <Status tone="muted">macOS app only; the web shell has no conversation view</Status>
+        <Row label={<span className="text-subtle-foreground">{t("settings.shortcuts.toggleConversation")}</span>}>
+          <Status tone="muted">{t("settings.shortcuts.conversationUnavailable")}</Status>
         </Row>
       </Group>
       <Group
-        title="Area commands"
-        note="Moving between Agent areas or View areas and resizing the one in use. They have no chord until you set one, and the desktop app lists them in its Pane menu."
+        title={t("settings.shortcuts.areaTitle")}
+        note={t("settings.shortcuts.areaDescription")}
         data-settings-group="area-commands"
       >
         {rowsFor(AREA_COMMANDS)}
       </Group>
       <Group
-        title="Numbered chords"
+        title={t("settings.shortcuts.numberedTitle")}
         note={
           host === "electron"
-            ? `The number is the order on screen: tabs left to right, Agents rows top to bottom, first to ninth. Hold ${system === "mac" ? "⌘ or ⌥" : "Ctrl+Shift or Alt"} to see it. These chords are fixed; a pane chord bound onto one is refused.`
-            : system === "mac"
-              ? "The desktop app's ⌘1-9 and ⌥1-9; a browser keeps its own ⌘1-9, so this host has no numbered chords."
-              : "The desktop app's Ctrl+Shift+1-9 and Alt+1-9; a browser tab has no numbered chords."
+            ? t("settings.shortcuts.numberedDesktop", { modifiers: t(system === "mac" ? "settings.shortcuts.numberedModifiersMac" : "settings.shortcuts.numberedModifiersPc") })
+            : t(system === "mac" ? "settings.shortcuts.numberedBrowserMac" : "settings.shortcuts.numberedBrowserPc")
         }
         data-settings-group="numbered-chords"
       >
@@ -1278,18 +1278,18 @@ function ShortcutsTab({ actions }: { actions: Actions }) {
           .concat(sheetRows("Navigate", registry, host, system))
           .filter((row) => row.id.startsWith("select_"))
           .map((row) => (
-            <Row key={row.id} label={row.title}>
+            <Row key={row.id} label={sheetRowTitle(row, t)}>
               <Kbd data-shortcut-effective={row.id}>{row.chord ?? "-"}</Kbd>
-              {row.chord === null ? <Status tone="muted">not on this host</Status> : null}
+              {row.chord === null ? <Status tone="muted">{t("settings.shortcuts.notOnHost")}</Status> : null}
             </Row>
           ))}
       </Group>
       {diagnostic ? <Note tone="warn" data-shortcut-diagnostic="true">{diagnostic}</Note> : null}
-      {saving ? <Note tone="pending">Saving…</Note> : null}
-      {saveError ? <Note tone="error" data-shortcut-save-error="true">Not saved: {saveError}</Note> : null}
+      {saving ? <Note tone="pending">{t("workspace.saving")}</Note> : null}
+      {saveError ? <Note tone="error" data-shortcut-save-error="true">{t("settings.notSaved", { reason: saveError })}</Note> : null}
       <div className="mt-sm flex justify-end">
         <Button variant="secondary" disabled={!stored || Object.keys(stored).length === 0} onClick={() => apply({})} data-shortcut-reset-all="true">
-          Restore all defaults
+          {t("settings.shortcuts.restoreDefaults")}
         </Button>
       </div>
     </>
@@ -1319,7 +1319,7 @@ function ShortcutRow({
   const command = registry.find((row) => row.id === id);
   const [recording, setRecording] = useState(false);
   const [draft, setDraft] = useState<Chord | null>(null);
-  const [problem, setProblem] = useState<string | null>(null);
+  const [problem, setProblem] = useState<BindingProblem | "altgr" | null>(null);
   const setRecordingFlag = useUiStore((s) => s.setRecordingShortcut);
   useEffect(() => {
     if (!recording) return;
@@ -1327,7 +1327,7 @@ function ShortcutRow({
     return () => setRecordingFlag(false);
   }, [recording, setRecordingFlag]);
   if (!command) return null;
-  const title = overviewCommandTitle(id, command.title, t);
+  const title = commandTitle(id, t);
   const effective = hostChord(command, host);
   const record = (event: KeyboardEvent<HTMLButtonElement>) => {
     // IME composition and lone modifiers are not chords; the recorder waits.
@@ -1344,10 +1344,8 @@ function ShortcutRow({
     // AltGr types a character on Windows and Linux layouts (Windows reports it
     // as Ctrl+Alt), so a key pressed with it is never a chord, as the window
     // listener already treats it.
-    const reason =
-      system === "pc" && event.nativeEvent.getModifierState?.("AltGraph")
-        ? "AltGr types a character, so it cannot start a chord."
-        : bindingProblem(id, chord, registry, host, system);
+    const reason: BindingProblem | "altgr" | null =
+      system === "pc" && event.nativeEvent.getModifierState?.("AltGraph") ? "altgr" : bindingProblem(id, chord, registry, host, system);
     setRecording(false);
     setProblem(reason);
     setDraft(reason ? null : chord);
@@ -1358,7 +1356,7 @@ function ShortcutRow({
       detail={
         problem ? (
           <Note tone="error" data-shortcut-problem={id}>
-            {problem} {effective ? `${displayChord(effective, system)} stays.` : ""}
+            {problem === "altgr" ? t("settings.shortcuts.altGr") : bindingProblemText(problem, t)} {effective ? t("settings.shortcuts.previousChord", { chord: displayChord(effective, system) }) : ""}
           </Note>
         ) : null
       }
@@ -1377,10 +1375,10 @@ function ShortcutRow({
             }}
             data-shortcut-apply={id}
           >
-            Apply
+            {t("common.apply")}
           </Button>
           <Button variant="ghost" onClick={() => setDraft(null)}>
-            Cancel
+            {t("common.cancel")}
           </Button>
         </>
       ) : (
@@ -1395,13 +1393,13 @@ function ShortcutRow({
           }}
           data-shortcut-record={id}
         >
-          {recording ? "Press a chord…" : "Change"}
+          {recording ? t("settings.shortcuts.pressChord") : t("settings.shortcuts.change")}
         </Button>
       )}
       {effective && !draft && !recording ? <Button variant="ghost" onClick={onClear} data-shortcut-clear={id}>{t("settings.shortcuts.clear")}</Button> : null}
       {overridden && !draft ? (
         <Button variant="ghost" onClick={onReset} data-shortcut-reset={id}>
-          Default
+          {t("common.default")}
         </Button>
       ) : null}
     </Row>

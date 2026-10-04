@@ -23,7 +23,7 @@ export const issueSettingsEnglish = {
 const ko = {
   "issueSettings.sources": "이슈 출처",
   "issueSettings.githubAccess": "gh로 읽고 씀",
-  "issueSettings.local": "로컬",
+  "issueSettings.local": "Local",
   "issueSettings.localDescription": "이 Mac에 저장 · 언제나 사용 가능",
   "issueSettings.projects": "프로젝트별 출처",
   "issueSettings.projectsDescription": "한 프로젝트는 출처 하나입니다. 바꿔도 이미 있는 이슈는 옮기지 않고, 연결된 워크트리는 그대로 둡니다.",

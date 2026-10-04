@@ -3,6 +3,7 @@
 // and names the state (herdr-core/src/usage.rs); these rules only decide how a
 // state reads, the way the native `SidebarUtilityBar` and `HideUsagePopover` do.
 
+import type { TFunction } from "i18next";
 import type { ProviderUsage, ProviderUsageBucket } from "./generated/hided-ws";
 
 export type UsageReading = Pick<ProviderUsage | ProviderUsageBucket, "state" | "used_percent">;
@@ -30,29 +31,29 @@ export function percentLabel(percent: number): string {
 }
 
 /** What stands where the percent goes: the percent, `…` while the first read runs, or `Unavailable`. */
-export function usageValueLabel(row: UsageReading): string {
+export function usageValueLabel(row: UsageReading, t: TFunction<"translation">): string {
   const percent = usagePercent(row);
   if (percent !== null) return percentLabel(percent);
-  return row.state === "loading" ? "…" : "Unavailable";
+  return row.state === "loading" ? "…" : t("common.unavailable");
 }
 
 /** `in 5d 4h`, `in 3h 12m` or `in 7m`: the time left before the window resets, never less than a minute. */
-export function resetCountdown(resetsAtUnixSeconds: number, nowMs: number): string {
+export function resetCountdown(resetsAtUnixSeconds: number, nowMs: number, t: TFunction<"translation">): string {
   const seconds = Math.max(0, Math.floor(resetsAtUnixSeconds - nowMs / 1000));
   const days = Math.floor(seconds / 86_400);
   const hours = Math.floor((seconds % 86_400) / 3_600);
   const minutes = Math.floor((seconds % 3_600) / 60);
-  if (days > 0) return `in ${days}d ${hours}h`;
-  if (hours > 0) return `in ${hours}h ${minutes}m`;
-  return `in ${Math.max(1, minutes)}m`;
+  if (days > 0) return t("shell.usage.resetDaysHours", { days, hours });
+  if (hours > 0) return t("shell.usage.resetHoursMinutes", { hours, minutes });
+  return t("shell.usage.resetMinutes", { minutes: Math.max(1, minutes) });
 }
 
 /** The chips' accessible name: every provider with its reading, in the order the chips draw them. */
-export function usageSummary(rows: readonly ProviderUsage[]): string {
+export function usageSummary(rows: readonly ProviderUsage[], t: TFunction<"translation">): string {
   const readings = rows.map((row) => {
     const percent = usagePercent(row);
-    if (percent !== null) return `${row.label} ${percentLabel(percent)}`;
-    return `${row.label} ${row.state === "loading" ? "loading" : "unavailable"}`;
+    if (percent !== null) return t("shell.usage.providerValue", { provider: row.label, value: percentLabel(percent) });
+    return t(row.state === "loading" ? "shell.usage.providerLoading" : "shell.usage.providerUnavailable", { provider: row.label });
   });
-  return ["Weekly usage", ...readings].join(", ");
+  return [t("shell.weeklyUsage"), ...readings].join(", ");
 }

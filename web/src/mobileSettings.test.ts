@@ -1,5 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { checklistRows, codeCountdown, exposureLine, phoneLine, type MobileState, type PhoneRow } from "./mobileSettings";
+import { initializeInterfaceI18n } from "./i18n/instance";
+import { checklistRows as checklistRowsIn, codeCountdown, exposureLine as exposureLineIn, phoneLine as phoneLineIn, type MobileState, type PhoneRow } from "./mobileSettings";
+
+// Korean is the wording Settings > Mobile shipped with; the rules read the same under it.
+const t = initializeInterfaceI18n("ko").getFixedT(null, "translation");
+const english = initializeInterfaceI18n("en").getFixedT(null, "translation");
+const checklistRows = (value: MobileState) => checklistRowsIn(value, t);
+const exposureLine = (value: MobileState) => exposureLineIn(value, t);
+const phoneLine = (phone: PhoneRow, nowMs: number) => phoneLineIn(phone, nowMs, t, "ko");
 
 const DAY = 24 * 60 * 60 * 1000;
 
@@ -79,3 +87,22 @@ describe("phoneLine", () => {
     expect(phoneLine({ ...phone, notifications: "unasked" }, 60 * 60 * 1000)).toBe("1시간 전");
   });
 });
+
+describe("in English", () => {
+  const phone: PhoneRow = { id: "p", name: "iPhone", last_seen_ms: 0, connected: false, notifications: "on", revoke_at_ms: 7 * DAY };
+
+  it("words the checklist, the foreign entry and the phone row without Korean", () => {
+    expect(checklistRowsIn(state({}), english).map((row) => row.title)).toEqual([
+      "Tailscale installed on this Mac",
+      "Not signed in to Tailscale",
+      "MagicDNS and HTTPS are on for the tailnet",
+      "Install Tailscale on your phone too and sign in with the same account",
+    ]);
+    expect(exposureLineIn(state({ exposure: "foreign", foreign_target: null }), english)?.text).toBe(
+      "Not exposed · tailscale serve HTTPS 443 on this Mac has an entry hide didn't create: Unknown target. hide will not change it.",
+    );
+    expect(phoneLineIn(phone, 3 * DAY, english, "en")).toBe("3 days ago · Receiving notifications · Automatically revoked in 4 days");
+    expect(phoneLineIn({ ...phone, connected: true, notifications: "off" }, 3 * DAY, english, "en")).toBe("Just now · Notifications off");
+  });
+});
+

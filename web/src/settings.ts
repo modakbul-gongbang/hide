@@ -2,8 +2,13 @@
 // the core or the daemon reported, and what the copied diagnostics carry.
 // Nothing here reads the store, so every rule is tested without a browser.
 
+import type { TFunction } from "i18next";
 import type { DaemonInfo } from "./store";
+import type { MessageKey } from "./i18n/catalogs";
+import type { AccentName } from "./theme";
 import type { AgentRow, AiProvider, CoreDiagnostic, Device, DeviceHost, EnvironmentStatus, HerdrStatus, KitComponent, KitComponentId, RemoteStatus, Workspace } from "./snapshot";
+
+type Translate = TFunction<"translation">;
 
 export type SettingsTab = "general" | "appearance" | "agents" | "issues" | "devices" | "mobile" | "performance" | "shortcuts";
 
@@ -13,14 +18,19 @@ export const SETTINGS_TABS: readonly SettingsTab[] = [
 
 /**
  * The Sleep idle agents choices (PRD agent-sleep D-10), in the hours the core
- * accepts; Never is the default and sends null.
+ * accepts; Never is the default and sends null. `unit` is how the choice reads.
  */
-export const SLEEP_AFTER_CHOICES: readonly { id: string; hours: number | null; label: string }[] = [
-  { id: "never", hours: null, label: "Never" },
-  { id: "12", hours: 12, label: "12 hours" },
-  { id: "24", hours: 24, label: "24 hours" },
-  { id: "72", hours: 72, label: "3 days" },
+export const SLEEP_AFTER_CHOICES: readonly { id: string; hours: number | null; unit: "hours" | "days" }[] = [
+  { id: "never", hours: null, unit: "hours" },
+  { id: "12", hours: 12, unit: "hours" },
+  { id: "24", hours: 24, unit: "hours" },
+  { id: "72", hours: 72, unit: "days" },
 ];
+
+export function sleepAfterLabel(choice: (typeof SLEEP_AFTER_CHOICES)[number], t: Translate): string {
+  if (choice.hours === null) return t("settings.sleep.never");
+  return choice.unit === "days" ? t("settings.sleep.days", { days: choice.hours / 24 }) : t("settings.sleep.hours", { hours: choice.hours });
+}
 
 /** The chosen Sleep idle agents choice; a value this build does not offer reads as Never. */
 export function sleepAfterChoice(hours: unknown): string {
@@ -54,16 +64,17 @@ export function githubAccess(workspaces: readonly Workspace[]): GithubAccess | n
   return failure?.failure_category ? { state: "failed", category: failure.failure_category, reason: failure.unavailable_reason } : null;
 }
 
-const GH_FAILURE_TEXT: Record<string, string> = {
-  "not installed": "gh 설치 안 됨",
-  "not logged in": "gh 로그인 안 됨",
-  "network or rate limit": "읽기 실패",
+const GH_FAILURE_KEY: Record<string, MessageKey> = {
+  "not installed": "issueSettings.ghNotInstalled",
+  "not logged in": "issueSettings.ghNotLoggedIn",
+  "network or rate limit": "issueSettings.readFailed",
 };
 
 /** What the GitHub row's state says; a category this build does not know is shown as the core named it. */
-export function githubAccessLine(access: GithubAccess): { text: string; tone: "ok" | "warn" } {
-  if (access.state === "connected") return { text: "연결됨", tone: "ok" };
-  return { text: GH_FAILURE_TEXT[access.category] ?? access.category, tone: "warn" };
+export function githubAccessLine(access: GithubAccess, t: Translate): { text: string; tone: "ok" | "warn" } {
+  if (access.state === "connected") return { text: t("common.connected"), tone: "ok" };
+  const key = GH_FAILURE_KEY[access.category];
+  return { text: key ? t(key) : access.category, tone: "warn" };
 }
 
 export type IssueSourceChoice = "auto" | "github" | "local";
@@ -79,14 +90,15 @@ export type IssueSourceChoice = "auto" | "github" | "local";
 export function issueSourceChoices(
   workspace: Workspace,
   stored: string | undefined,
+  t: Translate,
 ): { value: IssueSourceChoice; options: { id: IssueSourceChoice; label: string }[] } {
   const source = workspace.tasks?.source ?? null;
   const resolved = source && (!source.chosen || !workspace.is_git) ? source.label : null;
   const repository = source?.kind === "github" ? source.name : (workspace.home_issues?.repository ?? null);
   const options: { id: IssueSourceChoice; label: string }[] = [
-    { id: "auto", label: resolved ? `자동 (${resolved})` : "자동" },
-    ...(workspace.is_git ? [{ id: "github" as const, label: repository ? `GitHub · ${repository}` : "GitHub" }] : []),
-    { id: "local", label: "Local" },
+    { id: "auto", label: resolved ? t("issueSettings.autoResolved", { source: resolved }) : t("issueSettings.auto") },
+    ...(workspace.is_git ? [{ id: "github" as const, label: repository ? t("issueSettings.githubRepository", { repository }) : "GitHub" }] : []),
+    { id: "local", label: t("issueSettings.local") },
   ];
   return { value: options.find((option) => option.id === stored)?.id ?? "auto", options };
 }
@@ -101,11 +113,11 @@ export const FONT_SIZE_BASE = 13;
  * The accent choices, the native sheet's four, named by the token each one's
  * value and swatch come from; the class is spelled out for Tailwind's scanner.
  */
-export const ACCENT_CHOICES: readonly { name: string; token: string; swatch: string }[] = [
-  { name: "Lime", token: "--accent-choice-lime", swatch: "bg-accent-choice-lime" },
-  { name: "Sky", token: "--accent-choice-sky", swatch: "bg-accent-choice-sky" },
-  { name: "Violet", token: "--accent-choice-violet", swatch: "bg-accent-choice-violet" },
-  { name: "Amber", token: "--accent-choice-amber", swatch: "bg-accent-choice-amber" },
+export const ACCENT_CHOICES: readonly { id: AccentName; token: string; swatch: string }[] = [
+  { id: "lime", token: "--accent-choice-lime", swatch: "bg-accent-choice-lime" },
+  { id: "sky", token: "--accent-choice-sky", swatch: "bg-accent-choice-sky" },
+  { id: "violet", token: "--accent-choice-violet", swatch: "bg-accent-choice-violet" },
+  { id: "amber", token: "--accent-choice-amber", swatch: "bg-accent-choice-amber" },
 ];
 
 const HEX_COLOR = /^#[0-9a-f]{6}$/i;
@@ -120,9 +132,16 @@ export function usableFontSize(value: unknown): number | null {
   return typeof value === "number" && Number.isFinite(value) && value >= FONT_SIZE_MIN && value <= FONT_SIZE_MAX ? value : null;
 }
 
-/** A value the daemon or core did not report reads as unavailable, never as a guess. */
+const isReported = (value: string | number | null | undefined): value is string | number => value !== null && value !== undefined && value !== "";
+
+/** A value the daemon or core did not report reads as unavailable, never as a guess; the copied diagnostics keep that word as data. */
 export function shown(value: string | number | null | undefined): string {
-  return value === null || value === undefined || value === "" ? "unavailable" : String(value);
+  return isReported(value) ? String(value) : "unavailable";
+}
+
+/** `shown` for the sheet, where the missing word follows the interface language. */
+export function shownIn(value: string | number | null | undefined, t: Translate): string {
+  return isReported(value) ? String(value) : t("settings.unavailable");
 }
 
 /** An environment check's tone: `invalid` always needs attention, `absent` only when required. */
@@ -133,12 +152,12 @@ export function environmentTone(state: string, required: boolean): "ok" | "warn"
 }
 
 /** One line for the Herdr connection, from the core's own state words. */
-export function herdrLine(herdr: HerdrStatus | undefined): { text: string; tone: "ok" | "warn" | "error" } {
+export function herdrLine(herdr: HerdrStatus | undefined, t: Translate): { text: string; tone: "ok" | "warn" | "error" } {
   const state = herdr?.state;
-  if (!state) return { text: "unavailable", tone: "warn" };
-  if (state === "connected") return { text: "Connected", tone: "ok" };
+  if (!state) return { text: t("settings.unavailable"), tone: "warn" };
+  if (state === "connected") return { text: t("common.connected"), tone: "ok" };
   if (herdr?.expected_protocol != null && herdr.received_protocol != null && herdr.expected_protocol !== herdr.received_protocol) {
-    return { text: `Protocol ${herdr.received_protocol} (expects ${herdr.expected_protocol})`, tone: "error" };
+    return { text: t("settings.protocolMismatch", { received: String(herdr.received_protocol), expected: String(herdr.expected_protocol) }), tone: "error" };
   }
   return { text: state.replace(/_/g, " "), tone: "warn" };
 }
@@ -148,12 +167,17 @@ export function herdrLine(herdr: HerdrStatus | undefined): { text: string; tone:
  * `disabled`; the remote status beside it adds whether an attempt is still
  * pending, so "never tried", "trying" and "failed" read differently.
  */
-export function deviceLine(device: Device, remote: RemoteStatus | undefined): { text: string; tone: "ok" | "warn" | "pending" | "local" } {
-  if (device.kind !== "remote") return { text: "this daemon's machine", tone: "local" };
-  if (device.state === "ready") return { text: "connected", tone: "ok" };
-  if (device.state === "disabled") return { text: "disabled", tone: "warn" };
-  if (remote?.state === "not_connected" || remote?.state === "connecting") return { text: "connecting…", tone: "pending" };
-  return { text: "not connected", tone: "warn" };
+function deviceState(device: Device, remote: RemoteStatus | undefined): { state: "local" | "ready" | "disabled" | "connecting" | "unavailable"; tone: "ok" | "warn" | "pending" | "local" } {
+  if (device.kind !== "remote") return { state: "local", tone: "local" };
+  if (device.state === "ready") return { state: "ready", tone: "ok" };
+  if (device.state === "disabled") return { state: "disabled", tone: "warn" };
+  if (remote?.state === "not_connected" || remote?.state === "connecting") return { state: "connecting", tone: "pending" };
+  return { state: "unavailable", tone: "warn" };
+}
+
+export function deviceLine(device: Device, remote: RemoteStatus | undefined, t: Translate): { text: string; tone: "ok" | "warn" | "pending" | "local" } {
+  const { state, tone } = deviceState(device, remote);
+  return { text: t(`devices.line.${state}`), tone };
 }
 
 /**
@@ -161,11 +185,11 @@ export function deviceLine(device: Device, remote: RemoteStatus | undefined): { 
  * platform its helper runs on. Nothing here is read on this machine, so a
  * fact the device has not reported is left out rather than filled in.
  */
-export function deviceFacts(device: Device, remote: RemoteStatus | undefined): string[] {
+export function deviceFacts(device: Device, remote: RemoteStatus | undefined, t: Translate): string[] {
   if (device.kind !== "remote") return [];
   const facts: string[] = [];
   if (remote?.herdr_version) facts.push(`Herdr ${remote.herdr_version}`);
-  if (device.host?.state === "ready" && device.host.platform) facts.push(`helper on ${device.host.platform}`);
+  if (device.host?.state === "ready" && device.host.platform) facts.push(t("devices.helperPlatform", { platform: device.host.platform }));
   return facts;
 }
 
@@ -174,45 +198,36 @@ export function deviceFacts(device: Device, remote: RemoteStatus | undefined): s
  * thing to do about it (B38). Hide never changes known_hosts or asks for a
  * password; each action happens in the daemon machine's own SSH setup.
  */
-export function deviceProblemLine(problem: string | null | undefined, alias: string | null): { headline: string; action: string } | null {
-  const target = alias ?? "the device";
+export function deviceProblemLine(problem: string | null | undefined, alias: string | null, t: Translate): { headline: string; action: string } | null {
+  const target = alias ?? t("devices.targetFallback");
   switch (problem) {
     case "host_key_changed":
-      return {
-        headline: "Host key changed",
-        action: `${target} answered with a different host key than known_hosts records. Verify the device before you update known_hosts; Hide will not connect until then.`,
-      };
+      return { headline: t("devices.problem.hostKeyChanged"), action: t("devices.problem.hostKeyChangedAction", { alias: target }) };
     case "host_key_unknown":
-      return {
-        headline: "Host key not in known_hosts",
-        action: `Run ssh ${target} once on the daemon's machine to review and record its host key, then Retry.`,
-      };
+      return { headline: t("devices.problem.hostKeyUnknown"), action: t("devices.problem.hostKeyUnknownAction", { alias: target }) };
     case "authentication":
-      return {
-        headline: "Sign-in refused",
-        action: `The host key was verified, but no key the daemon machine's ssh config names for ${target} was accepted. Check its IdentityFile or IdentityAgent, then Retry.`,
-      };
+      return { headline: t("devices.problem.authentication"), action: t("devices.problem.authenticationAction", { alias: target }) };
     default:
       return null;
   }
 }
 
 /** The helper line a device row carries: whether file and Git work may run there, and why not. */
-export function hostLine(host: DeviceHost | undefined): { text: string; tone: "ok" | "warn" | "pending" | "muted" | "local" } {
-  if (!host || host.consent === "this_machine") return { text: "files and Git run on this daemon's machine", tone: "local" };
+export function hostLine(host: DeviceHost | undefined, t: Translate): { text: string; tone: "ok" | "warn" | "pending" | "muted" | "local" } {
+  if (!host || host.consent === "this_machine") return { text: t("devices.helper.local"), tone: "local" };
   switch (host.state) {
     case "ready":
-      return { text: `helper ready${host.platform ? ` (${host.platform})` : ""}`, tone: "ok" };
+      return { text: host.platform ? t("devices.helper.readyPlatform", { platform: host.platform }) : t("devices.helper.ready"), tone: "ok" };
     case "connecting":
-      return { text: "starting the helper…", tone: "pending" };
+      return { text: t("devices.helper.connecting"), tone: "pending" };
     case "not_allowed":
-      return { text: host.consent === "outdated" ? "helper needs a new consent" : "helper not allowed", tone: "muted" };
+      return { text: host.consent === "outdated" ? t("devices.helper.consentOutdated") : t("devices.helper.notAllowed"), tone: "muted" };
     case "identity_changed":
-      return { text: "device identity changed", tone: "warn" };
+      return { text: t("devices.helper.identityChanged"), tone: "warn" };
     case "unsupported":
-      return { text: "helper unsupported here", tone: "warn" };
+      return { text: t("devices.helper.unsupported"), tone: "warn" };
     default:
-      return { text: "helper unavailable", tone: "warn" };
+      return { text: t("devices.helper.unavailable"), tone: "warn" };
   }
 }
 
@@ -222,15 +237,14 @@ export function hostLine(host: DeviceHost | undefined): { text: string; tone: "o
  * keeps running, and what is never touched. The same words back the add form
  * and the row's Allow; they are said once, and nothing asks per part.
  */
-export function kitConsentTerms(helperRoot: string | null, cliDir: string | null): string[] {
-  const root = helperRoot ?? "the helper folder in the device account's home";
+export function kitConsentTerms(helperRoot: string | null, cliDir: string | null, t: Translate): string[] {
   return [
-    `Hide copies its helper, the hide command and its hook helper into ${root}, and replaces them there when this version of Hide needs newer ones.`,
-    `It links hide in ${cliDir ?? "the account's command folder"}, adds its own entries to ~/.claude/settings.json and ~/.codex/hooks.json. It keeps its records in ~/.hide and takes the folders of an older Hide layout away. The former coordination service is retired after active work is closed, with its old records preserved. Another tool's entries and files are left as they are.`,
-    "Codex를 pane마다 실행: Codex의 백그라운드 데몬을 끈다 (codex features disable daemon_auto_start). 떠 있는 데몬은 멈추지 않고, 새로 여는 Codex부터 적용된다. Settings › Devices의 그 줄에서 다시 켤 수 있다.",
-    "The helper runs only while Hide holds the SSH connection, serves registered projects, and manages the device's Home (~/hide and its project links). Agent labels for the device's panes are made on this Mac from conversations the helper reads.",
-    "Every move to the Trash or worktree removal still asks you for its target each time. A part you take away stays away until you press Reinstall.",
-    "Removing the device takes Hide's parts and its helper folder off it again; the records in ~/.hide stay. A different SSH identity asks again.",
+    t("devices.terms.copy", { root: helperRoot ?? t("devices.helperFolder") }),
+    t("devices.terms.configure", { cliDir: cliDir ?? t("devices.commandFolder") }),
+    t("devices.terms.codex"),
+    t("devices.terms.runtime"),
+    t("devices.terms.confirm"),
+    t("devices.terms.remove"),
   ];
 }
 
@@ -239,36 +253,36 @@ export function kitConsentTerms(helperRoot: string | null, cliDir: string | null
  * device-parity B22): with its helper connected the parts come off and records
  * stay; without one nothing on the device changes.
  */
-export function kitRemovalLine(device: Device): string {
+export function kitRemovalLine(device: Device, t: Translate): string {
   const where = device.ssh_alias ?? device.label;
   const sharing = device.kit?.shares_account_with;
   if (sharing) {
-    return `${sharing} reaches the same account on ${where}, so Hide's kit stays there for it.`;
+    return t("devices.removal.shared", { other: sharing, alias: where });
   }
   if (device.host?.state === "ready") {
     const folder = device.host?.helper_root ? ` (${device.host.helper_root})` : "";
-    return `On ${where}, Hide removes its hook entries, its hide link and its helper folder${folder}; the records in ~/.hide stay.`;
+    return t("devices.removal.connected", { alias: where, folder });
   }
-  return `Hide's helper is not connected to ${where}, so its kit stays there; it does not get in the way of agent sessions, and adding the device again replaces it.`;
+  return t("devices.removal.disconnected", { alias: where });
 }
 
 /** A kit part's state as the machine rows word it (PRD device-parity B7). */
-export function kitPartLine(part: KitComponent): { text: string; tone: "ok" | "warn" | "error" | "muted" } {
+export function kitPartLine(part: KitComponent, t: Translate): { text: string; tone: "ok" | "warn" | "error" | "muted" } {
   switch (part.state) {
     case "installed":
-      return { text: "Installed", tone: "ok" };
+      return { text: t("settings.kit.installed"), tone: "ok" };
     case "outdated":
-      return { text: "Outdated", tone: "warn" };
+      return { text: t("settings.kit.outdated"), tone: "warn" };
     case "not_installed":
-      return { text: "Not installed", tone: "warn" };
+      return { text: t("settings.kit.notInstalled"), tone: "warn" };
     case "removed":
-      return { text: "Removed", tone: "warn" };
+      return { text: t("settings.kit.removed"), tone: "warn" };
     case "failed":
-      return { text: "Failed", tone: "error" };
+      return { text: t("settings.kit.failed"), tone: "error" };
     case "absent":
-      return { text: "Not on this machine", tone: "muted" };
+      return { text: t("settings.kit.absent"), tone: "muted" };
     case "off":
-      return { text: "꺼짐", tone: "muted" };
+      return { text: t("common.off"), tone: "muted" };
   }
 }
 
@@ -309,17 +323,17 @@ export function kitHookMachines(devices: readonly Device[]): { device: Device; p
 }
 
 /** A device Herdr socket must be an absolute single-line path on that device, or left empty. */
-export function socketProblem(path: string): string | null {
+export function socketProblem(path: string, t: Translate): string | null {
   const trimmed = path.trim();
   if (!trimmed) return null;
   // eslint-disable-next-line no-control-regex
-  if (!trimmed.startsWith("/") || trimmed === "/" || /[\u0000-\u001f]/.test(trimmed)) return "Enter an absolute socket path on the device, such as /Users/example/.config/herdr/herdr.sock.";
+  if (!trimmed.startsWith("/") || trimmed === "/" || /[\u0000-\u001f]/.test(trimmed)) return t("devices.socketInvalid");
   return null;
 }
 
 /** Whether Retry is offered: a registered SSH device that is not connected and not mid-attempt. */
 export function canRetryDevice(device: Device, remote: RemoteStatus | undefined): boolean {
-  return device.kind === "remote" && device.state !== "ready" && deviceLine(device, remote).tone !== "pending";
+  return device.kind === "remote" && device.state !== "ready" && deviceState(device, remote).tone !== "pending";
 }
 
 /**
@@ -341,7 +355,6 @@ export function deviceIdFor(alias: string, existing: readonly string[]): string 
   }
 }
 
-/** What an SSH alias must look like before it is sent: one token, no spaces or shell syntax. */
 /**
  * What removing a device takes from Hide: its registered projects and its
  * open file tabs; and the drafts it leaves, which stay in this browser to
@@ -354,24 +367,20 @@ export function deviceRemovalLines(
   tabs: readonly { id: string; checkout_id: string; dirty: boolean }[],
   drafts: readonly { device: string | null }[],
   /** Tabs whose draft is not stored here and leaves only as the file the operator exported (B44). */
-  onlyExported: (tabId: string) => boolean = () => false,
+  onlyExported: (tabId: string) => boolean,
+  t: Translate,
 ): string[] {
   const scope = `remote:${deviceId}:`;
   const projects = registrations.filter((row) => row.device_id === deviceId).length;
   const own = tabs.filter((tab) => tab.checkout_id.startsWith(scope));
   const exportedOnly = own.filter((tab) => tab.dirty && onlyExported(tab.id)).length;
   const unsaved = own.filter((tab) => tab.dirty).length - exportedOnly + drafts.filter((draft) => draft.device === deviceId).length;
-  const count = (n: number, one: string, many: string) => `${n} ${n === 1 ? one : many}`;
   const lines: string[] = [];
   if (projects > 0 || own.length > 0) {
-    lines.push(`Hide forgets ${count(projects, "registered project", "registered projects")} and closes ${count(own.length, "file tab", "file tabs")} of it here.`);
+    lines.push(t("devices.removal.effects", { projects: t("devices.removal.projects", { count: projects }), tabs: t("devices.removal.tabs", { count: own.length }) }));
   }
-  if (unsaved > 0) {
-    lines.push(`${count(unsaved, "unsaved draft stays", "unsaved drafts stay")} in this browser under unsaved drafts, to export or discard.`);
-  }
-  if (exportedOnly > 0) {
-    lines.push(`${count(exportedOnly, "draft", "drafts")} could not be stored in this browser and ${exportedOnly === 1 ? "leaves" : "leave"} only as the file you exported.`);
-  }
+  if (unsaved > 0) lines.push(t("devices.removal.drafts", { count: unsaved }));
+  if (exportedOnly > 0) lines.push(t("devices.removal.exported", { count: exportedOnly }));
   return lines;
 }
 
@@ -403,10 +412,11 @@ export function draftExported(exported: ReadonlyMap<string, string>, current: (t
   };
 }
 
-export function aliasProblem(alias: string): string | null {
+/** What an SSH alias must look like before it is sent: one token, no spaces or shell syntax. */
+export function aliasProblem(alias: string, t: Translate): string | null {
   const trimmed = alias.trim();
-  if (!trimmed) return "Enter the SSH alias from the daemon machine's ~/.ssh/config.";
-  if (!/^[A-Za-z0-9._@-]+$/.test(trimmed)) return "An SSH alias is one word: letters, digits, dot, dash, underscore or @.";
+  if (!trimmed) return t("devices.aliasRequired");
+  if (!/^[A-Za-z0-9._@-]+$/.test(trimmed)) return t("devices.aliasInvalid");
   return null;
 }
 

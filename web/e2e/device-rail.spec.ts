@@ -7,7 +7,7 @@
 // hides the rail, the name on the top line becomes the device menu, and the
 // choice survives a reload. Registering one device that cannot be reached (an
 // alias no SSH config knows) adds a dimmed monogram tile with a cross and no
-// mark, named by its hint, and, selected, the sidebar reduced to its name, `연결 안 됨` and `다시 연결`.
+// mark, named by its hint, and, selected, the sidebar reduced to its name, `Not connected` and `Reconnect`.
 // Removing it leaves This Mac's rail. The Add project dialog's Host list entry
 // needs the desktop host's folder picker, so it is proved in desktop/e2e, not
 // in a browser tab.
@@ -30,7 +30,7 @@ async function openAddDeviceForm(page: Page): Promise<void> {
   await expect(page.locator("[data-add-device]")).toBeVisible();
 }
 
-test("the rail follows the registered devices; a device that cannot be reached is dimmed and offers 다시 연결", async ({ page }) => {
+test("the rail follows the registered devices; a device that cannot be reached is dimmed and offers Reconnect", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
@@ -58,10 +58,10 @@ test("the rail follows the registered devices; a device that cannot be reached i
     await expect(page.locator("[data-project-list]")).toHaveCount(0);
     await page.locator('[data-sidebar-mode="projects"]').click();
 
-    // B6: a right-click on the rail offers 레일 숨기기; hidden, the name is the device menu with 기기 추가… and 레일 표시.
+    // B6: a right-click on the rail offers Hide rail; hidden, the name is the device menu with Add device… and Show device rail.
     await rail.click({ button: "right", position: { x: 10, y: 400 } });
     const railMenu = page.locator('[data-device-rail-menu][role="menu"]');
-    await expect(railMenu).toContainText("레일 숨기기");
+    await expect(railMenu).toContainText("Hide rail");
     await railMenu.locator('[data-menu-item="hide"]').click();
     await expect(rail).toHaveCount(0);
     await expect(page.locator("[data-sidebar-device-menu]")).toContainText("This Mac");
@@ -74,7 +74,7 @@ test("the rail follows the registered devices; a device that cannot be reached i
     const deviceMenu = page.locator("[data-device-menu]");
     await expect(deviceMenu.locator('[data-device-menu-item="local"]')).toBeVisible();
     await screenshot(page, "device-rail-hidden-menu");
-    // B1: 기기 추가… opens Settings > Devices > Add device.
+    // B1: Add device… opens Settings > Devices > Add device.
     await deviceMenu.locator("[data-device-menu-add]").click();
     await openAddDeviceForm(page);
     await page.keyboard.press("Escape");
@@ -124,7 +124,7 @@ test("the rail follows the registered devices; a device that cannot be reached i
     await expect(tile).toHaveAttribute("data-rail-connected", "false", { timeout: 30_000 });
     await expect(tile.locator("[data-rail-off]")).toBeVisible();
     await expect(tile.locator("[data-rail-badge]")).toHaveCount(0);
-    await expect(tile).toHaveAccessibleName(/연결 안 됨/);
+    await expect(tile).toHaveAccessibleName(/Not connected/);
     for (const theme of ["dark", "light"] as const) {
       await page.evaluate((next) => {
         document.documentElement.classList.toggle("dark", next === "dark");
@@ -141,10 +141,10 @@ test("the rail follows the registered devices; a device that cannot be reached i
     await expect(tile).toHaveAttribute("aria-pressed", "true");
     await expect(rail.locator('[data-rail-tile="local"]')).toHaveAttribute("aria-pressed", "false");
 
-    // B8, B9: selected, the sidebar is the name, 연결 안 됨 and 다시 연결, with no tree.
+    // B8, B9: selected, the sidebar is the name, Not connected and Reconnect, with no tree.
     const disconnected = page.locator("[data-device-disconnected]");
     await expect(disconnected).toBeVisible();
-    await expect(disconnected).toContainText("연결 안 됨");
+    await expect(disconnected).toContainText("Not connected");
     await expect(disconnected.locator("[data-device-disconnected-name]")).toHaveText("연구실 빌드 서버 자동화 장비");
     await expect(page.locator("[data-project-list]")).toHaveCount(0);
     await expect(page.locator("[data-home-destination]")).toHaveCount(0);
@@ -165,7 +165,7 @@ test("the rail follows the registered devices; a device that cannot be reached i
     // The tile draws the name's monogram and no name; its hint is the name and its connection.
     await expect(tile.locator("[data-rail-glyph]")).toHaveText("연빌");
     await tile.hover();
-    await expect(page.getByRole("tooltip")).toContainText("연구실 빌드 서버 자동화 장비 · 연결 안 됨");
+    await expect(page.getByRole("tooltip")).toContainText("연구실 빌드 서버 자동화 장비 · Not connected");
 
     // B13: the rail's + opens the same Add device form.
     await rail.locator("[data-rail-add]").click();
