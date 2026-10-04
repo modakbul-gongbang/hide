@@ -6,6 +6,7 @@
 // exits, so nothing a worker started outlives it.
 
 const running = new Set<() => void>();
+const MAX_OWNED_FIXTURES = 256;
 
 process.once("exit", () => {
   for (const stop of [...running]) {
@@ -13,6 +14,7 @@ process.once("exit", () => {
       stop();
     } catch (error) {
       console.error("e2e fixture stop failed at worker exit", error);
+      process.exitCode = 1;
     }
   }
 });
@@ -23,6 +25,7 @@ process.once("exit", () => {
  * successor takes over (a daemon restart reuses it).
  */
 export function ownUntilWorkerExit(stop: () => void): { stop: () => void; disown: () => void } {
+  if (running.size >= MAX_OWNED_FIXTURES) cleanupAfterFailure(new Error("worker exceeded 256 owned fixtures"), stop);
   let done = false;
   const owned = () => {
     if (done) return;
@@ -34,6 +37,24 @@ export function ownUntilWorkerExit(stop: () => void): { stop: () => void; disown
   return { stop: owned, disown: () => void running.delete(owned) };
 }
 
+/** Run every release, keeping all failures in the actual serialized cause chain. */
+export async function finishFixture(primary: unknown, releases: (() => void | Promise<void>)[]): Promise<void> {
+  if (releases.length > 256) throw new Error("fixture release cap exceeded");
+  const failures: unknown[] = primary === undefined ? [] : [primary];
+  for (const release of releases) {
+    try { await release(); } catch (error) { failures.push(error); }
+  }
+  if (failures.length) {
+    let failure = failures.pop();
+    while (failures.length) {
+      const earlier = failures.pop();
+      try { cleanupAfterFailure(earlier, () => { throw failure; }); }
+      catch (reported) { failure = reported; }
+    }
+    throw failure;
+  }
+}
+
 /** Cleanup remains a failure without replacing the original stack/signature. */
 export function cleanupAfterFailure(primary: unknown, cleanup: () => void): never {
   try { cleanup(); } catch (secondary) {
@@ -42,7 +63,24 @@ export function cleanupAfterFailure(primary: unknown, cleanup: () => void): neve
     // extra prose appended to the stack is not a durable diagnostic channel.
     const original = primary instanceof Error ? primary : new Error(String(primary));
     const cleanupError = secondary instanceof Error ? secondary : new Error(String(secondary));
-    const reported = new Error(original.message, { cause: cleanupError });
+    // Keep a prior cause as well: setup can already carry a native subprocess
+    // error, and a second release failure must not erase the first release.
+    const causes: Error[] = [];
+    const seen = new Set<Error>();
+    for (let cause = original.cause; cause !== undefined;) {
+      if (causes.length >= 16 || cause instanceof Error && seen.has(cause)) {
+        const reported = new Error(original.message, { cause: new Error("fixture error cause chain exceeded its bound", { cause: cleanupError }) });
+        reported.name = original.name; reported.stack = original.stack;
+        throw reported;
+      }
+      const value = cause instanceof Error ? cause : new Error(String(cause));
+      causes.push(value); seen.add(value); cause = value.cause;
+    }
+    let chained = cleanupError;
+    for (const cause of causes.reverse()) {
+      const copy = new Error(cause.message, { cause: chained }); copy.name = cause.name; copy.stack = cause.stack; chained = copy;
+    }
+    const reported = new Error(original.message, { cause: chained });
     reported.name = original.name;
     reported.stack = original.stack;
     throw reported;

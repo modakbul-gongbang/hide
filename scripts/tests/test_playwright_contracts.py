@@ -143,7 +143,7 @@ catch(error) { if(!error.message.includes('incomplete controls')) throw error; }
             self.assertEqual(checked.returncode, 0, checked.stderr)
 
             (tests / 'errors.spec.ts').write_text(f"""import {{ test }} from {json.dumps(package)};
-import {{ cleanupAfterFailure, ownUntilWorkerExit }} from {json.dumps(worker)};
+import {{ cleanupAfterFailure, finishFixture, ownUntilWorkerExit }} from {json.dumps(worker)};
 for (const value of ['A', 'B']) test('primary ' + value, () => {{
   cleanupAfterFailure(new Error('Expected: primary ' + value + ' setup assertion'), () => {{ throw new Error('cleanup EBUSY owned executable'); }});
 }});
@@ -152,12 +152,25 @@ test('cleanup only', () => {{
   const owner = ownUntilWorkerExit(() => {{ if(fail) throw new Error('cleanup-only owned exit unconfirmed'); }});
   try {{ owner.stop(); }} finally {{ fail = false; owner.stop(); }}
 }});
+test('primary native cause and every release', async () => {{
+  const original = new Error('Expected: primary fixture setup', {{cause:new Error('clang.exe ETIMEDOUT')}});
+  const released: string[] = [];
+  try {{
+    await finishFixture(original, [
+      () => {{ released.push('daemon'); throw new Error('daemon exit unconfirmed'); }},
+      () => {{ released.push('server'); throw new Error('server cleanup EBUSY'); }},
+      () => {{ released.push('socket'); }},
+    ]);
+  }} finally {{
+    if (released.join(',') !== 'daemon,server,socket') throw new Error('not all owned resources were released');
+  }}
+}});
 """)
             failures, report = run('errors', 'errors.spec.ts', expected=1)
             rows = failures['records']
-            self.assertEqual(len(rows), 3)
+            self.assertEqual(len(rows), 4)
             self.assertTrue(all(r['status'] == 'failed' for r in rows))
-            primaries = [r for r in rows if r['test'].startswith('primary')]
+            primaries = [r for r in rows if r['test'] in ('primary A', 'primary B')]
             self.assertEqual(len({r['signature'] for r in primaries}), 2)
             for row in primaries:
                 self.assertEqual(row['category'], 'assertion')
@@ -169,6 +182,13 @@ test('cleanup only', () => {{
                 self.assertIn('Expected: primary', error['stack'])
                 self.assertIn('cleanup EBUSY owned executable', json.dumps(error['cause']))
             self.assertIn('cleanup-only owned exit unconfirmed', rows[2]['assertion'])
+            native = next(r for r in rows if r['test'] == 'primary native cause and every release')
+            self.assertIn('Expected: primary fixture setup', native['assertion'])
+            actual = errors[3]
+            self.assertIn('Expected: primary fixture setup', actual['stack'])
+            for detail in ('clang.exe ETIMEDOUT', 'daemon exit unconfirmed', 'server cleanup EBUSY'):
+                self.assertIn(detail, json.dumps(actual['cause']))
+                self.assertIn(detail, json.dumps(native['causes']))
 
 
 if __name__ == '__main__':

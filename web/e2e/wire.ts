@@ -5,6 +5,35 @@
 import { expect, type Locator, type Page, type WebSocket } from "@playwright/test";
 import path from "node:path";
 import { chord } from "./chords";
+import type { SnapshotRest } from "../src/snapshot";
+import { areasOf } from "../src/areaLayout";
+
+/** Observe the same published frames the shell consumes, without dispatch or probes. */
+export function observeTabProjection(page: Page, root: string) {
+  let rest: SnapshotRest | null = null;
+  let frames = 0;
+  const normalized = (value: string) => value.replace(/\\/g, "/");
+  page.on("websocket", (ws) => ws.on("framereceived", (frame) => {
+    const text = String(frame.payload);
+    if (!text.startsWith("{")) return;
+    if (Buffer.byteLength(text) > 8 * 1024 * 1024) throw new Error("projection observation frame cap exceeded");
+    const value = JSON.parse(text) as { type?: string; payload?: { rest?: SnapshotRest } };
+    if (value.type !== "snapshot" && value.type !== "delta") return;
+    if (++frames > 20_000) throw new Error("projection observation frame count cap exceeded");
+    rest = value.type === "snapshot" ? value.payload?.rest ?? null : { ...rest, ...value.payload?.rest };
+  }));
+  return () => {
+    const checkouts = rest?.navigator?.workspaces?.flatMap(workspace => workspace.checkouts.map(checkout => ({
+      workspace: workspace.id, checkout: checkout.id, owner: checkout.workspace_id,
+      rootMatches: normalized(checkout.path) === normalized(root), active: checkout.active_tab_id,
+      tabs: checkout.tabs.map(tab => ({ id: tab.id, owner: tab.workspace_id, panes: tab.panes.map(pane => pane.id) })),
+    }))) ?? [];
+    if (checkouts.length > 256 || checkouts.some(checkout => checkout.tabs.length > 256)) throw new Error("projection observation inventory cap exceeded");
+    const layout = rest?.workspace_view?.agent_layout;
+    return { frames, checkouts, selectedPane: rest?.focused?.pane_id ?? null,
+      groups: layout ? areasOf(layout.root).map(area => ({ id: area.id, active: area.active, tabs: area.displays.map(tab => tab.id) })) : [] };
+  };
+}
 
 /**
  * Counts client events by kind as the page sends them; one action must be

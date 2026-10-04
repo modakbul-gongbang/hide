@@ -131,6 +131,7 @@ The first Windows runs of the web e2e fixtures found three differences the helpe
 - Delete a fixture's root only after every process that used it has confirmed exit; when exit cannot be confirmed, keep the root and name it in the error, as `desktop/e2e/fixture.ts` does.
   `cleanupAfterFailure` keeps the original message and stack as the primary identity and the cleanup error in `cause`, which Playwright serializes.
   `scripts/tests/test_playwright_contracts.py` checks the actual JSON reporter and failure ledger, including cleanup-only failure.
+  `finishFixture` attempts every release and preserves an existing native cause and each secondary release failure in that serialized chain.
   An `AggregateError.errors` array alone is insufficient because Playwright does not serialize it.
 
 ### Interrupted execution retains its partial results
@@ -140,6 +141,12 @@ Completed results keep their original error and signature; an interrupted in-fli
 A hard process death leaves `partial-or-unknown` with the last completed results and the in-flight/scheduled identities, even when Playwright never reaches `onEnd`.
 The real-process controls in `scripts/tests/test_playwright_contracts.py` terminate Playwright with SIGKILL and SIGINT after one completed test and during the next test.
 The ledger caps remain 20,000 rows and 16 MiB; overflow fails the caller and retains the previous complete JSON.
+The complete repetition receipt reads all six five-result batch artifacts through `scripts/ci-controls.cjs collect` and requires every registered test/OS/repeat identity.
+Missing or malformed input leaves a failing incomplete receipt with the collection stage; a passing prefix of the workload is not thirty successful fixtures.
+
+The link-replacement reader test admits each of forty replacements only after a native file read has consumed its prefix.
+It keeps that file open until publication is observed, reads the suffix afterwards and asserts forty read phases straddled their replacements, alongside concurrent path lookups, old/new-only content, no `NotFound` and no temporary entry.
+The baseline read is excluded from overlap, and all phases share the existing five-second bound.
 
 ## Flaky tests
 

@@ -149,7 +149,9 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
 
     // ⌘⇧B with no view open opens File Views on the New tab page (B16), and
     // closing that untouched tab turns File Views off again; Tools stays.
+    const viewCalls = sent.get("workspace_view") ?? 0;
     await page.keyboard.press(chord("toggle_right_panel"));
+    await expect.poll(() => sent.get("workspace_view") ?? 0).toBe(viewCalls + 1);
     expect(last.get("workspace_view")).toEqual({ views: true });
     await expect(workspace).toHaveAttribute("data-file-views", "shown");
     await expect(viewsColumn.locator("[data-new-tab-page]")).toBeVisible();

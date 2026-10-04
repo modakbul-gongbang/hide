@@ -2,7 +2,8 @@ import { expect, test, type Page } from "@playwright/test";
 import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { enterWorkspace, screenshot } from "./wire";
+import { enterWorkspace, observeTabProjection, screenshot } from "./wire";
+import { finishFixture } from "./worker-owned";
 
 test.describe.configure({ timeout: 180_000 });
 
@@ -62,7 +63,16 @@ test("Agent tabs shrink in stages, the selected one keeping its title longest, a
   await page.setViewportSize({ width: 1920, height: 1080 });
   const herdr = await startHerdr({ agents: false });
   let daemon: Daemon | null = null;
-  const create = () => herdr.run(["tab", "create", "--workspace", herdr.workspace, "--cwd", path.join(herdr.root, "fixture"), "--no-focus"]);
+  const projection = observeTabProjection(page, path.join(herdr.root, "fixture"));
+  const created: { tab: { tab_id: string; workspace_id: string }; root_pane: { pane_id: string } }[] = [];
+  const actual = () => (herdr.run(["tab", "list", "--workspace", herdr.workspace]) as {result:{tabs:{tab_id:string;workspace_id:string}[]}}).result.tabs;
+  const initialTabIds = actual().map(tab => tab.tab_id);
+  const create = () => {
+    const result = herdr.run(["tab", "create", "--workspace", herdr.workspace, "--cwd", path.join(herdr.root, "fixture"), "--no-focus"]) as {result:typeof created[number]};
+    expect(result.result.tab.workspace_id).toBe(herdr.workspace);
+    created.push(result.result);
+  };
+  let failure: unknown;
   try {
     create();
     create();
@@ -80,6 +90,11 @@ test("Agent tabs shrink in stages, the selected one keeping its title longest, a
 
     for (let count = 3; count < 16; count += 1) create();
     await expect(tabs).toHaveCount(16);
+    const expectedIds = [...initialTabIds, ...created.map(result => result.tab.tab_id)].sort();
+    expect(new Set(expectedIds).size).toBe(16);
+    expect(actual().map(tab => tab.tab_id).sort()).toEqual(expectedIds);
+    expect(await tabs.evaluateAll(nodes=>nodes.map(node=>node.getAttribute("data-tab")).sort())).toEqual(expectedIds);
+    expect(projection().checkouts.filter(checkout=>checkout.rootMatches).flatMap(checkout=>checkout.tabs.map(tab=>tab.id)).sort()).toEqual(expectedIds);
 
     const settle = () => page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
     const check = async (width: number) => {
@@ -146,5 +161,11 @@ test("Agent tabs shrink in stages, the selected one keeping its title longest, a
     const narrowest = await strip(page);
     expect(narrowest.scrolls).toBe(true);
     expect(narrowest.selectedInView).toBe(true);
-  } finally { daemon?.stop(); herdr.stop(); }
+  } catch(error) { failure = error; }
+  finally {
+    await finishFixture(failure, [async () => { console.log(JSON.stringify({event:"tab-strip.boundaries",repeat:test.info().repeatEachIndex,
+      created:created.map(result=>({tab:result.tab.tab_id,owner:result.tab.workspace_id,pane:result.root_pane.pane_id})),
+      herdr:actual(),projection:projection(),ui:await page.locator('[data-agent-tab-bar] [role=tab]').evaluateAll(nodes=>nodes.map(node=>node.getAttribute("data-tab")))})); },
+      () => daemon?.stop(), () => herdr.stop()]);
+  }
 });

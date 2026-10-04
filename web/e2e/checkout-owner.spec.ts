@@ -4,8 +4,9 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { enterWorkspace, screenshot } from "./wire";
+import { countSent, enterWorkspace, observeTabProjection, screenshot } from "./wire";
 import { chord } from "./chords";
+import { finishFixture } from "./worker-owned";
 
 // PRD checkout-workspace-binding B1, B2, B13: a tab Hide creates goes to the
 // checkout's owner Herdr workspace, never to the workspace its other tabs sit
@@ -26,6 +27,12 @@ function workspaces(herdr: HerdrFixture): Workspace[] {
 function tabCount(herdr: HerdrFixture, workspaceId: string): number {
   const listed = herdr.run(["tab", "list", "--workspace", workspaceId]) as { result: { tabs: unknown[] } };
   return listed.result.tabs.length;
+}
+
+function tabIds(herdr: HerdrFixture, workspaceId: string): string[] {
+  const listed = herdr.run(["tab", "list", "--workspace", workspaceId]) as { result: { tabs: { tab_id: string; workspace_id: string }[] } };
+  expect(listed.result.tabs.every(tab => tab.workspace_id === workspaceId)).toBe(true);
+  return listed.result.tabs.map(tab => tab.tab_id).sort();
 }
 
 /** Two new-tab chords in the fixture's agent pane, the second before the first lands. */
@@ -81,6 +88,9 @@ test("With no workspace bound, Herdr binds the unbound one already at the checko
   test.setTimeout(120_000);
   const herdr = await startHerdr({ agents: false });
   let daemon: Daemon | null = null;
+  const projection = observeTabProjection(page, path.join(herdr.root, "fixture"));
+  const sent = countSent(page);
+  let failure: unknown;
   try {
     const root = path.join(herdr.root, "fixture");
     const git = (...args: string[]) => execFileSync("git", ["-C", root, ...args], { env: herdr.env });
@@ -95,8 +105,10 @@ test("With no workspace bound, Herdr binds the unbound one already at the checko
     await enterWorkspace(page, "fixture");
     const tabs = page.locator('[data-agent-tab-bar] [role="tab"]');
     await expect(tabs).toHaveCount(1);
+    const creates = sent.get("create_tab") ?? 0;
     await twoQuickNewTabs(page);
     await expect(tabs).toHaveCount(3, { timeout: 20_000 });
+    expect(sent.get("create_tab") ?? 0).toBe(creates + 2);
     // worktree.open answered already_open with the fixture's own workspace.
     const after = workspaces(herdr);
     expect(after).toHaveLength(1);
@@ -104,10 +116,15 @@ test("With no workspace bound, Herdr binds the unbound one already at the checko
     expect(fs.realpathSync(after[0].worktree!.checkout_path)).toBe(fs.realpathSync(root));
     expect(after[0].label).toBe(unbound.label);
     expect(tabCount(herdr, unbound.workspace_id)).toBe(3);
+    expect(await tabs.evaluateAll(nodes => nodes.map(node => node.getAttribute("data-tab")).sort())).toEqual(tabIds(herdr, unbound.workspace_id));
+    expect(projection().checkouts.filter(checkout => checkout.rootMatches).flatMap(checkout => checkout.tabs.map(tab => tab.id)).sort()).toEqual(tabIds(herdr, unbound.workspace_id));
     await screenshot(page, "checkout-owner-adopt");
-  } finally {
-    daemon?.stop();
-    herdr.stop();
+  } catch (error) { failure = error; }
+  finally {
+    await finishFixture(failure, [async () => { console.log(JSON.stringify({event:"checkout.adoption.boundaries",repeat:test.info().repeatEachIndex,
+      dispatches:sent.get("create_tab") ?? 0,herdr:workspaces(herdr).map(owner => ({id:owner.workspace_id,tabs:tabIds(herdr,owner.workspace_id)})),
+      projection:projection(),ui:await page.locator('[data-agent-tab-bar] [role="tab"]').evaluateAll(nodes=>nodes.map(node=>node.getAttribute("data-tab")))})); },
+      () => daemon?.stop(), () => herdr.stop()]);
   }
 });
 
