@@ -1,7 +1,7 @@
 ---
 topic: "Overview 요청 보기: 시킨 일, 결과, 내가 할 일을 한 화면에"
 status: "ready"
-human_approval: "pending"
+human_approval: "approved"
 review_profile: "high-risk"
 review_rationale: "install kit이 이 Mac과 등록된 device(운영 자동화가 도는 mini 포함)에서 사용자의 Codex 설정을 기본으로 바꿔 hide 밖 Codex 동작까지 바꾸고, 에이전트 대화 기록·도구 실행 기록과 OpenCode 데이터베이스를 새로 읽어 화면과 AI 요청에 쓰며, 운영자의 터미널 입력 시각을 기록하고, snapshot wire와 device helper protocol을 바꾼다."
 source_intake: "current conversation"
