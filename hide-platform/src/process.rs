@@ -1304,52 +1304,79 @@ mod sys {
     pub(super) fn release(_: &Tie) {}
 
     pub(super) fn kill_tree_of(child: &mut Child, _: &Tie, reaped: bool) -> io::Result<bool> {
+        const ERROR_CAP: usize = 16;
         let leader = child.id();
-        // Members that left the group (a `setsid` helper) are reached only by
-        // walking the table, and the walk comes before the first signal:
-        // ending a parent hands its children to init. A reaped child's id may
-        // be another process's, so nothing is walked for it.
+        let mut failures = Vec::new();
+        let mut failure_count = 0usize;
+        let mut record = |error: io::Error| {
+            failure_count += 1;
+            if failures.len() < ERROR_CAP {
+                failures.push(error);
+            }
+        };
+        // Capture escaped identities before signalling their parent. A failed
+        // inventory is a reported uncertainty, never permission to leave the
+        // independently owned private group running.
         let members = if reaped {
             Vec::new()
         } else {
-            descendants(leader)?
+            match descendants(leader) {
+                Ok(members) => members,
+                Err(error) => {
+                    record(error);
+                    Vec::new()
+                }
+            }
         };
         let mut identities = Vec::new();
         for pid in members {
             match start_time(pid) {
                 Ok(birth) => identities.push((pid, birth)),
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error),
+                Err(error) => record(error),
             }
         }
-        // The group is the child's own, so this reaches only what the child
-        // started, even once the child has exited (an unreaped leader, or any
-        // living member, keeps the group id from being reused).
-        let mut ended = match signal(-(leader as libc::pid_t), libc::SIGKILL) {
-            Ok(()) => true,
-            // The group is this account's own, so a refusal means only
-            // zombies are left in it, which macOS reports as `EPERM`.
-            Err(error) if error.raw_os_error() == Some(libc::EPERM) => false,
-            Err(error) if error.kind() == io::ErrorKind::NotFound => {
-                // No group left: the child is gone or never led one.
-                if child.try_wait()?.is_some() {
-                    false
-                } else {
-                    child.kill()?;
-                    true
-                }
-            }
-            Err(error) => return Err(error),
-        };
+        // The unreaped leader or a living group member retains this group
+        // identity. This attempt must run even if ancestry capture failed.
+        let mut ended = false;
+        match signal(-(leader as libc::pid_t), libc::SIGKILL) {
+            Ok(()) => ended = true,
+            Err(error) if error.raw_os_error() == Some(libc::EPERM) => {}
+            Err(error) if error.kind() == io::ErrorKind::NotFound => match child.try_wait() {
+                Ok(Some(_)) => {}
+                Ok(None) => match child.kill() {
+                    Ok(()) => ended = true,
+                    Err(error) => record(error),
+                },
+                Err(error) => record(error),
+            },
+            Err(error) => record(error),
+        }
         for (member, birth) in identities {
-            if member_exited(member, birth)? {
-                continue;
+            match member_exited(member, birth) {
+                Ok(true) => continue,
+                Ok(false) => {}
+                Err(error) => {
+                    record(error);
+                    continue; // An unconfirmed identity cannot authorize a signal.
+                }
             }
             match signal(member as libc::pid_t, libc::SIGKILL) {
                 Ok(()) => ended = true,
                 Err(error) if error.kind() == io::ErrorKind::NotFound => {}
-                Err(error) => return Err(error),
+                Err(error) => record(error),
             }
+        }
+        if let Some(primary) = failures.first() {
+            let mut detail = failures
+                .iter()
+                .map(ToString::to_string)
+                .collect::<Vec<_>>()
+                .join("; secondary termination failure: ");
+            if failure_count > ERROR_CAP {
+                detail.push_str(&format!("; owned termination error cap exceeded: {failure_count} errors, cap={ERROR_CAP}"));
+            }
+            return Err(io::Error::new(primary.kind(), detail));
         }
         Ok(ended)
     }

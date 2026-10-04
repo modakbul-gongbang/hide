@@ -206,6 +206,65 @@ while time.monotonic() < deadline:
     def test_native_stop_request_error_preserves_primary_cleanup_and_home(self):
         self.exercise('stop-directory')
 
+    @unittest.skipUnless(os.name != 'nt', 'Unix ancestry-failure termination boundary')
+    def test_native_ancestry_overflow_still_ends_the_original_private_group(self):
+        artifacts = ROOT / 'agents/runs/ci-test-refactor/fixture-owner-controls'
+        artifacts.mkdir(parents=True, exist_ok=True)
+        with OwnedControlRoot(artifacts) as owned:
+            root = owned.path
+            home = root / 'owned-home'
+            home.mkdir()
+            (home / 'sentinel').write_text('original home')
+            identities = root / 'identities'
+            state = root / 'depth.receipt'
+            target = root / 'deep.py'
+            target.write_text("""import os, pathlib, subprocess, sys, time
+file = pathlib.Path(sys.argv[1])
+with file.open('a') as output: output.write(str(os.getpid())+'\\n')
+depth = int(sys.argv[2])
+if depth:
+    child = subprocess.Popen([sys.executable, __file__, str(file), str(depth-1)])
+    child.wait()
+else:
+    file.with_suffix('.ready').write_text('ready')
+    time.sleep(60)
+""")
+            observations = []
+            with (artifacts / 'ancestry-overflow.log').open('w') as output:
+                helper = subprocess.Popen([str(HELPER), str(state), str(home), sys.executable, str(target), str(identities), '33'],
+                    stdin=subprocess.PIPE, stdout=output, stderr=subprocess.STDOUT)
+                try:
+                    until(lambda: identities.with_suffix('.ready').exists())
+                    ids = [int(pid) for pid in identities.read_text().splitlines()]
+                    self.assertEqual(len(ids), 34)
+                    observations = [ProcessObservation(pid) for pid in ids]
+                    self.assertTrue(all(not process.exited() for process in observations))
+                    running = receipt(state)
+                    self.assertEqual(running['phase'], 'running')
+                    self.assertEqual(running['pid'], ids[0])
+                    publish(state.with_suffix('.stop'), f"{running['pid']} {running['birth']}")
+                    finished = until(lambda: (value if value['phase']=='exit-unconfirmed' else None) if (value:=receipt(state)) else None)
+                    self.assertIn('process ancestry depth cap exceeded', finished['error'])
+                    self.assertIn('owned termination also failed:', finished['error'])
+                    self.assertEqual(finished['survivors'], -1)
+                    self.assertNotEqual(helper.wait(timeout=5), 0)
+                    until(lambda: all(process.exited() for process in observations))
+                    self.assertEqual((home / 'sentinel').read_text(), 'original home')
+                    (artifacts / 'ancestry-overflow.json').write_text(json.dumps({'targets':ids,'running':running,'finished':finished,'independentlyObservedSurvivors':0}, indent=2))
+                    owned.confirmed = True
+                finally:
+                    primary = sys.exc_info()[1]
+                    helper.stdin.close()
+                    if helper.poll() is None: helper.wait(timeout=5)
+                    if observations:
+                        try:
+                            until(lambda: all(process.exited() for process in observations))
+                            owned.confirmed = True
+                        except BaseException as cleanup:
+                            if primary is None: raise
+                            primary.add_note(f'Ancestry overflow cleanup also failed: {cleanup}')
+                    for process in observations: process.close()
+
     def test_actual_playwright_worker_loss_ends_ordinary_fixture_consumers(self):
         artifacts = ROOT / 'agents/runs/ci-test-refactor/fixture-owner-controls'
         artifacts.mkdir(parents=True, exist_ok=True)
