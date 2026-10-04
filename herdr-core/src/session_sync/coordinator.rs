@@ -1469,7 +1469,10 @@ mod worktree_observer_tests {
         fixture.expect_wake_after_unlock();
         let after = fixture.snapshot();
         assert_eq!(after["rest"]["git_worktrees_loading"], false);
-        assert_eq!(after["rest"]["git_worktrees"], before["rest"]["git_worktrees"]);
+        assert_eq!(
+            after["rest"]["git_worktrees"],
+            before["rest"]["git_worktrees"]
+        );
     }
 
     #[test]
@@ -1481,7 +1484,10 @@ mod worktree_observer_tests {
         let _ = publish_worktrees(&fixture.context, fixture.answer(catalog));
         fixture.expect_silence();
         let after = fixture.snapshot();
-        assert_eq!(after["rest"]["git_worktrees"], before["rest"]["git_worktrees"]);
+        assert_eq!(
+            after["rest"]["git_worktrees"],
+            before["rest"]["git_worktrees"]
+        );
         assert_eq!(after["rest"]["git_worktrees_loading"], false);
 
         fixture.runtime.lock().expect("runtime").refresh_worktrees();
@@ -1493,7 +1499,10 @@ mod worktree_observer_tests {
         let _ = publish_worktrees(&fixture.context, stale_request);
         fixture.expect_silence();
         let after = fixture.snapshot();
-        assert_eq!(after["rest"]["git_worktrees"], before["rest"]["git_worktrees"]);
+        assert_eq!(
+            after["rest"]["git_worktrees"],
+            before["rest"]["git_worktrees"]
+        );
         assert_eq!(after["rest"]["git_worktrees_loading"], true);
 
         let mut stale_observation = fixture.answer(rejected);
@@ -1501,7 +1510,10 @@ mod worktree_observer_tests {
         let _ = publish_worktrees(&fixture.context, stale_observation);
         fixture.expect_silence();
         let after = fixture.snapshot();
-        assert_eq!(after["rest"]["git_worktrees"], before["rest"]["git_worktrees"]);
+        assert_eq!(
+            after["rest"]["git_worktrees"],
+            before["rest"]["git_worktrees"]
+        );
         assert_eq!(after["rest"]["git_worktrees_loading"], true);
     }
 }
