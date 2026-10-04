@@ -6,23 +6,36 @@ const ledger = require('./ci-ledger.cjs');
 const HISTORY_DAYS = 30;
 const MAX_HISTORY_RUNS = 30;
 
-function readRecords(directory, records=[]) {
+function readRecords(directory, records=[], deferredErrors) {
+  const errors=deferredErrors || [];
+  let files=0;
+  function report(error,file) {
+    if(errors.length>=256) throw Error('producer error inventory cap exceeded');
+    errors.push({stage:'input',file:path.relative(directory,file),message:String(error.message).slice(0,16000)});
+  }
   function visit(at, depth=0) {
     if (depth>3) throw new Error('ledger directory depth cap exceeded');
-    for (const item of fs.readdirSync(at,{withFileTypes:true})) {
+    for (const item of fs.readdirSync(at,{withFileTypes:true}).sort((a,b)=>a.name.localeCompare(b.name))) {
       const file=path.join(at,item.name);
       if (item.isDirectory()) visit(file,depth+1);
       else if (item.name.endsWith('.json')) {
-        if (fs.statSync(file).size>ledger.MAX_BYTES) throw new Error('ledger input byte cap exceeded');
-        const value=JSON.parse(fs.readFileSync(file,'utf8'));
-        if (value.version!==1 || !Array.isArray(value.records) || !value.records.length) throw new Error(`unknown/empty ledger: ${item.name}`);
+        if(++files>1000) throw Error('producer file inventory cap exceeded');
+        let value;
+        try {
+          if (fs.statSync(file).size>ledger.MAX_BYTES) throw new Error('ledger input byte cap exceeded');
+          value=JSON.parse(fs.readFileSync(file,'utf8'));
+          if (value.version!==1 || !Array.isArray(value.records) || !value.records.length) throw new Error(`unknown/empty ledger: ${item.name}`);
+        } catch(error) { report(error,file); continue; }
+        if(records.length+value.records.length>ledger.MAX_ROWS) throw new Error('ledger row cap exceeded');
         records.push(...value.records);
-        if (records.length>ledger.MAX_ROWS) throw new Error('ledger row cap exceeded');
-        if (value.collection==='partial-or-unknown' || value.collection?.status==='partial-or-unknown') throw new Error(`partial producer ledger: ${item.name}`);
+        if (value.collection==='partial-or-unknown' || value.collection?.status==='partial-or-unknown') report(new Error(`partial producer ledger: ${item.name}`),file);
       }
     }
   }
   visit(directory);
+  if(errors.length && !deferredErrors) {
+    const error=new Error(errors[0].message); error.issues=errors; throw error;
+  }
   return records;
 }
 
@@ -67,19 +80,27 @@ async function collectInto(options, state) {
   const plan=planPath?JSON.parse(fs.readFileSync(planPath,'utf8')):options.plan;
   if (plan && (plan.version!==2 || !plan.lanes)) throw new Error('unknown CI plan');
   state.stage='input';
-  const current=readRecords(directory,state.records);
+  const pending=[];
+  state.pendingErrors=pending;
+  const current=readRecords(directory,state.records,pending);
   state.stage='jobs-api';
   const inventory=await ledger.jobs(github,context);
   state.jobs=inventory;
   state.stage='inventory';
   if (!plan && !current.length) throw new Error('no observed suite collection');
-  if (plan) confirmInventory(plan,current);
+  if (plan) try { confirmInventory(plan,current); }
+  catch(error) { pending.push({stage:state.stage,message:String(error.message)}); }
   state.stage='source-and-job-identity';
   for (const row of current) {
-    if (row.sha!==context.sha || String(row.run)!==String(context.runId) || row.runAttempt!==Number(process.env.GITHUB_RUN_ATTEMPT||1)) throw new Error('ledger source identity mismatch');
+    if (row.sha!==context.sha || String(row.run)!==String(context.runId) || row.runAttempt!==Number(process.env.GITHUB_RUN_ATTEMPT||1)) {
+      pending.push({stage:state.stage,message:'ledger source identity mismatch'}); continue;
+    }
     const matching=inventory.filter(job=>job.name===row.jobLabel || job.name.endsWith(' / '+row.jobLabel));
-    if (matching.length!==1) throw new Error(`missing/ambiguous Actions job identity: ${row.jobLabel}`);
+    if (matching.length!==1) { pending.push({stage:state.stage,message:`missing/ambiguous Actions job identity: ${row.jobLabel}`}); continue; }
     row.jobId=matching[0].id; row.jobUrl=matching[0].url;
+  }
+  if(pending.length) {
+    const error=new Error(pending[0].message); error.issues=pending; throw error;
   }
   state.stage='history-api';
   const cutoff=Date.now()-HISTORY_DAYS*86400000;
@@ -129,10 +150,14 @@ module.exports=async function collect(options) {
   const state={records:[],jobs:[],suites:{},attempts:0,stage:'start',errors:[]};
   let failure;
   function unknown(error) {
-    state.errors.push({stage:state.stage,message:String(error.message).slice(0,16000)});
-    state.records.push({...ledger.identity(),sha:context.sha,run:String(context.runId),
-      suite:'CI collection',test:state.stage,repeat:0,retry:0,status:'unknown',category:'collection',
-      assertion:String(error.message).slice(0,16000),signature:ledger.signature(String(error.message))});
+    const issues=error.issues || [...(state.pendingErrors || []),{stage:state.stage,message:String(error.message)}];
+    if(issues.length>256) throw Error('collection error inventory cap exceeded');
+    for(const issue of issues) {
+      state.errors.push({...issue,message:issue.message.slice(0,16000)});
+      state.records.push({...ledger.identity(),sha:context.sha,run:String(context.runId),
+        suite:'CI collection',test:`${issue.stage} ${issue.file || state.errors.length}`,repeat:0,retry:0,status:'unknown',category:'collection',
+        assertion:issue.message.slice(0,16000),signature:ledger.signature(issue.message)});
+    }
   }
   function save() {
     const collection={status:state.errors.length?'partial-or-unknown':'complete',errors:state.errors};

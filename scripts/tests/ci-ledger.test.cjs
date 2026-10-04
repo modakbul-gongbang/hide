@@ -199,6 +199,26 @@ test('collection API and inventory errors persist a failing partial attempt for 
     assert.ok(Object.values(collect.suiteSummaries(attempt.records)).some(s=>s.unknown===1));
   }
 });
+test('a partial producer never discards a later independent complete shard or its actual job identity', async () => {
+  const fs=require('node:fs'),path=require('node:path'),collect=require('../ci-history.cjs');
+  const root=path.resolve('agents/runs/ci-test-refactor/history-controls');
+  const directory=fs.mkdtempSync(path.join(root,'mixed-')); const input=path.join(directory,'input'); fs.mkdirSync(input);
+  const primary={...row,sha:'tested',run:'7',jobLabel:'partial shard',status:'passed',test:'completed before termination'};
+  const unfinished={...primary,test:'in-flight at termination',status:'unknown'};
+  const independent={...primary,jobLabel:'complete shard',test:'independent completed shard'};
+  fs.writeFileSync(path.join(input,'a-partial.json'),JSON.stringify({version:1,records:[primary,unfinished],collection:'partial-or-unknown'}));
+  fs.writeFileSync(path.join(input,'b-complete.json'),JSON.stringify({version:1,records:[independent],collection:'observed'}));
+  fs.writeFileSync(path.join(input,'c-malformed.json'),'{broken');
+  const github={rest:{actions:{listJobsForWorkflowRunAttempt:async()=>({data:{jobs:['partial shard','complete shard'].map((name,id)=>({id:id+81,name,steps:[]}))}})}}};
+  await assert.rejects(collect({github,context:{repo:{},runId:7,sha:'tested'},core:{summary:{addRaw:()=>({write:async()=>{}})}},directory:input,outputDirectory:directory}),/partial producer/);
+  const value=JSON.parse(fs.readFileSync(path.join(directory,'ci-history.json')));
+  assert.equal(value.collection.status,'partial-or-unknown');
+  assert.equal(value.records.find(r=>r.test===independent.test).jobId,82);
+  assert.equal(value.records.find(r=>r.test===primary.test).jobId,81);
+  assert.equal(value.summary.firstPass,2);
+  assert.equal(value.summary.unknown,3);
+  assert.equal(value.collection.errors.length,2);
+});
 test('the following successful collector includes an earlier unknown artifact in its real archive window', async () => {
   const fs=require('node:fs'),path=require('node:path'),{execFileSync}=require('node:child_process');
   const collect=require('../ci-history.cjs');
