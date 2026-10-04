@@ -423,6 +423,68 @@ impl Runtime {
     }
 }
 
+impl Runtime {
+    pub(crate) fn coordination_fork_context(
+        &self,
+        pane: &str,
+    ) -> Result<(Client, Authority, Actor), String> {
+        let actor = self
+            .delivery_observations
+            .get(pane)
+            .ok_or("parent_unavailable")?
+            .actor
+            .clone();
+        let context = self
+            .workspace_control_query(&actor.device_id, pane, Query::Info)
+            .map_err(|_| "parent_unavailable")?
+            .context;
+        Ok((
+            self.delivery_client.clone().ok_or("delivery_unavailable")?,
+            Authority {
+                caller: pane.into(),
+                context,
+            },
+            actor,
+        ))
+    }
+    pub(crate) fn coordination_context(
+        &self,
+        device: &str,
+    ) -> Result<
+        (
+            Arc<dyn hide_herdr_client::ApiConnector>,
+            String,
+            String,
+            crate::codex_launch::CodexDaemon,
+        ),
+        String,
+    > {
+        let (connector, scope, machine) = if device == "local" {
+            let live = self.live.as_ref().ok_or("herdr_unavailable")?;
+            (
+                live.api_connector.clone(),
+                live.socket_path
+                    .to_str()
+                    .ok_or("host_scope_unavailable")?
+                    .to_owned(),
+                self.local_machine_id
+                    .clone()
+                    .ok_or("machine_identity_unavailable")?,
+            )
+        } else {
+            (
+                self.remote_herdr_api(device).ok_or("device_unavailable")?,
+                device.to_owned(),
+                self.device_machine_ids
+                    .get(device)
+                    .cloned()
+                    .ok_or("machine_identity_unavailable")?,
+            )
+        };
+        Ok((connector, scope, machine, self.codex_daemon(device)))
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -723,67 +785,5 @@ pub(crate) mod tests {
             assert_eq!(std::fs::read(&path).unwrap(), before);
             drop(worker);
         }
-    }
-}
-
-impl Runtime {
-    pub(crate) fn coordination_fork_context(
-        &self,
-        pane: &str,
-    ) -> Result<(Client, Authority, Actor), String> {
-        let actor = self
-            .delivery_observations
-            .get(pane)
-            .ok_or("parent_unavailable")?
-            .actor
-            .clone();
-        let context = self
-            .workspace_control_query(&actor.device_id, pane, Query::Info)
-            .map_err(|_| "parent_unavailable")?
-            .context;
-        Ok((
-            self.delivery_client.clone().ok_or("delivery_unavailable")?,
-            Authority {
-                caller: pane.into(),
-                context,
-            },
-            actor,
-        ))
-    }
-    pub(crate) fn coordination_context(
-        &self,
-        device: &str,
-    ) -> Result<
-        (
-            Arc<dyn hide_herdr_client::ApiConnector>,
-            String,
-            String,
-            crate::codex_launch::CodexDaemon,
-        ),
-        String,
-    > {
-        let (connector, scope, machine) = if device == "local" {
-            let live = self.live.as_ref().ok_or("herdr_unavailable")?;
-            (
-                live.api_connector.clone(),
-                live.socket_path
-                    .to_str()
-                    .ok_or("host_scope_unavailable")?
-                    .to_owned(),
-                self.local_machine_id
-                    .clone()
-                    .ok_or("machine_identity_unavailable")?,
-            )
-        } else {
-            (
-                self.remote_herdr_api(device).ok_or("device_unavailable")?,
-                device.to_owned(),
-                self.device_machine_ids
-                    .get(device)
-                    .cloned()
-                    .ok_or("machine_identity_unavailable")?,
-            )
-        };
-        Ok((connector, scope, machine, self.codex_daemon(device)))
     }
 }
