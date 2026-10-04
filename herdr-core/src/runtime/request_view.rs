@@ -25,7 +25,7 @@ impl Runtime {
         agents: &mut [SidebarAgentSnapshot],
         live_panes: Option<&HashSet<String>>,
     ) {
-        let places: HashMap<&str, (Option<&str>, &str)> = self
+        let places: HashMap<&str, (Option<&str>, Option<&str>, &str)> = self
             .snapshot
             .navigator
             .workspaces
@@ -37,7 +37,11 @@ impl Runtime {
                         tab.panes.iter().map(move |pane| {
                             (
                                 pane.id.as_str(),
-                                (checkout.branch.as_deref(), workspace.path.as_str()),
+                                (
+                                    checkout.branch.as_deref(),
+                                    checkout.head_sha(),
+                                    workspace.path.as_str(),
+                                ),
                             )
                         })
                     })
@@ -48,10 +52,13 @@ impl Runtime {
         let mut changed = request_view::apply(
             agents,
             |pane| {
-                places.get(pane).map(|(branch, root_path)| RowPlace {
-                    branch: *branch,
-                    root_path,
-                })
+                places
+                    .get(pane)
+                    .map(|(branch, head_sha, root_path)| RowPlace {
+                        branch: *branch,
+                        head_sha: *head_sha,
+                        root_path,
+                    })
             },
             &self.github,
             verbs,

@@ -220,7 +220,8 @@ export function PrNewIssueDialog({ actions, workspace, pr, onClose }: { actions:
  */
 export function PrDelegateDialog({ actions, workspace, pr, onClose }: { actions: Actions; workspace: Workspace; pr: PullRequest; onClose: () => void }) {
   const branch = pr.head_branch ?? "";
-  const checkout = workspace.checkouts.find((row) => row.exists && row.branch === branch) ?? null;
+  // The checkout the core holds this pull request for, which is what the start reuses.
+  const checkout = workspace.checkouts.find((row) => row.exists && row.pull_request?.url === pr.url) ?? null;
   // A pull request is handed to an agent, never a bare terminal: the remembered kind, else Claude.
   const [agent, setAgent] = useState<AgentSelection>(() => rememberedSelection(useShellStore.getState().rest?.ui_state?.agent_start));
   const [prompt, setPrompt] = useState("");

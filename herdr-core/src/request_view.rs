@@ -147,6 +147,8 @@ pub struct VerbRecord {
 /// Where a row lives, for its branch's pull requests.
 pub(crate) struct RowPlace<'a> {
     pub(crate) branch: Option<&'a str>,
+    /// The commit the checkout is on, which ties a settled pull request to it.
+    pub(crate) head_sha: Option<&'a str>,
     pub(crate) root_path: &'a str,
 }
 
@@ -335,18 +337,19 @@ fn linked_pull_requests<'a>(
         return Vec::new();
     };
     let mut linked: Vec<Linked<'a>> = Vec::new();
-    if let (Some(branch), Some(project)) = (place.branch, github.project(place.root_path)) {
+    if let Some(project) = github.project(place.root_path) {
         linked.extend(
-            project
-                .pull_requests
-                .iter()
-                .filter(|pull_request| pull_request.head_branch == branch)
-                .map(|pull_request| Linked {
-                    pull_request,
-                    on_branch: true,
-                    sighted_at: None,
-                    duty: false,
-                }),
+            crate::github::pull_request_for_checkout(
+                &project.pull_requests,
+                place.branch,
+                place.head_sha,
+            )
+            .map(|pull_request| Linked {
+                pull_request,
+                on_branch: true,
+                sighted_at: None,
+                duty: false,
+            }),
         );
     }
     let created = row

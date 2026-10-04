@@ -46,6 +46,8 @@ fn pull_request(
         updated_at_unix_ms: Some(1),
         created_at_unix_ms: None,
         closed_at_unix_ms: None,
+        head_oid: None,
+        cross_repository: false,
     }
 }
 
@@ -115,11 +117,13 @@ fn the_prs_tab_gets_open_ones_and_merged_ones_with_a_worktree_or_merged_lately()
         pull_request(5, "given-up", PullRequestBadge::Closed, None),
         pull_request(6, "in-review", PullRequestBadge::Review, None),
     ]);
-    let shown: Vec<u32> = runtime.snapshot().navigator.workspaces[0]
+    let mut shown: Vec<u32> = runtime.snapshot().navigator.workspaces[0]
         .pull_requests
         .iter()
         .map(|pull_request| pull_request.number)
         .collect();
+    // Which ones reach the tab is the rule; the shell orders them.
+    shown.sort_unstable();
     assert_eq!(shown, vec![1, 2, 4, 6]);
 }
 
@@ -380,4 +384,148 @@ fn a_feedback_read_that_cannot_run_says_why_in_its_slot() {
         ("f1", "failed")
     );
     assert!(feedback.message.unwrap().contains("No worker"));
+}
+
+/// The worktree `/repo/task` on `4-task` at `head`, as the worktree reader
+/// reports it.
+fn catalog_at(head: &str) -> crate::model::WorktreeCatalogSnapshot {
+    crate::model::WorktreeCatalogSnapshot {
+        projects: vec![crate::model::ProjectWorktreesSnapshot {
+            root_path: "/repo".to_owned(),
+            worktrees: vec![
+                crate::model::WorktreeSnapshot {
+                    path: "/repo".to_owned(),
+                    branch: Some("main".to_owned()),
+                    is_main: true,
+                    ..Default::default()
+                },
+                crate::model::WorktreeSnapshot {
+                    path: "/repo/task".to_owned(),
+                    branch: Some("4-task".to_owned()),
+                    head_sha: Some(head.to_owned()),
+                    ..Default::default()
+                },
+            ],
+            ..Default::default()
+        }],
+    }
+}
+
+fn pull_request_at(
+    number: u32,
+    badge: PullRequestBadge,
+    head: &str,
+    updated: u64,
+) -> PullRequestSnapshot {
+    PullRequestSnapshot {
+        head_oid: Some(head.to_owned()),
+        updated_at_unix_ms: Some(updated),
+        ..pull_request(number, "4-task", badge, None)
+    }
+}
+
+/// The number of the pull request the `4-task` worktree shows, in the sidebar
+/// row and in the worktree catalog the Overview reads.
+fn shown_on_task(runtime: &Runtime) -> (Option<u32>, Option<u32>) {
+    let snapshot = runtime.snapshot();
+    let checkout = snapshot.navigator.workspaces[0]
+        .checkouts
+        .iter()
+        .find(|checkout| checkout.path == "/repo/task")
+        .expect("the task worktree");
+    let row = runtime.worktree_catalog().projects[0]
+        .worktrees
+        .iter()
+        .find(|worktree| worktree.path == "/repo/task")
+        .and_then(|worktree| worktree.pull_request.as_ref().map(|pr| pr.number));
+    (checkout.pull_request.as_ref().map(|pr| pr.number), row)
+}
+
+/// #393: a branch name used again for new work must not show the old merge.
+#[test]
+fn a_merged_pull_request_of_a_reused_branch_name_does_not_attach_to_the_new_worktree() {
+    let mut runtime = pr_runtime(vec![
+        pull_request_at(1, PullRequestBadge::Merged, "old-work", 10),
+        pull_request_at(2, PullRequestBadge::Closed, "older-work", 5),
+    ]);
+    runtime.ingest_worktrees(catalog_at("new-work"), 0);
+    assert_eq!(shown_on_task(&runtime), (None, None));
+}
+
+#[test]
+fn a_merged_pull_request_attaches_while_the_worktree_is_on_its_head_commit() {
+    let mut runtime = pr_runtime(vec![
+        pull_request_at(1, PullRequestBadge::Merged, "old-work", 10),
+        pull_request_at(2, PullRequestBadge::Closed, "older-work", 5),
+    ]);
+    runtime.ingest_worktrees(catalog_at("old-work"), 0);
+    assert_eq!(shown_on_task(&runtime), (Some(1), Some(1)));
+    runtime.ingest_worktrees(catalog_at("older-work"), 0);
+    assert_eq!(shown_on_task(&runtime), (Some(2), Some(2)));
+}
+
+#[test]
+fn an_open_pull_request_beats_a_merged_one_for_the_same_worktree() {
+    let mut runtime = pr_runtime(vec![
+        pull_request_at(1, PullRequestBadge::Merged, "head", 30),
+        pull_request_at(2, PullRequestBadge::Open, "head", 10),
+    ]);
+    runtime.ingest_worktrees(catalog_at("head"), 0);
+    assert_eq!(shown_on_task(&runtime), (Some(2), Some(2)));
+}
+
+#[test]
+fn a_pull_request_from_a_fork_does_not_attach_to_a_branch_of_the_same_name() {
+    let mut from_fork = pull_request_at(1, PullRequestBadge::Open, "head", 10);
+    from_fork.cross_repository = true;
+    let mut runtime = pr_runtime(vec![from_fork]);
+    runtime.ingest_worktrees(catalog_at("head"), 0);
+    assert_eq!(shown_on_task(&runtime), (None, None));
+}
+
+/// A worktree's HEAD moving is news the worktree reader brings, not GitHub:
+/// the connection is decided again when the catalog lands.
+#[test]
+fn moving_the_worktree_head_decides_the_connection_again() {
+    let mut runtime = pr_runtime(vec![pull_request_at(
+        1,
+        PullRequestBadge::Merged,
+        "merged-head",
+        10,
+    )]);
+    runtime.ingest_worktrees(catalog_at("merged-head"), 0);
+    assert_eq!(shown_on_task(&runtime), (Some(1), Some(1)));
+    runtime.ingest_worktrees(catalog_at("a-new-commit"), 0);
+    assert_eq!(shown_on_task(&runtime), (None, None));
+    runtime.ingest_worktrees(catalog_at("merged-head"), 0);
+    assert_eq!(shown_on_task(&runtime), (Some(1), Some(1)));
+}
+
+/// Before the worktree reader has answered, a merged pull request cannot be
+/// told from an older one of the same name, so only an open one shows.
+#[test]
+fn before_the_worktree_is_read_only_an_open_pull_request_attaches() {
+    let runtime = pr_runtime(vec![
+        pull_request_at(1, PullRequestBadge::Merged, "head", 30),
+        pull_request_at(2, PullRequestBadge::Open, "head", 10),
+    ]);
+    let snapshot = runtime.snapshot();
+    assert_eq!(
+        snapshot.navigator.workspaces[0].checkouts[0]
+            .pull_request
+            .as_ref()
+            .map(|pr| pr.number),
+        Some(2)
+    );
+    let runtime = pr_runtime(vec![pull_request_at(
+        1,
+        PullRequestBadge::Merged,
+        "head",
+        30,
+    )]);
+    assert!(
+        runtime.snapshot().navigator.workspaces[0].checkouts[0]
+            .pull_request
+            .is_none()
+    );
 }

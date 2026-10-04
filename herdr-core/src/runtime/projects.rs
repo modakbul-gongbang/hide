@@ -255,9 +255,8 @@ impl Runtime {
                     .github
                     .project(&workspace.path)
                     .map(|project| {
-                        project
-                            .pull_requests
-                            .iter()
+                        crate::github::preferred_per_branch(&project.pull_requests)
+                            .into_iter()
                             .map(|pull_request| {
                                 (
                                     pull_request.head_branch.clone(),
@@ -691,12 +690,13 @@ impl Runtime {
                 worktree.github = github_project
                     .map(|project| project.status.clone())
                     .unwrap_or_default();
-                worktree.pull_request = worktree.branch.as_deref().and_then(|branch| {
-                    github_project?
-                        .pull_requests
-                        .iter()
-                        .find(|pull_request| pull_request.head_branch == branch)
-                        .cloned()
+                worktree.pull_request = github_project.and_then(|project| {
+                    crate::github::pull_request_for_checkout(
+                        &project.pull_requests,
+                        worktree.branch.as_deref(),
+                        worktree.head_sha.as_deref(),
+                    )
+                    .cloned()
                 });
                 worktree.deletion_gate = crate::worktrees::deletion_gate(
                     worktree,
@@ -756,6 +756,10 @@ impl Runtime {
                 continue;
             }
             workspace::apply_worktrees(workspace, &self.worktree_catalog);
+            // The commit a checkout is on is what ties a settled pull request
+            // to it, so a catalog read that moved a HEAD decides again here.
+            let project = github.project(&workspace.path);
+            associate_pull_requests(workspace, project);
             // Git refreshes the persistent purpose sources. Restore the
             // agent/PR fallback in this same projection before publishing it.
             crate::sidebar::sync_checkout_purposes(
@@ -2390,18 +2394,8 @@ impl Runtime {
                     checkout.github = status.clone();
                     changed = true;
                 }
-                let pull_request = checkout.branch.as_deref().and_then(|branch| {
-                    project?
-                        .pull_requests
-                        .iter()
-                        .find(|pull_request| pull_request.head_branch == branch)
-                        .cloned()
-                });
-                if checkout.pull_request != pull_request {
-                    checkout.pull_request = pull_request;
-                    changed = true;
-                }
             }
+            changed |= associate_pull_requests(workspace, project);
         }
         let times = pull_request_times(&github);
         if *self.pull_request_times != times {
@@ -3293,6 +3287,32 @@ pub(super) fn owner_open(
 
 /// When GitHub made each pull request read, by the address's lowercase
 /// `owner/name` and number.
+/// Gives each checkout the one pull request that is its own work
+/// (`github::pull_request_for_checkout`), and reports whether any changed.
+/// Both places that learn something new about a checkout, GitHub's list and
+/// the worktree reader's HEAD, come through here.
+fn associate_pull_requests(
+    workspace: &mut crate::model::WorkspaceSnapshot,
+    project: Option<&crate::model::GithubProjectSnapshot>,
+) -> bool {
+    let mut changed = false;
+    for checkout in &mut workspace.checkouts {
+        let pull_request = project.and_then(|project| {
+            crate::github::pull_request_for_checkout(
+                &project.pull_requests,
+                checkout.branch.as_deref(),
+                checkout.head_sha(),
+            )
+            .cloned()
+        });
+        if checkout.pull_request != pull_request {
+            checkout.pull_request = pull_request;
+            changed = true;
+        }
+    }
+    changed
+}
+
 fn pull_request_times(
     github: &crate::model::GithubSnapshot,
 ) -> crate::labels::facts::PullRequestTimes {
