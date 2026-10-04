@@ -33,6 +33,8 @@ export const FILTER_LABEL: Record<Filter, string> = { all: "전체", done: "끝�
 
 export function inUseText(inUse: CleanupInUse): string {
   if (inUse.code === "agent_working") return "에이전트 작업 중";
+  if (inUse.code === "agent_waiting") return "에이전트가 입력을 기다림";
+  if (inUse.code === "descendant_busy") return "위임한 에이전트가 일하는 중";
   if (inUse.code === "process") return `터미널에서 ${inUse.name ?? "프로세스"} 실행 중`;
   if (inUse.code === "unverified") return "쓰는 중인지 확인하지 못함";
   return `포트 ${inUse.port ?? "?"} 서버`;
@@ -43,7 +45,7 @@ const CODE_TEXT: Record<CleanupResultCode, string> = {
   main: "main 체크아웃",
   locked: "잠김",
   current: "지금 보고 있는 체크아웃",
-  pane_open: "pane이 열려 있음",
+  pane_open: "이 체크아웃 것이 아닌 pane이 열려 있음",
   dirty: "바뀐 파일 있음",
   not_merged: "main에 머지되지 않음",
   merge_unverified: "머지를 확인하지 못함",
@@ -58,6 +60,7 @@ const CODE_TEXT: Record<CleanupResultCode, string> = {
   in_use: "쓰는 중",
   changed: "확인 사이에 바뀜",
   not_found: "이미 없음",
+  close_refused: "pane을 닫지 못함",
   remove_refused: "Git이 워크트리를 지우지 못함",
 };
 
@@ -96,7 +99,8 @@ export type SheetRow = {
   total: number | null;
   cache: Record<CacheLayer, CacheCell>;
   other: DiskCell | null;
-  worktree: { selectable: boolean; why: string | null } | null;
+  /** `panes` is how many live panes close with the folder: finished agents and shells, the core's count. */
+  worktree: { selectable: boolean; why: string | null; panes: number } | null;
   inUse: string | null;
 };
 
@@ -182,7 +186,7 @@ function rowOf(checkout: Checkout, cleanup: DiskCleanup | null, cachesOpen: bool
     total: measure === "measured" ? (disk?.total_bytes ?? null) : null,
     cache: { build_cache: cell("build_cache"), dependencies: cell("dependencies") },
     other: layers ? layers.other : null,
-    worktree: isMain ? null : { selectable: worktreesOpen && usable && core !== null && core.exclusion_code === null && core.result === null, why: measure === "unavailable" ? "크기를 재지 못함" : worktreeWhy },
+    worktree: isMain ? null : { selectable: worktreesOpen && usable && core !== null && core.exclusion_code === null && core.result === null, why: measure === "unavailable" ? "크기를 재지 못함" : worktreeWhy, panes: core?.pane_count ?? 0 },
     inUse,
   };
 }
@@ -286,7 +290,7 @@ export function pruneSelection(selection: Selection, visible: readonly SheetRow[
 
 export type CleanupPlan = {
   /** Worktree folders to remove; their own caches go with them. */
-  worktrees: { path: string; label: string; bytes: number }[];
+  worktrees: { path: string; label: string; bytes: number; panes: number }[];
   /** Cache cells to empty, never one whose worktree is going too. */
   cells: { path: string; layer: CacheLayer; bytes: number }[];
   bytes: number;
@@ -298,7 +302,7 @@ export function planOf(rows: readonly SheetRow[], selection: Selection): Cleanup
   for (const row of rows) {
     if (row.worktree?.selectable && selection.worktrees.has(row.path)) {
       const bytes = row.total ?? 0;
-      plan.worktrees.push({ path: row.path, label: row.label, bytes });
+      plan.worktrees.push({ path: row.path, label: row.label, bytes, panes: row.worktree.panes });
       plan.bytes += bytes;
       continue;
     }
