@@ -1,4 +1,4 @@
-import { ChevronRightIcon, GitBranchIcon, HomeIcon, Loader2Icon, LockIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
+import { ChevronRightIcon, GitBranchIcon, HomeIcon, Loader2Icon, LockIcon, RefreshCwIcon, SquareTerminalIcon, Trash2Icon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { Actions } from "./actions";
 import { AlertDialog, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "./components/ui/alert-dialog";
@@ -138,6 +138,8 @@ export function DiskCleanupSheet({ actions, workspace, filter: initialFilter, on
   // The one worktree the confirmation named can stop being removable while it is open (a row turned in use):
   // with none left the sheet is back on the table, where that row says why.
   const confirming = step === "confirm" && plan.worktrees.length > 0;
+  /** The confirmation says the panes close, so the button is named by what it does (UI_BEHAVIOR, Destructive buttons). */
+  const closingPanes = plan.worktrees.reduce((sum, worktree) => sum + worktree.panes, 0);
   useEffect(() => {
     if (step === "confirm" && plan.worktrees.length === 0) setStep("table");
   }, [step, plan.worktrees.length]);
@@ -203,7 +205,10 @@ export function DiskCleanupSheet({ actions, workspace, filter: initialFilter, on
             {plan.worktrees.map((worktree) => (
               <li key={worktree.path} className="flex min-w-0 items-baseline justify-between gap-md">
                 <span className="min-w-0 truncate">{worktree.label}</span>
-                <span className="shrink-0 text-muted-foreground">{formatBytes(worktree.bytes)}</span>
+                <span className="flex shrink-0 items-center gap-md text-muted-foreground">
+                  {worktree.panes > 0 ? <PaneCount count={worktree.panes} /> : null}
+                  {formatBytes(worktree.bytes)}
+                </span>
               </li>
             ))}
           </ul>
@@ -213,7 +218,7 @@ export function DiskCleanupSheet({ actions, workspace, filter: initialFilter, on
               돌아가기
             </Button>
             <Button variant="destructive" onClick={run} data-disk-confirm-run="true">
-              워크트리 {plan.worktrees.length}개와 캐시 정리
+              {closingPanes > 0 ? `pane ${closingPanes}개 닫고 ` : ""}워크트리 {plan.worktrees.length}개와 캐시 정리
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -509,7 +514,20 @@ function WorktreeCellView({ row, selection, onSelection }: { row: SheetRow; sele
       <span className={cn("font-mono text-body", isChecked(selection, ref) ? "text-destructive" : "text-foreground")} data-disk-bytes="true">
         {formatBytes(row.total)}
       </span>
+      {row.worktree.panes > 0 ? <PaneCount count={row.worktree.panes} /> : null}
     </span>
+  );
+}
+
+/** The panes that close with a worktree, as a mark and a count: the state shown, not a sentence about it. */
+function PaneCount({ count }: { count: number }) {
+  return (
+    <Hint label={`pane ${count}개도 함께 닫힘`} reveals>
+      <span className="inline-flex shrink-0 items-center gap-xxs font-mono text-caption text-muted-foreground" data-disk-panes={count} aria-label={`pane ${count}개도 함께 닫힘`}>
+        <SquareTerminalIcon aria-hidden="true" className="size-(--size-icon)" />
+        {count}
+      </span>
+    </Hint>
   );
 }
 

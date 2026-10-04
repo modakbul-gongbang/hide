@@ -563,7 +563,7 @@ export type CleanupExclusionCode =
   | "unverified";
 
 /** `unverified` is a checkout the core has no facts about, which is never read as idle. */
-export type CleanupInUse = { code: "agent_working" | "process" | "port" | "unverified"; name: string | null; port: number | null };
+export type CleanupInUse = { code: "agent_working" | "agent_waiting" | "descendant_busy" | "process" | "port" | "unverified"; name: string | null; port: number | null };
 
 export type CleanupRow = {
   path: string;
@@ -573,15 +573,17 @@ export type CleanupRow = {
   exclusion_code: CleanupExclusionCode | null;
   exclusion_count: number | null;
   in_use: CleanupInUse | null;
+  /** How many live panes of the checkout close with it: finished agents and shells nothing here is using. */
+  pane_count: number;
   /** The worktree's own outcome once confirmed: `skipped` when a recheck found it changed or busy, `failed` when Git refused. */
   result: "removed" | "skipped" | "failed" | null;
-  /** Why a skipped or failed worktree stayed: an exclusion code, `changed`, `not_found`, `unverified` or `remove_refused`. */
+  /** Why a skipped or failed worktree stayed: an exclusion code, `changed`, `not_found`, `unverified`, `close_refused` (a pane would not close) or `remove_refused`. */
   result_code: CleanupResultCode | null;
   /** The allocated size of the worktree this run removed. */
   bytes: number | null;
 };
 
-export type CleanupResultCode = CleanupExclusionCode | "changed" | "not_found" | "unverified" | "remove_refused";
+export type CleanupResultCode = CleanupExclusionCode | "changed" | "not_found" | "unverified" | "close_refused" | "remove_refused";
 
 export type CleanupCellSkip = "in_use" | "changed" | "tracked_files" | "nested_repository" | "symlink" | "not_found" | "unverified";
 
