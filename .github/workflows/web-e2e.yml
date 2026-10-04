@@ -1,5 +1,5 @@
 # The web end-to-end suite as one reusable lane, so the pull request's Linux
-# shards, its macOS `@platform` job and all three nightly OS lanes build, fetch and
+# shards, its macOS and Windows `@platform` jobs and all three nightly OS lanes build, fetch and
 # run the suite the same way and differ only in what they are asked here: the
 # runner, which Herdr asset to run, how many shards deal the tests out, and
 # which tests (`grep` and `full-suite`) to keep.

@@ -12,14 +12,14 @@ This table describes the checked-in workflows, not a claim that a particular PR'
 
 | Layer | What it catches | Current execution |
 | --- | --- | --- |
-| Deterministic regression tests and structural checks | Blank repaint buffers, cache bounds, incorrect state transitions, blocking work in forbidden paths | The Rust workspace suite and repository invariant checks run on every PR and main push in `.github/workflows/pr.yml`; `design-contract.yml` adds static design checks |
-| Automated end-to-end | Real window launch, attach to a private Herdr server, IPC between the desktop host and `hided`, occluded-window rendering, packaging mistakes | Playwright drives the web shell in a browser and the desktop app through `desktop/e2e/fixture.ts`; the web suite runs in the six Linux `web-e2e` shards and, for its `@platform` tests, in one macOS job, the desktop app in the macOS `desktop-e2e` job of `pr.yml`, and `nightly.yml` configures full web and desktop suites on Linux, macOS and Windows, with tracked flaky tests blocking nightly; Linux desktop uses Xvfb; `verify` requires the pull request's jobs |
+| Deterministic regression tests and structural checks | Blank repaint buffers, cache bounds, incorrect state transitions, blocking work in forbidden paths | The repository invariant checks run on every PR and main push in `.github/workflows/pr.yml`, and the Rust suite on every main push and on each PR whose plan includes it (docs/TESTING.md, "Which lanes a pull request runs"); `design-contract.yml` adds static design checks |
+| Automated end-to-end | Real window launch, attach to a private Herdr server, IPC between the desktop host and `hided`, occluded-window rendering, packaging mistakes | Playwright drives the web shell in a browser and the desktop app through `desktop/e2e/fixture.ts`; the web suite runs in the six Linux `web-e2e` shards and, for its `@platform` tests, in one macOS job and one Windows job, the desktop app in the macOS `desktop-e2e` job of `pr.yml`, each when the pull request's plan includes it, and `nightly.yml` configures full web and desktop suites on Linux, macOS and Windows, with tracked flaky tests blocking nightly; Linux desktop uses Xvfb; `verify` requires the pull request's jobs |
 | Controlled performance comparison | Warm/cold latency distributions, periodic stalls, CPU/lock contention, sustained RSS, and cost that grows with process uptime | Local matched baseline/candidate measurements (`scripts/web-shell-measure/run.sh`); no checked-in scheduled or required performance job |
 
-The repository-invariant Python tests run in the required `checks` lane of `pr.yml`.
+The repository-invariant Python tests run in the `policy` lane of `pr.yml`, which every plan includes.
 Fixture/replay commands under `scripts/web-shell-measure/` do not become CI gates merely because this guide lists them.
 Check the workflow before claiming any of them runs automatically.
-The per-OS schema/runtime contracts and three package lanes are nightly configuration; actual executed jobs, failures and skips establish a particular head's coverage.
+The per-OS schema/runtime contracts and two package lanes are nightly configuration; actual executed jobs, failures and skips establish a particular head's coverage.
 PR macOS queue comparisons use actual executed jobs (exclude skipped reusable placeholders), recorded SHA/time windows and sample counts, and report run wall time and runner cost separately.
 A before/after observational sample with different workloads or little concurrent queueing does not establish the concurrent-PR p90 target.
 Hosted desktop automation and private hook fixtures do not establish physical IME, first-launch security prompts or real agent hook behavior.

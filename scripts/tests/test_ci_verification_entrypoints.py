@@ -94,7 +94,7 @@ class EntryPoints(unittest.TestCase):
         self.assertEqual(result.returncode, 17)
         self.assertEqual([record["argv"] for record in self.records()],
                          [["--dir", "desktop", "exec", "install-electron", "--no"]])
-        for args in [("web", "electron-install"), ("hcoord", "electron-install"),
+        for args in [("web", "electron-install"), ("other", "electron-install"),
                      ("desktop", "electron-install", "--force")]:
             with self.subTest(args=args):
                 self.assertEqual(self.run_entry("verify-web.sh", *args).returncode, 2)

@@ -136,6 +136,8 @@ jobs:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
         run: |
           bash scripts/verify-cargo.sh test-scoped -p hide-platform -p hide-herdr-client
+          # The OS contract tests quarantined on macOS, blocking here like every tracked flaky test.
+          bash scripts/verify-cargo.sh test-scoped -p hide-platform -- --ignored
           bash scripts/verify-cargo.sh test-scoped -p hide-herdr-client --test real_herdr -- --ignored --nocapture
       - name: Whole desktop suite, including tracked flaky tests
         timeout-minutes: 20
