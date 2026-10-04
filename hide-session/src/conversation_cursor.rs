@@ -106,8 +106,19 @@ impl ConversationCursor {
     }
 
     pub fn read(&mut self, agent: Agent, path: &Path) -> Result<ParsedSession> {
+        self.read_with_budget(agent, path, crate::SESSION_INCREMENT_READ_LIMIT_BYTES)
+    }
+
+    /// A shared poll gives each file only its remaining byte allowance.
+    pub(crate) fn read_with_budget(
+        &mut self,
+        agent: Agent,
+        path: &Path,
+        budget: u64,
+    ) -> Result<ParsedSession> {
+        self.read_bytes = 0;
         let file = File::open(path).map_err(|error| SessionError::io("open", path, error))?;
-        self.read_file(agent, path, &file)
+        self.read_file_with_budget(agent, path, &file, budget)
     }
 
     /// Search uses one nonblocking, regular-file descriptor for all reads.
@@ -117,15 +128,25 @@ impl ConversationCursor {
         path: &Path,
         file: &File,
     ) -> Result<ParsedSession> {
+        self.read_file_with_budget(agent, path, file, crate::SESSION_INCREMENT_READ_LIMIT_BYTES)
+    }
+
+    fn read_file_with_budget(
+        &mut self,
+        agent: Agent,
+        path: &Path,
+        file: &File,
+        budget: u64,
+    ) -> Result<ParsedSession> {
         self.has_more = false;
+        self.read_bytes = 0;
         let AppendedBytes {
             contents: appended,
             start_offset,
             identity,
             rescan_reason,
             has_more,
-        } = read_appended_file(&mut self.cursor, path, file)?;
-        self.read_bytes = appended.len() as u64;
+        } = read_appended_file(&mut self.cursor, path, file, budget, &mut self.read_bytes)?;
         if rescan_reason.is_some() {
             self.discarded_bytes = 0;
             self.classifier = None;
@@ -222,6 +243,8 @@ fn read_appended_file(
     cursor: &mut SessionCursor,
     path: &Path,
     file: &File,
+    budget: u64,
+    read_bytes: &mut u64,
 ) -> Result<AppendedBytes> {
     let mut file = file
         .try_clone()
@@ -243,9 +266,12 @@ fn read_appended_file(
         .map_err(|e| SessionError::io("seek", path, e))?;
     let start = cursor.offset;
     let mut contents = Vec::new();
-    file.take(crate::SESSION_INCREMENT_READ_LIMIT_BYTES)
-        .read_to_end(&mut contents)
-        .map_err(|e| SessionError::io("read", path, e))?;
+    let read = file
+        .take(budget.min(crate::SESSION_INCREMENT_READ_LIMIT_BYTES))
+        .read_to_end(&mut contents);
+    // Failed parsing or a partial I/O failure still spent this poll's bytes.
+    *read_bytes = contents.len() as u64;
+    read.map_err(|e| SessionError::io("read", path, e))?;
     Ok(AppendedBytes {
         has_more: start + (contents.len() as u64) < metadata.len(),
         contents,

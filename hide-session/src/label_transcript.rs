@@ -310,10 +310,11 @@ fn read_subagents(
             .clone()
             .map(ConversationCursor::restore)
             .unwrap_or_default();
-        match cursor.read(Agent::Claude, &file) {
+        let parsed = cursor.read_with_budget(Agent::Claude, &file, SUBAGENT_READ_BUDGET - spent);
+        spent += cursor.read_bytes();
+        match parsed {
             Ok(parsed) => {
                 sightings.extend(parsed.pr_sightings);
-                spent += cursor.read_bytes();
                 pending |= cursor.has_more();
                 after.insert(name, cursor.checkpoint());
             }

@@ -106,6 +106,184 @@ fn sighted(transcript: &LabelTranscript, number: u64) -> Option<&PrSighting> {
         .find(|sighting| sighting.repository == "acme/app" && sighting.number == number)
 }
 
+/// Real provider records with deliberately priced byte lengths, rather than
+/// a mocked reader: the adapter contract admits 2MiB of subagents per poll.
+fn subagent_poll_fixture() -> (tempfile::TempDir, PathBuf, LabelTranscriptRequest) {
+    let home = tempfile::tempdir().unwrap();
+    let project = home.path().join(".claude/projects/-work-app");
+    std::fs::create_dir_all(&project).unwrap();
+    let path = project.join("budget-session.jsonl");
+    let record = serde_json::json!({"type":"user","sessionId":"budget-session",
+        "origin":{"kind":"human"},"timestamp":"2026-10-03T01:00:00Z",
+        "message":{"role":"user","content":"read subagent pull requests"}});
+    std::fs::write(&path, format!("{record}\n")).unwrap();
+    let folder = project.join("budget-session/subagents");
+    std::fs::create_dir_all(&folder).unwrap();
+    let request = LabelTranscriptRequest {
+        agent: Agent::Claude,
+        reference_kind: "path".to_owned(),
+        reference_value: path.display().to_string(),
+        cwd: None,
+        checkpoint: None,
+        subagents: BTreeMap::new(),
+    };
+    (home, folder, request)
+}
+
+fn sized_tool_record(number: u64, bytes: usize) -> String {
+    let mut record = serde_json::json!({"type":"user","sessionId":"budget-session",
+        "timestamp":"2026-10-03T01:00:01Z","message":{"role":"user",
+        "content":[{"type":"tool_result","tool_use_id":"t",
+        "content":format!("https://github.com/acme/app/pull/{number}")}]}});
+    let padding = bytes.checked_sub(record.to_string().len() + 1).unwrap();
+    let text = record["message"]["content"][0]["content"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    record["message"]["content"][0]["content"] = format!("{text}{}", " ".repeat(padding)).into();
+    let line = format!("{record}\n");
+    assert_eq!(line.len(), bytes);
+    line
+}
+
+fn write_poll_subagent(folder: &Path, index: u64, contents: &str) {
+    let path = folder.join(format!("agent-{index}.jsonl"));
+    std::fs::write(&path, contents).unwrap();
+    std::fs::File::options()
+        .write(true)
+        .open(path)
+        .unwrap()
+        .set_modified(
+            std::time::SystemTime::UNIX_EPOCH + std::time::Duration::from_secs(1000 - index),
+        )
+        .unwrap();
+}
+
+fn resume_subagent_poll(request: &mut LabelTranscriptRequest, answer: &LabelTranscript) {
+    // A relaunch restores only durable checkpoints, including the bounded
+    // classifier of an oversized record; no pending transcript is persisted.
+    request.checkpoint =
+        Some(serde_json::from_slice(&serde_json::to_vec(&answer.checkpoint).unwrap()).unwrap());
+    request.subagents =
+        serde_json::from_slice(&serde_json::to_vec(&answer.subagents).unwrap()).unwrap();
+}
+
+#[test]
+fn claude_subagent_poll_caps_aggregate_bytes_and_resumes_a_partial_record_once() {
+    let (home, folder, mut request) = subagent_poll_fixture();
+    for index in 1..=3 {
+        let contents: String = (1..=9)
+            .map(|record| sized_tool_record(index * 100 + record, 100 * 1024))
+            .collect();
+        write_poll_subagent(&folder, index, &contents);
+    }
+    let first = read(home.path(), &request).unwrap();
+    let committed_bytes: u64 = first.subagents.values().map(|cursor| cursor.offset()).sum();
+    assert!(
+        committed_bytes <= 2 * 1024 * 1024,
+        "one subagent poll committed {committed_bytes} bytes against the 2MiB contract"
+    );
+    assert_eq!(first.subagents["agent-1.jsonl"].offset(), 900 * 1024);
+    assert_eq!(first.subagents["agent-2.jsonl"].offset(), 900 * 1024);
+    assert_eq!(first.subagents["agent-3.jsonl"].offset(), 200 * 1024);
+    assert!(first.has_more);
+    let mut sightings: Vec<_> = first.pr_sightings.iter().map(|pr| pr.number).collect();
+    assert_eq!(
+        sightings,
+        (101..=109)
+            .chain(201..=209)
+            .chain(301..=302)
+            .collect::<Vec<_>>()
+    );
+    resume_subagent_poll(&mut request, &first);
+    let next = read(home.path(), &request).unwrap();
+    sightings.extend(next.pr_sightings.iter().map(|pr| pr.number));
+    assert_eq!(
+        sightings,
+        (101..=109)
+            .chain(201..=209)
+            .chain(301..=309)
+            .collect::<Vec<_>>()
+    );
+    assert_eq!(next.subagents["agent-3.jsonl"].offset(), 900 * 1024);
+    assert!(!next.has_more);
+    resume_subagent_poll(&mut request, &next);
+    assert!(read(home.path(), &request).unwrap().pr_sightings.is_empty());
+}
+
+#[test]
+fn claude_subagent_poll_resumes_an_oversized_tool_discard_across_its_budget() {
+    let (home, folder, mut request) = subagent_poll_fixture();
+    for index in 1..=2 {
+        let contents: String = (1..=7)
+            .map(|record| sized_tool_record(index * 100 + record, 100 * 1024))
+            .collect();
+        write_poll_subagent(&folder, index, &contents);
+    }
+    write_poll_subagent(
+        &folder,
+        3,
+        &(sized_tool_record(300, 900 * 1024) + &sized_tool_record(301, 1024)),
+    );
+    let first = read(home.path(), &request).unwrap();
+    assert_eq!(first.subagents["agent-3.jsonl"].offset(), 648 * 1024);
+    assert!(first.has_more);
+    assert!(first.pr_sightings.iter().all(|pr| pr.number < 300));
+    resume_subagent_poll(&mut request, &first);
+    let next = read(home.path(), &request).unwrap();
+    assert_eq!(
+        next.pr_sightings
+            .iter()
+            .map(|pr| pr.number)
+            .collect::<Vec<_>>(),
+        [301]
+    );
+    assert!(!next.has_more);
+    resume_subagent_poll(&mut request, &next);
+    assert!(read(home.path(), &request).unwrap().pr_sightings.is_empty());
+}
+
+#[test]
+fn claude_subagent_poll_counts_bytes_even_when_an_admitted_record_fails() {
+    let (home, folder, mut request) = subagent_poll_fixture();
+    let oversized = serde_json::json!({"type":"assistant","sessionId":"budget-session",
+        "message":{"role":"assistant","content":[{"type":"text","text":"x".repeat(900 * 1024)}]}});
+    for index in 1..=2 {
+        write_poll_subagent(&folder, index, &format!("{oversized}\n"));
+    }
+    let contents: String = (301..=309)
+        .map(|record| sized_tool_record(record, 100 * 1024))
+        .collect();
+    write_poll_subagent(&folder, 3, &contents);
+    let first = read(home.path(), &request).unwrap();
+    assert_eq!(
+        first
+            .pr_sightings
+            .iter()
+            .map(|pr| pr.number)
+            .collect::<Vec<_>>(),
+        [301, 302]
+    );
+    assert!(first.has_more);
+    assert!(!first.subagents.contains_key("agent-1.jsonl"));
+    assert!(!first.subagents.contains_key("agent-2.jsonl"));
+    // The provider removes the failed files. Valid deferred records still
+    // resume from their last complete line, without losing or repeating one.
+    for index in 1..=2 {
+        std::fs::remove_file(folder.join(format!("agent-{index}.jsonl"))).unwrap();
+    }
+    resume_subagent_poll(&mut request, &first);
+    let next = read(home.path(), &request).unwrap();
+    assert_eq!(
+        next.pr_sightings
+            .iter()
+            .map(|pr| pr.number)
+            .collect::<Vec<_>>(),
+        (303..=309).collect::<Vec<_>>()
+    );
+    assert!(!next.has_more);
+}
+
 #[test]
 fn every_agent_reads_to_the_same_facts() {
     for agent in [Agent::Claude, Agent::Codex, Agent::OpenCode] {
