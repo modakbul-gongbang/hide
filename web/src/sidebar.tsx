@@ -1096,9 +1096,9 @@ const CheckoutRowView = memo(function CheckoutRowView({
  * one row. Line one is the project's name and its status badge, which stays
  * while the agent rows are open because it is the project's own summary; line
  * two is the purpose. The row opens the checkout and is marked while that
- * checkout is the Workspace in front or the project's Overview is, and its
+ * checkout is the Workspace in front, and its
  * menu is the project's followed by the checkout's. It ends as a checkout row
- * does, and its Overview is reached from All projects.
+ * does, and its project scope is reached from the shared Overview.
  */
 const FolderRowView = memo(function FolderRowView({
   workspace,

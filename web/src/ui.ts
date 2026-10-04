@@ -308,7 +308,7 @@ type UiStore = {
   /** The Main request view's lens rides on its screen for Recent Panels. */
   setMainRequestLens: (patch: Partial<RequestLens>) => void;
   setTasksMode: (mode: TasksMode) => void;
-  /** Changes the Project Overview's lens in place; a no-op on any other screen. */
+  /** Changes the shared Overview scope lens in place. */
   setLens: (patch: Partial<OverviewLens>) => void;
   setRelation: (relation: Relation | null) => void;
   setSidebarMode: (mode: SidebarMode) => void;

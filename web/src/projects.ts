@@ -380,11 +380,7 @@ export function checkoutRowExpansion(foldable: boolean, workspaceSelected: boole
   return foldable ? !(workspaceSelected && expanded) : undefined;
 }
 
-/**
- * A project row takes the checkout rule: it opens the project's Overview and
- * unfolds it, unless that Overview is already open and the project unfolded,
- * when it folds. A remote device's tree has no folds to change.
- */
+/** A project row opens its usable checkout, then folds if that target is already open and unfolded. */
 export function projectRowExpansion(workspace: Workspace, target: Checkout | null, focusedCheckoutId: string | null, foldable: boolean): boolean | undefined {
   return checkoutRowExpansion(foldable, target !== null && target.id === focusedCheckoutId, workspace.expanded !== false);
 }

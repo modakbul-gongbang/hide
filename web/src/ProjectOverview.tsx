@@ -27,7 +27,7 @@ import { toggledFold, useUiStore, type OverviewLens } from "./ui";
 
 // A Project's Overview (PRD web-project-overview, task-agents-views, the
 // issue-first rework and overview-lenses-tiles-agents): the Project scope the
-// sidebar's project row opens. Under its title sits one line of repository
+// shared Overview's scope tab opens. Under its title sits repository
 // facts with the chosen tile's mode control at its right end, then the lens
 // tiles, 요청, Agents, Issues, PRs and Sessions, where the tab row was. Every
 // way in opens the request view (overview-request-view D-05), with the box in

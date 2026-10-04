@@ -1690,11 +1690,7 @@ export function createActions(send: DispatchFn) {
       foldProject(workspace);
     },
 
-    /**
-     * A project row: its Overview, a screen of this page alone, and the fold
-     * `projectRowExpansion` chose, the click's only core event and
-     * sent only when the fold changes.
-     */
+    /** Open the project's usable checkout and admit its disclosure in the same event. */
     openProject(workspace: Workspace, expanded: boolean | undefined) {
       const checkout = deviceConnected(rest(), workspace.device_id) ? projectCheckout(workspace, rest()?.ui_state?.recent_checkouts) : null;
       if (!checkout) return this.openOverview(workspace.device_id, workspace.id);

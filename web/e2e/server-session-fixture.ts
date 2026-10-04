@@ -1,4 +1,4 @@
-import { expect, type Locator, type Page } from "@playwright/test";
+import { expect, type Page } from "@playwright/test";
 import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
@@ -34,13 +34,10 @@ export async function startServer(cwd: string, host = "127.0.0.1", requestedPort
   });
   return { child, port };
 }
-export async function openSessions(page: Page, overview: Locator = page.locator("[data-go-overview]")): Promise<void> {
-  await expect(overview).toHaveCount(1);
-  await expect(overview).toBeVisible();
-  const projectId = await overview.getAttribute("data-project-overview") ?? await overview.getAttribute("data-go-overview");
-  expect(projectId).toBeTruthy();
-  await overview.click();
-  await expect(page.locator("[data-overview-screen]")).toHaveAttribute("data-overview-screen", projectId!);
+export async function openSessions(page: Page, projectName = "fixture"): Promise<void> {
+  await page.locator("[data-go-main]").click();
+  await page.getByRole("tab", { name: projectName, exact: true }).click();
+  await expect(page.locator("[data-overview-screen]")).toBeVisible();
   await page.locator('[data-lens-tile-button="sessions"]').click();
   await expect(page.locator("[data-sessions-screen]")).toBeVisible();
 }

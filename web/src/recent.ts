@@ -5,7 +5,7 @@
 // device, project and checkout: this machine's Herdr tabs and the View-area
 // displays (file, diff and browser) of each checkout's Workspace, each
 // connected device's Herdr tabs (PRD home-device-rail D-16), and the page's
-// own screens, a device's Home Overview and each Project's Overview, once the
+// shared Overview page and its scope, once the
 // operator has been on them.
 // Recent Panels walks it; Recent Projects walks the projects in the order
 // they were used and restores each one's last Workspace surface, which is

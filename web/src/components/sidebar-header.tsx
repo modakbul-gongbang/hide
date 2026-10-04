@@ -23,9 +23,9 @@ export type DeviceMenu = {
 
 /**
  * The top of the sidebar (quick device-rail-badges, replacing PRD
- * home-device-rail D-13, D-14). Every device's sidebar is the same two lines:
+ * home-device-rail D-13, D-14). Every device's sidebar is the same three lines:
  * the name of the device in front (`This Mac`, `mini Remote`) with Add project
- * and Search at its right end, then the `Projects | Agents` tab strip. While
+ * and Search at its right end, the shared Overview row, then `Projects | Agents`. While
  * the rail is hidden the name is a menu that lists the devices, `기기 추가…`
  * and `레일 표시`, since the rail is no longer the way to another device. A
  * device that cannot be read shows its name alone: it has no list to switch.
@@ -59,7 +59,7 @@ export function SidebarHeader({
   tabs: boolean;
   mode: SidebarMode;
   compact?: boolean;
-  /** The bound `toggle_sidebar_view` chord; it has none until the operator binds one. */
+  /** The current direct Projects and Agents shortcuts. */
   projectChord?: string | null;
   agentChord?: string | null;
   overview?: { selected: boolean; count: number; chord: string | null; onOpen: () => void };

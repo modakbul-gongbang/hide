@@ -425,7 +425,8 @@ test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" },
     // focused-area cycle pair the 33rd and 34th (they carry ⌥` and its Chrome
     // move; the global Recent Panels pair has no default chord), and the eight
     // Agent and View area commands (no default chord either) the 35th to 42nd.
-    await expect(page.locator("[data-shortcut]")).toHaveCount(42);
+    await expect(page.locator("[data-shortcut]")).toHaveCount(43);
+    for (const title of ["Overview", "Projects sidebar", "Agents sidebar"]) await expect(page.locator("[data-shortcut-sheet]")).toContainText(title);
     // Chrome keeps seven desktop chords on macOS and five on Windows and Linux.
     await expect(page.locator("[data-shortcut-sheet]").getByText("moved for Chrome")).toHaveCount(SYSTEM === "mac" ? 7 : 5);
     await screenshot(page, "s2-shortcut-sheet");

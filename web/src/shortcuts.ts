@@ -413,8 +413,8 @@ export const EDITABLE_PANE_COMMANDS: readonly CommandId[] = [
 ];
 
 /**
- * The macOS set's name for each editable command. `toggle_sidebar_view`
- * and `toggle_device_rail` have no pane command there: the set keeps the key and the desktop host
+ * The macOS set's name for each editable command. `toggle_device_rail`
+ * has no pane command there: the set keeps the key and the desktop host
  * ignores it, the way this shell ignores
  * `toggle_conversation`.
  */

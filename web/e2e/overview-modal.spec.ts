@@ -58,6 +58,22 @@ test("shared Overview preserves work, returns the keyboard and has direct sideba
     await expect(modal).toHaveCount(0);
     await page.keyboard.press("Escape");
 
+    // Clearing a shortcut persists, removes its keycap and disables its chord.
+    await page.locator("[data-open-settings]").click();
+    await page.locator('[data-settings-tab="shortcuts"]').click();
+    await page.locator('[data-shortcut-clear="overview"]').click();
+    await expect(page.locator('[data-shortcut-effective="overview"]')).toHaveText("-");
+    await page.keyboard.press("Escape");
+    await expect(sidebar.locator("kbd")).toHaveCount(0);
+    await page.keyboard.press(chord("overview"));
+    await expect(modal).toHaveCount(0);
+    await page.locator("[data-open-settings]").click();
+    await page.locator('[data-settings-tab="shortcuts"]').click();
+    await page.locator('[data-shortcut-reset="overview"]').click();
+    await expect(page.locator('[data-shortcut-effective="overview"]')).not.toHaveText("-");
+    await page.keyboard.press("Escape");
+    await expect(sidebar.locator("kbd")).toHaveCount(1);
+
     // A modal is not a visit; cycling begins on the most recent agent pane.
     await input.focus();
     await page.keyboard.press(chord("overview"));

@@ -277,9 +277,8 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await open(page, daemon);
     await expect(page.locator("[data-main-screen]").or(page.locator("[data-workspace-screen]"))).toBeVisible({ timeout: 20_000 });
 
-    // The sidebar's project name opens that project's Overview on the
-    // request view (overview-request-view D-05); its Agents tile is the
-    // graph, with no front checkout in it so main's box selected (B1).
+    // Shared Overview's current-project scope opens the request view.
+    // Its Agents tile keeps the front checkout's box selected (B1).
     await page.locator('[data-sidebar-mode="projects"]').click();
     const repoRow = page.locator("[data-project-row]", { hasText: /^repo/ });
     const refreshesBefore = sent.get("sessions_refresh") ?? 0;
@@ -848,7 +847,8 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     const allProjects = page.locator("[data-home-destination]");
     await allProjects.click();
     await expect(main).toBeVisible();
-    await expect(allProjects).toHaveAttribute("aria-current", "page");
+    await expect(page.locator("[data-sidebar-overview]")).toHaveAttribute("aria-current", "page");
+    await expect(allProjects).not.toHaveAttribute("aria-current", "page");
     await expect(page.locator('[data-main-stats] [data-stat="projects"]')).toHaveText("3 projects");
     await expect(main.locator("[data-main-tab]")).toHaveCount(4);
     await expect(main).toHaveAttribute("data-main-view", "requests");
@@ -873,6 +873,9 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     // 바로 시작 goes on to the Start dialog, and the card's menu closes it.
     await page.locator('[data-main-tab="projects"]').click();
     await page.locator("[data-main-project]", { hasText: /^fixture/ }).click();
+    await expect(workspace).toBeVisible();
+    await page.locator("[data-go-main]").click();
+    await page.getByRole("tab", { name: "fixture", exact: true }).click();
     await expect(overview).toHaveAttribute("data-overview-view", "requests");
     await tile("issues").locator("[data-lens-tile-button]").click();
     await expect(overview).toHaveAttribute("data-overview-state", "empty");
@@ -941,6 +944,9 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await page.locator("[data-go-main]").click();
     await page.locator('[data-main-tab="projects"]').click();
     await page.locator("[data-main-project]", { hasText: /^quiet/ }).click();
+    await expect(workspace).toBeVisible();
+    await page.locator("[data-go-main]").click();
+    await page.getByRole("tab", { name: "quiet", exact: true }).click();
     // The request view of a project with no agent is one line and New agent (overview-request-view B40).
     await expect(overview).toHaveAttribute("data-overview-state", "empty");
     await expect(overview.locator("[data-requests-empty]")).toBeVisible();
