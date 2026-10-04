@@ -402,27 +402,36 @@ impl MemoryStore {
     /// would violate the hook's 100 ms hard bound. Read-only schema checks and
     /// every query failure still fail closed for Memory and open for the agent.
     pub fn open_hook_read_only(path: &Path) -> Result<Self, MemoryError> {
-        Self::open_hook_read_only_until(path, None)
+        Self::open_hook_read_only_until(path, None::<fn() -> bool>)
     }
 
     pub fn open_hook_read_only_with_deadline(
         path: &Path,
         deadline: Instant,
     ) -> Result<Self, MemoryError> {
-        Self::open_hook_read_only_until(path, Some(deadline))
+        Self::open_hook_read_only_with_expiry(path, move || Instant::now() >= deadline)
     }
 
-    fn open_hook_read_only_until(
-        path: &Path,
-        deadline: Option<Instant>,
-    ) -> Result<Self, MemoryError> {
+    /// Opens a hook reader with its invocation's monotonic expiry predicate.
+    /// Once true, the predicate must remain true for this connection's lifetime.
+    pub fn open_hook_read_only_with_expiry<E>(path: &Path, expired: E) -> Result<Self, MemoryError>
+    where
+        E: Fn() -> bool + Send + 'static,
+    {
+        Self::open_hook_read_only_until(path, Some(expired))
+    }
+
+    fn open_hook_read_only_until<E>(path: &Path, expired: Option<E>) -> Result<Self, MemoryError>
+    where
+        E: Fn() -> bool + Send + 'static,
+    {
         let connection = Connection::open_with_flags(
             path,
             OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_URI,
         )?;
         connection.busy_timeout(Duration::ZERO)?;
-        if let Some(deadline) = deadline {
-            connection.progress_handler(250, Some(move || Instant::now() >= deadline));
+        if let Some(expired) = expired {
+            connection.progress_handler(250, Some(expired));
         }
         connection.pragma_update(None, "foreign_keys", "ON")?;
         require_schema(&connection)?;
@@ -1121,6 +1130,16 @@ impl MemoryStore {
 
     pub fn retrieve(&self, query: &RetrievalQuery) -> Result<Injection, MemoryError> {
         let started = Instant::now();
+        self.retrieve_with_expiry(query, || started.elapsed() >= query.deadline)
+    }
+
+    /// Retrieves within a caller-owned invocation deadline instead of starting
+    /// a new relative allowance. The expiry predicate must be monotonic.
+    pub fn retrieve_with_expiry(
+        &self,
+        query: &RetrievalQuery,
+        expired: impl Fn() -> bool,
+    ) -> Result<Injection, MemoryError> {
         let state = self.project_state(&query.project_id)?;
         if !state.enabled {
             return Ok(Injection {
@@ -1140,7 +1159,7 @@ impl MemoryStore {
         } else {
             self.search_active(&query.project_id, &query.text, &query.path_context)?
         };
-        if started.elapsed() >= query.deadline {
+        if expired() {
             return Ok(Injection {
                 outcome: InjectionOutcome::Deadline,
                 items: Vec::new(),
@@ -1178,7 +1197,7 @@ impl MemoryStore {
                 break;
             }
         }
-        if started.elapsed() >= query.deadline {
+        if expired() {
             return Ok(Injection {
                 outcome: InjectionOutcome::Deadline,
                 items: Vec::new(),
@@ -2028,6 +2047,17 @@ fn enforce_database_permissions(path: &Path) -> Result<(), MemoryError> {
 mod tests {
     use super::*;
     use std::fs;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicU64, Ordering};
+
+    fn invocation_clock() -> (Arc<AtomicU64>, impl Fn() -> bool + Clone + Send + 'static) {
+        let anchor = Instant::now();
+        let end = anchor + Duration::from_millis(HOOK_DEADLINE_MS);
+        let elapsed = Arc::new(AtomicU64::new(0));
+        let clock = Arc::clone(&elapsed);
+        let expired = move || anchor + Duration::from_millis(clock.load(Ordering::SeqCst)) >= end;
+        (elapsed, expired)
+    }
 
     #[test]
     fn hide_native_relevance_is_query_dependent_and_language_aware() {
@@ -2650,6 +2680,80 @@ mod tests {
             reader.delete_project_data(&project),
             Err(MemoryError::ReadOnly)
         ));
+    }
+
+    #[test]
+    fn hook_open_and_sqlite_progress_share_the_invocation_end() {
+        let (temp, mut writer, project) = store();
+        let candidates = (0..256)
+            .map(|index| {
+                candidate(
+                    &format!("Bounded projection rule {index}"),
+                    CandidateRelation::New,
+                )
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(
+            writer
+                .apply_candidates(
+                    &batch(&project, "progress-expiry", "progress-expiry-hash"),
+                    &candidates,
+                )
+                .unwrap()
+                .created,
+            256
+        );
+        drop(writer);
+
+        let path = temp.path().join("memory.sqlite3");
+        let (elapsed, expired) = invocation_clock();
+        let reader = MemoryStore::open_hook_read_only_with_expiry(&path, expired.clone()).unwrap();
+        elapsed.fetch_add(99, Ordering::SeqCst);
+        assert_eq!(reader.list_memories(&project, "").unwrap().len(), 256);
+        elapsed.fetch_add(1, Ordering::SeqCst);
+
+        assert!(matches!(
+            reader.list_memories(&project, ""),
+            Err(MemoryError::Sql(rusqlite::Error::SqliteFailure(error, _)))
+                if error.code == rusqlite::ErrorCode::OperationInterrupted
+        ));
+        assert!(matches!(
+            MemoryStore::open_hook_read_only_with_expiry(&path, expired),
+            Err(MemoryError::Sql(rusqlite::Error::SqliteFailure(error, _)))
+                if error.code == rusqlite::ErrorCode::OperationInterrupted
+        ));
+    }
+
+    #[test]
+    fn retrieval_honors_the_consumed_invocation_deadline_without_restarting_it() {
+        let (_temp, mut store, project) = store();
+        let body = "Keep the caller-owned deadline";
+        store
+            .apply_candidates(
+                &batch(&project, "retrieval-expiry", "retrieval-expiry-hash"),
+                &[candidate(body, CandidateRelation::New)],
+            )
+            .unwrap();
+        let query = RetrievalQuery::session_start(&project);
+        assert_eq!(query.deadline, Duration::from_millis(100));
+        let (elapsed, expired) = invocation_clock();
+        elapsed.fetch_add(99, Ordering::SeqCst);
+
+        let provided = store.retrieve_with_expiry(&query, &expired).unwrap();
+        assert_eq!(provided.outcome, InjectionOutcome::Provided);
+        assert_eq!(provided.items.len(), 1);
+        assert_eq!(provided.items[0].2, body);
+        assert!(provided.token_count > 0);
+        elapsed.fetch_add(1, Ordering::SeqCst);
+
+        assert_eq!(
+            store.retrieve_with_expiry(&query, &expired).unwrap(),
+            Injection {
+                outcome: InjectionOutcome::Deadline,
+                items: Vec::new(),
+                token_count: 0,
+            }
+        );
     }
 
     #[test]
