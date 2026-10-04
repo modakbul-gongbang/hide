@@ -6,8 +6,7 @@ const ledger = require('./ci-ledger.cjs');
 const HISTORY_DAYS = 30;
 const MAX_HISTORY_RUNS = 30;
 
-function readRecords(directory) {
-  const records=[];
+function readRecords(directory, records=[]) {
   function visit(at, depth=0) {
     if (depth>3) throw new Error('ledger directory depth cap exceeded');
     for (const item of fs.readdirSync(at,{withFileTypes:true})) {
@@ -60,17 +59,23 @@ function summary(suites, inventory) {
   return lines.join('\n')+'\n';
 }
 
-module.exports=async function collect({github,context,core,directory,plan}) {
+async function collectInto({github,context,directory,plan}, state) {
+  state.stage='input';
+  const current=readRecords(directory,state.records);
+  state.stage='jobs-api';
   const inventory=await ledger.jobs(github,context);
-  const current=readRecords(directory);
+  state.jobs=inventory;
+  state.stage='inventory';
   if (!plan && !current.length) throw new Error('no observed suite collection');
   if (plan) confirmInventory(plan,current);
+  state.stage='source-and-job-identity';
   for (const row of current) {
     if (row.sha!==context.sha || String(row.run)!==String(context.runId) || row.runAttempt!==Number(process.env.GITHUB_RUN_ATTEMPT||1)) throw new Error('ledger source identity mismatch');
     const matching=inventory.filter(job=>job.name===row.jobLabel || job.name.endsWith(' / '+row.jobLabel));
     if (matching.length!==1) throw new Error(`missing/ambiguous Actions job identity: ${row.jobLabel}`);
     row.jobId=matching[0].id; row.jobUrl=matching[0].url;
   }
+  state.stage='history-api';
   const cutoff=Date.now()-HISTORY_DAYS*86400000;
   const artifacts=[];
   for (let page=1;page<=10;page++) {
@@ -82,6 +87,7 @@ module.exports=async function collect({github,context,core,directory,plan}) {
     if (page===10) throw new Error('history artifact inventory overflow');
   }
   const suites=suiteSummaries(current);
+  state.suites=suites;
   // A ci-history artifact contains only its run, never recursively merged history.
   const attempts=new Set();
   for (const artifact of artifacts.sort((a,b)=>Date.parse(b.created_at)-Date.parse(a.created_at))) {
@@ -89,6 +95,8 @@ module.exports=async function collect({github,context,core,directory,plan}) {
     if (attempts.has(key)) continue;
     if (attempts.size===MAX_HISTORY_RUNS) break;
     attempts.add(key);
+    state.attempts=attempts.size;
+    state.stage='history-archive';
     if (artifact.size_in_bytes>ledger.MAX_BYTES) throw new Error('history archive byte cap exceeded');
     const response=await github.rest.actions.downloadArtifact({...context.repo,artifact_id:artifact.id,archive_format:'zip'});
     const zip=path.join(directory,`history-${artifact.id}.zip`);
@@ -106,9 +114,56 @@ module.exports=async function collect({github,context,core,directory,plan}) {
     }
     if (Object.keys(suites).length>1000) throw new Error('history suite cap exceeded');
   }
-  ledger.write('ci-history.json',{...ledger.merge(current),jobs:inventory,windowDays:HISTORY_DAYS});
-  ledger.write('ci-history-window.json',{version:1,suites,windowDays:HISTORY_DAYS,attemptCap:MAX_HISTORY_RUNS,observedPreviousAttempts:attempts.size});
-  await core.summary.addRaw(summary(suites,inventory)).write();
+  state.stage='complete';
+}
+
+module.exports=async function collect(options) {
+  const {context,core,outputDirectory='.'}=options;
+  const state={records:[],jobs:[],suites:{},attempts:0,stage:'start',errors:[]};
+  let failure;
+  function unknown(error) {
+    state.errors.push({stage:state.stage,message:String(error.message).slice(0,16000)});
+    state.records.push({...ledger.identity(),sha:context.sha,run:String(context.runId),
+      suite:'CI collection',test:state.stage,repeat:0,retry:0,status:'unknown',category:'collection',
+      assertion:String(error.message).slice(0,16000),signature:ledger.signature(String(error.message))});
+  }
+  function save() {
+    const collection={status:state.errors.length?'partial-or-unknown':'complete',errors:state.errors};
+    const current=ledger.merge(state.records);
+    // The current attempt is saved even when a remote API or required
+    // inventory fails. Its unknown result remains visible to later windows.
+    ledger.write(path.join(outputDirectory,'ci-history.json'),{...current,jobs:state.jobs,source:{sha:context.sha,run:String(context.runId),attempt:Number(process.env.GITHUB_RUN_ATTEMPT||1)},collection,windowDays:HISTORY_DAYS});
+    const currentSuites=suiteSummaries(state.records);
+    const suites={...state.suites};
+    // Prior summaries already contain current test rows; add only collection
+    // errors after a partial history read, otherwise summarize all retained rows.
+    if (!Object.keys(suites).length) Object.assign(suites,currentSuites);
+    else for (const [key,value] of Object.entries(currentSuites).filter(([key])=>key.endsWith(' / CI collection'))) {
+      const total=suites[key]||{firstAttempts:0,firstPass:0,excluded:0,unknown:0};
+      for (const field of Object.keys(total)) total[field]+=value[field];
+      suites[key]=total;
+    }
+    ledger.write(path.join(outputDirectory,'ci-history-window.json'),{version:1,suites,collection,windowDays:HISTORY_DAYS,attemptCap:MAX_HISTORY_RUNS,observedPreviousAttempts:state.attempts});
+    return suites;
+  }
+  try { await collectInto(options,state); }
+  catch (error) { failure=error; unknown(error); }
+  let suites;
+  try { suites=save(); }
+  catch (error) {
+    // A malformed duplicate or byte overflow cannot become an empty success.
+    // Keep a bounded unknown receipt, naming why the partial rows could not be saved.
+    failure ||= error;
+    state.stage='attempt-save'; unknown(error);
+    state.records=state.records.filter(row=>row.suite==='CI collection');
+    state.suites={}; suites=save();
+  }
+  try { await core.summary.addRaw(summary(suites,state.jobs)).write(); }
+  catch (error) {
+    failure ||= error;
+    state.stage='summary'; unknown(error); save();
+  }
+  if (failure) throw failure;
 };
 module.exports.confirmInventory=confirmInventory;
 module.exports.summary=summary;

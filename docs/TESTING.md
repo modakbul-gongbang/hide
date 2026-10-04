@@ -140,16 +140,24 @@ A failure on a different SHA is not evidence of flakiness by itself, and the sam
 
 - Record each failure in the issue that tracks the test: the run, job and attempt link, the tested SHA, the system, the failing assertion and its message, and the result of the first run and of each rerun.
   Group failures by assertion signature, not by title, so two causes under one name are not read as one.
-- A web or desktop e2e test that fails intermittently in CI before its cause is fixed can be quarantined, and that is the only way a test leaves a required gate.
-  Tag it `@flaky` with an `issue` annotation naming the issue that tracks the cause; the required web shards and the required desktop step skip it with `--grep-invert @flaky`, and web shard 1 and the desktop job each still run every quarantined test in a step that cannot turn `verify` red, so a fix shows up as a pass.
-  Pull-request quarantined web tests run only in shard 1 of the Linux lane, never in the macOS `@platform` job; nightly runs `@flaky` tests in their normal shards and blocking suites.
+- A web or desktop e2e test under investigation leaves an ordinary required suite only through `contracts/ci-quarantine.json`.
+  Each registry entry binds its exact file, title, OS and assertion signature to an issue, evidence, owner, registration and expiration, alternative coverage and return criteria.
+  Registration lasts at most seven days; missing metadata, expiration and unregistered `@flaky` declarations fail `python3 scripts/ci-quarantine.py check` in the required policy lane.
+  The source keeps its `@flaky` issue annotation, while Playwright `--test-list-invert` excludes only the exact registered file/title on its registered OS.
+  An unregistered same-title test in another file, or a longer title, still runs.
+  `advisory.yml` runs the relevant registered scenarios in a separate workflow on related PRs and daily; its failure stays visible without delaying ordinary `verify`.
+  A PR changing a registered scenario's behavior, test or shared fixture selects `quarantine-fixes`, which runs the exact registered scenarios as required checks.
+  `ci-quarantine.py results` requires a result for every selected identity, and a required scenario must pass.
+  Missing, skipped or ambiguous results fail the scenario lane; a new signature remains a distinct failure in the ledger.
+  Main and nightly full suites include the registered tests in their normal blocking shards.
 - Quarantine is for a cause under investigation, not for a test nobody means to fix; removing the tag is part of the fix.
 - Quarantine does not decide the cause.
   A failure that shows lost or misrouted input, a broken OS contract, or a missing tab the user asked for is a product defect candidate, and is investigated as one rather than tagged and left.
 - Do not make a flaky test pass by raising a timeout or deadline, adding retries, changing the number of clicks or keys, lowering an expected count, resending an action, accepting a partial string, or skipping it.
   Each of these hides the order or readiness problem the failure was reporting; fix the wait or the gate, or fix the product.
 
-These rules are checked by the reviewer; no CI check enforces them today:
+The registry policy and result checks enforce metadata, exact selection and required outcomes in CI.
+Review still decides whether the evidence supports quarantine and whether the original cause is fixed:
 
 - A pull request that adds `@flaky` links an open issue holding at least one recorded failure, and says what would end the quarantine.
 - A pull request that touches a quarantined test, or closes its issue, either removes the tag with evidence the cause is fixed or records in the issue why the quarantine stays.

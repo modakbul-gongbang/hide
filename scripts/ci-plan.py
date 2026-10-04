@@ -191,7 +191,7 @@ def main():
             raise ValueError("invalid Rust selection")
         packages = [arg for name in plan["rust_packages"] for arg in ("-p", name)]
         for mode, rest in (("clippy", ["--all-targets", "--", "-D", "warnings"]), ("test-scoped", [])):
-            command = ["bash", "scripts/verify-cargo.sh", mode, *packages, *rest]
+            command = ["bash", "scripts/verify-cargo.sh", mode, *packages, *(["--message-format=json-render-diagnostics"] if mode == "test-scoped" else []), *rest]
             if mode == "test-scoped" and os.environ.get("CI_RUST_LOG"):
                 with open(os.environ["CI_RUST_LOG"], "wb") as log:
                     process = subprocess.Popen(command, cwd=root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, start_new_session=True)

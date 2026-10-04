@@ -71,17 +71,44 @@ async function jobs(github, context) {
 module.exports = { signature, category, identity, merge, write, jobs, quarantine, MAX_ROWS, MAX_BYTES };
 function rust(text, metadata) {
   if (Buffer.byteLength(text) > MAX_BYTES) throw new Error('Rust log cap exceeded');
-  const rows = [];
-  const failures = new Map([...text.matchAll(/thread '([^']+)' panicked at ([\s\S]*?)(?=\nthread '|\nfailures:|\ntest result:|$)/g)].map(match=>[match[1],match[2]]));
-  let suite = 'unknown';
+  // Cargo's artifacts give package/target identity even for identically named
+  // integration binaries. Retain the executable identity for older raw logs.
+  const artifacts = new Map();
+  const sections = [];
+  let section;
   for (const line of text.split('\n')) {
-    const running = line.match(/Running (.*?) \(/);
-    if (running) suite = running[1];
-    const test = line.match(/^test (.+?) \.\.\. (ok|FAILED|ignored)(?:\s|$)/);
-    if (!test) continue;
-    const assertion = failures.get(test[1]) || '';
-    rows.push({...metadata,suite,test:test[1],repeat:0,retry:0,worker:'libtest',status:{ok:'passed',FAILED:'failed',ignored:'skipped'}[test[2]],
-      category:test[2]==='FAILED'?'assertion':test[2]==='ignored'?'skipped':'passed', assertion:assertion.slice(0,16000),signature:assertion?signature(assertion):null});
+    if (line.startsWith('{"reason":')) {
+      const value = JSON.parse(line);
+      if (value.reason === 'compiler-artifact' && value.executable) {
+        artifacts.set(value.executable.replace(/\\/g, '/').split('/').at(-1), value);
+      }
+    }
+    const running = line.match(/^\s*Running (.+) \((.+)\)\s*$/);
+    const doc = line.match(/^\s*Doc-tests (\S+)\s*$/);
+    if (running || doc) {
+      const executable = running ? running[2].replace(/\\/g, '/') : null;
+      const artifact = executable && artifacts.get(executable.split('/').at(-1));
+      const target = artifact ? {name:artifact.target.name,kind:artifact.target.kind} : {name:running ? running[1] : doc[1],kind:[doc ? 'doctest' : 'unknown']};
+      section = {suite:running ? `${running[1]} (${executable})` : `Doc-tests ${doc[1]}`,
+        package:artifact?.package_id || 'unknown', target, executable, lines:[]};
+      sections.push(section);
+    } else if (section) section.lines.push(line);
+  }
+  const rows = [];
+  for (const {lines, ...subject} of sections) {
+    const failures = new Map();
+    for (const match of lines.join('\n').matchAll(/thread '([^']+)'(?: \(\d+\))? panicked at ([\s\S]*?)(?=\nthread '|\nfailures:|\ntest result:|$)/g)) {
+      if (failures.has(match[1])) throw new Error('ambiguous Rust panic identity within suite');
+      failures.set(match[1], match[2]);
+    }
+    for (const line of lines) {
+      const test = line.match(/^test (.+?) \.\.\. (ok|FAILED|ignored)(?:\s|$)/);
+      if (!test) continue;
+      const assertion = test[2] === 'FAILED' ? failures.get(test[1]) || 'libtest failure detail not captured' : '';
+      rows.push({...metadata,...subject,test:test[1],repeat:Number(process.env.CI_REPEAT || 0),retry:0,worker:'libtest',status:{ok:'passed',FAILED:'failed',ignored:'skipped'}[test[2]],
+        category:test[2]==='FAILED'?(failures.has(test[1])?'assertion':'unknown'):test[2]==='ignored'?'skipped':'passed', assertion:assertion.slice(0,16000),signature:assertion?signature(assertion):null});
+      if (rows.length > MAX_ROWS) throw new Error('Rust result row cap exceeded');
+    }
   }
   if (!rows.length) throw new Error('Rust result has no observed tests');
   return merge(rows);
