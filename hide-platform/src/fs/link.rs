@@ -121,17 +121,16 @@ fn replace_using(
         if !primary
             .get_ref()
             .is_some_and(|inner| inner.is::<PublishedCleanupFailure>())
+            && let Err(cleanup) = cleanup(&beside)
         {
-            if let Err(cleanup) = cleanup(&beside) {
-                return io::Error::new(
-                    primary.kind(),
-                    UnpublishedCleanupFailure {
-                        retained: beside,
-                        primary,
-                        cleanup,
-                    },
-                );
-            }
+            return io::Error::new(
+                primary.kind(),
+                UnpublishedCleanupFailure {
+                    retained: beside,
+                    primary,
+                    cleanup,
+                },
+            );
         }
         primary
     })

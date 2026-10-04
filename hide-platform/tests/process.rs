@@ -260,6 +260,59 @@ impl Drop for FixtureProcess {
 }
 
 #[test]
+fn confirmed_tree_exit_keeps_launch_ownership_until_escaped_children_end() {
+    let _serial = serial();
+    let mut child = OwnedChild::spawn(&mut role_command("tree_own_group")).unwrap();
+    let helper = ready_number(child.take_stdout().unwrap());
+    let _recovery = FixtureProcess::live(helper);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    assert!(!child.has_exited().unwrap());
+    child.finish_tree_until(deadline, 256).unwrap();
+    assert!(child.try_wait().unwrap().is_some());
+    assert!(gone_within(
+        helper,
+        deadline.saturating_duration_since(Instant::now())
+    ));
+}
+
+#[test]
+fn confirmed_tree_exit_after_parent_exit_still_ends_its_owned_descendants() {
+    let _serial = serial();
+    let mut child = OwnedChild::spawn(&mut role_command("held_pipe")).unwrap();
+    let helper = ready_number(child.take_stdout().unwrap());
+    let _recovery = FixtureProcess::live(helper);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    while !child.has_exited().unwrap() {
+        assert!(Instant::now() < deadline, "parent exit was never observed");
+        thread::sleep(Duration::from_millis(5));
+    }
+    child.finish_tree_until(deadline, 256).unwrap();
+    assert!(child.try_wait().unwrap().is_some());
+    assert!(gone_within(
+        helper,
+        deadline.saturating_duration_since(Instant::now())
+    ));
+}
+
+#[test]
+fn crossing_the_owned_member_cap_reports_failure_and_keeps_termination_owned() {
+    let _serial = serial();
+    let mut child = OwnedChild::spawn(&mut role_command("tree_own_group")).unwrap();
+    let helper = ready_number(child.take_stdout().unwrap());
+    let _recovery = FixtureProcess::live(helper);
+    let deadline = Instant::now() + Duration::from_secs(2);
+    let error = child.finish_tree_until(deadline, 1).unwrap_err();
+    assert!(error.to_string().contains("member cap exceeded"), "{error}");
+    // The caller can recover the same launch; a cap failure is never an exit
+    // receipt, even if termination happened to finish the observed processes.
+    child.finish_tree_until(deadline, 256).unwrap();
+    assert!(gone_within(
+        helper,
+        deadline.saturating_duration_since(Instant::now())
+    ));
+}
+
+#[test]
 fn guarded_capture_keeps_stdin_payload_and_both_output_streams() {
     let _serial = serial();
     let started = Instant::now();

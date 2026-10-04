@@ -363,6 +363,62 @@ impl OwnedChild {
         }
     }
 
+    /// Observe exit without reaping the launch identity. A fixture supervisor
+    /// must retain that identity until all of its owned descendants exit.
+    pub fn has_exited(&self) -> io::Result<bool> {
+        if self.reaped {
+            return Ok(true);
+        }
+        sys::has_exited(&self.child)
+    }
+
+    /// End and confirm the complete owned namespace inside one absolute bound.
+    /// Windows queries the original job, including orphaned descendants. Unix
+    /// keeps the leader unreaped and confirms its private group plus the native
+    /// identities captured before termination. A crossed member cap is an error.
+    pub fn finish_tree_until(
+        &mut self,
+        deadline: Instant,
+        member_cap: usize,
+    ) -> io::Result<ExitStatus> {
+        self.bounded_drop = true;
+        if member_cap == 0 || member_cap > 256 {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "owned member cap must be 1..256",
+            ));
+        }
+        let members = match sys::owned_members(&self.child, &self.tie, self.reaped, member_cap) {
+            Ok(members) => members,
+            Err(primary) => {
+                // A failed inventory still requires termination of what the
+                // launch owns, while refusing an exit-confirmation claim.
+                return match self.kill_tree() {
+                    Ok(_) => Err(primary),
+                    Err(cleanup) => Err(io::Error::new(
+                        primary.kind(),
+                        format!("{primary}; owned termination also failed: {cleanup}"),
+                    )),
+                };
+            }
+        };
+        self.kill_tree()?;
+        loop {
+            if sys::owned_members_exited(&self.child, &self.tie, &members)? && self.has_exited()? {
+                return self
+                    .try_wait()?
+                    .ok_or_else(|| io::Error::other("owned root changed after exit observation"));
+            }
+            if Instant::now() >= deadline {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "owned tree exit unconfirmed; preserve home",
+                ));
+            }
+            pause_until(deadline);
+        }
+    }
+
     pub fn id(&self) -> u32 {
         self.child.id()
     }
@@ -817,25 +873,32 @@ pub fn measure_tree(pid: u32) -> io::Result<TreeMeasure> {
 
 /// Every process under `root`, parents before children.
 fn descendants(root: u32) -> io::Result<Vec<u32>> {
+    descendants_with_cap(root, 10000)
+}
+
+fn descendants_with_cap(root: u32, cap: usize) -> io::Result<Vec<u32>> {
     let mut walk = sys::Walk::new()?;
     let mut found: Vec<u32> = Vec::new();
     let mut level = vec![root];
     for _ in 0..MAX_DEPTH {
         let mut next = Vec::new();
         for parent in &level {
-            for child in walk.children_of(*parent) {
+            for child in walk.children_of(*parent)? {
                 if child != root && !found.contains(&child) {
+                    if found.len() >= cap {
+                        return Err(io::Error::other("owned process member cap exceeded"));
+                    }
                     found.push(child);
                     next.push(child);
                 }
             }
         }
         if next.is_empty() {
-            break;
+            return Ok(found);
         }
         level = next;
     }
-    Ok(found)
+    Err(io::Error::other("process ancestry depth cap exceeded"))
 }
 
 #[cfg(unix)]
@@ -1084,6 +1147,139 @@ mod sys {
         return Ok(unsafe { info.si_pid() } != 0);
     }
 
+    const MAX_PROCESS_TABLE: usize = 10000;
+    fn group_members(leader: u32) -> io::Result<Vec<u32>> {
+        let mut members = Vec::new();
+        #[cfg(target_os = "macos")]
+        {
+            let mut pids = [0i32; MAX_PROCESS_TABLE];
+            // SAFETY: bounded writable PID storage; proc_listpids returns bytes.
+            let bytes = unsafe {
+                *libc::__error() = 0;
+                libc::proc_listpids(
+                    2, /* PROC_PGRP_ONLY, sys/proc_info.h */
+                    leader,
+                    pids.as_mut_ptr().cast(),
+                    std::mem::size_of_val(&pids) as i32,
+                )
+            };
+            if bytes < 0 || (bytes == 0 && io::Error::last_os_error().raw_os_error() != Some(0)) {
+                return Err(io::Error::last_os_error());
+            }
+            if !(bytes as usize).is_multiple_of(std::mem::size_of::<i32>()) {
+                return Err(io::Error::other("invalid process table inventory"));
+            }
+            if bytes as usize >= std::mem::size_of_val(&pids) {
+                return Err(io::Error::other("process table cap exceeded"));
+            }
+            for pid in pids
+                .iter()
+                .take(bytes as usize / std::mem::size_of::<i32>())
+                .filter(|pid| **pid > 0)
+            {
+                match mac::bsd_info(*pid as u32) {
+                    Ok(info) if info.pbi_pgid == leader && info.pbi_status != libc::SZOMB => {
+                        members.push(*pid as u32)
+                    }
+                    Ok(_) => {}
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error),
+                }
+            }
+        }
+        #[cfg(target_os = "linux")]
+        {
+            let mut count = 0;
+            for entry in std::fs::read_dir("/proc")? {
+                let entry = entry?;
+                let Some(pid) = entry
+                    .file_name()
+                    .to_str()
+                    .and_then(|name| name.parse::<u32>().ok())
+                else {
+                    continue;
+                };
+                count += 1;
+                if count > MAX_PROCESS_TABLE {
+                    return Err(io::Error::other("process table cap exceeded"));
+                }
+                match linux::fields(pid) {
+                    Ok(fields)
+                        if linux::field::<u32>(&fields, 2)? == leader && fields[0] != "Z" =>
+                    {
+                        members.push(pid)
+                    }
+                    Ok(_) => {}
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error),
+                }
+            }
+        }
+        Ok(members)
+    }
+    fn member_exited(pid: u32, birth: u64) -> io::Result<bool> {
+        match start_time(pid) {
+            Ok(current) if current != birth => return Ok(true),
+            Err(error) if error.kind() == io::ErrorKind::NotFound => return Ok(true),
+            Err(error) => return Err(error),
+            Ok(_) => {}
+        }
+        #[cfg(target_os = "macos")]
+        let state = mac::bsd_info(pid).map(|info| info.pbi_status == libc::SZOMB);
+        #[cfg(target_os = "linux")]
+        let state = linux::fields(pid).map(|fields| fields[0] == "Z");
+        match state {
+            Err(error) if error.kind() == io::ErrorKind::NotFound => Ok(true),
+            other => other,
+        }
+    }
+    pub(super) fn owned_members(
+        child: &Child,
+        _: &Tie,
+        reaped: bool,
+        cap: usize,
+    ) -> io::Result<Vec<(u32, u64)>> {
+        if reaped {
+            return Err(io::Error::other(
+                "owned root was reaped before tree confirmation",
+            ));
+        }
+        let mut ids = descendants_with_cap(child.id(), cap - 1)?;
+        ids.push(child.id());
+        for pid in group_members(child.id())? {
+            if !ids.contains(&pid) {
+                ids.push(pid);
+            }
+        }
+        if ids.len() > cap {
+            return Err(io::Error::other("owned process member cap exceeded"));
+        }
+        let mut members = Vec::new();
+        for pid in ids {
+            match start_time(pid) {
+                Ok(birth) => members.push((pid, birth)),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
+        Ok(members)
+    }
+    pub(super) fn owned_members_exited(
+        child: &Child,
+        _: &Tie,
+        members: &[(u32, u64)],
+    ) -> io::Result<bool> {
+        if !group_members(child.id())?.is_empty() {
+            return Ok(false);
+        }
+        for &(pid, birth) in members {
+            if !member_exited(pid, birth)? {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
     pub(super) fn detach(command: &mut Command) -> io::Result<()> {
         // A child's standard streams are the ones its Command names, and the
         // standard library opens every other descriptor close-on-exec.
@@ -1116,8 +1312,16 @@ mod sys {
         let members = if reaped {
             Vec::new()
         } else {
-            descendants(leader).unwrap_or_default()
+            descendants(leader)?
         };
+        let mut identities = Vec::new();
+        for pid in members {
+            match start_time(pid) {
+                Ok(birth) => identities.push((pid, birth)),
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
+        }
         // The group is the child's own, so this reaches only what the child
         // started, even once the child has exited (an unreaped leader, or any
         // living member, keeps the group id from being reused).
@@ -1137,8 +1341,15 @@ mod sys {
             }
             Err(error) => return Err(error),
         };
-        for member in members {
-            ended |= signal(member as libc::pid_t, libc::SIGKILL).is_ok();
+        for (member, birth) in identities {
+            if member_exited(member, birth)? {
+                continue;
+            }
+            match signal(member as libc::pid_t, libc::SIGKILL) {
+                Ok(()) => ended = true,
+                Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                Err(error) => return Err(error),
+            }
         }
         Ok(ended)
     }
@@ -1306,7 +1517,7 @@ mod sys {
             Ok(Self)
         }
 
-        pub(super) fn children_of(&mut self, pid: u32) -> Vec<u32> {
+        pub(super) fn children_of(&mut self, pid: u32) -> io::Result<Vec<u32>> {
             // `proc_listchildpids` takes its buffer size in bytes but returns
             // a count of pids, both for the null-buffer size query and for
             // the filled buffer (libproc divides by `sizeof(int)` before
@@ -1318,11 +1529,17 @@ mod sys {
             // Both are the documented `proc_listchildpids` contract.
             unsafe {
                 let needed = libc::proc_listchildpids(pid as libc::c_int, std::ptr::null_mut(), 0);
-                if needed <= 0 {
-                    return Vec::new();
+                if needed < 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                if needed == 0 {
+                    return Ok(Vec::new());
+                }
+                if needed as usize >= MAX_PROCESS_TABLE {
+                    return Err(io::Error::other("process table cap exceeded"));
                 }
                 // Slack for children that appear between the two calls.
-                let capacity = needed as usize + 16;
+                let capacity = (needed as usize + 16).min(MAX_PROCESS_TABLE);
                 let mut buffer = vec![0i32; capacity];
                 let byte_len = (capacity * std::mem::size_of::<i32>()) as libc::c_int;
                 let written = libc::proc_listchildpids(
@@ -1330,15 +1547,21 @@ mod sys {
                     buffer.as_mut_ptr().cast(),
                     byte_len,
                 );
-                if written <= 0 {
-                    return Vec::new();
+                if written < 0 {
+                    return Err(io::Error::last_os_error());
+                }
+                if written == 0 {
+                    return Ok(Vec::new());
+                }
+                if written as usize >= capacity {
+                    return Err(io::Error::other("process child inventory cap exceeded"));
                 }
                 buffer.truncate((written as usize).min(capacity));
-                buffer
+                Ok(buffer
                     .into_iter()
                     .filter(|child| *child > 0)
                     .map(|child| child as u32)
-                    .collect()
+                    .collect())
             }
         }
     }
@@ -1411,8 +1634,9 @@ mod sys {
         pub(super) fn new() -> io::Result<Self> {
             let mut children: std::collections::HashMap<u32, Vec<u32>> =
                 std::collections::HashMap::new();
+            let mut count = 0;
             for entry in std::fs::read_dir("/proc")? {
-                let Ok(entry) = entry else { continue };
+                let entry = entry?;
                 let Some(pid) = entry
                     .file_name()
                     .to_str()
@@ -1420,16 +1644,23 @@ mod sys {
                 else {
                     continue;
                 };
-                // A process that exits during the pass is simply not listed.
-                if let Ok(parent) = parent_of(pid) {
-                    children.entry(parent).or_default().push(pid);
+                count += 1;
+                if count > MAX_PROCESS_TABLE {
+                    return Err(io::Error::other("process table cap exceeded"));
+                }
+                // A process that exited has no live entry. Other query errors
+                // cannot stand for an empty owned namespace.
+                match parent_of(pid) {
+                    Ok(parent) => children.entry(parent).or_default().push(pid),
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error),
                 }
             }
             Ok(Self { children })
         }
 
-        pub(super) fn children_of(&mut self, pid: u32) -> Vec<u32> {
-            self.children.get(&pid).cloned().unwrap_or_default()
+        pub(super) fn children_of(&mut self, pid: u32) -> io::Result<Vec<u32>> {
+            Ok(self.children.get(&pid).cloned().unwrap_or_default())
         }
     }
 }
@@ -1454,8 +1685,8 @@ mod sys {
         AssignProcessToJobObject, CreateJobObjectW, IsProcessInJob,
         JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
         JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectBasicAccountingInformation,
-        JobObjectExtendedLimitInformation, OpenJobObjectW, QueryInformationJobObject,
-        SetInformationJobObject, TerminateJobObject,
+        JobObjectBasicProcessIdList, JobObjectExtendedLimitInformation, OpenJobObjectW,
+        QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
     };
     use windows_sys::Win32::System::Pipes::PeekNamedPipe;
     use windows_sys::Win32::System::ProcessStatus::{
@@ -1802,6 +2033,68 @@ mod sys {
         Err(io::Error::other("the new process has no thread to start"))
     }
 
+    fn job_members(tie: &Tie, cap: usize) -> io::Result<Vec<u32>> {
+        #[repr(C)]
+        struct Members {
+            assigned: u32,
+            listed: u32,
+            ids: [usize; 256],
+        }
+        let mut members = Members {
+            assigned: 0,
+            listed: 0,
+            ids: [0; 256],
+        };
+        // SAFETY: the original job handle and aligned, bounded ABI storage.
+        let ok = unsafe {
+            QueryInformationJobObject(
+                (tie.0).0,
+                JobObjectBasicProcessIdList,
+                (&mut members as *mut Members).cast(),
+                std::mem::size_of::<Members>() as u32,
+                std::ptr::null_mut(),
+            )
+        };
+        if members.assigned as usize > cap {
+            return Err(io::Error::other("owned process member cap exceeded"));
+        }
+        if ok == 0 {
+            return Err(io::Error::last_os_error());
+        }
+        if members.listed > members.assigned || members.listed as usize > cap {
+            return Err(io::Error::other("invalid owned job member inventory"));
+        }
+        members.ids[..members.listed as usize]
+            .iter()
+            .map(|pid| u32::try_from(*pid).map_err(|_| io::Error::other("invalid owned job PID")))
+            .collect()
+    }
+    pub(super) fn owned_members(
+        child: &Child,
+        tie: &Tie,
+        _: bool,
+        cap: usize,
+    ) -> io::Result<Vec<(u32, u64)>> {
+        if !tie.1 {
+            return Ok(vec![(child.id(), start_time(child.id())?)]);
+        }
+        // The job, rather than old parent PIDs, is the authoritative ownership.
+        Ok(job_members(tie, cap)?
+            .into_iter()
+            .map(|pid| (pid, 0))
+            .collect())
+    }
+    pub(super) fn owned_members_exited(
+        child: &Child,
+        tie: &Tie,
+        _: &[(u32, u64)],
+    ) -> io::Result<bool> {
+        if !tie.1 {
+            return has_exited(child);
+        }
+        Ok(job_members(tie, 256)?.is_empty())
+    }
+
     pub(super) fn detach(command: &mut Command) -> io::Result<()> {
         command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
         for which in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
@@ -1977,6 +2270,9 @@ mod sys {
         // SAFETY: `entry` is valid for the size it declares.
         let mut more = unsafe { Process32FirstW(snapshot.0, &mut entry) } != 0;
         while more {
+            if table.len() >= 10000 {
+                return Err(io::Error::other("process table cap exceeded"));
+            }
             table.push((entry.th32ProcessID, entry.th32ParentProcessID));
             // SAFETY: as for the first call.
             more = unsafe { Process32NextW(snapshot.0, &mut entry) } != 0;
@@ -1998,17 +2294,21 @@ mod sys {
             })
         }
 
-        pub(super) fn children_of(&mut self, pid: u32) -> Vec<u32> {
-            let parent_started = start_time(pid).ok();
-            self.table
-                .iter()
-                .filter(|(_, parent)| *parent == pid)
-                .map(|(child, _)| *child)
-                .filter(|child| match (parent_started, start_time(*child).ok()) {
-                    (Some(parent), Some(child)) => child >= parent,
-                    _ => true,
-                })
-                .collect()
+        pub(super) fn children_of(&mut self, pid: u32) -> io::Result<Vec<u32>> {
+            let parent_started = start_time(pid)?;
+            let mut children = Vec::new();
+            for &(child, parent) in &self.table {
+                if parent != pid {
+                    continue;
+                }
+                match start_time(child) {
+                    Ok(birth) if birth >= parent_started => children.push(child),
+                    Ok(_) => {}
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                    Err(error) => return Err(error),
+                }
+            }
+            Ok(children)
         }
     }
 }
