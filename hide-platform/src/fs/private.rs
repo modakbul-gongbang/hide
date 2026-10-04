@@ -305,13 +305,13 @@ mod bootstrap_faults {
     }
 
     pub(super) fn fail(point: Point) -> io::Result<()> {
-        if let Some((wanted, skip)) = FAULT.get() {
-            if wanted == point {
-                if skip == 0 {
-                    return Err(io::Error::from_raw_os_error(libc::EIO));
-                }
-                FAULT.set(Some((wanted, skip - 1)));
+        if let Some((wanted, skip)) = FAULT.get()
+            && wanted == point
+        {
+            if skip == 0 {
+                return Err(io::Error::from_raw_os_error(libc::EIO));
             }
+            FAULT.set(Some((wanted, skip - 1)));
         }
         Ok(())
     }

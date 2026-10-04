@@ -1249,15 +1249,16 @@ mod sys {
     };
     use windows_sys::Win32::System::JobObjects::{
         AssignProcessToJobObject, CreateJobObjectW, IsProcessInJob,
-        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOB_OBJECT_QUERY,
-        JOBOBJECT_BASIC_ACCOUNTING_INFORMATION, JOBOBJECT_EXTENDED_LIMIT_INFORMATION,
-        JobObjectBasicAccountingInformation, JobObjectExtendedLimitInformation, OpenJobObjectW,
-        QueryInformationJobObject, SetInformationJobObject, TerminateJobObject,
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE, JOBOBJECT_BASIC_ACCOUNTING_INFORMATION,
+        JOBOBJECT_EXTENDED_LIMIT_INFORMATION, JobObjectBasicAccountingInformation,
+        JobObjectExtendedLimitInformation, OpenJobObjectW, QueryInformationJobObject,
+        SetInformationJobObject, TerminateJobObject,
     };
     use windows_sys::Win32::System::Pipes::PeekNamedPipe;
     use windows_sys::Win32::System::ProcessStatus::{
         K32GetProcessMemoryInfo, PROCESS_MEMORY_COUNTERS,
     };
+    use windows_sys::Win32::System::SystemServices::JOB_OBJECT_QUERY;
     use windows_sys::Win32::System::Threading::{
         CREATE_NEW_PROCESS_GROUP, CREATE_NO_WINDOW, CREATE_SUSPENDED, DETACHED_PROCESS,
         GetCurrentProcess, GetExitCodeProcess, GetProcessTimes, OpenProcess, OpenThread,
