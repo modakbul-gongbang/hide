@@ -334,20 +334,23 @@ class PosixOwned:
         self.child_pid = None
         self.returncode = None
         self.error = None
-        self.peak = 0
-        self.peak_rss_bytes = 0
+        self.peak = None
+        self.peak_rss_bytes = None
+        self.measurement_error = None
+        self.result_received = False
+        self.control_eof = False
+        self.cleanup_error = None
         self.memory_scope = "sampled_posix_process_group"
         self.closed = False
 
-    def poll(self):
+    def collect_result(self):
         while True:
             try:
                 chunk = self.control.recv(4096)
             except BlockingIOError:
                 break
             if not chunk:
-                if self.returncode is None:
-                    raise RuntimeError("process guardian exited without a result")
+                self.control_eof = True
                 break
             self.buffer += chunk
             if len(self.buffer) > 4096:
@@ -361,10 +364,17 @@ class PosixOwned:
                     self.returncode = record["returncode"]
                     self.error, self.peak = record["error"], record["peak"]
                     self.peak_rss_bytes = record["peak_rss_bytes"]
-                    if record["cleanup_error"]:
-                        self.error = ((self.error + "; ") if self.error else "") + record["cleanup_error"]
+                    self.cleanup_error = record["cleanup_error"]
+                    self.result_received = True
+
+    def poll(self):
+        self.collect_result()
+        if self.control_eof and not self.result_received:
+            raise RuntimeError("process guardian exited without a result")
         if self.error:
             raise RuntimeError(self.error)
+        if self.cleanup_error:
+            raise RuntimeError(self.cleanup_error)
         return self.returncode
 
     def close(self):
@@ -373,18 +383,35 @@ class PosixOwned:
         self.closed = True
         deadline = time.monotonic() + CLEANUP_SECONDS + 1
         failure = None
+        collecting = True
+
+        def collect():
+            nonlocal collecting
+            if collecting:
+                try:
+                    self.collect_result()
+                except BaseException as error:
+                    # Measurement failure must not interrupt process release.
+                    self.measurement_error = str(error)[:512]
+                    collecting = False
+
         try:
+            collect()
             try:
                 self.control.shutdown(socket.SHUT_WR)
             except OSError as error:
                 # A received terminal result means the guardian has completed
                 # cleanup and may already have closed its end of this socket.
                 # Reap it below; every other shutdown failure remains visible.
-                if error.errno != errno.ENOTCONN or self.returncode is None:
+                if error.errno != errno.ENOTCONN:
                     failure = error
             while True:
+                collect()
                 ended, status = os.waitpid(self.pid, os.WNOHANG)
                 if ended:
+                    # The final frame can arrive between the last read and
+                    # waitpid. Read it after reaping, before closing the pipe.
+                    collect()
                     if status != 0:
                         failure = RuntimeError("process guardian failed; command release is unconfirmed")
                     break
@@ -395,6 +422,11 @@ class PosixOwned:
                     os.waitpid(self.pid, 0)
                     raise RuntimeError("process guardian exceeded cleanup deadline; command release is unconfirmed")
                 time.sleep(0.05)
+            if not self.result_received:
+                self.measurement_error = self.measurement_error or "guardian exited without final resource report"
+                failure = RuntimeError(self.measurement_error + "; command release is unconfirmed")
+            elif self.cleanup_error:
+                failure = RuntimeError(self.cleanup_error)
         finally:
             self.control.close()
         if failure is not None:
@@ -413,8 +445,9 @@ class WindowsOwned:
         self.api, self.job, self.process, self.stdout = api, job, process, stdout
         self.accounting_type = accounting_type
         self.process_ids_type, self.memory_type = process_ids_type, memory_type
-        self.peak = 0
-        self.peak_rss_bytes = 0
+        self.peak = None
+        self.peak_rss_bytes = None
+        self.measurement_error = None
         self.memory_scope = "sampled_windows_job_working_set"
 
     @classmethod
@@ -563,7 +596,7 @@ class WindowsOwned:
         if not self.api.QueryInformationJobObject(self.job, 1, ctypes.byref(result),
                                                  ctypes.sizeof(result), None):
             raise ctypes.WinError(ctypes.get_last_error())
-        self.peak = max(self.peak, result.active)
+        self.peak = result.active if self.peak is None else max(self.peak, result.active)
         return result
 
     def poll(self):
@@ -614,7 +647,7 @@ class WindowsOwned:
             finally:
                 if not self.api.CloseHandle(process):
                     raise ctypes.WinError(ctypes.get_last_error())
-        self.peak_rss_bytes = max(self.peak_rss_bytes, rss)
+        self.peak_rss_bytes = rss if self.peak_rss_bytes is None else max(self.peak_rss_bytes, rss)
         if rss > MAX_RSS_BYTES:
             raise RuntimeError("owned Windows job exceeded the 3 GiB sampled RSS cap")
 
@@ -622,6 +655,13 @@ class WindowsOwned:
         if not self.job:
             return
         try:
+            try:
+                # An output-reader failure can precede the caller's first
+                # poll. Capture the owned job before terminating its members.
+                self.accounting()
+                self.measure_memory()
+            except BaseException as error:
+                self.measurement_error = str(error)[:512]
             if not self.api.TerminateJobObject(self.job, 1):
                 raise ctypes.WinError(ctypes.get_last_error())
             deadline = time.monotonic() + CLEANUP_SECONDS
@@ -634,6 +674,8 @@ class WindowsOwned:
                 if time.monotonic() >= deadline:
                     raise RuntimeError("Windows job survived cleanup deadline")
                 time.sleep(0.05)
+            if self.measurement_error:
+                raise RuntimeError(self.measurement_error)
         finally:
             if self.process:
                 self.api.CloseHandle(self.process)
@@ -695,7 +737,7 @@ def spawn_owned(command, environment, deadline):
             raise
         return result
     process = None
-    error, cleanup_error, returncode, peak, peak_rss = None, None, 1, 0, 0
+    error, cleanup_error, returncode, peak, peak_rss = None, None, 1, None, None
     try:
         parent.close()
         os.close(read_fd)
@@ -713,8 +755,8 @@ def spawn_owned(command, environment, deadline):
         child.sendall(json.dumps({"pid": process.pid}).encode() + b"\n")
         while (status := retained_exit_status(process)) is None:
             count, rss = group_resources(process.pid)
-            peak = max(peak, count)
-            peak_rss = max(peak_rss, rss)
+            peak = count if peak is None else max(peak, count)
+            peak_rss = rss if peak_rss is None else max(peak_rss, rss)
             if count > MAX_PROCESSES:
                 raise RuntimeError("owned process group exceeded 32 processes")
             if rss > MAX_RSS_BYTES:
@@ -750,6 +792,19 @@ def spawn_owned(command, environment, deadline):
         finally:
             # A forked guardian must never unwind into the parent's main/receipt.
             os._exit(1 if cleanup_error else 0)
+
+
+def resource_record(owned):
+    measured = owned.peak is not None and owned.peak_rss_bytes is not None
+    unavailable = owned.measurement_error
+    if not measured and unavailable is None:
+        unavailable = "no complete resource sample was collected"
+    return {"peak_owned_processes": owned.peak,
+            "peak_sampled_rss_bytes": owned.peak_rss_bytes,
+            "memory_scope": owned.memory_scope,
+            "measurement_status": ("available" if measured and not unavailable else
+                                   "partial" if measured else "unavailable"),
+            "measurement_error": unavailable}
 
 
 def run_command(command, deadline, log):
@@ -796,9 +851,7 @@ def run_command(command, deadline, log):
                     raise failures[0]
                 if returncode:
                     raise RuntimeError(f"verification wrapper exited {returncode}")
-                cost = {"output_bytes": len(output), "peak_owned_processes": owned.peak,
-                        "peak_sampled_rss_bytes": owned.peak_rss_bytes,
-                        "memory_scope": owned.memory_scope}
+                cost = {"output_bytes": len(output)}
                 break
             if time.monotonic() >= deadline:
                 raise RuntimeError("contract check exceeded shared 570s deadline")
@@ -825,9 +878,7 @@ def run_command(command, deadline, log):
         if owned is not None:
             print(json.dumps({"event": "ci.delivery_command_resources", "status": "fail",
                               "seconds": round(time.monotonic() - started, 3),
-                              "peak_owned_processes": owned.peak,
-                              "peak_sampled_rss_bytes": owned.peak_rss_bytes,
-                              "memory_scope": owned.memory_scope}), file=sys.stderr)
+                              **resource_record(owned)}), file=sys.stderr)
         # Preserve the original failure even if release also fails. UTF-8
         # replacement can expand bytes threefold: 8 KiB raw + 32 KiB JSON
         # and the fixed outcome text stay below the total 64 KiB budget.
@@ -835,6 +886,7 @@ def run_command(command, deadline, log):
         reasons = ([str(original_failure)[:512]] if original_failure is not None else [])
         reasons.extend("cleanup: " + value for value in cleanup_failures)
         raise RuntimeError("; ".join(reasons)) from original_failure
+    cost.update(resource_record(owned))
     cost["seconds"] = round(time.monotonic() - started, 3)  # Includes exit cleanup.
     return bytes(output), cost
 
