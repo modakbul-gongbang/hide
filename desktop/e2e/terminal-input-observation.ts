@@ -115,9 +115,13 @@ export async function observeTerminalInput(page: Page, panes: string[], candidat
             noteIncomplete("ws-frame-cap");
             return;
           }
-          const event = JSON.parse(data) as { schema?: unknown; kind?: unknown; payload?: { paneId?: unknown; base64?: unknown } };
-          if (event.schema !== 2 || event.kind !== "key" || typeof event.payload?.paneId !== "string" || !paneIds.includes(event.payload.paneId)) return;
-          const encoded = event.payload.base64;
+          const event = JSON.parse(data) as { schema_version?: unknown; kind?: unknown; payload?: { pane_id?: unknown; bytes_base64?: unknown } };
+          if (event.kind !== "key" || typeof event.payload?.pane_id !== "string" || !paneIds.includes(event.payload.pane_id)) return;
+          if (event.schema_version !== 2) {
+            noteIncomplete("invalid-key-schema");
+            return;
+          }
+          const encoded = event.payload.bytes_base64;
           if (typeof encoded !== "string") {
             noteIncomplete("invalid-key-payload");
             return;
@@ -127,7 +131,7 @@ export async function observeTerminalInput(page: Page, panes: string[], candidat
             return;
           }
           const bytes = atob(encoded);
-          append({ type: "ws-key", paneId: event.payload.paneId, byteLength: bytes.length,
+          append({ type: "ws-key", paneId: event.payload.pane_id, byteLength: bytes.length,
             bytes: syntheticText(bytes), readyState: socket.readyState, outcome, active: owner(document.activeElement) });
         } catch {
           noteIncomplete("ws-observation-error");
