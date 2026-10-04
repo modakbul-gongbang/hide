@@ -19,6 +19,8 @@ use hide_platform::process::{
 };
 
 const ROLE: &str = "HIDE_PLATFORM_PROC_ROLE";
+// Test-only handoff: arm recovery before the short-lived parent exits.
+const PIPE_OWNER: &str = "HIDE_PLATFORM_PROC_PIPE_OWNER";
 
 /// Windows hands a freed pid to the next process that starts, so a test that
 /// asks about a pid it has finished with must not run beside one that starts
@@ -82,6 +84,29 @@ fn child_role() {
             }
             println!("READY {}", child.id());
             let _ = child.wait();
+        }
+        // An ordinary supervisor leaves both inherited pipes in its child.
+        "exit_with_pipes" => {
+            #[allow(clippy::zombie_processes)]
+            let helper = Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", "child_role", "--nocapture", "--test-threads=1"])
+                .env(ROLE, "sleep")
+                .spawn()
+                .unwrap();
+            let path = PathBuf::from(std::env::var_os(PIPE_OWNER).unwrap());
+            std::fs::write(
+                &path,
+                format!("{} {}", helper.id(), start_time(helper.id()).unwrap()),
+            )
+            .unwrap();
+            let started = Instant::now();
+            while !path.with_extension("armed").exists() {
+                assert!(started.elapsed() < Duration::from_secs(5));
+                thread::sleep(Duration::from_millis(10));
+            }
+            println!("SPOKE out");
+            eprintln!("SPOKE err");
+            std::process::exit(0);
         }
         // Says something on both outputs and exits with a code of its own.
         "speak" => {
@@ -538,4 +563,84 @@ fn a_raised_stop_ends_the_child_before_its_deadline() {
     raiser.join().unwrap();
     assert!(matches!(failure, RunFailure::Stopped), "{failure:?}");
     assert!(started.elapsed() < Duration::from_secs(10));
+}
+
+/// The public call must finish after exit 0 even when its descendant retains
+/// both pipes. Recovery is armed before that parent exits, so the old hang
+/// fails within a bound and its one known helper is still cleaned up.
+#[test]
+fn normal_exit_ends_an_inherited_pipe_holder_before_draining() {
+    let _serial = serial();
+    let folder = tempfile::tempdir().unwrap();
+    let path = folder.path().join("owner");
+    let mut command = role_command("exit_with_pipes");
+    command.env(PIPE_OWNER, &path);
+    let (answered, result) = mpsc::channel();
+    let started = Instant::now();
+    let runner = thread::spawn(move || {
+        let answer = run_to_end(
+            &mut command,
+            Duration::from_secs(5),
+            &std::sync::atomic::AtomicBool::new(false),
+        );
+        answered.send(answer).unwrap();
+    });
+    let reported = loop {
+        match std::fs::read_to_string(&path) {
+            Ok(value) => {
+                let fields: Vec<_> = value.split_whitespace().collect();
+                if fields.len() == 2 {
+                    break (
+                        fields[0].parse::<u32>().unwrap(),
+                        fields[1].parse::<u64>().unwrap(),
+                    );
+                }
+            }
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => panic!("cannot read helper ownership: {error}"),
+        }
+        assert!(
+            started.elapsed() < Duration::from_secs(5),
+            "helper not reported"
+        );
+        thread::sleep(Duration::from_millis(10));
+    };
+    struct Recovery(u32, u64);
+    impl Drop for Recovery {
+        fn drop(&mut self) {
+            if start_time(self.0).is_ok_and(|birth| birth == self.1) {
+                terminate(self.0).expect("end only the reported helper");
+                assert!(
+                    gone_within(self.0, Duration::from_secs(5)),
+                    "helper recovery failed"
+                );
+            }
+        }
+    }
+    let recovery = Recovery(reported.0, reported.1);
+    assert_eq!(start_time(reported.0).unwrap(), reported.1);
+    std::fs::write(path.with_extension("armed"), b"ready").unwrap();
+    let answer = result.recv_timeout(Duration::from_secs(5));
+    let within_deadline = answer.is_ok();
+    let elapsed = started.elapsed();
+    let absent_on_return = !is_alive(reported.0);
+    drop(recovery);
+    let answer = answer.unwrap_or_else(|_| {
+        result
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the recovered pipe reader must finish")
+    });
+    runner.join().unwrap();
+    assert!(
+        within_deadline,
+        "run_to_end hung after exit 0 while inherited pipes remained open; elapsed {elapsed:?}"
+    );
+    let finished = answer.unwrap();
+    assert_eq!(finished.code, Some(0));
+    assert!(finished.stdout.contains("SPOKE out"));
+    assert!(finished.stderr.contains("SPOKE err"));
+    assert!(
+        absent_on_return,
+        "the inherited-pipe helper outlived the call"
+    );
 }
