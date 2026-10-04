@@ -143,7 +143,8 @@ where
             ..base()
         };
     }
-    let Ok(store) = MemoryStore::open_hook_read_only_with_expiry(&database_path(home), expired.clone())
+    let Ok(store) =
+        MemoryStore::open_hook_read_only_with_expiry(&database_path(home), expired.clone())
     else {
         if expired() {
             return HookMemoryResult {

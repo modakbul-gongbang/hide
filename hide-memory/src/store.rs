@@ -414,20 +414,14 @@ impl MemoryStore {
 
     /// Opens a hook reader with its invocation's monotonic expiry predicate.
     /// Once true, the predicate must remain true for this connection's lifetime.
-    pub fn open_hook_read_only_with_expiry<E>(
-        path: &Path,
-        expired: E,
-    ) -> Result<Self, MemoryError>
+    pub fn open_hook_read_only_with_expiry<E>(path: &Path, expired: E) -> Result<Self, MemoryError>
     where
         E: Fn() -> bool + Send + 'static,
     {
         Self::open_hook_read_only_until(path, Some(expired))
     }
 
-    fn open_hook_read_only_until<E>(
-        path: &Path,
-        expired: Option<E>,
-    ) -> Result<Self, MemoryError>
+    fn open_hook_read_only_until<E>(path: &Path, expired: Option<E>) -> Result<Self, MemoryError>
     where
         E: Fn() -> bool + Send + 'static,
     {
