@@ -433,6 +433,57 @@ test("Workspace columns preserve geometry, dock once on release and show native 
   }
 });
 
+// B20 and UI_BEHAVIOR: every arrow key moves one 32px step, even when
+// more keys arrive before the daemon publishes the previous width.
+test("column dividers retain every rapid arrow step before a snapshot arrives", async () => {
+  const herdr = await startHerdr({ agents: false });
+  const run = isolate(herdr, "column-key-burst");
+  let app: ElectronApplication | null = null;
+  try {
+    ({ app } = await launchShell(run.env));
+    const page = await app.firstWindow();
+    await enterWorkspace(page, "fixture");
+    await bodyWidth(app, page, 1600);
+    await page.locator('[data-column-toggle="views"]').click();
+    await expect(page.locator('[data-column="views"]')).toBeVisible();
+    await showExplorer(page);
+    const views = page.locator('[data-column-divider="views"]');
+    const tools = page.locator('[data-column-divider="tools"]');
+    await expect(views).toHaveAttribute("aria-valuenow", "640");
+    await expect(tools).toHaveAttribute("aria-valuenow", "355");
+    const burst = async (divider: typeof views, key: "ArrowLeft" | "ArrowRight") => {
+      await divider.focus();
+      // Deliver both keys in one browser turn, so the regression does not
+      // depend on the machine winning a race against the next snapshot.
+      await divider.evaluate((element, key) => {
+        for (let count = 0; count < 2; count += 1) {
+          element.dispatchEvent(new KeyboardEvent("keydown", { key, code: key, bubbles: true, cancelable: true }));
+        }
+      }, key);
+    };
+    await burst(views, "ArrowLeft");
+    await expect(views).toHaveAttribute("aria-valuenow", "704");
+    await expect(page.locator('[data-column="agents"]')).toHaveJSProperty("clientWidth", 525);
+    await burst(tools, "ArrowLeft");
+    await expect(tools).toHaveAttribute("aria-valuenow", "419");
+    await expect(views).toHaveAttribute("aria-valuenow", "640");
+    await expect(page.locator('[data-column="agents"]')).toHaveJSProperty("clientWidth", 525);
+    await burst(tools, "ArrowRight");
+    await expect(tools).toHaveAttribute("aria-valuenow", "355");
+    await expect(views).toHaveAttribute("aria-valuenow", "704");
+    await burst(views, "ArrowRight");
+    await expect(views).toHaveAttribute("aria-valuenow", "640");
+    await page.reload();
+    await expect(views).toHaveAttribute("aria-valuenow", "640");
+    await expect(tools).toHaveAttribute("aria-valuenow", "355");
+    await nativeCapture(app, page, "columns-rapid-keys-restored");
+  } finally {
+    await app?.close().catch(() => undefined);
+    run.cleanup();
+    herdr.stop();
+  }
+});
+
 test("SSH Workspace columns keep chords, fallback and saved widths separate from the same local path", async () => {
   test.skip(!process.env.HIDE_E2E_SSH_PORT, "requires the proved private SSH HOME in device-home.ts");
   test.setTimeout(300_000);

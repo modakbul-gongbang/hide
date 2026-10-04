@@ -44,6 +44,9 @@ pub(super) struct WorkspaceViewStore {
     pub(super) agent_placements: BTreeMap<String, (WorkspaceKey, String, Option<usize>)>,
     /// The Workspace the last sync saw in front.
     pub(super) front: Option<WorkspaceKey>,
+    /// One bounded acknowledgement slot for the last column-width intent.
+    /// It is published only for its Workspace and never saved.
+    width_request: Option<(WorkspaceKey, String)>,
     /// Counts the layout changes made outside the reconcile, so an unchanged
     /// state costs the reconcile one comparison.
     pub(super) generation: u64,
@@ -139,6 +142,9 @@ pub(super) struct WorkspaceViewPayload {
     /// The Tools column's width, in CSS pixels.
     #[serde(default)]
     pub(super) tools_width: Option<u32>,
+    /// An optional opaque identity for a width intent, at most 128 bytes.
+    #[serde(default)]
+    pub(super) width_request_id: Option<String>,
     /// A file of the front Workspace to reveal: Tools turns on with the
     /// Explorer and the file's folders unfolded, in the same event, and
     /// nothing is opened; File Views stays as it is (B5).
@@ -233,6 +239,7 @@ impl WorkspaceViewStore {
                 agent_admissions: BTreeMap::new(),
                 agent_placements: BTreeMap::new(),
                 front: None,
+                width_request: None,
                 generation: 0,
                 reconciled: None,
                 derived_active: None,
@@ -384,6 +391,18 @@ impl Runtime {
             );
             return true;
         }
+        if payload
+            .width_request_id
+            .as_ref()
+            .is_some_and(|id| id.is_empty() || id.len() > 128)
+        {
+            self.set_error(
+                "workspace_view.invalid_width_request",
+                "The column width request identity must contain 1 to 128 bytes",
+                false,
+            );
+            return true;
+        }
         let tool = match payload.tool.as_deref() {
             None => None,
             Some(value) => match Tool::parse(value) {
@@ -460,6 +479,15 @@ impl Runtime {
         if let Some(views) = payload.views {
             entry.views = views;
         }
+        let width_request_changed =
+            if payload.views_width.is_some() || payload.tools_width.is_some() {
+                let next = payload.width_request_id.map(|id| (key.clone(), id));
+                let changed = store.width_request != next;
+                store.width_request = next;
+                changed
+            } else {
+                false
+            };
         let revealed = payload
             .reveal
             .is_some_and(|path| self.unfold_to(&key, &path));
@@ -468,7 +496,7 @@ impl Runtime {
             .as_ref()
             .and_then(|store| store.views.get(&key.0, &key.1))
             != Some(&before);
-        if !entry_changed && !revealed {
+        if !entry_changed && !revealed && !width_request_changed {
             return false;
         }
         if entry_changed {
@@ -633,6 +661,11 @@ impl Runtime {
             tool: view.tool,
             views_width: view.views_width,
             tools_width: view.tools_width,
+            width_request_id: store
+                .width_request
+                .as_ref()
+                .filter(|(workspace, _)| workspace == key)
+                .map(|(_, request)| request.clone()),
             views_called: store.views_called.get(key).copied().unwrap_or(0),
             views_calls: store.views_calls,
             resumed: Some(key) == store.resumable.as_ref(),

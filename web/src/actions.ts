@@ -348,9 +348,9 @@ export function createActions(send: DispatchFn) {
    * field the value it should end at. The core keeps them per Workspace, so
    * another Workspace is never touched.
    */
-  const setWorkspaceView = (patch: { views?: boolean; tools?: boolean; tool?: Tool; views_width?: number; tools_width?: number; reveal?: string }) => {
+  const setWorkspaceView = (patch: { views?: boolean; tools?: boolean; tool?: Tool; views_width?: number; tools_width?: number; width_request_id?: string; reveal?: string }) => {
     if (!workspaceViewOf(rest())) return diagnostic("workspace_view: no Workspace in front");
-    dispatch({ schema_version: 2, kind: "workspace_view", payload: patch });
+    return dispatch({ schema_version: 2, kind: "workspace_view", payload: patch });
   };
 
   /** Shows one tool in the Tools column (B10, B12), turning the column on; nothing is sent when it already holds it. */

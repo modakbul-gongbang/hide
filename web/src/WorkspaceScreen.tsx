@@ -156,7 +156,7 @@ function ColumnRow({ view, frame, body, setBody, sizes, actions, checkout }: { v
   const [guide, setGuide] = useState<number | null>(null);
   const narrow = frame.step === "narrow";
   const covered = frame.agents === null;
-  const divider = (column: SideColumn) => <ColumnDivider workspace={workspaceKey(view)} column={column} frame={frame} body={body} sizes={sizes} setGuide={setGuide} actions={actions} />;
+  const divider = (column: SideColumn) => <ColumnDivider workspace={workspaceKey(view)} acknowledged={view.width_request_id ?? null} column={column} frame={frame} body={body} sizes={sizes} setGuide={setGuide} actions={actions} />;
   return (
     <div ref={setBody} className="relative flex min-h-0 min-w-0 flex-1" data-column-row="true">
       {/* Its own stacking context, so nothing the agents raise (a pane
@@ -213,30 +213,53 @@ function ColumnRow({ view, frame, body, setBody, sizes, actions, checkout }: { v
  * release, so no terminal or page resizes during it and every page shows its
  * still; a focused divider moves one step per arrow key, one event per press.
  */
-function ColumnDivider({ workspace, column, frame, body, sizes, setGuide, actions }: { workspace: string; column: SideColumn; frame: ColumnFrame; body: HTMLElement | null; sizes: ColumnSizes; setGuide: (x: number | null) => void; actions: Actions }) {
+function ColumnDivider({ workspace, acknowledged, column, frame, body, sizes, setGuide, actions }: { workspace: string; acknowledged: string | null; column: SideColumn; frame: ColumnFrame; body: HTMLElement | null; sizes: ColumnSizes; setGuide: (x: number | null) => void; actions: Actions }) {
   const cancelDrag = useRef<(() => void) | null>(null);
+  const [keySession] = useState(() => crypto.randomUUID());
+  const keyIntent = useRef<{ frame: ColumnFrame; published: ColumnFrame; body: number; request: string; observed: string | null } | null>(null);
+  // Keep one absolute target until its own acknowledgement, not an older
+  // echo from this key session. Other callers and changed geometry rebase it.
+  useLayoutEffect(() => {
+    const pending = keyIntent.current;
+    if (pending && (acknowledged === pending.request ||
+      ((acknowledged !== pending.observed || frame.views !== pending.published.views || frame.tools !== pending.published.tools) && !acknowledged?.startsWith(`${keySession}:`)) ||
+      pending.body !== body?.clientWidth || pending.frame.step !== frame.step ||
+      (pending.frame.views === null) !== (frame.views === null) || (pending.frame.tools === null) !== (frame.tools === null))) {
+      keyIntent.current = null;
+    }
+  }, [acknowledged, keySession, body, frame]);
+  useLayoutEffect(() => () => { keyIntent.current = null; }, [workspace, body]);
   // A captured pointer belongs to the Workspace and geometry it started on.
   // Switching either, or unmounting, retires the guide and its page still.
   useLayoutEffect(() => () => cancelDrag.current?.(), [workspace, body, frame.agents, frame.views, frame.tools]);
   const width = (column === "views" ? frame.views : frame.tools) ?? 0;
   const name = column === "views" ? "File Views" : "Tools";
-  const land = (x: number) => {
+  const land = (x: number, basis = frame, request?: string) => {
     const total = body?.clientWidth ?? 0;
     if (total <= 0) return;
-    const patch = dividerLanding({ divider: column, x, body: total, frame, sizes });
-    const changed = (patch.views_width !== undefined && patch.views_width !== frame.views) || (patch.tools_width !== undefined && patch.tools_width !== frame.tools);
-    if (changed) actions.setWorkspaceView(patch);
+    const patch = dividerLanding({ divider: column, x, body: total, frame: basis, sizes });
+    const changed = (patch.views_width !== undefined && patch.views_width !== basis.views) || (patch.tools_width !== undefined && patch.tools_width !== basis.tools);
+    if (!changed) return;
+    if (request) {
+      const views = patch.views_width ?? basis.views;
+      const tools = patch.tools_width ?? basis.tools;
+      const dividers = (views !== null ? sizes.divider : 0) + (tools !== null ? sizes.divider : 0);
+      keyIntent.current = { frame: { ...basis, views, tools, agents: total - dividers - (views ?? 0) - (tools ?? 0) }, published: frame, body: total, request, observed: acknowledged };
+    }
+    if (actions.setWorkspaceView({ ...patch, ...(request ? { width_request_id: request } : {}) }) === false) keyIntent.current = null;
   };
   // Where the divider's left edge stands now, from the body's left edge.
-  const position = () => {
+  const position = (basis = frame) => {
     const total = body?.clientWidth ?? 0;
-    const right = column === "views" ? total - (frame.tools !== null ? (frame.tools ?? 0) + sizes.divider : 0) : total;
-    return right - width - sizes.divider;
+    const right = column === "views" ? total - (basis.tools !== null ? basis.tools + sizes.divider : 0) : total;
+    const currentWidth = (column === "views" ? basis.views : basis.tools) ?? 0;
+    return right - currentWidth - sizes.divider;
   };
   const drag = (event: React.PointerEvent<HTMLDivElement>) => {
     if (event.button !== 0 || !body) return;
     event.preventDefault();
     cancelDrag.current?.();
+    keyIntent.current = null;
     const left = body.getBoundingClientRect().left;
     const target = event.currentTarget;
     target.setPointerCapture(event.pointerId);
@@ -289,11 +312,16 @@ function ColumnDivider({ workspace, column, frame, body, sizes, setGuide, action
       data-column-divider={column}
       className="group relative z-10 flex w-sm shrink-0 cursor-col-resize justify-center bg-background outline-none"
       onPointerDown={drag}
+      onBlur={() => { keyIntent.current = null; }}
       onKeyDown={(event) => {
         if (event.key !== "ArrowLeft" && event.key !== "ArrowRight") return;
         event.preventDefault();
-        // Left widens the column, as its divider moves left.
-        land(position() + (event.key === "ArrowLeft" ? -DIVIDER_STEP : DIVIDER_STEP));
+        // Left widens the column, as its divider moves left. Calculate from
+        // the last requested target while the core is still confirming it.
+        const pending = keyIntent.current;
+        const basis = pending && pending.body === body?.clientWidth ? pending.frame : frame;
+        const request = `${keySession}:${crypto.randomUUID()}`;
+        land(position(basis) + (event.key === "ArrowLeft" ? -DIVIDER_STEP : DIVIDER_STEP), basis, request);
       }}
     >
       <DividerGrip className="opacity-0 group-hover:opacity-100 group-focus-visible:opacity-100" />

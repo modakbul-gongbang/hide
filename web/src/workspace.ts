@@ -25,6 +25,8 @@ export type WorkspaceView = {
   views_width: number | null;
   /** The Tools column's width, the same way. */
   tools_width: number | null;
+  /** The core's latest width acknowledgement, absent before any named request. Never saved. */
+  width_request_id?: string | null;
   /** The number of this Workspace's last File Views call, 0 for none since the core started (`readCalls`). */
   views_called: number;
   /** How many File Views calls the core has numbered, in any Workspace. */

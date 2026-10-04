@@ -203,7 +203,7 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     const widthBefore = Number(await viewsDivider.getAttribute("aria-valuenow"));
     await page.keyboard.press("ArrowRight");
     await expect(viewsDivider).toHaveAttribute("aria-valuenow", String(widthBefore - 32));
-    expect(last.get("workspace_view")).toEqual({ views_width: widthBefore - 32 });
+    expect(last.get("workspace_view")).toEqual({ views_width: widthBefore - 32, width_request_id: expect.any(String) });
     await settled();
     const widened = (await viewsColumn.boundingBox())!;
     const resizesBeforeDrag = resizes();

@@ -218,6 +218,10 @@ pub struct WorkspaceViewSnapshot {
     pub views_width: Option<u32>,
     /// The Tools column's width, the same way.
     pub tools_width: Option<u32>,
+    /// The last width request the core accepted for this Workspace. Runtime
+    /// only, so a shell can distinguish its latest intent from an older echo.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub width_request_id: Option<String>,
     /// The number of this Workspace's last File Views call, 0 for none since
     /// the core started; a number past `views_calls` as the shell last read
     /// it is a call the shell shows in a narrow body (D-07).

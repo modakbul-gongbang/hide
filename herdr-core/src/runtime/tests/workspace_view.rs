@@ -901,3 +901,105 @@ fn closing_the_last_view_turns_file_views_off_and_keeps_tools() {
         }
     }
 }
+
+/// B20: width acknowledgements identify the accepted intent, including a
+/// no-op width, without adding UI bookkeeping to the saved Workspace file.
+#[test]
+fn workspace_width_requests_are_bounded_ephemeral_and_confirm_exact_intents() {
+    let (runtime, _checkout_id, directory) = strip_checkout("width-requests");
+    let state = views_path("width-requests");
+    let mut runtime = with_views(runtime, &state);
+    with_tabs(&mut runtime, &directory);
+    layout(
+        &mut runtime,
+        serde_json::json!({"views_width": 672, "width_request_id": "divider:first"}),
+    );
+    assert_eq!(
+        runtime
+            .snapshot
+            .workspace_view
+            .as_ref()
+            .unwrap()
+            .width_request_id
+            .as_deref(),
+        Some("divider:first")
+    );
+    layout(
+        &mut runtime,
+        serde_json::json!({"views_width": 704, "width_request_id": "divider:second"}),
+    );
+    let published = runtime.snapshot.workspace_view.as_ref().unwrap();
+    assert_eq!(published.views_width, Some(704));
+    assert_eq!(
+        published.width_request_id.as_deref(),
+        Some("divider:second")
+    );
+    assert!(!runtime.dispatch_json(&explorer_event(
+        "workspace_view",
+        serde_json::json!({"views_width": 704, "width_request_id": "divider:second"})
+    )));
+    let saved = std::fs::read_to_string(&state).unwrap();
+    assert!(runtime.dispatch_json(&explorer_event(
+        "workspace_view",
+        serde_json::json!({"views_width": 704, "width_request_id": "divider:third"})
+    )));
+    assert_eq!(
+        runtime
+            .snapshot
+            .workspace_view
+            .as_ref()
+            .unwrap()
+            .width_request_id
+            .as_deref(),
+        Some("divider:third")
+    );
+    assert_eq!(std::fs::read_to_string(&state).unwrap(), saved);
+    assert!(!saved.contains("width_request_id"));
+    layout(&mut runtime, serde_json::json!({"tools": true}));
+    assert_eq!(
+        runtime
+            .snapshot
+            .workspace_view
+            .as_ref()
+            .unwrap()
+            .width_request_id
+            .as_deref(),
+        Some("divider:third")
+    );
+    layout(&mut runtime, serde_json::json!({"views_width": 650}));
+    assert_eq!(
+        runtime
+            .snapshot
+            .workspace_view
+            .as_ref()
+            .unwrap()
+            .width_request_id,
+        None
+    );
+    for invalid in [String::new(), "x".repeat(129)] {
+        assert!(runtime.dispatch_json(&explorer_event(
+            "workspace_view",
+            serde_json::json!({"views_width": 720, "width_request_id": invalid})
+        )));
+        assert_eq!(
+            runtime.snapshot.status.last_error.as_ref().unwrap().kind,
+            "workspace_view.invalid_width_request"
+        );
+        assert_eq!(
+            runtime
+                .snapshot
+                .workspace_view
+                .as_ref()
+                .unwrap()
+                .views_width,
+            Some(650)
+        );
+    }
+    let published = runtime.snapshot.workspace_view.as_ref().unwrap();
+    let key = (published.device_id.clone(), published.path.clone());
+    drop(runtime);
+    let (reloaded, _) = crate::workspace_views::load(&state, 0);
+    assert_eq!(reloaded.get(&key.0, &key.1).unwrap().views_width, Some(650));
+    std::fs::remove_dir_all(state.parent().unwrap()).unwrap();
+    std::fs::remove_dir_all(directory).unwrap();
+}

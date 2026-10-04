@@ -48,6 +48,7 @@ Choosing an agent or a tab from the sidebar, the palette, a tab cycle or another
 
 The column edges are dividers: Agent Views | File Views, and the edge left of Tools.
 Each divider shows its grip on hover, keyboard focus and while dragging; a drag moves a guide with the pointer and lands once on release, and a focused divider moves one 32px step per arrow key, each divider a separator that reports its width.
+Fast arrow presses retain every step before the preceding width has been confirmed, and reloading restores the final width.
 The divider between File Views and Tools trades width between the two, so the agents keep theirs; the others change one column's width against Agent Views.
 No column gets narrower than its minimum: Agent Views 480px, File Views 360px, Tools 260px; File Views starts at 640px and Tools at its usual tool width until first resized.
 Turning File Views or Tools on or off, or landing a divider that moves Agent Views' edge, resizes the agents' terminals once; a drag in progress, an open, close or tab change inside File Views, a split or a drag of a view, and choosing an agent resize nothing.
