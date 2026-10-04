@@ -234,20 +234,22 @@ fn plan(ledger: &Ledger, device: &str, agents: &[ProjectedAgent]) -> Vec<Patch> 
         .iter()
         .map(|record| (record.id.as_str(), record))
         .collect::<HashMap<_, _>>();
-    let records = ledger
+    let mut records = ledger
         .agents
         .iter()
         .filter(|record| record.machine == device && record.parent.is_some())
         .map(|record| (record.pane.as_str(), record))
         .collect::<HashMap<_, _>>();
     let mut patches = Vec::new();
-    for agent in agents.iter().take(super::AGENT_LIMIT) {
-        let Some(record) = records.get(agent.pane_id.as_str()) else {
-            continue;
-        };
+    // The registry bounds retained targets, not their native-list position.
+    // Consuming each match also bounds duplicate observations to one patch.
+    for agent in agents {
         if agent.lineage_session.is_none() {
             continue;
         }
+        let Some(record) = records.remove(agent.pane_id.as_str()) else {
+            continue;
+        };
         let parent = record
             .parent
             .as_ref()
@@ -547,5 +549,57 @@ mod tests {
         writer.observe(&ledger, &missing, false, observed);
         assert!(batches.try_recv().is_err());
         assert_eq!(writer.in_flight.len(), 1);
+    }
+    #[test]
+    fn a_registered_child_after_unregistered_native_prefix_receives_all_four_tokens() {
+        let parent = record("agent-1", "w1:p1", "parent", None);
+        let child = record("agent-2", "w2:p1", "child", Some(&parent.id));
+        let ledger = Ledger {
+            next_id: 3,
+            agents: vec![parent.clone(), child.clone()],
+            ..Default::default()
+        };
+        let mut observations = (0..super::super::AGENT_LIMIT)
+            .map(|index| {
+                let mut native = agent(&child, BTreeMap::new());
+                native.pane_id = format!("unregistered-{index}");
+                native
+            })
+            .collect::<Vec<_>>();
+        observations.push(agent(&child, BTreeMap::new()));
+        let patches = plan(&ledger, "local", &observations);
+        assert_eq!(patches.len(), 1);
+        assert_eq!(patches[0].pane, child.pane);
+        assert_eq!(
+            patches[0].tokens,
+            BTreeMap::from([
+                ("parent_pane".into(), Value::String(parent.pane)),
+                ("parent_machine".into(), Value::Null),
+                (
+                    "child_session".into(),
+                    Value::String(child.actor.session.unwrap())
+                ),
+                (
+                    "parent_session".into(),
+                    Value::String(parent.actor.session.unwrap())
+                ),
+            ])
+        );
+    }
+
+    #[test]
+    fn duplicate_native_observations_cannot_exceed_registered_patch_count() {
+        let parent = record("agent-1", "w1:p1", "parent", None);
+        let child = record("agent-2", "w2:p1", "child", Some(&parent.id));
+        let observed = agent(&child, BTreeMap::new());
+        let ledger = Ledger {
+            next_id: 3,
+            agents: vec![parent, child.clone()],
+            ..Default::default()
+        };
+        let observations = vec![observed; super::super::AGENT_LIMIT + 1];
+        let patches = plan(&ledger, "local", &observations);
+        assert_eq!(patches.len(), 1);
+        assert_eq!(patches[0].pane, child.pane);
     }
 }

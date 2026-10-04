@@ -133,7 +133,8 @@ A report from an unwatched sender is an ordinary letter; the parent can restart 
 `hide agent register [--check]`, `list`, `show` and `end` preserve the caller surface used by dispatch and Fork.
 `hide agent spawn` accepts `--parent`, `--name`, `--intent`, `--kind`, `--repo`, `--branch`, optional `--path`, `--no-watch` and native arguments after `--`.
 It creates the checkout when needed, the real child pane and agent, registers their relationship, writes lineage immediately and starts a watch unless `--no-watch` is present.
-Retrying the same intent resumes the existing child and repairs incomplete registration rather than creating another one.
+A completed spawn stores a durable receipt for its parent and intent, so retries return the same child and preserve ended registrations and closed watches.
+Only incomplete intents resume their recorded creation and registration steps; starting a new watch after completion requires explicit `hide watch start`.
 Remote starts use Hide's existing device start path.
 The unsupported reconciliation/resume/session flags and relay, escalate, graph and events commands are absent.
 
