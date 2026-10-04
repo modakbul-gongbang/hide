@@ -1,5 +1,5 @@
 import { useInterfaceTranslation } from "./i18n/client";
-import { ChevronDownIcon, ChevronRightIcon, CornerUpLeftIcon, FolderGit2Icon, FolderIcon, HouseIcon, LayoutDashboardIcon, Loader2Icon, PlusIcon, RefreshCwIcon, ServerIcon, SettingsIcon } from "lucide-react";
+import { ChevronDownIcon, ChevronRightIcon, CornerUpLeftIcon, FolderGit2Icon, FolderIcon, HouseIcon, Loader2Icon, PlusIcon, RefreshCwIcon, ServerIcon, SettingsIcon } from "lucide-react";
 import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { Actions } from "./actions";
 import { Button } from "./components/ui/button";
@@ -18,7 +18,7 @@ import { checkoutAgentRows, type BoardRow } from "./projectBoard";
 import { FoldLane, SidebarAgentRow, type AgentRowMenu } from "./components/sidebar-agent-row";
 import { StatusBadge } from "./components/status-badge";
 import { WeeklyUsage } from "./components/weekly-usage";
-import { agentPlaces, agentSections, allAgents, allLineageWorkspaces, deviceListedAgents, groupCounts, overviewScreen, projectPaneIds, type ListedAgent } from "./navigation";
+import { agentPlaces, agentSections, allAgents, allLineageWorkspaces, deviceListedAgents, groupCounts, projectPaneIds, type ListedAgent } from "./navigation";
 import { foldedLineage, type FoldedLineage } from "./lineageSummary";
 import {
   activeCheckouts,
@@ -28,7 +28,7 @@ import {
   checkoutPresentation,
   checkoutRowExpansion,
   projectRowExpansion,
-  overviewRowSelected,
+  projectCheckout,
   folderCheckout,
   inactiveCheckouts,
   projectMarks,
@@ -46,6 +46,7 @@ import { focusedRemoteDevice, type AgentRow, type Checkout, type InactiveProject
 import { useShellStore } from "./store";
 import { draggedSidebarWidth, sidebarWidthToSend } from "./sidebarWidth";
 import { useUiStore } from "./ui";
+import { useOverviewCount } from "./Overview";
 
 function herdrRowLabel(state: string | null): string | null {
   if (state === "unconfigured" || state === "socket_missing") return "Herdr 소켓 없음";
@@ -89,7 +90,11 @@ export function Sidebar({ actions }: { actions: Actions }) {
   }, [devices, frontId, remoteStatus, actions]);
   useHomeStart();
   // The switch has no chord of its own until the operator binds one (issue 170).
-  const switchChord = useShellStore((s) => commandLabel("toggle_sidebar_view", s.rest?.ui_state));
+  const projectChord = useShellStore((s) => commandLabel("sidebar_projects", s.rest?.ui_state));
+  const agentChord = useShellStore((s) => commandLabel("sidebar_agents", s.rest?.ui_state));
+  const overviewChord = useShellStore((s) => commandLabel("overview", s.rest?.ui_state));
+  const overviewCount = useOverviewCount();
+  const overviewSelected = useUiStore((s) => s.overviewOpen || s.screen?.kind === "main");
   const storedWidth = useShellStore((s) => s.rest?.ui_state?.sidebar_width ?? null);
   // A drag draws the nav alone at the width under the pointer, over the
   // center, so nothing beside it (a terminal above all) reflows per move; the
@@ -99,6 +104,14 @@ export function Sidebar({ actions }: { actions: Actions }) {
   useEffect(() => {
     if (!dragging.current) setPreview(null);
   }, [storedWidth]);
+  const focusRequest = useUiStore((s) => s.sidebarFocus);
+  useEffect(() => {
+    if (!visible || !focusRequest || body === "disconnected") return;
+    const frame = requestAnimationFrame(() => {
+      document.querySelector<HTMLElement>(`[data-sidebar="${mode}"] [data-sidebar-content] [aria-current="page"], [data-sidebar="${mode}"] [data-sidebar-content] button`)?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [visible, mode, body, focusRequest]);
   if (!visible) return null;
   const land = (current: number, landed: number) => {
     const send = sidebarWidthToSend(storedWidth ?? current, landed);
@@ -141,15 +154,18 @@ export function Sidebar({ actions }: { actions: Actions }) {
       >
         {/* The rail is the sidebar's full-height left column, the device's header and lists beside it (quick device-rail-slack). */}
         {rail ? <DeviceRail actions={actions} /> : null}
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div className="sidebar-header-container flex min-h-0 min-w-0 flex-1 flex-col">
           <SidebarHeader
             rail={rail}
             title={title}
             addProject={body !== "agents"}
             tabs={body !== "disconnected"}
             mode={mode}
+            compact={(preview ?? storedWidth ?? tokenPx("--size-sidebar-ideal")) < tokenPx("--size-sidebar-ideal")}
             deviceMenu={deviceMenu}
-            switchChord={switchChord || null}
+            projectChord={projectChord || null}
+            agentChord={agentChord || null}
+            overview={{ selected: overviewSelected, count: overviewCount, chord: overviewChord || null, onOpen: () => actions.openOverviewEntry() }}
             searchChord={commandLabel("search") || null}
             newWorkspaceChord={commandLabel("new_workspace") || null}
             onMode={actions.showSidebarMode}
@@ -309,10 +325,8 @@ function SidebarEdge({
 const HomeSection = memo(function HomeSection({ actions }: { actions: Actions }) {
   const deviceId = useShellStore((s) => frontDeviceId(s.rest));
   const count = useShellStore((s) => (s.rest === null ? null : homeProjectCount(s.rest, deviceId)));
-  // A Home Overview names its device, or follows the one in front when it names none.
-  const screenDevice = useUiStore((s) => (s.screen?.kind === "main" ? (s.screen.deviceId ?? "") : null));
-  const selected = screenDevice !== null && (screenDevice === "" || screenDevice === deviceId);
-  const workspaceScreen = useUiStore((s) => s.screen?.kind === "workspace");
+  const selected = false;
+  const workspaceScreen = useUiStore((s) => s.screen?.kind === "workspace" && !s.overviewOpen);
   const home = useShellStore((s) => contextHome(s.rest));
   const agents = useShellStore((s) => contextAgents(s.rest, s.agents));
   const localWorkspaces = useShellStore((s) => s.rest?.navigator?.workspaces);
@@ -341,7 +355,7 @@ const HomeSection = memo(function HomeSection({ actions }: { actions: Actions })
           onClick={() => {
             const ui = useUiStore.getState();
             if (refusal !== null) ui.setHomeStart(null);
-            ui.setScreen({ kind: "main", deviceId });
+            actions.openHome(deviceId);
           }}
         >
           <HouseIcon aria-hidden="true" className="size-(--size-checkout-icon) shrink-0 text-subtle-foreground" />
@@ -613,8 +627,7 @@ function ProjectList({ actions, home }: { actions: Actions; home: ReactNode }) {
   const lineageWorkspaces = useMemo(() => allLineageWorkspaces(localWorkspaces, remoteStatuses), [localWorkspaces, remoteStatuses]);
   const openCheckouts = useShellStore((s) => s.rest?.ui_state?.expanded_checkout_ids ?? NO_IDS);
   const focusedPaneId = useShellStore((s) => s.focusedPaneId);
-  const screenKind = useUiStore((s) => s.screen?.kind ?? null);
-  const overviewProjectId = useUiStore((s) => (s.screen?.kind === "overview" ? s.screen.projectId : null));
+  const workspaceVisible = useUiStore((s) => s.screen?.kind === "workspace" && !s.overviewOpen);
   const catalogState = useShellStore((s) => catalogLineOf(s.rest)?.state ?? null);
   const catalogText = useShellStore((s) => catalogLineOf(s.rest)?.text ?? null);
   const catalogLine = catalogState && catalogText ? { state: catalogState, text: catalogText } : null;
@@ -642,8 +655,7 @@ function ProjectList({ actions, home }: { actions: Actions; home: ReactNode }) {
     numberOf: numberOfPane,
     focusedCheckoutId,
     focusedPaneId,
-    workspaceScreen: screenKind === "workspace",
-    overviewProjectId,
+    workspaceScreen: workspaceVisible,
     openCheckouts,
     disclosure: !remote,
     actions,
@@ -693,7 +705,6 @@ type ListContext = {
   /** A Workspace is in front, so the focused checkout and agent are the scope shown. */
   workspaceScreen: boolean;
   /** The project whose Overview is in front. */
-  overviewProjectId: string | null;
   /** Checkouts whose agent rows the operator opened; every other checkout names its agents on line two. */
   openCheckouts: string[];
   /** False over a selected SSH device, whose tree is drawn with nothing folded. */
@@ -882,14 +893,14 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
         workspace={workspace}
         checkout={folder}
         agentRows={rowsByCheckout.get(folder.id) ?? NO_BOARD_ROWS}
-        focused={(context.workspaceScreen && folder.id === context.focusedCheckoutId) || context.overviewProjectId === workspace.id}
+        focused={context.workspaceScreen && folder.id === context.focusedCheckoutId}
         inset={inset}
         context={context}
       />
     );
   }
   const ProjectIcon = workspace.is_git ? FolderGit2Icon : FolderIcon;
-  const selected = overviewRowSelected(workspace, context.overviewProjectId);
+  const target = projectCheckout(workspace, useShellStore.getState().rest?.ui_state?.recent_checkouts);
   const marks = projectMarks(workspace);
   const checkoutRow = (checkout: Checkout) => (
     <CheckoutRowView
@@ -919,7 +930,7 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
             data-project-row={workspace.id}
             aria-label={[workspace.label, badgeWords(marks)].filter(Boolean).join(", ")}
             className="flex min-w-0 flex-1 self-stretch items-center gap-sm rounded-xs text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
-            onClick={() => actions.openProject(workspace, projectRowExpansion(workspace, context.overviewProjectId, disclosure))}
+            onClick={() => actions.openProject(workspace, projectRowExpansion(workspace, target, context.workspaceScreen ? context.focusedCheckoutId : null, disclosure))}
           >
             <ProjectIcon aria-hidden="true" className="size-(--size-checkout-icon) shrink-0 text-subtle-foreground" />
             <span data-row-name="true" className="min-w-0 flex-1 truncate text-subhead font-semibold text-foreground">{workspace.label}</span>
@@ -940,7 +951,6 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
       </EntryContextMenu>
       {expanded ? (
         <ul>
-          {workspace.is_git ? <OverviewRow workspace={workspace} selected={selected} /> : null}
           {active.map(checkoutRow)}
           {inactive.length > 0 ? (
             <li>
@@ -957,28 +967,6 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
           {workspace.inactive_checkouts.expanded ? inactive.map(checkoutRow) : null}
         </ul>
       ) : null}
-    </li>
-  );
-}
-
-function OverviewRow({ workspace, selected }: { workspace: Workspace; selected: boolean }) {
-  return (
-    <li>
-      <button
-        type="button"
-        data-project-overview={workspace.id}
-        aria-current={selected ? "page" : undefined}
-        className={cn(
-          "flex min-h-(--size-checkout-row) w-full items-center gap-sm rounded-sm pr-xs text-left text-body text-foreground outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
-          selected ? "bg-secondary font-medium" : "hover:bg-accent",
-        )}
-        style={{ paddingLeft: CHECKOUT_COLUMN }}
-        onClick={() => useUiStore.getState().setScreen(overviewScreen(useShellStore.getState().rest, workspace.id))}
-      >
-        <LayoutDashboardIcon aria-hidden="true" className="size-(--size-checkout-icon) shrink-0 text-subtle-foreground" />
-        <span className="min-w-0 flex-1 truncate">Overview</span>
-        <FoldLane />
-      </button>
     </li>
   );
 }
@@ -1110,9 +1098,9 @@ const CheckoutRowView = memo(function CheckoutRowView({
  * one row. Line one is the project's name and its status badge, which stays
  * while the agent rows are open because it is the project's own summary; line
  * two is the purpose. The row opens the checkout and is marked while that
- * checkout is the Workspace in front or the project's Overview is, and its
+ * checkout is the Workspace in front, and its
  * menu is the project's followed by the checkout's. It ends as a checkout row
- * does, and its Overview is reached from All projects.
+ * does, and its project scope is reached from the shared Overview.
  */
 const FolderRowView = memo(function FolderRowView({
   workspace,
@@ -1390,8 +1378,6 @@ function menuHost(): MenuHost {
 
 function runProjectItem(actions: Actions, workspace: Workspace, item: MenuItem["id"]) {
   switch (item) {
-    case "open_overview":
-      return useUiStore.getState().setScreen(overviewScreen(useShellStore.getState().rest, workspace.id));
     case "new_worktree":
       return useUiStore.getState().setWorkspaceDialog({ kind: "new_worktree", workspaceId: workspace.id });
     case "new_tab_primary": {

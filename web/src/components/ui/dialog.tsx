@@ -5,8 +5,8 @@ import { cn } from "../../lib/utils";
 import { useLayerOpen, useReturnFocus } from "./layer";
 
 /** Radix's dialog root, with its open state joined to the shell's Escape layers. */
-function Dialog({ open, defaultOpen, onOpenChange, ...props }: ComponentProps<typeof DialogPrimitive.Root>) {
-  const [current, change] = useLayerOpen(open, defaultOpen, onOpenChange);
+function Dialog({ open, defaultOpen, onOpenChange, baseEscape = false, ...props }: ComponentProps<typeof DialogPrimitive.Root> & { baseEscape?: boolean }) {
+  const [current, change] = useLayerOpen(open, defaultOpen, onOpenChange, baseEscape);
   return <DialogPrimitive.Root data-slot="dialog" open={current} onOpenChange={change} {...props} />;
 }
 

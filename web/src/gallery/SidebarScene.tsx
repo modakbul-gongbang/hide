@@ -69,7 +69,7 @@ export function SidebarScene({ theme, width, scale, content, devices, front, rai
   }, [scene, width, rail]);
 
   useLayoutEffect(() => {
-    useUiStore.setState({ sidebarMode: "projects", screen: { kind: "overview", projectId: "herdr-ide", lens: entryLens(null, "board") } });
+    useUiStore.setState({ sidebarMode: "projects", screen: { kind: "main" }, overviewProjectId: "herdr-ide", overviewLens: entryLens(null, "board") });
   }, [front]);
 
   useLayoutEffect(() => {

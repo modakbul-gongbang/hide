@@ -1,3 +1,4 @@
+import { openProjectOverview } from "./overview-entry";
 // The request view on an isolated pinned Herdr and hided (PRD
 // overview-request-view): a Git project whose main agent was asked a long,
 // many-line request with an image and delegated a working child, a
@@ -136,7 +137,7 @@ test("the request view: what each agent was asked, what came of it, and what is 
 
     // The sidebar's project row opens the request view, the first tile (B1).
     await page.locator('[data-sidebar-mode="projects"]').click();
-    await page.locator("[data-project-row]", { hasText: /^repo/ }).click();
+    await openProjectOverview(page, "repo");
     const overview = page.locator("[data-overview-screen]");
     await expect(overview).toHaveAttribute("data-overview-view", "requests");
     expect(await overview.locator("[data-lens-tile]").evaluateAll((tiles) => tiles.map((tile) => tile.getAttribute("data-lens-tile")))).toEqual(["requests", "agents", "issues", "prs", "sessions"]);
@@ -253,7 +254,8 @@ test("the request view: what each agent was asked, what came of it, and what is 
 
     // ⌘⇧H comes back to the request view; Home opens All projects on its 요청 tab (B1).
     await page.locator("body").click({ position: { x: 1, y: 1 } });
-    await page.keyboard.press(chord("project_home"));
+    await page.locator("[data-go-main]").click();
+    await page.getByRole("tab", { name: "repo", exact: true }).click();
     await expect(overview).toHaveAttribute("data-overview-view", "requests");
     await page.locator("[data-home-destination]").click();
     const main = page.locator("[data-main-screen]");

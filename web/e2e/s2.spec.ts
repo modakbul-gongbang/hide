@@ -94,7 +94,7 @@ test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" },
     const firstRow = firstProject.locator("[data-checkout]").first();
     await firstRow.click();
     await expect(firstRow).toHaveAttribute("aria-current", "true");
-    await expect(page.locator("[role=tab]")).toHaveCount(3);
+    await expect(page.locator("[data-tab]")).toHaveCount(3);
     await expect(page.locator("[data-pane-view]")).toHaveCount(2);
     await screenshot(page, "s2-projects-two-checkouts");
     const focusEvents = sent.get("focus_checkout") ?? 0;
@@ -103,7 +103,7 @@ test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" },
     const betaRow = betaProject.locator("[data-checkout]").first();
     await betaRow.click();
     await expect(betaRow).toHaveAttribute("aria-current", "true");
-    await expect(page.locator("[role=tab]")).toHaveCount(1);
+    await expect(page.locator("[data-tab]")).toHaveCount(1);
     await expect(page.locator("[data-canvas]")).toHaveAttribute("data-canvas", beta.result.tab.tab_id);
     await expect(page.locator("[data-pane-view]")).toHaveCount(1);
     await expect.poll(() => sent.get("focus_checkout")).toBe(focusEvents + 1);
@@ -112,9 +112,9 @@ test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" },
     // reached from All projects (S6 B1). It opens on the request view
     // (overview-request-view D-05), its Agents tile on its agents' boxes,
     // and the sidebar row enters the Workspace again.
+    await firstRow.click();
     await page.locator("[data-go-main]").click();
-    await page.locator('[data-main-tab="projects"]').click();
-    await page.locator("[data-main-project]", { hasText: /^fixture/ }).click();
+    await page.getByRole("tab", { name: "fixture", exact: true }).click();
     await expect(page.locator('[data-overview-screen][data-overview-view="requests"]')).toBeVisible();
     await page.locator('[data-lens-tile-button="agents"]').click();
     await expect(page.locator('[data-overview-screen][data-overview-view="agents"] [data-graph-box]')).toHaveCount(1);
@@ -135,14 +135,14 @@ test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" },
     // ⌥T is one create_tab; the new tab is active with the core's next label.
     const nextLabel = (await page.locator("[data-new-agent-tab]").first().getAttribute("aria-label"))!.replace("New tab ", "");
     await page.keyboard.press(chord("new_tab"));
-    await expect(page.locator("[role=tab]")).toHaveCount(4);
+    await expect(page.locator("[data-tab]")).toHaveCount(4);
     // The fourth tab belongs to the marked owner, not a second workspace.
     await expect.poll(() => (herdr.run(["tab", "list", "--workspace", herdr.workspace]) as { result: { tabs: unknown[] } }).result.tabs.length).toBe(4);
     // The label is Herdr's: the strip shows an automatic label only until
     // Herdr reports the pane's process, which then names the tab.
     const labelled = () => (herdr.run(["api", "snapshot"]) as { result: { snapshot: { tabs: { tab_id: string; label?: string }[] } } }).result.snapshot.tabs.find((tab) => tab.label === nextLabel)?.tab_id;
     await expect.poll(labelled).toBeTruthy();
-    await expect(page.locator("[role=tab][aria-selected=true]")).toHaveAttribute("data-tab", labelled()!);
+    await expect(page.locator("[data-tab][aria-selected=true]")).toHaveAttribute("data-tab", labelled()!);
     await expect.poll(() => sent.get("create_tab")).toBe(1);
 
     // ⌥` in the Agent area walks the recent agent panes. The new tab and the
@@ -401,14 +401,14 @@ test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" },
     await page.mouse.up();
     await expect.poll(() => sent.get("agent_layout.move")).toBe(1);
     expect(sent.get("reorder_tab") ?? 0).toBe(0);
-    await expect.poll(() => page.locator("[role=tab]").first().getAttribute("data-tab"), { timeout: 10_000 }).toBe(tabs[1]);
+    await expect.poll(() => page.locator("[data-tab]").first().getAttribute("data-tab"), { timeout: 10_000 }).toBe(tabs[1]);
 
     // The tab close control closes the visible tab (idle panes need no confirmation).
     await page.locator(`[data-tab="${tabs[2]}"]`).click();
     await expect(page.locator("[data-canvas]")).toHaveAttribute("data-canvas", tabs[2]);
     await page.locator(`[data-tab="${tabs[2]}"] button`).click();
     await expect.poll(() => sent.get("close_tab")).toBe(1);
-    await expect(page.locator("[role=tab]")).toHaveCount(3);
+    await expect(page.locator("[data-tab]")).toHaveCount(3);
     await expect(page.locator(`[data-tab="${tabs[2]}"]`)).toHaveCount(0);
     await page.locator(`[data-tab="${herdr.tab}"]`).click();
     await expect(page.locator("[data-pane-view]")).toHaveCount(2);
@@ -420,18 +420,20 @@ test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" },
     const keysBeforeSheet = sent.get("key") ?? 0;
     await page.keyboard.press(chord("shortcuts"));
     await expect(page.locator("[data-shortcut-sheet]")).toBeVisible();
-    // On macOS the S5 Settings row (⌥, in place of Chrome's ⌘,) is a move
-    // and Add project (desktop app only) no longer is; Toggle Tools is the 28th row, and the two numbered
-    // families (Select tab 1-9, Select agent 1-9) fold into one row each,
-    // absent on this host and never a Chrome move (electron-digit-shortcuts-hints B3);
-    // Start agent (⌘N in the desktop app only; ⌘K's 에이전트 시작… here) is the 31st,
-    // Toggle device rail (no default chord, bindable) the 32nd, the
-    // focused-area cycle pair the 33rd and 34th (they carry ⌥` and its Chrome
-    // move; the global Recent Panels pair has no default chord), and the eight
-    // Agent and View area commands (no default chord either) the 35th to 42nd.
-    await expect(page.locator("[data-shortcut]")).toHaveCount(42);
-    // Chrome keeps seven desktop chords on macOS and five on Windows and Linux.
-    await expect(page.locator("[data-shortcut-sheet]").getByText("moved for Chrome")).toHaveCount(SYSTEM === "mac" ? 7 : 5);
+    // The complete command set includes the three direct Overview/sidebar commands.
+    // The two numbered families each fold into one row and have no browser chord;
+    // they never carry a Chrome move note (electron-digit-shortcuts-hints B3).
+    await expect(page.locator("[data-shortcut]")).toHaveCount(43);
+    for (const title of ["Overview", "Projects sidebar", "Agents sidebar"]) await expect(page.locator("[data-shortcut-sheet]")).toContainText(title);
+    // #349's Agents chord also moves on PC: Chrome reserves Alt+Shift+A.
+    // Assert the exact moved commands, including the unchanged platform exceptions.
+    const movedCommands = [
+      "new_tab", "close_tab", "reopen_closed_tab", "recent_area_tab", "previous_recent_area_tab",
+      ...(SYSTEM === "mac" ? ["close_pane", "settings"] : ["sidebar_agents"]),
+    ];
+    const movedRows = page.locator("[data-shortcut]").filter({ hasText: "moved for Chrome" });
+    await expect(movedRows).toHaveCount(movedCommands.length);
+    expect(await movedRows.evaluateAll((rows) => rows.map((row) => row.getAttribute("data-shortcut")).sort())).toEqual(movedCommands.sort());
     await screenshot(page, "s2-shortcut-sheet");
     await page.keyboard.press("Escape");
     await expect(page.locator("[data-shortcut-sheet]")).toHaveCount(0);
@@ -481,7 +483,7 @@ test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" },
     await page.evaluate(() => window.__hideProbe?.dropSocket());
     await expect(page.locator("[data-connection]")).toHaveText(/reconnecting/, { timeout: 15_000 });
     await expect(page.locator("[data-connection]")).toHaveCount(0, { timeout: 15_000 });
-    await expect(page.locator("[role=tab]")).toHaveCount(3);
+    await expect(page.locator("[data-tab]")).toHaveCount(3);
     await expect(page.locator("[data-pane-view]")).toHaveCount(2);
     await expect(page.locator("[data-split]")).toHaveCount(1);
     await page.locator('[data-pane-view][data-focused="true"] .xterm-helper-textarea').focus();

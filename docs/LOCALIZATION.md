@@ -34,6 +34,8 @@ Missing keys and missing interpolation values fail explicitly; English is a loca
 ## Current integration coverage
 
 The first integration covers Settings navigation and General labels, the language selector, sidebar header navigation, and Home navigation, project facts and project-list empty states.
+Shared Overview page and modal navigation, its toolbar tooltip and attention count, the sidebar tabs and Overview row, and the three Overview navigation command labels in Settings and the shortcut sheet also follow the confirmed language.
+Shortcut keycaps retain their host-specific chord glyphs in every language.
 The catalogs also contain translations for the remaining surfaces, but their presence does not mean those surfaces render translated text.
 Remaining #339 work includes other Settings bodies and their presentation helpers, sidebar rows and menus, boards and requests, Workspace and pane chrome, editor and file views, dialogs and errors, phone screens and push notifications, and native host menus and connection screens.
 Native or closed-window consumers may retain only the last core-confirmed explicit choice; they must resolve an unset choice on their own host.
@@ -44,5 +46,6 @@ The issue remains open until these integrations and four-language native evidenc
 `runtime::tests::appearance` checks all four choices, reset, invalid events, restart, stale UI saves, and preservation of invalid stored values.
 `web/e2e/interface-language.spec.ts` drives the selector against a private daemon and Herdr, with separate Korean and Japanese browser contexts.
 It checks shared choices, four-language headings, refresh, daemon restart, system reset, unsupported-system fallback and invalid-store diagnostics.
+It also checks Overview scope labels, sidebar tabs, navigation command labels and unchanged shortcut keycaps in all four languages.
 Catalog, translator and locale unit tests remain beside their modules.
 Run artifacts stay under `agents/runs/`; browser checks do not establish native menu or phone behavior.

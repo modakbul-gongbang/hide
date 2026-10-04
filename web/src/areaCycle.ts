@@ -16,7 +16,7 @@ export type CycleScope = { deviceId: string; checkoutId: string; path: string; k
 /** The owner must belong to the front checkout and an area actually drawn. */
 export function focusedCycleScope(rest: SnapshotRest | null, owner: KeyboardOwner = keyboardOwner()): CycleScope | null {
   const checkout = frontCheckout(rest);
-  if (!checkout || owner.kind === "none" || owner.kind === "tool" || owner.workspace !== checkout.id || useUiStore.getState().screen?.kind !== "workspace") return null;
+  if (!checkout || owner.kind === "none" || owner.kind === "tool" || owner.workspace !== checkout.id || (useUiStore.getState().screen?.kind !== "workspace" || useUiStore.getState().overviewOpen)) return null;
   const kind = owner.kind === "view" ? "view" : "agent";
   const frame = areaFrame(kind);
   if (!frame || frame.workspace.path !== checkout.path) return null;
@@ -36,7 +36,7 @@ export function focusedCycleScope(rest: SnapshotRest | null, owner: KeyboardOwne
 export function scopedSurfaces(rest: SnapshotRest | null, scope: CycleScope): { surfaces: Surface[]; active: string | null } | null {
   const checkout = frontCheckout(rest);
   const frame = areaFrame(scope.kind);
-  if (!checkout || checkout.id !== scope.checkoutId || checkout.path !== scope.path || !frame || frame.workspace.device_id !== scope.deviceId || frame.workspace.path !== scope.path || useUiStore.getState().screen?.kind !== "workspace") return null;
+  if (!checkout || checkout.id !== scope.checkoutId || checkout.path !== scope.path || !frame || frame.workspace.device_id !== scope.deviceId || frame.workspace.path !== scope.path || (useUiStore.getState().screen?.kind !== "workspace" || useUiStore.getState().overviewOpen)) return null;
   const view = workspaceViewOf(rest);
   if (!view || view.device_id !== scope.deviceId || view.path !== scope.path || (scope.kind === "view" && !view.views)) return null;
   const layout = scope.kind === "view" ? view.layout : scope.deviceId === "local" ? view.agent_layout : frame.layout;
@@ -82,7 +82,7 @@ export function areaCycle(rest: SnapshotRest | null, owner?: KeyboardOwner): Cyc
 export function agentOrigin(rest: SnapshotRest | null, owner: KeyboardOwner = keyboardOwner()): { paneId: string | null } | null {
   const checkout = frontCheckout(rest);
   const frame = areaFrame("agent");
-  if (!rest || !checkout || !frame || frame.workspace.path !== checkout.path || (owner.kind !== "pane" && owner.kind !== "agent") || owner.workspace !== checkout.id || useUiStore.getState().screen?.kind !== "workspace") return null;
+  if (!rest || !checkout || !frame || frame.workspace.path !== checkout.path || (owner.kind !== "pane" && owner.kind !== "agent") || owner.workspace !== checkout.id || (useUiStore.getState().screen?.kind !== "workspace" || useUiStore.getState().overviewOpen)) return null;
   const drawn = new Set(areasOf(frame.layout.root).map((area) => frame.layout.canvases[area.id] ?? area.active));
   const holds = (paneId: string | null | undefined, tabId?: string | null) =>
     paneId && checkout.tabs.some((tab) => tab.id !== null && drawn.has(tab.id) && (tabId === undefined || tab.id === tabId) && tab.panes.some((pane) => pane.id === paneId)) ? paneId : null;
@@ -100,7 +100,7 @@ export function agentOrigin(rest: SnapshotRest | null, owner: KeyboardOwner = ke
  * other screens do not need a drawn Agent area, and do not supply a pane visit.
  */
 export function agentCycle(rest: SnapshotRest | null, owner: KeyboardOwner = keyboardOwner()): Cycle | null {
-  if (owner.kind === "view" && useUiStore.getState().screen?.kind === "workspace") return null;
+  if (owner.kind === "view" && useUiStore.getState().screen?.kind === "workspace" && !useUiStore.getState().overviewOpen) return null;
   const origin = agentOrigin(rest, owner) ?? { paneId: null };
   const ids = [...(origin.paneId ? [origin.paneId] : []), ...recentPanes().filter((id) => id !== origin.paneId)];
   const items = ids.map((id) => paneItem(rest, id)).filter((item): item is CycleItem => item !== null);

@@ -204,10 +204,12 @@ Its web files are `web/src/entry-menu.tsx` and the start panel under `web/src/`.
 Projects Sidebar is `Screen / Projects Sidebar`.
 It draws the sidebar that follows the device rail.
 The rail is its full-height left column with This Mac and each registered device as 32 tiles with no name under them (the laptop glyph or the device's monogram), and `+` directly under the last tile; the selected tile is ringed, one mark at a tile's top-right shows the most urgent state (the Needs You count, `9+` from ten, else a dot for unseen Done), Working has no mark, and an unreachable device dims its glyph and wears a cross at the bottom-right with no mark.
-The rest frame is This Mac in front: a header line with the device name, Add project and Search over the `Projects | Agents` strip, then the Needs You group, the Home row with the project count where the Overview row stood (`+` under the pointer, drawn beside it), the agents that belong to no project, and Projects.
+The rest frame is This Mac in front: a header line with the device name, Add project and Search, the shared Overview row with its count and shortcut, then the `Projects | Agents` strip, the Needs You group, the Home row with the project count (`+` under the pointer, drawn beside it), the agents that belong to no project, and Projects.
 Five more frames draw the Agents tab (this device's agents by state with the three counts above, no device chip), a remote device in front with the `9+` pill, a device that is not connected (its name, `연결 안 됨` and one reconnect action, no tree), the one-device window (the rail with This Mac alone), and the rail hidden (the name with a chevron over the open device menu).
-In the list, pinned and activity-ordered projects with the row of the scope on screen selected, a Git project’s first Overview child as a checkout-row master instance with a layout-dashboard glyph and empty trailing slots, checkout rows with their kind glyph, age and agent line, an opened checkout’s agent rows, and both inactive folds.
-The Overview child owns selection on Overview; a checkout row opens and unfolds, then folds on activation while already selected and unfolded.
+In the list, pinned and activity-ordered projects contain checkout rows with their kind glyph, age and agent line, an opened checkout's agent rows, and both inactive folds.
+The shared Overview row owns selection on its page or modal; there is no per-project Overview child.
+A project row opens its last focused usable checkout, falling back to primary and then first usable, and unfolds; activation while its target Workspace is already in front and unfolded folds it.
+A checkout row opens and unfolds, then folds on activation while already selected and unfolded.
 Beside each theme's sidebar it draws a pull-request row under the pointer with its card (`Component / PR hover card`) opened to the right, the state the row's tooltip has become.
 Its web files are `web/src/sidebar.tsx`, `web/src/components/sidebar-header.tsx`, `web/src/projects.ts` and `web/src/components/pr-card.tsx`, plus the rail component under `web/src/`.
 

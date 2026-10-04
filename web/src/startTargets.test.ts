@@ -50,7 +50,7 @@ function rest(over: { front?: string; connected?: boolean; miniSession?: boolean
   } as unknown as SnapshotRest;
 }
 
-const OVERVIEW = (projectId: string): Screen => ({ kind: "overview", projectId, lens: {} as never });
+const overviewTargets = (snapshot: SnapshotRest, projectId: string) => startTargets(snapshot, { kind: "main" }, false, projectId);
 const keys = (rest: SnapshotRest, screen: Screen | null) => startTargets(rest, screen).groups.map((group) => group.items.map((item) => item.key));
 
 describe("start target default (PRD home-device-rail D-19, B25)", () => {
@@ -61,8 +61,8 @@ describe("start target default (PRD home-device-rail D-19, B25)", () => {
   });
 
   it("is a project Overview's main checkout", () => {
-    expect(startTargets(rest(), OVERVIEW("w-sasu")).defaultKey).toBe(checkoutKey("local", "/sasu"));
-    expect(startTargets(rest(), OVERVIEW("w-herdr")).defaultKey).toBe(checkoutKey("local", "/herdr-ide"));
+    expect(overviewTargets(rest(), "w-sasu").defaultKey).toBe(checkoutKey("local", "/sasu"));
+    expect(overviewTargets(rest(), "w-herdr").defaultKey).toBe(checkoutKey("local", "/herdr-ide"));
   });
 
   it("is the front device's Home when no project is in front", () => {
@@ -72,7 +72,7 @@ describe("start target default (PRD home-device-rail D-19, B25)", () => {
 
   it("is that device's own checkout when a remote device's thing is in front", () => {
     expect(startTargets(rest({ front: "mini", focusedCheckout: "m-main" }), { kind: "workspace" }).defaultKey).toBe(checkoutKey("mini", "/srv/app"));
-    expect(startTargets(rest({ front: "mini" }), OVERVIEW("mw")).defaultKey).toBe(checkoutKey("mini", "/srv/app"));
+    expect(overviewTargets(rest({ front: "mini" }), "mw").defaultKey).toBe(checkoutKey("mini", "/srv/app"));
   });
 
   it("is the front device's Home when the panel took Settings' place, whatever is under it", () => {
@@ -87,11 +87,11 @@ describe("start target default (PRD home-device-rail D-19, B25)", () => {
 
   it("reads a checkout of the Home itself as the Home, since Home is not a project", () => {
     expect(startTargets(rest({ focusedCheckout: "h1" }), { kind: "workspace" }).defaultKey).toBe(homeKey("local"));
-    expect(startTargets(rest(), OVERVIEW("w-home")).defaultKey).toBe(homeKey("local"));
+    expect(overviewTargets(rest(), "w-home").defaultKey).toBe(homeKey("local"));
   });
 
   it("falls back to Home when the thing in front is not listed", () => {
-    expect(startTargets(rest(), OVERVIEW("gone")).defaultKey).toBe(homeKey("local"));
+    expect(overviewTargets(rest(), "gone").defaultKey).toBe(homeKey("local"));
   });
 
   it("falls back to the first usable target when the front device is not connected", () => {

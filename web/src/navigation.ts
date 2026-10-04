@@ -11,7 +11,7 @@ import { folderCheckout } from "./projects";
 import { projectsOf } from "./remote";
 import { entryBox } from "./agentGraph";
 import { catalogWorkspaces, focusedRemoteDevice, frontCheckout, type AgentRow, type Device, type RemoteStatus, type SnapshotRest, type Workspace, type WorkspaceRegistration } from "./snapshot";
-import { entryLens, useUiStore, type Screen } from "./ui";
+import { entryLens, useUiStore, type OverviewLens } from "./ui";
 
 export type AgentGroup = "needs_you" | "done" | "working" | "seen";
 export const AGENT_GROUPS: readonly { group: AgentGroup; label: string }[] = [
@@ -485,9 +485,9 @@ export function agentListRows(tree: AgentTree): TreeRow[] {
  * front selected, or the primary checkout's when the front is elsewhere.
  * Only Recent Panels brings back a lens as it was left.
  */
-export function overviewScreen(rest: SnapshotRest | null, projectId: string): Extract<Screen, { kind: "overview" }> {
+export function projectEntryLens(rest: SnapshotRest | null, projectId: string): OverviewLens {
   const workspace = catalogWorkspaces(rest).find((row) => row.id === projectId);
-  return { kind: "overview", projectId, lens: entryLens(entryBox(workspace, frontCheckout(rest)?.id), useUiStore.getState().tasksMode) };
+  return entryLens(entryBox(workspace, frontCheckout(rest)?.id), useUiStore.getState().tasksMode);
 }
 
 /**
@@ -496,8 +496,7 @@ export function overviewScreen(rest: SnapshotRest | null, projectId: string): Ex
  * board's `이슈 없는 PR` line and the sidebar's PR card lead. A Project's
  * Overview already on screen keeps the rest of its lens.
  */
-export function pullRequestScreen(current: Screen | null, rest: SnapshotRest | null, projectId: string, number: number | null): Extract<Screen, { kind: "overview" }> {
-  const screen = current?.kind === "overview" && current.projectId === projectId ? current : overviewScreen(rest, projectId);
-  const open = number === null || screen.lens.prs.open.includes(number) ? screen.lens.prs.open : [...screen.lens.prs.open, number];
-  return { ...screen, lens: { ...screen.lens, tab: "prs", focusTask: null, panel: null, prs: { ...screen.lens.prs, open, focus: number } } };
+export function pullRequestLens(lens: OverviewLens, number: number | null): OverviewLens {
+  const open = number === null || lens.prs.open.includes(number) ? lens.prs.open : [...lens.prs.open, number];
+  return { ...lens, tab: "prs", focusTask: null, panel: null, prs: { ...lens.prs, open, focus: number } };
 }
