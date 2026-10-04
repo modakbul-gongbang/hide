@@ -806,7 +806,7 @@ test("area cycle native: page input previews one exact area, releases once and c
     expect(result.status, "exact native window capture failed: " + result.stderr).toBe(0);
     fs.writeFileSync(path.join(dir, "area-native-identity.json"), JSON.stringify({ pid, window: source, daemonPid: run.daemonPid(), socket: herdr.socket, state: run.env.HIDE_STATE_DIR, userData: run.env.HIDE_DESKTOP_USER_DATA_DIR, pages: await views() }, null, 2));
   };
-  await focus(current, originalId);
+  await test.step("native:initial-focus", () => focus(current, originalId));
   await expect(page.locator('[data-keyboard-area=true]')).toHaveCount(1);
   const selections = () => page.locator('[data-view-tab-bar] [aria-selected=true]').evaluateAll(tabs => tabs.map(tab => tab.getAttribute("data-display")));
   const before = await selections();
@@ -823,7 +823,7 @@ test("area cycle native: page input previews one exact area, releases once and c
   await expect.poll(() => sent.get("view_layout") ?? 0).toBe(commits + 1);
   expect(sent.get("view_layout") ?? 0).toBe(commits + 1);
   expect(await inPage(current, "window.tabKeys")).toBe(0);
-  await expect.poll(async () => (await zoomOf(previous)).focused).toBe(true);
+  await test.step("native:commit-return-focus", () => expect.poll(async () => (await zoomOf(previous)).focused).toBe(true));
   // A key code passes through the operator's input source, so the typing
   // uses digits: a letter is ㅋ under Korean 2-set and leaves a composition
   // open that turns the next chord into IME input.
@@ -834,15 +834,15 @@ test("area cycle native: page input previews one exact area, releases once and c
   // Escape from the actual native page preserves both the selection and owner.
   await tab(page, "한글 브라우저").click();
   await inPage(current, "document.querySelector('input').focus()");
-  await focus(current, originalId);
+  await test.step("native:cancel-refocus", () => focus(current, originalId));
   const canceled = sent.get("view_layout") ?? 0;
   nativeKeys(pid, ["control down", "tab"]);
-  await expect(page.locator("[data-cycle=area]")).toBeVisible();
+  await test.step("native:cancel-preview", () => expect(page.locator("[data-cycle=area]")).toBeVisible());
   nativeKeys(pid, ["escape", "control up"]);
   await expect(page.locator("[data-cycle]")).toHaveCount(0);
   await expect(tab(page, "한글 브라우저")).toHaveAttribute("aria-selected", "true");
   expect(sent.get("view_layout") ?? 0).toBe(canceled);
-  await expect.poll(async () => (await zoomOf(current)).focused).toBe(true);
+  await test.step("native:cancel-return-focus", () => expect.poll(async () => (await zoomOf(current)).focused).toBe(true));
   await expect(page.locator('[data-keyboard-area=true]')).toHaveCount(1);
   nativeKeys(pid, ["2"]);
   // The caret sits wherever the script's focus put it, so only the landing is checked.
@@ -851,12 +851,12 @@ test("area cycle native: page input previews one exact area, releases once and c
 
   // A native-window blur cancels a fresh hold; a later release cannot commit it.
   nativeKeys(pid, ["control down", "tab"]);
-  await expect(page.locator("[data-cycle=area]")).toBeVisible();
+  await test.step("native:blur-preview", () => expect(page.locator("[data-cycle=area]")).toBeVisible());
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.blur());
   await expect(page.locator("[data-cycle]")).toHaveCount(0);
   // The window coming back gives the keyboard to the page that started the hold.
   await app.evaluate(({ app: electron, BrowserWindow }) => { electron.focus({ steal: true }); BrowserWindow.getAllWindows()[0]!.focus(); });
-  await expect.poll(async () => (await zoomOf(current)).focused).toBe(true);
+  await test.step("native:blur-return-focus", () => expect.poll(async () => (await zoomOf(current)).focused).toBe(true));
   nativeKeys(pid, ["control up"]);
   await expect(tab(page, "한글 브라우저")).toHaveAttribute("aria-selected", "true");
   expect(sent.get("view_layout") ?? 0).toBe(canceled);
@@ -879,7 +879,7 @@ test("area cycle native: page input previews one exact area, releases once and c
   await page.keyboard.press("Escape");
   await inPage(previous, "document.getElementById('q').value = ''");
   await inPage(current, "document.querySelector('input').focus()");
-  await focus(current, originalId);
+  await test.step("native:rebound-focus", () => focus(current, originalId));
   const rebound = sent.get("view_layout") ?? 0;
   const originText = await inPage(current, "document.querySelector('input').value");
   nativeKeys(pid, ["option down", "control down", "tab"]);
@@ -891,7 +891,7 @@ test("area cycle native: page input previews one exact area, releases once and c
   await expect(tab(page, "Page B")).toHaveAttribute("aria-selected", "true");
   await expect.poll(() => sent.get("view_layout") ?? 0).toBe(rebound + 1);
   nativeKeys(pid, ["option up"]);
-  await expect.poll(async () => (await zoomOf(previous)).focused).toBe(true);
+  await test.step("native:rebound-return-focus", () => expect.poll(async () => (await zoomOf(previous)).focused).toBe(true));
   nativeKeys(pid, ["3"]);
   expect(await inPage(previous, "document.getElementById('q').value")).toBe("3");
   expect(await inPage(current, "document.querySelector('input').value")).toBe(originText);

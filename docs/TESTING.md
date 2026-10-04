@@ -188,6 +188,9 @@ A failure on a different SHA is not evidence of flakiness by itself, and the sam
   A PR changing a registered scenario's behavior, test or shared fixture selects `quarantine-fixes`, which runs the exact registered scenarios as required checks.
   `ci-quarantine.py results` requires a result for every selected identity, and a required scenario must pass.
   Missing, skipped or ambiguous results fail the scenario lane; a new signature remains a distinct failure in the ledger.
+  Native area-cycle classification also requires the explicit failing Playwright step phase recorded beside the unchanged primary message/stack.
+  The registered cancel-preview and blur-return-focus causes cannot classify a later rebound focus, another preview or an unidentified phase merely because its assertion text is the same.
+  ANSI normalization applies only within that phase identity; actual reporter controls prove that identical messages in other phases remain outside the registered signature.
   Main and nightly full suites include the registered tests in their normal blocking shards.
 - Quarantine is for a cause under investigation, not for a test nobody means to fix; removing the tag is part of the fix.
 - Quarantine does not decide the cause.

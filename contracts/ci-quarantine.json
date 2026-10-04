@@ -15,15 +15,21 @@
       "expires": "2026-10-11",
       "signature": {
         "category": "assertion",
-        "any_of": [
-          [
-            "Expected: true",
-            "Received: false"
-          ],
-          [
-            "[data-cycle=area]",
-            "toBeVisible"
-          ]
+        "phase_any_of": [
+          {
+            "phase": "native:blur-return-focus",
+            "all_of": [
+              "Expected: true",
+              "Received: false"
+            ]
+          },
+          {
+            "phase": "native:cancel-preview",
+            "all_of": [
+              "[data-cycle=area]",
+              "toBeVisible"
+            ]
+          }
         ]
       },
       "fix_paths": [

@@ -5,8 +5,9 @@ const MAX_ROWS = 20000;
 const MAX_BYTES = 16 * 1024 * 1024;
 const hash = value => crypto.createHash('sha256').update(value).digest('hex');
 
-function signature(message) {
-  return hash(message.replace(/\x1b\[[0-9;]*m/g, '').replace(/(?:[A-Z]:)?\/(?:[^\s:]+\/)+[^\s:]*/g, '<path>').replace(/\bw\w+:[pt]\w+\b/g, '<id>'));
+function signature(message, phase) {
+  const primary = message.replace(/\x1b\[[0-9;]*m/g, '').replace(/(?:[A-Z]:)?\/(?:[^\s:]+\/)+[^\s:]*/g, '<path>').replace(/\bw\w+:[pt]\w+\b/g, '<id>');
+  return hash(phase ? JSON.stringify([phase, primary]) : primary);
 }
 function category(error) {
   if (!error) return 'passed';
@@ -33,7 +34,10 @@ function quarantine(row, registry) {
   const entry = registry.entries.find(e => e.title === row.test && e.file === row.suite && e.oses.includes(row.os) && JSON.stringify(e.title_path || [e.title]) === JSON.stringify(row.titlePath || [row.test]));
   if (!entry) return null;
   if (row.status === 'passed') return {id:entry.id, classification:'passed'};
-  const known = row.category === entry.signature.category && entry.signature.any_of.some(pattern => pattern.every(token => row.assertion.includes(token)));
+  const message = row.assertion.replace(/\x1b\[[0-9;]*m/g, '');
+  const known = row.category === entry.signature.category && (entry.signature.phase_any_of
+    ? entry.signature.phase_any_of.some(pattern => pattern.phase === row.contractPhase && pattern.all_of.every(token => message.includes(token)))
+    : entry.signature.any_of.some(pattern => pattern.every(token => message.includes(token))));
   return {id:entry.id, classification:known?'known-signature':'outside-registered-signature'};
 }
 function attemptKey(row) {

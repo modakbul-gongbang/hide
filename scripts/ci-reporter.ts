@@ -1,8 +1,25 @@
-import type { FullConfig, FullResult, Reporter, Suite, TestCase, TestError, TestResult } from '@playwright/test/reporter';
+import type { FullConfig, FullResult, Reporter, Suite, TestCase, TestError, TestResult, TestStep } from '@playwright/test/reporter';
 // Shared by both Playwright suites; no product/runtime instrumentation.
 // eslint-disable-next-line @typescript-eslint/no-require-imports
 const ledger = require('./ci-ledger.cjs');
 const registry = require('../contracts/ci-quarantine.json');
+function primarySteps(result: TestResult) {
+  const primary = result.errors[0];
+  if (!primary) return [];
+  let visited = 0;
+  function locate(steps: TestStep[], depth: number): TestStep | undefined {
+    if (depth > 32) throw new Error('reporter step depth cap exceeded');
+    for (const step of steps) {
+      if (++visited > 10_000) throw new Error('reporter step inventory cap exceeded');
+      const child = locate(step.steps, depth + 1);
+      if (child) return child;
+      if (step.error?.message === primary.message && step.error?.stack === primary.stack) return step;
+    }
+  }
+  const found = locate(result.steps, 0), path: TestStep[] = [];
+  for (let step = found; step; step = step.parent) path.unshift(step);
+  return path.map(step => ({ title: step.title, location: step.location, params: step.category === 'test.step' ? step.params : undefined }));
+}
 export default class LedgerReporter implements Reporter {
   private rows = new Map<string, Record<string, unknown>>();
   private source = ledger.identity();
@@ -55,12 +72,15 @@ export default class LedgerReporter implements Reporter {
   }
   onTestEnd(test: TestCase, result: TestResult) {
     const assertion = result.errors[0]?.message || '';
+    const steps = primarySteps(result);
+    const contractPhase = steps.slice().reverse().find(step => step.title.startsWith('native:'))?.title || null;
     const row = { ...this.subject(test, result.retry), worker: result.workerIndex,
       status: result.status, phase: 'completed', durationMs: result.duration,
       startedAt: result.startTime.toISOString(), completedAt: new Date(result.startTime.getTime() + result.duration).toISOString(),
       category: result.status === 'skipped' ? 'skipped' : result.status === 'interrupted' ? 'cancelled' : ledger.category(assertion),
-      assertion: assertion.slice(0, 16000), signature: assertion ? ledger.signature(assertion) : null,
-      failure: { location: result.errors[0]?.location, stack: result.errors[0]?.stack?.slice(0, 64000) },
+      assertion: assertion.slice(0, 16000), signature: assertion ? ledger.signature(assertion, contractPhase) : null,
+      contractPhase,
+      failure: { location: result.errors[0]?.location, stack: result.errors[0]?.stack?.slice(0, 64000), steps },
       causes: [...result.errors.slice(1), ...result.errors.flatMap(error => error.cause ? [error.cause] : [])] };
     this.set(test, result.retry, { ...row, quarantine: ledger.quarantine(row, registry) });
     this.flush();

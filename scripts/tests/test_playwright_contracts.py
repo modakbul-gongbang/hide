@@ -16,6 +16,56 @@ spec.loader.exec_module(quarantine)
 
 
 class PlaywrightContracts(unittest.TestCase):
+    def test_actual_reporter_keeps_primary_native_phase_and_refuses_same_message_in_other_phases(self):
+        artifacts = ROOT / 'agents/runs/ci-test-refactor/reporter-controls'
+        artifacts.mkdir(parents=True, exist_ok=True)
+        entry = json.loads((ROOT / 'contracts/ci-quarantine.json').read_text())['entries'][0]
+        phases = ['native:blur-return-focus', 'native:rebound-focus', 'native:cancel-return-focus',
+            'native:cancel-preview', 'native:blur-preview', None]
+        with tempfile.TemporaryDirectory(dir=artifacts) as directory:
+            root = Path(directory)
+            tests = root / 'desktop/e2e'
+            tests.mkdir(parents=True)
+            package = (ROOT / 'web/node_modules/@playwright/test').as_posix()
+            (tests / 'browser.spec.ts').write_text(f"""import {{test,expect}} from {json.dumps(package)};
+const phases={json.dumps(phases)};
+test({json.dumps(entry['title'])},async()=>{{
+  const phase=phases[test.info().repeatEachIndex];
+  const fail=()=>{{
+    if(phase?.includes('preview')) throw new Error("expect(locator).toBeVisible() failed: [data-cycle=area] element(s) not found");
+    expect(false).toBe(true);
+  }};
+  if(phase) await test.step(phase,fail);else fail();
+}});
+""")
+            config = root / 'playwright.config.ts'
+            config.write_text(f"""import {{defineConfig}} from {json.dumps(package)};
+export default defineConfig({{testDir:{json.dumps(str(tests))},workers:1,retries:0,repeatEach:6,
+reporter:[['json'],[{json.dumps(str(ROOT/'scripts/ci-reporter.ts'))}]]}});
+""")
+            ledger = artifacts / 'native-phase.ledger.json'
+            report = artifacts / 'native-phase.report.json'
+            result = subprocess.run(['bash','scripts/verify-web.sh','web','e2e','--config',str(config)],cwd=ROOT,
+                env={**os.environ,'RUNNER_OS':'macOS','CI_LEDGER_PATH':str(ledger),'PLAYWRIGHT_JSON_OUTPUT_FILE':str(report),'FORCE_COLOR':'1'},
+                capture_output=True,text=True,timeout=30)
+            (artifacts/'native-phase.log').write_text(result.stdout+result.stderr)
+            self.assertNotEqual(result.returncode,0)
+            rows=sorted(json.loads(ledger.read_text())['records'],key=lambda row:row['repeat'])
+            self.assertEqual(len(rows),6)
+            self.assertEqual([row['contractPhase'] for row in rows],phases)
+            self.assertTrue(all(row['status']=='failed' and row['retry']==0 for row in rows))
+            self.assertEqual([row['quarantine']['classification'] for row in rows],
+                ['known-signature','outside-registered-signature','outside-registered-signature',
+                 'known-signature','outside-registered-signature','outside-registered-signature'])
+            self.assertIn('\x1b[',rows[0]['assertion'])
+            self.assertEqual(rows[0]['assertion'],rows[1]['assertion'])
+            self.assertNotEqual(rows[0]['signature'],rows[1]['signature'])
+            self.assertIn('browser.spec.ts',rows[0]['failure']['stack'])
+            actual=json.loads(report.read_text())
+            self.assertEqual(actual['stats']['unexpected'],6)
+            for row in rows[:-1]:
+                self.assertIn(row['contractPhase'],[step['title'] for step in row['failure']['steps']])
+
     def test_ordinary_configs_execute_exact_file_and_title_path_and_fail_empty_selection(self):
         artifacts = ROOT / 'agents/runs/ci-test-refactor/reporter-controls'
         artifacts.mkdir(parents=True, exist_ok=True)

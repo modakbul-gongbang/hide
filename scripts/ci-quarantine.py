@@ -27,7 +27,17 @@ def validate(root=ROOT, today=None):
             raise ValueError('quarantine duration requires a separately reviewed registration')
         if entry['suite'] not in ('web', 'desktop') or not set(entry['oses']) <= {'Linux','macOS','Windows'}:
             raise ValueError('unknown quarantine surface')
-        patterns = entry['signature'].get('any_of')
+        phase_patterns = entry['signature'].get('phase_any_of')
+        if phase_patterns is not None:
+            if entry['signature'].get('any_of') is not None or not isinstance(phase_patterns, list) or not phase_patterns or any(
+                not isinstance(p, dict) or set(p) != {'phase', 'all_of'} or not isinstance(p['phase'], str)
+                or not p['phase'].startswith('native:') or p['phase'] not in (root / entry['file']).read_text()
+                for p in phase_patterns
+            ):
+                raise ValueError('quarantine must bind an existing native assertion phase')
+            patterns = [p['all_of'] for p in phase_patterns]
+        else:
+            patterns = entry['signature'].get('any_of')
         if entry['signature'].get('category') != 'assertion' or not patterns or any(not isinstance(p, list) or len(p) < 2 or any(not isinstance(token, str) or not token for token in p) for p in patterns):
             raise ValueError('quarantine must name an assertion signature')
         source = (root / entry['file']).read_text()
