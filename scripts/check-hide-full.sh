@@ -16,13 +16,13 @@ cd "$(dirname "$0")/.."
 mkdir -p target
 exec > >(tee target/hide-full.log) 2>&1
 
-# verify / rust lane, and the unit suites of the checks lane (short of the
-# Playwright flows in the web e2e and desktop e2e lanes)
+# verify / rust lane, and the unit suites of the web, desktop and hcoord lanes
+# (short of the Playwright flows in the web e2e and desktop e2e lanes)
 bash scripts/verify-cargo.sh lint
 bash scripts/verify-cargo.sh test
 bash scripts/verify-web.sh
 
-# verify / checks lane: repository invariants
+# verify / policy lane: repository invariants
 python3 -m unittest discover -s scripts/tests -p 'test_*.py'
 bash scripts/check-harness-ignore-anchor.sh
 bash scripts/check-agent-asset-committed.sh

@@ -2,7 +2,8 @@
 # The cargo entrypoint for verification, as plain argv.
 #
 # Usage: verify-cargo.sh test [args...] | lint | release | cli
-# CI-scoped lanes: test-scoped | check | build | clippy [cargo arguments...]
+# CI-scoped lanes: test-scoped | check | build | clippy | metadata [cargo arguments...]
+#                  fmt-check (cargo fmt --all --check alone)
 #
 # The PRD harness runs each verify command with execvp and no shell, so an
 # `ENV=value cargo ...` binding fails with ENOENT at verify time rather than at
@@ -38,7 +39,7 @@ done
 # Scoped modes cannot move the checkout or its artifacts through cargo flags.
 # Keep the legacy modes unchanged for sealed verification commands.
 case "${1:-}" in
-    test-scoped|check|build|clippy)
+    test-scoped|check|build|clippy|metadata)
         mode=$1
         shift
         (( $# <= 128 )) || { printf 'too many cargo arguments\n' >&2; exit 2; }
@@ -57,6 +58,9 @@ case "${1:-}" in
         shift
         exec cargo test --locked --workspace "$@"
         ;;
+    fmt-check)
+        exec cargo fmt --all --check
+        ;;
     lint)
         cargo fmt --all --check
         exec cargo clippy --locked --workspace --all-targets -- -D warnings
@@ -70,7 +74,7 @@ case "${1:-}" in
         exec cargo build --locked -p hided --bins -p hide-host --bin hide-host-helper -p hide-agent-hooks --bin hide-agent-hooks
         ;;
     *)
-        printf 'usage: %s test [args...]|lint|release|cli|test-scoped|check|build|clippy [args...]\n' "$0" >&2
+        printf 'usage: %s test [args...]|lint|fmt-check|release|cli|test-scoped|check|build|clippy|metadata [args...]\n' "$0" >&2
         exit 2
         ;;
 esac

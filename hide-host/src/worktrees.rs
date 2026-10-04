@@ -318,24 +318,7 @@ pub fn describe(
 
     let merged = base_branch
         .as_deref()
-        .and_then(|base| resolvable_base(&listed.path, base))
-        .and_then(|base| {
-            let output = output_within(
-                Command::new("git").arg("-C").arg(&listed.path).args([
-                    "merge-base",
-                    "--is-ancestor",
-                    "HEAD",
-                    &base,
-                ]),
-                GIT_DEADLINE,
-            )
-            .ok()??;
-            match output.status.code() {
-                Some(0) => Some(true),
-                Some(1) => Some(false),
-                _ => None,
-            }
-        });
+        .and_then(|base| merged_into(&listed.path, base));
     let (upstream_state, unpushed, behind_upstream) = record_failure(
         upstream(&listed.path, listed.branch.as_deref()),
         &mut unavailable_reason,
@@ -538,22 +521,52 @@ pub fn parse_shortstat(output: &str) -> (u32, u32) {
 /// preferred, the remote-tracking ref is the fallback, and a base that
 /// resolves as neither yields no comparison rather than a silent zero.
 fn resolvable_base(path: &Path, base: &str) -> Option<String> {
-    for candidate in [base.to_owned(), format!("origin/{base}")] {
-        if git(
-            path,
-            &[
-                "rev-parse",
-                "--verify",
-                "--quiet",
-                &format!("{candidate}^{{commit}}"),
-            ],
+    base_candidates(base).find(|candidate| resolves(path, candidate))
+}
+
+/// The refs that name `base`: the local branch, then its remote-tracking copy
+/// as of the last fetch.
+fn base_candidates(base: &str) -> impl Iterator<Item = String> {
+    [base.to_owned(), format!("origin/{base}")].into_iter()
+}
+
+fn resolves(path: &Path, candidate: &str) -> bool {
+    git(
+        path,
+        &[
+            "rev-parse",
+            "--verify",
+            "--quiet",
+            &format!("{candidate}^{{commit}}"),
+        ],
+    )
+    .is_ok()
+}
+
+/// Whether HEAD is already in `base`, in the local branch or in its
+/// remote-tracking copy, whichever has it; a local base that stopped following
+/// its remote is one of two answers, never the only one. `None` when no ref names the base or
+/// Git could not answer, which is never read as "not merged".
+fn merged_into(path: &Path, base: &str) -> Option<bool> {
+    let mut answered = false;
+    for candidate in base_candidates(base).filter(|candidate| resolves(path, candidate)) {
+        let output = output_within(
+            Command::new("git").arg("-C").arg(path).args([
+                "merge-base",
+                "--is-ancestor",
+                "HEAD",
+                &candidate,
+            ]),
+            GIT_DEADLINE,
         )
-        .is_ok()
-        {
-            return Some(candidate);
+        .ok()??;
+        match output.status.code() {
+            Some(0) => return Some(true),
+            Some(1) => answered = true,
+            _ => return None,
         }
     }
-    None
+    answered.then_some(false)
 }
 
 /// Commits this branch has that its upstream does not, with the remote's
