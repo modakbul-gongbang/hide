@@ -3,6 +3,8 @@ const fs=require('node:fs'),path=require('node:path'),crypto=require('node:crypt
 const {execFileSync}=require('node:child_process');
 const ledger=require('./ci-ledger.cjs');
 const MANIFEST='agents/runs/ci-preparation/manifest.json';
+const BUILD='agents/runs/ci-preparation/build.json';
+const COMMAND=['build','-p','hided','--bins','--message-format=json-render-diagnostics'];
 const MAX_FILES=10000, MAX_FILE_BYTES=512*1024*1024, MAX_TOTAL_BYTES=2*1024*1024*1024;
 function digest(file) {
   const stat=fs.lstatSync(file);
@@ -13,11 +15,16 @@ function digest(file) {
   return {size:stat.size,sha256:hash.digest('hex')};
 }
 function identity(root) {
+  // This lane has exactly one supported native build recipe. Cargo accepts
+  // profile/target overrides from the environment even when argv is unchanged.
+  // Refuse those before both build and reuse instead of labelling them default.
+  const overrides=Object.keys(process.env).filter(key=>key.startsWith('CARGO_PROFILE_') || key==='CARGO_BUILD_TARGET' || key==='CARGO_BUILD_RUSTC' || key==='CI_PREPARATION_FEATURES');
+  if(overrides.length) throw Error('unsupported preparation build override: '+overrides.sort().join(', '));
   const command=(name,args)=>execFileSync(name,args,{cwd:root,encoding:'utf8',timeout:5000,maxBuffer:64*1024}).trim();
   const sha=command('git',['rev-parse','HEAD']);
   command('git',['diff','--quiet','HEAD','--']);
   if(process.env.GITHUB_SHA && process.env.GITHUB_SHA!==sha) throw Error('preparation checkout differs from tested SHA');
-  return {sha,os:process.platform,arch:process.arch,profile:'dev',features:'default',target:'host',
+  return {sha,os:process.platform,arch:process.arch,command:COMMAND,
     rust:command('rustc',['-vV']),node:process.version,pnpm:command('pnpm',['--version']),
     rustflags:process.env.CARGO_ENCODED_RUSTFLAGS || process.env.RUSTFLAGS || '',
     cargoLock:digest(path.join(root,'Cargo.lock')).sha256,pnpmLock:digest(path.join(root,'pnpm-lock.yaml')).sha256,
@@ -49,9 +56,28 @@ function verify(value, expected, files) {
 module.exports={identity,inventory,verify,digest};
 if(require.main===module) {
   const root=process.cwd(), mode=process.argv[2], file=path.join(root,MANIFEST);
-  if(mode==='create') ledger.write(file,{version:1,identity:identity(root),files:inventory(root)});
+  const buildFile=path.join(root,BUILD);
+  if(mode==='build') {
+    const boundary=identity(root);
+    const output=execFileSync('bash',['scripts/verify-cargo.sh',...COMMAND],{cwd:root,encoding:'utf8',timeout:20*60*1000,maxBuffer:ledger.MAX_BYTES,stdio:['ignore','pipe','inherit']});
+    const compiled=output.split('\n').filter(line=>line.startsWith('{')).map(line=>JSON.parse(line)).filter(value=>value.reason==='compiler-artifact' && value.executable && value.target.kind.includes('bin'));
+    const binaries=['hided','hide'].map(name=>{
+      const matches=compiled.filter(value=>value.target.name===name);
+      if(matches.length!==1) throw Error('missing/ambiguous compiled preparation binary: '+name);
+      const value=matches[0];
+      return {name,profile:value.profile,features:value.features,executable:path.relative(root,value.executable).replace(/\\/g,'/'),digest:digest(value.executable)};
+    });
+    ledger.write(buildFile,{version:1,identity:boundary,binaries});
+  }
+  else if(mode==='create') {
+    const boundary=identity(root),build=JSON.parse(fs.readFileSync(buildFile));
+    if(build.version!==1 || JSON.stringify(build.identity)!==JSON.stringify(boundary) || build.binaries?.length!==2) throw Error('preparation build invocation mismatch');
+    for(const binary of build.binaries) if(JSON.stringify(binary.digest)!==JSON.stringify(digest(path.join(root,binary.executable)))) throw Error('preparation compiled binary changed');
+    ledger.write(file,{version:1,identity:boundary,compiled:build.binaries,files:inventory(root)});
+  }
   else if(mode==='verify') {
+    const boundary=identity(root);
     if(fs.statSync(file).size>ledger.MAX_BYTES) throw Error('preparation manifest cap exceeded');
-    verify(JSON.parse(fs.readFileSync(file)),identity(root),inventory(root));
-  } else throw Error('usage: ci-preparation.cjs create|verify');
+    verify(JSON.parse(fs.readFileSync(file)),boundary,inventory(root));
+  } else throw Error('usage: ci-preparation.cjs build|create|verify');
 }

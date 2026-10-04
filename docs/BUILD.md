@@ -64,7 +64,9 @@ Each adds `--locked`, reuses the installed toolchain, clears `HERDR_*`, and fixe
 Scoped modes accept at most 128 arguments and refuse `--target-dir`, `--manifest-path` and `--config`; an unknown mode exits 2.
 The sealed `test`, `lint`, `release` and `cli` invocations keep their existing behavior.
 Multi-shard web lanes prepare the native debug binaries, web shell and hcoord output once and distribute them together.
-`scripts/ci-preparation.cjs` refuses reuse unless the clean tested SHA, dev/default-feature/host build boundary, OS, architecture, Rust/Node/pnpm toolchains, flags, locks and runtime pin match.
+`scripts/ci-preparation.cjs build` owns the exact native command and records Cargo's actual binary profile/features alongside their digests.
+`create` requires that build receipt, and `verify` requires the same clean tested SHA, command, OS, architecture, Rust/Node/pnpm toolchains, flags, locks, runtime pin and output bytes.
+Unsupported profile, target and feature overrides fail before build, create or reuse; they cannot be described as a default build.
 Every output file is streamed through SHA-256 and checked against the bounded manifest before use; missing, changed, extra or symbolic-link output fails the lane.
 Release builds continue to use their worktree's fixed release paths.
 `verify-web.sh install [--ignore-scripts]` locks dependency installation; `verify-web.sh <web|desktop|hcoord> <typecheck|lint|test|build>` runs one package step.

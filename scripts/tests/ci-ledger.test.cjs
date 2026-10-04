@@ -77,6 +77,15 @@ test('reused preparation refuses source, build, toolchain or byte differences', 
   assert.throws(()=>verify({...value,files:{}},identity,files),/inventory/);
   assert.throws(()=>verify(value,identity,{'target/debug/hide':{size:3,sha256:'changed'}}),/digest/);
 });
+test('actual preparation CLI rejects effective profile, target and feature overrides before create and verify', () => {
+  const {spawnSync}=require('node:child_process');
+  for(const mode of ['build','create','verify']) for(const [key,value] of Object.entries({CARGO_PROFILE_DEV_OPT_LEVEL:'3',CARGO_BUILD_TARGET:'foreign-target',CI_PREPARATION_FEATURES:'extra'})) {
+    const result=spawnSync(process.execPath,['scripts/ci-preparation.cjs',mode],{env:{...process.env,[key]:value},encoding:'utf8'});
+    assert.notEqual(result.status,0);
+    assert.match(result.stderr,new RegExp('unsupported preparation build override: '+key));
+    assert.doesNotMatch(result.stderr,/dirty|diff --quiet|ENOENT/);
+  }
+});
 test('a later pass cannot replace the first failure, and repeated upload deduplicates', () => {
   const ledger = merge([row,row,{...row,retry:1,status:'passed'}]);
   assert.equal(ledger.records.length,2);

@@ -159,7 +159,7 @@ jobs:
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build hided for Playwright
         timeout-minutes: 20
-        run: bash scripts/verify-cargo.sh build -p hided
+        run: node scripts/ci-preparation.cjs build
       - name: Prepare the shared shell and coordination output
         timeout-minutes: 5
         run: |
