@@ -456,7 +456,11 @@ mod tests {
     #[test]
     fn validated_startup_reestablishes_the_installed_version_without_repairing_corruption() {
         let root = tempfile::tempdir().unwrap();
-        let path = root.path().join("ledger.json");
+        // A tempfile root uses the normal directory default; the product
+        // stores its ledger inside a private state directory.
+        let state = root.path().join("state");
+        hide_platform::fs::private::create_dir(&state).unwrap();
+        let path = state.join("ledger.json");
         let ledger = letter();
         save(&path, &ledger).unwrap();
         assert_eq!(recover(&path).unwrap(), ledger);
