@@ -797,15 +797,35 @@ fn publish_replica(
     let Some(runtime) = context.runtime.upgrade() else {
         return false;
     };
-    let (registrations, worktrees, unconfirmed_created_purposes) = match runtime.lock() {
-        Ok(guard) => (
-            guard.snapshot().ui_state.workspace_registrations.clone(),
-            guard.worktree_catalog(),
-            guard.unconfirmed_created_purpose_values(),
-        ),
-        Err(_) => return false,
-    };
+    let (registrations, worktrees, unconfirmed_created_purposes, focus_readback_target) =
+        match runtime.lock() {
+            Ok(guard) => (
+                guard.snapshot().ui_state.workspace_registrations.clone(),
+                guard.worktree_catalog(),
+                guard.unconfirmed_created_purpose_values(),
+                guard.pane_focus_readback_target(&payload),
+            ),
+            Err(_) => return false,
+        };
     drop(runtime);
+
+    // The unsequenced stream can still contain a layout from an older focus
+    // after the pane worker has confirmed the final click. Read before adopting
+    // a differing external focus, outside the mutex and without another effect.
+    let focus_readback = focus_readback_target.map(|identity| {
+        let result = live::confirm_pane_focus(context.api_connector.as_ref(), &identity.target_id);
+        if let Err(error) = &result {
+            crate::diagnostic!(json!({
+                "component": "pane_focus",
+                "kind": "pane.focus.stream_readback_failed",
+                "pane_id": identity.target_id,
+                "serial": identity.serial,
+                "connection_generation": identity.live_generation,
+                "message": error.message(),
+            }));
+        }
+        (identity, result.is_ok())
+    });
 
     let spaces = Runtime::session_spaces(&payload);
     let cache_is_fresh = catalog_cache.as_ref().is_some_and(|cache| {
@@ -850,7 +870,7 @@ fn publish_replica(
             if let Some(overlay) = overlay {
                 guard.set_label_overlay(overlay);
             }
-            guard.ingest_session_with_catalog(Ok(payload), Some(precomputed))
+            guard.ingest_session_with_focus_readback(Ok(payload), Some(precomputed), focus_readback)
         }
         Err(_) => return false,
     };

@@ -1,5 +1,10 @@
 use super::*;
 
+enum SessionFocusCheck {
+    Unchecked,
+    Readback(Option<(PendingPaneFocusControl, bool)>),
+}
+
 fn suppress_unconfirmed_created_purposes(
     pending: &HashMap<String, String>,
     workspaces: &mut [crate::model::WorkspaceSnapshot],
@@ -1792,6 +1797,49 @@ impl Runtime {
         fetched: Result<SessionSnapshotPayload, SessionFetchError>,
         precomputed: Option<session_sync::PrecomputedCatalog>,
     ) -> bool {
+        self.ingest_session_with_focus_check(fetched, precomputed, SessionFocusCheck::Unchecked)
+    }
+
+    /// Identify only an external move within the selected pane's layout.
+    /// Missing panes and tab arrivals keep their existing topology handling.
+    pub(crate) fn pane_focus_readback_target(
+        &self,
+        payload: &SessionSnapshotPayload,
+    ) -> Option<PendingPaneFocusControl> {
+        if self.pending_pane_focus.is_some() || self.pane_focus_in_flight.is_some() {
+            return None;
+        }
+        let selected = self.snapshot.focused.pane_id.as_deref()?;
+        let layout = payload
+            .layouts
+            .iter()
+            .find(|layout| layout.panes.iter().any(|pane| pane.pane_id == selected))?;
+        (layout.focused_pane_id != selected).then(|| PendingPaneFocusControl {
+            serial: self.next_pane_focus_serial,
+            target_id: layout.focused_pane_id.clone(),
+            live_generation: self.live_generation,
+        })
+    }
+
+    pub(crate) fn ingest_session_with_focus_readback(
+        &mut self,
+        fetched: Result<SessionSnapshotPayload, SessionFetchError>,
+        precomputed: Option<session_sync::PrecomputedCatalog>,
+        readback: Option<(PendingPaneFocusControl, bool)>,
+    ) -> bool {
+        self.ingest_session_with_focus_check(
+            fetched,
+            precomputed,
+            SessionFocusCheck::Readback(readback),
+        )
+    }
+
+    fn ingest_session_with_focus_check(
+        &mut self,
+        fetched: Result<SessionSnapshotPayload, SessionFetchError>,
+        precomputed: Option<session_sync::PrecomputedCatalog>,
+        focus_check: SessionFocusCheck,
+    ) -> bool {
         // Sleeping agents Herdr no longer lists are drawn from their records
         // before anything below reads the agents (PRD agent-sleep B10).
         let mut fetched = fetched;
@@ -2270,7 +2318,11 @@ impl Runtime {
                 self.snapshot.terminal.pane_id = Some(pane_id.clone());
                 self.snapshot.focused.pane_id = Some(pane_id);
             }
-            changed |= self.apply_pane_layout(layout, session_confirms_pending_pane);
+            changed |= self.apply_pane_layout_with_focus_check(
+                layout,
+                session_confirms_pending_pane,
+                focus_check,
+            );
         }
         changed |= self.refresh_worktree_projection();
         changed |= self.align_visible_tab_with_selected_pane();
@@ -2658,6 +2710,19 @@ impl Runtime {
         layout: PaneLayoutSnapshot,
         session_confirms_pending_pane: bool,
     ) -> bool {
+        self.apply_pane_layout_with_focus_check(
+            layout,
+            session_confirms_pending_pane,
+            SessionFocusCheck::Unchecked,
+        )
+    }
+
+    fn apply_pane_layout_with_focus_check(
+        &mut self,
+        layout: PaneLayoutSnapshot,
+        session_confirms_pending_pane: bool,
+        focus_check: SessionFocusCheck,
+    ) -> bool {
         let pane_ids = layout
             .pane_ids()
             .into_iter()
@@ -2732,7 +2797,7 @@ impl Runtime {
             .pending_tab_focus
             .as_ref()
             .is_some_and(|pending| pending.target_id == arriving_tab_id);
-        let adopt_focus = match pending_pane.as_ref() {
+        let mut adopt_focus = match pending_pane.as_ref() {
             _ if self.pane_focus_in_flight.is_some() => false,
             Some(pending)
                 if pending.target_id == layout.focused_pane_id && session_confirms_pending_pane =>
@@ -2750,6 +2815,37 @@ impl Runtime {
             Some(_) => false,
             None => true,
         };
+        // A direct confirmation may finish while an older stream frame is
+        // queued. The stream has no cursor: even with no pending intent, its
+        // differing focus is not external authority until a fresh read agrees.
+        if adopt_focus
+            && previous_focus
+                .as_deref()
+                .is_some_and(|previous| pane_ids.iter().any(|pane| pane == previous))
+            && previous_focus.as_deref() != Some(layout.focused_pane_id.as_str())
+            && let SessionFocusCheck::Readback(readback) = focus_check
+        {
+            adopt_focus = readback.as_ref().is_some_and(|(identity, confirmed)| {
+                *confirmed
+                    && identity.target_id == layout.focused_pane_id
+                    && identity.serial == self.next_pane_focus_serial
+                    && identity.live_generation == self.live_generation
+                    && self.pending_pane_focus.is_none()
+                    && self.pane_focus_in_flight.is_none()
+            });
+            if !adopt_focus {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "pane_focus",
+                    "kind": "pane.focus.stream_unconfirmed",
+                    "previous_pane_id": previous_focus,
+                    "pane_id": layout.focused_pane_id,
+                    "serial": self.next_pane_focus_serial,
+                    "connection_generation": self.live_generation,
+                    "readback_serial": readback.as_ref().map(|(identity, _)| identity.serial),
+                    "readback_generation": readback.as_ref().map(|(identity, _)| identity.live_generation),
+                }));
+            }
+        }
         if adopt_focus {
             if previous_focus.as_deref() != Some(layout.focused_pane_id.as_str())
                 && pending_pane.is_none()

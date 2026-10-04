@@ -1525,6 +1525,80 @@ fn pane_focus_burst_keeps_only_the_latest_successor_and_resumes_external_follow(
 }
 
 #[test]
+fn pane_focus_rejects_a_stale_stream_after_confirmation_and_follows_a_verified_external_move() {
+    let mut runtime = live_runtime();
+    let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019)];
+    runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
+    runtime.dispatch_json(&operator_focus_event("w1:p2"));
+    finish_running_pane_focus(&mut runtime, Ok(()));
+
+    let stale = finished_tab_payload(&panes, "w1:p1");
+    let identity = runtime.pane_focus_readback_target(&stale).unwrap();
+    runtime.ingest_session_with_focus_readback(Ok(stale.clone()), None, Some((identity, false)));
+    assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p2"));
+    assert_eq!(
+        runtime.snapshot().terminal.pane_id.as_deref(),
+        Some("w1:p2")
+    );
+    assert_eq!(diagnostic_count(&runtime, "pane.focus.followed"), 0);
+    assert!(runtime.pending_pane_focus.is_none());
+
+    // The same proposed move becomes external authority when Herdr's fresh
+    // layout and active tab really agree, without any new operator request.
+    let identity = runtime.pane_focus_readback_target(&stale).unwrap();
+    runtime.ingest_session_with_focus_readback(Ok(stale), None, Some((identity, true)));
+    assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p1"));
+    assert_eq!(
+        runtime.snapshot().terminal.pane_id.as_deref(),
+        Some("w1:p1")
+    );
+    assert_eq!(diagnostic_count(&runtime, "pane.focus.followed"), 1);
+}
+
+#[test]
+fn pane_focus_readback_cannot_outlive_a_new_selection_or_connection() {
+    for reconnect in [false, true] {
+        let mut runtime = live_runtime();
+        let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6020)];
+        runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
+        runtime.dispatch_json(&operator_focus_event("w1:p2"));
+        finish_running_pane_focus(&mut runtime, Ok(()));
+        let stale = finished_tab_payload(&panes, "w1:p1");
+        let identity = runtime.pane_focus_readback_target(&stale).unwrap();
+        let expected = if reconnect {
+            runtime.set_live(runtime.live.as_ref().unwrap().clone());
+            "w1:p2"
+        } else {
+            runtime.dispatch_json(&operator_focus_event("w1:p3"));
+            finish_running_pane_focus(&mut runtime, Ok(()));
+            "w1:p3"
+        };
+
+        runtime.ingest_session_with_focus_readback(Ok(stale), None, Some((identity, true)));
+        assert_eq!(
+            runtime.snapshot().focused.pane_id.as_deref(),
+            Some(expected)
+        );
+        assert_eq!(diagnostic_count(&runtime, "pane.focus.followed"), 0);
+    }
+}
+
+#[test]
+fn pane_focus_completion_during_session_read_does_not_authorize_an_unchecked_stream_move() {
+    let mut runtime = live_runtime();
+    let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019)];
+    runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
+    runtime.dispatch_json(&operator_focus_event("w1:p2"));
+    let stale = finished_tab_payload(&panes, "w1:p1");
+    assert!(runtime.pane_focus_readback_target(&stale).is_none());
+    finish_running_pane_focus(&mut runtime, Ok(()));
+
+    runtime.ingest_session_with_focus_readback(Ok(stale), None, None);
+    assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p2"));
+    assert_eq!(diagnostic_count(&runtime, "pane.focus.followed"), 0);
+}
+
+#[test]
 fn superseded_same_pane_focus_failure_cannot_fail_a_newer_correlated_request() {
     let mut runtime = live_runtime();
     let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6020)];

@@ -2091,6 +2091,24 @@ fn execute_pane_focus_with_timeout(
             ControlFailure::Ambiguous(format!("pane.focus result is unknown: {message}"))
         }
     })?;
+    confirm_pane_focus_with_timeout(connector, pane_id, response_timeout)
+}
+
+/// Read current focus without producing another focus effect. Herdr's pinned
+/// event stream has no ordering cursor, so an external move needs this same
+/// confirmation before an older queued layout can replace Hide's selection.
+pub(crate) fn confirm_pane_focus(
+    connector: &dyn ApiConnector,
+    pane_id: &str,
+) -> Result<PaneLayoutSnapshot, ControlFailure> {
+    confirm_pane_focus_with_timeout(connector, pane_id, Duration::from_secs(5))
+}
+
+fn confirm_pane_focus_with_timeout(
+    connector: &dyn ApiConnector,
+    pane_id: &str,
+    response_timeout: Duration,
+) -> Result<PaneLayoutSnapshot, ControlFailure> {
     let layout = request_small_response(
         connector,
         "pane.layout",
@@ -5487,6 +5505,20 @@ mod tests {
             assert_eq!(
                 herdr.methods(),
                 ["pane.focus", "pane.layout", "workspace.get"]
+            );
+            // Checking a proposed stream move shares the confirmation
+            // contract and must not produce another focus mutation.
+            let readback = confirm_pane_focus(&herdr.connector(), "fixture:p2");
+            assert_eq!(readback.is_ok(), confirmed);
+            assert_eq!(
+                herdr.methods(),
+                [
+                    "pane.focus",
+                    "pane.layout",
+                    "workspace.get",
+                    "pane.layout",
+                    "workspace.get"
+                ]
             );
         }
     }
