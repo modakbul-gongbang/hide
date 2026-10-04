@@ -2,6 +2,13 @@ import type { Catalog, Catalogs } from "../schema";
 
 export const overviewEnglish = {
   "overview.title": "Overview",
+  "overview.scopeLabel": "Overview scope",
+  "overview.allProjects": "All projects",
+  "overview.close": "Close Overview",
+  "overview.needsYou": "{{count}} Needs You",
+  "overview.needsYouHint": "Overview · {{count}} Needs You",
+  "overview.askingCount": "{{count}} asking",
+  "overview.sidebarView": "Sidebar view",
   "overview.viewLabel": "Overview view",
   "overview.projectView": "Project view",
   "overview.tasks": "Tasks",
@@ -61,6 +68,13 @@ export const overviewEnglish = {
 
 const ko = {
   "overview.title": "개요",
+  "overview.scopeLabel": "개요 범위",
+  "overview.allProjects": "모든 프로젝트",
+  "overview.close": "개요 닫기",
+  "overview.needsYou": "내 차례 {{count}}개",
+  "overview.needsYouHint": "개요 · 내 차례 {{count}}개",
+  "overview.askingCount": "{{count}}개 대기",
+  "overview.sidebarView": "사이드바 보기",
   "overview.viewLabel": "개요 보기",
   "overview.projectView": "프로젝트 보기",
   "overview.tasks": "태스크",
@@ -120,6 +134,13 @@ const ko = {
 
 const zhCN = {
   "overview.title": "概览",
+  "overview.scopeLabel": "概览范围",
+  "overview.allProjects": "所有项目",
+  "overview.close": "关闭概览",
+  "overview.needsYou": "{{count}} 项待处理",
+  "overview.needsYouHint": "概览 · {{count}} 项待处理",
+  "overview.askingCount": "{{count}} 项待处理",
+  "overview.sidebarView": "侧边栏视图",
   "overview.viewLabel": "概览视图",
   "overview.projectView": "项目视图",
   "overview.tasks": "任务",
@@ -179,6 +200,13 @@ const zhCN = {
 
 const ja = {
   "overview.title": "概要",
+  "overview.scopeLabel": "概要の範囲",
+  "overview.allProjects": "すべてのプロジェクト",
+  "overview.close": "概要を閉じる",
+  "overview.needsYou": "自分の番 {{count}}件",
+  "overview.needsYouHint": "概要 · 自分の番 {{count}}件",
+  "overview.askingCount": "{{count}}件待機",
+  "overview.sidebarView": "サイドバーの表示",
   "overview.viewLabel": "概要の表示",
   "overview.projectView": "プロジェクトの表示",
   "overview.tasks": "タスク",

@@ -1,3 +1,4 @@
+import { openProjectOverview } from "./overview-entry";
 // The PRs tab of a Project's Overview on an isolated pinned Herdr and hided
 // (PRD overview-lenses-prs): a Git project whose pull requests a fake `gh`
 // answers and records every write of, so nothing reaches GitHub. The tile
@@ -154,7 +155,7 @@ if (a === "issue" && b === "create") {
   process.exit(0);
 }
 if (a === "issue" && b === "list") { out(read("issues.json")); process.exit(0); }
-if (a === "issue" && b === "view") { out({ body: "이슈 본문", labels: [], author: { login: "hoyeon" }, assignees: [], createdAt: "2026-09-19T00:00:00Z", comments: [] }); process.exit(0); }
+if (a === "issue" && b === "view") { out({ body: "이슈 본문", labels: [], author: { login: "example-user" }, assignees: [], createdAt: "2026-09-19T00:00:00Z", comments: [] }); process.exit(0); }
 if (a === "api" && b === "graphql") { out({ data: { r0: { nameWithOwner: "acme/repo" } } }); process.exit(0); }
 fail("unsupported: " + args.join(" "));
 `;
@@ -257,8 +258,7 @@ test("a project's PRs tab: grouped pull requests, 이슈 잇기, 맡기기 and �
 
     // The project row opens the request view (overview-request-view D-05).
     await page.locator('[data-sidebar-mode="projects"]').click();
-    const repoRow = page.locator("[data-project-row]", { hasText: /^repo/ });
-    await repoRow.click();
+    await openProjectOverview(page, "repo");
     const overview = page.locator("[data-overview-screen]");
     await expect(overview).toHaveAttribute("data-overview-view", "requests");
     const tile = (id: string) => overview.locator(`[data-lens-tile="${id}"]`);
@@ -466,7 +466,7 @@ test("a project's PRs tab: grouped pull requests, 이슈 잇기, 맡기기 and �
 
     // 최근 머지 unfolds from its header, dimmed; 정리 opens the existing
     // Delete worktree dialog, whose cancel changes nothing (B19, B20).
-    await repoRow.click();
+    await openProjectOverview(page, "repo");
     await tile("prs").locator("[data-lens-tile-button]").click();
     await overview.locator('[data-pr-group-toggle="merged"]').click();
     await expect(row(20)).toBeVisible();

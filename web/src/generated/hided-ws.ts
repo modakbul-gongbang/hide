@@ -158,6 +158,7 @@ export interface FocusCheckoutPayload {
   focus_device?: boolean;
   display_id?: string;
   expanded?: boolean;
+  project_expanded?: boolean;
 }
 /**
  * The core's shared explicit interface language. Null follows each client's primary system language, with English for unsupported languages. Invalid stored values publish en with a diagnostic and remain stored until an explicit edit.

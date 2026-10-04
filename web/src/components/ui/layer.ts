@@ -9,15 +9,15 @@ import { restoreFocus } from "../../terminals";
 import { useUiStore } from "../../ui";
 
 /** While `open`, Escape runs `close` before any layer opened earlier. */
-export function useEscapeLayer(open: boolean, close: () => void) {
+export function useEscapeLayer(open: boolean, close: () => void, base = false) {
   const latest = useRef(close);
   useEffect(() => {
     latest.current = close;
   });
   useEffect(() => {
     if (!open) return;
-    return useUiStore.getState().pushEscape(() => latest.current());
-  }, [open]);
+    return useUiStore.getState().pushEscape(() => latest.current(), base);
+  }, [open, base]);
 }
 
 /**
@@ -25,7 +25,7 @@ export function useEscapeLayer(open: boolean, close: () => void) {
  * Escape layer. A controlled caller keeps its own state; an uncontrolled one
  * gets it here.
  */
-export function useLayerOpen(open: boolean | undefined, defaultOpen: boolean | undefined, onOpenChange: ((open: boolean) => void) | undefined) {
+export function useLayerOpen(open: boolean | undefined, defaultOpen: boolean | undefined, onOpenChange: ((open: boolean) => void) | undefined, base = false) {
   const [own, setOwn] = useState(defaultOpen ?? false);
   const current = open ?? own;
   const change = useCallback(
@@ -35,7 +35,7 @@ export function useLayerOpen(open: boolean | undefined, defaultOpen: boolean | u
     },
     [open, onOpenChange],
   );
-  useEscapeLayer(current, () => change(false));
+  useEscapeLayer(current, () => change(false), base);
   return [current, change] as const;
 }
 

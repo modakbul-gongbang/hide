@@ -3,7 +3,7 @@
 // home-device-rail B1-B13): the rail is the sidebar's full-height left column,
 // shown with This Mac alone, and has no Inbox or footer device button, its
 // `+` opens Settings > Devices > Add device, and each device's sidebar is its
-// name over Projects | Agents with the Home row in Projects. A right-click
+// name, shared Overview and Projects | Agents, with Home in Projects. A right-click
 // hides the rail, the name on the top line becomes the device menu, and the
 // choice survives a reload. Registering one device that cannot be reached (an
 // alias no SSH config knows) adds a dimmed monogram tile with a cross and no
@@ -16,11 +16,13 @@ import { expect, test, type Page } from "@playwright/test";
 import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, screenshot } from "./wire";
+import { SYSTEM } from "./chords";
 
 test.describe.configure({ timeout: 180_000 });
 
 const ALIAS = "unreachable-e2e";
 const CENTER = "[data-main-screen], [data-workspace-screen]";
+const SIDEBAR_LABELS = SYSTEM === "mac" ? ["Projects⇧⌘P", "Agents⇧⌘A"] : ["ProjectsAlt+Shift+P", "AgentsCtrl+Alt+A"];
 
 async function openAddDeviceForm(page: Page): Promise<void> {
   await expect(page.locator('[data-settings="true"]')).toBeVisible();
@@ -46,10 +48,10 @@ test("the rail follows the registered devices; a device that cannot be reached i
     await expect(rail.locator('[data-rail-tile="local"]')).toHaveAttribute("aria-pressed", "true");
     await expect(rail.locator('[data-rail-tile="inbox"]')).toHaveCount(0);
     await expect(page.locator("[data-footer-device]")).toHaveCount(0);
-    // B3: the device's sidebar is its name over Projects | Agents, with the Home row in Projects and no Overview row.
+    // #349: device name, shared Overview, then Projects | Agents with direct keycaps.
     await expect(page.locator("[data-sidebar-title-name]")).toHaveText("This Mac");
-    await expect(page.locator("[data-sidebar-mode]")).toHaveText(["Projects", "Agents"]);
-    await expect(page.locator("[data-overview-destination]")).toHaveCount(0);
+    await expect(page.locator("[data-sidebar-mode]")).toHaveText(SIDEBAR_LABELS);
+    await expect(page.locator("[data-sidebar-overview]")).toHaveText(SYSTEM === "mac" ? "Overview⇧⌘O" : "OverviewAlt+Shift+O");
     await expect(page.locator("[data-project-list] [data-home-destination]")).toContainText("Home");
     await page.locator('[data-sidebar-mode="agents"]').click();
     await expect(page.locator("[data-agent-list], [data-agents-empty]").first()).toBeVisible();
@@ -97,7 +99,7 @@ test("the rail follows the registered devices; a device that cannot be reached i
     await page.keyboard.press("Escape");
     await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
     await expect(rail.locator("[data-rail-tile]")).toHaveCount(2, { timeout: 20_000 });
-    await expect(page.locator("[data-sidebar-mode]")).toHaveText(["Projects", "Agents"]);
+    await expect(page.locator("[data-sidebar-mode]")).toHaveText(SIDEBAR_LABELS);
     const ids = await rail.locator("[data-rail-tile]").evaluateAll((tiles) => tiles.map((tile) => tile.getAttribute("data-rail-tile")));
     expect(ids).toEqual(["local", ALIAS]);
     // The rail is its own fixed column beside the content column: the stored width stays the content's, and the rail adds to it.
@@ -175,7 +177,7 @@ test("the rail follows the registered devices; a device that cannot be reached i
     await expect(rail.locator("[data-rail-tile]")).toHaveCount(1, { timeout: 20_000 });
     await page.keyboard.press("Escape");
     await expect(rail.locator('[data-rail-tile="local"]')).toHaveAttribute("aria-pressed", "true");
-    await expect(page.locator("[data-sidebar-mode]")).toHaveText(["Projects", "Agents"]);
+    await expect(page.locator("[data-sidebar-mode]")).toHaveText(SIDEBAR_LABELS);
     await expect(page.locator("[data-home-destination]")).toBeVisible();
     await expect(page.locator(CENTER).first()).toBeVisible();
   } finally {

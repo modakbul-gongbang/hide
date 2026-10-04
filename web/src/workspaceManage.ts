@@ -60,7 +60,6 @@ export function branchProblem(name: string): string | null {
 
 export type MenuItem = {
   id:
-    | "open_overview"
     | "new_worktree"
     | "new_tab_primary"
     | "reveal_external"
@@ -129,7 +128,6 @@ export function projectMenu(workspace: Workspace, host: MenuHost): MenuItem[] {
   const primary = primaryCheckout(workspace);
   const reveal = revealItem(workspace, host, true);
   return [
-    { id: "open_overview", label: "Open Overview", unavailable: null },
     { id: "new_worktree", label: "New worktree…", unavailable: workspace.is_git === false ? "This project is not a Git repository." : null },
     {
       id: "new_tab_primary",

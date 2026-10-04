@@ -7,7 +7,7 @@ import { commitCycle, reconcileHeldCycle } from "./keyboard";
 import { expectPane, observeEntries, observePane, resetRecent, tabSurface } from "./recent";
 import type { SnapshotRest } from "./snapshot";
 import { useShellStore } from "./store";
-import { entryLens, useUiStore } from "./ui";
+import { useUiStore } from "./ui";
 import type { KeyboardOwner } from "./viewFocus";
 
 // a1 exists independently in Agent and View; another Agent area and
@@ -126,7 +126,7 @@ describe("Agent pane cycle (issue 301)", () => {
     const rest = devices(); draw(rest);
     observePane(rest, "other-tab-pane");
     noteAreaFrame("agent", null);
-    for (const screen of [{ kind: "main" }, { kind: "overview", projectId: "w", lens: entryLens(null, "board") }] as const) {
+    for (const screen of [{ kind: "main" }] as const) {
       useUiStore.setState({ screen });
       // A shortcut can leave the last View owner recorded when its screen
       // unmounts; that is no longer a focused file on Main or Overview.

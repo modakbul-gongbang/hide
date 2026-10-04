@@ -120,6 +120,7 @@ export const settingsEnglish = {
   "settings.shortcuts.changeAria": "Change {{command}}",
   "settings.shortcuts.pressChord": "Press a chord…",
   "settings.shortcuts.toggleConversation": "Toggle Conversation",
+  "settings.shortcuts.clear": "Clear",
   "settings.shortcuts.change": "Change",
 } as const;
 
@@ -243,6 +244,7 @@ const ko = {
   "settings.shortcuts.changeAria": "{{command}} 변경",
   "settings.shortcuts.pressChord": "단축키를 누르세요…",
   "settings.shortcuts.toggleConversation": "대화 표시 전환",
+  "settings.shortcuts.clear": "해제",
   "settings.shortcuts.change": "변경",
 } satisfies Catalog<typeof settingsEnglish>;
 
@@ -366,6 +368,7 @@ const ja = {
   "settings.shortcuts.changeAria": "{{command}}を変更",
   "settings.shortcuts.pressChord": "ショートカットを押してください…",
   "settings.shortcuts.toggleConversation": "会話の表示を切り替える",
+  "settings.shortcuts.clear": "解除",
   "settings.shortcuts.change": "変更",
 } satisfies Catalog<typeof settingsEnglish>;
 
@@ -489,6 +492,7 @@ const zhCN = {
   "settings.shortcuts.changeAria": "更改 {{command}}",
   "settings.shortcuts.pressChord": "请按快捷键…",
   "settings.shortcuts.toggleConversation": "切换对话显示",
+  "settings.shortcuts.clear": "清除",
   "settings.shortcuts.change": "更改",
 } satisfies Catalog<typeof settingsEnglish>;
 

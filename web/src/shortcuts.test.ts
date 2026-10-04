@@ -68,11 +68,12 @@ describe("shortcut registry", () => {
       previous_recent_project: "⌥⇧⇥",
       search: "⌘K",
       open_file: "⌘P",
-      project_home: "⇧⌘H",
       toggle_left_sidebar: "⌘B",
       // ⌘E shows the Explorer in both hosts (issue 170); the macOS set keeps
       // it on the sidebar switch, which has no chord here until one is bound.
-      toggle_sidebar_view: "",
+      overview: "⇧⌘O",
+      sidebar_projects: "⇧⌘P",
+      sidebar_agents: "⇧⌘A",
       toggle_device_rail: "",
       toggle_explorer: "⌘E",
       toggle_right_panel: "⇧⌘B",
@@ -254,7 +255,7 @@ describe("browser pane chord overrides (S5 B9, B10)", () => {
     expect([...EDITABLE_PANE_COMMANDS].sort()).toEqual(
       [
         "recent_area_tab", "previous_recent_area_tab", "recent_panel", "previous_recent_panel",
-        "close_pane", "split_down", "split_right", "text_larger", "text_reset", "text_smaller", "toggle_device_rail", "toggle_sidebar_view", "toggle_zoom",
+        "close_pane", "split_down", "split_right", "text_larger", "text_reset", "text_smaller", "toggle_device_rail", "overview", "sidebar_projects", "sidebar_agents", "toggle_zoom",
         "focus_next_agent_area", "focus_previous_agent_area", "grow_agent_area", "shrink_agent_area",
         "focus_next_view_area", "focus_previous_view_area", "grow_view_area", "shrink_view_area",
       ].sort(),
@@ -274,20 +275,15 @@ describe("browser pane chord overrides (S5 B9, B10)", () => {
     expect(displayCommand("shrink_agent_area", "electron", desktop.registry, "mac")).toBe("⌥⌘H");
   });
 
-  it("runs the Explorer on ⌘E and leaves the sidebar switch unbound until the operator binds it (issue 170)", () => {
-    const press = { code: "KeyE", metaKey: true, altKey: false, shiftKey: false, ctrlKey: false };
+  it("ignores the retired sidebar toggle without losing the other saved chords", () => {
     for (const host of ["browser", "electron"] as const) {
-      expect(matchHost(press, REGISTRY, host)?.id).toBe("toggle_explorer");
-      expect(displayCommand("toggle_sidebar_view", host, REGISTRY, "mac")).toBe("");
-      expect(bindingProblem("toggle_sidebar_view", { code: "KeyE", meta: true }, REGISTRY, host, "mac")).toMatch(/already Toggle Tools/);
+      const resolved = effectiveRegistry({ toggle_sidebar_view: "invalid", split_right: host === "browser" ? "meta+alt+KeyR" : "command+option+r" }, host, "mac");
+      expect(resolved.diagnostic).toMatch(/retired/);
+      expect(displayCommand("split_right", host, resolved.registry, "mac")).toBe("⌥⌘R");
+      expect(displayCommand("sidebar_projects", host, resolved.registry, "mac")).toBe("⇧⌘P");
+      expect(displayCommand("sidebar_agents", host, resolved.registry, "mac")).toBe("⇧⌘A");
+      expect(resolved.registry.some((command) => command.id as string === "toggle_sidebar_view")).toBe(false);
     }
-    const browser = effectiveRegistry({ toggle_sidebar_view: "meta+shift+KeyE" }, "browser", "mac");
-    expect(browser.diagnostic).toBeNull();
-    expect(displayCommand("toggle_sidebar_view", "browser", browser.registry, "mac")).toBe("⇧⌘E");
-    // The desktop app keeps it in the macOS set, under its own name.
-    const desktop = effectiveRegistry({ toggle_sidebar_view: "command+shift+e", split_right: "command+option+r" }, "electron", "mac");
-    expect(desktop.diagnostic).toBeNull();
-    expect(displayCommand("toggle_sidebar_view", "electron", desktop.registry, "mac")).toBe("⇧⌘E");
   });
 });
 
@@ -380,9 +376,10 @@ describe("Windows and Linux (operator decision 2026-10-03)", () => {
       previous_recent_project: "Ctrl+Alt+Shift+`",
       search: "Ctrl+Shift+K",
       open_file: "Ctrl+Shift+P",
-      project_home: "Alt+Shift+H",
       toggle_left_sidebar: "Ctrl+Shift+B",
-      toggle_sidebar_view: "",
+      overview: "Alt+Shift+O",
+      sidebar_projects: "Alt+Shift+P",
+      sidebar_agents: "Alt+Shift+A",
       toggle_device_rail: "",
       toggle_explorer: "Ctrl+Shift+E",
       toggle_right_panel: "Alt+Shift+B",
@@ -438,7 +435,7 @@ describe("Windows and Linux (operator decision 2026-10-03)", () => {
   });
 
   it("notes a browser chord as moved only where Chrome keeps the desktop chord on this system", () => {
-    expect(pc.filter((command) => command.moved).map((command) => command.id).sort()).toEqual(["close_tab", "new_tab", "previous_recent_area_tab", "recent_area_tab", "reopen_closed_tab"]);
+    expect(pc.filter((command) => command.moved).map((command) => command.id).sort()).toEqual(["close_tab", "new_tab", "previous_recent_area_tab", "recent_area_tab", "reopen_closed_tab", "sidebar_agents"]);
     expect(sheetRows("Tabs", pc, "browser", "pc").find((row) => row.id === "new_tab")).toMatchObject({ chord: "Alt+T", moved: true, movedFrom: "Ctrl+Shift+T" });
     // Chrome keeps Alt+Shift+T for its toolbar, and the macOS ⌥⇧T is those keys.
     expect(sheetRows("Tabs", pc, "browser", "pc").find((row) => row.id === "reopen_closed_tab")).toMatchObject({ chord: "Ctrl+Alt+Shift+T", moved: true, movedFrom: "Alt+Shift+T" });
@@ -511,3 +508,15 @@ describe("Windows and Linux (operator decision 2026-10-03)", () => {
   });
 });
 
+
+// Unbinding a navigation key preserves the rest of the host registry.
+describe("cleared navigation keys", () => {
+  it("keeps unrelated overrides while removing every new navigation chord", () => {
+    for (const host of ["browser", "electron"] as const) {
+      const result = effectiveRegistry({ overview: "none", sidebar_projects: "none", sidebar_agents: "none", split_right: host === "browser" ? "meta+alt+KeyR" : "command+option+r" }, host, "mac");
+      expect(result.diagnostic).toBeNull();
+      for (const id of ["overview", "sidebar_projects", "sidebar_agents"]) expect(result.registry.find(row => row.id === id)?.[host]).toBeNull();
+      expect(result.registry.find(row => row.id === "split_right")?.[host]?.code).toBe("KeyR");
+    }
+  });
+});

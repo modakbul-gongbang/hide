@@ -7,7 +7,7 @@ import { Kbd } from "./components/ui/kbd";
 import { Tabs, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { Hint } from "./components/ui/tooltip";
 import { cn } from "./lib/utils";
-import { AGENT_GROUPS, boardProjects, mainSections, overviewScreen, type DeviceAvailability, type DeviceSection, type GroupCounts, type ProjectEntry } from "./navigation";
+import { AGENT_GROUPS, boardProjects, mainSections, type DeviceAvailability, type DeviceSection, type GroupCounts, type ProjectEntry } from "./navigation";
 import { useNewIssueShortcut } from "./IssueDialogs";
 import { AgentGraph, GraphFilterControls } from "./GraphView";
 import { NO_GRAPH_FILTER, foldId, type GraphFilter } from "./agentGraph";
@@ -73,7 +73,7 @@ export function MainScreen({ actions }: { actions: Actions }) {
   const lensAgents = useMemo(() => scopeAgents(projects), [projects]);
   const rows = useMemo(() => requestRows(lensAgents, projects.flatMap((project) => project.agents)), [lensAgents, projects]);
   // The request view's expanded rows and fold, this screen's own page state.
-  const requestLens = useUiStore((s) => s.screen?.kind === "main" ? s.screen.requests ?? NO_REQUEST_LENS : NO_REQUEST_LENS);
+  const requestLens = useUiStore((s) => s.overviewOpen ? s.overviewRequests : s.screen?.kind === "main" ? s.screen.requests ?? NO_REQUEST_LENS : NO_REQUEST_LENS);
   const onRequestLens = useCallback((patch: Partial<RequestLens>) => useUiStore.getState().setMainRequestLens(patch), []);
   // Every local Git project's tasks are read once the boards are on screen.
   const localGit = useMemo(() => projects.filter(({ workspace }) => workspace.is_git && !workspace.remote_target_id).map(({ workspace }) => workspace.id).join("\n"), [projects]);
@@ -357,9 +357,8 @@ export function UnavailableNotice({ device, availability, actions }: { device: D
   );
 }
 
-function ProjectRow({ project }: { project: ProjectEntry; actions: Actions }) {
+function ProjectRow({ project, actions }: { project: ProjectEntry; actions: Actions }) {
   const { t } = useInterfaceTranslation();
-  const setScreen = useUiStore((s) => s.setScreen);
   const reachable = project.workspace !== null;
   return (
     <li>
@@ -369,7 +368,7 @@ function ProjectRow({ project }: { project: ProjectEntry; actions: Actions }) {
         disabled={!reachable}
         data-main-project={project.id}
         className="flex w-full items-center gap-md rounded-sm px-sm py-xs text-left outline-none hover:bg-accent focus-visible:bg-accent disabled:cursor-default disabled:hover:bg-transparent"
-        onClick={() => setScreen(overviewScreen(useShellStore.getState().rest, project.id))}
+        onClick={() => actions.openProjectById(project.deviceId, project.id)}
       >
         <span className="flex min-w-0 flex-1 flex-col">
           <span className="flex items-baseline gap-xs text-body text-foreground">

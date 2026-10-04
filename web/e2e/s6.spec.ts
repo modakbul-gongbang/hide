@@ -14,6 +14,7 @@ import { declareParent, herdrHasFocus, startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { chooseColumn, countSent, screenshot } from "./wire";
 import { chord, commandLabel } from "./chords";
+import { openCurrentProjectOverview } from "./overview-entry";
 
 test.describe.configure({ timeout: 120_000 });
 
@@ -48,10 +49,12 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     await expect(project.locator("[data-workspace-count]")).toHaveText(/1 workspace/);
     await screenshot(page, "s6-main");
 
-    // Its Overview opens on the request view (overview-request-view D-05);
+    // #350's project card opens its checkout. Shared Overview's scope
+    // opens on the request view (overview-request-view D-05);
     // the Agents graph's rows list both agents, and an agent enters the
     // Workspace at that pane (B2).
     await project.click();
+    await openCurrentProjectOverview(page, "fixture");
     await expect(page.locator('[data-overview-screen][data-overview-view="requests"]')).toBeVisible();
     await page.locator('[data-lens-tile-button="agents"]').click();
     await expect(page.locator('[data-overview-screen][data-overview-view="agents"]')).toBeVisible();
@@ -62,13 +65,14 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     await expect(page.locator(`[data-pane-view="${parent}"]`)).toHaveAttribute("data-focused", "true");
     // A new Workspace shows Agent Views alone: File Views and Tools are off
     // and Tools holds the Explorer (B2). The toolbar spans the body and ends
-    // with Open server, File Views and Tools as icons only (B6).
+    // with Overview, Open server, File Views and Tools as icons only (#349 D-07).
     await expect(workspace).toHaveAttribute("data-file-views", "off");
     await expect(workspace).toHaveAttribute("data-tools", "off");
     await expect(page.locator('[data-column="views"], [data-column="tools"]')).toHaveCount(0);
     const toggles = page.locator("[data-workspace-toolbar] [data-column-toggles] button");
-    await expect(toggles).toHaveCount(3);
+    await expect(toggles).toHaveCount(4);
     expect(await toggles.evaluateAll((buttons) => buttons.map((button) => [button.getAttribute("aria-label"), button.textContent?.trim() ?? ""]))).toEqual([
+      ["Overview", ""],
       ["Open server", ""],
       ["File Views", ""],
       ["Tools", ""],

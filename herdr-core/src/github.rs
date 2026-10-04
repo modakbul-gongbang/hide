@@ -1780,7 +1780,7 @@ mod tests {
         };
         let comments: Vec<String> = (1..=5).map(comment).collect();
         let output = format!(
-            r#"{{"body":"본문","labels":[{{"name":"bug","color":"d73a4a"}},{{"name":"odd","color":"red;x"}}],"author":{{"login":"yansfil","name":""}},"assignees":[{{"login":"a1"}}],"comments":[{}],"createdAt":"2026-09-27T00:00:00Z"}}"#,
+            r#"{{"body":"본문","labels":[{{"name":"bug","color":"d73a4a"}},{{"name":"odd","color":"red;x"}}],"author":{{"login":"example","name":""}},"assignees":[{{"login":"a1"}}],"comments":[{}],"createdAt":"2026-09-27T00:00:00Z"}}"#,
             comments.join(",")
         );
         let detail = parse_issue_detail(&output).unwrap();
@@ -1793,7 +1793,7 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![("bug", Some("d73a4a")), ("odd", None)]
         );
-        assert_eq!(detail.author.as_deref(), Some("yansfil"));
+        assert_eq!(detail.author.as_deref(), Some("example"));
         assert_eq!(detail.assignees, vec!["a1".to_owned()]);
         assert_eq!(
             detail.created_at_unix_ms,

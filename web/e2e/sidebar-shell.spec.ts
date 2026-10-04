@@ -37,14 +37,14 @@ test("the Home row, the Projects | Agents strip and its Search icon, with no Add
     const sidebar = page.locator("nav[data-sidebar]");
     // B3: Projects is the first tab and the one shown.
     await expect(sidebar).toHaveAttribute("data-sidebar", "projects", { timeout: 20_000 });
-    await expect(page.locator("[data-sidebar-mode]")).toHaveText(["Projects", "Agents"]);
-    await expect(page.locator('[data-sidebar-mode="projects"]')).toHaveAttribute("aria-pressed", "true");
+    await expect(page.locator("[data-sidebar-mode]")).toContainText(["Projects", "Agents"]);
+    await expect(page.locator('[data-sidebar-mode="projects"]')).toHaveAttribute("aria-selected", "true");
     const list = page.locator("[data-project-list]");
     await expect(list.locator("[data-checkout]").first()).toBeVisible({ timeout: 20_000 });
 
     // B1, B2: the Home row opens the device's Overview, titled with the device, and is marked.
     // No Overview row is left above the list.
-    await expect(page.locator("[data-overview-destination]")).toHaveCount(0);
+    await expect(page.locator("[data-sidebar-overview]")).toBeVisible();
     const overview = page.locator("[data-home-destination]");
     await expect(overview).toContainText("Home");
     await expect(overview.locator("[data-home-count]")).toHaveText(/^\d+ projects?$/);
@@ -53,7 +53,8 @@ test("the Home row, the Projects | Agents strip and its Search icon, with no Add
     await expect(main).toBeVisible();
     await expect(main.locator("h1")).toContainText("Home");
     await expect(main.locator("[data-main-device-name]")).toHaveText("This Mac");
-    await expect(overview).toHaveAttribute("aria-current", "page");
+    await expect(page.locator("[data-sidebar-overview]")).toHaveAttribute("aria-current", "page");
+    await expect(overview).not.toHaveAttribute("aria-current", "page");
     // The row is the Projects list's own, under the tab strip.
     expect(await overview.evaluate((row) => row.closest("[data-project-list]") !== null)).toBe(true);
     expect((await overview.boundingBox())!.y).toBeGreaterThan((await page.locator("[data-sidebar-strip]").boundingBox())!.y);
@@ -77,7 +78,8 @@ test("the Home row, the Projects | Agents strip and its Search icon, with no Add
     await overview.focus();
     await page.keyboard.press("Enter");
     await expect(main).toBeVisible();
-    await expect(overview).toHaveAttribute("aria-current", "page");
+    await expect(page.locator("[data-sidebar-overview]")).toHaveAttribute("aria-current", "page");
+    await expect(overview).not.toHaveAttribute("aria-current", "page");
 
     // B4: Search at the strip's end, hinted with its chord, opens the palette.
     const search = page.locator("[data-sidebar-search]");
