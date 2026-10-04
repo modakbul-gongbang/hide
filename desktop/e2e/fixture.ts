@@ -38,10 +38,7 @@ export type Isolated = {
  */
 export function isolate(herdr: Pick<HerdrFixture, "socket" | "bin"> & Partial<Pick<HerdrFixture, "root">>, label: string): Isolated {
   if (isolations.size >= MAX_ISOLATIONS) throw new Error(`desktop fixture has ${MAX_ISOLATIONS} unclosed homes; clean an owned fixture before creating another`);
-  // macOS's per-user TMPDIR can make HOME/.hcoord/api.sock exceed the Unix
-  // socket path limit before the kit can start its private LaunchAgent.
-  const temporaryDir = process.platform === "win32" ? os.tmpdir() : "/tmp";
-  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(temporaryDir, `hide-desktop-${label}-`)));
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), `hide-desktop-${label}-`)));
   const home = path.join(root, "home");
   let env: Record<string, string>;
   try {

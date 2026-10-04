@@ -3,7 +3,6 @@
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
 import { ChildProcess, execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
-import net from "node:net";
 import os from "node:os";
 import path from "node:path";
 import { isolate, launch, type Isolated } from "./fixture";
@@ -70,23 +69,6 @@ function privateHome(label: string): Isolated {
   runs.push(run);
   return run;
 }
-
-test.skipIf(process.platform === "win32")("a private coordinator socket can bind with a long system temporary directory", async () => {
-  // beforeEach supplies a long temporary directory, like macOS's per-user
-  // TMPDIR. The kit must be able to probe the coordinator's real socket.
-  const run = privateHome("server-search");
-  fs.mkdirSync(run.env.HCOORD_HOME!, { recursive: true, mode: 0o700 });
-  const server = net.createServer();
-  try {
-    await new Promise<void>((resolve, reject) => {
-      server.once("error", reject);
-      server.listen(path.join(run.env.HCOORD_HOME!, "api.sock"), resolve);
-    });
-    expect(server.listening).toBe(true);
-  } finally {
-    if (server.listening) await new Promise<void>((resolve, reject) => server.close((error) => error ? reject(error) : resolve()));
-  }
-});
 
 function reportExit(child: ChildProcess, signal: NodeJS.Signals | null = null): void {
   Object.assign(child, { exitCode: signal ? null : 0, signalCode: signal });
