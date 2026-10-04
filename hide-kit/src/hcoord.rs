@@ -446,10 +446,12 @@ fn stable_spelling(chosen: PathBuf, links: &[PathBuf]) -> PathBuf {
 
 /// The Node a device runs hcoord with: the one an existing hcoord shim
 /// already names (the operator's choice), in hcoord's home or else in the
-/// old `~/.hcoord` it has not moved from yet, then the first on `PATH`, then
-/// the usual install folders; each must answer a version of at least
-/// [`NODE_MINIMUM`] within five seconds. The one found is named by a stable
-/// link when one leads to it ([`stable_spelling`]).
+/// old `~/.hcoord` it has not moved from yet, then each on `PATH` in order,
+/// then the usual install folders; each must exit successfully within five
+/// seconds with a version of at least [`NODE_MINIMUM`]. Why each one before
+/// it was turned down is logged, or, when none is found, given in the error.
+/// The one found is named by a stable link when one leads to it
+/// ([`stable_spelling`]).
 pub fn find_node(home: &Path, hcoord_home: &Path, stop: &AtomicBool) -> Result<PathBuf, String> {
     let mut candidates = Vec::new();
     for shim in [
@@ -468,39 +470,70 @@ pub fn find_node(home: &Path, hcoord_home: &Path, stop: &AtomicBool) -> Result<P
         candidates.extend(std::env::split_paths(&path).map(|folder| folder.join("node")));
     }
     candidates.extend(stable_links(home));
+    choose_node(candidates, home, stop)
+}
+
+/// The first of `candidates` that counts as hcoord's Node, in order.
+fn choose_node(
+    candidates: Vec<PathBuf>,
+    home: &Path,
+    stop: &AtomicBool,
+) -> Result<PathBuf, String> {
     let mut seen = Vec::new();
     let mut too_old = None;
+    // Why each candidate before the chosen one was turned down, so a shim's
+    // Node replaced by another does not vanish from the diagnostics.
+    let mut rejected = Vec::new();
     for candidate in candidates {
         if seen.contains(&candidate) || !candidate.is_file() {
             continue;
         }
         seen.push(candidate.clone());
-        let Ok(finished) = process::run(
+        let finished = match process::run(
             &candidate,
             &["--version"],
             &[],
             home,
             NODE_PROBE_DEADLINE,
             stop,
-        ) else {
-            continue;
+        ) {
+            Ok(finished) => finished,
+            Err(error) => {
+                rejected.push(error);
+                continue;
+            }
         };
+        let name = candidate.display();
+        if !finished.succeeded() {
+            rejected.push(match finished.code {
+                Some(code) => format!("{name} exited with {code}"),
+                None => format!("{name} was ended by a signal"),
+            });
+            continue;
+        }
         match parse_node_version(&finished.stdout) {
             Some(version) if version >= NODE_MINIMUM => {
+                for reason in &rejected {
+                    eprintln!("hcoord.node_rejected reason={reason:?}");
+                }
                 return Ok(stable_spelling(candidate, &stable_links(home)));
             }
             Some((major, minor, patch)) => {
                 too_old.get_or_insert(format!("{major}.{minor}.{patch}"));
+                rejected.push(format!("{name} is Node {major}.{minor}.{patch}"));
             }
-            None => {}
+            None => rejected.push(format!("{name} answered no Node version")),
         }
     }
     let (major, minor, patch) = NODE_MINIMUM;
+    let needs = format!("hcoord needs Node {major}.{minor}.{patch} or later");
     Err(match too_old {
-        Some(found) => {
-            format!("hcoord needs Node {major}.{minor}.{patch} or later; this machine has {found}")
-        }
-        None => format!("hcoord needs Node {major}.{minor}.{patch} or later; none was found"),
+        Some(found) => format!(
+            "{needs}; this machine has {found} ({})",
+            rejected.join("; ")
+        ),
+        None if rejected.is_empty() => format!("{needs}; none was found"),
+        None => format!("{needs}; no Node found works ({})", rejected.join("; ")),
     })
 }
 
@@ -659,6 +692,32 @@ mod tests {
                 &stop
             ),
             Ok(chosen)
+        );
+    }
+
+    /// A Node that prints a version but exits unsuccessfully does not
+    /// count: the next one is chosen, and when none counts, the error says
+    /// why it was turned down. The candidates are given rather than found,
+    /// so the host's own Node cannot stand in.
+    #[cfg(unix)]
+    #[test]
+    fn a_node_whose_probe_fails_does_not_count() {
+        let stop = AtomicBool::new(false);
+        let home = tempfile::tempdir().unwrap();
+        let failing = home.path().join("tools/node/bin/node");
+        fake_node(&failing);
+        std::fs::write(&failing, "#!/bin/sh\necho v26.7.0\nexit 3\n").unwrap();
+        let working = home.path().join("other/bin/node");
+        fake_node(&working);
+
+        assert_eq!(
+            choose_node(vec![failing.clone(), working.clone()], home.path(), &stop),
+            Ok(working)
+        );
+        let reason = choose_node(vec![failing.clone()], home.path(), &stop).unwrap_err();
+        assert!(
+            reason.contains(&format!("{} exited with 3", failing.display())),
+            "{reason}"
         );
     }
 

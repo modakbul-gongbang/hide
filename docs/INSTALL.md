@@ -234,6 +234,9 @@ A machine allowed for the older `~/.local/share/hide/host-helper` is not asked a
 Once the helper runs from `~/.hide/host-helper`, a later step that fails (a hook entry, a link, hcoord) shows on that machine's row while the old helper folder is kept as long as anything still names it, and the next connection finishes it; removing the old folders is retried on each connection and logged, not shown.
 Every connection brings the kit up to this Hide's version, and a part you removed there stays removed until Reinstall on that machine's row.
 hcoord keeps its daemon running only on macOS, so on another system its row says so and nothing is installed for it.
+hcoord runs on the first Node that counts, tried in this order: the one an existing hcoord command names (in `~/.hide/hcoord`, else the older `~/.hcoord`), each on `PATH`, then `/opt/homebrew/bin`, `/usr/local/bin` and `~/.local/bin`.
+A Node counts only when `node --version` exits successfully within five seconds with 22.12 or later.
+When one is turned down and a later one is used, the device helper writes each refusal to its standard error as `hcoord.node_rejected`; when none counts, the machine's hcoord row gives each refusal.
 A pane on that machine can then run `hide file open`, `hide diff open` or `hide browser open http://localhost:3000`, and the result opens in this Hide, with `localhost` meaning that machine; that shell's `PATH` has to include `~/.local/bin` for a bare `hide` to be found.
 Its agent panes show labels, subagent counts and Workspace guidance as panes on this Mac do, with the labels made on this Mac from the device's conversations, which the helper reads and sends in memory only; Project Memory stays on this Mac and is not given to a device's sessions.
 A machine allowed by an earlier version of Hide gets the whole kit on its next connection without asking again; a machine added without the helper installs nothing until you press Allow and install on its row.
