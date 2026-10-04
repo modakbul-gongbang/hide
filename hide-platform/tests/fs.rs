@@ -1073,87 +1073,113 @@ fn a_link_that_is_replaced_never_leads_nowhere_while_a_reader_follows_it() {
     let (observed, acknowledgements) = mpsc::sync_channel(1);
     let (ready, reading) = mpsc::sync_channel(0);
     let deadline = Instant::now() + Duration::from_secs(5);
+    let follow = |path: &Path| -> Result<String, String> {
+        let mut file = File::open(path).map_err(|error| {
+            format!(
+                "link reader open failed: {error}; kind={:?}; raw={:?}",
+                error.kind(),
+                error.raw_os_error()
+            )
+        })?;
+        let mut text = String::new();
+        file.read_to_string(&mut text).map_err(|error| {
+            format!(
+                "link reader read failed: {error}; kind={:?}; raw={:?}",
+                error.kind(),
+                error.raw_os_error()
+            )
+        })?;
+        if text != "version-1" && text != "version-2" {
+            return Err(format!("link reader returned unexpected content: {text:?}"));
+        }
+        Ok(text)
+    };
     thread::scope(|scope| {
         let current = &current;
         let completed = &completed;
-        scope.spawn(move || {
-            // Baseline proves the reader is scheduled, but is never overlap.
-            assert_eq!(
-                fs::read_to_string(current.join("hide")).unwrap(),
-                "version-1"
-            );
-            observed.send(0).unwrap();
+        let reader = scope.spawn(move || -> Result<(), String> {
+            // Baseline proves scheduling but is never counted as overlap.
+            assert_eq!(follow(&current.join("hide"))?, "version-1");
+            observed.send(0).map_err(|error| error.to_string())?;
             for round in 1..=40 {
-                assert_eq!(
-                    phases
-                        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-                        .unwrap(),
-                    round
-                );
-                let before = fs::read_to_string(current.join("hide")).unwrap();
-                assert!(before == "version-1" || before == "version-2");
-                ready.send(round).unwrap();
+                let admitted = phases
+                    .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                    .map_err(|error| format!("reader phase {round} admission: {error}"))?;
+                assert_eq!(admitted, round);
+                follow(&current.join("hide"))?;
+                ready.send(round).map_err(|error| error.to_string())?;
                 loop {
-                    assert!(
-                        Instant::now() < deadline,
-                        "link reader phase {round} did not complete within its bound"
-                    );
-                    // A read can be refused while the swap lands on Windows;
-                    // what it must never be is "not found".
-                    match fs::read_to_string(current.join("hide")) {
-                        Ok(text) => {
-                            assert!(text == "version-1" || text == "version-2");
-                            // Sample completion before another read: the response
-                            // proves observation after this replacement, inside
-                            // its still-open phase, never before the first swap.
-                            if completed.load(Ordering::Acquire) == round {
-                                let after = fs::read_to_string(current.join("hide")).unwrap();
-                                assert!(after == "version-1" || after == "version-2");
-                                observed.send(round).unwrap();
-                                break;
-                            }
-                        }
-                        Err(error) => {
-                            assert_ne!(error.kind(), ErrorKind::NotFound, "link vanished: {error}");
-                            assert!(
-                                cfg!(windows) && error.kind() == ErrorKind::PermissionDenied,
-                                "unexpected link reader error: {error}"
-                            );
-                        }
+                    if Instant::now() >= deadline {
+                        return Err(format!("link reader phase {round} did not complete within its bound"));
+                    }
+                    // File::open and read are separate observations so a
+                    // native lookup refusal retains its actual syscall boundary.
+                    let mut file = match File::open(current.join("hide")) {
+                        Ok(file) => file,
+                        Err(error) if cfg!(windows) && error.kind() == ErrorKind::PermissionDenied => continue,
+                        Err(error) => return Err(format!("link reader open failed in phase {round}: {error}; kind={:?}; raw={:?}", error.kind(), error.raw_os_error())),
+                    };
+                    let mut text = String::new();
+                    file.read_to_string(&mut text).map_err(|error| format!("link reader read failed in phase {round}: {error}; kind={:?}; raw={:?}", error.kind(), error.raw_os_error()))?;
+                    assert!(text == "version-1" || text == "version-2");
+                    if completed.load(Ordering::Acquire) == round {
+                        follow(&current.join("hide"))?;
+                        observed.send(round).map_err(|error| error.to_string())?;
+                        break;
                     }
                 }
             }
+            Ok(())
         });
-        assert_eq!(
-            acknowledgements
-                .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-                .unwrap(),
-            0
-        );
-        for round in 0..40 {
-            begin.send(round + 1).unwrap();
-            assert_eq!(
-                reading
-                    .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-                    .unwrap(),
-                round + 1,
-                "replacement started before its reader phase"
-            );
-            let version = if round % 2 == 0 {
-                "version-2"
-            } else {
-                "version-1"
-            };
-            link::replace_link(Path::new(version), &current).unwrap();
-            completed.store(round + 1, Ordering::Release);
+        let writer_result = (|| -> Result<(), String> {
             assert_eq!(
                 acknowledgements
                     .recv_timeout(deadline.saturating_duration_since(Instant::now()))
-                    .unwrap(),
-                round + 1,
-                "reader did not observe replacement phase"
+                    .map_err(|error| format!("reader baseline acknowledgement: {error}"))?,
+                0
             );
+            for round in 0..40 {
+                begin.send(round + 1).map_err(|error| error.to_string())?;
+                assert_eq!(
+                    reading
+                        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                        .map_err(|error| format!(
+                            "reader phase {} readiness: {error}",
+                            round + 1
+                        ))?,
+                    round + 1,
+                    "replacement started before its reader phase"
+                );
+                let version = if round % 2 == 0 {
+                    "version-2"
+                } else {
+                    "version-1"
+                };
+                link::replace_link(Path::new(version), current)
+                    .map_err(|error| format!("replacement phase {}: {error}", round + 1))?;
+                completed.store(round + 1, Ordering::Release);
+                assert_eq!(
+                    acknowledgements
+                        .recv_timeout(deadline.saturating_duration_since(Instant::now()))
+                        .map_err(|error| format!(
+                            "reader phase {} completion: {error}",
+                            round + 1
+                        ))?,
+                    round + 1,
+                    "reader did not observe replacement phase"
+                );
+            }
+            Ok(())
+        })();
+        drop(begin);
+        drop(reading);
+        // Join explicitly. A reader's native error is primary, and its channel
+        // disconnection is secondary detail rather than a masking panic.
+        let reader_result = reader.join().unwrap();
+        if let Err(error) = reader_result {
+            panic!("{error}; writer observation: {writer_result:?}");
         }
+        writer_result.unwrap();
     });
     assert_eq!(completed.load(Ordering::Acquire), 40);
     assert_eq!(names(outer.path()), ["current", "version-1", "version-2"]);
