@@ -28,6 +28,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { ownUntilWorkerExit } from "./worker-owned";
+import { compileFixtureC, fixtureExecutable, fixtureHomeEnv, fixtureToolPath, inheritedFixtureEnv } from "./platform-fixture";
 
 export type HerdrFixture = {
   bin: string;
@@ -51,16 +52,66 @@ const SHIM_SOURCE = `#include <fcntl.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifdef _WIN32
+#include <windows.h>
+#include <io.h>
+#include <sys/stat.h>
+#define read _read
+#define write _write
+#define open _open
+typedef int fixture_count_t;
+static void raw_terminal(void) {
+  HANDLE input = GetStdHandle(STD_INPUT_HANDLE);
+  DWORD mode;
+  if (!GetConsoleMode(input, &mode)) { fputs("fixture console input unavailable\\n", stderr); exit(1); }
+  mode &= ~(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT);
+  mode |= ENABLE_VIRTUAL_TERMINAL_INPUT;
+  if (!SetConsoleMode(input, mode) || !SetConsoleCP(CP_UTF8) || !SetConsoleOutputCP(CP_UTF8)) exit(1);
+}
+static fixture_count_t terminal_read(char *bytes, size_t size) {
+  static WCHAR pending = 0;
+  WCHAR input[4096];
+  for (;;) {
+    DWORD prefix = pending ? 1 : 0, count;
+    input[0] = pending;
+    if (!ReadConsoleW(GetStdHandle(STD_INPUT_HANDLE), input + prefix, 4095 - prefix, &count, NULL)) return -1;
+    if (!count) return pending ? -1 : 0;
+    count += prefix;
+    pending = input[count - 1] >= 0xd800 && input[count - 1] <= 0xdbff ? input[--count] : 0;
+    if (count) {
+      int converted = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, input, (int)count, bytes, (int)size, NULL, NULL);
+      return converted ? converted : -1;
+    }
+  }
+}
+static fixture_count_t terminal_write(const char *bytes, size_t size) {
+  DWORD count;
+  return WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), bytes, (DWORD)size, &count, NULL) ? (fixture_count_t)count : -1;
+}
+#else
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
+typedef ssize_t fixture_count_t;
+#define terminal_read(bytes, size) read(0, bytes, size)
+#define terminal_write(bytes, size) write(1, bytes, size)
+static void raw_terminal(void) {
+  struct termios tio;
+  if (tcgetattr(0, &tio) == 0) {
+    tio.c_lflag &= ~(ICANON | ECHO | IEXTEN);
+    tio.c_cc[VMIN] = 1;
+    tio.c_cc[VTIME] = 0;
+    tcsetattr(0, TCSANOW, &tio);
+  }
+}
+#endif
 static char prompt[1 << 20];
 static int provider(int argc, char **argv) {
   if (argc > 2 && strcmp(argv[1], "auth") == 0 && strcmp(argv[2], "status") == 0) {
     puts("{\\"loggedIn\\":true}");
     return 0;
   }
-  size_t len = 0; ssize_t n;
+  size_t len = 0; fixture_count_t n;
   while (len < sizeof prompt - 1 && (n = read(0, prompt + len, sizeof prompt - 1 - len)) > 0) len += (size_t)n;
   prompt[len] = 0;
   char *label = NULL;
@@ -73,8 +124,12 @@ static int provider(int argc, char **argv) {
   for (char *at = prompt; (at = strstr(at, "HIDE_E2E_DELAY_MS ")) != NULL && at < label; at++) delay = at;
   if (delay) {
     long ms = atol(delay + strlen("HIDE_E2E_DELAY_MS "));
+#ifdef _WIN32
+    Sleep((DWORD)ms);
+#else
     struct timespec wait = { ms / 1000, (ms % 1000) * 1000000L };
     nanosleep(&wait, NULL);
+#endif
   }
   label += strlen("HIDE_E2E_LABEL ");
   char *end = strchr(label, '\\n');
@@ -86,23 +141,34 @@ static int provider(int argc, char **argv) {
   return 0;
 }
 int main(int argc, char **argv) {
+#ifdef _WIN32
+  _setmode(0, _O_BINARY);
+  _setmode(1, _O_BINARY);
+  if (strstr(argv[0], "hide-open.exe")) return 0;
+#endif
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--json-schema") == 0 || (i == 1 && strcmp(argv[i], "auth") == 0)) return provider(argc, argv);
   }
   const char *log_path = getenv("HIDE_E2E_INPUT_LOG");
-  int log = log_path ? open(log_path, O_WRONLY | O_CREAT | O_APPEND, 0644) : -1;
-  struct termios tio;
-  if (tcgetattr(0, &tio) == 0) {
-    tio.c_lflag &= ~(ICANON | ECHO | IEXTEN);
-    tio.c_cc[VMIN] = 1;
-    tio.c_cc[VTIME] = 0;
-    tcsetattr(0, TCSANOW, &tio);
-  }
-  char b[4096]; ssize_t n;
-  while ((n = read(0, b, sizeof b)) > 0) {
+  int flags = O_WRONLY | O_CREAT | O_APPEND;
+#ifdef _WIN32
+  flags |= _O_BINARY;
+#endif
+  int log = log_path ? open(log_path, flags, 0644) : -1;
+  raw_terminal();
+#ifdef _WIN32
+  char b[16384];
+#else
+  char b[4096];
+#endif
+  fixture_count_t n;
+  while ((n = terminal_read(b, sizeof b)) > 0) {
     if (log >= 0 && write(log, b, (size_t)n) < 0) return 1;
-    if (write(1, b, (size_t)n) < 0) return 1;
+    if (terminal_write(b, (size_t)n) < 0) return 1;
   }
+#ifdef _WIN32
+  if (n < 0) return 1;
+#endif
   return 0;
 }
 `;
@@ -117,8 +183,11 @@ export function herdrBinary(): string {
   for (const candidate of candidates) {
     if (candidate && fs.existsSync(candidate)) return candidate;
   }
-  const onPath = spawnSync("/usr/bin/which", ["herdr"], { encoding: "utf8" }).stdout.trim();
-  if (onPath) return onPath;
+  const lookup = spawnSync(process.platform === "win32" ? "where.exe" : "which", [fixtureExecutable("herdr")], { encoding: "utf8" });
+  if (lookup.status === 0) {
+    const onPath = lookup.stdout.trim().split(/\r?\n/).find((candidate) => fs.existsSync(candidate));
+    if (onPath) return onPath;
+  }
   throw new Error(
     "no herdr binary: set HIDE_E2E_HERDR_BIN or HERDR_BIN_PATH, or put the pinned herdr on PATH",
   );
@@ -162,11 +231,13 @@ function herdr(env: NodeJS.ProcessEnv, bin: string, args: string[]): unknown {
 }
 
 function isolatedEnv(root: string, socket: string): NodeJS.ProcessEnv {
-  const env = Object.fromEntries(Object.entries(process.env).filter(
-    ([key]) => !["HERDR_", "HIDE_", "ELECTRON_", "HCOORD_", "SASU_"].some((prefix) => key.startsWith(prefix)),
-  ));
+  const env = inheritedFixtureEnv();
   const config = path.join(root, "herdr-config.toml");
-  fs.writeFileSync(config, "[update]\nversion_check = false\nmanifest_check = false\n");
+  // The pinned Herdr defaults to PowerShell on Windows and ignores SHELL there.
+  // cmd.exe honors PROMPT, preserving the same prompt contract as zsh.
+  const shell = process.platform === "win32" ? env.COMSPEC : "/bin/zsh";
+  if (!shell || !path.isAbsolute(shell) || !fs.existsSync(shell)) throw new Error("fixture shell is unavailable: Windows needs ComSpec; Unix needs /bin/zsh");
+  fs.writeFileSync(config, `[update]\nversion_check = false\nmanifest_check = false\n[terminal]\ndefault_shell = ${JSON.stringify(shell)}\n`);
   for (const dir of ["xdg-config", "xdg-state", "home", "fixture", "bin"]) {
     fs.mkdirSync(path.join(root, dir), { recursive: true });
   }
@@ -177,7 +248,8 @@ function isolatedEnv(root: string, socket: string): NodeJS.ProcessEnv {
   fs.writeFileSync(path.join(root, "home", ".zshrc"), "PS1='fixture %# '\n");
   return {
     ...env,
-    SHELL: "/bin/zsh",
+    SHELL: shell,
+    ...(process.platform === "win32" ? { PROMPT: "fixture % " } : {}),
     // Ubuntu's /etc/zsh/zshrc runs compinit before this HOME's .zshrc, and on
     // a Linux runner compinit stops at "insecure directories, continue [y] or
     // abort [n]?", so the prompt never comes. That file skips compinit when
@@ -185,8 +257,7 @@ function isolatedEnv(root: string, socket: string): NodeJS.ProcessEnv {
     // specs write their own .zshenv to put the fake agent first on PATH and
     // would drop it. macOS has no such file.
     skip_global_compinit: "1",
-    HOME: path.join(root, "home"),
-    HCOORD_HOME: path.join(root, "home", ".hcoord"),
+    ...fixtureHomeEnv(path.join(root, "home")),
     HERDR_SESSION: `hide-e2e-${path.basename(root)}`,
     HERDR_SOCKET_PATH: socket,
     HERDR_CONFIG_PATH: config,
@@ -253,7 +324,7 @@ export function linkFixtureTranscripts(fixture: Pick<HerdrFixture, "root">, home
   fs.mkdirSync(own, { recursive: true });
   if (path.resolve(daemon) === path.resolve(own) || fs.existsSync(daemon)) return;
   fs.mkdirSync(path.dirname(daemon), { recursive: true });
-  fs.symlinkSync(own, daemon);
+  fs.symlinkSync(own, daemon, process.platform === "win32" ? "junction" : "dir");
 }
 
 /**
@@ -437,25 +508,33 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
   if (version !== pinned) {
     throw new Error(`herdr ${version} at ${bin} is not the pinned ${pinned}`);
   }
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), "hide-e2e-herdr-"));
-  // Unix socket paths are short; keep the node directly under /tmp.
-  const socket = `/tmp/hide-e2e-${crypto.randomBytes(4).toString("hex")}.sock`;
-  const env = isolatedEnv(root, socket);
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "hide-e2e-herdr-")));
+  // Windows Herdr maps this path to its pipe and marker; Unix needs /tmp's
+  // short spelling, including room for the derived -client.sock address.
+  const socket = process.platform === "win32" ? path.join(root, "herdr.sock") : `/tmp/hide-e2e-${crypto.randomBytes(4).toString("hex")}.sock`;
+  let env: NodeJS.ProcessEnv;
+  let fixturePath: string;
   try {
+    env = isolatedEnv(root, socket);
     fs.writeFileSync(path.join(root, "shim.c"), SHIM_SOURCE);
-    execFileSync("cc", ["-O1", "-o", path.join(root, "bin", "claude"), path.join(root, "shim.c")]);
+    const shim = path.join(root, "bin", fixtureExecutable("claude"));
+    compileFixtureC(path.join(root, "shim.c"), shim);
+    if (process.platform === "win32") fs.copyFileSync(shim, path.join(root, "bin", fixtureExecutable("hide-open")));
+    // Keep host-installed providers out while retaining system tools.
+    fixturePath = fixtureToolPath(path.join(root, "bin"));
   } catch (error) {
     fs.rmSync(root, { recursive: true, force: true });
     throw error;
   }
-  // Keep host-installed providers out while retaining tools such as lsof.
-  const fixturePath = `${path.join(root, "bin")}:/usr/bin:/bin:/usr/sbin:/sbin`;
   // Workspaces created later inherit the server's PATH, not hided's PATH.
   // Keep every pane on the same fake agent binary, including new workspaces.
   env.PATH = fixturePath;
 
   const log = fs.openSync(path.join(root, "herdr-server.log"), "w");
   const server: ChildProcess = spawn(bin, ["server"], { env, stdio: ["ignore", log, log] });
+  fs.closeSync(log);
+  let spawnFailed: Error | null = null;
+  server.once("error", (error) => { spawnFailed = error; });
   const { stop } = ownUntilWorkerExit(() => {
     spawnSync(bin, ["server", "stop"], { env, timeout: 10_000 });
     if (server.exitCode === null) server.kill("SIGKILL");
@@ -483,7 +562,10 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
     fs.rmSync(root, { recursive: true, force: true });
   });
   try {
-    await waitFor(() => fs.existsSync(socket), `herdr socket ${socket}`);
+    await waitFor(() => {
+      if (spawnFailed) throw spawnFailed;
+      return fs.existsSync(socket);
+    }, `herdr socket ${socket}`);
     const snapshot = herdr(env, bin, ["api", "snapshot"]) as {
       result?: { snapshot?: { workspaces?: unknown[] } };
     };
