@@ -233,21 +233,7 @@ jobs:
           pattern: ci-ledger-desktop-controls-*
           path: control-ledgers/desktop
       - name: Require every exact test and OS identity, including all six batches
-        run: |
-          node - <<'JS'
-          const fs=require('node:fs'), ledger=require('./scripts/ci-ledger.cjs');
-          const controls=require('./scripts/ci-controls.cjs'), history=require('./scripts/ci-history.cjs');
-          const contract=require('./contracts/ci-failure-controls.json'), source=ledger.identity();
-          const records=history.readRecords('control-ledgers');
-          const receipt={version:1,source,checks:[],complete:false};
-          try {
-            for(const [name,scenario] of Object.entries(contract.scenarios)) for(const os of scenario.oses) {
-              const selected=records.filter(row=>row.os===os && scenario.tests.some(([suite,test])=>row.suite===suite && row.test===test));
-              receipt.checks.push(controls.results(name,os,{version:1,records:selected},source));
-            }
-            receipt.complete=true;
-          } finally { ledger.write('control-receipt.json',receipt); }
-          JS
+        run: node scripts/ci-controls.cjs collect control-ledgers control-receipt.json
       - uses: actions/upload-artifact@v7
         if: always()
         with:

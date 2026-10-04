@@ -172,3 +172,4 @@ module.exports=async function collect(options) {
 module.exports.confirmInventory=confirmInventory;
 module.exports.summary=summary;
 module.exports.suiteSummaries=suiteSummaries;
+module.exports.readRecords=readRecords;

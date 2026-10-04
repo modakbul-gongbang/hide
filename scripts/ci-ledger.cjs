@@ -55,13 +55,16 @@ function write(filename, value) {
   fs.mkdirSync(require('node:path').dirname(filename), { recursive: true });
   // One namespace replacement leaves complete JSON even if the writer dies.
   const temporary = filename + '.' + process.pid + '.tmp';
-  let primary;
+  let primary, owned=false;
   try {
-    fs.writeFileSync(temporary, bytes, {flag:'wx'});
+    const descriptor=fs.openSync(temporary,'wx');
+    owned=true;
+    try { fs.writeFileSync(descriptor,bytes); }
+    finally { fs.closeSync(descriptor); }
     fs.renameSync(temporary, filename);
   } catch (error) { primary = error; throw error; }
   finally {
-    try { fs.unlinkSync(temporary); }
+    try { if(owned) fs.unlinkSync(temporary); }
     catch (error) {
       if (error.code !== 'ENOENT') {
         if (primary) primary.cause = error;

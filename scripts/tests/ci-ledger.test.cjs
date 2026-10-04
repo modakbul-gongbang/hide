@@ -11,7 +11,42 @@ test('atomic bounded publication keeps the previous ledger on byte overflow', ()
   assert.throws(()=>write(file,{value:'x'.repeat(MAX_BYTES)}),/byte cap/);
   assert.equal(fs.readFileSync(file,'utf8'),before);
   assert.equal(fs.existsSync(file+'.'+process.pid+'.tmp'),false);
+  const collision=file+'.'+process.pid+'.tmp';
+  fs.writeFileSync(collision,'another owner');
+  try {
+    assert.throws(()=>write(file,{version:1,records:[]}),/EEXIST/);
+    assert.equal(fs.readFileSync(collision,'utf8'),'another owner');
+    assert.equal(fs.readFileSync(file,'utf8'),before);
+  } finally { fs.unlinkSync(collision); }
   assert.equal(merge([row,{...row,project:'another project'}]).records.length,2);
+});
+test('workflow collector reads six batch artifacts and keeps incomplete attempts on input errors', () => {
+  const fs=require('node:fs'),path=require('node:path'),{spawnSync}=require('node:child_process');
+  const contract=require('../../contracts/ci-failure-controls.json');
+  const root=fs.mkdtempSync(path.resolve('agents/runs/ci-test-refactor/reporter-controls/receipt-'));
+  const input=path.join(root,'control-ledgers'),output=path.join(root,'receipt.json');
+  fs.mkdirSync(input);
+  const env={...process.env,CI_HEAD_SHA:'receipt-head',GITHUB_RUN_ID:'receipt-run',GITHUB_RUN_ATTEMPT:'1'};
+  let job=0;
+  for(const [name,scenario] of Object.entries(contract.scenarios)) for(const os of scenario.oses) for(let batch=0;batch<6;batch++) {
+    const directory=path.join(input,`${name}-${os}-${batch}`); fs.mkdirSync(directory);
+    const records=scenario.tests.flatMap(([suite,test])=>Array.from({length:5},(_,i)=>({...row,sha:env.CI_HEAD_SHA,run:env.GITHUB_RUN_ID,os,suite,test,repeat:batch*5+i,status:'passed',job:String(job)})));
+    fs.writeFileSync(path.join(directory,'ledger.json'),JSON.stringify({version:1,records})); job++;
+  }
+  const run=()=>spawnSync(process.execPath,['scripts/ci-controls.cjs','collect',input,output],{env,encoding:'utf8'});
+  assert.equal(run().status,0);
+  const receipt=JSON.parse(fs.readFileSync(output));
+  assert.equal(receipt.complete,true);
+  assert.equal(receipt.checks.flatMap(value=>value.checks).length,Object.values(contract.scenarios).reduce((sum,value)=>sum+value.tests.length*value.oses.length,0));
+  const removed=path.join(input,'checkout-Linux-5','ledger.json');
+  fs.unlinkSync(removed);
+  assert.notEqual(run().status,0);
+  let partial=JSON.parse(fs.readFileSync(output));
+  assert.equal(partial.complete,false); assert.match(partial.errors[0].message,/incomplete controls/);
+  fs.writeFileSync(removed,'{invalid');
+  assert.notEqual(run().status,0);
+  partial=JSON.parse(fs.readFileSync(output));
+  assert.equal(partial.complete,false); assert.equal(partial.errors[0].stage,'input');
 });
 test('thirty repetitions mean every exact focus identity, with the original suite independently present', () => {
   const controls=require('../ci-controls.cjs');
