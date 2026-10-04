@@ -408,10 +408,10 @@ impl Drop for Worker {
                 crate::diagnostic!(json!({"component":"delivery","kind":"producer.join_failed"}));
             }
         }
-        if let Some(thread) = self.thread.take() {
-            if thread.join().is_err() {
-                crate::diagnostic!(json!({"component":"delivery","kind":"worker.join_failed"}));
-            }
+        if let Some(thread) = self.thread.take()
+            && thread.join().is_err()
+        {
+            crate::diagnostic!(json!({"component":"delivery","kind":"worker.join_failed"}));
         }
         // Clients held by Runtime are weak references; only this off-lock
         // owner or an in-flight registration can end a retained process.
