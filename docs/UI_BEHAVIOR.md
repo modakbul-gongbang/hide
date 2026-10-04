@@ -486,7 +486,7 @@ A delegated child is not a row of its own while its parent is in the scope: the 
 On the Home Overview each row carries its project's name.
 
 A row reads its status mark, the agent's kind mark and its title (the same name every surface uses), then on the right the descendants, the pull request chip, the issue chip, the checkout or branch and the time.
-Its second line is who asked, `나 ›`, an hcoord sender's name or `에이전트 ›`, and the request on one line: its lines joined by ` · `, blank lines and runs of spaces gone, each path and address by its last name (a GitHub pull request or issue as `#N`, a name over 24 characters as its first 12 and its extension), and pasted images as `이미지 N` at the end.
+Its second line is who asked, `나 ›`, an coordination sender's name or `에이전트 ›`, and the request on one line: its lines joined by ` · `, blank lines and runs of spaces gone, each path and address by its last name (a GitHub pull request or issue as `#N`, a name over 24 characters as its first 12 and its extension), and pasted images as `이미지 N` at the end.
 A request that does not fit keeps its end, up to 40% of the width from a word boundary, and cuts its front with an ellipsis; it never takes a second line and never shows a home folder.
 A later request from another agent adds `이후 <보낸 이>`.
 Its third line is the label's line when there is one, else the agent's last words, all of them on one line while it works and their last line once it has stopped; it is the warning colour on a row to answer.
@@ -1224,16 +1224,16 @@ Unread weight is never reused to mean parent, child, delegated, or selected.
 
 ## Settings: each machine's install kit
 
-Settings > Devices shows This Mac and every device in the same form: under each machine's connection and helper lines, one line per part of Hide's kit (the `hide` command, the Claude Code hook, the Codex hook, hcoord, `Codex를 pane마다 실행`), with a mark, the part, and where it is when installed or its state and reason when not (PRD device-parity B7).
-hcoord's place is `~/.hide/hcoord/bin/hcoord`; an `hcoord` on `PATH` that is not Hide's, and an old `~/.hcoord` left beside `~/.hide/hcoord`, are named in a dimmed line under the installed hcoord row's location, and a move from the old `~/.hcoord` that failed reads failed with the reason and that the next launch or Reinstall tries again (PRD hide-home-layout B12, B14).
-A `~/.hide/hcoord` that holds a ledger but no `bin/hcoord` reads outdated, not removed, and is finished on the next launch: it is a move whose install did not complete, and hcoord's home is never taken by removal.
+Settings > Devices shows This Mac and every device in the same form: under each machine's connection and helper lines, one line per part of Hide's kit (the `hide` command, the Claude Code hook, the Codex hook, the one-release coordination retirement stage, `Codex를 pane마다 실행`), with a mark, the part, and where it is when installed or its state and reason when not (PRD device-parity B7).
+The retirement row shows completion, or the failed step and recovery action; Reinstall retries that stage.
+A retirement preflight with active runs, open requests, active watches or uninspectable state shows its reason before changing anything; this stage creates no new screen.
 Installed is ✓, not on this machine is –, turned off is ○ with `꺼짐`, outdated, not installed or removed is !, and failed is ✕; the state is also read out, since the mark is hidden from assistive technology.
 `Codex를 pane마다 실행` reads – where the machine's Codex has no shared daemon (none, or an older one), carries `새로 여는 Codex부터 적용` under its installed row while a Codex daemon still runs, and is the one row with a switch at its end: off gives Codex its daemon back and the row reads `꺼짐` with no Reinstall and nothing asking to turn it on again, and on applies it again (PRD overview-request-view B33..B36).
 Reinstall sits on a machine's row only while one of its parts needs it, repairs only those parts, and reads Reinstalling… while the machine's kit work runs (B8); nothing else on the screen reacts, and the detail of every install goes to the diagnostic log (B18).
 A machine whose kit does not run says why in that place instead of its parts: a daemon outside the installed app, a device not allowed yet, a device that must be allowed again, or a platform this build does not carry (B11, B17, B21).
 A device not read yet reads that its kit is checked when it connects; the tab reads every machine once when it opens.
 The add form has one Add button and lists, once, what the kit puts on the device and where (B12); a device registered earlier without the helper offers Allow and install on its row, with the same list.
-Removing a device asks once, names in one line what comes off that device (with its helper folder, `~/.hide/host-helper` by default) and that hcoord and the records in `~/.hide` stay, or, when its helper is not connected, that the kit stays there; no button is focused when the confirmation opens (B22).
+Removing a device asks once, names in one line what comes off that device (with its helper folder, `~/.hide/host-helper` by default) and that the records in `~/.hide` stay, or, when its helper is not connected, that the kit stays there; no button is focused when the confirmation opens (B22).
 When another registered device reaches the same account on that machine, such as a second Herdr server there, the line says the kit stays for it instead.
 
 Settings > Agents lists the hook parts of every machine, This Mac first and then each device in the Devices order, with Reinstall on a part that needs it and nowhere else (B27).

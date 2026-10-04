@@ -60,7 +60,7 @@ open /Applications/hide.app
 
 The Windows and Linux packages are not signed.
 Each is a folder in an archive: `hide-win32-x64` in `hide-v<version>-windows-x64.zip`, and `hide-linux-x64` in `hide-v<version>-linux-x64.tar.gz`, each with a `.sha256` file beside it on the Releases page.
-The folder holds the Electron app at its top and, in its `resources` folder, the same `hided`, `hide`, `hide-agent-hooks`, device helper, pinned Herdr and hcoord the macOS app carries; on Windows those are `.exe` files, and Herdr's ConPTY runtime is the `conpty` folder beside `herdr.exe`.
+The folder holds the Electron app at its top and, in its `resources` folder, the same `hided`, `hide`, `hide-agent-hooks`, device helper, pinned Herdr the macOS app carries; on Windows those are `.exe` files, and Herdr's ConPTY runtime is the `conpty` folder beside `herdr.exe`.
 
 ### Install on Windows
 
@@ -104,7 +104,7 @@ sudo chmod 4755 hide-linux-x64/chrome-sandbox
   Either way `hided` keeps running after the app is gone, as [First launch](#first-launch) describes.
 - The app's profile is `%APPDATA%\hide-desktop` on Windows and `~/.config/hide-desktop` on Linux, instead of `~/Library/Application Support/hide-desktop`.
 - First launch installs the `hide` command and the Claude Code and Codex hooks for runtimes configured on this machine.
-  Settings > Devices shows their installation results under This machine; hcoord remains Absent with its reason because its daemon supports macOS only.
+  Settings > Devices shows their installation results under This machine.
 - Linux installs `~/.local/bin/hide` as a link to the package's `resources/hide`.
   Windows installs `%USERPROFILE%\.local\bin\hide.cmd`, which runs `resources\hide.exe` through a `.hide-kit` directory junction beside the command; neither Administrator access nor Developer Mode is needed.
   Keep the unpacked package folder in place while using it.
@@ -135,7 +135,7 @@ HIDE_VERSION=<version> pnpm --dir desktop package
 `HIDE_VERSION` sets the version the packaged app reports.
 Omit it to build from a checkout that a Git tag matching `v[0-9]*` already describes; the packaging script fails rather than ship a version nothing was released under.
 
-Packaging builds the web shell and hcoord, builds the release `hided`, `hide`, `hide-agent-hooks` and `hide-host-helper` binaries, fetches and digest-verifies the pinned Herdr binary, and stops with a named error and no app if any of those is missing or not executable.
+Packaging builds the web shell, builds the release `hided`, `hide`, `hide-agent-hooks` and `hide-host-helper` binaries, fetches and digest-verifies the pinned Herdr binary, and stops with a named error and no app if any of those is missing or not executable.
 It then packages everything into `desktop/out/hide-darwin-arm64/hide.app`, ad-hoc signs it, verifies the signature, and writes `desktop/out/hide-v<version>-macos-arm64.zip` with a `.sha256` sidecar.
 The same command on Windows x64 writes `desktop/out/hide-win32-x64/` and `hide-v<version>-windows-x64.zip`, and on Linux x64 `desktop/out/hide-linux-x64/` and `hide-v<version>-linux-x64.tar.gz`, each with its `.sha256` and unsigned; each system builds only its own package.
 
@@ -185,8 +185,25 @@ Every launch of the installed app installs Hide's kit on this Mac without asking
 
 - `~/.local/bin/hide`, a link to the app's `hide` command, unless a `hide` that is not Hide's is already there;
 - Hide's entries in `~/.claude/settings.json` and `~/.codex/hooks.json`, for each of Claude Code and Codex that is set up on this Mac, next to whatever other tools put there;
-- hcoord, copied to `~/.hide/kit/hcoord/`, with its command at `~/.hide/hcoord/bin/hcoord`, a link to it at `~/.local/bin/hcoord` unless an `hcoord` that is not Hide's is already there, and its daemon;
+- A one-release retirement stage removes the former coordination installation after its read-only preflight succeeds; see Coordination retirement below;
 - `Codex를 pane마다 실행`: when this Mac's Codex has the shared app-server daemon turned on, `codex features disable daemon_auto_start`, so each Codex runs in its own pane and Hide can read it. A daemon already running keeps running, and the setting reaches each Codex started after it. Settings > Devices turns it back on (`codex features enable daemon_auto_start`), and Hide then leaves it on.
+
+### Coordination retirement
+
+Merging this change and installing its build performs the transition.
+The operator chooses a time with no active sasu runs, open requests or active watches.
+The kit retains this stage for one release on each machine, with its result shown in Settings > Devices.
+
+Before changing anything, the stage checks the legacy ledgers, Hide's delivery ledger and the sasu run registry and registered checkout run state.
+An open item, an unreadable or unknown record, or a capacity limit stops the pass, names the reason and recovery action, and leaves the machine unchanged.
+After that check succeeds, the ordered steps stop the old daemon, unload its LaunchAgent and delete the plist, remove only Hide-owned command and plugin links, remove the kit copy, and rename the old `~/.hide/hcoord` and `~/.hcoord` folders to siblings ending in `.retired-YYYY-MM-DD`.
+The old ledger is never imported into Hide or deleted.
+There is no compatibility command and no rollback.
+
+The private `~/.hide/kit/coordination-retirement.json` receipt records completion or the failed step.
+An interrupted pass retries idempotently at the next kit pass or Reinstall, with completed removals staying removed.
+A completed stage does no more work, and the operator decides when a later release removes this stage after every device has passed it.
+Retirement is tested only with private homes, fixture ledgers and injected service control.
 
 ### Where Hide keeps its files
 
@@ -195,22 +212,19 @@ Everything Hide owns on a machine is under `~/.hide`:
 | Folder | What it holds |
 | --- | --- |
 | `~/.hide/state` | The daemon's state: registered projects, screen layout, labels, phone pairing, logs (`HIDE_STATE_DIR` or a set `XDG_STATE_HOME` choose another folder) |
-| `~/.hide/hcoord` | hcoord's ledger, letters and command (`HCOORD_HOME` chooses another) |
-| `~/.hide/kit` | The kit's record and its copy of hcoord's code |
+| `~/.hide/kit` | The kit record and one-release retirement receipt |
 | `~/.hide/agent-hooks` | The hook helper's per-pane counters and last report |
 | `~/.hide/host-helper` | On a device: Hide's helper builds |
 
-Outside it stay only what another program reads at a place it chose: Hide's entries in `~/.claude/settings.json` and `~/.codex/hooks.json`, and the `hide` and `hcoord` links in `~/.local/bin`.
+Outside it stay only what another program reads at a place it chose: Hide's entries in `~/.claude/settings.json` and `~/.codex/hooks.json`, and the `hide` link in `~/.local/bin`.
 macOS's own places (`~/Library/Application Support/hide-desktop`, `~/Library/Application Support/hide` with the AI settings and Project Memory), the Home folder `~/hide`, and the label generator lock beside the Herdr socket are not moved.
 
-A build from before this layout kept the same files in `~/.local/state/hide`, `~/.local/share/hide` and `~/.hcoord`.
+A build from before this layout kept the same files in `~/.local/state/hide`, `~/.local/share/hide`; the retired coordination folders are handled by the stage above.
 The first launch of a newer app moves them once:
 
 - the state folder is renamed to `~/.hide/state` as a whole after the daemon running from it is stopped; a `~/.hide/state` that already exists is used, the old folder is left untouched, and the daemon's log records `state.legacy_left` with both paths;
-- hcoord's daemon is stopped, `~/.hcoord` is renamed to `~/.hide/hcoord` with its ledger, letters and manual stop, and the daemon is started again under the same `com.hcoord.daemon` label; if that fails, the old folder and the old daemon keep running and This Mac's hcoord row says why, and the next launch or Reinstall tries again;
 - `~/.local/state/hide-plugin-upgrade`, `~/.local/share/hide/agent-context-labels`, and then `~/.local/share/hide` if it is empty, are removed; `~/.local/state` and `~/.local/share` stay.
 
-A Codex session in `workspace-write` writes hcoord's letters only where `~/.codex/config.toml` lets it: add `~/.hide/hcoord` to `writable_roots` there (Hide does not edit that file); until then a Codex agent's `hcoord request send` answers `permission_denied` naming the folder.
 
 Settings > Devices shows each of these on This Mac's row, with where it is or why it is not.
 A part you remove by hand stays removed; Reinstall on that row puts it back.
@@ -227,18 +241,17 @@ hide can show and drive a Herdr server on another machine.
 Open Settings, choose Devices, and add the machine with a label and the alias `~/.ssh/config` already knows it by; that alias is the only thing hide stores about it.
 Authentication stays with SSH: the alias's `IdentityFile`, or the running SSH agent, is what hide signs in with, and hide never asks for or keeps a password.
 
-The remote machine needs Herdr installed where a non-login shell finds it (`~/.local/bin`, Homebrew, or the system paths) and a running `herdr server`, and Node 22.12 or later for hcoord.
+The remote machine needs Herdr installed where a non-login shell finds it (`~/.local/bin`, Homebrew, or the system paths) and a running `herdr server`,.
 hide asks that machine `herdr status server --json` to learn where the server socket is, so nothing about the remote user or home directory is configured on this side.
-Adding the machine installs the same kit a first launch installs here, under that account's home, with the form listing each part and where it goes: Hide's helper and every part's files in `~/.hide/host-helper`, the `hide` and `hcoord` links in `~/.local/bin`, the Claude Code and Codex hook entries, and hcoord in `~/.hide/hcoord`.
-A machine allowed for the older `~/.local/share/hide/host-helper` is not asked again: its next connection installs in `~/.hide/host-helper`, re-points the `hide` link and the hook entries there, moves hcoord from `~/.hcoord` as on this Mac, and then removes the old helper folder, the old `~/.local/state/hide/workspace-bridges`, and `~/.local/share/hide` and `~/.local/state/hide` when they are left empty.
-Once the helper runs from `~/.hide/host-helper`, a later step that fails (a hook entry, a link, hcoord) shows on that machine's row while the old helper folder is kept as long as anything still names it, and the next connection finishes it; removing the old folders is retried on each connection and logged, not shown.
+Adding the machine installs the same kit a first launch installs here, under that account's home, with the form listing each part and where it goes: Hide's helper and every part's files in `~/.hide/host-helper`, the `hide` link in `~/.local/bin`, the Claude Code and Codex hook entries.
+A machine allowed for the older `~/.local/share/hide/host-helper` is not asked again: its next connection installs in `~/.hide/host-helper`, re-points the `hide` link and the hook entries there, and then removes the old helper folder, the old `~/.local/state/hide/workspace-bridges`, and `~/.local/share/hide` and `~/.local/state/hide` when they are left empty.
+Once the helper runs from `~/.hide/host-helper`, a later step that fails (a hook entry or a link) shows on that machine's row while the old helper folder is kept as long as anything still names it, and the next connection finishes it; removing the old folders is retried on each connection and logged, not shown.
 Every connection brings the kit up to this Hide's version, and a part you removed there stays removed until Reinstall on that machine's row.
-hcoord keeps its daemon running only on macOS, so on another system its row says so and nothing is installed for it.
 A pane on that machine can then run `hide file open`, `hide diff open` or `hide browser open http://localhost:3000`, and the result opens in this Hide, with `localhost` meaning that machine; that shell's `PATH` has to include `~/.local/bin` for a bare `hide` to be found.
 Its agent panes show labels, subagent counts and Workspace guidance as panes on this Mac do, with the labels made on this Mac from the device's conversations, which the helper reads and sends in memory only; Project Memory stays on this Mac and is not given to a device's sessions.
 A machine allowed by an earlier version of Hide gets the whole kit on its next connection without asking again; a machine added without the helper installs nothing until you press Allow and install on its row.
 Only machines on the platform this build carries get the kit; another platform shows why on its row and is only viewed and driven.
-Removing a machine while it is connected takes Hide's hook entries, the `hide` link and the helper folder `~/.hide/host-helper` off it, and leaves hcoord, `~/.hide/kit` and `~/.hide/agent-hooks`; removing it while it is not connected leaves them there, where they do no harm, and adding it again replaces them.
+Removing a machine while it is connected takes Hide's hook entries, the `hide` link and the helper folder `~/.hide/host-helper` off it, and leaves `~/.hide/kit` and `~/.hide/agent-hooks`; removing it while it is not connected leaves them there, where they do no harm, and adding it again replaces them.
 Each device row in Settings shows whether the remote session is connected and, when it is not, the reason in the words the connection failed with; `Test` runs the SSH, authentication, Herdr, protocol, PTY, SFTP, and Git stages one after another and lists the first one that needs attention on that host.
 
 ## Update
@@ -255,15 +268,15 @@ Quit hide and move `/Applications/hide.app` to the Trash.
 This removes the application but keeps `~/.hide` and `~/Library/Application Support/hide-desktop`.
 Delete both directories only when you deliberately want to reset hide's saved state.
 Hide's hook entries stay in `~/.claude/settings.json` and `~/.codex/hooks.json` and do nothing once the app is gone; delete the entries whose command carries `hide-subagents@` to take them out.
-`~/.local/bin/hide`, `~/.local/bin/hcoord` and hcoord's LaunchAgent stay as well until you remove them.
+`~/.local/bin/hide` stays as well until you remove it.
 On Windows or Linux, delete the unpacked package folder after quitting and running its `resources/hide[.exe] stop`.
 The hook entries and home state likewise remain; remove `~/.local/bin/hide` on Linux, or `%USERPROFILE%\.local\bin\hide.cmd` and the `.hide-kit` junction beside it on Windows.
 Remove the junction itself, not the directory it leads to.
 
-### Going back to a build from before `~/.hide`
+### Earlier builds and the transition
 
 An older build reads only the old places, so opened after the move it starts empty.
-To go back: quit hide, stop hcoord with `launchctl bootout "gui/$(id -u)/com.hcoord.daemon"`, rename `~/.hide/state` to `~/.local/state/hide` and `~/.hide/hcoord` to `~/.hcoord`, then open the older app.
+The coordination transition has no rollback; the preserved old folders remain available for the operator to inspect or delete.
 
 ## Troubleshooting
 

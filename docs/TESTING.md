@@ -65,21 +65,19 @@ When the behavior depends on the order of two events, the test fixes that order;
 
 ## Writing a fixture
 
-- Set each fixture's `HCOORD_HOME` to a private folder such as `HOME/.hcoord`, so its daemon gets a launchd label of its own; hcoord gives the plain `com.hcoord.daemon` label only to the account's default `~/.hide/hcoord`, read from the user database, but a fixture that names its own home leaves no doubt.
-- A test of a one-time move (`hide connect` moving the state folder, `hcoord home adopt`, the kit's hcoord part) stops only a daemon the test started in its own private folder, and injects launchctl and the label (`plugins/hcoord/test/unit/hcoord-home.test.mjs`); launchd domains are per account, so a real `launchctl` call with the default label reaches the operator's coordinator whatever `HOME` says.
-  The desktop fixture refuses a mismatched coordinator before launching a candidate.
+- Set every fixture's `HOME` and Hide state folder to private paths before starting a candidate.
+- A retirement test injects its service-control boundary and uses private legacy folders and ledger fixtures.
+  A real launchd call to the account's default retired-service label reaches the operator's service regardless of a private `HOME`, so it is never part of fixture teardown.
 - Copy the whole isolation environment from `web/e2e/herdr-fixture.ts` and `desktop/e2e/fixture.ts`, never a subset; [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md#3-isolate-runtime-state-before-making-fixtures) lists every variable and why.
 - Register every process a fixture starts with `ownUntilWorkerExit` from `web/e2e/worker-owned.ts`, so synchronous cleanup runs on Node-managed worker exit even when a test's `finally` was skipped.
   A `spawn` with no `error` listener is such a death: when `target/debug/hided` was missing, each test killed its worker and left its private Herdr server running under launchd.
   The exit callback cannot run after SIGKILL, an OOM kill or host loss; these require separate recovery and are not proven by a `process.exit()` regression.
 - `desktop/e2e/fixture.ts` owns each `isolate` home through both automatic test teardown and worker exit, with at most sixteen unclosed homes per worker.
   Each home records at most sixteen live or pending candidate launches; a launch over that cap fails before starting another process.
-  Automatic teardown closes candidate apps, then each home's cleanup checks its recorded process handles for confirmed exit before stopping the private hided, unloading only the hashed hcoord labels for that home's legacy and adopted directories, and confirming each label absent before deleting the home.
-  An unconfirmed candidate exit, stop, launchctl query or unload failure fails teardown and retains the home for recovery; the error names the retained path and recovery action.
+  Automatic teardown closes candidate apps, then each home's cleanup checks its recorded process handles for confirmed exit before stopping the private hided and deleting the home.
+  An unconfirmed candidate exit, stop or cleanup failure fails teardown and retains the home for recovery; the error names the retained path and recovery action.
   When candidate exit is unconfirmed, close only the recorded owned candidate, confirm its exit, then call that fixture's `cleanup()` again.
   `desktop/e2e/fixture-cleanup.unit.ts` injects Electron close failures at the external boundary and checks real home retention, confirmed-exit deletion and recovery without starting native processes.
-  `desktop/e2e/lifecycle.spec.ts` checks running and manually stopped services, failed tests, Node-managed worker exit via `process.exit(23)`, and retained state after an unload failure against private homes in real launchd.
-  Standalone hcoord fixtures must use `hcoord daemon uninstall --json` with their original `HOME` and `HCOORD_HOME` before removing those paths; `daemon stop` alone keeps the job registered.
 - Herdr starts a pane's shell from the server's `SHELL`, so a fixture sets `SHELL=/bin/zsh` beside its private `HOME`.
   The CI runner's login shell is bash, where a prompt planted in the fixture's `.zshrc` never appears; reproduce that with `SHELL=/bin/bash pnpm --dir web e2e`.
 - A private `HOME` has no Claude or Codex login, because each CLI keys its credential to `HOME`.

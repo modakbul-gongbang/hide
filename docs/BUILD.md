@@ -60,13 +60,13 @@ Focused delivery and session-activity filters and their nonzero-test prerequisit
 Each compiler or test process's failure reaches the caller.
 
 CI uses scoped Cargo modes `test-scoped`, `check`, `build` and `clippy` with trailing Cargo arguments, for example `bash scripts/verify-cargo.sh test-scoped -p hide-platform -p hide-herdr-client`.
-Each adds `--locked`, reuses the installed toolchain, clears `HERDR_*`, and fixes output to this worktree's `target/`.
+Each adds `--locked`, reuses the installed toolchain, clears inherited Herdr and legacy coordination overrides, and fixes output to this worktree's `target/`.
 Scoped modes accept at most 128 arguments and refuse `--target-dir`, `--manifest-path` and `--config`; an unknown mode exits 2.
 The sealed `test`, `lint`, `release` and `cli` invocations keep their existing behavior.
-`verify-web.sh install [--ignore-scripts]` locks dependency installation; `verify-web.sh <web|desktop|hcoord> <typecheck|lint|test|build>` runs one package step.
+`verify-web.sh install [--ignore-scripts]` locks dependency installation; `verify-web.sh <web|desktop> <typecheck|lint|test|build>` runs one package step.
 `web e2e` runs Playwright against the web output already built; `desktop e2e` rebuilds the desktop host before Playwright.
 Both forward the test arguments and their exit status, so a missing test filter fails the caller.
-`playwright-install` installs Chromium for web or desktop, `desktop package` packages this runner's app, and `hcoord test:e2e` runs its isolated coordination suite.
+`playwright-install` installs Chromium for web or desktop; `desktop package` packages this runner's app.
 An invalid package/action pair or more than 128 trailing arguments exits 2; the no-argument full web gate stays unchanged.
 `test_ci_verification_entrypoints.py` checks this external command boundary without building or installing; it complements the real build tests below.
 
@@ -75,7 +75,7 @@ They check that a caller's `CARGO_TARGET_DIR` cannot move the release binaries, 
 They require macOS with Cargo.
 
 
-The Windows/Linux package smoke uses an isolated HOME and Herdr socket to check the command from a fresh shell, both configured agent hooks, and hcoord remaining absent.
+The Windows/Linux package smoke uses an isolated HOME and Herdr socket to check the command from a fresh shell, both configured agent hooks and the completed retirement row.
 It then uses a second complete package fixture with an executable overlay that changes the daemon hash, proving replacement, refreshed command and hook paths, same-build reuse and standalone refusal.
 All test daemons and temporary files are cleaned up on failure as well as success.
 
@@ -89,8 +89,8 @@ Electron downloads its runtime into `desktop/node_modules/electron/dist/` on the
 | `pnpm --dir desktop dev` | Bundles `desktop/dist/` with esbuild and launches the app unpackaged; it finds this worktree's `target/{debug,release}/hide` itself |
 | `pnpm --dir desktop typecheck`, `lint`, `test` | The desktop CI lane |
 | `pnpm --dir desktop e2e` | Playwright `_electron` against a private hided and pinned Herdr; needs `web/dist`, `target/debug/hide` and `hided`, and the pinned `herdr` as the web e2e does |
-| `pnpm --dir desktop package` | `desktop/scripts/package.mjs`: builds the release binaries and fetches the pinned Herdr, bundles `hided`, `hide`, `hide-agent-hooks`, `hide-host-helper-macos-<arch>` and `herdr` into `Contents/Resources` with the install kit's `hcoord/`, ad-hoc signs `desktop/out/hide-darwin-<arch>/hide.app` (bundle id `me.grab.hide.desktop`), and archives it to `desktop/out/hide-v<version>-macos-<arch>.zip` beside a `.sha256` checksum; nothing is notarized or installed. On Windows x64 and Linux x64 the same command builds that system's package, unsigned: the folder `desktop/out/hide-win32-x64/` or `hide-linux-x64/` with the same binaries (`.exe` on Windows, with Herdr's `conpty/` beside `herdr.exe`) and `hide-host-helper-<windows\|linux>-x86_64` in its `resources/`, archived to `hide-v<version>-windows-x64.zip` (the system's `tar.exe`) or `hide-v<version>-linux-x64.tar.gz` beside a `.sha256`. Each system packages only itself, and a machine of another architecture than its pinned Herdr asset is refused |
-| `node desktop/scripts/smoke-package.mjs <archive>` | On Windows or Linux only: checks a package against its `.sha256`, unpacks it into a temporary folder, and with a private home and state folder runs the bundled `herdr --version`, the device helper, `hide-agent-hooks doctor`, the bundled hcoord through Electron's Node, and `hide connect`, `/health`, the embedded shell, first-launch CLI and hooks, a command from a fresh shell, hcoord remaining absent, replacement by a second package fixture, refreshed paths, same-build reuse, standalone refusal and `hide stop`; `.github/workflows/package.yml` runs it after each package. It refuses macOS, where a daemon inside `hide.app` installs the kit and its LaunchAgent into the account |
+| `pnpm --dir desktop package` | `desktop/scripts/package.mjs`: builds the release binaries and fetches the pinned Herdr, bundles `hided`, `hide`, `hide-agent-hooks`, `hide-host-helper-macos-<arch>` and `herdr` into `Contents/Resources`, ad-hoc signs `desktop/out/hide-darwin-<arch>/hide.app` (bundle id `me.grab.hide.desktop`), and archives it to `desktop/out/hide-v<version>-macos-<arch>.zip` beside a `.sha256` checksum; nothing is notarized or installed. On Windows x64 and Linux x64 the same command builds that system's package, unsigned: the folder `desktop/out/hide-win32-x64/` or `hide-linux-x64/` with the same binaries (`.exe` on Windows, with Herdr's `conpty/` beside `herdr.exe`) and `hide-host-helper-<windows\|linux>-x86_64` in its `resources/`, archived to `hide-v<version>-windows-x64.zip` (the system's `tar.exe`) or `hide-v<version>-linux-x64.tar.gz` beside a `.sha256`. Each system packages only itself, and a machine of another architecture than its pinned Herdr asset is refused |
+| `node desktop/scripts/smoke-package.mjs <archive>` | On Windows or Linux only: checks a package against its `.sha256`, unpacks it into a temporary folder, and with a private home and state folder runs the bundled `herdr --version`, the device helper, `hide-agent-hooks doctor`, and `hide connect`, `/health`, the embedded shell, first-launch CLI and hooks, a command from a fresh shell, the completed retirement row, replacement by a second package fixture, refreshed paths, same-build reuse, standalone refusal and `hide stop`; `.github/workflows/package.yml` runs it after each package. It refuses macOS, where first-launch kit behavior is covered by the isolated desktop suite |
 
 The app attaches to whatever daemon the environment names: without `HIDE_STATE_DIR` it is the operator's own at `~/.hide/state`.
 For QA, set `HIDE_STATE_DIR`, `HOME`, `HERDR_SOCKET_PATH` and `HIDE_DESKTOP_USER_DATA_DIR` to private paths, as `desktop/e2e/fixture.ts` does and refuses to launch without.

@@ -70,7 +70,7 @@ Read [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md#2-identify-the-build-and-pr
   Anything that resolves an app by name or bundle id reaches whichever one it finds first: open-computer-use, System Events (even `first process whose unix id is N` dereferences by name), `open -a`, and `quit app id`.
 - An unpackaged `pnpm --dir desktop dev` instance and every desktop e2e instance run as `Electron` (`com.github.Electron`), so those collide with each other instead.
 - Without its own `HIDE_DESKTOP_USER_DATA_DIR`, a dev instance focuses the operator's app and exits ([dev-runtime.md](dev-runtime.md#one-instance-per-profile)).
-- `pgrep -fl 'hide.app/Contents/MacOS/hide'` also matches the hcoord daemon, which the bundle's executable runs as Node; the app is the PID that owns windows.
+- Identify the app by the candidate executable and the PID that owns its window; a name-only process match does not prove which build rendered it.
 - A global input event (a CGEvent tap, typing with `--foreground`, a pointer move) lands in whatever is frontmost when it is delivered, and a frontmost check a moment earlier is not a guard.
   In September 2026 such events selected a row in the operator's Explorer and activated the operator's app in the middle of a run.
 
@@ -136,7 +136,7 @@ Compare any temporary weak-blur proposal against the readable treatment in the a
 ## A device check
 
 `desktop/e2e/remote-workspace.spec.ts` covers remote routes and `desktop/e2e/device-kit.spec.ts` the install kit against an isolated SSH server; a check against a real device is for what those specs cannot reach.
-That server logs in as the account running the suite and connecting with consent installs Hide's kit there, so its sessions must get a private `HOME` and `HCOORD_HOME` (`SetEnv` in its config); `desktop/e2e/device-home.ts` describes the setup and refuses to register a device until it has proved both.
+That server logs in as the account running the suite and connecting with consent installs Hide's kit there, so its sessions must get a private `HOME` (`SetEnv` in its config); `desktop/e2e/device-home.ts` describes the setup and refuses to register a device until it has proved both.
 
 - Start a private `herdr server` on the device with the same isolation variables, sent as a script over `ssh <alias> 'bash -s' < script.sh`, and keep the device's real `HOME` so its agent CLIs stay logged in.
 - Drive it from a private hided: the web e2e fixtures `startHerdr` and `startHided` with the fixture home's `.ssh` linked to the operator's, because hided resolves the alias from `$HOME/.ssh/config`.

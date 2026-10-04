@@ -201,7 +201,7 @@ describe("settings rules", () => {
   it("names every kit part and where it goes in the one consent, and refuses a relative device socket", () => {
     const lines = kitConsentTerms("/opt/hide", "/opt/bin");
     const terms = lines.join(" ");
-    for (const named of ["/opt/hide", "/opt/bin", "hook helper", "hcoord", "~/.claude/settings.json", "~/.codex/hooks.json", "~/.hide/hcoord/bin/hcoord"]) {
+    for (const named of ["/opt/hide", "/opt/bin", "hook helper", "old records preserved", "~/.claude/settings.json", "~/.codex/hooks.json"]) {
       expect(terms).toContain(named);
     }
     expect(lines).toHaveLength(6);
@@ -236,8 +236,8 @@ describe("the install kit rows (PRD device-parity B7, B8, B27)", () => {
   it("offers Reinstall only for a part a reinstall would change", () => {
     const offered = (["installed", "outdated", "not_installed", "removed", "failed", "absent", "off"] as const).filter((state) => kitPartNeedsReinstall(part("cli", state)));
     expect(offered).toEqual(["outdated", "not_installed", "removed", "failed"]);
-    expect(kitPartLine(part("hcoord", "removed"))).toEqual({ text: "Removed", tone: "warn" });
-    expect(kitPartLine(part("hcoord", "absent")).tone).toBe("muted");
+    expect(kitPartLine(part("coordination_retirement", "removed"))).toEqual({ text: "Removed", tone: "warn" });
+    expect(kitPartLine(part("coordination_retirement", "absent")).tone).toBe("muted");
   });
 
   it("gives the Codex part a switch while it has a setting to switch, and reads off as neutral (PRD overview-request-view B36)", () => {
@@ -262,7 +262,7 @@ describe("the install kit rows (PRD device-parity B7, B8, B27)", () => {
 
   it("says in one line what removing a device takes off it and what stays (B22, B24)", () => {
     const connected = device({ host: { state: "ready", helper_root: "~/.hide/host-helper" } as DeviceHost });
-    expect(kitRemovalLine(connected)).toMatch(/removes its hook entries, its hide link and its helper folder \(~\/\.hide\/host-helper\); hcoord and the records in ~\/\.hide stay/);
+    expect(kitRemovalLine(connected)).toMatch(/removes its hook entries, its hide link and its helper folder \(~\/\.hide\/host-helper\); the records in ~\/\.hide stay/);
     const offline = device({ host: { state: "unavailable" } as DeviceHost });
     expect(kitRemovalLine(offline)).toMatch(/not connected .* its kit stays there/);
     const shared = device({ host: { state: "ready" } as DeviceHost, kit: { ...kit([]), shares_account_with: "Studio, second Herdr" } });

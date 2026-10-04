@@ -1,8 +1,8 @@
 # Agent delivery and inactivity watches
 
-Hide's core owns the local mailbox and inactivity watches while the existing hcoord coordinator continues to own its requests, watches, spawning and lineage.
-The operating contract is [PRD A](../agents/prd/hcoord-delivery-v2/prd.md).
-Remote recipients, hcoord retirement, human Inbox UI and automatic draft clearing belong to later work.
+Hide's core owns agent registration, spawning and lineage, the single mailbox and inactivity watches for local and connected device agents.
+The operating contracts are [PRD A](../agents/prd/hcoord-delivery-v2/prd.md) and its final coordination and retirement decisions in [PRD B](../agents/prd/hcoord-retire/prd.md).
+Human Inbox UI, relay/escalate, authority proof and automatic draft clearing remain follow-up work.
 
 ## Commands and caller identity
 
@@ -13,7 +13,8 @@ Each queued command revalidates both its original capability caller and the agen
 Mailbox callers and new recipients require a positive native-session binding; a missing binding returns `native_identity_required`.
 Two missing native references in the same pane never authorize retained mail.
 Target names and pane IDs resolve against the daemon's current observations.
-Sending to a remote recipient returns `remote_delivery_unsupported`.
+A connected device recipient uses the existing reverse-forwarded Workspace bridge; the capability fixes its pane, sender and kind, and the only ledger remains on the controlling daemon.
+A disconnected device hook finishes within its two-second budget with no letters, leaving them pending in that ledger.
 
 ```sh
 hide request send child-name --intent task-question-1 --body 'Please report the check result.'
@@ -25,6 +26,7 @@ hide inbox
 hide watch start child-name
 hide watch list
 hide watch stop watch-2
+hide request send parent-name --kind report --intent task-complete-1 --body 'The check passed.'
 ```
 
 The recipient can acknowledge or reply; the sender can cancel.
@@ -36,7 +38,7 @@ The envelope identifies the sender and letter kind; it is not a session-level au
 ## Safe intake and manual fallback
 
 A doorbell carries only a short instruction to read `hide inbox`.
-It requires a current local idle/done occupant, 30 seconds since Hide last routed a key to that pane, positive native readiness, a positively styled empty composer, and a recognized footer structure.
+It requires a current idle/done occupant, 30 seconds since Hide last routed a key to that pane, positive native readiness, a positively styled empty composer, and a recognized footer structure.
 Working agents, drafts, uncertain menus and unknown layouts leave the letter pending.
 The adapter never copies, clears or restores a draft.
 Its bounded visible ANSI read preserves the styling that distinguishes a placeholder from identical typed text.
@@ -65,7 +67,7 @@ That residual limit is the approved D-18 boundary; external input is not represe
 
 ## Persistence, clocks and limits
 
-The mailbox lives at the state directory's `delivery-ledger.json`, named by `hide_kit::layout::delivery_ledger`, independently of hcoord's storage.
+The mailbox lives at the state directory's `delivery-ledger.json`, named by `hide_kit::layout::delivery_ledger`.
 An admitted mutation is atomically persisted as a private file before the daemon publishes it or returns success.
 Startup establishes the existing trusted ancestor's directory barriers, creates and syncs at most 64 private descendants, validates the actual ledger and reestablishes its file barrier before admitting effects.
 An uncertain replacement disables further delivery effects until a validated restart; corrupt bytes and incomplete directory chains remain available for recovery.
@@ -75,7 +77,7 @@ Capacity errors retain existing letters and watches.
 
 | Resource or clock | Bound |
 | --- | --- |
-| Pending delivery deadline | 10 minutes, then `undelivered`; visible through CLI |
+| Pending delivery deadline | 60 minutes, then `undelivered`; visible through CLI |
 | Hide-key quiet period | 30 seconds |
 | Doorbell reservations per letter | Three total, persisted across restart |
 | First inactivity warning | 20 minutes without activity |
@@ -87,12 +89,12 @@ Capacity errors retain existing letters and watches.
 | Hook batch / context / total deadline | Five letters / 8 KiB / two seconds |
 
 The delivery deadline and watch clocks are distinct.
-There is no transition to `expired` in this contract, and an undelivered letter does not generate a new notification letter or UI banner.
+There is no transition to `expired` in this contract; an undelivered letter uses the existing human notification paths without creating another letter or UI banner.
 First-warning time and count persist across daemon restarts; activity resets both.
 
-## Watch activity and hcoord coexistence
+## Watch activity and completion
 
-Only a local parent that explicitly starts a watch receives its warning letters.
+The registered observer receives inactivity warning letters; `hide watch assign` changes that observer without a polling interval flag.
 Activity is the later of Herdr's status-transition time and the confirmed native session file's modification time.
 A local read and the device helper's `session_activity` use the same session ownership and root-confinement checks.
 Session lookup has one total budget of 10000 directory entries, including skipped extensions and unmatched names, 64 visited directories and 8 MiB of retained path bytes.
@@ -116,16 +118,28 @@ Session discovery, ownership reads and helper I/O run outside `Mutex<Runtime>`.
 A tick also performs one bounded ledger encoding and bounded per-watch admission checks; it publishes only watch start, warning and end transitions.
 A target exit or parent's explicit stop ends the watch.
 A normal reply closes the request's answer wait and leaves the watch active.
-A done target remains watched until exit or explicit stop; there is no completion-report command in this phase.
+A done target remains watched until exit, explicit stop or a completion report.
+`hide request send --kind report` ends its sender's watch when delivery to the parent is confirmed, without waiting for acknowledgement.
+A report from an unwatched sender is an ordinary letter; the parent can restart a watch explicitly.
 
-At registration only, Hide runs one existing read-only hcoord watch-list call and, when active watches exist, at most one agent-list call within one combined two-second budget.
-An exact current pane/session/machine/host-scope match rejects registration as `conflict`; unavailable or ambiguous proof records a stable diagnostic and allows registration.
-One off-lock probe owner serializes registration reads with a nonblocking admission check and retains at most one child whose cleanup is unconfirmed.
-It refuses another probe while that child remains unconfirmed, records the stable unverified-registration outcome, and spends at most 50 ms of the next registration's existing two-second budget retrying cleanup.
-Each probe keeps the existing 1 MiB output and 2048-row limits, and Runtime holds only a weak reference so its teardown cannot perform child cleanup under the runtime mutex.
-Returned prompts, paths and arguments are not persisted or logged.
-During PRD A, do not add an hcoord watch to a target already watched by Hide: the reverse registration direction is an operational rule, and two independent watches can otherwise produce two warning letters.
-The helper protocol addition must inherit the preceding request-view contract; this work does not authorize replacing an installed helper or retiring hcoord.
+## Agent registration and spawning
+
+`hide agent register [--check]`, `list`, `show` and `end` preserve the caller surface used by dispatch and Fork.
+`hide agent spawn` accepts `--parent`, `--name`, `--intent`, `--kind`, `--repo`, `--branch`, optional `--path`, `--no-watch` and native arguments after `--`.
+It creates the checkout when needed, the real child pane and agent, registers their relationship, writes lineage immediately and starts a watch unless `--no-watch` is present.
+Retrying the same intent resumes the existing child and repairs incomplete registration rather than creating another one.
+Remote starts use Hide's existing device start path.
+The unsupported reconciliation/resume/session flags and relay, escalate, graph and events commands are absent.
+
+The existing one-second `agent.list` refresh reconciles only panes whose four lineage tokens differ; startup and reconnect perform one full pass, and a changed session clears stale tokens.
+There is no separate lineage timer, subprocess on the input path or blocking work under `Mutex<Runtime>`.
+The token readers and digest contract remain unchanged.
+
+People receive notifications only for an unanswered parent inactivity warning and an overdue undelivered letter.
+The notification key is the watched target or letter ID plus the cause, shared across phone Web Push and Herdr notifications.
+Each key sends once across both channels, with at most two notifications per inactivity episode; new activity resets the episode.
+A failed first channel falls back to the other; two failures record a diagnostic without retry.
+These cases add no Inbox screen or automatic escalation chain.
 
 ## Verification
 
@@ -143,8 +157,8 @@ The helper executable tests use private homes and fixture transcripts, pair JSON
 Each fixture launch and capture shares an absolute five-second deadline and a combined 64 KiB output cap; provider sessions and the installed helper are never used.
 The full Rust test and lint lanes still apply to the final committed head.
 Actual Linux and Windows OS-contract runner results are required for the state-machine, ledger and activity portability claim; declaring a workflow does not prove it passed.
-Real TUI delivery requires an isolated Herdr server, private HOME/state/HCOORD_HOME, precisely identified candidate processes and disposable provider sessions with observed native identity and hcoord lineage.
-Register only an actual parent session and spawn its child through the existing hcoord path; never seed a capability or coordination ledger.
+Real TUI delivery requires an isolated Herdr server, private HOME/state, precisely identified candidate processes and disposable provider sessions with observed native identity and registered lineage.
+Register only an actual parent session and spawn its child through `hide agent spawn`; never seed a capability or coordination ledger.
 Exercise idle/done delivery, working delay, a draft identical to the placeholder, uncertain menus, hook confirmation/restart, capacity/corruption, watch clocks/reset/exit/reply and helper privacy/fallback.
 Label protocol fixtures separately from actual provider runtime observations.
 Measure matched baseline/candidate input latency and idle/driven load through [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md); a headless or socket-only check does not prove native presentation.

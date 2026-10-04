@@ -2225,8 +2225,8 @@
                     {
                       "type": "text",
                       "id": "main-sidebar-agent1-summary0-l-b",
-                      "name": "hcoord-decouple",
-                      "content": "hcoord-decouple",
+                      "name": "mailbox-decouple",
+                      "content": "mailbox-decouple",
                       "fill": "$--subtle-foreground",
                       "fontFamily": "$--font-ui",
                       "fontSize": "$--text-caption",
@@ -2651,8 +2651,8 @@
                                     {
                                       "type": "text",
                                       "id": "main-lineage-pop2-b-l",
-                                      "name": "hcoord-decouple",
-                                      "content": "hcoord-decouple",
+                                      "name": "mailbox-decouple",
+                                      "content": "mailbox-decouple",
                                       "fill": "$--muted-foreground",
                                       "fontFamily": "$--font-mono",
                                       "fontSize": "$--text-caption",
@@ -2955,8 +2955,8 @@
                                 {
                                   "type": "text",
                                   "id": "main-lineage-chip2-b-l",
-                                  "name": "hcoord-decouple",
-                                  "content": "hcoord-decouple",
+                                  "name": "mailbox-decouple",
+                                  "content": "mailbox-decouple",
                                   "fill": "$--subtle-foreground",
                                   "fontFamily": "$--font-mono",
                                   "fontSize": "$--text-caption",
@@ -6441,7 +6441,7 @@
                             {
                               "type": "frame",
                               "id": "main-r2-l",
-                              "name": "hcoord-decouple: move lineage tokens into the plugin",
+                              "name": "mailbox-decouple: move lineage tokens into the plugin",
                               "children": [
                                 {
                                   "type": "frame",
@@ -6507,8 +6507,8 @@
                                 {
                                   "type": "text",
                                   "id": "main-r2-l-title",
-                                  "name": "hcoord-decouple: move lineag",
-                                  "content": "hcoord-decouple: move lineage tokens into the plugin",
+                                  "name": "mailbox-decouple: move linea",
+                                  "content": "mailbox-decouple: move lineage tokens into the plugin",
                                   "fill": "$--foreground",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-title",
@@ -6545,8 +6545,8 @@
                                             {
                                               "type": "text",
                                               "id": "main-r2-l-co-br-t",
-                                              "name": "9-hcoord-decouple",
-                                              "content": "9-hcoord-decouple",
+                                              "name": "9-mailbox-decouple",
+                                              "content": "9-mailbox-decouple",
                                               "fill": "$--muted-foreground",
                                               "fontFamily": "$--font-mono",
                                               "fontSize": "$--text-caption",
@@ -8983,8 +8983,8 @@
                     {
                       "type": "text",
                       "id": "main-sidebar-agent1-summary0-d-b",
-                      "name": "hcoord-decouple",
-                      "content": "hcoord-decouple",
+                      "name": "mailbox-decouple",
+                      "content": "mailbox-decouple",
                       "fill": "$--subtle-foreground",
                       "fontFamily": "$--font-ui",
                       "fontSize": "$--text-caption",
@@ -9409,8 +9409,8 @@
                                     {
                                       "type": "text",
                                       "id": "main-lineage-pop2-b-d",
-                                      "name": "hcoord-decouple",
-                                      "content": "hcoord-decouple",
+                                      "name": "mailbox-decouple",
+                                      "content": "mailbox-decouple",
                                       "fill": "$--muted-foreground",
                                       "fontFamily": "$--font-mono",
                                       "fontSize": "$--text-caption",
@@ -9713,8 +9713,8 @@
                                 {
                                   "type": "text",
                                   "id": "main-lineage-chip2-b-d",
-                                  "name": "hcoord-decouple",
-                                  "content": "hcoord-decouple",
+                                  "name": "mailbox-decouple",
+                                  "content": "mailbox-decouple",
                                   "fill": "$--subtle-foreground",
                                   "fontFamily": "$--font-mono",
                                   "fontSize": "$--text-caption",
@@ -13199,7 +13199,7 @@
                             {
                               "type": "frame",
                               "id": "main-r2-d",
-                              "name": "hcoord-decouple: move lineage tokens into the plugin",
+                              "name": "mailbox-decouple: move lineage tokens into the plugin",
                               "children": [
                                 {
                                   "type": "frame",
@@ -13265,8 +13265,8 @@
                                 {
                                   "type": "text",
                                   "id": "main-r2-d-title",
-                                  "name": "hcoord-decouple: move lineag",
-                                  "content": "hcoord-decouple: move lineage tokens into the plugin",
+                                  "name": "mailbox-decouple: move linea",
+                                  "content": "mailbox-decouple: move lineage tokens into the plugin",
                                   "fill": "$--foreground",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-title",
@@ -13303,8 +13303,8 @@
                                             {
                                               "type": "text",
                                               "id": "main-r2-d-co-br-t",
-                                              "name": "9-hcoord-decouple",
-                                              "content": "9-hcoord-decouple",
+                                              "name": "9-mailbox-decouple",
+                                              "content": "9-mailbox-decouple",
                                               "fill": "$--muted-foreground",
                                               "fontFamily": "$--font-mono",
                                               "fontSize": "$--text-caption",
@@ -21686,7 +21686,7 @@
                             {
                               "type": "frame",
                               "id": "ov-gsb-pr-l",
-                              "name": "184-hcoord-plugin",
+                              "name": "184-mailbox-plugin",
                               "children": [
                                 {
                                   "type": "frame",
@@ -21712,8 +21712,8 @@
                                         {
                                           "type": "text",
                                           "id": "ov-gsb-pr-l-head-b",
-                                          "name": "184-hcoord-plugin",
-                                          "content": "184-hcoord-plugin",
+                                          "name": "184-mailbox-plugin",
+                                          "content": "184-mailbox-plugin",
                                           "fill": "$--foreground",
                                           "fontFamily": "$--font-mono",
                                           "fontSize": "$--text-body",
@@ -21734,8 +21734,8 @@
                                         {
                                           "type": "text",
                                           "id": "ov-gsb-pr-l-head-purpose",
-                                          "name": "Bundle hcoord as a Herdr plu",
-                                          "content": "Bundle hcoord as a Herdr plugin",
+                                          "name": "Bundle mailbox as a Herdr pl",
+                                          "content": "Bundle mailbox as a Herdr plugin",
                                           "fill": "$--muted-foreground",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-caption",
@@ -26847,7 +26847,7 @@
                             {
                               "type": "frame",
                               "id": "ov-r2-l",
-                              "name": "Bundle hcoord as a Herdr plugin with checkout lineage",
+                              "name": "Bundle mailbox as a Herdr plugin with checkout lineage",
                               "children": [
                                 {
                                   "type": "frame",
@@ -26903,8 +26903,8 @@
                                 {
                                   "type": "text",
                                   "id": "ov-r2-l-title",
-                                  "name": "Bundle hcoord as a Herdr plu",
-                                  "content": "Bundle hcoord as a Herdr plugin with checkout lineage",
+                                  "name": "Bundle mailbox as a Herdr pl",
+                                  "content": "Bundle mailbox as a Herdr plugin with checkout lineage",
                                   "fill": "$--foreground",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-title",
@@ -26941,8 +26941,8 @@
                                             {
                                               "type": "text",
                                               "id": "ov-r2-l-co-br-t",
-                                              "name": "184-hcoord-plugin",
-                                              "content": "184-hcoord-plugin",
+                                              "name": "184-mailbox-plugin",
+                                              "content": "184-mailbox-plugin",
                                               "fill": "$--muted-foreground",
                                               "fontFamily": "$--font-mono",
                                               "fontSize": "$--text-caption",
@@ -28012,7 +28012,7 @@
                         {
                           "type": "frame",
                           "id": "ov-s3-l",
-                          "name": "Bundle hcoord as a Herdr plugin with checkout lineage",
+                          "name": "Bundle mailbox as a Herdr plugin with checkout lineage",
                           "children": [
                             {
                               "type": "frame",
@@ -28106,8 +28106,8 @@
                             {
                               "type": "text",
                               "id": "ov-s3-l-title",
-                              "name": "Bundle hcoord as a Herdr plu",
-                              "content": "Bundle hcoord as a Herdr plugin with checkout lineage",
+                              "name": "Bundle mailbox as a Herdr pl",
+                              "content": "Bundle mailbox as a Herdr plugin with checkout lineage",
                               "fill": "$--foreground",
                               "fontFamily": "$--font-ui",
                               "fontSize": "$--text-title",
@@ -28144,8 +28144,8 @@
                                         {
                                           "type": "text",
                                           "id": "ov-s3-l-co-br-t",
-                                          "name": "184-hcoord-plugin",
-                                          "content": "184-hcoord-plugin",
+                                          "name": "184-mailbox-plugin",
+                                          "content": "184-mailbox-plugin",
                                           "fill": "$--muted-foreground",
                                           "fontFamily": "$--font-mono",
                                           "fontSize": "$--text-caption",
@@ -48174,7 +48174,7 @@
                             {
                               "type": "frame",
                               "id": "ov-gsb-pr-d",
-                              "name": "184-hcoord-plugin",
+                              "name": "184-mailbox-plugin",
                               "children": [
                                 {
                                   "type": "frame",
@@ -48200,8 +48200,8 @@
                                         {
                                           "type": "text",
                                           "id": "ov-gsb-pr-d-head-b",
-                                          "name": "184-hcoord-plugin",
-                                          "content": "184-hcoord-plugin",
+                                          "name": "184-mailbox-plugin",
+                                          "content": "184-mailbox-plugin",
                                           "fill": "$--foreground",
                                           "fontFamily": "$--font-mono",
                                           "fontSize": "$--text-body",
@@ -48222,8 +48222,8 @@
                                         {
                                           "type": "text",
                                           "id": "ov-gsb-pr-d-head-purpose",
-                                          "name": "Bundle hcoord as a Herdr plu",
-                                          "content": "Bundle hcoord as a Herdr plugin",
+                                          "name": "Bundle mailbox as a Herdr pl",
+                                          "content": "Bundle mailbox as a Herdr plugin",
                                           "fill": "$--muted-foreground",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-caption",
@@ -53335,7 +53335,7 @@
                             {
                               "type": "frame",
                               "id": "ov-r2-d",
-                              "name": "Bundle hcoord as a Herdr plugin with checkout lineage",
+                              "name": "Bundle mailbox as a Herdr plugin with checkout lineage",
                               "children": [
                                 {
                                   "type": "frame",
@@ -53391,8 +53391,8 @@
                                 {
                                   "type": "text",
                                   "id": "ov-r2-d-title",
-                                  "name": "Bundle hcoord as a Herdr plu",
-                                  "content": "Bundle hcoord as a Herdr plugin with checkout lineage",
+                                  "name": "Bundle mailbox as a Herdr pl",
+                                  "content": "Bundle mailbox as a Herdr plugin with checkout lineage",
                                   "fill": "$--foreground",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-title",
@@ -53429,8 +53429,8 @@
                                             {
                                               "type": "text",
                                               "id": "ov-r2-d-co-br-t",
-                                              "name": "184-hcoord-plugin",
-                                              "content": "184-hcoord-plugin",
+                                              "name": "184-mailbox-plugin",
+                                              "content": "184-mailbox-plugin",
                                               "fill": "$--muted-foreground",
                                               "fontFamily": "$--font-mono",
                                               "fontSize": "$--text-caption",
@@ -54500,7 +54500,7 @@
                         {
                           "type": "frame",
                           "id": "ov-s3-d",
-                          "name": "Bundle hcoord as a Herdr plugin with checkout lineage",
+                          "name": "Bundle mailbox as a Herdr plugin with checkout lineage",
                           "children": [
                             {
                               "type": "frame",
@@ -54594,8 +54594,8 @@
                             {
                               "type": "text",
                               "id": "ov-s3-d-title",
-                              "name": "Bundle hcoord as a Herdr plu",
-                              "content": "Bundle hcoord as a Herdr plugin with checkout lineage",
+                              "name": "Bundle mailbox as a Herdr pl",
+                              "content": "Bundle mailbox as a Herdr plugin with checkout lineage",
                               "fill": "$--foreground",
                               "fontFamily": "$--font-ui",
                               "fontSize": "$--text-title",
@@ -54632,8 +54632,8 @@
                                         {
                                           "type": "text",
                                           "id": "ov-s3-d-co-br-t",
-                                          "name": "184-hcoord-plugin",
-                                          "content": "184-hcoord-plugin",
+                                          "name": "184-mailbox-plugin",
+                                          "content": "184-mailbox-plugin",
                                           "fill": "$--muted-foreground",
                                           "fontFamily": "$--font-mono",
                                           "fontSize": "$--text-caption",
@@ -107948,8 +107948,8 @@
                         {
                           "type": "text",
                           "id": "pal-side-a0t-l",
-                          "name": "hcoord 원격 에이전트 구현",
-                          "content": "hcoord 원격 에이전트 구현",
+                          "name": "mailbox 원격 에이전트 구현",
+                          "content": "mailbox 원격 에이전트 구현",
                           "fill": "$--foreground",
                           "fontFamily": "$--font-ui",
                           "fontSize": "$--text-body",
@@ -108136,8 +108136,8 @@
                                         {
                                           "type": "text",
                                           "id": "pal-q0-l-title",
-                                          "name": "#273 hcoord 쓰기 명령이 sandbox 거",
-                                          "content": "#273 hcoord 쓰기 명령이 sandbox 거부를 internal로 숨김",
+                                          "name": "#273 mailbox 쓰기 명령이 sandbox ",
+                                          "content": "#273 mailbox 쓰기 명령이 sandbox 거부를 internal로 숨김",
                                           "fill": "$--foreground",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-body",
@@ -108216,8 +108216,8 @@
                                         {
                                           "type": "text",
                                           "id": "pal-q1-l-title",
-                                          "name": "fix/hcoord-sandbox-letters",
-                                          "content": "fix/hcoord-sandbox-letters",
+                                          "name": "fix/mailbox-sandbox-letters",
+                                          "content": "fix/mailbox-sandbox-letters",
                                           "fill": "$--foreground",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-body",
@@ -108285,8 +108285,8 @@
                                         {
                                           "type": "text",
                                           "id": "pal-q2-l-title",
-                                          "name": "#275 Surface hcoord sandbox ",
-                                          "content": "#275 Surface hcoord sandbox refusals",
+                                          "name": "#275 Surface mailbox sandbox",
+                                          "content": "#275 Surface mailbox sandbox refusals",
                                           "fill": "$--foreground",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-body",
@@ -108295,8 +108295,8 @@
                                         {
                                           "type": "text",
                                           "id": "pal-q2-l-detail",
-                                          "name": "PR · Open · fix/hcoord-sandb",
-                                          "content": "PR · Open · fix/hcoord-sandbox-letters",
+                                          "name": "PR · Open · fix/mailbox-sand",
+                                          "content": "PR · Open · fix/mailbox-sandbox-letters",
                                           "fill": "$--muted-foreground",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-caption",
@@ -108345,8 +108345,8 @@
                                         {
                                           "type": "text",
                                           "id": "pal-q3-l-title",
-                                          "name": "hcoord 쓰기 명령 sandbox 오류 해결",
-                                          "content": "hcoord 쓰기 명령 sandbox 오류 해결",
+                                          "name": "mailbox 쓰기 명령 sandbox 오류 해결",
+                                          "content": "mailbox 쓰기 명령 sandbox 오류 해결",
                                           "fill": "$--foreground",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-body",
@@ -108355,8 +108355,8 @@
                                         {
                                           "type": "text",
                                           "id": "pal-q3-l-detail",
-                                          "name": "herdr-ide › fix/hcoord-sandb",
-                                          "content": "herdr-ide › fix/hcoord-sandbox-letters · Done",
+                                          "name": "herdr-ide › fix/mailbox-sand",
+                                          "content": "herdr-ide › fix/mailbox-sandbox-letters · Done",
                                           "fill": "$--muted-foreground",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-caption",
@@ -108466,8 +108466,8 @@
                                 {
                                   "type": "text",
                                   "id": "pal-rel-d-l-t",
-                                  "name": "hcoord 쓰기 명령이 sandbox 거부를 in",
-                                  "content": "hcoord 쓰기 명령이 sandbox 거부를 internal로 숨김",
+                                  "name": "mailbox 쓰기 명령이 sandbox 거부를 i",
+                                  "content": "mailbox 쓰기 명령이 sandbox 거부를 internal로 숨김",
                                   "fill": "$--foreground",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-body",
@@ -108575,8 +108575,8 @@
                                     {
                                       "type": "text",
                                       "id": "pal-rel-d-l-fv1",
-                                      "name": "fix/hcoord-sandbox-letters",
-                                      "content": "fix/hcoord-sandbox-letters",
+                                      "name": "fix/mailbox-sandbox-letters",
+                                      "content": "fix/mailbox-sandbox-letters",
                                       "fill": "$--foreground",
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-caption",
@@ -108662,8 +108662,8 @@
                                     {
                                       "type": "text",
                                       "id": "pal-rel-d-l-rl0",
-                                      "name": "#273 hcoord 쓰기 명령이 sandbox 거",
-                                      "content": "#273 hcoord 쓰기 명령이 sandbox 거부를…",
+                                      "name": "#273 mailbox 쓰기 명령이 sandbox ",
+                                      "content": "#273 mailbox 쓰기 명령이 sandbox 거부를…",
                                       "fill": "$--foreground",
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-caption",
@@ -108685,8 +108685,8 @@
                                     {
                                       "type": "text",
                                       "id": "pal-rel-d-l-rl1",
-                                      "name": "fix/hcoord-sandbox-letters",
-                                      "content": "fix/hcoord-sandbox-letters",
+                                      "name": "fix/mailbox-sandbox-letters",
+                                      "content": "fix/mailbox-sandbox-letters",
                                       "fill": "$--subtle-foreground",
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-caption",
@@ -108708,8 +108708,8 @@
                                     {
                                       "type": "text",
                                       "id": "pal-rel-d-l-rl2",
-                                      "name": "#275 Surface hcoord sandbox ",
-                                      "content": "#275 Surface hcoord sandbox refusals",
+                                      "name": "#275 Surface mailbox sandbox",
+                                      "content": "#275 Surface mailbox sandbox refusals",
                                       "fill": "$--subtle-foreground",
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-caption",
@@ -108946,8 +108946,8 @@
                                         {
                                           "type": "text",
                                           "id": "pal-t0-l-title",
-                                          "name": "#273 hcoord 쓰기 명령이 sandbox 거",
-                                          "content": "#273 hcoord 쓰기 명령이 sandbox 거부를 internal로 숨김",
+                                          "name": "#273 mailbox 쓰기 명령이 sandbox ",
+                                          "content": "#273 mailbox 쓰기 명령이 sandbox 거부를 internal로 숨김",
                                           "fill": "$--foreground",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-body",
@@ -109028,8 +109028,8 @@
                                         {
                                           "type": "text",
                                           "id": "pal-t1-l-title",
-                                          "name": "hcoord 쓰기 명령 sandbox 오류 해결",
-                                          "content": "hcoord 쓰기 명령 sandbox 오류 해결",
+                                          "name": "mailbox 쓰기 명령 sandbox 오류 해결",
+                                          "content": "mailbox 쓰기 명령 sandbox 오류 해결",
                                           "fill": "$--foreground",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-body",
@@ -109038,8 +109038,8 @@
                                         {
                                           "type": "text",
                                           "id": "pal-t1-l-detail",
-                                          "name": "herdr-ide › fix/hcoord-sandb",
-                                          "content": "herdr-ide › fix/hcoord-sandbox-letters · Done",
+                                          "name": "herdr-ide › fix/mailbox-sand",
+                                          "content": "herdr-ide › fix/mailbox-sandbox-letters · Done",
                                           "fill": "$--muted-foreground",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-caption",
@@ -109130,8 +109130,8 @@
                                         {
                                           "type": "text",
                                           "id": "pal-t2-l-title",
-                                          "name": "herdr-ide / fix/hcoord-sandb",
-                                          "content": "herdr-ide / fix/hcoord-sandbox-letters",
+                                          "name": "herdr-ide / fix/mailbox-sand",
+                                          "content": "herdr-ide / fix/mailbox-sandbox-letters",
                                           "fill": "$--foreground",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-body",
@@ -109239,8 +109239,8 @@
                                 {
                                   "type": "text",
                                   "id": "pal-typed-d-l-t",
-                                  "name": "hcoord 쓰기 명령 sandbox 오류 해결",
-                                  "content": "hcoord 쓰기 명령 sandbox 오류 해결",
+                                  "name": "mailbox 쓰기 명령 sandbox 오류 해결",
+                                  "content": "mailbox 쓰기 명령 sandbox 오류 해결",
                                   "fill": "$--foreground",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-body",
@@ -109319,8 +109319,8 @@
                                     {
                                       "type": "text",
                                       "id": "pal-typed-d-l-fv0",
-                                      "name": "herdr-ide › fix/hcoord-sandb",
-                                      "content": "herdr-ide › fix/hcoord-sandbox-letters",
+                                      "name": "herdr-ide › fix/mailbox-sand",
+                                      "content": "herdr-ide › fix/mailbox-sandbox-letters",
                                       "fill": "$--foreground",
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-caption",
@@ -109553,8 +109553,8 @@
                                         {
                                           "type": "text",
                                           "id": "pal-n0-l-title",
-                                          "name": "#275 Surface hcoord sandbox ",
-                                          "content": "#275 Surface hcoord sandbox refusals",
+                                          "name": "#275 Surface mailbox sandbox",
+                                          "content": "#275 Surface mailbox sandbox refusals",
                                           "fill": "$--foreground",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-body",
@@ -109563,8 +109563,8 @@
                                         {
                                           "type": "text",
                                           "id": "pal-n0-l-detail",
-                                          "name": "PR · Open · fix/hcoord-sandb",
-                                          "content": "PR · Open · fix/hcoord-sandbox-letters",
+                                          "name": "PR · Open · fix/mailbox-sand",
+                                          "content": "PR · Open · fix/mailbox-sandbox-letters",
                                           "fill": "$--muted-foreground",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-caption",
@@ -109625,8 +109625,8 @@
                                 {
                                   "type": "text",
                                   "id": "pal-number-d-l-t",
-                                  "name": "Surface hcoord sandbox refus",
-                                  "content": "Surface hcoord sandbox refusals",
+                                  "name": "Surface mailbox sandbox refu",
+                                  "content": "Surface mailbox sandbox refusals",
                                   "fill": "$--foreground",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-body",
@@ -109757,8 +109757,8 @@
                                     {
                                       "type": "text",
                                       "id": "pal-number-d-l-fv1",
-                                      "name": "fix/hcoord-sandbox-letters",
-                                      "content": "fix/hcoord-sandbox-letters",
+                                      "name": "fix/mailbox-sandbox-letters",
+                                      "content": "fix/mailbox-sandbox-letters",
                                       "fill": "$--foreground",
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-caption",
@@ -110463,8 +110463,8 @@
                                         {
                                           "type": "text",
                                           "id": "pal-gr1-l-title",
-                                          "name": "#96 hcoord sandbox 거부 로그가 비어",
-                                          "content": "#96 hcoord sandbox 거부 로그가 비어 있음",
+                                          "name": "#96 mailbox sandbox 거부 로그가 비",
+                                          "content": "#96 mailbox sandbox 거부 로그가 비어 있음",
                                           "fill": "$--foreground",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-body",
@@ -111562,8 +111562,8 @@
                         {
                           "type": "text",
                           "id": "pal-side-a0t-d",
-                          "name": "hcoord 원격 에이전트 구현",
-                          "content": "hcoord 원격 에이전트 구현",
+                          "name": "mailbox 원격 에이전트 구현",
+                          "content": "mailbox 원격 에이전트 구현",
                           "fill": "$--foreground",
                           "fontFamily": "$--font-ui",
                           "fontSize": "$--text-body",
@@ -111750,8 +111750,8 @@
                                         {
                                           "type": "text",
                                           "id": "pal-q0-d-title",
-                                          "name": "#273 hcoord 쓰기 명령이 sandbox 거",
-                                          "content": "#273 hcoord 쓰기 명령이 sandbox 거부를 internal로 숨김",
+                                          "name": "#273 mailbox 쓰기 명령이 sandbox ",
+                                          "content": "#273 mailbox 쓰기 명령이 sandbox 거부를 internal로 숨김",
                                           "fill": "$--foreground",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-body",
@@ -111830,8 +111830,8 @@
                                         {
                                           "type": "text",
                                           "id": "pal-q1-d-title",
-                                          "name": "fix/hcoord-sandbox-letters",
-                                          "content": "fix/hcoord-sandbox-letters",
+                                          "name": "fix/mailbox-sandbox-letters",
+                                          "content": "fix/mailbox-sandbox-letters",
                                           "fill": "$--foreground",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-body",
@@ -111899,8 +111899,8 @@
                                         {
                                           "type": "text",
                                           "id": "pal-q2-d-title",
-                                          "name": "#275 Surface hcoord sandbox ",
-                                          "content": "#275 Surface hcoord sandbox refusals",
+                                          "name": "#275 Surface mailbox sandbox",
+                                          "content": "#275 Surface mailbox sandbox refusals",
                                           "fill": "$--foreground",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-body",
@@ -111909,8 +111909,8 @@
                                         {
                                           "type": "text",
                                           "id": "pal-q2-d-detail",
-                                          "name": "PR · Open · fix/hcoord-sandb",
-                                          "content": "PR · Open · fix/hcoord-sandbox-letters",
+                                          "name": "PR · Open · fix/mailbox-sand",
+                                          "content": "PR · Open · fix/mailbox-sandbox-letters",
                                           "fill": "$--muted-foreground",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-caption",
@@ -111959,8 +111959,8 @@
                                         {
                                           "type": "text",
                                           "id": "pal-q3-d-title",
-                                          "name": "hcoord 쓰기 명령 sandbox 오류 해결",
-                                          "content": "hcoord 쓰기 명령 sandbox 오류 해결",
+                                          "name": "mailbox 쓰기 명령 sandbox 오류 해결",
+                                          "content": "mailbox 쓰기 명령 sandbox 오류 해결",
                                           "fill": "$--foreground",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-body",
@@ -111969,8 +111969,8 @@
                                         {
                                           "type": "text",
                                           "id": "pal-q3-d-detail",
-                                          "name": "herdr-ide › fix/hcoord-sandb",
-                                          "content": "herdr-ide › fix/hcoord-sandbox-letters · Done",
+                                          "name": "herdr-ide › fix/mailbox-sand",
+                                          "content": "herdr-ide › fix/mailbox-sandbox-letters · Done",
                                           "fill": "$--muted-foreground",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-caption",
@@ -112080,8 +112080,8 @@
                                 {
                                   "type": "text",
                                   "id": "pal-rel-d-d-t",
-                                  "name": "hcoord 쓰기 명령이 sandbox 거부를 in",
-                                  "content": "hcoord 쓰기 명령이 sandbox 거부를 internal로 숨김",
+                                  "name": "mailbox 쓰기 명령이 sandbox 거부를 i",
+                                  "content": "mailbox 쓰기 명령이 sandbox 거부를 internal로 숨김",
                                   "fill": "$--foreground",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-body",
@@ -112189,8 +112189,8 @@
                                     {
                                       "type": "text",
                                       "id": "pal-rel-d-d-fv1",
-                                      "name": "fix/hcoord-sandbox-letters",
-                                      "content": "fix/hcoord-sandbox-letters",
+                                      "name": "fix/mailbox-sandbox-letters",
+                                      "content": "fix/mailbox-sandbox-letters",
                                       "fill": "$--foreground",
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-caption",
@@ -112276,8 +112276,8 @@
                                     {
                                       "type": "text",
                                       "id": "pal-rel-d-d-rl0",
-                                      "name": "#273 hcoord 쓰기 명령이 sandbox 거",
-                                      "content": "#273 hcoord 쓰기 명령이 sandbox 거부를…",
+                                      "name": "#273 mailbox 쓰기 명령이 sandbox ",
+                                      "content": "#273 mailbox 쓰기 명령이 sandbox 거부를…",
                                       "fill": "$--foreground",
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-caption",
@@ -112299,8 +112299,8 @@
                                     {
                                       "type": "text",
                                       "id": "pal-rel-d-d-rl1",
-                                      "name": "fix/hcoord-sandbox-letters",
-                                      "content": "fix/hcoord-sandbox-letters",
+                                      "name": "fix/mailbox-sandbox-letters",
+                                      "content": "fix/mailbox-sandbox-letters",
                                       "fill": "$--subtle-foreground",
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-caption",
@@ -112322,8 +112322,8 @@
                                     {
                                       "type": "text",
                                       "id": "pal-rel-d-d-rl2",
-                                      "name": "#275 Surface hcoord sandbox ",
-                                      "content": "#275 Surface hcoord sandbox refusals",
+                                      "name": "#275 Surface mailbox sandbox",
+                                      "content": "#275 Surface mailbox sandbox refusals",
                                       "fill": "$--subtle-foreground",
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-caption",
@@ -112560,8 +112560,8 @@
                                         {
                                           "type": "text",
                                           "id": "pal-t0-d-title",
-                                          "name": "#273 hcoord 쓰기 명령이 sandbox 거",
-                                          "content": "#273 hcoord 쓰기 명령이 sandbox 거부를 internal로 숨김",
+                                          "name": "#273 mailbox 쓰기 명령이 sandbox ",
+                                          "content": "#273 mailbox 쓰기 명령이 sandbox 거부를 internal로 숨김",
                                           "fill": "$--foreground",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-body",
@@ -112642,8 +112642,8 @@
                                         {
                                           "type": "text",
                                           "id": "pal-t1-d-title",
-                                          "name": "hcoord 쓰기 명령 sandbox 오류 해결",
-                                          "content": "hcoord 쓰기 명령 sandbox 오류 해결",
+                                          "name": "mailbox 쓰기 명령 sandbox 오류 해결",
+                                          "content": "mailbox 쓰기 명령 sandbox 오류 해결",
                                           "fill": "$--foreground",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-body",
@@ -112652,8 +112652,8 @@
                                         {
                                           "type": "text",
                                           "id": "pal-t1-d-detail",
-                                          "name": "herdr-ide › fix/hcoord-sandb",
-                                          "content": "herdr-ide › fix/hcoord-sandbox-letters · Done",
+                                          "name": "herdr-ide › fix/mailbox-sand",
+                                          "content": "herdr-ide › fix/mailbox-sandbox-letters · Done",
                                           "fill": "$--muted-foreground",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-caption",
@@ -112744,8 +112744,8 @@
                                         {
                                           "type": "text",
                                           "id": "pal-t2-d-title",
-                                          "name": "herdr-ide / fix/hcoord-sandb",
-                                          "content": "herdr-ide / fix/hcoord-sandbox-letters",
+                                          "name": "herdr-ide / fix/mailbox-sand",
+                                          "content": "herdr-ide / fix/mailbox-sandbox-letters",
                                           "fill": "$--foreground",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-body",
@@ -112853,8 +112853,8 @@
                                 {
                                   "type": "text",
                                   "id": "pal-typed-d-d-t",
-                                  "name": "hcoord 쓰기 명령 sandbox 오류 해결",
-                                  "content": "hcoord 쓰기 명령 sandbox 오류 해결",
+                                  "name": "mailbox 쓰기 명령 sandbox 오류 해결",
+                                  "content": "mailbox 쓰기 명령 sandbox 오류 해결",
                                   "fill": "$--foreground",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-body",
@@ -112933,8 +112933,8 @@
                                     {
                                       "type": "text",
                                       "id": "pal-typed-d-d-fv0",
-                                      "name": "herdr-ide › fix/hcoord-sandb",
-                                      "content": "herdr-ide › fix/hcoord-sandbox-letters",
+                                      "name": "herdr-ide › fix/mailbox-sand",
+                                      "content": "herdr-ide › fix/mailbox-sandbox-letters",
                                       "fill": "$--foreground",
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-caption",
@@ -113167,8 +113167,8 @@
                                         {
                                           "type": "text",
                                           "id": "pal-n0-d-title",
-                                          "name": "#275 Surface hcoord sandbox ",
-                                          "content": "#275 Surface hcoord sandbox refusals",
+                                          "name": "#275 Surface mailbox sandbox",
+                                          "content": "#275 Surface mailbox sandbox refusals",
                                           "fill": "$--foreground",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-body",
@@ -113177,8 +113177,8 @@
                                         {
                                           "type": "text",
                                           "id": "pal-n0-d-detail",
-                                          "name": "PR · Open · fix/hcoord-sandb",
-                                          "content": "PR · Open · fix/hcoord-sandbox-letters",
+                                          "name": "PR · Open · fix/mailbox-sand",
+                                          "content": "PR · Open · fix/mailbox-sandbox-letters",
                                           "fill": "$--muted-foreground",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-caption",
@@ -113239,8 +113239,8 @@
                                 {
                                   "type": "text",
                                   "id": "pal-number-d-d-t",
-                                  "name": "Surface hcoord sandbox refus",
-                                  "content": "Surface hcoord sandbox refusals",
+                                  "name": "Surface mailbox sandbox refu",
+                                  "content": "Surface mailbox sandbox refusals",
                                   "fill": "$--foreground",
                                   "fontFamily": "$--font-ui",
                                   "fontSize": "$--text-body",
@@ -113371,8 +113371,8 @@
                                     {
                                       "type": "text",
                                       "id": "pal-number-d-d-fv1",
-                                      "name": "fix/hcoord-sandbox-letters",
-                                      "content": "fix/hcoord-sandbox-letters",
+                                      "name": "fix/mailbox-sandbox-letters",
+                                      "content": "fix/mailbox-sandbox-letters",
                                       "fill": "$--foreground",
                                       "fontFamily": "$--font-ui",
                                       "fontSize": "$--text-caption",
@@ -114077,8 +114077,8 @@
                                         {
                                           "type": "text",
                                           "id": "pal-gr1-d-title",
-                                          "name": "#96 hcoord sandbox 거부 로그가 비어",
-                                          "content": "#96 hcoord sandbox 거부 로그가 비어 있음",
+                                          "name": "#96 mailbox sandbox 거부 로그가 비",
+                                          "content": "#96 mailbox sandbox 거부 로그가 비어 있음",
                                           "fill": "$--foreground",
                                           "fontFamily": "$--font-ui",
                                           "fontSize": "$--text-body",
@@ -126778,6 +126778,16 @@
                                           "fontSize": "$--text-subhead",
                                           "fontWeight": "600"
                                         },
+                                        "hideui:TS5x9": {
+                                          "stroke": "$--border",
+                                          "enabled": false
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
+                                        },
                                         "hideui:checkout-status": {
                                           "fill": "$--secondary",
                                           "enabled": true
@@ -126839,10 +126849,6 @@
                                         "hideui:QetL0": {
                                           "width": 292
                                         },
-                                        "hideui:TS5x9": {
-                                          "enabled": false,
-                                          "stroke": "$--border"
-                                        },
                                         "hideui:checkout-error": {
                                           "enabled": false
                                         },
@@ -126870,12 +126876,6 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
-                                        },
-                                        "hideui:TS5x9/hideui:xXuNa": {
-                                          "fill": "$--subtle-foreground"
-                                        },
-                                        "hideui:TS5x9/hideui:n8L5dm": {
-                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -127030,6 +127030,16 @@
                                           "content": "Overview",
                                           "fontWeight": "500"
                                         },
+                                        "hideui:TS5x9": {
+                                          "stroke": "$--border",
+                                          "enabled": false
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
+                                        },
                                         "hideui:checkout-status": {
                                           "fill": "$--secondary",
                                           "enabled": false
@@ -127089,10 +127099,6 @@
                                         "hideui:QetL0": {
                                           "width": 274
                                         },
-                                        "hideui:TS5x9": {
-                                          "enabled": false,
-                                          "stroke": "$--border"
-                                        },
                                         "hideui:IXwZI": {
                                           "opacity": 0
                                         },
@@ -127102,12 +127108,6 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
-                                        },
-                                        "hideui:TS5x9/hideui:xXuNa": {
-                                          "fill": "$--subtle-foreground"
-                                        },
-                                        "hideui:TS5x9/hideui:n8L5dm": {
-                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -127142,6 +127142,16 @@
                                               "fill": "$--foreground",
                                               "content": "main",
                                               "fontWeight": "normal"
+                                            },
+                                            "hideui:TS5x9": {
+                                              "stroke": "$--border",
+                                              "enabled": false
+                                            },
+                                            "hideui:TS5x9/hideui:xXuNa": {
+                                              "fill": "$--subtle-foreground"
+                                            },
+                                            "hideui:TS5x9/hideui:n8L5dm": {
+                                              "fill": "$--destructive"
                                             },
                                             "hideui:checkout-status": {
                                               "fill": "$--secondary",
@@ -127204,10 +127214,6 @@
                                             "hideui:QetL0": {
                                               "width": 274
                                             },
-                                            "hideui:TS5x9": {
-                                              "enabled": false,
-                                              "stroke": "$--border"
-                                            },
                                             "hideui:IXwZI": {
                                               "opacity": 0
                                             },
@@ -127217,12 +127223,6 @@
                                             },
                                             "hideui:yfur4": {
                                               "width": 20
-                                            },
-                                            "hideui:TS5x9/hideui:xXuNa": {
-                                              "fill": "$--subtle-foreground"
-                                            },
-                                            "hideui:TS5x9/hideui:n8L5dm": {
-                                              "fill": "$--destructive"
                                             }
                                           }
                                         },
@@ -127645,8 +127645,8 @@
                                                 {
                                                   "type": "text",
                                                   "id": "psb-a2-l-summary1-b",
-                                                  "name": "hcoord-decouple",
-                                                  "content": "hcoord-decouple",
+                                                  "name": "mailbox-decouple",
+                                                  "content": "mailbox-decouple",
                                                   "fill": "$--subtle-foreground",
                                                   "fontFamily": "$--font-ui",
                                                   "fontSize": "$--text-caption",
@@ -127829,6 +127829,16 @@
                                           "content": "155-browser-display",
                                           "fontWeight": "normal"
                                         },
+                                        "hideui:TS5x9": {
+                                          "stroke": "$--border",
+                                          "enabled": false
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
+                                        },
                                         "hideui:checkout-status": {
                                           "fill": "$--secondary",
                                           "enabled": true
@@ -127891,10 +127901,6 @@
                                         "hideui:QetL0": {
                                           "width": 274
                                         },
-                                        "hideui:TS5x9": {
-                                          "enabled": false,
-                                          "stroke": "$--border"
-                                        },
                                         "hideui:checkout-error": {
                                           "enabled": false
                                         },
@@ -127922,12 +127928,6 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
-                                        },
-                                        "hideui:TS5x9/hideui:xXuNa": {
-                                          "fill": "$--subtle-foreground"
-                                        },
-                                        "hideui:TS5x9/hideui:n8L5dm": {
-                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -127958,6 +127958,16 @@
                                           "fill": "$--foreground",
                                           "content": "154-search-palette",
                                           "fontWeight": "normal"
+                                        },
+                                        "hideui:TS5x9": {
+                                          "stroke": "$--border",
+                                          "enabled": false
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         },
                                         "hideui:checkout-status": {
                                           "fill": "$--secondary",
@@ -128021,10 +128031,6 @@
                                         "hideui:QetL0": {
                                           "width": 274
                                         },
-                                        "hideui:TS5x9": {
-                                          "enabled": false,
-                                          "stroke": "$--border"
-                                        },
                                         "hideui:checkout-error": {
                                           "enabled": false
                                         },
@@ -128052,12 +128058,6 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
-                                        },
-                                        "hideui:TS5x9/hideui:xXuNa": {
-                                          "fill": "$--subtle-foreground"
-                                        },
-                                        "hideui:TS5x9/hideui:n8L5dm": {
-                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -128087,6 +128087,16 @@
                                           "fill": "$--foreground",
                                           "content": "electron-shortcut-bindings",
                                           "fontWeight": "normal"
+                                        },
+                                        "hideui:TS5x9": {
+                                          "stroke": "$--border",
+                                          "enabled": false
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         },
                                         "hideui:checkout-status": {
                                           "fill": "$--secondary",
@@ -128150,10 +128160,6 @@
                                         "hideui:QetL0": {
                                           "width": 274
                                         },
-                                        "hideui:TS5x9": {
-                                          "enabled": false,
-                                          "stroke": "$--border"
-                                        },
                                         "hideui:checkout-error": {
                                           "enabled": false
                                         },
@@ -128181,12 +128187,6 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
-                                        },
-                                        "hideui:TS5x9/hideui:xXuNa": {
-                                          "fill": "$--subtle-foreground"
-                                        },
-                                        "hideui:TS5x9/hideui:n8L5dm": {
-                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -128217,6 +128217,16 @@
                                           "fill": "$--foreground",
                                           "content": "workspace-ux-prop…",
                                           "fontWeight": "normal"
+                                        },
+                                        "hideui:TS5x9": {
+                                          "stroke": "$--border",
+                                          "enabled": false
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         },
                                         "hideui:checkout-status": {
                                           "fill": "$--secondary",
@@ -128279,10 +128289,6 @@
                                         "hideui:QetL0": {
                                           "width": 274
                                         },
-                                        "hideui:TS5x9": {
-                                          "enabled": false,
-                                          "stroke": "$--border"
-                                        },
                                         "hideui:IXwZI": {
                                           "opacity": 0
                                         },
@@ -128292,12 +128298,6 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
-                                        },
-                                        "hideui:TS5x9/hideui:xXuNa": {
-                                          "fill": "$--subtle-foreground"
-                                        },
-                                        "hideui:TS5x9/hideui:n8L5dm": {
-                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -128328,6 +128328,16 @@
                                           "fill": "$--foreground",
                                           "content": "registered-projects-only",
                                           "fontWeight": "normal"
+                                        },
+                                        "hideui:TS5x9": {
+                                          "stroke": "$--border",
+                                          "enabled": false
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         },
                                         "hideui:checkout-status": {
                                           "fill": "$--secondary",
@@ -128389,10 +128399,6 @@
                                         "hideui:QetL0": {
                                           "width": 274
                                         },
-                                        "hideui:TS5x9": {
-                                          "enabled": false,
-                                          "stroke": "$--border"
-                                        },
                                         "hideui:IXwZI": {
                                           "opacity": 0
                                         },
@@ -128402,12 +128408,6 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
-                                        },
-                                        "hideui:TS5x9/hideui:xXuNa": {
-                                          "fill": "$--subtle-foreground"
-                                        },
-                                        "hideui:TS5x9/hideui:n8L5dm": {
-                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -128437,6 +128437,16 @@
                                           "fill": "$--foreground",
                                           "content": "legacy-shell",
                                           "fontWeight": "normal"
+                                        },
+                                        "hideui:TS5x9": {
+                                          "stroke": "$--border",
+                                          "enabled": true
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         },
                                         "hideui:checkout-status": {
                                           "fill": "$--secondary",
@@ -128497,10 +128507,6 @@
                                         "hideui:QetL0": {
                                           "width": 274
                                         },
-                                        "hideui:TS5x9": {
-                                          "enabled": true,
-                                          "stroke": "$--border"
-                                        },
                                         "hideui:IXwZI": {
                                           "opacity": 0
                                         },
@@ -128510,12 +128516,6 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
-                                        },
-                                        "hideui:TS5x9/hideui:xXuNa": {
-                                          "fill": "$--subtle-foreground"
-                                        },
-                                        "hideui:TS5x9/hideui:n8L5dm": {
-                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -129244,6 +129244,16 @@
                                   "content": "Overview",
                                   "fontWeight": "normal"
                                 },
+                                "hideui:TS5x9": {
+                                  "stroke": "$--border",
+                                  "enabled": false
+                                },
+                                "hideui:TS5x9/hideui:xXuNa": {
+                                  "fill": "$--subtle-foreground"
+                                },
+                                "hideui:TS5x9/hideui:n8L5dm": {
+                                  "fill": "$--destructive"
+                                },
                                 "hideui:checkout-status": {
                                   "fill": "$--secondary",
                                   "enabled": false
@@ -129303,10 +129313,6 @@
                                 "hideui:QetL0": {
                                   "width": 274
                                 },
-                                "hideui:TS5x9": {
-                                  "enabled": false,
-                                  "stroke": "$--border"
-                                },
                                 "hideui:IXwZI": {
                                   "opacity": 0
                                 },
@@ -129316,12 +129322,6 @@
                                 },
                                 "hideui:yfur4": {
                                   "width": 20
-                                },
-                                "hideui:TS5x9/hideui:xXuNa": {
-                                  "fill": "$--subtle-foreground"
-                                },
-                                "hideui:TS5x9/hideui:n8L5dm": {
-                                  "fill": "$--destructive"
                                 }
                               }
                             },
@@ -129352,6 +129352,16 @@
                                   "fill": "$--foreground",
                                   "content": "155-browser-display",
                                   "fontWeight": "normal"
+                                },
+                                "hideui:TS5x9": {
+                                  "stroke": "$--border",
+                                  "enabled": false
+                                },
+                                "hideui:TS5x9/hideui:xXuNa": {
+                                  "fill": "$--subtle-foreground"
+                                },
+                                "hideui:TS5x9/hideui:n8L5dm": {
+                                  "fill": "$--destructive"
                                 },
                                 "hideui:checkout-status": {
                                   "fill": "$--secondary",
@@ -129415,10 +129425,6 @@
                                 "hideui:QetL0": {
                                   "width": 274
                                 },
-                                "hideui:TS5x9": {
-                                  "enabled": false,
-                                  "stroke": "$--border"
-                                },
                                 "hideui:checkout-error": {
                                   "enabled": false
                                 },
@@ -129446,12 +129452,6 @@
                                 },
                                 "hideui:yfur4": {
                                   "width": 20
-                                },
-                                "hideui:TS5x9/hideui:xXuNa": {
-                                  "fill": "$--subtle-foreground"
-                                },
-                                "hideui:TS5x9/hideui:n8L5dm": {
-                                  "fill": "$--destructive"
                                 }
                               }
                             },
@@ -129482,6 +129482,16 @@
                                   "fill": "$--foreground",
                                   "content": "154-search-palette",
                                   "fontWeight": "normal"
+                                },
+                                "hideui:TS5x9": {
+                                  "stroke": "$--border",
+                                  "enabled": false
+                                },
+                                "hideui:TS5x9/hideui:xXuNa": {
+                                  "fill": "$--subtle-foreground"
+                                },
+                                "hideui:TS5x9/hideui:n8L5dm": {
+                                  "fill": "$--destructive"
                                 },
                                 "hideui:checkout-status": {
                                   "fill": "$--secondary",
@@ -129545,10 +129555,6 @@
                                 "hideui:QetL0": {
                                   "width": 274
                                 },
-                                "hideui:TS5x9": {
-                                  "enabled": false,
-                                  "stroke": "$--border"
-                                },
                                 "hideui:checkout-error": {
                                   "enabled": false
                                 },
@@ -129576,12 +129582,6 @@
                                 },
                                 "hideui:yfur4": {
                                   "width": 20
-                                },
-                                "hideui:TS5x9/hideui:xXuNa": {
-                                  "fill": "$--subtle-foreground"
-                                },
-                                "hideui:TS5x9/hideui:n8L5dm": {
-                                  "fill": "$--destructive"
                                 }
                               }
                             },
@@ -129612,6 +129612,16 @@
                                   "fill": "$--foreground",
                                   "content": "electron-shortcut-bindings",
                                   "fontWeight": "normal"
+                                },
+                                "hideui:TS5x9": {
+                                  "stroke": "$--border",
+                                  "enabled": false
+                                },
+                                "hideui:TS5x9/hideui:xXuNa": {
+                                  "fill": "$--subtle-foreground"
+                                },
+                                "hideui:TS5x9/hideui:n8L5dm": {
+                                  "fill": "$--destructive"
                                 },
                                 "hideui:checkout-status": {
                                   "fill": "$--secondary",
@@ -129675,10 +129685,6 @@
                                 "hideui:QetL0": {
                                   "width": 274
                                 },
-                                "hideui:TS5x9": {
-                                  "enabled": false,
-                                  "stroke": "$--border"
-                                },
                                 "hideui:checkout-error": {
                                   "enabled": false
                                 },
@@ -129706,12 +129712,6 @@
                                 },
                                 "hideui:yfur4": {
                                   "width": 20
-                                },
-                                "hideui:TS5x9/hideui:xXuNa": {
-                                  "fill": "$--subtle-foreground"
-                                },
-                                "hideui:TS5x9/hideui:n8L5dm": {
-                                  "fill": "$--destructive"
                                 }
                               }
                             },
@@ -129742,6 +129742,16 @@
                                   "fill": "$--foreground",
                                   "content": "workspace-ux-prop…",
                                   "fontWeight": "normal"
+                                },
+                                "hideui:TS5x9": {
+                                  "stroke": "$--border",
+                                  "enabled": false
+                                },
+                                "hideui:TS5x9/hideui:xXuNa": {
+                                  "fill": "$--subtle-foreground"
+                                },
+                                "hideui:TS5x9/hideui:n8L5dm": {
+                                  "fill": "$--destructive"
                                 },
                                 "hideui:checkout-status": {
                                   "fill": "$--secondary",
@@ -129804,10 +129814,6 @@
                                 "hideui:QetL0": {
                                   "width": 274
                                 },
-                                "hideui:TS5x9": {
-                                  "enabled": false,
-                                  "stroke": "$--border"
-                                },
                                 "hideui:IXwZI": {
                                   "opacity": 0
                                 },
@@ -129817,12 +129823,6 @@
                                 },
                                 "hideui:yfur4": {
                                   "width": 20
-                                },
-                                "hideui:TS5x9/hideui:xXuNa": {
-                                  "fill": "$--subtle-foreground"
-                                },
-                                "hideui:TS5x9/hideui:n8L5dm": {
-                                  "fill": "$--destructive"
                                 }
                               }
                             }
@@ -130332,6 +130332,16 @@
                                       "content": "electron-shortcut-bindings",
                                       "fontWeight": "normal"
                                     },
+                                    "hideui:TS5x9": {
+                                      "stroke": "$--border",
+                                      "enabled": false
+                                    },
+                                    "hideui:TS5x9/hideui:xXuNa": {
+                                      "fill": "$--subtle-foreground"
+                                    },
+                                    "hideui:TS5x9/hideui:n8L5dm": {
+                                      "fill": "$--destructive"
+                                    },
                                     "hideui:checkout-status": {
                                       "fill": "$--secondary",
                                       "enabled": true
@@ -130394,10 +130404,6 @@
                                     "hideui:QetL0": {
                                       "width": 274
                                     },
-                                    "hideui:TS5x9": {
-                                      "enabled": false,
-                                      "stroke": "$--border"
-                                    },
                                     "hideui:checkout-error": {
                                       "enabled": false
                                     },
@@ -130425,12 +130431,6 @@
                                     },
                                     "hideui:yfur4": {
                                       "width": 20
-                                    },
-                                    "hideui:TS5x9/hideui:xXuNa": {
-                                      "fill": "$--subtle-foreground"
-                                    },
-                                    "hideui:TS5x9/hideui:n8L5dm": {
-                                      "fill": "$--destructive"
                                     }
                                   }
                                 }
@@ -133239,6 +133239,16 @@
                                           "content": "Overview",
                                           "fontWeight": "normal"
                                         },
+                                        "hideui:TS5x9": {
+                                          "stroke": "$--border",
+                                          "enabled": false
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
+                                        },
                                         "hideui:checkout-status": {
                                           "fill": "$--secondary",
                                           "enabled": false
@@ -133298,10 +133308,6 @@
                                         "hideui:QetL0": {
                                           "width": 274
                                         },
-                                        "hideui:TS5x9": {
-                                          "enabled": false,
-                                          "stroke": "$--border"
-                                        },
                                         "hideui:IXwZI": {
                                           "opacity": 0
                                         },
@@ -133311,12 +133317,6 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
-                                        },
-                                        "hideui:TS5x9/hideui:xXuNa": {
-                                          "fill": "$--subtle-foreground"
-                                        },
-                                        "hideui:TS5x9/hideui:n8L5dm": {
-                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -133347,6 +133347,16 @@
                                           "fill": "$--foreground",
                                           "content": "main",
                                           "fontWeight": "500"
+                                        },
+                                        "hideui:TS5x9": {
+                                          "stroke": "$--border",
+                                          "enabled": false
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         },
                                         "hideui:checkout-status": {
                                           "fill": "$--secondary",
@@ -133410,10 +133420,6 @@
                                         "hideui:QetL0": {
                                           "width": 274
                                         },
-                                        "hideui:TS5x9": {
-                                          "enabled": false,
-                                          "stroke": "$--border"
-                                        },
                                         "hideui:checkout-error": {
                                           "enabled": false
                                         },
@@ -133441,12 +133447,6 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
-                                        },
-                                        "hideui:TS5x9/hideui:xXuNa": {
-                                          "fill": "$--subtle-foreground"
-                                        },
-                                        "hideui:TS5x9/hideui:n8L5dm": {
-                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -133477,6 +133477,16 @@
                                           "fill": "$--foreground",
                                           "content": "246-frontmost",
                                           "fontWeight": "normal"
+                                        },
+                                        "hideui:TS5x9": {
+                                          "stroke": "$--border",
+                                          "enabled": false
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         },
                                         "hideui:checkout-status": {
                                           "fill": "$--secondary",
@@ -133539,10 +133549,6 @@
                                         "hideui:QetL0": {
                                           "width": 274
                                         },
-                                        "hideui:TS5x9": {
-                                          "enabled": false,
-                                          "stroke": "$--border"
-                                        },
                                         "hideui:IXwZI": {
                                           "opacity": 0
                                         },
@@ -133552,12 +133558,6 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
-                                        },
-                                        "hideui:TS5x9/hideui:xXuNa": {
-                                          "fill": "$--subtle-foreground"
-                                        },
-                                        "hideui:TS5x9/hideui:n8L5dm": {
-                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -134964,6 +134964,16 @@
                                           "content": "Overview",
                                           "fontWeight": "normal"
                                         },
+                                        "hideui:TS5x9": {
+                                          "stroke": "$--border",
+                                          "enabled": false
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
+                                        },
                                         "hideui:checkout-status": {
                                           "fill": "$--secondary",
                                           "enabled": false
@@ -135023,10 +135033,6 @@
                                         "hideui:QetL0": {
                                           "width": 274
                                         },
-                                        "hideui:TS5x9": {
-                                          "enabled": false,
-                                          "stroke": "$--border"
-                                        },
                                         "hideui:IXwZI": {
                                           "opacity": 0
                                         },
@@ -135036,12 +135042,6 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
-                                        },
-                                        "hideui:TS5x9/hideui:xXuNa": {
-                                          "fill": "$--subtle-foreground"
-                                        },
-                                        "hideui:TS5x9/hideui:n8L5dm": {
-                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -135072,6 +135072,16 @@
                                           "fill": "$--foreground",
                                           "content": "main",
                                           "fontWeight": "500"
+                                        },
+                                        "hideui:TS5x9": {
+                                          "stroke": "$--border",
+                                          "enabled": false
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         },
                                         "hideui:checkout-status": {
                                           "fill": "$--secondary",
@@ -135136,10 +135146,6 @@
                                         "hideui:QetL0": {
                                           "width": 274
                                         },
-                                        "hideui:TS5x9": {
-                                          "enabled": false,
-                                          "stroke": "$--border"
-                                        },
                                         "hideui:checkout-error": {
                                           "enabled": false
                                         },
@@ -135167,12 +135173,6 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
-                                        },
-                                        "hideui:TS5x9/hideui:xXuNa": {
-                                          "fill": "$--subtle-foreground"
-                                        },
-                                        "hideui:TS5x9/hideui:n8L5dm": {
-                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -135203,6 +135203,16 @@
                                           "fill": "$--foreground",
                                           "content": "home-device-rail",
                                           "fontWeight": "normal"
+                                        },
+                                        "hideui:TS5x9": {
+                                          "stroke": "$--border",
+                                          "enabled": false
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         },
                                         "hideui:checkout-status": {
                                           "fill": "$--secondary",
@@ -135266,10 +135276,6 @@
                                         "hideui:QetL0": {
                                           "width": 274
                                         },
-                                        "hideui:TS5x9": {
-                                          "enabled": false,
-                                          "stroke": "$--border"
-                                        },
                                         "hideui:checkout-error": {
                                           "enabled": false
                                         },
@@ -135297,12 +135303,6 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
-                                        },
-                                        "hideui:TS5x9/hideui:xXuNa": {
-                                          "fill": "$--subtle-foreground"
-                                        },
-                                        "hideui:TS5x9/hideui:n8L5dm": {
-                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -137499,6 +137499,16 @@
                                           "fontSize": "$--text-subhead",
                                           "fontWeight": "600"
                                         },
+                                        "hideui:TS5x9": {
+                                          "stroke": "$--border",
+                                          "enabled": false
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
+                                        },
                                         "hideui:checkout-status": {
                                           "fill": "$--secondary",
                                           "enabled": true
@@ -137560,10 +137570,6 @@
                                         "hideui:QetL0": {
                                           "width": 292
                                         },
-                                        "hideui:TS5x9": {
-                                          "enabled": false,
-                                          "stroke": "$--border"
-                                        },
                                         "hideui:checkout-error": {
                                           "enabled": false
                                         },
@@ -137591,12 +137597,6 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
-                                        },
-                                        "hideui:TS5x9/hideui:xXuNa": {
-                                          "fill": "$--subtle-foreground"
-                                        },
-                                        "hideui:TS5x9/hideui:n8L5dm": {
-                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -137751,6 +137751,16 @@
                                           "content": "Overview",
                                           "fontWeight": "500"
                                         },
+                                        "hideui:TS5x9": {
+                                          "stroke": "$--border",
+                                          "enabled": false
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
+                                        },
                                         "hideui:checkout-status": {
                                           "fill": "$--secondary",
                                           "enabled": false
@@ -137810,10 +137820,6 @@
                                         "hideui:QetL0": {
                                           "width": 274
                                         },
-                                        "hideui:TS5x9": {
-                                          "enabled": false,
-                                          "stroke": "$--border"
-                                        },
                                         "hideui:IXwZI": {
                                           "opacity": 0
                                         },
@@ -137823,12 +137829,6 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
-                                        },
-                                        "hideui:TS5x9/hideui:xXuNa": {
-                                          "fill": "$--subtle-foreground"
-                                        },
-                                        "hideui:TS5x9/hideui:n8L5dm": {
-                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -137863,6 +137863,16 @@
                                               "fill": "$--foreground",
                                               "content": "main",
                                               "fontWeight": "normal"
+                                            },
+                                            "hideui:TS5x9": {
+                                              "stroke": "$--border",
+                                              "enabled": false
+                                            },
+                                            "hideui:TS5x9/hideui:xXuNa": {
+                                              "fill": "$--subtle-foreground"
+                                            },
+                                            "hideui:TS5x9/hideui:n8L5dm": {
+                                              "fill": "$--destructive"
                                             },
                                             "hideui:checkout-status": {
                                               "fill": "$--secondary",
@@ -137925,10 +137935,6 @@
                                             "hideui:QetL0": {
                                               "width": 274
                                             },
-                                            "hideui:TS5x9": {
-                                              "enabled": false,
-                                              "stroke": "$--border"
-                                            },
                                             "hideui:IXwZI": {
                                               "opacity": 0
                                             },
@@ -137938,12 +137944,6 @@
                                             },
                                             "hideui:yfur4": {
                                               "width": 20
-                                            },
-                                            "hideui:TS5x9/hideui:xXuNa": {
-                                              "fill": "$--subtle-foreground"
-                                            },
-                                            "hideui:TS5x9/hideui:n8L5dm": {
-                                              "fill": "$--destructive"
                                             }
                                           }
                                         },
@@ -138366,8 +138366,8 @@
                                                 {
                                                   "type": "text",
                                                   "id": "psb-a2-d-summary1-b",
-                                                  "name": "hcoord-decouple",
-                                                  "content": "hcoord-decouple",
+                                                  "name": "mailbox-decouple",
+                                                  "content": "mailbox-decouple",
                                                   "fill": "$--subtle-foreground",
                                                   "fontFamily": "$--font-ui",
                                                   "fontSize": "$--text-caption",
@@ -138550,6 +138550,16 @@
                                           "content": "155-browser-display",
                                           "fontWeight": "normal"
                                         },
+                                        "hideui:TS5x9": {
+                                          "stroke": "$--border",
+                                          "enabled": false
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
+                                        },
                                         "hideui:checkout-status": {
                                           "fill": "$--secondary",
                                           "enabled": true
@@ -138612,10 +138622,6 @@
                                         "hideui:QetL0": {
                                           "width": 274
                                         },
-                                        "hideui:TS5x9": {
-                                          "enabled": false,
-                                          "stroke": "$--border"
-                                        },
                                         "hideui:checkout-error": {
                                           "enabled": false
                                         },
@@ -138643,12 +138649,6 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
-                                        },
-                                        "hideui:TS5x9/hideui:xXuNa": {
-                                          "fill": "$--subtle-foreground"
-                                        },
-                                        "hideui:TS5x9/hideui:n8L5dm": {
-                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -138679,6 +138679,16 @@
                                           "fill": "$--foreground",
                                           "content": "154-search-palette",
                                           "fontWeight": "normal"
+                                        },
+                                        "hideui:TS5x9": {
+                                          "stroke": "$--border",
+                                          "enabled": false
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         },
                                         "hideui:checkout-status": {
                                           "fill": "$--secondary",
@@ -138742,10 +138752,6 @@
                                         "hideui:QetL0": {
                                           "width": 274
                                         },
-                                        "hideui:TS5x9": {
-                                          "enabled": false,
-                                          "stroke": "$--border"
-                                        },
                                         "hideui:checkout-error": {
                                           "enabled": false
                                         },
@@ -138773,12 +138779,6 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
-                                        },
-                                        "hideui:TS5x9/hideui:xXuNa": {
-                                          "fill": "$--subtle-foreground"
-                                        },
-                                        "hideui:TS5x9/hideui:n8L5dm": {
-                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -138808,6 +138808,16 @@
                                           "fill": "$--foreground",
                                           "content": "electron-shortcut-bindings",
                                           "fontWeight": "normal"
+                                        },
+                                        "hideui:TS5x9": {
+                                          "stroke": "$--border",
+                                          "enabled": false
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         },
                                         "hideui:checkout-status": {
                                           "fill": "$--secondary",
@@ -138871,10 +138881,6 @@
                                         "hideui:QetL0": {
                                           "width": 274
                                         },
-                                        "hideui:TS5x9": {
-                                          "enabled": false,
-                                          "stroke": "$--border"
-                                        },
                                         "hideui:checkout-error": {
                                           "enabled": false
                                         },
@@ -138902,12 +138908,6 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
-                                        },
-                                        "hideui:TS5x9/hideui:xXuNa": {
-                                          "fill": "$--subtle-foreground"
-                                        },
-                                        "hideui:TS5x9/hideui:n8L5dm": {
-                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -138938,6 +138938,16 @@
                                           "fill": "$--foreground",
                                           "content": "workspace-ux-prop…",
                                           "fontWeight": "normal"
+                                        },
+                                        "hideui:TS5x9": {
+                                          "stroke": "$--border",
+                                          "enabled": false
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         },
                                         "hideui:checkout-status": {
                                           "fill": "$--secondary",
@@ -139000,10 +139010,6 @@
                                         "hideui:QetL0": {
                                           "width": 274
                                         },
-                                        "hideui:TS5x9": {
-                                          "enabled": false,
-                                          "stroke": "$--border"
-                                        },
                                         "hideui:IXwZI": {
                                           "opacity": 0
                                         },
@@ -139013,12 +139019,6 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
-                                        },
-                                        "hideui:TS5x9/hideui:xXuNa": {
-                                          "fill": "$--subtle-foreground"
-                                        },
-                                        "hideui:TS5x9/hideui:n8L5dm": {
-                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -139049,6 +139049,16 @@
                                           "fill": "$--foreground",
                                           "content": "registered-projects-only",
                                           "fontWeight": "normal"
+                                        },
+                                        "hideui:TS5x9": {
+                                          "stroke": "$--border",
+                                          "enabled": false
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         },
                                         "hideui:checkout-status": {
                                           "fill": "$--secondary",
@@ -139110,10 +139120,6 @@
                                         "hideui:QetL0": {
                                           "width": 274
                                         },
-                                        "hideui:TS5x9": {
-                                          "enabled": false,
-                                          "stroke": "$--border"
-                                        },
                                         "hideui:IXwZI": {
                                           "opacity": 0
                                         },
@@ -139123,12 +139129,6 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
-                                        },
-                                        "hideui:TS5x9/hideui:xXuNa": {
-                                          "fill": "$--subtle-foreground"
-                                        },
-                                        "hideui:TS5x9/hideui:n8L5dm": {
-                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -139158,6 +139158,16 @@
                                           "fill": "$--foreground",
                                           "content": "legacy-shell",
                                           "fontWeight": "normal"
+                                        },
+                                        "hideui:TS5x9": {
+                                          "stroke": "$--border",
+                                          "enabled": true
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         },
                                         "hideui:checkout-status": {
                                           "fill": "$--secondary",
@@ -139218,10 +139228,6 @@
                                         "hideui:QetL0": {
                                           "width": 274
                                         },
-                                        "hideui:TS5x9": {
-                                          "enabled": true,
-                                          "stroke": "$--border"
-                                        },
                                         "hideui:IXwZI": {
                                           "opacity": 0
                                         },
@@ -139231,12 +139237,6 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
-                                        },
-                                        "hideui:TS5x9/hideui:xXuNa": {
-                                          "fill": "$--subtle-foreground"
-                                        },
-                                        "hideui:TS5x9/hideui:n8L5dm": {
-                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -139965,6 +139965,16 @@
                                   "content": "Overview",
                                   "fontWeight": "normal"
                                 },
+                                "hideui:TS5x9": {
+                                  "stroke": "$--border",
+                                  "enabled": false
+                                },
+                                "hideui:TS5x9/hideui:xXuNa": {
+                                  "fill": "$--subtle-foreground"
+                                },
+                                "hideui:TS5x9/hideui:n8L5dm": {
+                                  "fill": "$--destructive"
+                                },
                                 "hideui:checkout-status": {
                                   "fill": "$--secondary",
                                   "enabled": false
@@ -140024,10 +140034,6 @@
                                 "hideui:QetL0": {
                                   "width": 274
                                 },
-                                "hideui:TS5x9": {
-                                  "enabled": false,
-                                  "stroke": "$--border"
-                                },
                                 "hideui:IXwZI": {
                                   "opacity": 0
                                 },
@@ -140037,12 +140043,6 @@
                                 },
                                 "hideui:yfur4": {
                                   "width": 20
-                                },
-                                "hideui:TS5x9/hideui:xXuNa": {
-                                  "fill": "$--subtle-foreground"
-                                },
-                                "hideui:TS5x9/hideui:n8L5dm": {
-                                  "fill": "$--destructive"
                                 }
                               }
                             },
@@ -140073,6 +140073,16 @@
                                   "fill": "$--foreground",
                                   "content": "155-browser-display",
                                   "fontWeight": "normal"
+                                },
+                                "hideui:TS5x9": {
+                                  "stroke": "$--border",
+                                  "enabled": false
+                                },
+                                "hideui:TS5x9/hideui:xXuNa": {
+                                  "fill": "$--subtle-foreground"
+                                },
+                                "hideui:TS5x9/hideui:n8L5dm": {
+                                  "fill": "$--destructive"
                                 },
                                 "hideui:checkout-status": {
                                   "fill": "$--secondary",
@@ -140136,10 +140146,6 @@
                                 "hideui:QetL0": {
                                   "width": 274
                                 },
-                                "hideui:TS5x9": {
-                                  "enabled": false,
-                                  "stroke": "$--border"
-                                },
                                 "hideui:checkout-error": {
                                   "enabled": false
                                 },
@@ -140167,12 +140173,6 @@
                                 },
                                 "hideui:yfur4": {
                                   "width": 20
-                                },
-                                "hideui:TS5x9/hideui:xXuNa": {
-                                  "fill": "$--subtle-foreground"
-                                },
-                                "hideui:TS5x9/hideui:n8L5dm": {
-                                  "fill": "$--destructive"
                                 }
                               }
                             },
@@ -140203,6 +140203,16 @@
                                   "fill": "$--foreground",
                                   "content": "154-search-palette",
                                   "fontWeight": "normal"
+                                },
+                                "hideui:TS5x9": {
+                                  "stroke": "$--border",
+                                  "enabled": false
+                                },
+                                "hideui:TS5x9/hideui:xXuNa": {
+                                  "fill": "$--subtle-foreground"
+                                },
+                                "hideui:TS5x9/hideui:n8L5dm": {
+                                  "fill": "$--destructive"
                                 },
                                 "hideui:checkout-status": {
                                   "fill": "$--secondary",
@@ -140266,10 +140276,6 @@
                                 "hideui:QetL0": {
                                   "width": 274
                                 },
-                                "hideui:TS5x9": {
-                                  "enabled": false,
-                                  "stroke": "$--border"
-                                },
                                 "hideui:checkout-error": {
                                   "enabled": false
                                 },
@@ -140297,12 +140303,6 @@
                                 },
                                 "hideui:yfur4": {
                                   "width": 20
-                                },
-                                "hideui:TS5x9/hideui:xXuNa": {
-                                  "fill": "$--subtle-foreground"
-                                },
-                                "hideui:TS5x9/hideui:n8L5dm": {
-                                  "fill": "$--destructive"
                                 }
                               }
                             },
@@ -140333,6 +140333,16 @@
                                   "fill": "$--foreground",
                                   "content": "electron-shortcut-bindings",
                                   "fontWeight": "normal"
+                                },
+                                "hideui:TS5x9": {
+                                  "stroke": "$--border",
+                                  "enabled": false
+                                },
+                                "hideui:TS5x9/hideui:xXuNa": {
+                                  "fill": "$--subtle-foreground"
+                                },
+                                "hideui:TS5x9/hideui:n8L5dm": {
+                                  "fill": "$--destructive"
                                 },
                                 "hideui:checkout-status": {
                                   "fill": "$--secondary",
@@ -140396,10 +140406,6 @@
                                 "hideui:QetL0": {
                                   "width": 274
                                 },
-                                "hideui:TS5x9": {
-                                  "enabled": false,
-                                  "stroke": "$--border"
-                                },
                                 "hideui:checkout-error": {
                                   "enabled": false
                                 },
@@ -140427,12 +140433,6 @@
                                 },
                                 "hideui:yfur4": {
                                   "width": 20
-                                },
-                                "hideui:TS5x9/hideui:xXuNa": {
-                                  "fill": "$--subtle-foreground"
-                                },
-                                "hideui:TS5x9/hideui:n8L5dm": {
-                                  "fill": "$--destructive"
                                 }
                               }
                             },
@@ -140463,6 +140463,16 @@
                                   "fill": "$--foreground",
                                   "content": "workspace-ux-prop…",
                                   "fontWeight": "normal"
+                                },
+                                "hideui:TS5x9": {
+                                  "stroke": "$--border",
+                                  "enabled": false
+                                },
+                                "hideui:TS5x9/hideui:xXuNa": {
+                                  "fill": "$--subtle-foreground"
+                                },
+                                "hideui:TS5x9/hideui:n8L5dm": {
+                                  "fill": "$--destructive"
                                 },
                                 "hideui:checkout-status": {
                                   "fill": "$--secondary",
@@ -140525,10 +140535,6 @@
                                 "hideui:QetL0": {
                                   "width": 274
                                 },
-                                "hideui:TS5x9": {
-                                  "enabled": false,
-                                  "stroke": "$--border"
-                                },
                                 "hideui:IXwZI": {
                                   "opacity": 0
                                 },
@@ -140538,12 +140544,6 @@
                                 },
                                 "hideui:yfur4": {
                                   "width": 20
-                                },
-                                "hideui:TS5x9/hideui:xXuNa": {
-                                  "fill": "$--subtle-foreground"
-                                },
-                                "hideui:TS5x9/hideui:n8L5dm": {
-                                  "fill": "$--destructive"
                                 }
                               }
                             }
@@ -141053,6 +141053,16 @@
                                       "content": "electron-shortcut-bindings",
                                       "fontWeight": "normal"
                                     },
+                                    "hideui:TS5x9": {
+                                      "stroke": "$--border",
+                                      "enabled": false
+                                    },
+                                    "hideui:TS5x9/hideui:xXuNa": {
+                                      "fill": "$--subtle-foreground"
+                                    },
+                                    "hideui:TS5x9/hideui:n8L5dm": {
+                                      "fill": "$--destructive"
+                                    },
                                     "hideui:checkout-status": {
                                       "fill": "$--secondary",
                                       "enabled": true
@@ -141115,10 +141125,6 @@
                                     "hideui:QetL0": {
                                       "width": 274
                                     },
-                                    "hideui:TS5x9": {
-                                      "enabled": false,
-                                      "stroke": "$--border"
-                                    },
                                     "hideui:checkout-error": {
                                       "enabled": false
                                     },
@@ -141146,12 +141152,6 @@
                                     },
                                     "hideui:yfur4": {
                                       "width": 20
-                                    },
-                                    "hideui:TS5x9/hideui:xXuNa": {
-                                      "fill": "$--subtle-foreground"
-                                    },
-                                    "hideui:TS5x9/hideui:n8L5dm": {
-                                      "fill": "$--destructive"
                                     }
                                   }
                                 }
@@ -143960,6 +143960,16 @@
                                           "content": "Overview",
                                           "fontWeight": "normal"
                                         },
+                                        "hideui:TS5x9": {
+                                          "stroke": "$--border",
+                                          "enabled": false
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
+                                        },
                                         "hideui:checkout-status": {
                                           "fill": "$--secondary",
                                           "enabled": false
@@ -144019,10 +144029,6 @@
                                         "hideui:QetL0": {
                                           "width": 274
                                         },
-                                        "hideui:TS5x9": {
-                                          "enabled": false,
-                                          "stroke": "$--border"
-                                        },
                                         "hideui:IXwZI": {
                                           "opacity": 0
                                         },
@@ -144032,12 +144038,6 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
-                                        },
-                                        "hideui:TS5x9/hideui:xXuNa": {
-                                          "fill": "$--subtle-foreground"
-                                        },
-                                        "hideui:TS5x9/hideui:n8L5dm": {
-                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -144068,6 +144068,16 @@
                                           "fill": "$--foreground",
                                           "content": "main",
                                           "fontWeight": "500"
+                                        },
+                                        "hideui:TS5x9": {
+                                          "stroke": "$--border",
+                                          "enabled": false
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         },
                                         "hideui:checkout-status": {
                                           "fill": "$--secondary",
@@ -144131,10 +144141,6 @@
                                         "hideui:QetL0": {
                                           "width": 274
                                         },
-                                        "hideui:TS5x9": {
-                                          "enabled": false,
-                                          "stroke": "$--border"
-                                        },
                                         "hideui:checkout-error": {
                                           "enabled": false
                                         },
@@ -144162,12 +144168,6 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
-                                        },
-                                        "hideui:TS5x9/hideui:xXuNa": {
-                                          "fill": "$--subtle-foreground"
-                                        },
-                                        "hideui:TS5x9/hideui:n8L5dm": {
-                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -144198,6 +144198,16 @@
                                           "fill": "$--foreground",
                                           "content": "246-frontmost",
                                           "fontWeight": "normal"
+                                        },
+                                        "hideui:TS5x9": {
+                                          "stroke": "$--border",
+                                          "enabled": false
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         },
                                         "hideui:checkout-status": {
                                           "fill": "$--secondary",
@@ -144260,10 +144270,6 @@
                                         "hideui:QetL0": {
                                           "width": 274
                                         },
-                                        "hideui:TS5x9": {
-                                          "enabled": false,
-                                          "stroke": "$--border"
-                                        },
                                         "hideui:IXwZI": {
                                           "opacity": 0
                                         },
@@ -144273,12 +144279,6 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
-                                        },
-                                        "hideui:TS5x9/hideui:xXuNa": {
-                                          "fill": "$--subtle-foreground"
-                                        },
-                                        "hideui:TS5x9/hideui:n8L5dm": {
-                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -145685,6 +145685,16 @@
                                           "content": "Overview",
                                           "fontWeight": "normal"
                                         },
+                                        "hideui:TS5x9": {
+                                          "stroke": "$--border",
+                                          "enabled": false
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
+                                        },
                                         "hideui:checkout-status": {
                                           "fill": "$--secondary",
                                           "enabled": false
@@ -145744,10 +145754,6 @@
                                         "hideui:QetL0": {
                                           "width": 274
                                         },
-                                        "hideui:TS5x9": {
-                                          "enabled": false,
-                                          "stroke": "$--border"
-                                        },
                                         "hideui:IXwZI": {
                                           "opacity": 0
                                         },
@@ -145757,12 +145763,6 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
-                                        },
-                                        "hideui:TS5x9/hideui:xXuNa": {
-                                          "fill": "$--subtle-foreground"
-                                        },
-                                        "hideui:TS5x9/hideui:n8L5dm": {
-                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -145793,6 +145793,16 @@
                                           "fill": "$--foreground",
                                           "content": "main",
                                           "fontWeight": "500"
+                                        },
+                                        "hideui:TS5x9": {
+                                          "stroke": "$--border",
+                                          "enabled": false
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         },
                                         "hideui:checkout-status": {
                                           "fill": "$--secondary",
@@ -145857,10 +145867,6 @@
                                         "hideui:QetL0": {
                                           "width": 274
                                         },
-                                        "hideui:TS5x9": {
-                                          "enabled": false,
-                                          "stroke": "$--border"
-                                        },
                                         "hideui:checkout-error": {
                                           "enabled": false
                                         },
@@ -145888,12 +145894,6 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
-                                        },
-                                        "hideui:TS5x9/hideui:xXuNa": {
-                                          "fill": "$--subtle-foreground"
-                                        },
-                                        "hideui:TS5x9/hideui:n8L5dm": {
-                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -145924,6 +145924,16 @@
                                           "fill": "$--foreground",
                                           "content": "home-device-rail",
                                           "fontWeight": "normal"
+                                        },
+                                        "hideui:TS5x9": {
+                                          "stroke": "$--border",
+                                          "enabled": false
+                                        },
+                                        "hideui:TS5x9/hideui:xXuNa": {
+                                          "fill": "$--subtle-foreground"
+                                        },
+                                        "hideui:TS5x9/hideui:n8L5dm": {
+                                          "fill": "$--destructive"
                                         },
                                         "hideui:checkout-status": {
                                           "fill": "$--secondary",
@@ -145987,10 +145997,6 @@
                                         "hideui:QetL0": {
                                           "width": 274
                                         },
-                                        "hideui:TS5x9": {
-                                          "enabled": false,
-                                          "stroke": "$--border"
-                                        },
                                         "hideui:checkout-error": {
                                           "enabled": false
                                         },
@@ -146018,12 +146024,6 @@
                                         },
                                         "hideui:yfur4": {
                                           "width": 20
-                                        },
-                                        "hideui:TS5x9/hideui:xXuNa": {
-                                          "fill": "$--subtle-foreground"
-                                        },
-                                        "hideui:TS5x9/hideui:n8L5dm": {
-                                          "fill": "$--destructive"
                                         }
                                       }
                                     },
@@ -155836,7 +155836,7 @@
                                     {
                                       "type": "frame",
                                       "id": "mob-list-b-l-n1",
-                                      "name": "hcoord 플러그인 구현",
+                                      "name": "mailbox 플러그인 구현",
                                       "children": [
                                         {
                                           "type": "frame",
@@ -155887,8 +155887,8 @@
                                                 {
                                                   "type": "text",
                                                   "id": "mob-list-b-l-n1-t",
-                                                  "name": "hcoord 플러그인 구현",
-                                                  "content": "hcoord 플러그인 구현",
+                                                  "name": "mailbox 플러그인 구현",
+                                                  "content": "mailbox 플러그인 구현",
                                                   "fill": "$--foreground",
                                                   "fontFamily": "$--font-ui",
                                                   "fontSize": 15,
@@ -155950,8 +155950,8 @@
                                             {
                                               "type": "text",
                                               "id": "mob-list-b-l-n1-pb",
-                                              "name": "herdr-ide · prd/hcoord-plugi",
-                                              "content": "herdr-ide · prd/hcoord-plugin",
+                                              "name": "herdr-ide · prd/mailbox-plug",
+                                              "content": "herdr-ide · prd/mailbox-plugin",
                                               "fill": "$--muted-foreground",
                                               "fontFamily": "$--font-ui",
                                               "fontSize": "$--text-body",
@@ -159064,7 +159064,7 @@
                                     {
                                       "type": "frame",
                                       "id": "mob-unreach-b-l-n1",
-                                      "name": "hcoord 플러그인 구현",
+                                      "name": "mailbox 플러그인 구현",
                                       "children": [
                                         {
                                           "type": "frame",
@@ -159115,8 +159115,8 @@
                                                 {
                                                   "type": "text",
                                                   "id": "mob-unreach-b-l-n1-t",
-                                                  "name": "hcoord 플러그인 구현",
-                                                  "content": "hcoord 플러그인 구현",
+                                                  "name": "mailbox 플러그인 구현",
+                                                  "content": "mailbox 플러그인 구현",
                                                   "fill": "$--foreground",
                                                   "fontFamily": "$--font-ui",
                                                   "fontSize": 15,
@@ -159178,8 +159178,8 @@
                                             {
                                               "type": "text",
                                               "id": "mob-unreach-b-l-n1-pb",
-                                              "name": "herdr-ide · prd/hcoord-plugi",
-                                              "content": "herdr-ide · prd/hcoord-plugin",
+                                              "name": "herdr-ide · prd/mailbox-plug",
+                                              "content": "herdr-ide · prd/mailbox-plugin",
                                               "fill": "$--muted-foreground",
                                               "fontFamily": "$--font-ui",
                                               "fontSize": "$--text-body",
@@ -161551,7 +161551,7 @@
                                             {
                                               "type": "frame",
                                               "id": "mob-start-b-l-l-n1",
-                                              "name": "hcoord 플러그인 구현",
+                                              "name": "mailbox 플러그인 구현",
                                               "children": [
                                                 {
                                                   "type": "frame",
@@ -161602,8 +161602,8 @@
                                                         {
                                                           "type": "text",
                                                           "id": "mob-start-b-l-l-n1-t",
-                                                          "name": "hcoord 플러그인 구현",
-                                                          "content": "hcoord 플러그인 구현",
+                                                          "name": "mailbox 플러그인 구현",
+                                                          "content": "mailbox 플러그인 구현",
                                                           "fill": "$--foreground",
                                                           "fontFamily": "$--font-ui",
                                                           "fontSize": 15,
@@ -161665,8 +161665,8 @@
                                                     {
                                                       "type": "text",
                                                       "id": "mob-start-b-l-l-n1-pb",
-                                                      "name": "herdr-ide · prd/hcoord-plugi",
-                                                      "content": "herdr-ide · prd/hcoord-plugin",
+                                                      "name": "herdr-ide · prd/mailbox-plug",
+                                                      "content": "herdr-ide · prd/mailbox-plugin",
                                                       "fill": "$--muted-foreground",
                                                       "fontFamily": "$--font-ui",
                                                       "fontSize": "$--text-body",
@@ -172107,7 +172107,7 @@
                                     {
                                       "type": "frame",
                                       "id": "mob-list-b-d-n1",
-                                      "name": "hcoord 플러그인 구현",
+                                      "name": "mailbox 플러그인 구현",
                                       "children": [
                                         {
                                           "type": "frame",
@@ -172158,8 +172158,8 @@
                                                 {
                                                   "type": "text",
                                                   "id": "mob-list-b-d-n1-t",
-                                                  "name": "hcoord 플러그인 구현",
-                                                  "content": "hcoord 플러그인 구현",
+                                                  "name": "mailbox 플러그인 구현",
+                                                  "content": "mailbox 플러그인 구현",
                                                   "fill": "$--foreground",
                                                   "fontFamily": "$--font-ui",
                                                   "fontSize": 15,
@@ -172221,8 +172221,8 @@
                                             {
                                               "type": "text",
                                               "id": "mob-list-b-d-n1-pb",
-                                              "name": "herdr-ide · prd/hcoord-plugi",
-                                              "content": "herdr-ide · prd/hcoord-plugin",
+                                              "name": "herdr-ide · prd/mailbox-plug",
+                                              "content": "herdr-ide · prd/mailbox-plugin",
                                               "fill": "$--muted-foreground",
                                               "fontFamily": "$--font-ui",
                                               "fontSize": "$--text-body",
@@ -175335,7 +175335,7 @@
                                     {
                                       "type": "frame",
                                       "id": "mob-unreach-b-d-n1",
-                                      "name": "hcoord 플러그인 구현",
+                                      "name": "mailbox 플러그인 구현",
                                       "children": [
                                         {
                                           "type": "frame",
@@ -175386,8 +175386,8 @@
                                                 {
                                                   "type": "text",
                                                   "id": "mob-unreach-b-d-n1-t",
-                                                  "name": "hcoord 플러그인 구현",
-                                                  "content": "hcoord 플러그인 구현",
+                                                  "name": "mailbox 플러그인 구현",
+                                                  "content": "mailbox 플러그인 구현",
                                                   "fill": "$--foreground",
                                                   "fontFamily": "$--font-ui",
                                                   "fontSize": 15,
@@ -175449,8 +175449,8 @@
                                             {
                                               "type": "text",
                                               "id": "mob-unreach-b-d-n1-pb",
-                                              "name": "herdr-ide · prd/hcoord-plugi",
-                                              "content": "herdr-ide · prd/hcoord-plugin",
+                                              "name": "herdr-ide · prd/mailbox-plug",
+                                              "content": "herdr-ide · prd/mailbox-plugin",
                                               "fill": "$--muted-foreground",
                                               "fontFamily": "$--font-ui",
                                               "fontSize": "$--text-body",
@@ -177822,7 +177822,7 @@
                                             {
                                               "type": "frame",
                                               "id": "mob-start-b-d-l-n1",
-                                              "name": "hcoord 플러그인 구현",
+                                              "name": "mailbox 플러그인 구현",
                                               "children": [
                                                 {
                                                   "type": "frame",
@@ -177873,8 +177873,8 @@
                                                         {
                                                           "type": "text",
                                                           "id": "mob-start-b-d-l-n1-t",
-                                                          "name": "hcoord 플러그인 구현",
-                                                          "content": "hcoord 플러그인 구현",
+                                                          "name": "mailbox 플러그인 구현",
+                                                          "content": "mailbox 플러그인 구현",
                                                           "fill": "$--foreground",
                                                           "fontFamily": "$--font-ui",
                                                           "fontSize": 15,
@@ -177936,8 +177936,8 @@
                                                     {
                                                       "type": "text",
                                                       "id": "mob-start-b-d-l-n1-pb",
-                                                      "name": "herdr-ide · prd/hcoord-plugi",
-                                                      "content": "herdr-ide · prd/hcoord-plugin",
+                                                      "name": "herdr-ide · prd/mailbox-plug",
+                                                      "content": "herdr-ide · prd/mailbox-plugin",
                                                       "fill": "$--muted-foreground",
                                                       "fontFamily": "$--font-ui",
                                                       "fontSize": "$--text-body",

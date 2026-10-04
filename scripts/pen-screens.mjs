@@ -412,7 +412,7 @@ function screenLineageDetails(tokens, suffix) {
   const children = [
     {status: 'working', title: '레이아웃 재구조화', branch: 'web-view-overlay', age: '4m'},
     {status: 'done', title: '패널 디자인 검토', branch: 'web-side-panel', age: '13m'},
-    {status: 'done', title: '원격 분리', branch: 'hcoord-decouple', device: 'mini', age: '1h'},
+    {status: 'done', title: '원격 분리', branch: 'mailbox-decouple', device: 'mini', age: '1h'},
   ];
   const popover = frame(`main-lineage-pop-${suffix}`, 'Children list', {width: num(tokens, '--size-agent-children-popover'), layout: 'vertical', fill: '$--popover', cornerRadius: '$--radius-md', stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner', padding: ['$--spacing-xxs', 0]}, [
     ...children.map((child, index) => frame(`main-lineage-pop${index}-${suffix}`, 'Child', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', padding: ['$--spacing-xs', '$--spacing-sm'], ...(index === 0 ? {fill: '$--accent'} : {})}, [
@@ -1342,7 +1342,7 @@ function buildMain(tokens) {
         {status: 'done', branch: 'web-side-panel', pr: '#170', more: 1},
       ]},
       {title: '조용한 순찰 기능 개발', status: 'Seen', symbol: '○', statusColor: '$--muted-foreground', fold: 'folded', summaries: [
-        {status: 'done', branch: 'hcoord-decouple', device: 'mini'},
+        {status: 'done', branch: 'mailbox-decouple', device: 'mini'},
       ]},
     ], {overview: true});
     const card = (id, value) => taskCard(`main-${id}-${suffix}`, value);
@@ -1361,7 +1361,7 @@ function buildMain(tokens) {
         ], {foot: [foldLine(`main-loose-${suffix}`, '이슈 없는 워크트리 5')]}),
         stageColumn(`main-review-${suffix}`, '리뷰', 2, [
           card('r1', {...ISSUE_186, project: 'herdr-ide'}),
-          card('r2', {task: gh(9), project: 'sasu', title: 'hcoord-decouple: move lineage tokens into the plugin', branch: '9-hcoord-decouple', pr: {number: 12, checks: 'pending', review: 'review_required'}}),
+          card('r2', {task: gh(9), project: 'sasu', title: 'mailbox-decouple: move lineage tokens into the plugin', branch: '9-mailbox-decouple', pr: {number: 12, checks: 'pending', review: 'review_required'}}),
         ]),
         doneColumn(`main-done-${suffix}`, 19, [{name: 'herdr-ide', count: 12}, {name: 'sasu', count: 6}, {name: 'creator', count: 1}]),
       ]),
@@ -1673,7 +1673,7 @@ function buildProjectOverview(tokens) {
         stateCell('primary', '기본 박스 · main', box('primary', {primary: true, branch: 'main', purpose: 'Observer · 계획과 위임', agents: 2, rows: [
           {mark: 'seen', title: 'SIGTERM 정리 오케스트레이션', age: '20m'}, {mark: 'work', title: 'Overview 진입 흐름', age: '1m'},
         ]})),
-        stateCell('pr', '워크트리 · 이슈 칩 + PR 칩', box('pr', {task: '#184', branch: '184-hcoord-plugin', purpose: 'Bundle hcoord as a Herdr plugin', pr: {number: 207, tone: 'open', checks: 'passing', review: 'changes_requested'}, distance: '↑5', files: 3, rows: [
+        stateCell('pr', '워크트리 · 이슈 칩 + PR 칩', box('pr', {task: '#184', branch: '184-mailbox-plugin', purpose: 'Bundle mailbox as a Herdr plugin', pr: {number: 207, tone: 'open', checks: 'passing', review: 'changes_requested'}, distance: '↑5', files: 3, rows: [
           {mark: 'work', provider: 'codex', title: '리뷰 반영', age: '3m'},
         ]})),
         stateCell('merged', '머지됨 · 흐리게 + 정리', box('merged', {branch: 'fix/checkout-capability-follow-up', purpose: '체크아웃 권한 후속', cleanup: true, resting: true, pr: {number: 216, tone: 'merged'}, rows: [CODEX_REST]})),
@@ -1709,7 +1709,7 @@ function buildProjectOverview(tokens) {
         ], {foot: [foldLine(`ov-loose-${suffix}`, '이슈 없는 워크트리 3')]}),
         stageColumn(`ov-review-${suffix}`, '리뷰', 2, [
           card('r1', ISSUE_186),
-          card('r2', {task: gh(184), title: 'Bundle hcoord as a Herdr plugin with checkout lineage', branch: '184-hcoord-plugin', pr: {number: 207, checks: 'pending', review: 'changes_requested'}, agents: [
+          card('r2', {task: gh(184), title: 'Bundle mailbox as a Herdr plugin with checkout lineage', branch: '184-mailbox-plugin', pr: {number: 207, checks: 'pending', review: 'changes_requested'}, agents: [
             {mark: 'work', provider: 'codex', title: '리뷰 반영', age: '3m'},
           ]}),
         ], {foot: [foldLine(`ov-loosepr-${suffix}`, '이슈 없는 PR 1')]}),
@@ -1728,7 +1728,7 @@ function buildProjectOverview(tokens) {
       frame(`ov-states-r1-${suffix}`, 'Under the pointer', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, [
         card('s1', {task: gh(201), labels: [ENHANCEMENT], title: 'Add Workspace design reference and visual review coverage', hover: 'start'}),
         card('s2', {...LOCAL_3, hover: 'workspace'}),
-        card('s3', {task: gh(184), title: 'Bundle hcoord as a Herdr plugin with checkout lineage', branch: '184-hcoord-plugin', pr: {number: 207, checks: 'pending', review: 'changes_requested'}, hover: 'pr'}),
+        card('s3', {task: gh(184), title: 'Bundle mailbox as a Herdr plugin with checkout lineage', branch: '184-mailbox-plugin', pr: {number: 207, checks: 'pending', review: 'changes_requested'}, hover: 'pr'}),
         card('s4', {task: local(3), title: 'Overview 진입 흐름', hover: 'start', edit: true}),
       ]),
       frame(`ov-states-r2-${suffix}`, 'States', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, [
@@ -3588,7 +3588,7 @@ function buildPalette(tokens) {
       frame(id('side-a0'), 'Agent row', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', padding: ['$--spacing-xs', '$--spacing-md']}, [
         screenStatusMark(tokens, id('side-a0s'), '?', '$--warning'),
         mark('side-a0m', 'claude'),
-        text(id('side-a0t'), 'hcoord 원격 에이전트 구현', {weight: '500'}),
+        text(id('side-a0t'), 'mailbox 원격 에이전트 구현', {weight: '500'}),
       ]),
     ]);
 
@@ -3641,30 +3641,30 @@ function buildPalette(tokens) {
     // elsewhere as one `↑ 부모` line.
     const relations = wide('related', {placeholder: '이름이나 #번호를 입력하세요', list: [
       heading('g-related', 'Related'),
-      row('q0', {lead: glyph('q0i', 'circle-dot'), title: '#273 hcoord 쓰기 명령이 sandbox 거부를 internal로 숨김', detail: 'Issue · herdr-ide', selected: true}),
-      row('q1', {lead: glyph('q1i', 'git-branch'), title: 'fix/hcoord-sandbox-letters', detail: 'herdr-ide'}),
-      row('q2', {lead: glyph('q2i', 'git-pull-request'), title: '#275 Surface hcoord sandbox refusals', detail: 'PR · Open · fix/hcoord-sandbox-letters'}),
-      row('q3', {lead: mark('q3m', 'claude'), title: 'hcoord 쓰기 명령 sandbox 오류 해결', detail: 'herdr-ide › fix/hcoord-sandbox-letters · Done'}),
+      row('q0', {lead: glyph('q0i', 'circle-dot'), title: '#273 mailbox 쓰기 명령이 sandbox 거부를 internal로 숨김', detail: 'Issue · herdr-ide', selected: true}),
+      row('q1', {lead: glyph('q1i', 'git-branch'), title: 'fix/mailbox-sandbox-letters', detail: 'herdr-ide'}),
+      row('q2', {lead: glyph('q2i', 'git-pull-request'), title: '#275 Surface mailbox sandbox refusals', detail: 'PR · Open · fix/mailbox-sandbox-letters'}),
+      row('q3', {lead: mark('q3m', 'claude'), title: 'mailbox 쓰기 명령 sandbox 오류 해결', detail: 'herdr-ide › fix/mailbox-sandbox-letters · Done'}),
       row('q4', {lead: mark('q4m', 'codex'), title: '↑ 부모 codex workspace-write 원인 조사', detail: 'herdr-ide › main · Working'}),
-    ], detail: detailLines('rel-d', 'Issue', 'hcoord 쓰기 명령이 sandbox 거부를 internal로 숨김', [pill('rel-p1', 'Open', '$--secondary', '$--success'), pill('rel-p2', '#273')], [['프로젝트', 'herdr-ide'], ['맡은 곳', 'fix/hcoord-sandbox-letters'], ['닫는 PR', '#275'], ['읽음', '4분 전 읽음']], [['#273 hcoord 쓰기 명령이 sandbox 거부를…', 0, true], ['fix/hcoord-sandbox-letters', 0, false], ['#275 Surface hcoord sandbox refusals', 1, false]])});
+    ], detail: detailLines('rel-d', 'Issue', 'mailbox 쓰기 명령이 sandbox 거부를 internal로 숨김', [pill('rel-p1', 'Open', '$--secondary', '$--success'), pill('rel-p2', '#273')], [['프로젝트', 'herdr-ide'], ['맡은 곳', 'fix/mailbox-sandbox-letters'], ['닫는 PR', '#275'], ['읽음', '4분 전 읽음']], [['#273 mailbox 쓰기 명령이 sandbox 거부를…', 0, true], ['fix/mailbox-sandbox-letters', 0, false], ['#275 Surface mailbox sandbox refusals', 1, false]])});
 
     const typed = wide('typed', {query: 'sand', list: [
       heading('g-issues', 'Issues'),
-      row('t0', {lead: glyph('t0i', 'circle-dot'), title: '#273 hcoord 쓰기 명령이 sandbox 거부를 internal로 숨김', detail: 'Issue · herdr-ide'}),
+      row('t0', {lead: glyph('t0i', 'circle-dot'), title: '#273 mailbox 쓰기 명령이 sandbox 거부를 internal로 숨김', detail: 'Issue · herdr-ide'}),
       heading('g-agents', 'Agents'),
-      row('t1', {lead: mark('t1m', 'claude'), title: 'hcoord 쓰기 명령 sandbox 오류 해결', detail: 'herdr-ide › fix/hcoord-sandbox-letters · Done', selected: true}),
+      row('t1', {lead: mark('t1m', 'claude'), title: 'mailbox 쓰기 명령 sandbox 오류 해결', detail: 'herdr-ide › fix/mailbox-sandbox-letters · Done', selected: true}),
       heading('g-checkouts', 'Checkouts'),
-      row('t2', {lead: glyph('t2i', 'git-branch'), title: 'herdr-ide / fix/hcoord-sandbox-letters', detail: '~/projects/herdr-ide.worktrees/sandbox', mono: true}),
+      row('t2', {lead: glyph('t2i', 'git-branch'), title: 'herdr-ide / fix/mailbox-sandbox-letters', detail: '~/projects/herdr-ide.worktrees/sandbox', mono: true}),
       frame(id('t-gh'), 'GitHub row', {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', width: ROW, padding: ['$--spacing-xs', '$--spacing-sm']}, [
         glyph('t-ghi', 'search'),
         text(id('t-ght'), 'GitHub에서 "sand" 검색', {weight: '500'}),
       ]),
-    ], detail: detailLines('typed-d', 'Agent · Claude', 'hcoord 쓰기 명령 sandbox 오류 해결', [pill('typed-p1', 'Done', '$--secondary', '$--success'), pill('typed-p2', 'This Mac')], [['checkout', 'herdr-ide › fix/hcoord-sandbox-letters']], null)});
+    ], detail: detailLines('typed-d', 'Agent · Claude', 'mailbox 쓰기 명령 sandbox 오류 해결', [pill('typed-p1', 'Done', '$--secondary', '$--success'), pill('typed-p2', 'This Mac')], [['checkout', 'herdr-ide › fix/mailbox-sandbox-letters']], null)});
 
     const number = wide('number', {query: '#275', list: [
       heading('g-prs', 'Pull requests'),
-      row('n0', {lead: glyph('n0i', 'git-pull-request'), title: '#275 Surface hcoord sandbox refusals', detail: 'PR · Open · fix/hcoord-sandbox-letters', selected: true}),
-    ], detail: detailLines('number-d', 'Pull request', 'Surface hcoord sandbox refusals', [pill('number-p1', 'Open', '$--secondary', '$--success'), pill('number-p2', 'CI 진행 중', '$--secondary', '$--warning'), pill('number-p3', '#275')], [['Review', '리뷰 필요'], ['브랜치', 'fix/hcoord-sandbox-letters'], ['닫는 이슈', '#273']], null)});
+      row('n0', {lead: glyph('n0i', 'git-pull-request'), title: '#275 Surface mailbox sandbox refusals', detail: 'PR · Open · fix/mailbox-sandbox-letters', selected: true}),
+    ], detail: detailLines('number-d', 'Pull request', 'Surface mailbox sandbox refusals', [pill('number-p1', 'Open', '$--secondary', '$--success'), pill('number-p2', 'CI 진행 중', '$--secondary', '$--warning'), pill('number-p3', '#275')], [['Review', '리뷰 필요'], ['브랜치', 'fix/mailbox-sandbox-letters'], ['닫는 이슈', '#273']], null)});
 
     const collapsed = wide('collapsed', {placeholder: '이름이나 #번호를 입력하세요', list: null});
 
@@ -3684,7 +3684,7 @@ function buildPalette(tokens) {
     const ghResults = wide('gh-results', {query: 'quota wall', list: [
       heading('g-github', 'GitHub'),
       row('gr0', {lead: glyph('gr0i', 'git-pull-request'), title: '#118 Close stale sandbox watches', detail: 'PR · acme/herdr-ide · Merged', selected: true}),
-      row('gr1', {lead: glyph('gr1i', 'circle-dot'), title: '#96 hcoord sandbox 거부 로그가 비어 있음', detail: 'Issue · acme/herdr-ide · Closed'}),
+      row('gr1', {lead: glyph('gr1i', 'circle-dot'), title: '#96 mailbox sandbox 거부 로그가 비어 있음', detail: 'Issue · acme/herdr-ide · Closed'}),
     ], detail: detailLines('gh-results-d', 'Pull request · GitHub', 'Close stale sandbox watches', [pill('gh-results-p1', 'Merged'), pill('gh-results-p2', '#118'), pill('gh-results-p3', 'acme/herdr-ide')], [], null)});
     const ghFailed = wide('gh-failed', {query: 'quota wall', list: [
       empty('gh-failed-e', '일치하는 항목 없음'),
@@ -4332,7 +4332,7 @@ function buildProjectsSidebar(tokens) {
           // A folded parent waiting on its children: ring in Working, the badge, the chevron shown.
           foldedAgent(`psb-a2-${s}`, {title: '후속 UX 계획 인터뷰', status: 'working', age: '2m', badge: '?1', fold: 'folded'}, [
             {status: 'working', branch: 'agent-sleep', pr: '#183'},
-            {status: 'done', branch: 'hcoord-decouple', device: 'mini'},
+            {status: 'done', branch: 'mailbox-decouple', device: 'mini'},
           ]),
           agentRow(`psb-a3-${s}`, {title: '배포 전 확인', status: 'asking', age: '30s', line: '프로덕션 배포 전에 변경 내용을 확인해…', bright: true}),
         ]),
@@ -4678,7 +4678,7 @@ function buildMobile(tokens) {
   const AGENTS = {
     needs: [
       {title: '솔루션 6 구현', status: 'approval', project: 'herdr-ide', branch: 'prd/mobile-companion', age: '2m', request: 'Bash(cargo test -p hided) 실행을 허용할까요?'},
-      {title: 'hcoord 플러그인 구현', status: 'question', kind: 'codex', project: 'herdr-ide', branch: 'prd/hcoord-plugin', machine: 'mini', age: '9m', request: '워크스페이스 이름을 어떤 걸로 할까요?'},
+      {title: 'mailbox 플러그인 구현', status: 'question', kind: 'codex', project: 'herdr-ide', branch: 'prd/mailbox-plugin', machine: 'mini', age: '9m', request: '워크스페이스 이름을 어떤 걸로 할까요?'},
     ],
     done: [
       {title: '사이드바 행 클릭으로 펼치기', status: 'done', project: 'herdr-ide', branch: 'prd/sidebar-row-click-unfold', age: '14m', news: 'PR #186 열림 · CI 통과'},
