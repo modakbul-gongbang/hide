@@ -88,6 +88,7 @@ fn path(home: &Path) -> PathBuf {
 /// be read. An unreadable record is not treated as empty: that would read
 /// every part the operator removed as never installed and put it back.
 pub(crate) fn load(home: &Path) -> Result<Record, String> {
+    private_state_dir(home, false)?;
     let path = path(home);
     let bytes = match std::fs::read(&path) {
         Ok(bytes) => bytes,
@@ -125,6 +126,7 @@ pub(crate) fn save(home: &Path, record: &Record) -> Result<(), String> {
 }
 
 pub(crate) fn forget(home: &Path) -> Result<(), String> {
+    private_state_dir(home, false)?;
     let path = path(home);
     match std::fs::remove_file(&path) {
         Ok(()) => Ok(()),

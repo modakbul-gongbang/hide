@@ -1374,3 +1374,143 @@ fn identified_sasu_run_with_unknown_status_blocks_and_other_artifacts_do_not() {
         assert_eq!(home_tree(fixture.home()), before);
     }
 }
+
+#[test]
+fn intermediate_kit_links_refuse_before_services_status_or_any_mutation() {
+    for linked_component in [".hide", ".hide/kit"] {
+        let mut fixture = Fixture::new();
+        let outside = fixture.root.join("outside-owned-folder");
+        let copy = if linked_component == ".hide" {
+            outside.join("kit/hcoord")
+        } else {
+            outside.join("hcoord")
+        };
+        executable(&copy.join("dist/cli.js"), "unrelated preserved bytes");
+        std::fs::write(outside.join("notes.txt"), b"another folder's files").unwrap();
+        let link = fixture.home().join(linked_component);
+        std::fs::create_dir_all(link.parent().unwrap()).unwrap();
+        std::os::unix::fs::symlink(&outside, &link).unwrap();
+        executable(
+            &fixture.root.join("launchctl"),
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/service-called\"\nexit 113\n",
+        );
+        let codex = fixture.root.join("bin/codex");
+        executable(
+            &codex,
+            "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/status-called\"\nexit 1\n",
+        );
+        fixture.target.codex = Some(codex);
+        let daemon_home = fixture.home().join(".hcoord");
+        std::fs::create_dir_all(&daemon_home).unwrap();
+        let daemon = UnixListener::bind(daemon_home.join("api.sock")).unwrap();
+        daemon.set_nonblocking(true).unwrap();
+        let before_home = home_tree(fixture.home());
+        let before_outside = home_tree(&outside);
+        let observed = status(&fixture.target);
+        assert_eq!(
+            state(&observed, ComponentId::CoordinationRetirement),
+            ComponentState::Failed,
+            "{observed:?}"
+        );
+        let report = apply(&fixture.target, &Scope::automatic());
+        assert_eq!(
+            state(&report, ComponentId::CoordinationRetirement),
+            ComponentState::Failed,
+            "{report:?}"
+        );
+        assert!(
+            matches!(daemon.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock),
+            "a daemon RPC was initiated"
+        );
+        assert_eq!(
+            home_tree(&outside),
+            before_outside,
+            "the intermediate link target changed"
+        );
+        assert_eq!(
+            home_tree(fixture.home()),
+            before_home,
+            "preflight wrote to HOME"
+        );
+        assert!(fixture.herdr.calls.lock().unwrap().is_empty());
+        assert!(!fixture.home().join("service-called").exists());
+        assert!(!fixture.home().join("status-called").exists());
+        assert!(!outside.join(".lock").exists());
+        assert!(!outside.join("installed.json").exists());
+        assert_eq!(std::fs::read_link(link).unwrap(), outside);
+    }
+}
+
+#[test]
+fn writable_retirement_records_refuse_before_services_status_or_any_mutation() {
+    for record in ["ledger", "progress", "run"] {
+        for mode in [0o660, 0o666] {
+            let mut fixture = Fixture::new();
+            let path = match record {
+                "ledger" => old_coordination(&fixture, json!({}), json!({})).join("ledger.json"),
+                "progress" => {
+                    let path = kit_state_dir(fixture.home()).join("coordination-retirement.json");
+                    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                    std::fs::write(
+                        &path,
+                        json!({"homes":[],"step":"complete","failure":null,"complete":true})
+                            .to_string(),
+                    )
+                    .unwrap();
+                    path
+                }
+                _ => {
+                    let project = fixture.root.join("project");
+                    let path = project.join("agents/runs/task/state.json");
+                    std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                    std::fs::write(&path, json!({"schema":"sasu.implement.state.v11.stateless-verification", "status":"retired"}).to_string()).unwrap();
+                    fixture.target.retirement_projects.push(project);
+                    path
+                }
+            };
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(mode)).unwrap();
+            executable(
+                &fixture.root.join("launchctl"),
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/service-called\"\nexit 113\n",
+            );
+            let codex = fixture.root.join("bin/codex");
+            executable(
+                &codex,
+                "#!/bin/sh\nprintf '%s\\n' \"$*\" >> \"$HOME/status-called\"\nexit 1\n",
+            );
+            fixture.target.codex = Some(codex);
+            let daemon_home = fixture.home().join(".hcoord");
+            std::fs::create_dir_all(&daemon_home).unwrap();
+            let daemon = UnixListener::bind(daemon_home.join("api.sock")).unwrap();
+            daemon.set_nonblocking(true).unwrap();
+            let before_home = home_tree(fixture.home());
+            let before_record = std::fs::read(&path).unwrap();
+            let parent = path.parent().unwrap();
+            let before_parent = home_tree(parent);
+            let report = apply(&fixture.target, &Scope::automatic());
+            assert_eq!(
+                state(&report, ComponentId::CoordinationRetirement),
+                ComponentState::Failed,
+                "{record} {mode:o}: {report:?}"
+            );
+            assert!(
+                matches!(daemon.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock),
+                "a daemon RPC was initiated"
+            );
+            assert_eq!(std::fs::read(&path).unwrap(), before_record);
+            assert_eq!(
+                home_tree(parent),
+                before_parent,
+                "{record} {mode:o}: record folder changed"
+            );
+            assert_eq!(
+                home_tree(fixture.home()),
+                before_home,
+                "{record} {mode:o}: HOME changed"
+            );
+            assert!(fixture.herdr.calls.lock().unwrap().is_empty());
+            assert!(!fixture.home().join("service-called").exists());
+            assert!(!fixture.home().join("status-called").exists());
+        }
+    }
+}

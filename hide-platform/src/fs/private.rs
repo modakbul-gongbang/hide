@@ -478,6 +478,12 @@ pub fn others_can_modify(path: &Path) -> io::Result<bool> {
     sys::access_of_others(path, true)
 }
 
+/// Whether another account can change an open file or folder. The descriptor
+/// is judged directly, so replacing its path cannot change this answer.
+pub fn handle_others_can_modify(handle: &impl Handle) -> io::Result<bool> {
+    sys::handle_access_of_others(handle, true)
+}
+
 /// Whether the file or folder at `path` belongs to the current account.
 pub fn owned_by_current_user(path: &Path) -> io::Result<bool> {
     sys::owned_by_current_user(path)
@@ -538,6 +544,11 @@ mod sys {
     pub(super) fn access_of_others(path: &Path, changes: bool) -> io::Result<bool> {
         let watched = if changes { 0o022 } else { 0o077 };
         Ok(fs::metadata(path)?.mode() & watched != 0)
+    }
+
+    pub(super) fn handle_access_of_others(handle: &impl Handle, changes: bool) -> io::Result<bool> {
+        let watched = if changes { 0o022 } else { 0o077 };
+        Ok(crate::fs::duplicate(handle)?.metadata()?.mode() & watched != 0)
     }
 
     fn current_user() -> u32 {
@@ -960,7 +971,14 @@ mod sys {
     /// Whether an access list the current account does not own grants `others`
     /// any access (`changes` false) or any access that changes the file.
     pub(super) fn access_of_others(path: &Path, changes: bool) -> io::Result<bool> {
-        let security = security_of_path(path)?;
+        access_of_security(&security_of_path(path)?, changes)
+    }
+
+    pub(super) fn handle_access_of_others(handle: &impl Handle, changes: bool) -> io::Result<bool> {
+        access_of_security(&security_of_handle(handle)?, changes)
+    }
+
+    fn access_of_security(security: &Security, changes: bool) -> io::Result<bool> {
         let account = account()?;
         let trusted = [
             account.user,

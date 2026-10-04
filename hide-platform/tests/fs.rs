@@ -1456,3 +1456,22 @@ fn an_open_file_knows_the_path_it_is_at_even_after_a_rename() {
         folder_path.join("second.txt")
     );
 }
+
+#[test]
+fn open_file_permissions_are_judged_on_the_descriptor() {
+    let home = folder();
+    let path = home.path().join("record.json");
+    let file = private::create_new_file(&path).unwrap();
+    assert!(!private::handle_others_can_modify(&file).unwrap());
+    let original = home.path().join("original.json");
+    fs::rename(&path, &original).unwrap();
+    fs::write(&path, b"replacement").unwrap();
+    widen(&path, true);
+    assert!(private::others_can_modify(&path).unwrap());
+    assert!(!private::handle_others_can_modify(&file).unwrap());
+    widen(&original, false);
+    assert!(!private::handle_others_can_modify(&file).unwrap());
+    widen(&original, true);
+    assert!(private::handle_others_can_modify(&file).unwrap());
+    assert!(private::handle_owned_by_current_user(&file).unwrap());
+}

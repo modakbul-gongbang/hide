@@ -442,6 +442,9 @@ pub(crate) fn lock_account(target: &KitTarget) -> Result<AccountLock, String> {
 
 /// Judges every part without changing anything.
 pub fn status(target: &KitTarget) -> KitReport {
+    if let Err(reason) = record::private_state_dir(&target.home, false) {
+        return retirement_blocked(target, reason);
+    }
     let record = record::load(&target.home);
     let recorded = |id| record.as_ref().is_ok_and(|record| record.contains(id));
     KitReport {
@@ -578,16 +581,19 @@ pub fn apply(target: &KitTarget, scope: &Scope) -> KitReport {
     }
 }
 
-/// The unchanged machine report with the reason retirement cannot proceed.
+/// A preflight refusal, without inspecting any other part or external service.
 pub fn retirement_blocked(target: &KitTarget, reason: String) -> KitReport {
-    let mut report = status(target);
+    let mut report = KitReport::unavailable(&reason);
     if let Some(component) = report
         .components
         .iter_mut()
         .find(|component| component.id == ComponentId::CoordinationRetirement)
     {
-        component.state = ComponentState::Failed;
-        component.reason = Some(reason);
+        component.location = Some(
+            coordination_retirement::location(target)
+                .display()
+                .to_string(),
+        );
     }
     report
 }
@@ -666,9 +672,10 @@ pub fn remove(target: &KitTarget) -> RemoveReport {
 
 /// `base` joined with `parts`, each folder checked in turn: the kit keeps
 /// code there that launchd and Herdr run as this account, so a folder that
-/// belongs to another account or that others can write to is refused rather
-/// than trusted. With `create`, a missing folder is made 0700; without it, a
-/// missing folder ends the check, since nothing below it can be there yet.
+/// is a link, belongs to another account or that others can write to is
+/// refused rather than trusted. With `create`, a missing folder is made 0700;
+/// without it, a missing folder ends the check, since nothing below it can be
+/// there yet.
 pub(crate) fn private_dirs(base: &Path, parts: &[&str], create: bool) -> Result<PathBuf, String> {
     use hide_platform::fs::private;
     let mut folder = base.to_path_buf();
@@ -686,13 +693,19 @@ pub(crate) fn private_dirs(base: &Path, parts: &[&str], create: bool) -> Result<
                 }
             }
         }
-        let metadata = match std::fs::metadata(&folder) {
+        let metadata = match std::fs::symlink_metadata(&folder) {
             Ok(metadata) => metadata,
             Err(error) if !create && error.kind() == std::io::ErrorKind::NotFound => {
                 return Ok(base.join(parts.join("/")));
             }
             Err(error) => return Err(format!("{} could not be read: {error}", folder.display())),
         };
+        if metadata.file_type().is_symlink() {
+            return Err(format!(
+                "{} is a link; Hide requires an owned real folder",
+                folder.display()
+            ));
+        }
         if !metadata.is_dir() {
             return Err(format!("{} is not a folder", folder.display()));
         }

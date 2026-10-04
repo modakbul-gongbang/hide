@@ -51,6 +51,17 @@ fn read_json(path: &Path, limit: u64) -> Result<Option<Value>, String> {
             ));
         }
     };
+    if hide_platform::fs::private::handle_others_can_modify(&file).map_err(|error| {
+        format!(
+            "{} permissions cannot be inspected: {error}",
+            path.display()
+        )
+    })? {
+        return Err(format!(
+            "{} can be changed by another account; inspect its permissions before retrying retirement",
+            path.display()
+        ));
+    }
     let mut bytes = Vec::new();
     file.take(limit + 1)
         .read_to_end(&mut bytes)
@@ -440,7 +451,7 @@ fn remove_links(target: &KitTarget) -> Result<crate::Retirement, String> {
 }
 
 fn remove_copy(target: &KitTarget) -> Result<(), String> {
-    let path = crate::kit_state_dir(&target.home).join("hcoord");
+    let path = crate::record::private_state_dir(&target.home, false)?.join("hcoord");
     match fs::symlink_metadata(&path) {
         Ok(metadata) if metadata.file_type().is_symlink() => {
             Err("the kit copy is a link; inspect its ownership before retrying".into())
