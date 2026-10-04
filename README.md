@@ -100,6 +100,14 @@ The bundled binary is not modified by hide.
 The weekly `herdr-update.yml` workflow proposes upstream stable releases with `--repo herdrdev/herdr`; updates must pass contract and runtime checks.
 <!-- herdr-provenance:end -->
 
+## Measured performance
+
+On an M4 Pro Mac, a private native candidate measured **16.3 ms p95 from the first renderer keydown to a complete nine-character echo in the terminal buffer**, and **99.5 ms p95 from a wheel event to changed terminal text and the next animation frame**, with 50 samples each.
+The paired resource run measured total process-tree RSS p95 of **549.0 MiB idle** and **622.0 MiB with three driven terminal panes**.
+These are observations of the 2026-10-04 unpackaged candidate, with release daemon builds; the input endpoints do not measure physical pixel presentation.
+Read the [full results, startup measurements, sustained-output tails and limits](docs/PERFORMANCE_RESULTS.md) before comparing them with another workload or app.
+No matched Orca comparison completed, so these results support no claim of relative speed or memory use.
+
 ## Development
 
 Contributions go through pull requests gated by the `verify` workflow; `CONTRIBUTING.md` lists the gates and how to run them locally, and `SECURITY.md` says how to report a vulnerability privately.

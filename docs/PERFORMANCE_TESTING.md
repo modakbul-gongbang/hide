@@ -277,6 +277,9 @@ Use a qualified verdict when coverage is bounded: "no whole-body blanking observ
 
 ## Web shell echo and frame measurement
 
+Published figures and their measurement boundaries live in the dated [performance observations](PERFORMANCE_RESULTS.md).
+That report is an observed candidate result, not a new threshold or a replacement for the measurement contract here.
+
 `scripts/web-shell-measure/run.sh` measures the product `hided` the way the S0 spike measured its prototype, so the numbers stay comparable to the S0 spike baseline.
 It owns every process it starts: an isolated pinned Herdr server on a socket inside a run-specific mode-0700 directory under `/tmp` (`isolated-env.sh`, the same routing table as section 3), one linked Git checkout and workspace with a `stty -echo -icanon; cat` pane, the release `hided` with its embedded `web/dist`, and one Google Chrome with an automatically assigned CDP port on the page opened with `?probe=1`.
 The runner reads Chrome's CDP port from its own profile and sends the page URL over standard input so the token is absent from the Chrome command line.
@@ -289,7 +292,7 @@ The baseline is reused from the S0 report rather than re-measured, and `summariz
 Frames (PRD B12) is one 120 s window with the pane printing a line every 8 ms while a `requestAnimationFrame` loop injected through CDP records every frame's `dt`; the result is the fraction of frames over 16.7 ms, the WebSocket frame count the page received during the window, and the pane tail that proves the driver ran.
 This is a live driven pipeline, not the in-page replay the spike used: a replay mode would put spike code into the product, and the threshold is absolute, so the live run is the stricter measurement.
 
-Run it as `HIDE_MEASURE_RUN_DIR=agents/runs/<slug>/measure/<attempt> bash scripts/web-shell-measure/run.sh` after `pnpm --dir web build` and `cargo build --release -p hided`.
+Run it as `HIDE_MEASURE_RUN_DIR=agents/runs/<slug>/measure/<attempt> bash scripts/web-shell-measure/run.sh` after `bash scripts/verify-web.sh web build` and `bash scripts/verify-cargo.sh release`.
 For an unattended comparison, append `--isolated-headless`: Chrome has no native window and the runner records that operator topology observation was skipped, without contacting the operator socket.
 Use that same browser mode for baseline and candidate, and report it with the results; a headless measurement does not prove native presentation.
 `MEASURE_SCENARIO=areas2` or `areas3` shows two or three Agent tabs through the real area menu, each with one pane.
@@ -297,6 +300,9 @@ All shown panes receive the same line-every-8-ms driver; the measured pane also 
 `resources-idle.json` and `resources-driven.json` record twenty one-second CPU-time deltas and RSS sums for the owned hided, Herdr and Chrome process trees, independently of the echo and frame samples.
 For an RSS comparison, append `--memory-series` after `--isolated-headless` to extend the driven window to ten minutes and collect eleven one-minute process-tree RSS samples in `memory-series.json`.
 A first run opens on Main (PRD S6), so the harness uses the Projects sidebar to open its linked fixture checkout before measuring.
+The fixture workspace reports the checkout's `hide_owner` token before startup so the core reuses the prepared pane rather than creating a different workspace.
+The Projects control is a tab, so readiness reads `aria-selected`; opening the fixture is one click after its checkout row appears.
+Cleanup removes the private socket's label-generator lock as well as its socket before removing the owned socket directory.
 The run directory keeps `identity.txt` (head, dirty count, binary hash, Herdr and Chrome versions, load), `echo-*.json`, `frames.json`, both summaries and the owned PID status at cleanup.
 The harness resolves that directory to an absolute path before starting child panes, so their private HOME, state, and checkout paths remain valid after the pane changes directory.
 `MEASURE_SCENARIO=multi` is the S2 shape (PRD web-shell-pivot-s2 D-08): the measured pane shares its tab with four splits and four more tabs are shown once each so the core holds five attached tabs before the shell returns to the measured tab; `page.json` records the pane, split and tab counts, the attached pane ids and the live xterm instances the run started from (every attached pane keeps its instance parked while its tab is hidden, D-05).
