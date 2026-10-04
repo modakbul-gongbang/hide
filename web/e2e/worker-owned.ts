@@ -2,8 +2,9 @@
 // that fails still runs its own `finally`, but a worker that dies first (an
 // unhandled error event, the runner stopping it) skips every one of them, and
 // the private Herdr server or hided it started lives on under launchd with its
-// temporary directory. Every stop registered here also runs when the worker
-// exits, so nothing a worker started outlives it.
+// temporary directory. Registered releases run on normal worker exit; hard
+// worker loss is owned by platform-fixture's native supervisor/lifetime pipe.
+// A callback alone does not confirm process exit or release a live home.
 
 const running = new Set<() => void>();
 const MAX_OWNED_FIXTURES = 256;

@@ -9,6 +9,7 @@ import sys
 import tempfile
 import time
 import unittest
+import traceback
 
 ROOT = Path(__file__).resolve().parents[2]
 HELPER = ROOT / 'target/debug/examples' / ('fixture-owner.exe' if os.name == 'nt' else 'fixture-owner')
@@ -87,12 +88,38 @@ class OwnedControlRoot:
             raise RuntimeError(f'Control child exit unconfirmed; retained root: {self.path}')
 
 
+@unittest.skipUnless(__name__ == '__main__' or os.environ.get('CI_FIXTURE_OWNER_CONTROLS') == '1',
+    'native fixture controls run in their prepared three-OS workflow')
 class FixtureOwner(unittest.TestCase):
     @classmethod
     def setUpClass(cls):
-        result = subprocess.run(['bash', 'scripts/verify-cargo.sh', 'build', '-p', 'hide-platform', '--example', 'fixture-owner'], cwd=ROOT)
-        if result.returncode:
-            raise RuntimeError('native fixture supervisor build failed')
+        artifacts = ROOT / 'agents/runs/ci-test-refactor/fixture-owner-controls'
+        artifacts.mkdir(parents=True, exist_ok=True)
+        record = {'version': 1, 'phase': 'verification-shell-lookup', 'status': 'in-flight',
+            'sha': os.environ.get('GITHUB_SHA', 'local'), 'os': sys.platform}
+        try:
+            selected = os.environ.get('CI_FIXTURE_BASH')
+            if os.name == 'nt' and not selected:
+                raise RuntimeError('Windows native controls require CI_FIXTURE_BASH from the Actions Git Bash shell')
+            selected = selected or shutil.which('bash')
+            if not selected or not Path(selected).is_absolute() or not Path(selected).is_file():
+                raise RuntimeError('verification Bash is unavailable or not an absolute executable')
+            cls.shell = str(Path(selected).resolve())
+            record['shell'] = cls.shell
+            version = subprocess.run([cls.shell, '--version'], check=True, capture_output=True, text=True, timeout=5)
+            record['shellVersion'] = version.stdout.splitlines()[0]
+            if os.name == 'nt' and 'pc-msys' not in record['shellVersion']:
+                raise RuntimeError('Windows native controls require the installed Git Bash, not WSL')
+            record['phase'] = 'native-supervisor-build'
+            result = subprocess.run([cls.shell, 'scripts/verify-cargo.sh', 'build', '-p', 'hide-platform', '--example', 'fixture-owner'], cwd=ROOT)
+            if result.returncode:
+                raise RuntimeError(f'native fixture supervisor build failed: exit={result.returncode}')
+            record['status'] = 'passed'
+        except BaseException as error:
+            record.update(status='failed', error=str(error), stack=traceback.format_exc())
+            raise
+        finally:
+            (artifacts / 'setup.json').write_text(json.dumps(record, indent=2)+'\n')
 
     def exercise(self, mode):
         artifacts = ROOT / 'agents/runs/ci-test-refactor/fixture-owner-controls'
@@ -287,7 +314,7 @@ else:
             process = None
             try:
                 with (artifacts / 'ordinary-worker.log').open('w') as output:
-                    process = subprocess.Popen(['bash', 'scripts/verify-web.sh', 'web', 'e2e', filename.name,
+                    process = subprocess.Popen([self.shell, 'scripts/verify-web.sh', 'web', 'e2e', filename.name,
                         '--retries=0', '--workers=1'], cwd=ROOT, stdout=output, stderr=subprocess.STDOUT)
                     data = until(lambda: json.loads(proof.read_text()) if proof.exists() else None, seconds=20)
                     self.assertEqual(len(data['native']), 2)
@@ -370,7 +397,7 @@ else:
                         " await expect.poll(()=>fs.readFileSync(receipt,'utf8').split('\\t')[1]).toBe('owner-lost-exited');\n"
                         " expect(fs.readFileSync(receipt,'utf8').split('\\t')[5]).toBe('0');herdr.stop();throw primary;\n});\n")
             try:
-                result = subprocess.run(['bash', 'scripts/verify-web.sh', 'web', 'e2e', filename.name, '--retries=0', '--workers=1',
+                result = subprocess.run([self.shell, 'scripts/verify-web.sh', 'web', 'e2e', filename.name, '--retries=0', '--workers=1',
                     '--reporter=list,'+str(ROOT/'scripts/ci-reporter.ts')+',json'], cwd=ROOT,
                     env={**os.environ,'PLAYWRIGHT_JSON_OUTPUT_FILE':str(report),'CI_LEDGER_PATH':str(normalized)},
                     capture_output=True, text=True, timeout=60)
@@ -388,6 +415,39 @@ else:
                 self.assertTrue(all(row['status']=='failed' for row in rows))
                 self.assertTrue(any('EEXIST' in row['assertion'] for row in rows))
                 self.assertTrue(any('stop-request-read-failed' in row['assertion'] and 'stop-request-cleanup-failed' in row['assertion'] for row in rows))
+            finally:
+                filename.unlink(missing_ok=True)
+
+    def test_actual_native_receivers_refuse_missing_duplicate_and_wrong_pane_bytes(self):
+        artifacts = ROOT / 'agents/runs/ci-test-refactor/fixture-owner-controls'
+        artifacts.mkdir(parents=True, exist_ok=True)
+        with tempfile.TemporaryDirectory(dir=artifacts) as directory:
+            proof = Path(directory) / 'native-input.jsonl'
+            filename = ROOT / 'web/e2e' / ('ci-native-input-' + Path(directory).name + '.spec.ts')
+            filename.write_text("import {test,expect} from '@playwright/test';\n"
+                "import fs from 'node:fs'; import {execFileSync} from 'node:child_process'; import {startHerdr} from './herdr-fixture';\n"
+                "import {nativeInputReceivers} from './native-input-receiver'; import {finishFixture} from './worker-owned';\n"
+                "for(const mode of ['missing','duplicate','wrong-pane','exact']) test('native receipt '+mode,async()=>{\n"
+                " const herdr=await startHerdr({agents:false});let primary:unknown;\n"
+                " try {const receivers=await nativeInputReceivers(herdr,herdr.panes);\n"
+                " const line='printf receiver-control'; const bytes=Buffer.from(line+'\\r');\n"
+                " const received=new Map(herdr.panes.map(pane=>[pane,Buffer.alloc(0)]));\n"
+                " const expected=new Map(received);expected.set(herdr.panes[0],bytes);\n"
+                " if(mode!=='missing'){const pane=herdr.panes[mode==='wrong-pane'?1:0];\n"
+                " const text=mode==='duplicate'?line+'\\r'+line+'\\r':line+'\\r';execFileSync(herdr.bin,['pane','send-text',pane,text],{env:herdr.env,timeout:30000});received.set(pane,Buffer.from(text));}\n"
+                " await expect.poll(()=>receivers.read()).toEqual(received);\n"
+                " if(mode==='exact')receivers.confirm(expected);else expect(()=>receivers.confirm(expected)).toThrow('native byte receipt mismatch');\n"
+                " fs.appendFileSync("+json.dumps(str(proof))+",JSON.stringify({mode,panes:herdr.panes,receipt:receivers.receipt(),received:[...receivers.read()].map(([pane,bytes])=>({pane,hex:bytes.toString('hex')})),rejected:mode!=='exact'})+'\\n');\n"
+                " }catch(error){primary=error;}finally{await finishFixture(primary,[()=>herdr.stop()]);}\n});\n")
+            try:
+                result = subprocess.run([self.shell,'scripts/verify-web.sh','web','e2e',filename.name,'--retries=0','--workers=1'],
+                    cwd=ROOT,capture_output=True,text=True,timeout=60)
+                (artifacts/'native-input-controls.log').write_text(result.stdout+result.stderr)
+                self.assertEqual(result.returncode,0,result.stdout+result.stderr)
+                facts=[json.loads(line) for line in proof.read_text().splitlines()]
+                self.assertEqual({row['mode'] for row in facts},{'missing','duplicate','wrong-pane','exact'})
+                self.assertTrue(all(row['rejected']==(row['mode']!='exact') for row in facts))
+                (artifacts/'native-input-controls.json').write_text(json.dumps(facts,indent=2)+'\n')
             finally:
                 filename.unlink(missing_ok=True)
 

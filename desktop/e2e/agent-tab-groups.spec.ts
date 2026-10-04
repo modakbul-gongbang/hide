@@ -6,6 +6,7 @@ import { finishFixture } from "../../web/e2e/worker-owned";
 import { enterWorkspace } from "../../web/e2e/wire";
 import { isolate, launch, screenshot, test, type Isolated } from "./fixture";
 import { observeTerminalInput, type TerminalInputObservation } from "./terminal-input-observation";
+import { nativeInputReceivers } from "../../web/e2e/native-input-receiver";
 
 test("Agent edge drag splits the desktop column into two live tab groups", async () => {
   const herdr = await startHerdr({ agents: false });
@@ -13,9 +14,14 @@ test("Agent edge drag splits the desktop column into two live tab groups", async
   let primary: unknown;
   let app: ElectronApplication | null = null;
   let observation: TerminalInputObservation | null = null;
+  let receivers: Awaited<ReturnType<typeof nativeInputReceivers>> | null = null;
   try {
     run = isolate(herdr, "agent-groups");
     const created = herdr.run(["tab", "create", "--workspace", herdr.workspace, "--cwd", path.join(herdr.root, "fixture"), "--no-focus"]) as { result: { tab: { tab_id: string }; root_pane: { pane_id: string } } };
+    const panes = [...herdr.panes, created.result.root_pane.pane_id];
+    receivers = await nativeInputReceivers(herdr, panes);
+    const expectedInput = new Map(panes.map(pane => [pane, Buffer.alloc(0)]));
+    receivers.confirm(expectedInput);
     const launched = await launch(run.env);
     app = launched.app;
     const page = launched.page;
@@ -44,6 +50,9 @@ test("Agent edge drag splits the desktop column into two live tab groups", async
       await terminal.click();
       await page.keyboard.type("printf 'desktop-group-live\\n'");
       await page.keyboard.press("Enter");
+      expectedInput.set(pane, Buffer.from("printf 'desktop-group-live\\n'\r"));
+      await expect.poll(() => receivers!.read()).toEqual(expectedInput);
+      receivers.confirm(expectedInput);
       await expect.poll(() => execFileSync(herdr.bin, ["pane", "read", pane, "--source", "visible", "--format", "text"], { env: herdr.env, encoding: "utf8", timeout: 10_000 })).toMatch(/(?:^|\n)desktop-group-live\r?(?:\n|$)/);
     }
     await expect(page.locator('[data-transport="released"]')).toHaveCount(0);
@@ -52,11 +61,13 @@ test("Agent edge drag splits the desktop column into two live tab groups", async
     await expect(page.locator(`[data-tab="${created.result.tab.tab_id}"] [data-keycap="2"]`)).toBeVisible();
     await page.keyboard.up("Meta");
     await expect(page.locator("[data-keycap]")).toHaveCount(0);
+    receivers.confirm(expectedInput);
     await screenshot(page, "desktop-agent-groups-split");
   } catch (error) {
     primary = error;
   } finally {
     await finishFixture(primary, [
+      () => receivers?.export(),
       () => observation?.exportOnce(),
       async () => { await app?.close(); },
       () => run?.cleanup(),

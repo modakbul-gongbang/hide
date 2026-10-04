@@ -121,7 +121,12 @@ Normal stop uses that launch identity and keeps the existing two-second terminat
 After confirmed exit it attempts each independent release even when an earlier release failed; unconfirmed exit preserves the live home and skips those filesystem releases.
 The supervisor has 256 owned-member, 16 KiB receipt and 128-byte stop-request bounds; the worker has 256 active owners and a 10,000-file receipt bound.
 The isolated failure-controls workflow runs real native refusal/I/O controls and an actual ordinary Playwright worker-only hard kill on each OS; a missing result is unverified, and helper-only controls do not substitute for those consumer results.
+Its Python build and Playwright subprocesses use the exact Actions Bash executable, explicitly translated from Git Bash on Windows; setup failure leaves its original phase/error receipt even before any test runs.
+Native ownership controls run in that prepared workflow or by an explicit script invocation, separately from ordinary Python unit discovery.
+Socket or HTTP readiness alone does not establish launch identity: consumers also require the native running receipt with the original target PID and birth.
 Put a new difference in that shared owner when it fits, or beside the fixture that owns the resource, rather than in a spec.
+The desktop two-group input scenario records native stdin independently for each actual pane, including the unused pane, while executing the original submitted shell command.
+Its receiver has 64 KiB total-input and 4096-byte line bounds; exact byte equality rejects missing, duplicated and wrong-pane input, with real receiver controls separate from desktop/native acceptance.
 The first Windows runs of the web e2e fixtures found three differences the helper has to own:
 
 - An endpoint is a named pipe on Windows: a fixture that would use the socket path `P` on Unix uses `\\.\pipe\P`, because listening on a Unix socket path there fails with `EACCES`.

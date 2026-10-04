@@ -61,7 +61,9 @@ jobs:
         timeout-minutes: 3
         env:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
-        run: python3 scripts/tests/test_fixture_owner.py
+        run: |
+          if [ "$RUNNER_OS" = Windows ]; then export CI_FIXTURE_BASH="$(cygpath -w "$BASH")"; else export CI_FIXTURE_BASH="$BASH"; fi
+          python3 scripts/tests/test_fixture_owner.py
       - uses: actions/upload-artifact@v7
         if: always()
         with:

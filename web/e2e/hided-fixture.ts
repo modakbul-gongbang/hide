@@ -88,11 +88,12 @@ async function launch(herdr: HerdrFixture, label: string, dir: string, home: str
   const { stop, disown } = ownUntilWorkerExit(() => releaseFixtureRoot(dir,
     () => stopFixtureProcess(child), [() => fs.rmSync(dir, { recursive: true, force: true })]));
   for (let i = 0; i < 50; i += 1) {
-    try { fixtureProcessFailure(child); } catch (error) { cleanupAfterFailure(error, stop); }
+    let launched: boolean;
+    try { launched = fixtureProcessFailure(child); } catch (error) { cleanupAfterFailure(error, stop); }
     if (spawnFailed) {
       cleanupAfterFailure(new Error(`hided did not start from ${binary}: ${spawnFailed.message}; build hided in this worktree`, { cause: spawnFailed }), stop);
     }
-    if (fs.existsSync(statePath)) {
+    if (launched && fs.existsSync(statePath)) {
       try {
         // The file may be mid-write on the first read; the next tick reads it whole.
         const state = JSON.parse(fs.readFileSync(statePath, "utf8")) as { port: number; token: string };

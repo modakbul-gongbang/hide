@@ -63,10 +63,10 @@ async function startHided(extra: Record<string, string> = {}, herdr?: HerdrFixtu
       child.stderr?.pipe(log, { end: false });
     }
     for (let i = 0; i < 50; i += 1) {
-      fixtureProcessFailure(child);
+      const launched = fixtureProcessFailure(child);
       if (spawnFailed) throw new Error(`hided did not start from ${bin}: ${(spawnFailed as Error).message}`, { cause: spawnFailed });
       const statePath = path.join(dir, "hide", "hided.json");
-      if (fs.existsSync(statePath)) {
+      if (launched && fs.existsSync(statePath)) {
         try {
           // The file may be mid-write on the first read; the next tick reads it whole.
           const state = JSON.parse(fs.readFileSync(statePath, "utf8")) as {

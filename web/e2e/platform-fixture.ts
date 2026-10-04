@@ -9,6 +9,23 @@ import { cleanupAfterFailure, throwFixtureFailures } from "./worker-owned";
 
 export const fixtureExecutable = (name: string): string => `${name}${process.platform === "win32" ? ".exe" : ""}`;
 
+/** The receiver executes the unchanged POSIX printf input through the same
+ * installed Git Bash used by Windows verification, with literal argv. */
+export function fixturePosixShell(): string {
+  const shell = process.platform === "win32"
+    ? path.join(inheritedFixtureEnv().PROGRAMFILES ?? "", "Git", "bin", "bash.exe") : "/bin/sh";
+  if (!path.isAbsolute(shell) || !fs.existsSync(shell)) throw new Error("fixture POSIX shell is unavailable");
+  return shell;
+}
+
+/** The configured Windows pane shell is cmd; native argv quotes differ from
+ * a Unix shell's exec. The called receiver owns the same pane stdin. */
+export function fixtureShellCommand(executable: string, args: string[]): string {
+  if (process.platform !== "win32") return "exec " + [executable, ...args].map(value => `'${value.replaceAll("'", "'\\''")}'`).join(" ");
+  if ([executable, ...args].some(value => /[\r\n"%!]/.test(value))) throw new Error("fixture cmd argument cannot be represented without expansion");
+  return [executable, ...args].map(value => `"${value}"`).join(" ");
+}
+
 type NativeReceipt = { phase: string; pid: number; birth: string; code: number; survivors: number; error: string };
 type Owner = { root: string; file: string; spawnError?: Error; released: boolean; failures?: unknown[] };
 const owners = new WeakMap<ChildProcess, Owner>();
@@ -64,13 +81,16 @@ export function fixtureProcessId(child: ChildProcess): number {
   return value.pid;
 }
 
-export function fixtureProcessFailure(child: ChildProcess): void {
+export function fixtureProcessFailure(child: ChildProcess): boolean {
   const owner = owners.get(child);
   if (!owner) throw new Error("fixture process has no native launch owner");
   if (owner.spawnError) throw owner.spawnError;
   const value = readReceipt(owner);
+  if (!value) return false;
   if (value?.error) throw new Error(value.error);
   if (value && value.phase !== "running") throw new Error(`fixture target ended during setup: ${value.phase}, code=${value.code}`);
+  if (!Number.isSafeInteger(value.pid) || value.pid <= 0 || BigInt(value.birth) <= 0n) throw new Error("invalid native fixture launch identity");
+  return true;
 }
 
 /** Every callback failure still reaches native termination. The same launch

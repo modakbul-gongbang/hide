@@ -58,10 +58,13 @@ const SHIM_SOURCE = `#include <fcntl.h>
 #ifdef _WIN32
 #include <windows.h>
 #include <io.h>
+#include <process.h>
 #include <sys/stat.h>
 #define read _read
 #define write _write
 #define open _open
+#define close _close
+#define getpid _getpid
 typedef int fixture_count_t;
 static void raw_terminal(void) {
   HANDLE input = GetStdHandle(STD_INPUT_HANDLE);
@@ -70,6 +73,27 @@ static void raw_terminal(void) {
   mode &= ~(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT);
   mode |= ENABLE_VIRTUAL_TERMINAL_INPUT;
   if (!SetConsoleMode(input, mode) || !SetConsoleCP(CP_UTF8) || !SetConsoleOutputCP(CP_UTF8)) exit(1);
+}
+// The CRT spawn family concatenates argv without adding quotes. Preserve
+// each literal argument through the documented Windows CRT parsing rules.
+static int quote_spawn_argument(const char *input, char *output, size_t capacity) {
+  size_t used = 0, slashes = 0;
+  if (capacity < 3) return -1;
+  output[used++] = 34;
+  for (;;) {
+    unsigned char current = (unsigned char)*input++;
+    if (current == 92) { slashes++; continue; }
+    size_t count = (current == 34 || !current) ? slashes * 2 : slashes;
+    if (used + count + 3 >= capacity) return -1;
+    while (count--) output[used++] = 92;
+    slashes = 0;
+    if (!current) break;
+    if (current == 34) output[used++] = 92;
+    output[used++] = (char)current;
+  }
+  output[used++] = 34;
+  output[used] = 0;
+  return 0;
 }
 static fixture_count_t terminal_read(char *bytes, size_t size) {
   static WCHAR pending = 0;
@@ -95,6 +119,7 @@ static fixture_count_t terminal_write(const char *bytes, size_t size) {
 #include <termios.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/wait.h>
 typedef ssize_t fixture_count_t;
 #define terminal_read(bytes, size) read(0, bytes, size)
 #define terminal_write(bytes, size) write(1, bytes, size)
@@ -109,6 +134,82 @@ static void raw_terminal(void) {
 }
 #endif
 static char prompt[1 << 20];
+// A native receiver in one actual pane, independent of renderer/ws events.
+// It records stdin verbatim, then runs each original submitted shell line.
+static int input_receiver(const char *at, const char *pane, const char *shell) {
+  int flags = O_WRONLY | O_CREAT | O_EXCL;
+#ifdef _WIN32
+  flags |= _O_BINARY;
+#endif
+  int log = open(at, flags, 0600);
+  if (log < 0) { perror("fixture receiver open"); return 1; }
+  char identity[4096], temporary[4096];
+  if (snprintf(identity, sizeof identity, "%s.identity", at) >= (int)sizeof identity) return 1;
+  if (snprintf(temporary, sizeof temporary, "%s.tmp", identity) >= (int)sizeof temporary) return 1;
+  int owner = open(temporary, flags, 0600);
+  if (owner < 0) { perror("fixture receiver identity"); return 1; }
+  unsigned long before, after;
+#ifdef _WIN32
+  DWORD mode;
+  if (!GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), &mode)) return 1;
+  before = mode;
+  raw_terminal();
+  if (!GetConsoleMode(GetStdHandle(STD_INPUT_HANDLE), &mode)) return 1;
+  after = mode;
+#else
+  struct termios tio;
+  if (tcgetattr(0, &tio) != 0) { perror("fixture receiver terminal mode"); return 1; }
+  before = tio.c_iflag;
+  raw_terminal();
+  if (tcgetattr(0, &tio) != 0) return 1;
+  tio.c_iflag &= ~(ICRNL | INLCR | IGNCR);
+  if (tcsetattr(0, TCSANOW, &tio) != 0 || tcgetattr(0, &tio) != 0) return 1;
+  after = tio.c_iflag;
+  if (after & (ICRNL | INLCR | IGNCR)) return 1;
+#endif
+  char value[256];
+  int size = snprintf(value, sizeof value, "%s %ld %lu %lu\\n", pane, (long)getpid(), before, after);
+  if (size < 0 || size >= (int)sizeof value || write(owner, value, (size_t)size) != size) return 1;
+  if (close(owner) != 0) return 1;
+  if (rename(temporary, identity) != 0) { perror("fixture receiver identity publication"); return 1; }
+  static const char ready[] = "fixture input receiver ready\\r\\n";
+  if (terminal_write(ready, sizeof ready - 1) != (fixture_count_t)(sizeof ready - 1)) return 1;
+  char bytes[4096], line[4096]; size_t used = 0, total = 0; fixture_count_t count;
+  while ((count = terminal_read(bytes, sizeof bytes)) > 0) {
+    total += (size_t)count;
+    if (total > 65536) { fputs("fixture receiver input cap exceeded\\n", stderr); return 1; }
+    if (write(log, bytes, (size_t)count) != count) { perror("fixture receiver write"); return 1; }
+    for (fixture_count_t index = 0; index < count; index++) {
+      if (bytes[index] == '\\r' || bytes[index] == '\\n') {
+        line[used] = 0;
+        if (used) {
+#ifdef _WIN32
+          char quoted_shell[8196], quoted_line[8196];
+          if (quote_spawn_argument(shell, quoted_shell, sizeof quoted_shell) != 0
+            || quote_spawn_argument(line, quoted_line, sizeof quoted_line) != 0) return 1;
+          intptr_t result = _spawnl(_P_WAIT, shell, quoted_shell, "-c", quoted_line, NULL);
+#else
+          // The command remains the original submitted line; the shell is
+          // supplied by the shared platform fixture, never guessed here.
+          pid_t child = fork();
+          if (child < 0) return 1;
+          if (child == 0) { execl(shell, shell, "-c", line, NULL); _exit(127); }
+          int result;
+          if (waitpid(child, &result, 0) != child) return 1;
+#endif
+          if (result != 0) { fputs("fixture receiver shell failed\\n", stderr); return 1; }
+        }
+        used = 0;
+      } else {
+        if (used == sizeof line - 1) { fputs("fixture receiver line cap exceeded\\n", stderr); return 1; }
+        line[used++] = bytes[index];
+      }
+    }
+  }
+  int failed = count < 0;
+  if (close(log) != 0) failed = 1;
+  return failed;
+}
 static int provider(int argc, char **argv) {
   if (argc > 2 && strcmp(argv[1], "auth") == 0 && strcmp(argv[2], "status") == 0) {
     puts("{\\"loggedIn\\":true}");
@@ -149,6 +250,7 @@ int main(int argc, char **argv) {
   _setmode(1, _O_BINARY);
   if (strstr(argv[0], "hide-open.exe")) return 0;
 #endif
+  if (argc == 5 && strcmp(argv[1], "--fixture-receive-input") == 0) return input_receiver(argv[2], argv[3], argv[4]);
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--json-schema") == 0 || (i == 1 && strcmp(argv[i], "auth") == 0)) return provider(argc, argv);
   }
@@ -583,9 +685,8 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
   try {
     await waitFor(() => {
       if (spawnFailed) throw spawnFailed;
-      fixtureProcessFailure(server);
-      return fs.existsSync(socket);
-    }, `herdr socket ${socket}`);
+      return fixtureProcessFailure(server) && fs.existsSync(socket);
+    }, `herdr native running receipt and socket ${socket}`);
     const snapshot = herdr(env, bin, ["api", "snapshot"]) as {
       result?: { snapshot?: { workspaces?: unknown[] } };
     };
