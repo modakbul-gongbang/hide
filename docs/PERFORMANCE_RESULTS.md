@@ -63,7 +63,7 @@ Git fixture creation is outside these clocks; Herdr workspace/pane preparation i
 ## Native input, tabs, output and scroll
 
 These phases used a warmed one-pane Workspace, with a second tab added for the switching phase.
-Input starts at the first renderer keydown for an nine-character ASCII marker followed by Enter, and ends when that whole marker is in the parsed terminal buffer.
+Input starts at the first renderer keydown for a nine-character ASCII marker followed by Enter, and ends when that whole marker is in the parsed terminal buffer.
 The interval includes injection of the remaining characters, dispatch, PTY echo, subscription delivery and xterm parsing.
 Tab switching alternates two tabs and waits for the selected canvas, a terminal canvas and the next animation frame; it does not require terminal pixels or restored text to have been painted.
 Each output burst launches a synthetic writer through the private Herdr CLI, emits 1,000 numbered 79-byte rows plus a unique end marker, and waits for that marker in the parsed buffer.
