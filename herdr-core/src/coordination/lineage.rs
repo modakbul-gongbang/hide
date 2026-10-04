@@ -101,10 +101,7 @@ impl Writer {
         self.pending_retry = false;
         self.observed_registrations = Some(ledger.agents.len());
         let patches = plan(ledger, &self.device, agents);
-        let current = patches
-            .iter()
-            .map(|patch| signature(patch))
-            .collect::<HashSet<_>>();
+        let current = patches.iter().map(signature).collect::<HashSet<_>>();
         self.queued.retain(|signature| current.contains(signature));
         let fresh = patches
             .into_iter()

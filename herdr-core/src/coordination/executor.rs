@@ -123,11 +123,14 @@ fn actor_for(agent: &ProjectedAgent, device: &str) -> Result<Actor, String> {
     actor.require_native_identity()?;
     Ok(actor)
 }
+struct HostIdentity<'a> {
+    machine: &'a str,
+    scope: &'a str,
+    native_machine: &'a str,
+}
 fn record(
     agent: &ProjectedAgent,
-    machine: &str,
-    host_scope: &str,
-    native_machine: &str,
+    host: HostIdentity<'_>,
     instance: String,
     name: String,
     parent: Option<String>,
@@ -136,9 +139,9 @@ fn record(
     Ok(AgentRecord {
         id: String::new(),
         name,
-        machine: machine.into(),
-        host_scope: host_scope.into(),
-        native_machine: native_machine.into(),
+        machine: host.machine.into(),
+        host_scope: host.scope.into(),
+        native_machine: host.native_machine.into(),
         session: agent
             .agent_session
             .as_ref()
@@ -149,7 +152,7 @@ fn record(
         pane: agent.pane_id.clone(),
         parent,
         project,
-        actor: actor_for(agent, machine)?,
+        actor: actor_for(agent, host.machine)?,
         ended: false,
     })
 }
@@ -237,9 +240,11 @@ pub(crate) fn run(
                 .transpose()?;
             let record = record(
                 native,
-                &machine,
-                &host_scope,
-                &native_machine,
+                HostIdentity {
+                    machine: &machine,
+                    scope: &host_scope,
+                    native_machine: &native_machine,
+                },
                 instance,
                 name,
                 parent,
@@ -332,9 +337,11 @@ fn spawn(
                 .ok_or("parent_unavailable")?;
             let record = record(
                 native,
-                &actor.device_id,
-                &host_scope,
-                &native_machine,
+                HostIdentity {
+                    machine: &actor.device_id,
+                    scope: &host_scope,
+                    native_machine: &native_machine,
+                },
                 native.pane_id.clone(),
                 actor.name.clone(),
                 None,
@@ -502,9 +509,11 @@ fn spawn(
     let native = wait_native_identity(connector.as_ref(), pane, Some(name), kind)?;
     let child = record(
         &native,
-        &actor.device_id,
-        &host_scope,
-        &native_machine,
+        HostIdentity {
+            machine: &actor.device_id,
+            scope: &host_scope,
+            native_machine: &native_machine,
+        },
         pane.into(),
         name.clone(),
         Some(parent_id.clone()),
@@ -580,9 +589,11 @@ pub(crate) fn link_fork(
     } else {
         let parent_record = record(
             native_parent,
-            &actor.device_id,
-            &host_scope,
-            &native_machine,
+            HostIdentity {
+                machine: &actor.device_id,
+                scope: &host_scope,
+                native_machine: &native_machine,
+            },
             parent.into(),
             actor.name.clone(),
             None,
@@ -610,9 +621,11 @@ pub(crate) fn link_fork(
     )?;
     let child_record = record(
         &native_child,
-        &actor.device_id,
-        &host_scope,
-        &native_machine,
+        HostIdentity {
+            machine: &actor.device_id,
+            scope: &host_scope,
+            native_machine: &native_machine,
+        },
         child.into(),
         native_child.name.clone().unwrap_or_else(|| child.into()),
         Some(parent_id),
