@@ -1345,3 +1345,32 @@ fn a_registered_checkout_with_an_active_run_blocks_before_mutation() {
     );
     assert_eq!(home_tree(fixture.home()), before);
 }
+
+#[test]
+fn identified_sasu_run_with_unknown_status_blocks_and_other_artifacts_do_not() {
+    for (state, blocked) in [
+        (
+            json!({"schema":"sasu.implement.state.v10", "status":"unknown"}),
+            true,
+        ),
+        (
+            json!({"schema":"sasu.implement.state.v11.stateless-verification"}),
+            true,
+        ),
+        (json!({"schema":"another-tool.v1"}), false),
+        (
+            json!({"schema":"sasu.implement.state.v10", "status":"retired"}),
+            false,
+        ),
+    ] {
+        let mut fixture = Fixture::new();
+        let project = fixture.root.join("project");
+        let path = project.join("agents/runs/task/state.json");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(path, state.to_string()).unwrap();
+        fixture.target.retirement_projects.push(project);
+        let before = home_tree(fixture.home());
+        assert_eq!(retirement_preflight(&fixture.target).is_err(), blocked);
+        assert_eq!(home_tree(fixture.home()), before);
+    }
+}

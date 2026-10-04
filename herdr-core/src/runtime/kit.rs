@@ -68,6 +68,7 @@ pub(crate) struct DeviceKitCall {
     pub(crate) channel: Arc<dyn HostChannel>,
     pub(crate) cli_dir: String,
     pub(crate) herdr_socket: Option<String>,
+    pub(crate) retirement_projects: Vec<String>,
 }
 
 /// What a device's kit call answered.
@@ -113,6 +114,41 @@ impl KitDeclined {
 const LEFT_ON_DEVICE: [&str; 3] = ["Hide's hook entries", "Hide's hide link", "the helper root"];
 
 impl Runtime {
+    /// Registered roots and the catalog's known checkouts, on this device only.
+    /// This copies paths; the kit inspects their run states outside the lock.
+    pub(crate) fn retirement_projects(&self, device_id: &str) -> Vec<String> {
+        let mut paths = self
+            .snapshot
+            .ui_state
+            .workspace_registrations
+            .iter()
+            .filter(|registration| registration.device_id == device_id)
+            .map(|registration| registration.path.clone())
+            .collect::<Vec<_>>();
+        let projects = self.snapshot.navigator.workspaces.iter().chain(
+            self.snapshot
+                .status
+                .remote
+                .iter()
+                .filter(|status| status.target_id == device_id)
+                .filter_map(|status| status.session.as_ref())
+                .flat_map(|session| session.workspaces.iter()),
+        );
+        for project in
+            projects.filter(|project| project.device_id == device_id && project.registered)
+        {
+            paths.extend(
+                project
+                    .checkouts
+                    .iter()
+                    .map(|checkout| checkout.path.clone()),
+            );
+        }
+        paths.sort();
+        paths.dedup();
+        paths
+    }
+
     /// This Mac cannot run the kit at all, and its row says why (B11).
     pub(crate) fn set_local_kit_unavailable(&mut self, reason: &str) {
         self.set_kit_state(LOCAL_DEVICE_ID, KitSnapshot::unavailable(reason));
@@ -438,6 +474,7 @@ impl Runtime {
                     .and_then(|consent| consent.cli_dir.clone())
                     .unwrap_or_else(|| self.host_cli_dir.clone()),
                 herdr_socket: registration.herdr_socket_path.clone(),
+                retirement_projects: Vec::new(),
             },
         );
         self.device_kit_removing.insert(device_id.to_owned());
@@ -497,6 +534,7 @@ impl Runtime {
             channel,
             cli_dir,
             herdr_socket: registration.herdr_socket_path,
+            retirement_projects: self.retirement_projects(device_id),
         })
     }
 

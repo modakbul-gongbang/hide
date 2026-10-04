@@ -35,7 +35,12 @@ pub use hide_kit::is_build_name;
 
 /// Answers one `kit` request for the helper root the running helper was
 /// installed under.
-pub fn handle(action: KitAction, cli_dir: &str, herdr_socket: Option<&str>) -> HostResult<Value> {
+pub fn handle(
+    action: KitAction,
+    cli_dir: &str,
+    herdr_socket: Option<&str>,
+    retirement_projects: &[String],
+) -> HostResult<Value> {
     let executable = std::env::current_exe().map_err(|error| {
         HostError::new(
             ErrorCode::Io,
@@ -51,7 +56,7 @@ pub fn handle(action: KitAction, cli_dir: &str, herdr_socket: Option<&str>) -> H
             ),
         )
     })?;
-    run(
+    run_for_projects(
         &Placement {
             root,
             version,
@@ -60,6 +65,7 @@ pub fn handle(action: KitAction, cli_dir: &str, herdr_socket: Option<&str>) -> H
         action,
         cli_dir,
         herdr_socket,
+        retirement_projects,
         Arc::clone(&STOP),
     )
 }
@@ -104,7 +110,22 @@ pub fn run(
     herdr_socket: Option<&str>,
     stop: Arc<AtomicBool>,
 ) -> HostResult<Value> {
+    run_for_projects(placement, action, cli_dir, herdr_socket, &[], stop)
+}
+
+fn run_for_projects(
+    placement: &Placement,
+    action: KitAction,
+    cli_dir: &str,
+    herdr_socket: Option<&str>,
+    retirement_projects: &[String],
+    stop: Arc<AtomicBool>,
+) -> HostResult<Value> {
     let home = &placement.home;
+    let projects = retirement_projects
+        .iter()
+        .map(|project| expand(project, home))
+        .collect::<HostResult<Vec<_>>>()?;
     let cli_dir = expand(cli_dir, home)?;
     let herdr_socket = match herdr_socket {
         Some(socket) => expand(socket, home)?,
@@ -126,13 +147,15 @@ pub fn run(
         }
     };
     let target = || {
-        hide_kit::device_target(
+        let mut target = hide_kit::device_target(
             &placement.root,
             home,
             &cli_dir,
             &herdr_socket,
             Arc::clone(&stop),
-        )
+        );
+        target.retirement_projects = projects.clone();
+        target
     };
     match action {
         KitAction::Apply | KitAction::Reinstall { .. } => {

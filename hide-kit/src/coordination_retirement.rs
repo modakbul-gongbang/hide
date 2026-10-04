@@ -13,9 +13,7 @@ use sha2::{Digest, Sha256};
 
 use crate::{KitTarget, Observed};
 
-const MAX_LEDGER_BYTES: u64 = 64 * 1024 * 1024;
-const MAX_STATE_BYTES: u64 = 8 * 1024 * 1024;
-const MAX_ENTRIES: usize = 1024;
+use crate::retirement_inspection::{self, MAX_ENTRIES, MAX_LEDGER_BYTES, MAX_STATE_BYTES};
 
 #[derive(Default, Serialize, Deserialize)]
 struct Progress {
@@ -115,80 +113,22 @@ pub fn preflight(target: &KitTarget) -> Result<(), String> {
         let Some(ledger) = read_json(&home.join("ledger.json"), MAX_LEDGER_BYTES)? else {
             continue;
         };
-        if ledger["schema"] != "hcoord.ledger.v1" {
-            return Err("legacy coordination ledger has an unknown schema; inspect it before retrying retirement".into());
-        }
-        for (table, active, closed) in [
-            ("requests", "open", &["answered", "canceled"][..]),
-            ("watches", "active", &["stopped"][..]),
-        ] {
-            let entries = ledger[table].as_object().ok_or_else(|| {
-                format!("legacy {table} cannot be inspected; retirement has not begun")
-            })?;
-            for value in entries.values() {
-                let status = value["status"].as_str().ok_or_else(|| {
-                    format!("legacy {table} has no status; retirement has not begun")
-                })?;
-                if status == active {
-                    return Err(format!(
-                        "legacy coordination has {active} {table}; finish or close them, then retry retirement"
-                    ));
-                }
-                if !closed.contains(&status) {
-                    return Err(format!(
-                        "legacy {table} has an unknown status; inspect it before retrying retirement"
-                    ));
-                }
-            }
-        }
+        retirement_inspection::legacy_ledger(&ledger)?;
     }
     inspect_directory(&crate::kit_state_dir(&target.home).join("hcoord"))?;
     if let Some(ledger) = read_json(
         &crate::layout::delivery_ledger(&crate::layout::state_dir_from_process(&target.home)),
         MAX_LEDGER_BYTES,
     )? {
-        if ledger["version"] != 1 {
-            return Err(
-                "Hide delivery ledger has an unknown version; inspect it before retirement".into(),
-            );
-        }
-        let letters = ledger["letters"]
-            .as_array()
-            .ok_or("Hide requests cannot be inspected; retirement has not begun")?;
-        let watches = ledger["watches"]
-            .as_array()
-            .ok_or("Hide watches cannot be inspected; retirement has not begun")?;
-        for letter in letters {
-            if !matches!(
-                letter["state"].as_str(),
-                Some(
-                    "pending"
-                        | "delivered"
-                        | "acknowledged"
-                        | "cancelled"
-                        | "expired"
-                        | "undelivered"
-                )
-            ) || !letter["waiting_answer"].is_boolean()
-            {
-                return Err(
-                    "Hide request status cannot be inspected; retirement has not begun".into(),
-                );
-            }
-        }
-        if letters
-            .iter()
-            .any(|value| value["state"] == "pending" || value["waiting_answer"] == true)
-        {
-            return Err(
-                "Hide has open requests; finish or close them, then retry retirement".into(),
-            );
-        }
-        if !watches.is_empty() {
-            return Err("Hide has active watches; stop them, then retry retirement".into());
-        }
+        retirement_inspection::delivery_ledger(&ledger)?;
     }
     sasu_preflight(&target.home)?;
+    if target.retirement_projects.len() > MAX_ENTRIES {
+        return Err(
+            "registered checkouts exceed the preflight entry bound; inspect them before retirement"
+                .into(),
+        );
+    }
     for project in &target.retirement_projects {
         project_preflight(project)?;
     }
@@ -256,48 +196,10 @@ fn sasu_preflight(home: &Path) -> Result<(), String> {
     let Some(index) = read_json(&latest, MAX_STATE_BYTES)? else {
         return Ok(());
     };
-    if index["schema"] != "sasu.supervisor.index.v1" {
-        return Err("sasu registry has an unknown schema; inspect it before retirement".into());
-    }
-    if !index["tickExecutor"].is_null() {
-        return Err(
-            "sasu supervisor still has an active tick; stop it and retry retirement".into(),
-        );
-    }
-    let entries = index["entries"]
-        .as_array()
-        .ok_or("sasu indexed runs cannot be inspected")?;
-    if !entries.is_empty() {
-        return Err(
-            "sasu supervisor still owns indexed runs; retire them and retry retirement".into(),
-        );
-    }
-    let coordinated = if index.get("coordinated").is_none() {
-        &[][..]
-    } else {
-        index["coordinated"]
-            .as_array()
-            .ok_or("sasu coordinated runs cannot be inspected")?
-            .as_slice()
-    };
-    if coordinated.len() > MAX_ENTRIES {
-        return Err("sasu runs exceed the preflight entry bound".into());
-    }
-    for entry in coordinated {
-        let state = entry["statePath"]
-            .as_str()
-            .ok_or("sasu run has no state path; inspect its registry before retirement")?;
-        entry["runInstanceId"]
-            .as_str()
-            .ok_or("sasu run has no identity; inspect its registry before retirement")?;
-        let state = read_json(Path::new(state), MAX_STATE_BYTES)?
+    for state_path in retirement_inspection::supervisor_states(&index)? {
+        let state = read_json(Path::new(state_path), MAX_STATE_BYTES)?
             .ok_or("a sasu run state is missing; inspect its registry before retirement")?;
-        if !matches!(state["status"].as_str(), Some("active" | "retired")) {
-            return Err("sasu run status cannot be inspected; retirement has not begun".into());
-        }
-        if state["status"] == "active" {
-            return Err("a sasu run is active; retire it and retry retirement".into());
-        }
+        retirement_inspection::indexed_run(&state)?;
     }
     Ok(())
 }
@@ -318,20 +220,17 @@ fn project_preflight(project: &Path) -> Result<(), String> {
             return Err("registered checkout runs exceed the preflight entry bound".into());
         }
         let entry = entry.map_err(|error| error.to_string())?;
-        if !entry
-            .file_type()
-            .map_err(|error| error.to_string())?
-            .is_dir()
-        {
+        let kind = entry.file_type().map_err(|error| error.to_string())?;
+        if kind.is_symlink() {
+            return Err(
+                "a registered run folder is a symlink; inspect it before retirement".into(),
+            );
+        }
+        if !kind.is_dir() {
             continue;
         }
-        if let Some(state) = read_json(&entry.path().join("state.json"), MAX_STATE_BYTES)?
-            && state["status"] == "active"
-        {
-            return Err(
-                "a registered checkout has an active sasu run; retire it and retry retirement"
-                    .into(),
-            );
+        if let Some(state) = read_json(&entry.path().join("state.json"), MAX_STATE_BYTES)? {
+            retirement_inspection::checkout_run(&state)?;
         }
     }
     Ok(())

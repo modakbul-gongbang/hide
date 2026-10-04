@@ -29,6 +29,7 @@ pub mod legacy;
 mod local;
 pub mod process;
 mod record;
+pub mod retirement_inspection;
 
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};

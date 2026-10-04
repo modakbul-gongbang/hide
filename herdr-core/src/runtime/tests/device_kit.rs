@@ -14,6 +14,7 @@ const DEVICE: &str = "studio";
 /// removal outcome for `remove`.
 struct KitDevice {
     calls: Mutex<Vec<(KitAction, String, Option<String>)>>,
+    retirement_projects: Mutex<Vec<Vec<String>>>,
     answer: Mutex<Result<KitReport, String>>,
     closed: Mutex<Option<String>>,
     /// When set, an apply or status call waits here until the test lets it
@@ -25,6 +26,7 @@ impl KitDevice {
     fn answering(answer: Result<KitReport, String>) -> Arc<Self> {
         Arc::new(Self {
             calls: Mutex::new(Vec::new()),
+            retirement_projects: Mutex::new(Vec::new()),
             answer: Mutex::new(answer),
             closed: Mutex::new(None),
             gate: Mutex::new(None),
@@ -51,11 +53,16 @@ impl HostChannel for KitDevice {
             action,
             cli_dir,
             herdr_socket,
+            retirement_projects,
         } = call
         else {
             return Err(HostCallError::NotConnected("kit calls only".to_owned()));
         };
         let removing = action == KitAction::Remove;
+        self.retirement_projects
+            .lock()
+            .unwrap()
+            .push(retirement_projects);
         self.calls
             .lock()
             .unwrap()
@@ -642,5 +649,81 @@ fn a_device_added_again_during_its_removal_waits_to_connect() {
             .as_deref()
             .is_some_and(|message| message.contains("still taking its kit off")),
         "{host:?}"
+    );
+}
+
+#[test]
+fn retirement_inspection_takes_registered_checkouts_on_their_own_device() {
+    let mut runtime = runtime();
+    for (device, path) in [
+        ("local", "/local-checkout"),
+        (DEVICE, "/device-checkout"),
+        ("other", "/other-checkout"),
+    ] {
+        runtime.snapshot.ui_state.workspace_registrations.push(
+            crate::model::WorkspaceRegistration {
+                id: format!("{device}-project"),
+                device_id: device.into(),
+                path: path.into(),
+                ..Default::default()
+            },
+        );
+    }
+    runtime.snapshot.navigator.workspaces.push(workspace(
+        "local-project",
+        "local",
+        "/local-checkout",
+        vec![checkout(
+            "local-project",
+            "linked",
+            "/local-linked-checkout",
+            None,
+        )],
+    ));
+    let mut unregistered = workspace(
+        "incidental",
+        "incidental",
+        "/pane-only",
+        vec![checkout("incidental", "pane", "/pane-only", None)],
+    );
+    unregistered.registered = false;
+    runtime.snapshot.navigator.workspaces.push(unregistered);
+    assert_eq!(
+        runtime.retirement_projects("local"),
+        ["/local-checkout", "/local-linked-checkout"]
+    );
+    assert_eq!(runtime.retirement_projects(DEVICE), ["/device-checkout"]);
+    assert_eq!(
+        runtime.retirement_projects("unregistered"),
+        Vec::<String>::new()
+    );
+}
+
+#[test]
+fn device_kit_worker_sends_only_its_registered_checkout_paths() {
+    let helper = KitDevice::answering(Ok(report(&[])));
+    let shared = with_consent(Some(Arc::clone(&helper)));
+    {
+        let mut runtime = shared.lock().unwrap();
+        for (device, path) in [
+            ("local", "/local-checkout"),
+            (DEVICE, "/device-checkout"),
+            ("other", "/other-checkout"),
+        ] {
+            runtime.snapshot.ui_state.workspace_registrations.push(
+                crate::model::WorkspaceRegistration {
+                    id: format!("{device}-project"),
+                    device_id: device.into(),
+                    path: path.into(),
+                    ..Default::default()
+                },
+            );
+        }
+        runtime.queue_device_kit(DEVICE, KitJob::Status);
+    }
+    settle(&shared);
+    assert_eq!(
+        *helper.retirement_projects.lock().unwrap(),
+        [vec!["/device-checkout".to_owned()]]
     );
 }

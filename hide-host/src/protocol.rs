@@ -191,6 +191,9 @@ pub enum Call {
         action: KitAction,
         cli_dir: String,
         herdr_socket: Option<String>,
+        /// Known registered checkout roots on this helper's device only.
+        #[serde(default)]
+        retirement_projects: Vec<String>,
     },
     /// One bounded read of a pane's conversation for its label, from the
     /// checkpoint the caller kept (`hide_session::label_transcript::read`).

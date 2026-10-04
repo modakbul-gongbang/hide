@@ -312,7 +312,13 @@ pub fn handle(call: Call) -> HostResult<Value> {
             action,
             cli_dir,
             herdr_socket,
-        } => crate::kit::handle(action, &cli_dir, herdr_socket.as_deref()),
+            retirement_projects,
+        } => crate::kit::handle(
+            action,
+            &cli_dir,
+            herdr_socket.as_deref(),
+            &retirement_projects,
+        ),
         Call::LabelTranscript { request } => {
             let home = std::env::var_os("HOME").ok_or_else(|| {
                 HostError::new(ErrorCode::Unsupported, "label_session_home_unavailable")

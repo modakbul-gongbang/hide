@@ -15,6 +15,8 @@
 //! by reading the target again rather than by resending it (B14, B33).
 
 use super::*;
+#[path = "retirement.rs"]
+mod retirement;
 pub use crate::host_access::HostCallError;
 use crate::host_access::{HostAnswer, HostChannel, call_as};
 use crate::model::{HostConsent, HostIdentity};
@@ -664,6 +666,7 @@ pub fn establish(
     client: &RusshRemoteClient,
     packages: &HelperPackages,
     consent: &HostConsent,
+    retirement_projects: &[String],
     on_close: Box<dyn FnOnce(String) + Send + 'static>,
 ) -> Result<Established, EstablishError> {
     let observed_key = Arc::new(Mutex::new(None));
@@ -709,7 +712,13 @@ pub fn establish(
     let result = client.runtime.block_on(async {
         tokio::time::timeout(
             INSTALL_TIMEOUT,
-            start_helper(&mut session, client, packages, &consent.helper_root),
+            start_helper(
+                &mut session,
+                client,
+                packages,
+                &consent.helper_root,
+                retirement_projects,
+            ),
         )
         .await
         .unwrap_or_else(|_| {
@@ -769,6 +778,7 @@ async fn start_helper(
     client: &RusshRemoteClient,
     packages: &HelperPackages,
     helper_root: &str,
+    retirement_projects: &[String],
 ) -> Result<(Channel<Msg>, bool, String, Upload), EstablishError> {
     let target = client.host.host_id.clone();
     let uname = execute_channel(
@@ -788,6 +798,21 @@ async fn start_helper(
     }
     let (os, arch) = platform_of(uname.stdout.trim()).map_err(EstablishError::Unsupported)?;
     let payload = packages.payload(&os, &arch)?;
+    // The helper inherits this SSH exec environment. Read its path overrides
+    // before uploading any candidate; older helpers need no new operation.
+    let environment = execute_channel(
+        session,
+        r#"[ "${#HCOORD_HOME}" -le 4096 ] && [ "${#HIDE_STATE_DIR}" -le 4096 ] && [ "${#XDG_STATE_HOME}" -le 4096 ] || exit 65; printf '%s\n' "${HCOORD_HOME-}" "${HIDE_STATE_DIR-}" "${XDG_STATE_HOME-}""#,
+        "remote-retirement-environment",
+        &target,
+        RemoteStage::Sftp,
+    )
+    .await
+    .map_err(EstablishError::Connect)?;
+    if environment.exit_status != 0 {
+        return Err(EstablishError::Install("The device retirement paths could not be inspected; check its SSH environment and retry; no helper was uploaded".into()));
+    }
+    let locations = retirement::Locations::from_environment(&environment.stdout)?;
 
     let channel = session.channel_open_session().await.map_err(|error| {
         EstablishError::Install(format!("The SFTP channel could not be opened: {error}"))
@@ -800,7 +825,7 @@ async fn start_helper(
         })?;
     let raw = RawSftpSession::new(channel.into_stream());
     raw.set_timeout(30);
-    let installed = install(&raw, helper_root, &payload).await;
+    let installed = install(&raw, helper_root, &payload, retirement_projects, &locations).await;
     let _ = raw.close_session();
     let installed = installed?;
     let (helper_path, fresh) = (installed.helper_path, installed.fresh);
@@ -852,6 +877,8 @@ async fn install(
     raw: &RawSftpSession,
     helper_root: &str,
     payload: &Payload,
+    retirement_projects: &[String],
+    locations: &retirement::Locations,
 ) -> Result<Installed, EstablishError> {
     raw.init()
         .await
@@ -895,6 +922,13 @@ async fn install(
             "The helper install root is not a plain path".to_owned(),
         ));
     }
+    // No folders, staging files or current link have changed at this point.
+    tokio::time::timeout(
+        SSH_OPERATION_TIMEOUT,
+        retirement::preflight(raw, &home, owner, retirement_projects, locations),
+    ).await.map_err(|_| EstablishError::Install(
+        "The device retirement preflight timed out; inspect its run and request state and retry; no helper was uploaded".into()
+    ))??;
     // Everything from here goes through the path the check resolved, whose
     // every folder was checked and none is a link, so a link on the spelled
     // path cannot be swapped between the check and the launch.
@@ -1805,6 +1839,7 @@ mod probe {
             &client,
             &packages,
             &consent,
+            &[],
             Box::new(move |reason| {
                 *lock_recover(&seen) = Some(reason);
             }),

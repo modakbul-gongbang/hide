@@ -317,6 +317,7 @@ impl Runtime {
         };
         self.set_host_phase(device_id, HostPhase::Connecting);
         let packages = self.host_packages.clone();
+        let retirement_projects = self.retirement_projects(device_id);
         let device = device_id.to_owned();
         let spawned = thread::Builder::new()
             .name("herdr-core-device-host".to_owned())
@@ -338,7 +339,8 @@ impl Runtime {
                         close_context.notifier.notify();
                     }
                 });
-                let result = host::establish(&client, &packages, &consent, on_close);
+                let result =
+                    host::establish(&client, &packages, &consent, &retirement_projects, on_close);
                 let Some(runtime) = context.runtime.upgrade() else {
                     return;
                 };
