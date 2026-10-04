@@ -113,7 +113,11 @@ async function fromPane(args: string[], succeeds = true): Promise<Record<string,
   expect(sent.status).toBe(0);
   await expect.poll(() => fs.existsSync(status), { timeout: 30_000 }).toBe(true);
   expect(fs.statSync(output).size, "bounded isolated Workspace reply").toBeLessThanOrEqual(64 * 1024);
-  const reply = JSON.parse(fs.readFileSync(output, "utf8").trim().split("\n").at(-1) ?? "null") as Record<string, unknown>;
+  let parsed: unknown;
+  try { parsed = JSON.parse(fs.readFileSync(output, "utf8").trim().split("\n").at(-1) ?? "null"); }
+  catch { throw new Error("Invalid isolated Workspace command reply"); }
+  if (typeof parsed !== "object" || parsed === null || Array.isArray(parsed)) throw new Error("Invalid isolated Workspace command reply");
+  const reply = parsed as Record<string, unknown>;
   // Report only the finite reason identifier, never capability-bearing output.
   const reason = typeof reply.reason === "string" && /^[a-z_]{1,64}$/.test(reply.reason) ? reply.reason : "unclassified";
   expect(Number(fs.readFileSync(status, "utf8")) === 0, `isolated Workspace command result (${reason})`).toBe(succeeds);
