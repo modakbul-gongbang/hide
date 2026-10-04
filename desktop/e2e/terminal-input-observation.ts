@@ -1,7 +1,6 @@
 import type { Page } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath } from "node:url";
 
 const MAX_RECORDS = 1024;
 const MAX_MARKERS = 2;
@@ -204,7 +203,7 @@ export async function observeTerminalInput(page: Page, panes: string[], candidat
           omittedRendererRecords: renderer?.records.length ?? 0 });
       }
       try {
-        const directory = fileURLToPath(new URL("../../agents/runs/terminal-input-diagnosis/", import.meta.url));
+        const directory = path.resolve(__dirname, "../../agents/runs/terminal-input-diagnosis");
         fs.mkdirSync(directory, { recursive: true });
         fs.writeFileSync(path.join(directory, "desktop-terminal-input-" + startedAtMs + "-" + process.pid + ".json"), json,
           { encoding: "utf8", flag: "wx", mode: 0o600 });
