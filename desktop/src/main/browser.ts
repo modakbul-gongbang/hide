@@ -447,9 +447,13 @@ export class BrowserViews {
     const stamp = page.applied;
     this.update(page, { url, loading: true, failure: null });
     void this.resolve(page.workspace, page.id, stamp).then((route) => {
-      if (this.pages.get(page.key) !== page || page.applied !== stamp || route.load !== stamp || route.source_url !== url) return;
-      page.route = route;
+      // The core can canonicalize a checked file address while the loading
+      // report is in flight. The load stamp binds this answer to its intent;
+      // spelling changes within that generation must not strand the load.
+      if (this.pages.get(page.key) !== page || page.applied !== stamp || route.load !== stamp) return;
       if (!loadable(route.url)) throw new Error("Resolved page address cannot be loaded");
+      if (browserPartition(page.workspace, route.source_url) !== page.partition) throw new Error("Resolved page requires a different browser partition");
+      page.route = route;
       return page.view.webContents.loadURL(route.url).catch((error: unknown) => {
         // did-fail-load reports it; a load a newer one replaced is not a failure.
         const code = (error as { errno?: number }).errno;

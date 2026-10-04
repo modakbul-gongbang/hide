@@ -1499,6 +1499,42 @@ fn fresh_catalog() -> CatalogCache {
     }
 }
 
+#[test]
+fn agent_refresh_reconciles_a_plain_new_panes_live_checkout_cwd() {
+    let mut value = two_tab_snapshot();
+    value["panes"][1]["cwd"] = json!("/tmp");
+    let mut replica = SessionReplica::from_snapshot(&value).expect("snapshot");
+    let mut plain = agent("w1:p2", "");
+    plain.tab_id = "w1:t2".to_owned();
+    plain.agent = None;
+    plain.cwd = Some("/tmp/fixture".to_owned());
+
+    replica.replace_agents(vec![plain]);
+    replica.refresh_published_state().expect("publish live cwd");
+    let projected = replica.project();
+    assert_eq!(
+        Runtime::session_spaces(&projected)[0].cwds,
+        vec!["/tmp/fixture".to_owned()],
+        "the shell's live directory, not its inherited birth cwd, owns both tabs"
+    );
+    assert_eq!(projected.tabs.len(), 2);
+    assert_eq!(projected.panes[1].cwd.as_deref(), Some("/tmp/fixture"));
+}
+
+#[test]
+fn agent_refresh_does_not_move_a_pane_or_clear_its_known_cwd() {
+    let mut replica = SessionReplica::from_snapshot(&snapshot()).expect("snapshot");
+    let mut other_scope = agent("w1:p1", "");
+    other_scope.tab_id = "w1:t2".to_owned();
+    other_scope.cwd = Some("/tmp/elsewhere".to_owned());
+    replica.replace_agents(vec![other_scope]);
+    assert_eq!(replica.state.panes[0].cwd.as_deref(), Some("/tmp/fixture"));
+    assert_eq!(replica.state.panes[0].tab_id, "w1:t1");
+
+    replica.replace_agents(vec![agent("w1:p1", "")]);
+    assert_eq!(replica.state.panes[0].cwd.as_deref(), Some("/tmp/fixture"));
+}
+
 /// R6, AC12, SC5. `agent.list` is polled once a second whether or not it
 /// moved, and every tick used to rebuild the whole projection and re-enter
 /// the runtime lock twice for a sidebar that had not changed.
