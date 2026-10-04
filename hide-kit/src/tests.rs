@@ -1514,3 +1514,63 @@ fn writable_retirement_records_refuse_before_services_status_or_any_mutation() {
         }
     }
 }
+
+#[test]
+fn a_long_home_with_no_daemon_socket_finishes_retirement_and_converges() {
+    for legacy_folder in [false, true] {
+        let mut fixture = Fixture::new();
+        fixture.target.home = fixture.root.join(format!("home-{}", "l".repeat(160)));
+        fixture.target.cli_dir = fixture.home().join(".local/bin");
+        std::fs::create_dir_all(fixture.home()).unwrap();
+        let old = fixture.home().join(".hide/hcoord");
+        let ledger = if legacy_folder {
+            old_coordination(&fixture, json!({}), json!({}));
+            Some(std::fs::read(old.join("ledger.json")).unwrap())
+        } else {
+            None
+        };
+        for home in [&old, &fixture.home().join(".hcoord")] {
+            let socket = home.join("api.sock");
+            assert!(socket.as_os_str().len() > 200);
+            assert!(
+                matches!(std::fs::symlink_metadata(&socket), Err(error) if error.kind() == std::io::ErrorKind::NotFound)
+            );
+        }
+        let report = apply(&fixture.target, &Scope::automatic());
+        assert_eq!(
+            state(&report, ComponentId::CoordinationRetirement),
+            ComponentState::Installed,
+            "legacy folder {legacy_folder}: {report:?}"
+        );
+        let progress: Value = serde_json::from_slice(
+            &std::fs::read(kit_state_dir(fixture.home()).join("coordination-retirement.json"))
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(progress["complete"], true);
+        if let Some(ledger) = ledger {
+            let preserved = std::fs::read_dir(fixture.home().join(".hide"))
+                .unwrap()
+                .map(|entry| entry.unwrap().path())
+                .find(|path| {
+                    path.file_name()
+                        .unwrap()
+                        .to_string_lossy()
+                        .starts_with("hcoord.retired-")
+                })
+                .unwrap();
+            assert_eq!(
+                std::fs::read(preserved.join("ledger.json")).unwrap(),
+                ledger
+            );
+            assert!(!old.exists());
+        }
+        let before = home_tree(fixture.home());
+        let report = apply(&fixture.target, &Scope::automatic());
+        assert_eq!(
+            state(&report, ComponentId::CoordinationRetirement),
+            ComponentState::Installed
+        );
+        assert_eq!(home_tree(fixture.home()), before);
+    }
+}

@@ -201,6 +201,8 @@ It shares the local ledger and run predicates, needs no remote interpreter, and 
 The kit never stops an old test server by name without an ownership receipt.
 Before the transition, the operator checks earlier test servers and refuses automatic cleanup of any whose ownership cannot be confirmed.
 After that check succeeds, the ordered steps stop the old daemon, unload its LaunchAgent and delete the plist, remove only Hide-owned command and plugin links, remove the kit copy, and rename the old `~/.hide/hcoord` and `~/.hcoord` folders to siblings ending in `.retired-YYYY-MM-DD`.
+A socket confirmed absent, or an owned socket that refuses a connection, is already stopped; a missing socket does not need its name validated by the local transport.
+A linked, foreign or unreadable endpoint is refused, and other connection failures remain visible at the stop step.
 The old ledger is never imported into Hide or deleted.
 There is no compatibility command and no rollback.
 

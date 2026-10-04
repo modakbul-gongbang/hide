@@ -328,8 +328,41 @@ pub(crate) fn install(target: &KitTarget) -> Result<crate::Retirement, String> {
     save(target, &progress).map(|()| retirement)
 }
 
+/// An absent endpoint is already stopped, before IPC validates its name.
+/// An existing entry must be an owned local endpoint, never a followed link.
+fn daemon_socket_present(path: &Path) -> Result<bool, String> {
+    let metadata = match fs::symlink_metadata(path) {
+        Ok(metadata) => metadata,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+        Err(error) => return Err(format!("daemon socket cannot be inspected: {error}")),
+    };
+    #[cfg(unix)]
+    let endpoint = {
+        use std::os::unix::fs::FileTypeExt;
+        metadata.file_type().is_socket()
+    };
+    // The local IPC layer keeps an owned marker for a Windows pipe.
+    #[cfg(windows)]
+    let endpoint = metadata.is_file();
+    if metadata.file_type().is_symlink() || !endpoint {
+        return Err(
+            "daemon socket is not an owned local endpoint; inspect it before retrying".into(),
+        );
+    }
+    let trusted = hide_platform::fs::private::owned_by_current_user(path)
+        .and_then(|owned| Ok(owned && !hide_platform::fs::private::others_can_modify(path)?))
+        .map_err(|error| format!("daemon socket ownership cannot be inspected: {error}"))?;
+    if !trusted {
+        return Err("daemon socket can be changed by another account; inspect its ownership before retrying".into());
+    }
+    Ok(true)
+}
+
 fn stop_daemon(home: &Path) -> Result<(), String> {
     let path = home.join("api.sock");
+    if !daemon_socket_present(&path)? {
+        return Ok(());
+    }
     let mut socket = match hide_platform::ipc::LocalStream::connect(&path) {
         Ok(socket) => socket,
         Err(error)
@@ -375,6 +408,9 @@ fn stop_daemon(home: &Path) -> Result<(), String> {
     }
     let end = std::time::Instant::now() + Duration::from_secs(2);
     loop {
+        if !daemon_socket_present(&path)? {
+            return Ok(());
+        }
         match hide_platform::ipc::LocalStream::connect(&path) {
             Err(error)
                 if matches!(
@@ -505,4 +541,103 @@ fn date() -> String {
     let month = month_of_year + if month_of_year < 10 { 3 } else { -9 };
     year += i64::from(month <= 2);
     format!("{year:04}-{month:02}-{day:02}")
+}
+
+#[cfg(all(test, unix))]
+mod daemon_tests {
+    use std::os::unix::fs::{FileTypeExt, MetadataExt, PermissionsExt};
+    use std::os::unix::net::UnixListener;
+
+    use super::*;
+
+    #[test]
+    fn an_existing_socket_with_a_long_name_keeps_its_transport_failure() {
+        let fixture = tempfile::tempdir().unwrap();
+        let original = fixture.path().join("original.sock");
+        let listener = UnixListener::bind(&original).unwrap();
+        listener.set_nonblocking(true).unwrap();
+        let home = fixture.path().join(format!("home-{}", "l".repeat(160)));
+        fs::create_dir(&home).unwrap();
+        let path = home.join("api.sock");
+        fs::rename(original, &path).unwrap();
+        let before = fs::symlink_metadata(&path).unwrap();
+        assert!(before.file_type().is_socket());
+        let failure = stop_daemon(&home).unwrap_err();
+        assert!(
+            failure.contains("daemon socket cannot be reached"),
+            "{failure}"
+        );
+        assert!(failure.contains("sun_path"), "{failure}");
+        assert_eq!(fs::symlink_metadata(&path).unwrap().ino(), before.ino());
+        assert!(
+            matches!(listener.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock)
+        );
+    }
+
+    #[test]
+    fn untrusted_socket_entries_are_refused_without_connecting_or_changing_them() {
+        for entry in ["file", "folder", "link", "writable socket"] {
+            let fixture = tempfile::tempdir().unwrap();
+            let home = fixture.path().join("home");
+            fs::create_dir(&home).unwrap();
+            let path = home.join("api.sock");
+            let other_path = fixture.path().join("other.sock");
+            let other = UnixListener::bind(&other_path).unwrap();
+            other.set_nonblocking(true).unwrap();
+            let listener = match entry {
+                "file" => {
+                    fs::write(&path, b"preserved bytes").unwrap();
+                    None
+                }
+                "folder" => {
+                    fs::create_dir(&path).unwrap();
+                    None
+                }
+                "link" => {
+                    std::os::unix::fs::symlink(&other_path, &path).unwrap();
+                    None
+                }
+                _ => {
+                    let listener = UnixListener::bind(&path).unwrap();
+                    listener.set_nonblocking(true).unwrap();
+                    fs::set_permissions(&path, fs::Permissions::from_mode(0o666)).unwrap();
+                    Some(listener)
+                }
+            };
+            let before = fs::symlink_metadata(&path).unwrap();
+            let failure = stop_daemon(&home).unwrap_err();
+            assert!(failure.contains("daemon socket"), "{entry}: {failure}");
+            let after = fs::symlink_metadata(&path).unwrap();
+            assert_eq!(after.ino(), before.ino());
+            assert_eq!(after.permissions().mode(), before.permissions().mode());
+            assert_eq!(fs::read_dir(&home).unwrap().count(), 1);
+            if entry == "file" {
+                assert_eq!(fs::read(&path).unwrap(), b"preserved bytes");
+            } else if entry == "link" {
+                assert_eq!(fs::read_link(&path).unwrap(), other_path);
+            }
+            assert!(
+                matches!(other.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock)
+            );
+            if let Some(listener) = listener {
+                assert!(
+                    matches!(listener.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock)
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn an_endpoint_that_cannot_be_inspected_is_not_absent() {
+        let fixture = tempfile::tempdir().unwrap();
+        let home = fixture.path().join("not-a-folder");
+        fs::write(&home, b"preserved bytes").unwrap();
+        let failure = stop_daemon(&home).unwrap_err();
+        assert!(
+            failure.contains("daemon socket cannot be inspected"),
+            "{failure}"
+        );
+        assert_eq!(fs::read(home).unwrap(), b"preserved bytes");
+        assert_eq!(fs::read_dir(fixture.path()).unwrap().count(), 1);
+    }
 }
