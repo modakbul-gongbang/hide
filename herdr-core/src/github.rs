@@ -1223,25 +1223,24 @@ struct GhIssueReference {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct MergedPullRequestProof {
     pub head_oid: String,
-    pub merge_oid: Option<String>,
+    /// The branch the pull request merged into. Only `main` proves anything
+    /// about main; a stacked pull request merged into its parent branch does not.
+    pub base_ref: String,
 }
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
 struct GhMergedPullRequestProof {
     head_ref_oid: String,
-    merge_commit: Option<GhCommitOid>,
+    base_ref_name: String,
 }
 
-#[derive(Debug, Deserialize)]
-struct GhCommitOid {
-    oid: String,
-}
-
-/// Exact commit identities for merged pull requests on one branch.
+/// Exact head commits and base branches of the merged pull requests on one
+/// branch.
 ///
 /// Cleanup uses this only when ordinary Git ancestry cannot prove that a
-/// worktree is merged. A branch name alone is never deletion evidence.
+/// worktree is merged. A branch name alone is never deletion evidence: the
+/// caller matches the head commit and the base.
 pub(crate) fn merged_pull_request_proofs(
     root: &Path,
     branch: &str,
@@ -1255,12 +1254,10 @@ pub(crate) fn merged_pull_request_proofs(
             "merged",
             "--head",
             branch,
-            "--base",
-            "main",
             "--limit",
             "100",
             "--json",
-            "headRefOid,mergeCommit",
+            "headRefOid,baseRefName",
         ],
     )
     .map_err(|failure| {
@@ -1279,7 +1276,7 @@ fn parse_merged_pull_request_proofs(output: &str) -> Result<Vec<MergedPullReques
         .into_iter()
         .map(|proof| MergedPullRequestProof {
             head_oid: proof.head_ref_oid,
-            merge_oid: proof.merge_commit.map(|commit| commit.oid),
+            base_ref: proof.base_ref_name,
         })
         .collect())
 }
@@ -2265,9 +2262,9 @@ esac"#,
     }
 
     #[test]
-    fn merged_pull_request_proof_keeps_exact_head_and_merge_commit_ids() {
+    fn merged_pull_request_proof_keeps_exact_head_and_base() {
         let proofs = parse_merged_pull_request_proofs(
-            r#"[{"headRefOid":"branch-head","mergeCommit":{"oid":"main-merge"}},{"headRefOid":"other-head","mergeCommit":null}]"#,
+            r#"[{"headRefOid":"branch-head","baseRefName":"main"},{"headRefOid":"other-head","baseRefName":"ci/platform-completion"}]"#,
         )
         .expect("merge proof parses");
         assert_eq!(
@@ -2275,11 +2272,11 @@ esac"#,
             vec![
                 MergedPullRequestProof {
                     head_oid: "branch-head".into(),
-                    merge_oid: Some("main-merge".into()),
+                    base_ref: "main".into(),
                 },
                 MergedPullRequestProof {
                     head_oid: "other-head".into(),
-                    merge_oid: None,
+                    base_ref: "ci/platform-completion".into(),
                 },
             ]
         );

@@ -455,7 +455,7 @@ describe("reasons in the operator's words (B15, B22)", () => {
       ["detached", "브랜치 없이 떨어진 HEAD"],
       ["contains_worktree", "다른 워크트리를 품고 있음"],
       ["unverified", "확인하지 못함"],
-      ["main_unavailable", "로컬 main을 읽을 수 없음"],
+      ["main_unavailable", "main을 읽을 수 없음"],
       ["alias", "폴더를 읽을 수 없음"],
       ["missing", "폴더를 읽을 수 없음"],
       ["unavailable", "폴더를 읽을 수 없음"],
