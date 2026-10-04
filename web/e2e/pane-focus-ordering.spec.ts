@@ -147,6 +147,10 @@ function observeFocusFrames(page: Page) {
 test("rapid pane clicks coalesce behind one request and leave keys on the last pane", { tag: "@platform" }, async ({ page }) => {
   const herdr = await startHerdr();
   const focusFrames = observeFocusFrames(page);
+  // Two fixed bursts produce at most 32 stage records, with no input contents.
+  const stages: { stage: string; at: number }[] = [];
+  const mark = (stage: string) => { stages.push({ stage, at: Date.now() }); };
+  let firstFocusAt: number | undefined;
   let gate: Awaited<ReturnType<typeof focusGate>> | undefined;
   let daemon: Daemon | undefined;
   try {
@@ -167,7 +171,9 @@ test("rapid pane clicks coalesce behind one request and leave keys on the last p
       await page.mouse.click(box.x + 100, box.y + 100);
     };
     const clickBurst = async () => {
+      mark("cdp.connect.before");
       const mouse = await page.context().newCDPSession(page);
+      mark("cdp.connect.after");
       try {
         const inputs: Promise<unknown>[] = [];
         lastClickAt = Date.now();
@@ -183,9 +189,13 @@ test("rapid pane clicks coalesce behind one request and leave keys on the last p
             inputs.push(mouse.send("Input.dispatchMouseEvent", { ...point, type: "mouseReleased", button: "left", buttons: 0, clickCount: 1 }));
           }
         }
+        mark("cdp.inputs.before");
         await Promise.all(inputs);
+        mark("cdp.inputs.after");
       } finally {
+        mark("cdp.detach.before");
         await mouse.detach();
+        mark("cdp.detach.after");
       }
     };
     const requested = () => diagnostics().filter((entry) => entry.kind === "pane.focus.requested");
@@ -196,10 +206,17 @@ test("rapid pane clicks coalesce behind one request and leave keys on the last p
         && last.occurred_at >= lastClickAt;
     };
 
+    mark("gate.arm");
     const held = gate.arm();
+    mark("first.click.before");
     await click(1);
+    mark("first.click.after");
     await held;
+    mark("gate.held");
+    mark("first.requested.before");
     await expect.poll(() => requested().at(-1)?.message).toBe(`Focusing pane ${second}`);
+    firstFocusAt = requested()[0]?.occurred_at;
+    mark("first.requested.after");
     const acceptedBefore = requested().length;
     const sentBefore = focusFrames.changes();
     await clickBurst();
@@ -209,13 +226,21 @@ test("rapid pane clicks coalesce behind one request and leave keys on the last p
     // Observe every accepted change before releasing the gate; a stale first-
     // pane snapshot or a later focus diagnostic cannot satisfy this barrier.
     const acceptedAfter = acceptedBefore + focusFrames.changes() - sentBefore;
+    mark("burst.accepted.before");
     await expect.poll(() => requested().length).toBe(acceptedAfter);
+    mark("burst.accepted.after");
     expect(requested().at(-1)?.message).toBe(`Focusing pane ${first}`);
     expect(diagnostics().some((entry) => entry.kind === "pane.focus.unknown")).toBe(false);
     expect(gate.requests).toEqual([second]);
+    mark("focused.attribute.before");
     await expect(panes[0]).toHaveAttribute("data-focused", "true");
+    mark("focused.attribute.after");
+    mark("gate.release.before");
     await gate.release();
+    mark("gate.release.after");
+    mark("first.confirmed.before");
     await expect.poll(confirmed).toBe(true);
+    mark("first.confirmed.after");
     expect(gate.requests).toEqual([second, first]);
     expect(gate.maximum()).toBe(1);
     expect(herdrHasFocus(herdr, first)).toBe(true);
@@ -237,6 +262,10 @@ test("rapid pane clicks coalesce behind one request and leave keys on the last p
     await expect(panes[1]).toHaveAttribute("data-focused", "true");
     await expect.poll(() => diagnostics().some((entry) => entry.kind === "pane.focus.followed")).toBe(true);
   } finally {
+    console.log("[focus-burst-timing]", JSON.stringify({
+      first_focus_at: firstFocusAt,
+      stages: stages.map(({ stage, at }) => ({ stage, at, since_first_focus_ms: firstFocusAt === undefined ? null : at - firstFocusAt })),
+    }));
     daemon?.stop();
     await gate?.stop();
     herdr.stop();
