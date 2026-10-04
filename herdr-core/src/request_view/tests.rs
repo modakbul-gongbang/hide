@@ -59,7 +59,15 @@ fn pull_request(
         updated_at_unix_ms: Some(u64::from(number)),
         created_at_unix_ms: Some(u64::from(number)),
         closed_at_unix_ms: None,
+        head_oid: Some(head_of(branch)),
+        cross_repository: false,
     }
+}
+
+/// The commit every test checkout on `branch` is on, and the head of the
+/// pull requests these tests make for it: the work belongs to its branch.
+fn head_of(branch: &str) -> String {
+    format!("head-of-{branch}")
 }
 
 fn github(pull_requests: Vec<PullRequestSnapshot>) -> GithubSnapshot {
@@ -74,15 +82,16 @@ fn github(pull_requests: Vec<PullRequestSnapshot>) -> GithubSnapshot {
 
 /// Every row's branch, by pane.
 fn run(rows: &mut [SidebarAgentSnapshot], branches: &[(&str, &str)], github: &GithubSnapshot) {
-    let branches: HashMap<String, String> = branches
+    let branches: HashMap<String, (String, String)> = branches
         .iter()
-        .map(|(pane, branch)| ((*pane).to_owned(), (*branch).to_owned()))
+        .map(|(pane, branch)| ((*pane).to_owned(), ((*branch).to_owned(), head_of(branch))))
         .collect();
     apply(
         rows,
         |pane| {
             Some(RowPlace {
-                branch: branches.get(pane).map(String::as_str),
+                branch: branches.get(pane).map(|(branch, _)| branch.as_str()),
+                head_sha: branches.get(pane).map(|(_, head)| head.as_str()),
                 root_path: ROOT,
             })
         },
@@ -243,12 +252,14 @@ fn an_opened_result_rests_until_another_pull_request_settles() {
     let lay = |rows: &mut Vec<SidebarAgentSnapshot>,
                github: &GithubSnapshot,
                verbs: &mut BTreeMap<String, VerbRecord>,
+               head: &str,
                now| {
         apply(
             rows,
             |_| {
                 Some(RowPlace {
                     branch: Some("after"),
+                    head_sha: Some(head),
                     root_path: ROOT,
                 })
             },
@@ -265,11 +276,13 @@ fn an_opened_result_rests_until_another_pull_request_settles() {
     );
     merged.merged_at_unix_ms = Some(ASKED + 1);
     let mut verbs = BTreeMap::new();
+    let first_head = head_of("after");
     let mut shown = rows(&[("p", "idle")]);
     lay(
         &mut shown,
         &github(vec![merged.clone()]),
         &mut verbs,
+        &first_head,
         ASKED + 10,
     );
     assert_eq!(verb(&shown[0]), RequestVerb::Result);
@@ -280,6 +293,7 @@ fn an_opened_result_rests_until_another_pull_request_settles() {
         &mut shown,
         &github(vec![merged.clone()]),
         &mut verbs,
+        &first_head,
         ASKED + 30,
     );
     assert_eq!(verb(&shown[0]), RequestVerb::Idle);
@@ -295,11 +309,15 @@ fn an_opened_result_rests_until_another_pull_request_settles() {
         PullRequestChecks::Passing,
     );
     later.closed_at_unix_ms = Some(ASKED + 50);
+    // The branch was worked on again after the merge, so the checkout is on
+    // the later pull request's commit, not the merged one's.
+    later.head_oid = Some("second-round".to_owned());
     let mut shown = rows(&[("p", "idle")]);
     lay(
         &mut shown,
         &github(vec![merged, later]),
         &mut verbs,
+        "second-round",
         ASKED + 60,
     );
     assert_eq!(verb(&shown[0]), RequestVerb::Result);
@@ -436,4 +454,37 @@ fn a_verbs_time_holds_while_the_verb_holds_and_starts_over_when_it_moves() {
     ));
     assert_eq!(working[0].request.as_ref().unwrap().verb_since_unix_ms, 30);
     assert!(prune_verbs(&mut verbs, |_| true));
+}
+
+#[test]
+fn a_merged_pull_request_of_a_reused_branch_name_is_not_a_rows_result() {
+    let merged = pull_request(
+        1,
+        "feature",
+        PullRequestBadge::Merged,
+        PullRequestChecks::Passing,
+    );
+    let on = |head: &str| {
+        let mut shown = rows(&[("p", "idle")]);
+        apply(
+            &mut shown,
+            |_| {
+                Some(RowPlace {
+                    branch: Some("feature"),
+                    head_sha: Some(head),
+                    root_path: ROOT,
+                })
+            },
+            &github(vec![merged.clone()]),
+            &mut BTreeMap::new(),
+            2_000_000,
+        );
+        shown
+            .remove(0)
+            .request
+            .map_or(0, |block| block.pull_requests.len())
+    };
+    let current = head_of("feature");
+    assert_eq!(on("new-work"), 0);
+    assert_eq!(on(&current), 1);
 }

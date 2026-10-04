@@ -438,6 +438,9 @@ The shell memoizes the board by navigation snapshot revision, project identity a
 A body re-evaluation on unchanged input does not regroup cards or rebuild lineage.
 The core issue projection uses accepted catalog and metadata only; it schedules GitHub work on a changed selected reference, board open, project selection or explicit refresh, never a timer.
 The GitHub reader keeps its existing single worker and per-project generation cache.
+A project's pull request read is two concurrent `gh pr list` calls under the same 15-second limit, so it adds one short-lived thread per read and no timer; a read asks for the checks of the open pull requests only, which took it from 11 - 14 seconds to about 5 on this repository (2026-10-05, same Mac and `gh`), and the cache keeps at most one check result per listed pull request.
+Each read's `pull_requests.ok`, `pull_requests.empty` or `pull_requests.failed` diagnostic carries `duration_ms`, which is where a slow read is found afterwards.
+Tying a pull request to a checkout compares the checkout's already-held HEAD with at most 200 listed pull requests under the lock, with no Git process or file read.
 At most 200 linked identities and backlog entries are retained per project; one extra list result reports overflow.
 Closed and cross-repository identities are resolved in one bounded query.
 Manual writes use the existing task-operation slot and a terminating worker; cleanup shares the bounded purpose mirror queue.

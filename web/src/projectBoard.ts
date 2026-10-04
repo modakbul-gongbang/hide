@@ -653,7 +653,10 @@ export function buildPullRequests(project: BoardProject, now: number): PrBoard {
   const rows: PrRow[] = [];
   for (const pr of workspace.pull_requests ?? []) {
     const branch = pr.head_branch ?? "";
-    const checkout = workspace.checkouts.find((row) => row.branch === branch && (row.is_worktree || row.exists)) ?? null;
+    // The checkout the core connected it to (a settled pull request only at the
+    // exact commit), never a branch of the same name: a branch used again for
+    // new work is not the merged pull request's worktree to clean up.
+    const checkout = workspace.checkouts.find((row) => row.pull_request?.url === pr.url && (row.is_worktree || row.exists)) ?? null;
     const boardRows = checkout ? (rowsByCheckout.get(checkout.id) ?? []) : [];
     const panes = new Set(checkout?.tabs.flatMap((tab) => tab.panes.map((pane) => pane.id)) ?? []);
     // The agent whose session made it is on its row too, wherever it works
