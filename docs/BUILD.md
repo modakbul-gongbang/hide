@@ -58,6 +58,17 @@ The Cargo `test` mode forwards trailing test arguments, so an explicitly configu
 The no-argument `test` mode remains the full locked workspace gate.
 Each compiler or test process's failure reaches the caller.
 
+CI uses scoped Cargo modes `test-scoped`, `check`, `build` and `clippy` with trailing Cargo arguments, for example `bash scripts/verify-cargo.sh test-scoped -p hide-platform -p hide-herdr-client`.
+Each adds `--locked`, reuses the installed toolchain, clears `HERDR_*`, and fixes output to this worktree's `target/`.
+Scoped modes accept at most 128 arguments and refuse `--target-dir`, `--manifest-path` and `--config`; an unknown mode exits 2.
+The sealed `test`, `lint`, `release` and `cli` invocations keep their existing behavior.
+`verify-web.sh install [--ignore-scripts]` locks dependency installation; `verify-web.sh <web|desktop|hcoord> <typecheck|lint|test|build>` runs one package step.
+`web e2e` runs Playwright against the web output already built; `desktop e2e` rebuilds the desktop host before Playwright.
+Both forward the test arguments and their exit status, so a missing test filter fails the caller.
+`playwright-install` installs Chromium for web or desktop, `desktop package` packages this runner's app, and `hcoord test:e2e` runs its isolated coordination suite.
+An invalid package/action pair or more than 128 trailing arguments exits 2; the no-argument full web gate stays unchanged.
+`test_ci_verification_entrypoints.py` checks this external command boundary without building or installing; it complements the real build tests below.
+
 The build regression tests in `test_verification_builds.py` use a tiny real Cargo workspace, not compiler mocks.
 They check that a caller's `CARGO_TARGET_DIR` cannot move the release binaries, that output stays in the checkout, warm build reuse, a core value change, a changed failing test, and compiler and prerequisite failure propagation.
 They require macOS with Cargo.
@@ -71,6 +82,8 @@ All test daemons and temporary files are cleaned up on failure as well as succes
 
 `desktop/` is a pnpm workspace member; `pnpm install` at the root installs it with the web shell.
 Electron downloads its runtime into `desktop/node_modules/electron/dist/` on the first launch rather than at install, so a lane that only typechecks never fetches it.
+CI acquires that lock-resolved runtime once with `bash scripts/verify-web.sh desktop electron-install` before desktop or packaged-app fixtures, using the dependency's own checksum-verifying installer within a five-minute step.
+An acquisition failure blocks the suite at that prerequisite and retains the upstream error instead of retrying the download in each test.
 
 | Command | Does |
 | --- | --- |
@@ -82,6 +95,8 @@ Electron downloads its runtime into `desktop/node_modules/electron/dist/` on the
 
 The app attaches to whatever daemon the environment names: without `HIDE_STATE_DIR` it is the operator's own at `~/.hide/state`.
 For QA, set `HIDE_STATE_DIR`, `HOME`, `HERDR_SOCKET_PATH` and `HIDE_DESKTOP_USER_DATA_DIR` to private paths, as `desktop/e2e/fixture.ts` does and refuses to launch without.
+Use `web/e2e/platform-fixture.ts` for the native executable and tool paths and for Windows `USERPROFILE`, `APPDATA` and `LOCALAPPDATA` inside that private home.
+The fixture C shim needs the runner's native compiler, `cc` on Unix or `clang.exe` on Windows, with an owned 20-second process bound; this is a fixture prerequisite, not an installed product requirement.
 A packaged app does not need `hide` on `PATH`: it ships its own CLI and Herdr, and only falls back to a login-shell PATH search and the well-known install directories when its own bundled CLI is somehow missing (see `docs/ARCHITECTURE.md`, The desktop host).
 macOS may refuse the unsigned app's first launch until it is opened once with Open from the context menu.
 
