@@ -189,12 +189,13 @@ fn dispatch(shared: &Arc<Mutex<Runtime>>, payload: Value) {
 fn wait(shared: &Arc<Mutex<Runtime>>, what: &str, ready: impl Fn(&Runtime) -> bool) {
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     while !ready(&shared.lock().unwrap()) {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "timed out waiting for {what}: {:?} {:?}",
-            shared.lock().unwrap().snapshot.task_operation,
-            shared.lock().unwrap().snapshot.status.last_error,
-        );
+        if std::time::Instant::now() >= deadline {
+            let runtime = shared.lock().unwrap();
+            panic!(
+                "timed out waiting for {what}: {:?} {:?}",
+                runtime.snapshot.task_operation, runtime.snapshot.status.last_error
+            );
+        }
         std::thread::sleep(Duration::from_millis(5));
     }
 }
@@ -229,6 +230,19 @@ fn a_device_home_start_makes_home_then_starts_the_agent_with_its_folders() {
     let machine = machine();
     let herdr = herdr("home-device");
     let shared = device_runtime(&herdr, &machine.user_home);
+    shared.lock().unwrap().ingest_kit_report(
+        DEVICE,
+        &hide_kit::KitReport {
+            components: vec![hide_kit::ComponentReport {
+                id: hide_kit::ComponentId::CodexPerPane,
+                state: hide_kit::ComponentState::Off,
+                reason: None,
+                location: None,
+                codex_daemon: Some(true),
+            }],
+            ..Default::default()
+        },
+    );
     {
         let mut runtime = shared.lock().unwrap();
         for path in &machine.projects {
@@ -314,7 +328,11 @@ fn a_device_home_start_makes_home_then_starts_the_agent_with_its_folders() {
         .find(|(method, _)| method == "agent.start")
         .map(|(_, params)| params.clone())
         .expect("agent.start");
-    let mut expected = vec!["--model".to_owned(), "gpt-6-astra".to_owned()];
+    let mut expected = vec![
+        "--no-daemon".to_owned(),
+        "--model".to_owned(),
+        "gpt-6-astra".to_owned(),
+    ];
     let mut folders = machine.projects.clone();
     folders.sort();
     for folder in folders {
@@ -335,6 +353,39 @@ fn a_device_home_start_makes_home_then_starts_the_agent_with_its_folders() {
         .map(|(_, params)| params.clone())
         .expect("the Home owner is opened");
     assert_eq!(created["cwd"], json!(home_path));
+}
+
+#[test]
+fn a_device_home_start_with_unknown_codex_reports_the_next_action_without_starting() {
+    let machine = machine();
+    let herdr = herdr("home-device-unknown-codex");
+    let shared = device_runtime(&herdr, &machine.user_home);
+    dispatch(
+        &shared,
+        json!({"home": true, "device_id": DEVICE, "provider": "codex", "prompt": "tidy the notes", "request_id": "unknown"}),
+    );
+    wait(&shared, "the refused agent start", |runtime| {
+        runtime
+            .snapshot
+            .task_operation
+            .as_ref()
+            .is_some_and(|operation| operation.agent_phase.as_deref() == Some("failed"))
+    });
+    let outcome = operation(&shared);
+    assert!(
+        outcome
+            .agent_message
+            .as_deref()
+            .unwrap()
+            .contains("Settings")
+    );
+    assert_eq!(outcome.request_id.as_deref(), Some("unknown"));
+    assert!(
+        herdr
+            .calls()
+            .iter()
+            .all(|(method, _)| method != "agent.start")
+    );
 }
 
 /// B17, B19: a new tab in this machine's Home is a terminal start there; a

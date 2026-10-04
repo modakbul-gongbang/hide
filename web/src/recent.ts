@@ -68,7 +68,7 @@ export type RecentEntry = Surface | ScreenVisit;
 function screenVisit(screen: PageScreen, frontId: string): ScreenVisit {
   if (screen.kind === "main") {
     const deviceId = screen.deviceId ?? frontId;
-    return { key: `main:${deviceId}`, screen: { kind: "main", deviceId } };
+    return { key: `main:${deviceId}`, screen: { ...screen, deviceId } };
   }
   return { key: `overview:${screen.projectId}`, screen };
 }

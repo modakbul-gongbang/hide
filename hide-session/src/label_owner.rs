@@ -12,7 +12,7 @@ use std::path::Path;
 /// A compact, path-free token that consumers can compare with Herdr's current
 /// native reference. Unsupported or unreported references prove nothing.
 pub fn label_reference_token(provider: &str, kind: &str, value: &str) -> Option<String> {
-    if !matches!(provider, "codex" | "claude")
+    if !matches!(provider, "codex" | "claude" | "opencode")
         || !matches!(kind, "id" | "path")
         || value.trim().is_empty()
         || value.chars().any(char::is_control)
@@ -118,6 +118,7 @@ mod tests {
                 Agent::Claude => {
                     serde_json::json!({"type":"user","sessionId":"native-a","message":{"role":"user","content":"content must not identify the owner"}})
                 }
+                Agent::OpenCode => unreachable!("OpenCode keeps no session file"),
             };
             fs::write(&path, format!("{metadata}\n")).unwrap();
             let id = confirm_label_session(agent, &path, Some("native-a")).unwrap();

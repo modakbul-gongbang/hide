@@ -125,6 +125,7 @@ pub(crate) struct WakeRequest {
     pub(crate) mode: WakeMode,
     pub(crate) args: Vec<String>,
     pub(crate) cwd: Option<String>,
+    pub(crate) codex_daemon: crate::codex_launch::CodexDaemon,
 }
 
 /// How a wake ended. `reason` is what the pane says (B14); `detail` is what
@@ -152,11 +153,12 @@ pub(crate) fn start_agent(connector: &dyn ApiConnector, request: &WakeRequest) -
         &request.name,
         &request.kind,
         request.args.clone(),
+        request.codex_daemon,
     ) {
         Ok(params) => params,
         Err(detail) => {
             return WakeOutcome::Failed {
-                reason: refused_reason(request.mode).to_owned(),
+                reason: detail.clone(),
                 detail,
             };
         }
@@ -330,6 +332,30 @@ mod tests {
     }
 
     #[test]
+    fn an_unknown_codex_wake_keeps_the_next_action_and_sends_no_start() {
+        let herdr = FakeHerdr::start("codex-wake-capability", |method, _| {
+            panic!("unexpected {method}")
+        });
+        let outcome = start_agent(
+            &herdr.connector(),
+            &WakeRequest {
+                codex_daemon: crate::codex_launch::CodexDaemon::Unknown,
+                pane_id: "w1:p1".into(),
+                kind: "codex".into(),
+                name: "one".into(),
+                mode: WakeMode::Resume,
+                args: vec!["resume".into(), "abc".into()],
+                cwd: None,
+            },
+        );
+        let WakeOutcome::Failed { reason, .. } = outcome else {
+            panic!("wake started")
+        };
+        assert!(reason.contains("Settings"), "{reason}");
+        assert!(herdr.methods().is_empty());
+    }
+
+    #[test]
     fn a_refused_wake_names_a_plain_reason_and_keeps_herdrs_words_for_the_log() {
         let herdr = FakeHerdr::start_with_errors("agent-wake-refused", |method, _| match method {
             "pane.process_info" => Ok(process_info(42, 42)),
@@ -342,6 +368,7 @@ mod tests {
         let outcome = start_agent(
             &herdr.connector(),
             &WakeRequest {
+                codex_daemon: Default::default(),
                 pane_id: "w1:p1".into(),
                 kind: "claude".into(),
                 name: "one".into(),
@@ -365,6 +392,7 @@ mod tests {
         let outcome = start_agent(
             &herdr.connector(),
             &WakeRequest {
+                codex_daemon: Default::default(),
                 pane_id: "w1:p1".into(),
                 kind: "codex".into(),
                 name: "wake-w1-p1".into(),

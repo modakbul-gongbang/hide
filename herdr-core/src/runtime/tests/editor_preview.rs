@@ -523,6 +523,7 @@ fn reveal_and_reopen_open_ordinary_tabs() {
         .cloned()
         .expect("the closed file");
     let request = live::ReopenRequest {
+        codex_daemon: Default::default(),
         item,
         workspace_exists: true,
         tab_exists: true,

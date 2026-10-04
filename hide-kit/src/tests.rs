@@ -141,6 +141,7 @@ impl Fixture {
                 program: PathBuf::from("/bin/sh"),
                 env: vec![("HCOORD_TEST".to_owned(), "1".to_owned())],
             }),
+            codex: None,
             hcoord_home: None,
             legacy: Vec::new(),
             stop: Arc::default(),
@@ -200,7 +201,7 @@ fn a_first_apply_installs_every_part_and_keeps_other_tools_entries() {
     let fixture = Fixture::new();
     let before = other_tool_entry(OTHER_TOOL);
 
-    let report = apply(&fixture.target, &Scope::Automatic);
+    let report = apply(&fixture.target, &Scope::automatic());
 
     for id in [ComponentId::Cli, ComponentId::ClaudeCodeHook] {
         assert_eq!(
@@ -279,13 +280,13 @@ fn a_first_apply_installs_every_part_and_keeps_other_tools_entries() {
 #[test]
 fn a_second_apply_of_the_same_build_changes_nothing() {
     let fixture = Fixture::new();
-    apply(&fixture.target, &Scope::Automatic);
+    apply(&fixture.target, &Scope::automatic());
     let settings = fixture.settings();
     let record_path = fixture.home().join(".hide/kit/installed.json");
     let record_written = std::fs::metadata(&record_path).unwrap().modified().unwrap();
     let calls = fixture.herdr.calls.lock().unwrap().len();
 
-    let report = apply(&fixture.target, &Scope::Automatic);
+    let report = apply(&fixture.target, &Scope::automatic());
 
     assert_eq!(fixture.settings(), settings);
     assert_eq!(
@@ -302,10 +303,10 @@ fn a_second_apply_of_the_same_build_changes_nothing() {
 #[test]
 fn a_part_the_operator_removed_stays_removed_until_reinstall_asks_for_it() {
     let fixture = Fixture::new();
-    apply(&fixture.target, &Scope::Automatic);
+    apply(&fixture.target, &Scope::automatic());
     hide_agent_hooks::remove(hide_agent_hooks::AgentRuntime::ClaudeCode, fixture.home()).unwrap();
 
-    let report = apply(&fixture.target, &Scope::Automatic);
+    let report = apply(&fixture.target, &Scope::automatic());
     assert_eq!(
         state(&report, ComponentId::ClaudeCodeHook),
         ComponentState::Removed
@@ -314,7 +315,7 @@ fn a_part_the_operator_removed_stays_removed_until_reinstall_asks_for_it() {
 
     let report = apply(
         &fixture.target,
-        &Scope::Reinstall(vec![ComponentId::ClaudeCodeHook]),
+        &Scope::reinstall([ComponentId::ClaudeCodeHook]),
     );
     assert_eq!(
         state(&report, ComponentId::ClaudeCodeHook),
@@ -329,7 +330,7 @@ fn the_old_first_run_marker_does_not_count_as_an_install() {
     std::fs::create_dir_all(marker.parent().unwrap()).unwrap();
     std::fs::write(&marker, "").unwrap();
 
-    let report = apply(&fixture.target, &Scope::Automatic);
+    let report = apply(&fixture.target, &Scope::automatic());
 
     assert_eq!(
         state(&report, ComponentId::ClaudeCodeHook),
@@ -350,7 +351,7 @@ fn an_older_hook_is_replaced_on_the_next_apply() {
         ComponentState::Outdated
     );
 
-    let report = apply(&fixture.target, &Scope::Automatic);
+    let report = apply(&fixture.target, &Scope::automatic());
 
     assert_eq!(
         state(&report, ComponentId::ClaudeCodeHook),
@@ -367,7 +368,7 @@ fn a_hook_file_that_does_not_parse_is_left_byte_for_byte() {
     let broken = "{ \"hooks\": [ not json\n";
     std::fs::write(fixture.home().join(".claude/settings.json"), broken).unwrap();
 
-    let report = apply(&fixture.target, &Scope::Automatic);
+    let report = apply(&fixture.target, &Scope::automatic());
 
     let hook = report.component(ComponentId::ClaudeCodeHook).unwrap();
     assert_eq!(hook.state, ComponentState::Failed);
@@ -382,7 +383,7 @@ fn another_programs_hide_is_left_and_an_older_hide_link_is_replaced() {
     let link = fixture.home().join(".local/bin/hide");
     executable(&link, "#!/bin/sh\necho mine\n");
 
-    let report = apply(&fixture.target, &Scope::Automatic);
+    let report = apply(&fixture.target, &Scope::automatic());
     assert_eq!(state(&report, ComponentId::Cli), ComponentState::Failed);
     assert_eq!(
         std::fs::read_to_string(&link).unwrap(),
@@ -396,7 +397,7 @@ fn another_programs_hide_is_left_and_an_older_hide_link_is_replaced() {
         state(&status(&fixture.target), ComponentId::Cli),
         ComponentState::Outdated
     );
-    let report = apply(&fixture.target, &Scope::Automatic);
+    let report = apply(&fixture.target, &Scope::automatic());
     assert_eq!(state(&report, ComponentId::Cli), ComponentState::Installed);
 
     std::fs::remove_file(&link).unwrap();
@@ -405,7 +406,7 @@ fn another_programs_hide_is_left_and_an_older_hide_link_is_replaced() {
     std::fs::write(old_resources.join("app.asar"), "").unwrap();
     std::fs::write(old_resources.parent().unwrap().join("hide"), "").unwrap();
     std::os::unix::fs::symlink(old_resources.join("hide"), &link).unwrap();
-    let report = apply(&fixture.target, &Scope::Automatic);
+    let report = apply(&fixture.target, &Scope::automatic());
     assert_eq!(state(&report, ComponentId::Cli), ComponentState::Installed);
     assert_eq!(
         std::fs::read_link(&link).unwrap(),
@@ -414,7 +415,7 @@ fn another_programs_hide_is_left_and_an_older_hide_link_is_replaced() {
 
     std::fs::remove_file(&link).unwrap();
     std::os::unix::fs::symlink("/usr/local/bin/some-other-hide", &link).unwrap();
-    let report = apply(&fixture.target, &Scope::Automatic);
+    let report = apply(&fixture.target, &Scope::automatic());
     assert_eq!(state(&report, ComponentId::Cli), ComponentState::Failed);
     assert_eq!(
         std::fs::read_link(&link).unwrap(),
@@ -424,7 +425,10 @@ fn another_programs_hide_is_left_and_an_older_hide_link_is_replaced() {
     std::fs::remove_file(&link).unwrap();
     std::os::unix::fs::symlink("/another-program/resources/hide", &link).unwrap();
     assert_eq!(
-        state(&apply(&fixture.target, &Scope::Automatic), ComponentId::Cli),
+        state(
+            &apply(&fixture.target, &Scope::automatic()),
+            ComponentId::Cli
+        ),
         ComponentState::Failed
     );
     assert_eq!(
@@ -436,7 +440,7 @@ fn another_programs_hide_is_left_and_an_older_hide_link_is_replaced() {
     std::fs::remove_file(&link).unwrap();
     let climbing = fixture.target.owned_roots[0].join("../elsewhere/hide");
     std::os::unix::fs::symlink(&climbing, &link).unwrap();
-    let report = apply(&fixture.target, &Scope::Automatic);
+    let report = apply(&fixture.target, &Scope::automatic());
     assert_eq!(state(&report, ComponentId::Cli), ComponentState::Failed);
     assert_eq!(std::fs::read_link(&link).unwrap(), climbing);
 }
@@ -450,7 +454,7 @@ fn an_upgrade_takes_the_linked_labels_plugin_its_copy_and_its_state_out() {
     let record = fixture.home().join(".hide/kit/installed.json");
     std::fs::write(&record, r#"{"format":1,"installed":["labels"]}"#).unwrap();
 
-    let report = apply(&fixture.target, &Scope::Automatic);
+    let report = apply(&fixture.target, &Scope::automatic());
 
     assert!(fixture.herdr.plugins.lock().unwrap().is_empty());
     assert!(!labels_home(fixture.home()).exists());
@@ -468,7 +472,7 @@ fn an_upgrade_takes_the_linked_labels_plugin_its_copy_and_its_state_out() {
 
     // Nothing is left to take out, and Herdr is not asked again.
     let calls = fixture.herdr.calls.lock().unwrap().len();
-    let report = apply(&fixture.target, &Scope::Automatic);
+    let report = apply(&fixture.target, &Scope::automatic());
     assert!(report.labels_retirement.is_empty());
     assert_eq!(fixture.herdr.calls.lock().unwrap().len(), calls);
 }
@@ -478,7 +482,7 @@ fn a_github_install_of_the_labels_plugin_is_taken_out_through_the_herdr_command(
     let fixture = Fixture::new();
     fixture.legacy_plugin("github");
 
-    let report = apply(&fixture.target, &Scope::Automatic);
+    let report = apply(&fixture.target, &Scope::automatic());
 
     assert_eq!(
         std::fs::read_to_string(fixture.home().join("herdr.log")).unwrap(),
@@ -496,7 +500,7 @@ fn with_herdr_down_the_labels_plugin_files_stay_until_its_link_is_gone() {
     fixture.legacy_plugin("local");
     fixture.target.herdr_socket = fixture.root.join("no-herdr.sock");
 
-    let report = apply(&fixture.target, &Scope::Automatic);
+    let report = apply(&fixture.target, &Scope::automatic());
     assert!(
         report.labels_retirement.failures[0].contains("plugin.list"),
         "{report:?}"
@@ -506,7 +510,7 @@ fn with_herdr_down_the_labels_plugin_files_stay_until_its_link_is_gone() {
     assert_eq!(state(&report, ComponentId::Cli), ComponentState::Installed);
 
     fixture.target.herdr_socket = fixture.herdr.socket.clone();
-    let report = apply(&fixture.target, &Scope::Automatic);
+    let report = apply(&fixture.target, &Scope::automatic());
     assert!(report.labels_retirement.failures.is_empty());
     assert!(fixture.herdr.plugins.lock().unwrap().is_empty());
     assert!(!labels_home(fixture.home()).exists());
@@ -543,7 +547,7 @@ fn a_running_labels_watcher_is_found_by_its_lock_and_stopped() {
     let lock = plugin_state_dir(fixture.home()).join("watcher.lock");
     let mut watcher = lock_holder(&lock, &fixture.root.join("watcher-ready"));
 
-    let report = apply(&fixture.target, &Scope::Automatic);
+    let report = apply(&fixture.target, &Scope::automatic());
 
     let status = watcher.wait().unwrap();
     assert!(!status.success(), "the watcher was ended by a signal");
@@ -568,7 +572,7 @@ fn a_watcher_holding_another_homes_lock_is_left_running() {
     let lock = plugin_state_dir(&other_home).join("watcher.lock");
     let mut watcher = lock_holder(&lock, &fixture.root.join("other-ready"));
 
-    let report = apply(&fixture.target, &Scope::Automatic);
+    let report = apply(&fixture.target, &Scope::automatic());
 
     let still_running = watcher.try_wait().unwrap().is_none();
     let _ = watcher.kill();
@@ -610,7 +614,7 @@ fn a_watcher_that_cannot_be_stopped_keeps_its_state_folder() {
         other => panic!("the test could not take the lock: {other:?}"),
     };
 
-    let report = apply(&fixture.target, &Scope::Automatic);
+    let report = apply(&fixture.target, &Scope::automatic());
 
     assert!(!report.labels_retirement.failures.is_empty(), "{report:?}");
     assert!(lock.exists(), "the watcher's lock is gone: {report:?}");
@@ -628,7 +632,7 @@ fn without_a_runtime_for_hcoord_it_fails_and_an_existing_shim_is_left() {
     );
     fixture.target.hcoord = Err("hcoord needs Node 22.12.0 or later; none was found".to_owned());
 
-    let report = apply(&fixture.target, &Scope::Automatic);
+    let report = apply(&fixture.target, &Scope::automatic());
 
     let hcoord = report.component(ComponentId::Hcoord).unwrap();
     assert_eq!(hcoord.state, ComponentState::Failed);
@@ -647,7 +651,7 @@ fn without_a_runtime_for_hcoord_it_fails_and_an_existing_shim_is_left() {
 #[test]
 fn the_kit_runs_nothing_from_a_folder_another_account_can_change() {
     let fixture = Fixture::new();
-    apply(&fixture.target, &Scope::Automatic);
+    apply(&fixture.target, &Scope::automatic());
     let mode = |path: &Path| std::fs::metadata(path).unwrap().permissions().mode() & 0o777;
     let state = kit_state_dir(&fixture.target.home);
     assert_eq!(mode(&state), 0o700);
@@ -674,7 +678,7 @@ fn an_apply_waits_for_another_kit_changing_the_same_account() {
     let settings = fixture.home().join(".claude/settings.json");
     let held = lock_account(&fixture.target).unwrap();
     let target = fixture.target.clone();
-    let waiting = std::thread::spawn(move || apply(&target, &Scope::Automatic));
+    let waiting = std::thread::spawn(move || apply(&target, &Scope::automatic()));
     std::thread::sleep(std::time::Duration::from_millis(300));
     assert!(!waiting.is_finished());
     assert_eq!(std::fs::read_to_string(&settings).unwrap(), OTHER_TOOL);
@@ -690,7 +694,7 @@ fn an_apply_waits_for_another_kit_changing_the_same_account() {
         .target
         .stop
         .store(true, std::sync::atomic::Ordering::Relaxed);
-    let report = apply(&fixture.target, &Scope::Automatic);
+    let report = apply(&fixture.target, &Scope::automatic());
     assert!(
         report
             .components
@@ -707,7 +711,7 @@ fn an_unreadable_record_installs_nothing_missing_on_a_guess() {
     std::fs::create_dir_all(record.parent().unwrap()).unwrap();
     std::fs::write(&record, "not a record").unwrap();
 
-    let report = apply(&fixture.target, &Scope::Automatic);
+    let report = apply(&fixture.target, &Scope::automatic());
 
     let cli = report.component(ComponentId::Cli).unwrap();
     assert_eq!(cli.state, ComponentState::Failed);
@@ -720,7 +724,7 @@ fn an_unreadable_record_installs_nothing_missing_on_a_guess() {
 #[test]
 fn removing_the_kit_takes_only_hides_parts_and_leaves_hcoord() {
     let fixture = Fixture::new();
-    apply(&fixture.target, &Scope::Automatic);
+    apply(&fixture.target, &Scope::automatic());
 
     let report = remove(&fixture.target);
 
@@ -774,7 +778,7 @@ fn a_recorded_hcoord_in_the_old_home_is_moved_before_the_new_copy_and_linked_on_
         ComponentState::Outdated
     );
 
-    let report = apply(&fixture.target, &Scope::Automatic);
+    let report = apply(&fixture.target, &Scope::automatic());
 
     assert_eq!(
         state(&report, ComponentId::Hcoord),
@@ -809,7 +813,7 @@ fn a_recorded_hcoord_in_the_old_home_is_moved_before_the_new_copy_and_linked_on_
             .as_deref(),
         Some(home.join("bin/hcoord").display().to_string().as_str())
     );
-    let again = apply(&fixture.target, &Scope::Automatic);
+    let again = apply(&fixture.target, &Scope::automatic());
     assert_eq!(
         state(&again, ComponentId::Hcoord),
         ComponentState::Installed
@@ -829,7 +833,7 @@ fn a_failed_move_leaves_the_old_home_and_says_how_it_is_retried() {
     let old = installed_under_the_old_home(&fixture);
     std::fs::write(fixture.home().join("adopt-fails"), "").unwrap();
 
-    let report = apply(&fixture.target, &Scope::Automatic);
+    let report = apply(&fixture.target, &Scope::automatic());
 
     let part = report.component(ComponentId::Hcoord).unwrap();
     assert_eq!(part.state, ComponentState::Failed);
@@ -862,7 +866,7 @@ fn an_install_that_failed_after_the_move_is_finished_on_the_next_pass() {
     std::fs::remove_file(old.join("bin/hcoord")).unwrap();
     std::fs::create_dir(old.join("bin/hcoord")).unwrap();
 
-    let first = apply(&fixture.target, &Scope::Automatic);
+    let first = apply(&fixture.target, &Scope::automatic());
     assert_eq!(
         state(&first, ComponentId::Hcoord),
         ComponentState::Failed,
@@ -871,7 +875,7 @@ fn an_install_that_failed_after_the_move_is_finished_on_the_next_pass() {
     assert!(fixture.home().join(".hide/hcoord/ledger.json").is_file());
 
     std::fs::remove_dir(fixture.home().join(".hide/hcoord/bin/hcoord")).unwrap();
-    let second = apply(&fixture.target, &Scope::Automatic);
+    let second = apply(&fixture.target, &Scope::automatic());
     assert_eq!(
         state(&second, ComponentId::Hcoord),
         ComponentState::Installed,
@@ -891,7 +895,7 @@ fn a_relocated_hcoord_is_never_moved() {
     let relocated = fixture.root.join("coordinator");
     fixture.target.hcoord_home = Some(relocated.clone());
 
-    let report = apply(&fixture.target, &Scope::Automatic);
+    let report = apply(&fixture.target, &Scope::automatic());
 
     assert_eq!(
         state(&report, ComponentId::Hcoord),
@@ -916,7 +920,7 @@ fn a_relocated_hcoord_leaves_the_accounts_hcoord_link_alone() {
     std::os::unix::fs::symlink(&accounts, &link).unwrap();
     fixture.target.hcoord_home = Some(fixture.root.join("coordinator"));
 
-    let report = apply(&fixture.target, &Scope::Automatic);
+    let report = apply(&fixture.target, &Scope::automatic());
 
     let part = report.component(ComponentId::Hcoord).unwrap();
     assert_eq!(part.state, ComponentState::Installed, "{report:?}");
@@ -931,13 +935,13 @@ fn a_relocated_hcoord_leaves_the_accounts_hcoord_link_alone() {
 #[test]
 fn an_old_home_beside_the_new_one_is_named_and_does_not_block_updates() {
     let fixture = Fixture::new();
-    apply(&fixture.target, &Scope::Automatic);
+    apply(&fixture.target, &Scope::automatic());
     std::fs::remove_file(fixture.home().join("ensure.log")).unwrap();
     let old = fixture.home().join(".hcoord");
     std::fs::create_dir_all(&old).unwrap();
     std::fs::write(old.join("ledger.json"), "{\"kept\":true}").unwrap();
 
-    let report = apply(&fixture.target, &Scope::Automatic);
+    let report = apply(&fixture.target, &Scope::automatic());
 
     let part = report.component(ComponentId::Hcoord).unwrap();
     assert_eq!(part.state, ComponentState::Installed, "{report:?}");
@@ -963,7 +967,7 @@ fn another_programs_hcoord_on_path_is_left_and_named() {
     let theirs = fixture.home().join(".local/bin/hcoord");
     executable(&theirs, "#!/bin/sh\necho theirs\n");
 
-    let report = apply(&fixture.target, &Scope::Automatic);
+    let report = apply(&fixture.target, &Scope::automatic());
 
     let part = report.component(ComponentId::Hcoord).unwrap();
     assert_eq!(part.state, ComponentState::Installed);
@@ -977,7 +981,7 @@ fn another_programs_hcoord_on_path_is_left_and_named() {
     // A link to the old home's shim is Hide's and is moved along.
     std::fs::remove_file(&theirs).unwrap();
     std::os::unix::fs::symlink(fixture.home().join(".hcoord/bin/hcoord"), &theirs).unwrap();
-    let report = apply(&fixture.target, &Scope::Automatic);
+    let report = apply(&fixture.target, &Scope::automatic());
     assert_eq!(report.component(ComponentId::Hcoord).unwrap().reason, None);
     assert_eq!(
         std::fs::read_link(&theirs).unwrap(),
@@ -996,7 +1000,7 @@ fn the_standalone_hcoord_plugin_is_unlinked_once() {
         "local",
     ));
 
-    let report = apply(&fixture.target, &Scope::Automatic);
+    let report = apply(&fixture.target, &Scope::automatic());
 
     assert_eq!(
         report.legacy_retirement.removed,
@@ -1004,7 +1008,7 @@ fn the_standalone_hcoord_plugin_is_unlinked_once() {
     );
     assert!(fixture.herdr.plugins.lock().unwrap().is_empty());
     let calls = fixture.herdr.calls.lock().unwrap().len();
-    let again = apply(&fixture.target, &Scope::Automatic);
+    let again = apply(&fixture.target, &Scope::automatic());
     assert!(again.legacy_retirement.is_empty());
     assert_eq!(
         fixture.herdr.calls.lock().unwrap().len(),
@@ -1030,7 +1034,7 @@ fn the_labels_era_folders_go_and_a_link_is_not_followed() {
     .unwrap();
     std::fs::create_dir_all(home.join(".local/state/claude")).unwrap();
 
-    let report = apply(&fixture.target, &Scope::Automatic);
+    let report = apply(&fixture.target, &Scope::automatic());
 
     assert!(report.legacy_retirement.failures.is_empty(), "{report:?}");
     assert!(!home.join(".local/state/hide-plugin-upgrade").exists());
@@ -1041,7 +1045,7 @@ fn the_labels_era_folders_go_and_a_link_is_not_followed() {
     std::fs::create_dir_all(&precious).unwrap();
     std::fs::write(precious.join("keep"), "x").unwrap();
     std::os::unix::fs::symlink(&precious, home.join(".local/state/hide-plugin-upgrade")).unwrap();
-    let report = apply(&fixture.target, &Scope::Automatic);
+    let report = apply(&fixture.target, &Scope::automatic());
     assert!(precious.join("keep").is_file());
     assert!(
         report
@@ -1077,7 +1081,7 @@ fn the_old_helper_root_goes_only_once_nothing_names_it() {
     )
     .unwrap();
 
-    let report = apply(&fixture.target, &Scope::Automatic);
+    let report = apply(&fixture.target, &Scope::automatic());
     assert!(
         old.join("current").exists(),
         "kept while the Codex hook names it"
@@ -1092,7 +1096,7 @@ fn the_old_helper_root_goes_only_once_nothing_names_it() {
     );
 
     std::fs::write(&codex, "{}").unwrap();
-    let report = apply(&fixture.target, &Scope::Automatic);
+    let report = apply(&fixture.target, &Scope::automatic());
     assert!(!old.exists(), "{report:?}");
     assert!(!home.join(".local/share/hide").exists());
     assert!(home.join(".local/share").is_dir());
@@ -1110,16 +1114,292 @@ fn a_recorded_command_is_upgraded_after_its_old_package_is_deleted() {
     let mut old = fixture.target.clone();
     old.kit_dir = old_resources.clone();
     assert_eq!(
-        state(&apply(&old, &Scope::Automatic), ComponentId::Cli),
+        state(&apply(&old, &Scope::automatic()), ComponentId::Cli),
         ComponentState::Installed
     );
     std::fs::remove_dir_all(old_resources.parent().unwrap()).unwrap();
     assert_eq!(
-        state(&apply(&fixture.target, &Scope::Automatic), ComponentId::Cli),
+        state(
+            &apply(&fixture.target, &Scope::automatic()),
+            ComponentId::Cli
+        ),
         ComponentState::Installed
     );
     assert_eq!(
         std::fs::read_link(fixture.home().join(".local/bin/hide")).unwrap(),
         fixture.target.kit_dir.join("hide")
     );
+}
+/// A `codex` that keeps `daemon_auto_start` in `$CODEX_HOME/daemon` the way
+/// `codex features` reports it, logs every call, and is told by files in
+/// HOME to be an old Codex (`codex-old`), to fail (`codex-fails`) or to have a
+/// daemon answering (`daemon-running`).
+fn fake_codex(fixture: &mut Fixture, daemon: &str) -> PathBuf {
+    let codex = fixture.root.join("bin/codex");
+    executable(
+        &codex,
+        concat!(
+            "#!/bin/sh\n",
+            "echo \"$@\" >> \"$HOME/codex.log\"\n",
+            "if [ -e \"$HOME/codex-fails\" ]; then echo 'Error: config.toml is locked' >&2; exit 1; fi\n",
+            "case \"$1 $2\" in\n",
+            "  'features list')\n",
+            "    echo 'apps                 stable  true'\n",
+            "    [ -e \"$HOME/codex-old\" ] || echo \"daemon_auto_start    stable  $(cat \"$CODEX_HOME/daemon\" 2>/dev/null || echo true)\" ;;\n",
+            "  'features disable') echo false > \"$CODEX_HOME/daemon\" ;;\n",
+            "  'features enable') echo true > \"$CODEX_HOME/daemon\" ;;\n",
+            "  'app-server daemon')\n",
+            "    [ -e \"$HOME/daemon-running\" ] || { echo 'Error: failed to connect' >&2; exit 1; }\n",
+            "    echo '{\"status\":\"running\"}' ;;\n",
+            "  *) exit 2 ;;\n",
+            "esac\n",
+        ),
+    );
+    let folder = fixture.home().join(".codex");
+    std::fs::create_dir_all(&folder).unwrap();
+    std::fs::write(folder.join("daemon"), format!("{daemon}\n")).unwrap();
+    fixture.target.codex = Some(codex.clone());
+    codex
+}
+
+impl Fixture {
+    fn daemon_setting(&self) -> String {
+        std::fs::read_to_string(self.home().join(".codex/daemon"))
+            .unwrap()
+            .trim()
+            .to_owned()
+    }
+
+    /// The `codex features enable|disable` calls the kit made, in order.
+    fn codex_writes(&self) -> Vec<String> {
+        std::fs::read_to_string(self.home().join("codex.log"))
+            .unwrap_or_default()
+            .lines()
+            .filter(|line| {
+                line.starts_with("features enable") || line.starts_with("features disable")
+            })
+            .map(str::to_owned)
+            .collect()
+    }
+}
+
+#[test]
+fn the_first_pass_turns_the_codex_daemon_off_once_and_then_converges() {
+    let mut fixture = Fixture::new();
+    fake_codex(&mut fixture, "true");
+
+    let report = apply(&fixture.target, &Scope::automatic());
+    assert_eq!(
+        state(&report, ComponentId::CodexPerPane),
+        ComponentState::Installed,
+        "{report:?}"
+    );
+    assert_eq!(fixture.daemon_setting(), "false");
+    let part = report.component(ComponentId::CodexPerPane).unwrap();
+    assert_eq!(part.reason, None);
+    assert_eq!(
+        part.location.as_deref(),
+        Some(fixture.home().join(".codex/config.toml").to_str().unwrap())
+    );
+
+    for _ in 0..2 {
+        let report = apply(&fixture.target, &Scope::automatic());
+        assert_eq!(
+            state(&report, ComponentId::CodexPerPane),
+            ComponentState::Installed
+        );
+    }
+    assert_eq!(
+        fixture.codex_writes(),
+        ["features disable daemon_auto_start"]
+    );
+}
+
+#[test]
+fn a_codex_already_running_per_pane_is_not_written_to() {
+    let mut fixture = Fixture::new();
+    fake_codex(&mut fixture, "false");
+
+    let report = apply(&fixture.target, &Scope::automatic());
+
+    assert_eq!(
+        state(&report, ComponentId::CodexPerPane),
+        ComponentState::Installed
+    );
+    assert!(fixture.codex_writes().is_empty());
+}
+
+#[test]
+fn turning_the_part_off_gives_codex_its_daemon_back_and_no_pass_reverses_it() {
+    let mut fixture = Fixture::new();
+    fake_codex(&mut fixture, "true");
+    apply(&fixture.target, &Scope::automatic());
+
+    let report = apply(
+        &fixture.target,
+        &Scope::turn_off([ComponentId::CodexPerPane]),
+    );
+    assert_eq!(
+        state(&report, ComponentId::CodexPerPane),
+        ComponentState::Off,
+        "{report:?}"
+    );
+    assert!(!ComponentState::Off.needs_attention());
+    assert_eq!(fixture.daemon_setting(), "true");
+
+    let report = apply(&fixture.target, &Scope::automatic());
+    assert_eq!(
+        state(&report, ComponentId::CodexPerPane),
+        ComponentState::Off
+    );
+    assert_eq!(fixture.daemon_setting(), "true");
+
+    // Turning it on is the operator asking for it back.
+    let report = apply(
+        &fixture.target,
+        &Scope::reinstall([ComponentId::CodexPerPane]),
+    );
+    assert_eq!(
+        state(&report, ComponentId::CodexPerPane),
+        ComponentState::Installed
+    );
+    assert_eq!(
+        fixture.codex_writes(),
+        [
+            "features disable daemon_auto_start",
+            "features enable daemon_auto_start",
+            "features disable daemon_auto_start",
+        ]
+    );
+}
+
+#[test]
+fn a_daemon_setting_turned_back_on_outside_hide_reads_as_off() {
+    let mut fixture = Fixture::new();
+    fake_codex(&mut fixture, "true");
+    apply(&fixture.target, &Scope::automatic());
+    std::fs::write(fixture.home().join(".codex/daemon"), "true\n").unwrap();
+
+    let report = apply(&fixture.target, &Scope::automatic());
+
+    assert_eq!(
+        state(&report, ComponentId::CodexPerPane),
+        ComponentState::Off
+    );
+    assert_eq!(fixture.daemon_setting(), "true");
+    assert_eq!(
+        fixture.codex_writes(),
+        ["features disable daemon_auto_start"]
+    );
+}
+
+#[test]
+fn a_machine_without_a_codex_that_has_the_daemon_is_not_applicable() {
+    // No codex at all.
+    let fixture = Fixture::new();
+    let report = apply(&fixture.target, &Scope::automatic());
+    assert_eq!(
+        state(&report, ComponentId::CodexPerPane),
+        ComponentState::Absent
+    );
+
+    // A Codex never set up here: capability is read, no configuration is made.
+    let mut fixture = Fixture::new();
+    fake_codex(&mut fixture, "true");
+    std::fs::remove_dir_all(fixture.home().join(".codex")).unwrap();
+    let report = apply(&fixture.target, &Scope::automatic());
+    assert_eq!(
+        state(&report, ComponentId::CodexPerPane),
+        ComponentState::Absent
+    );
+    assert!(!fixture.home().join(".codex").exists());
+    assert_eq!(
+        report
+            .component(ComponentId::CodexPerPane)
+            .unwrap()
+            .codex_daemon,
+        Some(true)
+    );
+    assert!(fixture.codex_writes().is_empty());
+
+    // An older Codex that has no such setting.
+    let mut fixture = Fixture::new();
+    fake_codex(&mut fixture, "true");
+    std::fs::write(fixture.home().join("codex-old"), "").unwrap();
+    let report = apply(&fixture.target, &Scope::automatic());
+    assert_eq!(
+        state(&report, ComponentId::CodexPerPane),
+        ComponentState::Absent,
+        "{report:?}"
+    );
+    assert!(fixture.codex_writes().is_empty());
+    assert_eq!(
+        report
+            .component(ComponentId::CodexPerPane)
+            .unwrap()
+            .codex_daemon,
+        Some(false)
+    );
+}
+
+#[test]
+fn a_codex_that_fails_marks_only_its_part_and_changes_nothing() {
+    let mut fixture = Fixture::new();
+    fake_codex(&mut fixture, "true");
+    std::fs::write(fixture.home().join("codex-fails"), "").unwrap();
+
+    let report = apply(&fixture.target, &Scope::automatic());
+
+    let part = report.component(ComponentId::CodexPerPane).unwrap();
+    assert_eq!(part.state, ComponentState::Failed);
+    assert!(
+        part.reason
+            .as_deref()
+            .is_some_and(|reason| reason.contains("config.toml is locked")),
+        "{part:?}"
+    );
+    assert_eq!(
+        state(&report, ComponentId::ClaudeCodeHook),
+        ComponentState::Installed
+    );
+    assert_eq!(fixture.daemon_setting(), "true");
+}
+
+#[test]
+fn a_running_daemon_is_left_alone_and_said_on_the_row_until_it_goes_down() {
+    let mut fixture = Fixture::new();
+    fake_codex(&mut fixture, "true");
+    std::fs::write(fixture.home().join("daemon-running"), "").unwrap();
+
+    let report = apply(&fixture.target, &Scope::automatic());
+    let part = report.component(ComponentId::CodexPerPane).unwrap();
+    assert_eq!(part.state, ComponentState::Installed);
+    assert_eq!(part.reason.as_deref(), Some("새로 여는 Codex부터 적용"));
+    let log = std::fs::read_to_string(fixture.home().join("codex.log")).unwrap();
+    assert!(!log.contains("daemon stop"), "{log}");
+
+    std::fs::remove_file(fixture.home().join("daemon-running")).unwrap();
+    let part = status(&fixture.target)
+        .component(ComponentId::CodexPerPane)
+        .cloned()
+        .unwrap();
+    assert_eq!(part.state, ComponentState::Installed);
+    assert_eq!(part.reason, None);
+}
+
+#[test]
+fn a_later_choice_for_one_part_wins_when_two_requests_merge() {
+    let merged = Scope::turn_off([ComponentId::CodexPerPane]).merge(Scope::reinstall([
+        ComponentId::CodexPerPane,
+        ComponentId::Cli,
+    ]));
+    assert_eq!(
+        merged,
+        Scope::reinstall([ComponentId::CodexPerPane, ComponentId::Cli])
+    );
+    let merged = Scope::reinstall([ComponentId::CodexPerPane, ComponentId::Cli])
+        .merge(Scope::turn_off([ComponentId::CodexPerPane]));
+    assert_eq!(merged.restore, BTreeSet::from([ComponentId::Cli]));
+    assert_eq!(merged.turn_off, BTreeSet::from([ComponentId::CodexPerPane]));
+    assert!(Scope::automatic().merge(Scope::automatic()).is_automatic());
 }
