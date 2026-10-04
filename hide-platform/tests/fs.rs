@@ -150,6 +150,73 @@ fn widen(path: &Path, write: bool) {
 // ---- private ------------------------------------------------------------
 
 #[test]
+fn inspection_accepts_protected_directories_and_refuses_modifiable_entries_without_changes() {
+    let outer = folder();
+    let directory = outer.path().join("state");
+    private::create_dir(&directory).unwrap();
+    let kept = directory.join("keep");
+    fs::write(&kept, b"preserved state").unwrap();
+    let before = identity::file_id(&directory).unwrap();
+    assert_eq!(
+        private::inspect_directory_entry(&directory).unwrap(),
+        private::InspectionDirectory::Real
+    );
+    assert!(private::inspect_directory_entry(&kept).is_err());
+    assert_eq!(identity::file_id(&directory).unwrap(), before);
+    assert_eq!(read(&kept), "preserved state");
+    widen(&directory, true);
+    assert!(private::inspect_directory_entry(&directory).is_err());
+    assert_eq!(identity::file_id(&directory).unwrap(), before);
+    assert_eq!(read(&kept), "preserved state");
+    assert_eq!(names(&directory), ["keep"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn inspection_returns_only_system_owned_aliases_without_following_their_targets() {
+    use std::os::unix::fs::MetadataExt;
+
+    let outer = folder();
+    let target = outer.path().join("absent-target");
+    let alias = outer.path().join("alias");
+    link::create_link(&target, &alias).unwrap();
+    let before = fs::read_link(&alias).unwrap();
+    let result = private::inspect_directory_entry(&alias);
+    if fs::symlink_metadata(&alias).unwrap().uid() == 0 {
+        assert_eq!(
+            result.unwrap(),
+            private::InspectionDirectory::SystemAlias(target.clone())
+        );
+    } else {
+        assert!(result.is_err());
+    }
+    assert_eq!(fs::read_link(&alias).unwrap(), before);
+    assert!(!target.exists());
+    assert_eq!(names(outer.path()), ["alias"]);
+}
+
+#[cfg(unix)]
+#[test]
+fn inspection_accepts_sticky_system_directories_and_reports_system_alias_targets() {
+    use std::os::unix::fs::MetadataExt;
+
+    let metadata = fs::symlink_metadata("/tmp").unwrap();
+    assert_eq!(metadata.uid(), 0);
+    if metadata.file_type().is_symlink() {
+        assert_eq!(
+            private::inspect_directory_entry(Path::new("/tmp")).unwrap(),
+            private::InspectionDirectory::SystemAlias(fs::read_link("/tmp").unwrap())
+        );
+    } else {
+        assert_eq!(
+            private::inspect_directory_entry(Path::new("/tmp")).unwrap(),
+            private::InspectionDirectory::Real
+        );
+    }
+    assert_eq!(fs::symlink_metadata("/tmp").unwrap().uid(), metadata.uid());
+}
+
+#[test]
 fn a_private_folder_is_the_current_accounts_alone() {
     let outer = folder();
     let made = outer.path().join("state");

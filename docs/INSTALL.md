@@ -198,6 +198,7 @@ Before changing anything, the stage checks the legacy ledgers, Hide's delivery l
 Both the legacy v1 and current Hide-only v2 registries are inspected read-only; a selected revision that disappears causes a refusal and a retry instruction, never an empty-registry assumption.
 An open item, an unreadable or unknown record, or a capacity limit stops the pass, names the reason and recovery action, and leaves the machine unchanged.
 Every local directory below the selected HOME or registered checkout must be a real directory owned by the account and unwritable by other accounts; an alias at or above that selected root remains valid.
+An outside-HOME `HIDE_STATE_DIR` or `XDG_STATE_HOME` remains supported only after its entire namespace is inspected, including before a missing ledger is treated as empty; protected system directories and authenticated system aliases are allowed, while account-controlled links and directories another account can modify are refused without changing them.
 A relocated legacy home must stay below HOME and cannot overlap the active Hide state or kit; an indexed run outside HOME needs its owning checkout registered before inspection.
 On a device, the existing SSH/SFTP connection performs this read-only check against that device's registered checkouts before uploading a helper, creating its folders or changing its current link.
 It shares the local ledger and run predicates, needs no remote interpreter, and stops at the existing 15-second SSH operation deadline.

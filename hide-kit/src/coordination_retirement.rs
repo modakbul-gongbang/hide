@@ -133,6 +133,8 @@ pub fn preflight(target: &KitTarget) -> Result<(), String> {
     let state = crate::layout::state_dir_from_process(&target.home);
     if let Ok(anchor) = home_anchor(&target.home, &state) {
         inspect_below(&anchor, &state)?;
+    } else {
+        inspect_state_override(&state)?;
     }
     if let Some(ledger) = read_json(&crate::layout::delivery_ledger(&state), MAX_LEDGER_BYTES)? {
         retirement_inspection::delivery_ledger(&ledger)?;
@@ -148,6 +150,74 @@ pub fn preflight(target: &KitTarget) -> Result<(), String> {
         project_preflight(project)?;
     }
     Ok(())
+}
+
+/// An external state override has no selected HOME or checkout anchor.
+/// Authenticate its namespace before a missing ledger can mean "empty".
+fn inspect_state_override(state: &Path) -> Result<bool, String> {
+    use hide_platform::fs::private::{InspectionDirectory, inspect_directory_entry};
+
+    let mut selected = state.to_path_buf();
+    let mut inspected = 0;
+    let mut system_alias_target = false;
+    'namespace: loop {
+        if !selected.is_absolute()
+            || (!system_alias_target
+                && selected.components().any(|component| {
+                    matches!(
+                        component,
+                        std::path::Component::CurDir | std::path::Component::ParentDir
+                    )
+                }))
+        {
+            return Err("the Hide state override has no absolute plain inspection path; choose a safe state directory and retry retirement".into());
+        }
+        let root = selected.ancestors().last().ok_or(
+            "the Hide state override has no inspection root; choose a safe state directory and retry retirement",
+        )?;
+        let mut remaining = selected.strip_prefix(root).unwrap().components();
+        let mut current = root.to_path_buf();
+        loop {
+            inspected += 1;
+            if inspected > MAX_ENTRIES {
+                return Err("the Hide state override exceeds the preflight component bound; inspect its path before retrying retirement".into());
+            }
+            #[cfg(all(test, unix))]
+            let entry = crate::tests::inspect_system_alias_fixture(&current)
+                .unwrap_or_else(|| inspect_directory_entry(&current));
+            #[cfg(not(all(test, unix)))]
+            let entry = inspect_directory_entry(&current);
+            match entry {
+                Ok(InspectionDirectory::Real) => {}
+                Ok(InspectionDirectory::SystemAlias(target)) => {
+                    let parent = current.parent().ok_or(
+                        "a state override alias has no parent; inspect its path before retrying retirement",
+                    )?;
+                    selected = parent.join(target).join(remaining.as_path());
+                    system_alias_target = true;
+                    continue 'namespace;
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+                Err(error) => {
+                    return Err(format!(
+                        "the Hide state override cannot be inspected at {}: {error}; resolve its ownership, permissions or links before retrying retirement",
+                        current.display()
+                    ));
+                }
+            }
+            match remaining.next() {
+                Some(std::path::Component::Normal(name)) => current.push(name),
+                // A relative system alias such as /var/run -> ../run is
+                // followed in filesystem order. Never normalize away an
+                // unchecked directory or alias before its parent component.
+                Some(std::path::Component::ParentDir) if system_alias_target && current.pop() => {}
+                Some(_) => {
+                    return Err("the Hide state override leaves its inspection root; choose a safe state directory and retry retirement".into());
+                }
+                None => return Ok(true),
+            }
+        }
+    }
 }
 
 /// Only the selected anchor may have aliases above it. Every directory below

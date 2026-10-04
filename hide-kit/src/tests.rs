@@ -15,6 +15,38 @@ type IndexReadHook = Box<dyn FnOnce(&Path)>;
 std::thread_local! {
     static SUPERVISOR_INDEX_READ_HOOK: std::cell::RefCell<Option<IndexReadHook>> =
         const { std::cell::RefCell::new(None) };
+    static SYSTEM_ALIAS_FIXTURE: std::cell::RefCell<Option<PathBuf>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+// A private fixture cannot create a root-owned system alias. Inject only
+// that kernel ownership answer; the alias, target walk and kit are real.
+pub(crate) fn inspect_system_alias_fixture(
+    path: &Path,
+) -> Option<std::io::Result<hide_platform::fs::private::InspectionDirectory>> {
+    SYSTEM_ALIAS_FIXTURE.with(|slot| {
+        (slot.borrow().as_deref() == Some(path)).then(|| {
+            std::fs::read_link(path)
+                .map(hide_platform::fs::private::InspectionDirectory::SystemAlias)
+        })
+    })
+}
+
+struct ArmedSystemAliasFixture;
+
+impl ArmedSystemAliasFixture {
+    fn new(path: PathBuf) -> Self {
+        SYSTEM_ALIAS_FIXTURE.with(|slot| {
+            assert!(slot.borrow_mut().replace(path).is_none());
+        });
+        Self
+    }
+}
+
+impl Drop for ArmedSystemAliasFixture {
+    fn drop(&mut self) {
+        SYSTEM_ALIAS_FIXTURE.with(|slot| slot.borrow_mut().take());
+    }
 }
 
 pub(crate) fn before_supervisor_index_read(path: &Path) {
@@ -1828,6 +1860,158 @@ fn assert_preflight_refusal_preserves_fixture(fixture: &Fixture, daemon: Option<
             matches!(daemon.accept(), Err(error) if error.kind() == std::io::ErrorKind::WouldBlock),
             "a daemon RPC was initiated"
         );
+    }
+}
+
+#[test]
+fn external_hide_state_override_keeps_its_ancestor_authority() {
+    exercise_external_state_override("HIDE_STATE_DIR");
+}
+
+#[test]
+fn external_xdg_state_override_keeps_its_ancestor_authority() {
+    exercise_external_state_override("XDG_STATE_HOME");
+}
+
+fn exercise_external_state_override(key: &str) {
+    const CASE: &str = "HIDE_KIT_TEST_EXTERNAL_STATE_CASE";
+    const ROOT: &str = "HIDE_KIT_TEST_EXTERNAL_STATE_ROOT";
+    let Ok(case) = std::env::var(CASE) else {
+        // A separate test process supplies the real environment contract;
+        // no global environment is changed under parallel test threads.
+        let mut failures = Vec::new();
+        for case in [
+            "parent link",
+            "group write",
+            "world write",
+            "active ledger",
+            "safe existing",
+            "safe missing",
+            "system alias",
+            "relative system alias",
+            "system alias through account link",
+        ] {
+            let outside = tempfile::tempdir().unwrap();
+            let root = std::fs::canonicalize(outside.path()).unwrap();
+            let parent = root.join("state-parent");
+            let leaf = if key == "HIDE_STATE_DIR" {
+                "state"
+            } else {
+                "hide"
+            };
+            let state_dir = parent.join(leaf);
+            if case != "safe missing" {
+                std::fs::create_dir_all(&state_dir).unwrap();
+            }
+            if matches!(case, "parent link" | "active ledger") {
+                std::fs::write(
+                    state_dir.join("delivery-ledger.json"),
+                    json!({"version":1,"letters":[{"state":"pending","waiting_answer":false}],"watches":[]}).to_string(),
+                )
+                .unwrap();
+            } else if case == "safe existing" {
+                std::fs::write(
+                    state_dir.join("delivery-ledger.json"),
+                    json!({"version":1,"letters":[],"watches":[]}).to_string(),
+                )
+                .unwrap();
+            }
+            if case == "parent link" {
+                std::fs::rename(&parent, root.join("preserved-active-state")).unwrap();
+                let redirect = root.join("empty-redirect");
+                std::fs::create_dir(&redirect).unwrap();
+                std::os::unix::fs::symlink(&redirect, &parent).unwrap();
+            } else if matches!(case, "group write" | "world write") {
+                let mode = if case == "group write" { 0o770 } else { 0o777 };
+                std::fs::set_permissions(&parent, std::fs::Permissions::from_mode(mode)).unwrap();
+            }
+            let selected_parent = if matches!(
+                case,
+                "relative system alias" | "system alias through account link"
+            ) {
+                let system = root.join("system");
+                let var = system.join("var");
+                let run = system.join("run");
+                std::fs::create_dir_all(&var).unwrap();
+                std::fs::create_dir_all(run.join(leaf)).unwrap();
+                let target = if case == "relative system alias" {
+                    PathBuf::from("../run")
+                } else {
+                    let redirect = root.join("redirect");
+                    std::fs::create_dir(&redirect).unwrap();
+                    std::os::unix::fs::symlink(&redirect, run.join("account-link")).unwrap();
+                    PathBuf::from("../run/account-link/..")
+                };
+                let alias = var.join("run");
+                std::os::unix::fs::symlink(target, &alias).unwrap();
+                alias
+            } else if case == "system alias" {
+                // On macOS the temporary spelling includes the root-owned
+                // /var alias; its canonical spelling names the same fixture.
+                outside.path().join("state-parent")
+            } else {
+                parent
+            };
+            let selected = if key == "HIDE_STATE_DIR" {
+                selected_parent.join(leaf)
+            } else {
+                selected_parent
+            };
+            let test = if key == "HIDE_STATE_DIR" {
+                "tests::external_hide_state_override_keeps_its_ancestor_authority"
+            } else {
+                "tests::external_xdg_state_override_keeps_its_ancestor_authority"
+            };
+            let result = std::process::Command::new(std::env::current_exe().unwrap())
+                .args(["--exact", test, "--nocapture"])
+                .env_remove("HIDE_STATE_DIR")
+                .env_remove("XDG_STATE_HOME")
+                .env("HOME", root.join("process-home"))
+                .env(CASE, case)
+                .env(ROOT, &root)
+                .env(key, selected)
+                .output()
+                .unwrap();
+            if !result.status.success() {
+                failures.push(format!(
+                    "{key}, {case}: {}{}",
+                    String::from_utf8_lossy(&result.stdout),
+                    String::from_utf8_lossy(&result.stderr)
+                ));
+            }
+        }
+        assert!(failures.is_empty(), "{}", failures.join("\n"));
+        return;
+    };
+    let mut fixture = Fixture::new();
+    let outside = PathBuf::from(std::env::var_os(ROOT).unwrap());
+    let before_outside = home_tree(&outside);
+    let _system_alias = matches!(
+        case.as_str(),
+        "relative system alias" | "system alias through account link"
+    )
+    .then(|| ArmedSystemAliasFixture::new(outside.join("system/var/run")));
+    let selected = layout::state_dir_from_process(fixture.home());
+    assert!(!selected.starts_with(fixture.home()));
+    if matches!(
+        case.as_str(),
+        "safe existing" | "safe missing" | "system alias" | "relative system alias"
+    ) {
+        let report = apply(&fixture.target, &Scope::automatic());
+        assert_eq!(
+            state(&report, ComponentId::CoordinationRetirement),
+            ComponentState::Installed,
+            "{report:?}"
+        );
+        assert_eq!(home_tree(&outside), before_outside);
+        assert!(fixture.home().join(".local/bin/hide").exists());
+    } else {
+        record_preflight_commands(&mut fixture);
+        let old = old_coordination(&fixture, json!({}), json!({}));
+        let daemon = UnixListener::bind(old.join("api.sock")).unwrap();
+        daemon.set_nonblocking(true).unwrap();
+        assert_preflight_refusal_preserves_fixture(&fixture, Some(&daemon));
+        assert_eq!(home_tree(&outside), before_outside);
     }
 }
 
