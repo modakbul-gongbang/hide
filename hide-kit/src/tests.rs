@@ -1884,8 +1884,41 @@ fn writable_retirement_records_refuse_before_services_status_or_any_mutation() {
     }
 }
 
+// These fixtures select their own HOME registry. Clear an inherited XDG
+// override in an owned subprocess, without changing the parallel runner's env.
+fn isolated_plugin_registry(test: &str) -> bool {
+    if std::env::var_os("XDG_CONFIG_HOME").is_none() {
+        return false;
+    }
+    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    command
+        .args(["--exact", test, "--nocapture"])
+        .env_remove("XDG_CONFIG_HOME")
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::piped());
+    let output = hide_platform::process::OwnedChild::spawn(&mut command)
+        .unwrap()
+        .capture_until(
+            std::time::Instant::now() + std::time::Duration::from_secs(20),
+            1024 * 1024,
+        )
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    true
+}
+
 #[test]
 fn retirement_without_a_herdr_server_finishes_when_no_plugin_is_registered() {
+    if isolated_plugin_registry(
+        "tests::retirement_without_a_herdr_server_finishes_when_no_plugin_is_registered",
+    ) {
+        return;
+    }
     for refused_socket in [false, true] {
         for registry in [
             None,
@@ -1928,6 +1961,11 @@ fn retirement_without_a_herdr_server_finishes_when_no_plugin_is_registered() {
 
 #[test]
 fn offline_plugin_retirement_refuses_an_unreadable_registry_and_resumes_after_repair() {
+    if isolated_plugin_registry(
+        "tests::offline_plugin_retirement_refuses_an_unreadable_registry_and_resumes_after_repair",
+    ) {
+        return;
+    }
     for bytes in [b"invalid".as_slice(), b"{}", b"[{}]"] {
         let mut fixture = Fixture::new();
         old_coordination(&fixture, json!({}), json!({}));
@@ -1957,6 +1995,11 @@ fn offline_plugin_retirement_refuses_an_unreadable_registry_and_resumes_after_re
 
 #[test]
 fn offline_plugin_retirement_requires_confirmed_removal_and_preserves_foreign_entries() {
+    if isolated_plugin_registry(
+        "tests::offline_plugin_retirement_requires_confirmed_removal_and_preserves_foreign_entries",
+    ) {
+        return;
+    }
     let mut fixture = Fixture::new();
     old_coordination(&fixture, json!({}), json!({}));
     fixture.target.herdr_socket = fixture.root.join("absent.sock");
@@ -1998,6 +2041,11 @@ fn offline_plugin_retirement_requires_confirmed_removal_and_preserves_foreign_en
 
 #[test]
 fn a_long_home_with_no_daemon_socket_finishes_retirement_and_converges() {
+    if isolated_plugin_registry(
+        "tests::a_long_home_with_no_daemon_socket_finishes_retirement_and_converges",
+    ) {
+        return;
+    }
     for legacy_folder in [false, true] {
         let mut fixture = Fixture::new();
         // Each component stays below NAME_MAX; the nested suffix alone
