@@ -7,15 +7,8 @@ import type { AgentRow, AiProvider, CoreDiagnostic, Device, DeviceHost, Environm
 
 export type SettingsTab = "general" | "appearance" | "agents" | "issues" | "devices" | "mobile" | "performance" | "shortcuts";
 
-export const SETTINGS_TABS: readonly { id: SettingsTab; title: string; subtitle: string }[] = [
-  { id: "general", title: "General", subtitle: "This daemon, the Herdr runtime behind it, and where its state lives." },
-  { id: "appearance", title: "Appearance", subtitle: "Theme, accent and interface density." },
-  { id: "agents", title: "Agents", subtitle: "The agent CLIs the daemon's machine can launch, Background AI, and hooks." },
-  { id: "issues", title: "Issues", subtitle: "이슈를 어디에 두고 어떻게 작업을 시작할지." },
-  { id: "devices", title: "Devices", subtitle: "SSH targets. Authentication stays in the daemon machine's SSH environment." },
-  { id: "mobile", title: "Mobile", subtitle: "이 맥의 hide를 폰에서 열고, 기다리는 에이전트에 답하고, 알림을 받습니다." },
-  { id: "performance", title: "Performance", subtitle: "What this machine ends while you are away, and resumes when you come back." },
-  { id: "shortcuts", title: "Shortcuts", subtitle: "The pane chords this host runs. Every other chord is on the Keyboard shortcuts sheet." },
+export const SETTINGS_TABS: readonly SettingsTab[] = [
+  "general", "appearance", "agents", "issues", "devices", "mobile", "performance", "shortcuts",
 ];
 
 /**
@@ -161,17 +154,6 @@ export function deviceLine(device: Device, remote: RemoteStatus | undefined): { 
   if (device.state === "disabled") return { text: "disabled", tone: "warn" };
   if (remote?.state === "not_connected" || remote?.state === "connecting") return { text: "connecting…", tone: "pending" };
   return { text: "not connected", tone: "warn" };
-}
-
-/**
- * Where every value on these pages is kept (PRD S5.5 B35): the daemon's own
- * state on its machine, whichever device is selected in the sidebar.
- */
-export function ownerLine(daemon: DaemonInfo | null, selected: Device | null): string {
-  const host = daemon?.host_name ? daemon.host_name : "the daemon's machine";
-  const kept = `Appearance, shortcuts, Background AI, hooks and the device list are kept by hided on ${host}.`;
-  if (!selected || selected.kind !== "remote") return kept;
-  return `${kept} ${selected.label} is selected; that changes where files, Git and panes run, not where these settings are kept.`;
 }
 
 /**

@@ -1510,6 +1510,25 @@ impl Runtime {
                 occurred_at: unix_milliseconds(),
             });
         }
+        if snapshot
+            .ui_state
+            .interface_language
+            .as_ref()
+            .is_some_and(|value| {
+                serde_json::from_value::<crate::model::InterfaceLanguage>(value.clone()).is_err()
+            })
+        {
+            let kind = "ui_state.interface_language_invalid";
+            let message = "The stored interface language is invalid; English is used and the value is retained";
+            crate::diagnostic!(serde_json::json!({
+                "component": "ui_state", "kind": kind, "fallback": "en"
+            }));
+            snapshot.status.diagnostics.push(DiagnosticSnapshot {
+                kind: kind.to_owned(),
+                message: message.to_owned(),
+                occurred_at: unix_milliseconds(),
+            });
+        }
         // A stored width the drag could not have produced (a hand-edited
         // store) is not drawn; the sidebar opens at its default.
         if !crate::model::sidebar_width_fits(snapshot.ui_state.sidebar_width) {

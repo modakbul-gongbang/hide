@@ -89,6 +89,17 @@ class EntryPoints(unittest.TestCase):
                 self.assertEqual(self.run_entry("verify-web.sh", *args).returncode, 2)
         self.assertEqual(len(self.records()), 1)
 
+    def test_electron_acquisition_runs_once_and_propagates_the_installer_failure(self):
+        result = self.run_entry("verify-web.sh", "desktop", "electron-install", FAIL_COMMAND="17")
+        self.assertEqual(result.returncode, 17)
+        self.assertEqual([record["argv"] for record in self.records()],
+                         [["--dir", "desktop", "exec", "install-electron", "--no"]])
+        for args in [("web", "electron-install"), ("hcoord", "electron-install"),
+                     ("desktop", "electron-install", "--force")]:
+            with self.subTest(args=args):
+                self.assertEqual(self.run_entry("verify-web.sh", *args).returncode, 2)
+        self.assertEqual(len(self.records()), 1)
+
 
 if __name__ == "__main__":
     unittest.main()

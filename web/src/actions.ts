@@ -5,7 +5,8 @@ import { findArea as findAgentArea, activeDisplay as activeAgentDisplay, adjacen
 // the same code against the same snapshot. Each action is one core event
 // (dispatch is fire-and-forget; a sequence would arrive as several frames).
 
-import type { FocusCheckoutPayload, UiStateUsageHints } from "./generated/hided-ws";
+import type { FocusCheckoutPayload, InterfaceLanguageSetPayload, UiStateUsageHints } from "./generated/hided-ws";
+import type { InterfaceLanguage } from "./i18n/locale";
 import type { ThemeChoice } from "./theme";
 import { hostBridge, type HostKind } from "./host";
 import {
@@ -177,6 +178,7 @@ export function createActions(send: DispatchFn) {
       workspace_registrations: _workspaces,
       device_registrations: _devices,
       sidebar_width: _width,
+      interface_language: _language,
       collapsed_workspace_ids: _projectFolds,
       expanded_checkout_ids: _checkoutFolds,
       expanded_agent_pane_ids: _lineageFolds,
@@ -185,6 +187,7 @@ export function createActions(send: DispatchFn) {
     void _workspaces;
     void _devices;
     void _width;
+    void _language;
     void _projectFolds;
     void _checkoutFolds;
     void _lineageFolds;
@@ -875,6 +878,11 @@ export function createActions(send: DispatchFn) {
       updateUiState({ accent_hex: hex });
     },
 
+    /** One typed event; the core owns the shared interface choice. */
+    setInterfaceLanguage(language: InterfaceLanguage | null) {
+      const payload = { language } satisfies InterfaceLanguageSetPayload;
+      dispatch({ schema_version: 2, kind: "interface_language_set", payload });
+    },
     /** One typed event; the core owns the choice and stores it (D-15). */
     setTheme(theme: ThemeChoice) {
       dispatch({ schema_version: 2, kind: "theme_set", payload: { theme } });

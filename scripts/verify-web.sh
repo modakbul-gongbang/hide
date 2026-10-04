@@ -3,7 +3,7 @@
 #
 # Usage: verify-web.sh [install [--ignore-scripts] | PACKAGE ACTION [args...]]
 # PACKAGE: web, desktop. ACTION: typecheck, lint, test, build, e2e,
-# playwright-install, package (desktop only).
+# playwright-install, package and electron-install (desktop only).
 #
 # Runs the web shell and desktop app typecheck, lint, unit tests and build.
 # Playwright flows use the explicit per-package e2e actions below.
@@ -50,6 +50,10 @@ if (( $# > 0 )); then
         playwright-install)
             [[ $# == 0 ]] || { printf 'invalid playwright-install arguments\n' >&2; exit 2; }
             exec pnpm --dir "$directory" exec playwright install chromium
+            ;;
+        electron-install)
+            [[ "$package" == desktop && $# == 0 ]] || { printf 'electron-install requires desktop and no arguments\n' >&2; exit 2; }
+            exec pnpm --dir desktop exec install-electron --no
             ;;
         package)
             [[ "$package" == desktop && $# == 0 ]] || { printf 'package requires desktop and no arguments\n' >&2; exit 2; }

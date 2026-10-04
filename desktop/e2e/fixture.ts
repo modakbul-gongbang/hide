@@ -10,11 +10,12 @@ import os from "node:os";
 import path from "node:path";
 import { linkFixtureTranscripts, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { ownUntilWorkerExit } from "../../web/e2e/worker-owned";
+import { fixtureExecutable, fixtureHomeEnv, fixtureOpenCommand, fixtureToolPath, inheritedFixtureEnv } from "../../web/e2e/platform-fixture";
 import { SHOW_INACTIVE_SWITCH } from "../src/main/launchSwitches";
 
 export const DESKTOP_DIR = path.resolve(__dirname, "..");
 export const REPO = path.resolve(DESKTOP_DIR, "..");
-export const HIDE_CLI = path.join(REPO, "target", "debug", "hide");
+export const HIDE_CLI = path.join(REPO, "target", "debug", fixtureExecutable("hide"));
 const isolations = new Map<string, { cleanup: () => void; candidates: Set<ChildProcess>; launching: number }>();
 const MAX_ISOLATIONS = 16;
 const MAX_CANDIDATES_PER_HOME = 16;
@@ -36,32 +37,29 @@ export type Isolated = {
  */
 export function isolate(herdr: Pick<HerdrFixture, "socket" | "bin"> & Partial<Pick<HerdrFixture, "root">>, label: string): Isolated {
   if (isolations.size >= MAX_ISOLATIONS) throw new Error(`desktop fixture has ${MAX_ISOLATIONS} unclosed homes; clean an owned fixture before creating another`);
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), `hide-desktop-${label}-`));
+  const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), `hide-desktop-${label}-`)));
   const home = path.join(root, "home");
-  fs.mkdirSync(path.join(home, "projects"), { recursive: true });
-  if (herdr.root) linkFixtureTranscripts({ root: herdr.root }, home);
-  // Retired coordination overrides must not route a fixture into operator state.
-  const inherited = Object.fromEntries(
-    Object.entries(process.env).filter(
-      (entry): entry is [string, string] =>
-        entry[1] !== undefined && !["HERDR_", "HIDE_", "ELECTRON_", "HCOORD_", "SASU_"].some((prefix) => entry[0].startsWith(prefix)),
-    ),
-  );
-  const env: Record<string, string> = {
-    ...inherited,
-    HOME: home,
-    XDG_CONFIG_HOME: path.join(home, ".config"),
-    XDG_STATE_HOME: path.join(home, ".local", "state"),
-    HIDE_STATE_DIR: path.join(root, "state"),
-    HIDE_DESKTOP_USER_DATA_DIR: path.join(root, "user-data"),
-    HIDE_CLI_PATH: HIDE_CLI,
-    HIDED_UI_DIR: path.join(REPO, "web", "dist"),
-    HERDR_SOCKET_PATH: herdr.socket,
-    HERDR_BIN_PATH: herdr.bin,
-    ...(herdr.root ? { PATH: `${path.join(herdr.root, "bin")}:${inherited.PATH ?? "/usr/bin:/bin"}` } : {}),
-    // `open_external` must not launch a GUI application during a test.
-    HIDE_OPEN_COMMAND: "/usr/bin/true",
-  };
+  let env: Record<string, string>;
+  try {
+    fs.mkdirSync(path.join(home, "projects"), { recursive: true });
+    if (herdr.root) linkFixtureTranscripts({ root: herdr.root }, home);
+    env = {
+      ...inheritedFixtureEnv(),
+      ...fixtureHomeEnv(home),
+      HIDE_STATE_DIR: path.join(root, "state"),
+      HIDE_DESKTOP_USER_DATA_DIR: path.join(root, "user-data"),
+      HIDE_CLI_PATH: HIDE_CLI,
+      HIDED_UI_DIR: path.join(REPO, "web", "dist"),
+      HERDR_SOCKET_PATH: herdr.socket,
+      HERDR_BIN_PATH: herdr.bin,
+      PATH: fixtureToolPath(path.join(herdr.root ?? root, "bin")),
+      // `open_external` must not launch a GUI application during a test.
+      HIDE_OPEN_COMMAND: fixtureOpenCommand(undefined, root),
+    };
+  } catch (error) {
+    fs.rmSync(root, { recursive: true, force: true });
+    throw error;
+  }
   const cleanupEnv = { ...env };
   const hide = (args: string[]) => {
     const run = spawnSync(HIDE_CLI, args, { env, encoding: "utf8", timeout: 20_000 });
@@ -103,12 +101,17 @@ export function isolate(herdr: Pick<HerdrFixture, "socket" | "bin"> & Partial<Pi
 
 export function assertIsolated(env: Record<string, string>): void {
   // The Herdr fixture keeps its socket directly under /tmp for the path length limit.
-  const roots = [fs.realpathSync(os.tmpdir()), ...(process.platform === "win32" ? [] : [fs.realpathSync("/tmp")])];
-  for (const key of ["HOME", "HIDE_STATE_DIR", "HIDE_DESKTOP_USER_DATA_DIR", "HERDR_SOCKET_PATH"]) {
+  const roots = [fs.realpathSync.native(os.tmpdir()), ...(process.platform === "win32" ? [] : [fs.realpathSync.native("/tmp")])];
+  const nativeHomeKeys = process.platform === "win32" ? ["USERPROFILE", "APPDATA", "LOCALAPPDATA"] : [];
+  for (const key of ["HOME", "HIDE_STATE_DIR", "HIDE_DESKTOP_USER_DATA_DIR", "HERDR_SOCKET_PATH", ...nativeHomeKeys]) {
     const value = env[key];
-    const parent = value ? fs.realpathSync(path.dirname(value)) : null;
-    if (!parent || !roots.some((root) => parent.startsWith(root))) throw new Error(`${key} is not isolated under ${roots.join(" or ")}`);
+    const parent = value ? fs.realpathSync.native(path.dirname(value)) : null;
+    if (!parent || !roots.some((root) => {
+      const relative = path.relative(root, parent);
+      return relative === "" || (!relative.startsWith(`..${path.sep}`) && relative !== ".." && !path.isAbsolute(relative));
+    })) throw new Error(`${key} is not isolated under ${roots.join(" or ")}`);
   }
+  if (process.platform === "win32" && (env.USERPROFILE !== env.HOME || env.APPDATA !== path.join(env.HOME!, "AppData", "Roaming") || env.LOCALAPPDATA !== path.join(env.HOME!, "AppData", "Local"))) throw new Error("Windows native home and AppData must belong to this fixture's HOME");
 }
 
 /**
