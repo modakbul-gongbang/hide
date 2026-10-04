@@ -232,6 +232,8 @@ Record uptime, the restart time, and both sample windows in the run directory, a
   Read-then-clear can swallow a concurrent change.
 - Size snapshot traffic by changes: terminal sequence cursors, rarely-changing revisioned `rest`, and per-event scalars.
   An unused heartbeat timestamp can still dirty `rest` and resend the full navigator every second.
+- Keep the keyboard path to the byte bridge.
+  The one thing added per key is the operator-submit check (`labels::input::key_submits`, PRD overview-request-view D-19): a chunk over 64 bytes is skipped, a shorter one is decoded into a stack buffer and scanned; only a found submit looks up the agent row and pushes one entry behind the submit record's own lock, and nothing is published.
 - Keep async operation records bounded by active intent and conflict scope.
   A close or topology mutation uses an absolute five-second stage deadline; expiry becomes a caller-visible unknown result and never schedules a destructive resend.
   Status checks are read-only and are started only for an ambiguous close or an explicit status action, so unknown activity does not become a polling loop.
@@ -329,12 +331,20 @@ Measure baseline and candidate idle/driven work separately with the same project
 
 Each opening of a local Git project's Overview requests a background worktree and pull request read for that project; closing it adds no Git command.
 The previous catalog remains visible while that read runs.
+An accepted changed worktree answer announces its facts and loading completion after releasing the runtime mutex, even when the following catalog rebuild leaves pane topology unchanged; unchanged or rejected answers announce nothing.
+The open-dialog regression in `web/e2e/worktree-delete.spec.ts` checks lock recovery, loading completion and repository-list A-to-B-to-A consent on the existing renderer connection.
 `behind_upstream` rides the same `rev-list --left-right --count @{u}...HEAD` call that already counted unpushed commits, so a fetched-side count costs no extra process, and `created_at_unix_ms` is one `stat` of the worktree's gitdir in the same background pass off the mutex.
 The catalog pass is bounded by the worktree count; a project with many worktrees pays one status, one rev-list and one stat per worktree per change, never per tick or per agent update.
 A Git HEAD, index or ref change is scoped to its own repository: the OS watcher groups a burst into one generation change, so that project alone is re-read and every other project is answered from the worker's last read.
 Idle repositories do not run Git commands or sample working-tree files; content-only edits are reflected when the Overview opens again.
 `a_commit_in_one_project_does_not_rerun_status_in_another` and `idle_and_working_tree_edits_do_not_reread_but_manual_refresh_does` own these boundaries.
 A finished worktree removal follows the same scope: its row leaves the catalog under the lock with no Git call, the coordinator rebuilds the rows on its next wake, and the reader re-reads only the removed worktree's repository; `a_finished_removal_drops_its_row_at_once_and_an_older_read_cannot_bring_it_back` owns this.
+The linked-worktree facts pass also measures ignored repository boundaries off the runtime mutex once for each linked worktree in an accepted project read.
+Each scan has hard caps of 2,000,000 steps, 30 seconds and 1,024 names.
+The total project-read cost scales with its linked-worktree count; there is no shared project-wide scan step, time or name cap.
+It skips Git metadata and directory links; a failed or capped scan publishes an unavailable fact rather than an empty list.
+A confirmed deletion uses the existing single removal slot and one preflight worker before any pane close; the same host check runs again before guarded removal.
+No scan is added to pane input, a snapshot tick, hover or an unchanged catalog read, and only phase transitions notify the shell.
 Every `git` the catalog runs is bounded by `GIT_DEADLINE` (15 s) and drained off-thread past the pipe buffer; a repository that outruns it reports its status unavailable and a `git.deadline_exceeded` diagnostic rather than holding the other projects' answer, which a status over evicted iCloud files once did for minutes.
 Group ordering, chips and search are pure functions of the accepted snapshot; agent status updates redraw rows and never recompute the catalog.
 List rows use the existing lazy-loading and search keyboard patterns.

@@ -8,6 +8,132 @@ use std::process::Command;
 use hide_host::ErrorCode;
 use hide_host::protocol::Call;
 use hide_host::serve::handle;
+use hide_host::worktrees::{ConfirmedRemoval, ignored_repositories};
+
+fn removal(root: &Path, linked: &Path) -> ConfirmedRemoval {
+    ConfirmedRemoval {
+        repository_root: root.to_string_lossy().into_owned(),
+        checkout_path: linked.to_string_lossy().into_owned(),
+        expected_head_sha: Some(output(linked, &["rev-parse", "HEAD"]).trim().to_owned()),
+        expected_branch: Some("linked".into()),
+        protected_base_branch: Some("main".into()),
+        delete_branch: None,
+        force_delete_branch: false,
+        discard_changes: false,
+        expected_ignored_repositories: Vec::new(),
+    }
+}
+
+#[test]
+fn a_locked_worktree_is_named_with_its_reason_and_manual_unlock_action_before_removal() {
+    let (_fixture, root, linked) = linked_worktree(0);
+    let reason = "Release review\n보관 $(never-execute)";
+    git(
+        &root,
+        &[
+            "worktree",
+            "lock",
+            "--reason",
+            reason,
+            linked.to_str().unwrap(),
+        ],
+    );
+    let facts = hide_host::worktrees::read(&root, &Default::default(), None).unwrap();
+    assert_eq!(facts.worktrees[1].lock_reason.as_deref(), Some(reason));
+    let mut request = removal(&root, &linked);
+    request.discard_changes = true;
+    let refused = handle(Call::WorktreeRemovalCheck {
+        removal: request.clone(),
+    })
+    .unwrap_err();
+    assert!(refused.message.contains("Worktree linked is locked"));
+    assert!(refused.message.contains(reason));
+    assert!(refused.message.contains("git worktree unlock"));
+    assert!(refused.message.contains("panes are kept"));
+    let removed: hide_host::worktrees::RemovalOutcome =
+        serde_json::from_value(handle(Call::WorktreeRemove { removal: request }).unwrap()).unwrap();
+    assert!(!removed.removed);
+    assert!(linked.exists());
+    assert!(trash_entries(&root).is_empty());
+    assert!(hide_host::worktrees::registered(&root).unwrap()[1].locked);
+}
+
+#[test]
+fn discard_names_every_ignored_repository_including_worktrees_separate_gitdirs_and_bare_repositories()
+ {
+    let (fixture, root, linked) = linked_worktree(0);
+    for name in [
+        "target/vendor/alpha",
+        "target/vendor/alpha/embedded",
+        "target/deep/beta",
+    ] {
+        let repo = linked.join(name);
+        std::fs::create_dir_all(&repo).unwrap();
+        git(&repo, &["init", "-q"]);
+    }
+    let source = repository();
+    git(
+        source.path(),
+        &[
+            "worktree",
+            "add",
+            "-q",
+            "--detach",
+            linked.join("target/linked").to_str().unwrap(),
+        ],
+    );
+    let separate = linked.join("target/separate");
+    std::fs::create_dir_all(&separate).unwrap();
+    git(
+        &separate,
+        &[
+            "init",
+            "-q",
+            "--separate-git-dir",
+            fixture.path().join("separate.git").to_str().unwrap(),
+        ],
+    );
+    let bare = linked.join("target/bare.git");
+    std::fs::create_dir_all(&bare).unwrap();
+    git(&bare, &["init", "-q", "--bare"]);
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(source.path(), linked.join("target/linked-alias")).unwrap();
+    let expected = vec![
+        "target/bare.git",
+        "target/deep/beta",
+        "target/linked",
+        "target/separate",
+        "target/vendor/alpha",
+        "target/vendor/alpha/embedded",
+    ];
+    assert_eq!(ignored_repositories(&linked).unwrap(), expected);
+    let mut request = removal(&root, &linked);
+    request.discard_changes = true;
+    let refused = handle(Call::WorktreeRemovalCheck {
+        removal: request.clone(),
+    })
+    .unwrap_err();
+    assert!(refused.message.contains("repository list changed"));
+    assert!(linked.exists());
+    request.expected_ignored_repositories = expected.into_iter().map(str::to_owned).collect();
+    assert_eq!(
+        handle(Call::WorktreeRemovalCheck {
+            removal: request.clone()
+        })
+        .unwrap(),
+        serde_json::Value::Null
+    );
+    // The check is non-mutating. A newly created ignored repository invalidates consent.
+    assert!(linked.exists());
+    let added = linked.join("target/late");
+    std::fs::create_dir_all(&added).unwrap();
+    git(&added, &["init", "-q"]);
+    let outcome: hide_host::worktrees::RemovalOutcome =
+        serde_json::from_value(handle(Call::WorktreeRemove { removal: request }).unwrap()).unwrap();
+    assert!(!outcome.removed);
+    assert!(linked.exists());
+    assert!(trash_entries(&root).is_empty());
+}
 
 fn git(root: &Path, args: &[&str]) {
     let output = Command::new("git")

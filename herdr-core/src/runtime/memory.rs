@@ -1185,6 +1185,7 @@ mod scope_tests {
                         "content": [{"type": "input_text", "text": context}],
                     },
                 }),
+                Agent::OpenCode => unreachable!("OpenCode keeps no session file"),
             };
             fs::write(&locator, format!("{transcript}\n")).unwrap();
             let session = ProjectSession {
@@ -2130,6 +2131,7 @@ fn project_session_row(session: hide_session::ProjectSession) -> SessionRowSnaps
         provider_label: match session.agent {
             Agent::Codex => "Codex",
             Agent::Claude => "Claude Code",
+            Agent::OpenCode => "OpenCode",
         }
         .to_owned(),
         locator: session.locator.to_string_lossy().into_owned(),

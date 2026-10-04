@@ -253,7 +253,7 @@ fn read_project(
             "--limit",
             PULL_REQUEST_LIMIT,
             "--json",
-            "number,title,statusCheckRollup,headRefName,baseRefName,state,reviewDecision,isDraft,url,mergedAt,updatedAt,closingIssuesReferences",
+            "number,title,statusCheckRollup,headRefName,baseRefName,state,reviewDecision,isDraft,url,mergedAt,updatedAt,createdAt,closedAt,closingIssuesReferences",
         ],
     ) {
         Ok(listed) => listed,
@@ -337,9 +337,9 @@ fn read_issues(
     // One sentinel proves overflow; ordinary gh list sorts by creation.
     let (listed, mut warning) = with_optional_projects(|include_projects| {
         let fields = if include_projects {
-            "number,title,url,state,projectItems,updatedAt,createdAt"
+            "number,title,url,state,projectItems,updatedAt,createdAt,closedAt"
         } else {
-            "number,title,url,state,updatedAt,createdAt"
+            "number,title,url,state,updatedAt,createdAt,closedAt"
         };
         let output = gh(
             Some(root),
@@ -588,6 +588,7 @@ pub(crate) fn create_issue(
         project_status: None,
         updated_at_unix_ms: Some(now_unix_ms()),
         created_at_unix_ms: None,
+        closed_at_unix_ms: None,
         blocked_by: Vec::new(),
     })
 }
@@ -1140,7 +1141,7 @@ fn issue_query(
             .repository
             .split_once('/')
             .expect("validated repository");
-        query.push_str(&format!("r{index}:repository(owner:\"{owner}\",name:\"{name}\"){{issue(number:{}){{number title url state updatedAt createdAt{projects}}}}}", valid.number));
+        query.push_str(&format!("r{index}:repository(owner:\"{owner}\",name:\"{name}\"){{issue(number:{}){{number title url state updatedAt createdAt closedAt{projects}}}}}", valid.number));
     }
     query.push('}');
     Ok(query)
@@ -1206,6 +1207,10 @@ struct GhPullRequest {
     url: String,
     merged_at: Option<String>,
     updated_at: Option<String>,
+    #[serde(default)]
+    created_at: Option<String>,
+    #[serde(default)]
+    closed_at: Option<String>,
     #[serde(default)]
     closing_issues_references: Vec<GhIssueReference>,
 }
@@ -1422,6 +1427,8 @@ fn project(listed: GhPullRequest) -> Result<PullRequestSnapshot, String> {
         is_draft: listed.is_draft,
         merged_at_unix_ms: listed.merged_at.as_deref().and_then(parse_rfc3339_ms),
         updated_at_unix_ms: listed.updated_at.as_deref().and_then(parse_rfc3339_ms),
+        created_at_unix_ms: listed.created_at.as_deref().and_then(parse_rfc3339_ms),
+        closed_at_unix_ms: listed.closed_at.as_deref().and_then(parse_rfc3339_ms),
     })
 }
 
@@ -2301,6 +2308,7 @@ esac"#,
             project_status: None,
             updated_at_unix_ms: None,
             created_at_unix_ms: None,
+            closed_at_unix_ms: None,
             blocked_by: Vec::new(),
         };
         let query = dependency_query(&[

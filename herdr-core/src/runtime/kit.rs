@@ -47,16 +47,9 @@ impl KitJob {
 }
 
 fn merge_scopes(before: Option<Scope>, after: Scope) -> Scope {
-    match (before, after) {
-        (Some(Scope::Reinstall(mut before)), Scope::Reinstall(after)) => {
-            before.extend(after);
-            before.sort();
-            before.dedup();
-            Scope::Reinstall(before)
-        }
-        (Some(Scope::Reinstall(parts)), Scope::Automatic)
-        | (Some(Scope::Automatic) | None, Scope::Reinstall(parts)) => Scope::Reinstall(parts),
-        (Some(Scope::Automatic) | None, Scope::Automatic) => Scope::Automatic,
+    match before {
+        Some(before) => before.merge(after),
+        None => after,
     }
 }
 
@@ -127,7 +120,7 @@ impl Runtime {
 
     /// The worker exists: the launch pass is its first job (B1, B10).
     pub(crate) fn queue_local_kit_launch(&mut self) {
-        self.local_kit_pending = Some(Scope::Automatic);
+        self.local_kit_pending = Some(Scope::automatic());
         self.set_kit_busy(LOCAL_DEVICE_ID);
     }
 
@@ -255,11 +248,70 @@ impl Runtime {
 
     /// Queues a Reinstall of `parts` on one machine.
     pub(super) fn queue_kit_reinstall(&mut self, device_id: &str, parts: Vec<ComponentId>) -> bool {
-        if device_id != LOCAL_DEVICE_ID {
-            self.queue_device_kit(device_id, KitJob::Apply(Scope::Reinstall(parts)));
+        self.queue_kit_scope(device_id, Scope::reinstall(parts))
+    }
+
+    /// The operator turned a part on or off from its row (PRD
+    /// overview-request-view D-24, B36). Turning on is that part's
+    /// Reinstall; turning off undoes it, and no later pass puts it back. A
+    /// part already where the switch puts it is the same intent, already met
+    /// (engineering rule 11).
+    pub(super) fn request_kit_component_set(
+        &mut self,
+        device_id: &str,
+        component: ComponentId,
+        enabled: bool,
+    ) -> bool {
+        if !component.can_turn_off() {
+            self.set_error(
+                "kit.not_switchable",
+                format!("{} has no switch", component.label()),
+                false,
+            );
             return true;
         }
-        let merged = merge_scopes(self.local_kit_pending.take(), Scope::Reinstall(parts));
+        if device_id != LOCAL_DEVICE_ID && !self.device_registration_exists(device_id) {
+            self.set_error(
+                "kit.unknown_machine",
+                format!("Device {device_id} is not registered"),
+                false,
+            );
+            return true;
+        }
+        let state = self.kit_view(device_id);
+        if let Some(reason) = state.unavailable {
+            self.set_error("kit.unavailable", reason, false);
+            return true;
+        }
+        let now = state
+            .components
+            .iter()
+            .find(|part| part.id == component)
+            .map(|part| part.state);
+        let already = match now {
+            Some(hide_kit::ComponentState::Installed) => enabled,
+            Some(hide_kit::ComponentState::Off) => !enabled,
+            // Not applicable here: there is nothing to switch.
+            Some(hide_kit::ComponentState::Absent) => true,
+            _ => false,
+        };
+        if already {
+            return false;
+        }
+        let scope = if enabled {
+            Scope::reinstall([component])
+        } else {
+            Scope::turn_off([component])
+        };
+        self.queue_kit_scope(device_id, scope)
+    }
+
+    fn queue_kit_scope(&mut self, device_id: &str, scope: Scope) -> bool {
+        if device_id != LOCAL_DEVICE_ID {
+            self.queue_device_kit(device_id, KitJob::Apply(scope));
+            return true;
+        }
+        let merged = merge_scopes(self.local_kit_pending.take(), scope);
         self.local_kit_pending = Some(merged);
         self.set_kit_busy(LOCAL_DEVICE_ID);
         true
@@ -608,6 +660,24 @@ impl Runtime {
             .find(|other| other.id != registration.id && account(other) == Some(own))
     }
 
+    /// What a Codex start on this machine passes about the shared daemon,
+    /// from its kit's last report (PRD overview-request-view D-20).
+    pub(super) fn codex_daemon(&self, device_id: &str) -> crate::codex_launch::CodexDaemon {
+        self.kit_states
+            .get(device_id)
+            .map(crate::codex_launch::CodexDaemon::from_kit)
+            .unwrap_or_default()
+    }
+
+    /// [`Self::codex_daemon`] for the machine a pane id belongs to.
+    pub(super) fn codex_daemon_for_pane(&self, pane_id: &str) -> crate::codex_launch::CodexDaemon {
+        let device = pane_id
+            .strip_prefix("remote:")
+            .and_then(|rest| rest.split_once(":pane:"))
+            .map_or(LOCAL_DEVICE_ID, |(device, _)| device);
+        self.codex_daemon(device)
+    }
+
     pub(super) fn kit_state(&self, device_id: &str) -> KitSnapshot {
         self.kit_states.get(device_id).cloned().unwrap_or_default()
     }
@@ -638,17 +708,18 @@ mod tests {
 
     #[test]
     fn requests_for_one_machine_merge_into_the_widest() {
-        let reinstall = |parts: &[ComponentId]| KitJob::Apply(Scope::Reinstall(parts.to_vec()));
+        let reinstall =
+            |parts: &[ComponentId]| KitJob::Apply(Scope::reinstall(parts.iter().copied()));
         assert_eq!(
-            KitJob::Status.merge(KitJob::Apply(Scope::Automatic)),
-            KitJob::Apply(Scope::Automatic)
+            KitJob::Status.merge(KitJob::Apply(Scope::automatic())),
+            KitJob::Apply(Scope::automatic())
         );
         assert_eq!(
-            KitJob::Apply(Scope::Automatic).merge(KitJob::Status),
-            KitJob::Apply(Scope::Automatic)
+            KitJob::Apply(Scope::automatic()).merge(KitJob::Status),
+            KitJob::Apply(Scope::automatic())
         );
         assert_eq!(
-            reinstall(&[ComponentId::Hcoord]).merge(KitJob::Apply(Scope::Automatic)),
+            reinstall(&[ComponentId::Hcoord]).merge(KitJob::Apply(Scope::automatic())),
             reinstall(&[ComponentId::Hcoord])
         );
         assert_eq!(
@@ -657,5 +728,11 @@ mod tests {
             reinstall(&[ComponentId::Cli, ComponentId::Hcoord])
         );
         assert_eq!(KitJob::Status.merge(KitJob::Status), KitJob::Status);
+        // The operator's later switch wins for the part it names.
+        assert_eq!(
+            KitJob::Apply(Scope::turn_off([ComponentId::CodexPerPane]))
+                .merge(reinstall(&[ComponentId::CodexPerPane])),
+            reinstall(&[ComponentId::CodexPerPane])
+        );
     }
 }

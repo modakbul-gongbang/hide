@@ -20,7 +20,7 @@ import { hostLog, isolate, relaunch, screenshot, shellPage, test } from "./fixtu
 test.describe.configure({ timeout: 300_000 });
 test.skip(!process.env.HIDE_E2E_APP, "a packaged hide.app is required");
 
-const PARTS = ["cli", "claude_code_hook", "codex_hook", "hcoord"];
+const PARTS = ["cli", "claude_code_hook", "codex_hook", "hcoord", "codex_per_pane"];
 const LABELS_ID = "hide.agent-context-labels";
 
 type Applied = { kind?: string; device_id?: string; components?: { id: string; state: string; reason: string | null }[] };

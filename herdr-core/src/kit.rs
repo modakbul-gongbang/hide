@@ -137,10 +137,9 @@ fn completed(device_id: &str, scope: &hide_kit::Scope, report: &hide_kit::KitRep
         "component": "kit",
         "kind": "apply.completed",
         "device_id": device_id,
-        "scope": match scope {
-            hide_kit::Scope::Automatic => "automatic",
-            hide_kit::Scope::Reinstall(_) => "reinstall",
-        },
+        "scope": if scope.is_automatic() { "automatic" } else { "operator" },
+        "restore": scope.restore.iter().map(|id| id.code()).collect::<Vec<_>>(),
+        "turn_off": scope.turn_off.iter().map(|id| id.code()).collect::<Vec<_>>(),
         "components": report.components.iter().map(|part| json!({
             "id": part.id.code(),
             "state": part.state,
@@ -209,12 +208,11 @@ pub(crate) fn spawn_device_worker(
 fn call_device(call: &DeviceKitCall) -> DeviceKitAnswer {
     use hide_host::protocol::KitAction;
     let action = match &call.work {
-        DeviceKitWork::Job(KitJob::Apply(hide_kit::Scope::Automatic)) => KitAction::Apply,
-        DeviceKitWork::Job(KitJob::Apply(hide_kit::Scope::Reinstall(components))) => {
-            KitAction::Reinstall {
-                components: components.clone(),
-            }
-        }
+        DeviceKitWork::Job(KitJob::Apply(scope)) if scope.is_automatic() => KitAction::Apply,
+        DeviceKitWork::Job(KitJob::Apply(scope)) => KitAction::Reinstall {
+            components: scope.restore.iter().copied().collect(),
+            turn_off: scope.turn_off.iter().copied().collect(),
+        },
         DeviceKitWork::Job(KitJob::Status) => KitAction::Status,
         DeviceKitWork::Remove => KitAction::Remove,
     };

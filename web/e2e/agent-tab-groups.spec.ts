@@ -164,7 +164,8 @@ test("New tab and Reopen use the requested area and Rename works in either bar",
     const second = herdr.run(["tab", "create", "--workspace", herdr.workspace, "--cwd", path.join(herdr.root, "fixture"), "--no-focus"]) as { result: { tab: { tab_id: string } } };
     const secondId = second.result.tab.tab_id;
     daemon = await startHided(herdr, "agent-placement");
-    await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+    const sent = countSent(page);
+    await page.goto(`${daemon.origin}/?probe=1#token=${daemon.token}`);
     await enterWorkspace(page, "fixture");
     const body = await box(page.locator("[data-agent-body]"));
     await drag(page, tab(page, secondId), { x: body.x + body.width * .95, y: body.y + body.height / 2 });
@@ -189,14 +190,23 @@ test("New tab and Reopen use the requested area and Rename works in either bar",
     await tab(page, createdId).getByRole("button", { name: /^Close tab/ }).click();
     await expect(tab(page, createdId)).toHaveCount(0);
     await tab(page, secondId).click();
+    await expect(page.locator("[data-connection]")).toHaveCount(0);
     await page.keyboard.press(chord("reopen_closed_tab"));
     await expect(left.locator('[role="tab"]')).toHaveCount(2);
     await expect(left).toHaveAttribute("data-active-area", "true");
+    expect(sent.get("reopen_closed")).toBe(1);
     await tab(page, secondId).hover();
     await tab(page, secondId).getByRole("button", { name: /^Close tab/ }).click();
     await expect(areas(page)).toHaveCount(1);
+    // Closing an area does not imply a live transport. A shortcut during
+    // reconnect is deliberately dropped, so prove recovery before sending
+    // this new intent; never replay the key or relax the placement assertion.
+    await page.evaluate(() => window.__hideProbe!.dropSocket());
+    await expect(page.locator("[data-connection]")).toHaveAttribute("data-connection", "reconnecting");
+    await expect(page.locator("[data-connection]")).toHaveCount(0);
     await page.keyboard.press(chord("reopen_closed_tab"));
     await expect(left.locator('[role="tab"]')).toHaveCount(3);
+    expect(sent.get("reopen_closed")).toBe(2);
     await expect(areas(page)).toHaveCount(1);
     await screenshot(page, "agent-groups-reopen-placement");
   } finally { daemon?.stop(); herdr.stop(); }

@@ -930,6 +930,14 @@ export function createActions(send: DispatchFn) {
     observeAgents(observing: boolean) {
       dispatch({ schema_version: 2, kind: "ai_settings", payload: { observing } });
     },
+    /** Whether this page shows the request view; while one does, the core re-reads running checks (PRD overview-request-view D-32). */
+    observeRequestView(observing: boolean) {
+      dispatch({ schema_version: 2, kind: "request_view", payload: { observing } });
+    },
+    /** A finished row opened in the request view: the pane is read, the focus stays (D-29). */
+    openResult(paneId: string) {
+      dispatch({ schema_version: 2, kind: "overview_open_result", payload: { pane_id: paneId } });
+    },
 
     /**
      * Whether the window is on screen and whether the Weekly Usage popover is
@@ -943,10 +951,19 @@ export function createActions(send: DispatchFn) {
     chooseAi(provider: string, model?: string) {
       dispatch({ schema_version: 2, kind: "ai_settings", payload: model === undefined ? { provider } : { provider, model } });
     },
+    /** The `에이전트 요약` switch (PRD overview-request-view D-11): off, agent labels are neither asked for nor shown. */
+    setAgentSummary(on: boolean) {
+      dispatch({ schema_version: 2, kind: "ai_settings", payload: { agent_summary: on } });
+    },
 
     /** Reinstall on a machine's row repairs every part that needs it; a hook row names its one part. */
     reinstallKit(deviceId: string, components?: KitComponentId[]) {
       dispatch({ schema_version: 2, kind: "kit_reinstall", payload: components ? { device_id: deviceId, components } : { device_id: deviceId } });
+    },
+
+    /** A switchable kit part's switch on its machine's row (PRD overview-request-view D-24). */
+    setKitComponent(deviceId: string, component: KitComponentId, enabled: boolean) {
+      dispatch({ schema_version: 2, kind: "kit_component_set", payload: { device_id: deviceId, component, enabled } });
     },
 
     /** A tab showing the kit opened: this Mac's parts are read once. */
@@ -1377,11 +1394,11 @@ export function createActions(send: DispatchFn) {
 
     /** `discardChanges`: the operator ticked the discard the core's gate offered, accepting the folder's uncommitted work is lost. */
     /** `closeDescendants`: the agents outside the worktree the operator chose to close first (PRD close-agent-subtree D-36). */
-    removeWorktree(deviceId: string, checkoutPath: string, deleteBranch: boolean, discardChanges: boolean, closeDescendants: string[] = []) {
+    removeWorktree(deviceId: string, checkoutPath: string, deleteBranch: boolean, discardChanges: boolean, closeDescendants: string[] = [], ignoredRepositories: string[] = []) {
       dispatch({
         schema_version: 2,
         kind: "remove_worktree",
-        payload: { device_id: deviceId, checkout_path: checkoutPath, delete_branch: deleteBranch, discard_changes: discardChanges, ...(closeDescendants.length > 0 ? { close_descendant_pane_ids: closeDescendants } : {}) },
+        payload: { device_id: deviceId, checkout_path: checkoutPath, delete_branch: deleteBranch, discard_changes: discardChanges, expected_ignored_repositories: ignoredRepositories, ...(closeDescendants.length > 0 ? { close_descendant_pane_ids: closeDescendants } : {}) },
       });
     },
 
