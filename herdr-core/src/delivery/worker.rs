@@ -1,7 +1,6 @@
 //! One bounded writer. Runtime owns the published immutable ledger; owned
 //! candidates are validated and persisted before a result or publication.
 
-use std::io::Read;
 use std::path::PathBuf;
 use std::process::{Command as ProcessCommand, Stdio};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -10,6 +9,7 @@ use std::sync::{Arc, Mutex, Weak};
 use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
+use hide_platform::process::{CaptureFailureKind, OwnedChild};
 use serde::Deserialize;
 use serde_json::{Value, json};
 
@@ -27,6 +27,7 @@ const SAVE_BATCH: usize = 32;
 #[derive(Clone)]
 pub(crate) struct Client {
     requests: SyncSender<Request>,
+    probes: Weak<Mutex<ProbeOwner>>,
 }
 
 pub struct Prepared {
@@ -64,12 +65,13 @@ impl Prepared {
     pub fn run(self, timeout: Duration) -> Result<Value, String> {
         if matches!(&self.command, Command::WatchStart { .. }) {
             let target = self.target.as_ref().ok_or("target_unavailable")?;
-            match conflict_probe(target) {
+            match conflict_probe(target, &self.client) {
                 Ok(true) => return Err("conflict".into()),
                 Ok(false) => {}
-                Err(code) => crate::diagnostic!(json!({
+                Err(failure) => crate::diagnostic!(json!({
                     "component":"delivery","kind":"watch.conflict_unverified",
-                    "pane_id":target.actor.pane_id,"code":code,
+                    "pane_id":target.actor.pane_id,"code":failure.code,
+                    "cleanup_io_kind":failure.cleanup.map(|kind| format!("{kind:?}")),
                 })),
             }
         }
@@ -350,6 +352,7 @@ pub(crate) struct Worker {
     stop: Arc<AtomicBool>,
     thread: Option<JoinHandle<()>>,
     producers: Vec<JoinHandle<()>>,
+    probes: Arc<Mutex<ProbeOwner>>,
 }
 
 impl Worker {
@@ -366,11 +369,16 @@ impl Worker {
             .name("hide-delivery-store".into())
             .spawn(move || run(store_runtime, notifier, path, receiver, stopped))
             .map_err(|_| "delivery_unavailable".to_owned())?;
-        let client = Client { requests };
+        let probes = Arc::new(Mutex::new(ProbeOwner::default()));
+        let client = Client {
+            requests,
+            probes: Arc::downgrade(&probes),
+        };
         let mut worker = Self {
             stop,
             thread: Some(thread),
             producers: Vec::new(),
+            probes,
         };
         let bell_runtime = runtime.clone();
         let bell_client = client.clone();
@@ -404,6 +412,14 @@ impl Drop for Worker {
             if thread.join().is_err() {
                 crate::diagnostic!(json!({"component":"delivery","kind":"worker.join_failed"}));
             }
+        }
+        // Clients held by Runtime are weak references; only this off-lock
+        // owner or an in-flight registration can end a retained process.
+        match self.probes.lock() {
+            Ok(mut owner) => owner.stop(),
+            Err(_) => crate::diagnostic!(
+                json!({"component":"delivery","kind":"watch.probe_owner_unavailable"})
+            ),
         }
     }
 }
@@ -698,65 +714,109 @@ struct Participant {
     connection: String,
 }
 
-fn probe_read<T: for<'a> Deserialize<'a>>(
-    topic: &str,
-    deadline: Instant,
-) -> Result<Vec<T>, &'static str> {
-    const OUTPUT: usize = 1024 * 1024;
-    if Instant::now() >= deadline {
-        return Err("conflict_probe_timeout");
-    }
-    let mut command = ProcessCommand::new("hcoord");
-    command
-        .args([topic, "list", "--json"])
-        .stdin(Stdio::null())
-        .stderr(Stdio::null())
-        .stdout(Stdio::piped());
-    let mut child = hide_platform::process::OwnedChild::spawn(&mut command)
-        .map_err(|_| "conflict_probe_unavailable")?;
-    let stdout = child.take_stdout().ok_or("conflict_probe_failed")?;
-    let reader = thread::spawn(move || {
-        let mut bytes = Vec::new();
-        stdout
-            .take(OUTPUT as u64 + 1)
-            .read_to_end(&mut bytes)
-            .map(|_| bytes)
-    });
-    let status = loop {
-        if Instant::now() >= deadline {
-            break Err("conflict_probe_timeout");
-        }
-        match child.try_wait() {
-            Ok(Some(status)) => break Ok(status),
-            Ok(None) => thread::sleep(Duration::from_millis(5)),
-            Err(_) => break Err("conflict_probe_failed"),
-        }
-    };
-    let _ = child.kill_tree();
-    let bytes = reader
-        .join()
-        .map_err(|_| "conflict_probe_failed")?
-        .map_err(|_| "conflict_probe_failed")?;
-    if bytes.len() > OUTPUT {
-        return Err("conflict_probe_bounds");
-    }
-    if !status?.success() {
-        return Err("conflict_probe_failed");
-    }
-    let response: ProbeReply<T> =
-        serde_json::from_slice(&bytes).map_err(|_| "conflict_probe_format")?;
-    if !response.ok {
-        return Err("conflict_probe_failed");
-    }
-    if response.value.len() > 2048 {
-        return Err("conflict_probe_bounds");
-    }
-    Ok(response.value)
+struct ProbeFailure {
+    code: &'static str,
+    cleanup: Option<std::io::ErrorKind>,
 }
 
-fn conflict_probe(target: &Observation) -> Result<bool, &'static str> {
+impl From<&'static str> for ProbeFailure {
+    fn from(code: &'static str) -> Self {
+        Self {
+            code,
+            cleanup: None,
+        }
+    }
+}
+
+#[derive(Default)]
+struct ProbeOwner {
+    unconfirmed: Option<OwnedChild>,
+    stopped: bool,
+}
+
+impl ProbeOwner {
+    fn stop(&mut self) {
+        self.stopped = true;
+        if let Some(mut child) = self.unconfirmed.take()
+            && let Err(error) = child.capture_until(Instant::now() + Duration::from_millis(50), 1)
+        {
+            crate::diagnostic!(
+                json!({"component":"delivery","kind":"watch.probe_cleanup_unconfirmed","cleanup_io_kind":error.cleanup.as_ref().map(|source| format!("{:?}", source.kind()))})
+            );
+        }
+    }
+
+    fn read<T: for<'a> Deserialize<'a>>(
+        &mut self,
+        topic: &str,
+        deadline: Instant,
+    ) -> Result<Vec<T>, ProbeFailure> {
+        const OUTPUT: usize = 1024 * 1024;
+        if self.stopped {
+            return Err("conflict_probe_unavailable".into());
+        }
+        if let Some(mut child) = self.unconfirmed.take() {
+            let cleanup_deadline = deadline.min(Instant::now() + Duration::from_millis(50));
+            if let Err(failure) = child.capture_until(cleanup_deadline, OUTPUT) {
+                self.unconfirmed = Some(child);
+                return Err(ProbeFailure {
+                    code: "conflict_probe_cleanup_pending",
+                    cleanup: failure.cleanup.as_ref().map(std::io::Error::kind),
+                });
+            }
+        }
+        if Instant::now() >= deadline {
+            return Err("conflict_probe_timeout".into());
+        }
+        let mut command = ProcessCommand::new("hcoord");
+        command
+            .args([topic, "list", "--json"])
+            .stdin(Stdio::null())
+            .stderr(Stdio::null())
+            .stdout(Stdio::piped());
+        let mut child = hide_platform::process::OwnedChild::spawn(&mut command)
+            .map_err(|_| "conflict_probe_unavailable")?;
+        let output = match child.capture_until(deadline, OUTPUT) {
+            Ok(output) => output,
+            Err(failure) => {
+                if failure.cleanup.is_some() {
+                    self.unconfirmed = Some(child);
+                }
+                return Err(ProbeFailure {
+                    code: match failure.kind {
+                        CaptureFailureKind::Deadline => "conflict_probe_timeout",
+                        CaptureFailureKind::OutputLimit { .. } => "conflict_probe_bounds",
+                        CaptureFailureKind::Io(_) | CaptureFailureKind::Cleanup => {
+                            "conflict_probe_failed"
+                        }
+                    },
+                    cleanup: failure.cleanup.as_ref().map(std::io::Error::kind),
+                });
+            }
+        };
+        if !output.status.success() {
+            return Err("conflict_probe_failed".into());
+        }
+        let response: ProbeReply<T> =
+            serde_json::from_slice(&output.stdout).map_err(|_| "conflict_probe_format")?;
+        if !response.ok {
+            return Err("conflict_probe_failed".into());
+        }
+        if response.value.len() > 2048 {
+            return Err("conflict_probe_bounds".into());
+        }
+        Ok(response.value)
+    }
+}
+
+fn conflict_probe(target: &Observation, client: &Client) -> Result<bool, ProbeFailure> {
     let deadline = Instant::now() + Duration::from_secs(2);
-    let watches = probe_read::<CoordinationWatch>("watch", deadline)?;
+    let probes = client
+        .probes
+        .upgrade()
+        .ok_or("conflict_probe_unavailable")?;
+    let mut owner = probes.try_lock().map_err(|_| "conflict_probe_busy")?;
+    let watches = owner.read::<CoordinationWatch>("watch", deadline)?;
     let active: Vec<_> = watches
         .into_iter()
         .filter(|watch| watch.status == "active")
@@ -764,7 +824,7 @@ fn conflict_probe(target: &Observation) -> Result<bool, &'static str> {
     if active.is_empty() {
         return Ok(false);
     }
-    let participants = probe_read::<Participant>("agent", deadline)?;
+    let participants = owner.read::<Participant>("agent", deadline)?;
     // The existing local hcoord route explicitly uses machine=local and the
     // exact socket as hostScope. "default", host-name aliases and unknown
     // remote routes cannot establish a binding and take B36's diagnostic path.
@@ -778,7 +838,7 @@ fn conflict_probe(target: &Observation) -> Result<bool, &'static str> {
         .as_deref()
         .ok_or("conflict_binding_unavailable")?;
     if target.actor.device_id != "local" {
-        return Err("conflict_binding_unavailable");
+        return Err("conflict_binding_unavailable".into());
     }
     let mut incomplete = false;
     for watch in active {
@@ -808,7 +868,7 @@ fn conflict_probe(target: &Observation) -> Result<bool, &'static str> {
         }
     }
     if incomplete {
-        Err("conflict_binding_unavailable")
+        Err("conflict_binding_unavailable".into())
     } else {
         Ok(false)
     }

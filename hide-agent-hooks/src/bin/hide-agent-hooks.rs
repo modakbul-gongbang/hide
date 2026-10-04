@@ -93,8 +93,8 @@ fn run_hook(arguments: &[String]) {
     let intake = if event == HookEvent::UserPromptSubmit && runtime.is_some() {
         match hide_agent_hooks::delivery::pull(delivery_deadline) {
             Ok(intake) => intake,
-            Err(code) => {
-                hide_agent_hooks::delivery::diagnose(&home, code);
+            Err(failure) => {
+                hide_agent_hooks::delivery::diagnose_failure(&home, &failure);
                 None
             }
         }
@@ -131,8 +131,10 @@ fn run_hook(arguments: &[String]) {
     if event == HookEvent::UserPromptSubmit {
         if let Some(intake) = intake {
             if flushed {
-                if let Err(code) = hide_agent_hooks::delivery::confirm(&intake, delivery_deadline) {
-                    hide_agent_hooks::delivery::diagnose(&home, code);
+                if let Err(failure) =
+                    hide_agent_hooks::delivery::confirm(&intake, delivery_deadline)
+                {
+                    hide_agent_hooks::delivery::diagnose_failure(&home, &failure);
                 }
             } else {
                 hide_agent_hooks::delivery::diagnose(&home, "stdout");

@@ -6,11 +6,10 @@ use std::collections::BTreeMap;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use hide_platform::fs::{self, private};
-use hide_platform::process::OwnedChild;
+use hide_platform::process::{CaptureFailureKind, OwnedChild};
 use serde::{Deserialize, Serialize};
 
 const OUTPUT_LIMIT: usize = 64 * 1024;
@@ -23,7 +22,22 @@ pub struct Intake {
     pub ids: Vec<String>,
 }
 
-pub fn pull(deadline: Instant) -> Result<Option<Intake>, &'static str> {
+#[derive(Debug)]
+pub struct Failure {
+    pub code: &'static str,
+    pub cleanup: Option<std::io::ErrorKind>,
+}
+
+impl From<&'static str> for Failure {
+    fn from(code: &'static str) -> Self {
+        Self {
+            code,
+            cleanup: None,
+        }
+    }
+}
+
+pub fn pull(deadline: Instant) -> Result<Option<Intake>, Failure> {
     let pull_deadline = deadline.checked_sub(CONFIRM_RESERVE).ok_or("deadline")?;
     let answer = run_cli(&["inbox", "--hook"], pull_deadline)?;
     let intake: Intake = serde_json::from_value(answer).map_err(|_| "format")?;
@@ -34,7 +48,7 @@ pub fn pull(deadline: Instant) -> Result<Option<Intake>, &'static str> {
             .iter()
             .any(|id| id.is_empty() || id.len() > 256 || id.chars().any(char::is_control))
     {
-        return Err("format");
+        return Err("format".into());
     }
     if intake.ids.is_empty() {
         Ok(None)
@@ -43,7 +57,7 @@ pub fn pull(deadline: Instant) -> Result<Option<Intake>, &'static str> {
     }
 }
 
-pub fn confirm(intake: &Intake, deadline: Instant) -> Result<(), &'static str> {
+pub fn confirm(intake: &Intake, deadline: Instant) -> Result<(), Failure> {
     let mut arguments = vec!["inbox", "--confirm"];
     arguments.extend(intake.ids.iter().map(String::as_str));
     let answer = run_cli(&arguments, deadline)?;
@@ -57,14 +71,14 @@ pub fn confirm(intake: &Intake, deadline: Instant) -> Result<(), &'static str> {
             .zip(&intake.ids)
             .all(|(actual, expected)| actual.as_str() == Some(expected))
     {
-        return Err("confirm");
+        return Err("confirm".into());
     }
     Ok(())
 }
 
-fn run_cli(arguments: &[&str], deadline: Instant) -> Result<serde_json::Value, &'static str> {
+fn run_cli(arguments: &[&str], deadline: Instant) -> Result<serde_json::Value, Failure> {
     if Instant::now() >= deadline {
-        return Err("deadline");
+        return Err("deadline".into());
     }
     let executable = std::env::current_exe().map_err(|_| "cli")?;
     let sibling = executable
@@ -80,33 +94,18 @@ fn run_cli(arguments: &[&str], deadline: Instant) -> Result<serde_json::Value, &
         .stdout(Stdio::piped())
         .stderr(Stdio::null());
     let mut child = OwnedChild::spawn(&mut command).map_err(|_| "cli")?;
-    let stdout = child.take_stdout().ok_or("cli")?;
-    let reader = thread::spawn(move || {
-        let mut bytes = Vec::new();
-        stdout
-            .take(OUTPUT_LIMIT as u64 + 1)
-            .read_to_end(&mut bytes)
-            .map(|_| bytes)
-    });
-    let status = loop {
-        if Instant::now() >= deadline {
-            break Err("deadline");
-        }
-        match child.try_wait() {
-            Ok(Some(status)) => break Ok(status),
-            Ok(None) => thread::sleep(Duration::from_millis(5)),
-            Err(_) => break Err("cli"),
-        }
-    };
-    let _ = child.kill_tree();
-    let bytes = reader.join().map_err(|_| "cli")?.map_err(|_| "cli")?;
-    let status = status?;
-    let value: serde_json::Value = if bytes.len() <= OUTPUT_LIMIT {
-        serde_json::from_slice(&bytes).map_err(|_| "format")?
-    } else {
-        return Err("format");
-    };
-    if !status.success() || value["ok"] != true {
+    let output = child
+        .capture_until(deadline, OUTPUT_LIMIT)
+        .map_err(|failure| Failure {
+            code: match failure.kind {
+                CaptureFailureKind::Deadline => "deadline",
+                CaptureFailureKind::OutputLimit { .. } => "format",
+                CaptureFailureKind::Io(_) | CaptureFailureKind::Cleanup => "cli",
+            },
+            cleanup: failure.cleanup.as_ref().map(std::io::Error::kind),
+        })?;
+    let value: serde_json::Value = serde_json::from_slice(&output.stdout).map_err(|_| "format")?;
+    if !output.status.success() || value["ok"] != true {
         return Err(match value["reason"].as_str() {
             Some("ledger_unavailable") => "ledger",
             Some("capacity") => "capacity",
@@ -114,9 +113,10 @@ fn run_cli(arguments: &[&str], deadline: Instant) -> Result<serde_json::Value, &
                 "identity"
             }
             _ => "cli",
-        });
+        }
+        .into());
     }
-    value.get("result").cloned().ok_or("format")
+    value.get("result").cloned().ok_or_else(|| "format".into())
 }
 
 #[derive(Deserialize, Serialize, Default)]
@@ -127,6 +127,11 @@ struct Diagnostics {
 /// Eight fixed causes, private storage and a nonblocking cross-process lock.
 /// A hook with no pane can still record its failure without recording its cwd.
 pub fn diagnose(home: &Path, cause: &'static str) -> bool {
+    diagnose_failure(home, &cause.into())
+}
+
+pub fn diagnose_failure(home: &Path, failure: &Failure) -> bool {
+    let cause = failure.code;
     const CAUSES: [&str; 8] = [
         "cli", "deadline", "format", "confirm", "ledger", "capacity", "identity", "stdout",
     ];
@@ -189,7 +194,7 @@ pub fn diagnose(home: &Path, cause: &'static str) -> bool {
     if matches!(result, Ok(true)) {
         eprintln!(
             "{}",
-            serde_json::json!({"component":"delivery_hook","kind":"intake.failed","code":cause,"diagnostic_saved":result.is_ok()})
+            serde_json::json!({"component":"delivery_hook","kind":"intake.failed","code":cause,"cleanup_io_kind":failure.cleanup.map(|kind| format!("{kind:?}")),"diagnostic_saved":true})
         );
         true
     } else {

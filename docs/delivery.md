@@ -52,6 +52,8 @@ Interruption before confirmation can repeat the same letter ID; confirmed letter
 The hook emits at most five letters and 8 KiB of context, with a remaining-count line and `hide inbox` guidance when more are pending.
 A large letter is truncated at a UTF-8 boundary and includes its ID and `hide request show` command for the complete body.
 The hook has one total two-second budget; failure succeeds without context, records a bounded private diagnostic and leaves the letter pending.
+CLI output collection uses the canonical platform capture, with a 64 KiB bound and no reader thread or blocking join after timeout.
+Cleanup uncertainty is a separate private diagnostic field and never authorizes confirmation.
 Manual `hide inbox` and `hide request show` remain available when the hook is missing or fails.
 
 The pinned Herdr API has no atomic composer guard.
@@ -113,6 +115,9 @@ A done target remains watched until exit or explicit stop; there is no completio
 
 At registration only, Hide runs one existing read-only hcoord watch-list call and, when active watches exist, at most one agent-list call within one combined two-second budget.
 An exact current pane/session/machine/host-scope match rejects registration as `conflict`; unavailable or ambiguous proof records a stable diagnostic and allows registration.
+One off-lock probe owner serializes registration reads with a nonblocking admission check and retains at most one child whose cleanup is unconfirmed.
+It refuses another probe while that child remains unconfirmed, records the stable unverified-registration outcome, and spends at most 50 ms of the next registration's existing two-second budget retrying cleanup.
+Each probe keeps the existing 1 MiB output and 2048-row limits, and Runtime holds only a weak reference so its teardown cannot perform child cleanup under the runtime mutex.
 Returned prompts, paths and arguments are not persisted or logged.
 During PRD A, do not add an hcoord watch to a target already watched by Hide: the reverse registration direction is an operational rule, and two independent watches can otherwise produce two warning letters.
 The helper protocol addition must inherit the preceding request-view contract; this work does not authorize replacing an installed helper or retiring hcoord.
