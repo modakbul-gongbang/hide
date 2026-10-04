@@ -20,7 +20,11 @@ function identity(root) {
   // Refuse those before both build and reuse instead of labelling them default.
   const overrides=Object.keys(process.env).filter(key=>key.startsWith('CARGO_PROFILE_') || key==='CARGO_BUILD_TARGET' || key==='CARGO_BUILD_RUSTC' || key==='CI_PREPARATION_FEATURES');
   if(overrides.length) throw Error('unsupported preparation build override: '+overrides.sort().join(', '));
-  const command=(name,args)=>execFileSync(name,args,{cwd:root,encoding:'utf8',timeout:5000,maxBuffer:64*1024}).trim();
+  // Verification already owns a Bash entrypoint on every runner. Its command
+  // lookup executes Windows pnpm command shims as well as native executables;
+  // Node's execFile lookup alone cannot start that same installed shim.
+  // Pass separate argv through a fixed script, never interpolate shell text.
+  const command=(name,args)=>execFileSync('bash',['-c','"$@"','preparation-tool',name,...args],{cwd:root,encoding:'utf8',timeout:5000,maxBuffer:64*1024}).trim();
   const sha=command('git',['rev-parse','HEAD']);
   command('git',['diff','--quiet','HEAD','--']);
   if(process.env.GITHUB_SHA && process.env.GITHUB_SHA!==sha) throw Error('preparation checkout differs from tested SHA');
