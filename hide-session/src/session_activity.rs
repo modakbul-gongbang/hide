@@ -73,12 +73,14 @@ mod tests {
         let root = match agent {
             Agent::Claude => home.join(".claude/projects/project"),
             Agent::Codex => home.join(".codex/sessions/2026/01/01"),
+            Agent::OpenCode => unreachable!("OpenCode has no transcript file"),
         };
         fs::create_dir_all(&root).unwrap();
         let path = root.join("native-a.jsonl");
         let header = match agent {
             Agent::Claude => serde_json::json!({"type":"user","sessionId":"native-a"}),
             Agent::Codex => serde_json::json!({"type":"session_meta","payload":{"id":"native-a"}}),
+            Agent::OpenCode => unreachable!("OpenCode has no transcript file"),
         };
         // Conversation records are deliberately invalid: activity must not
         // parse or project them after establishing the native owner.
