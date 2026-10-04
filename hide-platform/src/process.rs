@@ -1084,58 +1084,6 @@ mod sys {
         return Ok(unsafe { info.si_pid() } != 0);
     }
 
-    pub(super) use std::os::fd::AsRawFd as PipeHandle;
-
-    pub(super) fn nonblocking(pipe: &impl PipeHandle) -> io::Result<()> {
-        let fd = pipe.as_raw_fd();
-        // SAFETY: fd is borrowed and open; no ownership changes.
-        let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
-        if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
-            Err(io::Error::last_os_error())
-        } else {
-            Ok(())
-        }
-    }
-
-    pub(super) fn read_available<P: io::Read + PipeHandle>(
-        pipe: &mut P,
-        bytes: &mut [u8],
-    ) -> io::Result<Option<usize>> {
-        match pipe.read(bytes) {
-            Err(error)
-                if matches!(
-                    error.kind(),
-                    io::ErrorKind::WouldBlock | io::ErrorKind::Interrupted
-                ) =>
-            {
-                Ok(None)
-            }
-            result => result.map(Some),
-        }
-    }
-
-    pub(super) fn has_exited(child: &Child) -> io::Result<bool> {
-        // SAFETY: waitid writes initialized storage; WNOWAIT keeps the owned
-        // leader unreaped so its pid/group cannot be reused before teardown.
-        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
-        if unsafe {
-            libc::waitid(
-                libc::P_PID,
-                child.id() as libc::id_t,
-                &mut info,
-                libc::WEXITED | libc::WNOHANG | libc::WNOWAIT,
-            )
-        } < 0
-        {
-            return Err(io::Error::last_os_error());
-        }
-        #[cfg(target_os = "macos")]
-        return Ok(info.si_pid != 0);
-        #[cfg(target_os = "linux")]
-        // SAFETY: waitid initialized the union above.
-        return Ok(unsafe { info.si_pid() } != 0);
-    }
-
     pub(super) fn detach(command: &mut Command) -> io::Result<()> {
         // A child's standard streams are the ones its Command names, and the
         // standard library opens every other descriptor close-on-exec.
@@ -1852,58 +1800,6 @@ mod sys {
             more = unsafe { Thread32Next(snapshot.0, &mut entry) } != 0;
         }
         Err(io::Error::other("the new process has no thread to start"))
-    }
-
-    pub(super) use std::os::windows::io::AsRawHandle as PipeHandle;
-
-    // Anonymous Windows pipes cannot be made O_NONBLOCK. The sole reader
-    // peeks first and reads no more bytes than are already available.
-    pub(super) fn nonblocking(_: &impl PipeHandle) -> io::Result<()> {
-        Ok(())
-    }
-
-    pub(super) fn read_available<P: io::Read + PipeHandle>(
-        pipe: &mut P,
-        bytes: &mut [u8],
-    ) -> io::Result<Option<usize>> {
-        use windows_sys::Win32::System::Pipes::PeekNamedPipe;
-        let mut available = 0;
-        // SAFETY: the handle is borrowed and the only output is writable.
-        let peeked = unsafe {
-            PeekNamedPipe(
-                pipe.as_raw_handle(),
-                std::ptr::null_mut(),
-                0,
-                std::ptr::null_mut(),
-                &mut available,
-                std::ptr::null_mut(),
-            )
-        };
-        if peeked == 0 {
-            let error = io::Error::last_os_error();
-            return if matches!(error.raw_os_error(), Some(109 | 232 | 233)) {
-                Ok(Some(0))
-            } else {
-                Err(error)
-            };
-        }
-        if available == 0 {
-            return Ok(None);
-        }
-        let count = bytes.len().min(available as usize);
-        pipe.read(&mut bytes[..count]).map(Some)
-    }
-
-    pub(super) fn has_exited(child: &Child) -> io::Result<bool> {
-        use windows_sys::Win32::Foundation::{WAIT_OBJECT_0, WAIT_TIMEOUT};
-        use windows_sys::Win32::System::Threading::WaitForSingleObject;
-        // SAFETY: the borrowed process handle is owned by child; zero never
-        // blocks or releases its identity.
-        match unsafe { WaitForSingleObject(child.as_raw_handle(), 0) } {
-            WAIT_OBJECT_0 => Ok(true),
-            WAIT_TIMEOUT => Ok(false),
-            _ => Err(io::Error::last_os_error()),
-        }
     }
 
     pub(super) fn detach(command: &mut Command) -> io::Result<()> {
