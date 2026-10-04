@@ -9,6 +9,7 @@ import { expect, test, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { toPage } from "../../desktop/src/main/wirePath";
 import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, enterWorkspace, screenshot, showExplorer } from "./wire";
@@ -56,7 +57,7 @@ function gitFixture(dir: string): void {
 type Fixture = {
   herdr: HerdrFixture;
   daemon: Daemon;
-  /** The checkout root as the core spells it (a resolved path). */
+  /** The resolved checkout root in the core's wire spelling. */
   repo: string;
   file: string;
   sent: Map<string, number>;
@@ -91,7 +92,7 @@ async function openCheckout(page: Page, beforeLoad?: (page: Page) => Promise<voi
     // download instead of a buffer (D-12).
     fs.writeFileSync(path.join(repoDir, "huge.txt"), "");
     fs.truncateSync(path.join(repoDir, "huge.txt"), 17 * 1024 * 1024);
-    const repo = fs.realpathSync(repoDir);
+    const repo = toPage(fs.realpathSync(repoDir));
     herdr.run([
       "workspace", "create", "--cwd", repoDir, "--label", "repo",
       "--env", `PATH=${herdr.fixturePath}`, "--no-focus",
@@ -119,7 +120,7 @@ async function openCheckout(page: Page, beforeLoad?: (page: Page) => Promise<voi
     await expect(page.locator(`[data-explorer-row="${repo}/src/main.ts"]`)).toBeVisible();
     await page.locator(`[data-explorer-row="${repo}/src/main.ts"]`).click();
     await expect(page.locator('[data-editor-codemirror] .cm-content')).toContainText("export const answer = 41;");
-    return { herdr, daemon, repo, file: path.join(repo, "src/main.ts"), sent, lastSent };
+    return { herdr, daemon, repo, file: `${repo}/src/main.ts`, sent, lastSent };
   } catch (error) {
     daemon?.stop();
     herdr.stop();
