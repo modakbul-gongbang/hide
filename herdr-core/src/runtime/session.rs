@@ -1270,12 +1270,19 @@ impl Runtime {
                 if answers_superseded && let Some(tab_id) = herdr_tab.as_deref() {
                     self.superseded_tab_focus
                         .retain(|held| held.scope_id != checkout.id || held.target_id != tab_id);
-                    crate::diagnostic!(serde_json::json!({
-                        "component": "view_state",
-                        "kind": "tab.focus.late_answer",
-                        "checkout_id": checkout.id,
-                        "tab_id": tab_id,
-                    }));
+                    // Recorded only where the answer would have been followed.
+                    if hide_tab
+                        .as_deref()
+                        .is_some_and(|hide_tab| hide_tab != tab_id)
+                    {
+                        crate::diagnostic!(serde_json::json!({
+                            "component": "view_state",
+                            "kind": "tab.focus.late_answer",
+                            "checkout_id": checkout.id,
+                            "from_tab_id": hide_tab,
+                            "tab_id": tab_id,
+                        }));
+                    }
                 }
                 let visible = match (hide_tab, herdr_tab) {
                     (Some(hide_tab), Some(herdr_tab)) if hide_tab == herdr_tab => Some(hide_tab),
@@ -2939,11 +2946,6 @@ impl Runtime {
         target_id: &str,
         message: &str,
     ) {
-        // A refused superseded request will never be answered either.
-        if slot == ViewFocusSlot::Tab {
-            self.superseded_tab_focus
-                .retain(|held| held.target_id != target_id);
-        }
         let Some(pending) = self
             .pending_view_focus(slot)
             .as_ref()
@@ -2982,8 +2984,9 @@ impl Runtime {
     /// answer can arrive after the new request has already been confirmed by
     /// a session that predates both.
     pub(super) fn await_tab_focus(&mut self, next: PendingViewFocus) {
+        let next_target_id = next.target_id.clone();
         if let Some(previous) = self.pending_tab_focus.replace(next)
-            && previous.target_id != self.pending_tab_focus.as_ref().expect("just set").target_id
+            && previous.target_id != next_target_id
         {
             self.superseded_tab_focus.retain(|held| {
                 held.scope_id != previous.scope_id || held.target_id != previous.target_id
@@ -4075,6 +4078,13 @@ impl Runtime {
                 // and the wait ends, so the next Herdr event naming another
                 // tab is read as an external focus rather than a late answer.
                 if let RemoteControlAction::FocusTab { tab_id } = &action {
+                    // A refused superseded request will never be answered.
+                    // One whose result was lost may still have been applied,
+                    // so it keeps waiting for its answer until it expires.
+                    if !error.is_ambiguous() {
+                        self.superseded_tab_focus
+                            .retain(|held| held.target_id != *tab_id);
+                    }
                     self.clear_refused_view_focus(ViewFocusSlot::Tab, tab_id, &message);
                 }
                 self.set_error(

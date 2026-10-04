@@ -1050,6 +1050,79 @@ fn view_authority_a_late_answer_to_a_superseded_switch_is_not_followed() {
     assert_eq!(diagnostic_count(&runtime, "tab.focus.followed"), 1);
 }
 
+/// The superseded requests are bounded in count and in time, and one Herdr
+/// refused is not waited on; each of those ends the claim, so Herdr then
+/// focusing that tab is followed. A request whose result was lost may have
+/// been applied, so it keeps its claim.
+#[test]
+fn view_authority_a_superseded_switch_stops_claiming_its_tab_when_capped_expired_or_refused() {
+    let checkout_path = "/private/tmp/hide-view-authority-superseded-bounds";
+    let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
+    let tabs = (1..=20)
+        .map(|n| format!("w-order:t{n}"))
+        .collect::<Vec<_>>();
+    let tabs = tabs.iter().map(String::as_str).collect::<Vec<_>>();
+    runtime.ingest_session(Ok(tab_order_payload(
+        checkout_path,
+        &tabs,
+        &tabs,
+        "w-order:t20",
+    )));
+    let superseded = |runtime: &Runtime| {
+        runtime
+            .superseded_tab_focus
+            .iter()
+            .map(|held| held.target_id.clone())
+            .collect::<Vec<_>>()
+    };
+
+    for tab in &tabs[..=SUPERSEDED_TAB_FOCUS_LIMIT + 1] {
+        assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, tab)));
+    }
+    assert_eq!(superseded(&runtime).len(), SUPERSEDED_TAB_FOCUS_LIMIT);
+    assert!(!superseded(&runtime).contains(&"w-order:t1".to_owned()));
+
+    runtime.ingest_local_control_result(
+        RemoteControlAction::FocusTab {
+            tab_id: "w-order:t2".to_owned(),
+        },
+        Err("tab.focus rejected".to_owned()),
+        3,
+    );
+    runtime.ingest_local_control_failure(
+        RemoteControlAction::FocusTab {
+            tab_id: "w-order:t3".to_owned(),
+        },
+        Err(live::ControlFailure::Ambiguous(
+            "tab.focus result is unknown".into(),
+        )),
+        3,
+    );
+    assert!(!superseded(&runtime).contains(&"w-order:t2".to_owned()));
+    assert!(superseded(&runtime).contains(&"w-order:t3".to_owned()));
+
+    // The latest request is the youngest, so its deadline is past every one.
+    let requested_at = runtime
+        .pending_tab_focus
+        .as_ref()
+        .expect("the latest switch is in flight")
+        .requested_at_unix_ms;
+    runtime.expire_pending_view_focus(requested_at + VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS);
+    assert!(runtime.superseded_tab_focus.is_empty());
+
+    // With every claim gone, Herdr focusing t2 is an outside move again.
+    runtime.ingest_session(Ok(tab_order_payload(
+        checkout_path,
+        &tabs,
+        &tabs,
+        "w-order:t2",
+    )));
+    assert_eq!(
+        checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+        Some("w-order:t2")
+    );
+}
+
 /// AC1, R1. With nothing in flight, a Herdr session naming another tab is
 /// somebody focusing that tab outside Hide. Hide follows it and says so.
 #[test]
