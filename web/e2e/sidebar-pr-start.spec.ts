@@ -20,6 +20,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
+import { fixtureProgram } from "./platform-fixture";
 import { countSent, enterWorkspace } from "./wire";
 
 test.describe.configure({ timeout: 180_000 });
@@ -66,24 +67,27 @@ function fakeGh(dir: string, heads: Map<string, string>): { bin: string; down: s
   // The reader asks twice at once: every state without checks, and the open ones with only their number and checks.
   const openChecks = (repository: (typeof REPOSITORIES)[number]) =>
     JSON.stringify([{ number: repository.number, statusCheckRollup: [{ __typename: "CheckRun", status: "COMPLETED", conclusion: "SUCCESS", name: "verify" }] }]);
-  const byRepository = REPOSITORIES.map((repository) => `    *"/${repository.name}") case "$*" in *"--state open"*) echo '${openChecks(repository)}' ;; *) echo '${answer(repository)}' ;; esac ;;`).join("\n");
-  fs.writeFileSync(
-    path.join(bin, "gh"),
-    `#!/bin/sh
-[ -e '${down}' ] && { echo "dial tcp: network is unreachable" >&2; exit 1; }
-case "$1 $2" in
-  "auth status") exit 0 ;;
-  "pr list")
-    case "$PWD" in
-${byRepository}
-      *) echo '[]' ;;
-    esac ;;
-  "repo view") echo '{"nameWithOwner":"acme/repo"}' ;;
-  "issue list") echo '[]' ;;
-  *) echo "unsupported: $*" >&2; exit 1 ;;
-esac
+  const byRepository = Object.fromEntries(REPOSITORIES.map((repository) => [repository.name, { open: openChecks(repository), all: answer(repository) }]));
+  // The repository is the folder the call runs in, spelled with `/` as the wire does.
+  fixtureProgram(
+    bin,
+    "gh",
+    `const fs = require("fs");
+const args = process.argv.slice(2);
+const key = args.slice(0, 2).join(" ");
+const byRepository = ${JSON.stringify(byRepository)};
+if (fs.existsSync(${JSON.stringify(down)})) { console.error("dial tcp: network is unreachable"); process.exit(1); }
+if (key === "auth status") process.exit(0);
+if (key === "pr list") {
+  const repository = byRepository[process.cwd().replaceAll("\\\\", "/").split("/").pop()];
+  console.log(!repository ? "[]" : args.join(" ").includes("--state open") ? repository.open : repository.all);
+  process.exit(0);
+}
+if (key === "repo view") { console.log('{"nameWithOwner":"acme/repo"}'); process.exit(0); }
+if (key === "issue list") { console.log("[]"); process.exit(0); }
+console.error("unsupported: " + args.join(" "));
+process.exit(1);
 `,
-    { mode: 0o755 },
   );
   return { bin, down };
 }
@@ -113,7 +117,7 @@ test("the sidebar draws every project's pull request with no screen asking, and 
     const heads = new Map<string, string>();
     for (const { name, branch } of REPOSITORIES) heads.set(name, repositoryWithWorktree(herdr, name, branch));
     const gh = fakeGh(herdr.root, heads);
-    daemon = await startHided(herdr, "sidebar-pr-start", undefined, { PATH: `${gh.bin}:${herdr.fixturePath}` });
+    daemon = await startHided(herdr, "sidebar-pr-start", undefined, { PATH: `${gh.bin}${path.delimiter}${herdr.fixturePath}` });
 
     // The first run opens on All projects and chooses a Workspace, so the next start resumes on it.
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);

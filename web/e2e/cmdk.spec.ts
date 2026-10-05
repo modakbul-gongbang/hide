@@ -22,6 +22,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { labelAgent, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
+import { fixtureProgram } from "./platform-fixture";
 import { countSent, enterWorkspace, registerFolder, screenshot } from "./wire";
 import { chord, field, label, SYSTEM } from "./chords";
 import { fieldChord } from "../src/shortcuts";
@@ -157,34 +158,28 @@ function fakeGh(root: string): { bin: string; log: string } {
   const hit = (kind: string, number: number, title: string, state: string, url: string) => ({ number, title, state, url, isDraft: false, repository: { name: "repo", nameWithOwner: "acme/repo" }, kind });
   const searchPrs = [hit("pr", 90, "오래된 PR", "merged", SEARCHED_PR), hit("pr", 180, "⌘K를 이동 팔레트로", "open", "https://github.com/acme/repo/pull/180")];
   const searchIssues = [hit("issue", 91, "닫힌 이슈", "closed", "https://github.com/acme/repo/issues/91")];
-  fs.writeFileSync(
-    path.join(bin, "gh"),
-    `#!/bin/sh
-echo "$*" >> '${log}'
-case "$1 $2" in
-  "auth status") exit 0 ;;
-  "repo view") echo '{"nameWithOwner":"acme/repo"}'; exit 0 ;;
-  "issue list") echo '${JSON.stringify(issues)}'; exit 0 ;;
-  "pr list")
-    case " $* " in
-      *" merged "*) echo '[]' ;;
-      *) echo '${JSON.stringify(pulls)}' ;;
-    esac
-    exit 0 ;;
-  "search prs"|"search issues")
-    # The query is the words after the double dash.
-    case " $* " in
-      *" fail "*) echo "boom" >&2; exit 1 ;;
-      *" nothing "*) echo '[]'; exit 0 ;;
-    esac
-    if [ "$2" = "prs" ]; then echo '${JSON.stringify(searchPrs)}'; else echo '${JSON.stringify(searchIssues)}'; fi
-    exit 0 ;;
-  "api graphql") echo '{"data":{"r0":{"nameWithOwner":"acme/repo"}}}'; exit 0 ;;
-esac
-echo "unsupported: $*" >&2
-exit 1
+  fixtureProgram(
+    bin,
+    "gh",
+    `const fs = require("fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(log)}, args.join(" ") + "\\n");
+const key = args.slice(0, 2).join(" ");
+const done = (text) => { console.log(text); process.exit(0); };
+if (key === "auth status") process.exit(0);
+if (key === "repo view") done('{"nameWithOwner":"acme/repo"}');
+if (key === "issue list") done(${JSON.stringify(JSON.stringify(issues))});
+if (key === "pr list") done(args.includes("merged") ? "[]" : ${JSON.stringify(JSON.stringify(pulls))});
+if (key === "search prs" || key === "search issues") {
+  // The query is the words after the double dash.
+  if (args.includes("fail")) { console.error("boom"); process.exit(1); }
+  if (args.includes("nothing")) done("[]");
+  done(key === "search prs" ? ${JSON.stringify(JSON.stringify(searchPrs))} : ${JSON.stringify(JSON.stringify(searchIssues))});
+}
+if (key === "api graphql") done('{"data":{"r0":{"nameWithOwner":"acme/repo"}}}');
+console.error("unsupported: " + args.join(" "));
+process.exit(1);
 `,
-    { mode: 0o755 },
   );
   return { bin, log };
 }
@@ -235,7 +230,7 @@ test("⌘K relates the agent in front to its issue and pull request, finds them 
     const agent = await workspaceAt(herdr, worktree, "이동 팔레트 구현");
 
     const gh = fakeGh(herdr.root);
-    daemon = await startHided(herdr, "cmdk-github", undefined, { PATH: `${gh.bin}:${herdr.fixturePath}` });
+    daemon = await startHided(herdr, "cmdk-github", undefined, { PATH: `${gh.bin}${path.delimiter}${herdr.fixturePath}` });
     const last = new Map<string, Record<string, unknown>>();
     const sent = countSent(page, last);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);

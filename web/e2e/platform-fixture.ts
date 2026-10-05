@@ -56,6 +56,70 @@ export function forgetCompiledFixtures(): void {
  */
 export const localEndpoint = (socket: string): string => (process.platform === "win32" ? `\\\\.\\pipe\\${socket}` : socket);
 
+// Runs the Node script next to it that shares its name: `name.exe` runs
+// `name.js`, interpreted by the program its first line (`#!<path>`) names, with
+// the arguments it was given, and exits with that program's status.
+const LAUNCHER_SOURCE = `#include <windows.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+
+int main(void) {
+  char script[MAX_PATH];
+  DWORD length = GetModuleFileNameA(NULL, script, sizeof script);
+  char *dot = strrchr(script, '.');
+  if (length == 0 || length >= sizeof script || !dot) return 70;
+  strcpy(dot, ".js");
+  FILE *file = fopen(script, "rb");
+  if (!file) { fprintf(stderr, "launcher: no script %s\\n", script); return 70; }
+  char line[MAX_PATH + 3];
+  char *got = fgets(line, sizeof line, file);
+  fclose(file);
+  if (!got || strncmp(line, "#!", 2) != 0) { fprintf(stderr, "launcher: %s has no interpreter line\\n", script); return 70; }
+  char *interpreter = line + 2;
+  interpreter[strcspn(interpreter, "\\r\\n")] = 0;
+  const char *arguments = GetCommandLineA();
+  if (*arguments == '"') {
+    arguments++;
+    while (*arguments && *arguments != '"') arguments++;
+    if (*arguments) arguments++;
+  } else {
+    while (*arguments && *arguments != ' ' && *arguments != '\\t') arguments++;
+  }
+  char *command = malloc(strlen(interpreter) + strlen(script) + strlen(arguments) + 8);
+  if (!command) return 70;
+  sprintf(command, "\\"%s\\" \\"%s\\"%s", interpreter, script, arguments);
+  STARTUPINFOA startup = { sizeof startup };
+  PROCESS_INFORMATION process;
+  if (!CreateProcessA(NULL, command, NULL, NULL, TRUE, 0, NULL, NULL, &startup, &process)) return 71;
+  WaitForSingleObject(process.hProcess, INFINITE);
+  DWORD status = 1;
+  GetExitCodeProcess(process.hProcess, &status);
+  return (int)status;
+}
+`;
+
+/**
+ * An executable `name` in `dir` that runs the Node `script`, the same way on
+ * every system: Unix runs the file through its interpreter line, and Windows,
+ * which cannot run a script by name, gets `name.exe`, one compiled launcher
+ * copied beside `name.js`. Returns the executable's path. The script reads
+ * its arguments from `process.argv.slice(2)`.
+ */
+export function fixtureProgram(dir: string, name: string, script: string): string {
+  fs.mkdirSync(dir, { recursive: true });
+  const body = `#!${process.execPath}\n${script}`;
+  if (process.platform !== "win32") {
+    const executable = path.join(dir, name);
+    fs.writeFileSync(executable, body, { mode: 0o755 });
+    return executable;
+  }
+  fs.writeFileSync(path.join(dir, `${name}.js`), body);
+  const executable = path.join(dir, `${name}.exe`);
+  compileFixtureC(LAUNCHER_SOURCE, executable);
+  return executable;
+}
+
 /** What the system says a running process has used: cumulative CPU seconds and resident memory. */
 export function processUsage(pid: number): { cpuSeconds: number; rssKiB: number } {
   if (process.platform === "win32") {

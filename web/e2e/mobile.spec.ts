@@ -22,6 +22,7 @@ import os from "node:os";
 import path from "node:path";
 import { elsewhereTab, finishFixtureTurn, labelAgent, labelMarker, setFixtureLifecycle, setFixtureSession, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
+import { fixtureExecutable, fixtureProgram } from "./platform-fixture";
 import { screenshot } from "./wire";
 import { chord } from "./chords";
 
@@ -32,25 +33,31 @@ const DNS = "mac.tailnet-name.ts.net";
 /** A `tailscale` CLI whose answers the test writes; it records every call. */
 class FakeTailscale {
   readonly dir = fs.mkdtempSync(path.join(os.tmpdir(), "hide-ts-"));
-  readonly bin = path.join(this.dir, "tailscale");
+  readonly bin = path.join(this.dir, fixtureExecutable("tailscale"));
 
   install(): void {
-    const script = `#!/bin/sh
-S='${this.dir}'
-echo "$*" >> "$S/calls.log"
-case "$1" in
-  status) cat "$S/status.json" ;;
-  serve)
-    shift
-    if [ "$1" = status ]; then cat "$S/serve.json" 2>/dev/null || echo '{}'; exit 0; fi
-    last=""; for a in "$@"; do last="$a"; done
-    if [ "$last" = off ]; then echo '{}' > "$S/serve.json"; exit 0; fi
-    printf '{"TCP":{"443":{"HTTPS":true}},"Web":{"${DNS}:443":{"Handlers":{"/":{"Proxy":"%s"}}}}}' "$last" > "$S/serve.json"
-    ;;
-  *) exit 2 ;;
-esac
-`;
-    fs.writeFileSync(this.bin, script, { mode: 0o755 });
+    fixtureProgram(
+      this.dir,
+      "tailscale",
+      `const fs = require("fs");
+const path = require("path");
+const file = (name) => path.join(${JSON.stringify(this.dir)}, name);
+const args = process.argv.slice(2);
+fs.appendFileSync(file("calls.log"), args.join(" ") + "\\n");
+if (args[0] === "status") { process.stdout.write(fs.readFileSync(file("status.json"), "utf8")); process.exit(0); }
+if (args[0] === "serve") {
+  const rest = args.slice(1);
+  if (rest[0] === "status") {
+    process.stdout.write(fs.existsSync(file("serve.json")) ? fs.readFileSync(file("serve.json"), "utf8") : "{}\\n");
+    process.exit(0);
+  }
+  const last = rest[rest.length - 1];
+  fs.writeFileSync(file("serve.json"), last === "off" ? "{}\\n" : '{"TCP":{"443":{"HTTPS":true}},"Web":{"${DNS}:443":{"Handlers":{"/":{"Proxy":"' + last + '"}}}}}');
+  process.exit(0);
+}
+process.exit(2);
+`,
+    );
   }
 
   status(value: unknown): void {
