@@ -579,6 +579,13 @@ impl std::error::Error for RunCleanupFailure {
 
 const RUN_POLL: std::time::Duration = std::time::Duration::from_millis(20);
 
+/// When a killed child that is still not seen to end counts as one the kernel
+/// could not end. It does not wait out a slow machine: a SIGKILL or a
+/// terminated job ends a process in milliseconds even on a loaded runner, so a
+/// leader still running this long after is held in the kernel (an I/O that
+/// cannot be interrupted, a driver), which waiting longer would not end.
+const END_UNCONFIRMED_AFTER: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// Runs `command` as an [`OwnedChild`] with no input and capped outputs.
 /// The original deadline and stop apply through pipe draining, including after
 /// normal exit. Cleanup precedes that drain on every exit; the tree's end is
@@ -606,7 +613,7 @@ pub fn run_to_end(
     let outcome = capture_run(&mut child, end, stop);
     let cleanup = child
         .kill_tree()
-        .and_then(|_| confirm_end(&mut child, stop));
+        .and_then(|_| confirm_end(&mut child, stop, END_UNCONFIRMED_AFTER));
     match cleanup {
         Ok(()) => outcome,
         Err(cleanup) => Err(RunFailure::Wait(io::Error::other(RunCleanupFailure {
@@ -619,13 +626,19 @@ pub fn run_to_end(
 
 /// Waits until the ended child's exit is observed. The kill is sent, and its
 /// effect is that state, not a moment: Windows ends a job's processes after
-/// `TerminateJobObject` returns, so a busy machine can take longer than any
-/// fixed bound. Only the caller's stop gives up first, one poll interval after
-/// it is seen, because a kernel call has no universal cancellation guarantee
-/// and a quitting owner does not wait on a reap.
-#[allow(clippy::disallowed_methods)] // a production wait, not test code
-fn confirm_end(child: &mut OwnedChild, stop: &std::sync::atomic::AtomicBool) -> io::Result<()> {
+/// `TerminateJobObject` returns, so a busy machine can take longer than one
+/// poll interval. The wait is on the exit itself where the system has one
+/// (`sys::wait_exit`). Two states give up: the caller's stop, one poll
+/// interval after it is seen, because a quitting owner does not wait on a
+/// reap; and `give_up` passing, which means the kernel did not end the child.
+/// Either way the caller keeps the child in `RunCleanupFailure`.
+fn confirm_end(
+    child: &mut OwnedChild,
+    stop: &std::sync::atomic::AtomicBool,
+    give_up: std::time::Duration,
+) -> io::Result<()> {
     use std::sync::atomic::Ordering;
+    let started = Instant::now();
     let mut stopping = false;
     loop {
         if child.try_wait()?.is_some() {
@@ -637,8 +650,20 @@ fn confirm_end(child: &mut OwnedChild, stop: &std::sync::atomic::AtomicBool) -> 
                 "child exit was not confirmed before the caller stopped",
             ));
         }
+        let waited = started.elapsed();
+        if waited >= give_up {
+            eprintln!(
+                "process.end_unconfirmed pid={} waited_ms={}",
+                child.id(),
+                waited.as_millis()
+            );
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "the killed child did not end; the system is still holding it",
+            ));
+        }
         stopping = stop.load(Ordering::Relaxed);
-        std::thread::sleep(RUN_POLL);
+        sys::wait_exit(&child.child, RUN_POLL.min(give_up - waited))?;
     }
 }
 
@@ -1130,6 +1155,14 @@ mod sys {
             }
             read => read.map(Some),
         }
+    }
+
+    /// Unix has no wait on one child's exit with a limit, and a killed
+    /// child's exit is seen by the next `try_wait`, so this only paces it.
+    #[allow(clippy::disallowed_methods)] // a production wait, not test code
+    pub(super) fn wait_exit(_: &Child, at_most: Duration) -> io::Result<()> {
+        std::thread::sleep(at_most);
+        Ok(())
     }
 
     pub(super) fn has_exited(child: &Child) -> io::Result<bool> {
@@ -1829,6 +1862,18 @@ mod sys {
         pipe.read(&mut bytes[..count]).map(Some)
     }
 
+    /// Returns when the child's process handle is signalled (it ended) or
+    /// after `at_most`, whichever comes first.
+    pub(super) fn wait_exit(child: &Child, at_most: Duration) -> io::Result<()> {
+        let milliseconds = u32::try_from(at_most.as_millis()).unwrap_or(u32::MAX);
+        // SAFETY: the process handle is owned by child and stays open for the
+        // call; waiting does not release the process's identity.
+        match unsafe { WaitForSingleObject(child.as_raw_handle(), milliseconds) } {
+            WAIT_OBJECT_0 | WAIT_TIMEOUT => Ok(()),
+            _ => Err(io::Error::last_os_error()),
+        }
+    }
+
     pub(super) fn has_exited(child: &Child) -> io::Result<bool> {
         // SAFETY: the process handle is owned by child. A zero wait observes
         // exit without blocking or releasing the process's identity.
@@ -2169,15 +2214,34 @@ mod run_cleanup_tests {
     #[test]
     fn an_exit_that_comes_after_one_poll_interval_is_still_confirmed() {
         let mut child = child(300);
-        confirm_end(&mut child, &AtomicBool::new(false)).unwrap();
+        confirm_end(&mut child, &AtomicBool::new(false), END_UNCONFIRMED_AFTER).unwrap();
         assert!(child.try_wait().unwrap().is_some());
     }
 
     #[test]
     fn a_raised_stop_leaves_an_exit_that_has_not_come_to_the_caller() {
         let mut child = child(30_000);
-        let error = confirm_end(&mut child, &AtomicBool::new(true)).unwrap_err();
+        let error =
+            confirm_end(&mut child, &AtomicBool::new(true), END_UNCONFIRMED_AFTER).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::Interrupted, "{error}");
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "the child is retained, not reaped"
+        );
+        child.kill_tree().unwrap();
+        child.wait().unwrap();
+    }
+
+    #[test]
+    fn a_child_still_running_when_the_end_is_given_up_is_left_to_the_caller() {
+        let mut child = child(30_000);
+        let error = confirm_end(
+            &mut child,
+            &AtomicBool::new(false),
+            Duration::from_millis(100),
+        )
+        .unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut, "{error}");
         assert!(
             child.try_wait().unwrap().is_none(),
             "the child is retained, not reaped"
