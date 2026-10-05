@@ -303,6 +303,7 @@ impl Runtime {
                     if let RemoteControlAction::FocusTab { tab_id } = &action {
                         self.mark_tab_focus_sent(tab_id);
                     }
+                    let live_generation = self.live_generation;
                     if let RemoteControlAction::MoveTab {
                         checkout_id,
                         generation,
@@ -318,6 +319,7 @@ impl Runtime {
                                 .filter(|pending| {
                                     pending.generation == *generation
                                         && pending.phase == "transmitting"
+                                        && pending.connection_generation == live_generation
                                 });
                         let Some(pending) = current else {
                             crate::diagnostic!(serde_json::json!({
@@ -331,6 +333,7 @@ impl Runtime {
                         };
                         pending.deadline_at_unix_ms =
                             Some(unix_milliseconds().saturating_add(CLOSE_STAGE_TIMEOUT_MS));
+                        self.sync_async_operations();
                     }
                     return Some(LaneStart::Tab { context, action });
                 }
@@ -384,6 +387,7 @@ impl Runtime {
         let unknown = result.as_ref().is_err_and(ControlFailure::is_ambiguous);
         let mut changed = self.ingest_pane_focus_completion(control, result, elapsed_ms);
         if unknown {
+            self.control_lane.drop_queued_pane_focus();
             changed |= self.abandon_queued_tab_focus();
         }
         (changed, self.advance_lane())
@@ -405,7 +409,7 @@ impl Runtime {
         }
         self.push_diagnostic(
             "tab.focus.unknown",
-            "Herdr's answer to an earlier tab focus was lost, so the newer one was not sent; Hide keeps the tab it shows",
+            "Herdr's answer to an earlier focus was lost, so the newer tab focus was not sent; Hide keeps the tab it shows",
         );
         true
     }

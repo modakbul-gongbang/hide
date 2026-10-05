@@ -625,3 +625,21 @@ fn a_lost_tab_focus_answer_does_not_release_the_pane_focus_behind_it() {
     assert!(!runtime.control_lane.is_busy());
     assert!(runtime.pending_pane_focus.is_none());
 }
+
+/// A move accepted on one Herdr connection is not replayed on the next one:
+/// its insert index names the order the first one showed.
+#[test]
+fn a_tab_move_queued_on_an_earlier_connection_is_not_sent() {
+    let herdr = fake_herdr("order-move-connection");
+    let (mut runtime, checkout_id) =
+        runtime_on(&herdr, "/private/tmp/hide-control-order-move-connection");
+    assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2")));
+    queued_move(&mut runtime, &checkout_id, "transmitting");
+    herdr.wait_for_requests(1, Duration::from_secs(5));
+    runtime.live_generation += 1;
+
+    let (_, next) = runtime.complete_lane_tab(focus_action("w-order:t2"), acknowledged(), 4);
+
+    assert!(next.is_none());
+    assert!(!runtime.control_lane.is_busy());
+}

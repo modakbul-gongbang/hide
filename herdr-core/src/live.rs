@@ -2170,12 +2170,21 @@ pub(crate) fn spawn_control_lane(first: LaneStart) -> Result<(), String> {
                 let started = Instant::now();
                 let (context, finished) = match current {
                     LaneStart::Tab { context, action } => {
-                        let result = execute_local_control(context.api_connector.as_ref(), &action);
+                        // A panic here must still settle the job: the lane
+                        // goes idle only when this worker reports back, so a
+                        // dead worker would hold every later control behind
+                        // it. The effect is unknown, so it is ambiguous.
+                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            execute_local_control(context.api_connector.as_ref(), &action)
+                        }))
+                        .unwrap_or_else(|_| Err(lane_worker_panicked(action.kind())));
                         (context, Finished::Tab(action, result))
                     }
                     LaneStart::PaneFocus { context, control } => {
-                        let result =
-                            execute_pane_focus(context.api_connector.as_ref(), &control.target_id);
+                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            execute_pane_focus(context.api_connector.as_ref(), &control.target_id)
+                        }))
+                        .unwrap_or_else(|_| Err(lane_worker_panicked("pane.focus")));
                         (context, Finished::PaneFocus(control, result))
                     }
                 };
@@ -2206,6 +2215,17 @@ pub(crate) fn spawn_control_lane(first: LaneStart) -> Result<(), String> {
         })
         .map(|_| ())
         .map_err(|error| format!("control lane worker could not be started: {error}"))
+}
+
+fn lane_worker_panicked(kind: &str) -> ControlFailure {
+    crate::diagnostic!(serde_json::json!({
+        "component": "control_lane",
+        "kind": "control.worker_panicked",
+        "action": kind,
+    }));
+    ControlFailure::Ambiguous(format!(
+        "{kind} result is unknown: the control worker failed"
+    ))
 }
 
 /// What a lane job produced, waiting to be settled under the runtime lock.
