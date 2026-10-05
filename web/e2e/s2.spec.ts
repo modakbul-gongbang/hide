@@ -12,6 +12,7 @@ import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { toPage } from "../../desktop/src/main/wirePath";
+import { altScreenProgram, bytesReceived } from "./alt-screen-program";
 import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, screenshot } from "./wire";
@@ -377,27 +378,38 @@ test("a wheel over a shell pane is one terminal_scroll per batch, and a click is
   }
 });
 
-// @platform: A full-screen program (less) on the platform's PTY, which answers a wheel with the alternate screen's own keys.
-test("a wheel over an alternate-screen program is one terminal_scroll and no cursor-key bytes", { tag: "@platform" }, async ({ page }) => {
+// @platform: A full-screen program on the platform's PTY, which answers a wheel with the alternate screen's own keys.
+test("a wheel over an alternate-screen program is one terminal_scroll and no key event, and q reaches it", { tag: "@platform" }, async ({ page }) => {
   const flow = await startFlow(page);
   try {
-    const { sent, lastSent } = flow;
+    const { herdr, sent, lastSent } = flow;
     const shellPane = page.locator('[data-pane-view][data-focused="true"]');
     await splitShell(page, flow);
-    // An alternate-screen program (less) gets the same treatment: the
-    // wheel is one terminal_scroll and no cursor-key bytes reach the PTY.
-    await page.keyboard.type("seq 1 200 | less\n");
+    // The pager fixture draws the alternate screen and logs every byte the
+    // PTY hands it, which is what says whether a wheel or a key reached it.
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hide-e2e-alt-"));
+    herdr.afterStop(() => fs.rmSync(dir, { recursive: true, force: true }));
+    const log = path.join(dir, "bytes.log");
+    await page.keyboard.type(`${altScreenProgram(dir, log).command}\n`);
     await expect.poll(() => screen(page), { timeout: 15_000 }).toMatch(/^1\s/);
+    expect(bytesReceived(log).length).toBe(0);
     const shellBox = (await shellPane.boundingBox())!;
     await page.mouse.move(shellBox.x + shellBox.width / 2, shellBox.y + shellBox.height / 2);
-    const keysBeforeLess = sent.get("key") ?? 0;
+    const keysBeforeWheel = sent.get("key") ?? 0;
     await page.mouse.wheel(0, 240);
     await expect.poll(() => sent.get("terminal_scroll")).toBe(1);
     expect(lastSent.get("terminal_scroll")).toMatchObject({ direction: "down" });
     await page.mouse.wheel(0, -240);
     await expect.poll(() => sent.get("terminal_scroll")).toBe(2);
-    expect(sent.get("key") ?? 0).toBe(keysBeforeLess);
+    expect(sent.get("key") ?? 0).toBe(keysBeforeWheel);
     await page.keyboard.press("q");
+    await expect.poll(() => sent.get("key")).toBe(keysBeforeWheel + 1);
+    // Herdr answers a wheel batch over an alternate screen without mouse
+    // tracking with one cursor key (down, then up), whatever the batch's
+    // lines; q is the one key event the page sent. These are the only bytes
+    // the PTY got, in this order.
+    await expect.poll(() => bytesReceived(log).toString("latin1"), { timeout: 15_000 }).toBe("\x1b[B\x1b[Aq");
+    // The program left the alternate screen on q and the shell's prompt is back.
     await expect.poll(() => screen(page), { timeout: 15_000 }).toMatch(/fixture %\s*$/);
   } finally {
     flow.stop();
