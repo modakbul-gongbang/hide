@@ -244,6 +244,7 @@ The crate's own `AGENTS.md` says where the file goes; this section says how the 
    A rule about order lives here, where it is deterministic, and the e2e spec keeps one journey that proves the pieces are connected.
 4. **Inject the clock; do not wait for it.**
    Code with a deadline, a backoff or an expiry takes the current time as an argument, and the test passes a time it chose: `usage.rs`'s `can_attempt(now)` is tested at `now + 89 s` and `now + 90 s` without sleeping.
+   A component that reads the time in many places takes one clock instead: `AiRouter::with_clock` (`hide-ai/src/router.rs`) gives every park, availability cache and per-minute window the same source, the real clock unless a test passes one, and the cooldown tests move a `ManualClock` to 1 ms before and at the reset.
    For async code, `tokio::time::pause()` with `tokio::time::advance()` moves the clock by hand; `herdr-core` does not enable tokio's `test-util` feature today, so enabling it for a crate is part of the pull request that first needs it.
    `herdr-core/src` still calls `Instant::now()` directly in many places, and no module has had its clock injected yet.
    Where a test could not inject one, it orders the events itself instead of waiting a time: the router tests hold the provider on a gate and wait for the `ai.request.joined` log event (`hide-ai/src/router.rs`), the usage test's worker reports when it began and waits to be released (`herdr-core/src/usage.rs`), and the pane-control test makes `FakeHerdr` hold its answer until the spawn has returned (`herdr-core/src/live.rs`).
@@ -265,6 +266,8 @@ The crate's own `AGENTS.md` says where the file goes; this section says how the 
    CI runs every Rust lane (Linux, macOS, Windows, the OS contract and nightly) with `scripts/verify-cargo.sh nextest --profile ci` (`retries = 1` in `.config/nextest.toml`), so a test that fails once and then passes is reported as flaky and recorded in an issue with an expiry; two failures fail the lane.
    `nextest` does not run doc tests; the workspace has none that runs today, and a runnable one needs its own `cargo test --doc` step.
    `scripts/install-nextest.sh` installs the pinned release on a runner; a lane that runs nextest several times keeps one JUnit report per run, and `scripts/ci-flaky-report.py` reads them all.
+   The `ci` profile also ends a test still running at 120 s (`slow-timeout`; 240 s for the remote mailbox binary), so a hang fails with the test's name, is retried and is filed like any other flaky failure, instead of holding the lane until a step or job limit cancels it with no test named.
+   That limit is a hang guard set well above the slowest test each lane measures, and the comment beside it in `.config/nextest.toml` says how it was measured; a test that needs more is the finding, not the limit.
    A flaky OS-contract test is fixed or deleted by its issue's deadline like any other; it is not ignored.
    The rule against raising a deadline to pass is unchanged.
 
@@ -295,7 +298,9 @@ Marking the pull request ready (`ready_for_review`) starts the run that plans an
 Keep `ready_for_review` in `pr.yml`'s `types`, and keep `verify` running on a draft; `scripts/tests/test_ci_plan.py` reads the workflow for both.
 A hand run of `nightly.yml` takes a `lane` (`all`, `linux`, `macos`, `windows`): one system's web and desktop suites, with `verify`, `os contract` and `package` for `all` only; the schedule runs everything.
 A plan that cannot be computed plans every lane: a missing base, a checkout that is not the merge commit, a diff that does not parse, or a crate graph `cargo metadata` cannot read.
-A merge queue group (`merge_group`) plans from the paths between the main commit it starts from (`merge_group.base_sha`) and the group's commit, the tree main becomes, so a group queued behind others plans for their changes too; a base the `plan` job cannot fetch is a missing base.
+A merge queue group (`merge_group`) plans from the paths between the commit it starts from (`merge_group.base_sha`) and the group's commit; that base is main for the first group and the commit of the group queued ahead for every later one, so each group plans its own pull request's changes on the tree the groups ahead make, and a base the `plan` job cannot fetch is a missing base.
+That is enough because each group's run checks its own lanes on a tree that already holds every group ahead: a lane is checked by the run of the last group that touched its inputs, on the same inputs as the tree main finally becomes, which assumes the path rules are right, as a pull request's plan does.
+The queue merges a group only when every group ahead of it passed, and one that fails is removed and the groups behind it are rebuilt on a new base.
 A push to main plans no lane when a merge queue run of `verify` succeeded on its commit, which the `plan` job asks the Actions API, and `verify` passes with every lane skipped.
 The exception is a push that changed a file a CI cache key hashes (`CACHE_KEYS` in the script: `Cargo.lock`, a `Cargo.toml`, a toolchain file, `.cargo/`, `pnpm-lock.yaml`, `.github/workflows/`), compared from the last main commit whose push run passed, so a run GitHub replaced while it waited still has its merges checked: the caches save only from main and only under a new key, so that push runs every lane.
 A lookup that fails, no merge queue run on the commit, or a comparison it cannot make also plans every lane, and the plan's output says which.

@@ -579,11 +579,18 @@ impl std::error::Error for RunCleanupFailure {
 
 const RUN_POLL: std::time::Duration = std::time::Duration::from_millis(20);
 
+/// When a killed child that is still not seen to end counts as one the kernel
+/// could not end. It does not wait out a slow machine: a SIGKILL or a
+/// terminated job ends a process in milliseconds even on a loaded runner, so a
+/// leader still running this long after is held in the kernel (an I/O that
+/// cannot be interrupted, a driver), which waiting longer would not end.
+const END_UNCONFIRMED_AFTER: std::time::Duration = std::time::Duration::from_secs(10);
+
 /// Runs `command` as an [`OwnedChild`] with no input and capped outputs.
 /// The original deadline and stop apply through pipe draining, including after
-/// normal exit. Cleanup precedes that drain on every exit; reaping gets at most
-/// one existing poll interval and uncertainty retains ownership in the error.
-#[allow(clippy::disallowed_methods)] // a production wait, not test code
+/// normal exit. Cleanup precedes that drain on every exit; the tree's end is
+/// confirmed by the leader's observed exit (`confirm_end`), and uncertainty
+/// retains ownership in the error.
 pub fn run_to_end(
     command: &mut Command,
     deadline: std::time::Duration,
@@ -604,25 +611,9 @@ pub fn run_to_end(
     let mut child = OwnedChild::spawn(command).map_err(RunFailure::Start)?;
     child.bounded_drop = true;
     let outcome = capture_run(&mut child, end, stop);
-    let cleanup = child.kill_tree().and_then(|_| {
-        let reap_end = Instant::now() + RUN_POLL;
-        loop {
-            match child.try_wait()? {
-                Some(_) => return Ok(()),
-                None if Instant::now() >= reap_end => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::TimedOut,
-                        "child exit was not confirmed within the cleanup bound",
-                    ));
-                }
-                None => std::thread::sleep(
-                    reap_end
-                        .saturating_duration_since(Instant::now())
-                        .min(RUN_POLL),
-                ),
-            }
-        }
-    });
+    let cleanup = child
+        .kill_tree()
+        .and_then(|_| confirm_end(&mut child, END_UNCONFIRMED_AFTER));
     match cleanup {
         Ok(()) => outcome,
         Err(cleanup) => Err(RunFailure::Wait(io::Error::other(RunCleanupFailure {
@@ -630,6 +621,36 @@ pub fn run_to_end(
             cleanup,
             child,
         }))),
+    }
+}
+
+/// Waits until the ended child's exit is observed. The kill is sent, and its
+/// effect is that state, not a moment: Windows ends a job's processes after
+/// `TerminateJobObject` returns, so a busy machine can take longer than one
+/// poll interval. The wait is on the exit itself where the system has one
+/// (`sys::wait_exit`), so a stopped run waits the same way: a process the
+/// kill reached is seen ending at once. It gives up only when `give_up`
+/// passes, which means the kernel did not end the child, and the caller then
+/// keeps the child in `RunCleanupFailure`.
+fn confirm_end(child: &mut OwnedChild, give_up: std::time::Duration) -> io::Result<()> {
+    let started = Instant::now();
+    loop {
+        if child.try_wait()?.is_some() {
+            return Ok(());
+        }
+        let waited = started.elapsed();
+        if waited >= give_up {
+            eprintln!(
+                "process.end_unconfirmed pid={} waited_ms={}",
+                child.id(),
+                waited.as_millis()
+            );
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                "the killed child did not end; the system is still holding it",
+            ));
+        }
+        sys::wait_exit(&child.child, RUN_POLL.min(give_up - waited))?;
     }
 }
 
@@ -1121,6 +1142,14 @@ mod sys {
             }
             read => read.map(Some),
         }
+    }
+
+    /// Unix has no wait on one child's exit with a limit, and a killed
+    /// child's exit is seen by the next `try_wait`, so this only paces it.
+    #[allow(clippy::disallowed_methods)] // a production wait, not test code
+    pub(super) fn wait_exit(_: &Child, at_most: Duration) -> io::Result<()> {
+        std::thread::sleep(at_most);
+        Ok(())
     }
 
     pub(super) fn has_exited(child: &Child) -> io::Result<bool> {
@@ -1820,6 +1849,18 @@ mod sys {
         pipe.read(&mut bytes[..count]).map(Some)
     }
 
+    /// Returns when the child's process handle is signalled (it ended) or
+    /// after `at_most`, whichever comes first.
+    pub(super) fn wait_exit(child: &Child, at_most: Duration) -> io::Result<()> {
+        let milliseconds = u32::try_from(at_most.as_millis()).unwrap_or(u32::MAX);
+        // SAFETY: the process handle is owned by child and stays open for the
+        // call; waiting does not release the process's identity.
+        match unsafe { WaitForSingleObject(child.as_raw_handle(), milliseconds) } {
+            WAIT_OBJECT_0 | WAIT_TIMEOUT => Ok(()),
+            _ => Err(io::Error::last_os_error()),
+        }
+    }
+
     pub(super) fn has_exited(child: &Child) -> io::Result<bool> {
         // SAFETY: the process handle is owned by child. A zero wait observes
         // exit without blocking or releasing the process's identity.
@@ -2121,5 +2162,58 @@ mod owner_watch_tests {
             // the next watch in this process (the second round).
             drop(owner_end);
         }
+    }
+}
+
+#[cfg(test)]
+mod run_cleanup_tests {
+    use super::*;
+
+    const ROLE: &str = "HIDE_PLATFORM_CLEANUP_TEST_LIFETIME_MS";
+
+    /// The child of the tests below: it ends on its own after the lifetime
+    /// it is given, which is longer than one poll interval.
+    #[test]
+    #[allow(clippy::disallowed_methods)] // the child sleeps to stay alive
+    fn child_role() {
+        if let Ok(lifetime) = std::env::var(ROLE) {
+            std::thread::sleep(Duration::from_millis(lifetime.parse().unwrap()));
+        }
+    }
+
+    fn child(lifetime_ms: u64) -> OwnedChild {
+        OwnedChild::spawn(
+            Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "process::run_cleanup_tests::child_role",
+                    "--test-threads=1",
+                ])
+                .env(ROLE, lifetime_ms.to_string())
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null()),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn an_exit_that_comes_after_one_poll_interval_is_still_confirmed() {
+        let mut child = child(300);
+        confirm_end(&mut child, END_UNCONFIRMED_AFTER).unwrap();
+        assert!(child.try_wait().unwrap().is_some());
+    }
+
+    #[test]
+    fn a_child_still_running_when_the_end_is_given_up_is_left_to_the_caller() {
+        let mut child = child(30_000);
+        let error = confirm_end(&mut child, Duration::from_millis(100)).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut, "{error}");
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "the child is retained, not reaped"
+        );
+        child.kill_tree().unwrap();
+        child.wait().unwrap();
     }
 }

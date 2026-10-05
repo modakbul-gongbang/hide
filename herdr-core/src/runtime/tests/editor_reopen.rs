@@ -1287,7 +1287,7 @@ fn explorer_trash_refuses_an_item_replaced_while_the_prompt_was_open() {
             "root": root.to_string_lossy(),
             "path": lib.to_string_lossy(),
             "select_after": root.join("src").to_string_lossy(),
-            "inode": shown,
+            "inode": shown.to_string(),
         })
     )));
     let snapshot = runtime.snapshot();
@@ -1302,6 +1302,28 @@ fn explorer_trash_refuses_an_item_replaced_while_the_prompt_was_open() {
         "rewritten"
     );
     assert_eq!(snapshot.ui_state.selected_path, None);
+    std::fs::remove_dir_all(&root).ok();
+}
+
+/// The inode a trash sends is the listing's decimal text, so an id past
+/// what a browser number holds arrives exact, and the item it names goes.
+#[test]
+fn explorer_trash_takes_the_item_the_prompt_named_by_its_inode_text() {
+    let (mut runtime, root) = explorer_runtime();
+    let lib = root.join("src/lib.rs");
+    let shown = hide_platform::fs::identity::file_id_nofollow(&lib)
+        .expect("fixture")
+        .index();
+    assert!(runtime.dispatch_json(&explorer_event(
+        "path_trash",
+        serde_json::json!({
+            "root": root.to_string_lossy(),
+            "path": lib.to_string_lossy(),
+            "select_after": root.join("src").to_string_lossy(),
+            "inode": shown.to_string(),
+        })
+    )));
+    assert!(!lib.exists(), "the named item left the tree");
     std::fs::remove_dir_all(&root).ok();
 }
 

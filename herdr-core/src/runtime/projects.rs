@@ -48,6 +48,36 @@ fn github_wait(failures: u32) -> std::time::Duration {
     }
 }
 
+/// The most sighted addresses remembered at once as having set off their read;
+/// one past it sets off nothing and is a reported shortfall.
+const SIGHTED_ASKED_LIMIT: usize = 64;
+
+/// A pull request address a session printed that set off a read, or waits to
+/// (`read_sighted_pull_requests`).
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(super) struct Sighted {
+    /// Until when it is recent enough to read for, on the clock the re-read
+    /// runs on.
+    fresh_until: std::time::Instant,
+    /// The projects whose ask was unanswered when it was printed, each owed a
+    /// read once that answer lands if the answer does not hold it.
+    waiting: BTreeSet<String>,
+}
+
+/// What a sighting may do to one project now.
+enum SightedRead {
+    /// The project's last read answered and worked, and nothing has asked
+    /// since: read it again now.
+    Now,
+    /// An ask is outstanding (a read in flight, the first not yet answered,
+    /// or an answer the clock has not taken yet): asking again would overtake
+    /// it, so wait for its answer.
+    AfterAnswer,
+    /// The last read failed; the project's own retry comes within five
+    /// minutes and reads the pull request then.
+    Never,
+}
+
 /// The most local Git projects the core reads GitHub for. Every registered one
 /// is read, and each costs `gh` calls every `GITHUB_REREAD`; a count past this
 /// is a reported shortfall, not a larger number.
@@ -976,6 +1006,13 @@ impl Runtime {
         self.github_answered.retain(|path, _| known(path));
         self.github_read_generation.retain(|path, _| known(path));
         self.github_settled.retain(known);
+        // A sighting that grew old while its project's answer was owed (no
+        // window attached, no read) sets off nothing when the answer lands.
+        self.github_sighted
+            .retain(|_, kept| now <= kept.fresh_until);
+        for kept in self.github_sighted.values_mut() {
+            kept.waiting.retain(known);
+        }
         for path in paths {
             let before = self.github_clock.get(&path).copied();
             if let Some(failed) = self.github_answered.remove(&path) {
@@ -985,7 +1022,10 @@ impl Runtime {
                     0
                 };
                 self.github_clock
-                    .insert(path, GithubClock::Answered { at: now, failures });
+                    .insert(path.clone(), GithubClock::Answered { at: now, failures });
+                if self.sighted_owed_after_answer(&path, failed) {
+                    self.ask_github_again(&path);
+                }
                 continue;
             }
             match before {
@@ -1012,6 +1052,196 @@ impl Runtime {
                 Some(_) => {}
             }
         }
+    }
+
+    /// Reads GitHub again for each project a session just printed the address
+    /// of a pull request in that the last answer does not hold, so a pull
+    /// request an agent opens reaches its row without waiting for the
+    /// five-minute re-read. The read is the existing one: the project's
+    /// generation moves and its clock waits for the answer, as the stale
+    /// re-read does, so a project is still never asked again while an ask is
+    /// unanswered; a sighting that finds one waits for that answer and reads
+    /// only if the answer does not hold it, and a project whose last read
+    /// failed is left to its own retry. An address sets off its read once
+    /// while it is recent; one the read still does not return (another
+    /// repository, past the newest 200) is not asked for again. The read is
+    /// quiet: the row does not show `loading` for it.
+    pub(crate) fn read_sighted_pull_requests(
+        &mut self,
+        sighted: &[crate::labels::worker::SightedPullRequest],
+        (now, now_unix_ms): (std::time::Instant, u64),
+    ) {
+        self.github_sighted
+            .retain(|_, kept| now <= kept.fresh_until);
+        let candidates = self.sighted_candidates();
+        let mut read = BTreeSet::new();
+        for sighting in sighted {
+            let address = (sighting.repository.clone(), sighting.number);
+            // Every pull request read is keyed here by its address, so a
+            // sighting it holds needs no read.
+            let Some(fresh_for) =
+                crate::labels::worker::sighting_fresh_for(sighting.at_unix_ms, now_unix_ms)
+            else {
+                continue;
+            };
+            if self.pull_request_times.contains_key(&address)
+                || self.github_sighted.contains_key(&address)
+            {
+                continue;
+            }
+            let projects = self.sighted_projects(&candidates, sighting);
+            if projects.is_empty() {
+                // Not remembered: an address no read project owns must not
+                // take a place a project's own pull request needs.
+                crate::diagnostic!(serde_json::json!({
+                    "component": "github",
+                    "kind": "read.sighted_unowned",
+                    "repository": sighting.repository,
+                    "number": sighting.number,
+                    "pane_id": sighting.pane_id,
+                }));
+                continue;
+            }
+            if self.github_sighted.len() >= SIGHTED_ASKED_LIMIT {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "github",
+                    "kind": "read.sighted_over_limit",
+                    "limit": SIGHTED_ASKED_LIMIT,
+                    "repository": sighting.repository,
+                    "number": sighting.number,
+                }));
+                continue;
+            }
+            let mut kept = Sighted {
+                fresh_until: now + fresh_for,
+                waiting: BTreeSet::new(),
+            };
+            let mut read_now = Vec::new();
+            for path in projects {
+                match self.sighted_read(&path) {
+                    SightedRead::Now => read_now.push(path),
+                    SightedRead::AfterAnswer => {
+                        kept.waiting.insert(path);
+                    }
+                    SightedRead::Never => {}
+                }
+            }
+            crate::diagnostic!(serde_json::json!({
+                "component": "github",
+                "kind": "read.sighted",
+                "repository": sighting.repository,
+                "number": sighting.number,
+                "pane_id": sighting.pane_id,
+                "read": read_now,
+                "after_answer": kept.waiting,
+            }));
+            read.extend(read_now);
+            self.github_sighted.insert(address, kept);
+        }
+        for path in read {
+            self.ask_github_again(&path);
+        }
+    }
+
+    /// The read local projects by path, each with the repository its pull
+    /// requests name, if it has one yet.
+    fn sighted_candidates(&self) -> Vec<(String, Option<String>)> {
+        self.github_projects()
+            .0
+            .into_iter()
+            .map(|workspace| {
+                let repository = self.github.project(&workspace.path).and_then(|project| {
+                    project
+                        .pull_requests
+                        .iter()
+                        .find_map(|pull_request| pull_request_address(&pull_request.url))
+                        .map(|(repository, _)| repository)
+                });
+                (workspace.path.clone(), repository)
+            })
+            .collect()
+    }
+
+    /// The read local projects a sighted pull request belongs to: those whose
+    /// pull requests are in its repository; when none is, the project of the
+    /// pane whose session printed it, unless that project's pull requests
+    /// name another repository. A repository's first pull request has no
+    /// earlier one to name it, and the session that made it works in it; a
+    /// fork's checkout whose agent opens a pull request upstream is therefore
+    /// not read for it.
+    fn sighted_projects(
+        &self,
+        candidates: &[(String, Option<String>)],
+        sighting: &crate::labels::worker::SightedPullRequest,
+    ) -> Vec<String> {
+        let matching: Vec<String> = candidates
+            .iter()
+            .filter(|(_, repository)| repository.as_deref() == Some(sighting.repository.as_str()))
+            .map(|(path, _)| path.clone())
+            .collect();
+        if !matching.is_empty() {
+            return matching;
+        }
+        let printed_in = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .filter(|workspace| workspace.remote_target_id.is_none())
+            .find(|workspace| {
+                workspace.checkouts.iter().any(|checkout| {
+                    checkout
+                        .tabs
+                        .iter()
+                        .any(|tab| tab.panes.iter().any(|pane| pane.id == sighting.pane_id))
+                })
+            })
+            .map(|workspace| workspace.path.as_str());
+        candidates
+            .iter()
+            .find(|(path, repository)| Some(path.as_str()) == printed_in && repository.is_none())
+            .map(|(path, _)| vec![path.clone()])
+            .unwrap_or_default()
+    }
+
+    fn sighted_read(&self, path: &str) -> SightedRead {
+        // Whoever asked (the clock, a refresh, the request view, a sighting),
+        // an ask is outstanding while the generation asked for is not the one
+        // last answered, and until the clock takes an answer that landed.
+        let asked = self.github_generations.get(path).copied().unwrap_or(0);
+        let outstanding = self.github_read_generation.get(path) != Some(&asked)
+            || self.github_answered.contains_key(path);
+        match self.github_clock.get(path) {
+            _ if outstanding => SightedRead::AfterAnswer,
+            Some(GithubClock::Answered { failures: 0, .. })
+                if self.github_settled.contains(path) =>
+            {
+                SightedRead::Now
+            }
+            Some(GithubClock::Answered { failures, .. }) if *failures > 0 => SightedRead::Never,
+            _ => SightedRead::AfterAnswer,
+        }
+    }
+
+    /// Takes `path` off every sighting waiting for its answer, and whether one
+    /// of them is owed a read: the answer worked and does not hold it.
+    fn sighted_owed_after_answer(&mut self, path: &str, failed: bool) -> bool {
+        let times = &self.pull_request_times;
+        let mut owed = false;
+        for (address, kept) in &mut self.github_sighted {
+            if kept.waiting.remove(path) && !failed && !times.contains_key(address) {
+                owed = true;
+            }
+        }
+        owed
+    }
+
+    /// Asks for `path` again and waits for that answer, as the stale re-read
+    /// does, so nothing asks again while it is unanswered.
+    fn ask_github_again(&mut self, path: &str) {
+        self.github_clock
+            .insert(path.to_owned(), GithubClock::Waiting { failures: 0 });
+        self.bump_github_generation(path);
     }
 
     /// Whether `path` is read for GitHub and no read has answered for it yet.
@@ -2628,6 +2858,9 @@ impl Runtime {
         }
         let times = pull_request_times(&github);
         if *self.pull_request_times != times {
+            // A sighted address the answer now holds needs no place kept.
+            self.github_sighted
+                .retain(|address, _| !times.contains_key(address));
             self.pull_request_times = std::sync::Arc::new(times);
             if let Some(services) = self.label_services.as_ref() {
                 services.wake_local();
@@ -3540,6 +3773,14 @@ fn associate_pull_requests(
     changed
 }
 
+/// A pull request's lowercase `owner/name` and number, from its address.
+fn pull_request_address(url: &str) -> Option<(String, u64)> {
+    hide_session::pull_request_addresses(url)
+        .into_iter()
+        .next()
+        .map(|(repository, number)| (repository.to_ascii_lowercase(), number))
+}
+
 /// When GitHub made each pull request read, by the address's lowercase
 /// `owner/name` and number.
 fn pull_request_times(
@@ -3551,10 +3792,7 @@ fn pull_request_times(
         .flat_map(|project| project.pull_requests.iter())
         .filter_map(|pull_request| {
             let created = pull_request.created_at_unix_ms?;
-            let (repository, number) = hide_session::pull_request_addresses(&pull_request.url)
-                .into_iter()
-                .next()?;
-            Some(((repository.to_ascii_lowercase(), number), created))
+            Some((pull_request_address(&pull_request.url)?, created))
         })
         .collect()
 }

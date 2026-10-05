@@ -503,8 +503,76 @@ fn deletion_gate_warns_instead_of_blocking_and_reports_pane_consequence() {
     );
 }
 
+/// The next answer the reader publishes, polled the way the coordinator's
+/// wakes poll it. A Git change waits out its debounce on the wall clock, so
+/// no single state says the read has started.
+#[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
+fn next_answer(
+    reader: &mut WorktreeReader,
+    request: &WorktreeRequest,
+    what: &str,
+) -> WorktreeAnswer {
+    let deadline = std::time::Instant::now() + Duration::from_secs(15);
+    loop {
+        if let Some(answer) = reader.read_if_due(request.clone()) {
+            return answer;
+        }
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{what}: no answer within 15 seconds"
+        );
+        std::thread::sleep(Duration::from_millis(20));
+    }
+}
+
+/// Writes a ref no read looks at and returns every Git fact the reader's
+/// watch reported before it. The watch queues paths in the order the system
+/// reported them, so a change made before the sentinel is either already
+/// pending in the reader or queued ahead of the sentinel: once the sentinel
+/// arrives, an empty answer means nothing else happened before it.
+fn changes_before_sentinel(
+    repo: &Repository,
+    reader: &mut WorktreeReader,
+    name: &str,
+) -> Vec<PathBuf> {
+    let mut before: Vec<PathBuf> = reader.git_watch.pending.keys().cloned().collect();
+    git(
+        &repo.0,
+        &["update-ref", &format!("refs/sentinel/{name}"), "HEAD"],
+    )
+    .unwrap();
+    let (_, changes) = reader
+        .git_watch
+        .watch
+        .as_ref()
+        .expect("the Git watch started");
+    let sentinel = Path::new("refs/sentinel").join(name);
+    loop {
+        match changes.recv_timeout(Duration::from_secs(15)) {
+            Some(Change::Path { path, .. }) => {
+                let relative = reader
+                    .git_watch
+                    .roots
+                    .keys()
+                    .find_map(|common| path.strip_prefix(common).ok())
+                    .unwrap_or(&path)
+                    .to_path_buf();
+                if relative == sentinel {
+                    return before;
+                }
+                // The sentinel's own writes: the folders it is written in,
+                // and the lock file git writes it through.
+                if !sentinel.starts_with(&relative) && relative != sentinel.with_extension("lock") {
+                    before.push(relative);
+                }
+            }
+            Some(Change::Overflow { reason, .. }) => panic!("the watch lost changes: {reason}"),
+            None => panic!("the sentinel {name} never reached the watch"),
+        }
+    }
+}
+
 #[test]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn idle_and_working_tree_edits_do_not_reread_but_manual_refresh_does() {
     let repo = Repository::new();
     std::fs::write(repo.0.join("tracked"), "original").unwrap();
@@ -521,31 +589,34 @@ fn idle_and_working_tree_edits_do_not_reread_but_manual_refresh_does() {
         generation: 0,
         removals: 0,
     };
-    let wait = |reader: &mut WorktreeReader, request: &WorktreeRequest| {
-        let started = std::time::Instant::now();
-        loop {
-            if let Some(result) = reader.read_if_due(request.clone()) {
-                break result.catalog;
-            }
-            assert!(started.elapsed() < Duration::from_secs(15));
-            std::thread::sleep(Duration::from_millis(20));
-        }
-    };
-    wait(&mut reader, &request);
+    next_answer(&mut reader, &request, "the first read");
     let listed = std::fs::canonicalize(&repo.0).unwrap();
     let status_before = git_call_count(&listed, "status");
+    // The read's own Git calls must not wake the watch, or an idle project
+    // would read itself again on every debounce.
+    assert_eq!(
+        changes_before_sentinel(&repo, &mut reader, "idle"),
+        Vec::<PathBuf>::new(),
+        "the reader's own read changed a Git fact"
+    );
     assert!(reader.read_if_due(request.clone()).is_none());
-    let started = std::time::Instant::now();
-    while started.elapsed() < Duration::from_secs(20) {
-        assert!(reader.read_if_due(request.clone()).is_none());
-        std::thread::sleep(Duration::from_millis(100));
-    }
     assert_eq!(git_call_count(&listed, "status"), status_before);
     std::fs::write(repo.0.join("tracked"), "changed contents").unwrap();
+    assert_eq!(
+        changes_before_sentinel(&repo, &mut reader, "edit"),
+        Vec::<PathBuf>::new(),
+        "a working tree edit reached the Git watch"
+    );
     assert!(reader.read_if_due(request.clone()).is_none());
     assert_eq!(git_call_count(&listed, "status"), status_before);
     request.generation += 1;
-    assert!(wait(&mut reader, &request).projects[0].worktrees[0].dirty);
+    assert!(
+        next_answer(&mut reader, &request, "the manual refresh")
+            .catalog
+            .projects[0]
+            .worktrees[0]
+            .dirty
+    );
     assert_eq!(git_call_count(&listed, "status"), status_before + 1);
 }
 
@@ -603,11 +674,9 @@ fn behind_upstream_is_absent_without_an_upstream_and_counts_the_fetched_side() {
 /// worktree carries none, so the Overview can keep the primary first and the
 /// rest in the order they were created.
 #[test]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn linked_worktrees_carry_their_creation_time_and_the_main_worktree_none() {
     let repo = Repository::new();
     repo.linked("older");
-    std::thread::sleep(Duration::from_millis(20));
     repo.linked("newer");
     let project = repo.read(None);
     let by_branch = |branch: &str| {
@@ -618,10 +687,22 @@ fn linked_worktrees_carry_their_creation_time_and_the_main_worktree_none() {
             .unwrap()
             .clone()
     };
+    // Git writes `.git/worktrees/<name>` once, at `worktree add`.
+    let born = |name: &str| {
+        let created = std::fs::metadata(repo.0.join(".git/worktrees").join(name))
+            .unwrap()
+            .created()
+            .unwrap();
+        created
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64
+    };
     assert!(by_branch("main").is_main);
     assert_eq!(by_branch("main").created_at_unix_ms, None);
     let older = by_branch("older").created_at_unix_ms.expect("older time");
     let newer = by_branch("newer").created_at_unix_ms.expect("newer time");
+    assert_eq!((older, newer), (born("older"), born("newer")));
     assert!(older <= newer, "{older} should not be after {newer}");
 }
 
@@ -629,7 +710,6 @@ fn linked_worktrees_carry_their_creation_time_and_the_main_worktree_none() {
 /// other project's `git status` does not run again. Before the per-project
 /// key, every project's status ran on any project's change.
 #[test]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn a_commit_in_one_project_does_not_rerun_status_in_another() {
     let changing = Repository::new();
     let quiet = Repository::new();
@@ -647,17 +727,7 @@ fn a_commit_in_one_project_does_not_rerun_status_in_another() {
         generation: 0,
         removals: 0,
     };
-    let wait = |reader: &mut WorktreeReader, phase: &str| {
-        let started = std::time::Instant::now();
-        loop {
-            if let Some(result) = reader.read_if_due(request.clone()) {
-                break result.catalog;
-            }
-            assert!(started.elapsed() < Duration::from_secs(15), "{phase}");
-            std::thread::sleep(Duration::from_millis(20));
-        }
-    };
-    let catalog = wait(&mut reader, "initial catalog");
+    let catalog = next_answer(&mut reader, &request, "initial catalog").catalog;
     assert_eq!(catalog.projects.len(), 2);
     // Status runs in the path git lists, which is the canonical one.
     let listed = |catalog: &WorktreeCatalogSnapshot, index: usize| {
@@ -668,7 +738,13 @@ fn a_commit_in_one_project_does_not_rerun_status_in_another() {
     let quiet_before = git_call_count(&quiet_path, "status");
     assert!(changing_before > 0 && quiet_before > 0);
     git(&changing.0, &["commit", "--allow-empty", "-m", "moved"]).unwrap();
-    assert_eq!(wait(&mut reader, "commit refresh").projects.len(), 2);
+    assert_eq!(
+        next_answer(&mut reader, &request, "commit refresh")
+            .catalog
+            .projects
+            .len(),
+        2
+    );
     assert_eq!(
         git_call_count(&changing_path, "status") - changing_before,
         1
@@ -679,7 +755,6 @@ fn a_commit_in_one_project_does_not_rerun_status_in_another() {
 /// Git's own ref writes wake the reader without an Overview refresh event.
 /// A pull's many writes settle as one catalog read for the affected project.
 #[test]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn moved_remote_ref_refreshes_one_project_once_after_a_burst() {
     let changing = Repository::new();
     let quiet = Repository::new();
@@ -712,20 +787,7 @@ fn moved_remote_ref_refreshes_one_project_once_after_a_burst() {
         generation: 0,
         removals: 0,
     };
-    let wait = |reader: &mut WorktreeReader| {
-        let started = std::time::Instant::now();
-        loop {
-            if let Some(result) = reader.read_if_due(request.clone()) {
-                break result.catalog;
-            }
-            assert!(
-                started.elapsed() < Duration::from_secs(15),
-                "Git watch did not refresh"
-            );
-            std::thread::sleep(Duration::from_millis(20));
-        }
-    };
-    let initial = wait(&mut reader);
+    let initial = next_answer(&mut reader, &request, "the first read").catalog;
     let main = PathBuf::from(&initial.projects[0].worktrees[0].path);
     let quiet_path = PathBuf::from(&initial.projects[1].worktrees[0].path);
     let before = git_call_count(&main, "status");
@@ -743,14 +805,13 @@ fn moved_remote_ref_refreshes_one_project_once_after_a_burst() {
         &["update-ref", "refs/remotes/origin/main", "future"],
     )
     .unwrap();
-    let updated = wait(&mut reader);
+    let updated = next_answer(&mut reader, &request, "the Git watch refresh").catalog;
     assert_eq!(updated.projects[0].worktrees[0].behind_upstream, Some(1));
     assert_eq!(git_call_count(&main, "status") - before, 1);
     assert_eq!(git_call_count(&quiet_path, "status") - quiet_before, 0);
 }
 
 #[test]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn a_watch_change_during_a_read_keeps_the_old_answer_stale() {
     let repo = Repository::new();
     let mut reader = WorktreeReader::new();
@@ -781,20 +842,17 @@ fn a_watch_change_during_a_read_keeps_the_old_answer_stale() {
     started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
     reader.git_generations.insert(repo.0.clone(), 1);
     release_tx.send(()).unwrap();
-    let wait = |reader: &mut WorktreeReader| {
-        let started = std::time::Instant::now();
-        loop {
-            if let Some(answer) = reader.read_if_due(request.clone()) {
-                break answer;
-            }
-            assert!(started.elapsed() < Duration::from_secs(5));
-            std::thread::sleep(Duration::from_millis(10));
-        }
+    // The released read has sent its answer once its worker has ended.
+    let answer = |reader: &mut WorktreeReader| {
+        reader.inner.join_pending();
+        reader
+            .read_if_due(request.clone())
+            .expect("a finished read is handed back on the next wake")
     };
-    assert!(!wait(&mut reader).observations_current);
+    assert!(!answer(&mut reader).observations_current);
     started_rx.recv_timeout(Duration::from_secs(5)).unwrap();
     release_tx.send(()).unwrap();
-    assert!(wait(&mut reader).observations_current);
+    assert!(answer(&mut reader).observations_current);
 }
 
 /// A git invocation is bounded: one that outruns the deadline is killed and

@@ -131,6 +131,26 @@ describe("Agent pane cycle (issue 301)", () => {
     expect(panes(agentCycle(rest, outside))).toEqual(["other-tab-pane", "t2-pane", "remote:mini:pane:p1"]);
   });
 
+  it("starts at the pane the page just reported, before the core echoes it, then follows the core", () => {
+    const rest = devices(); draw(rest);
+    rest.ui_state = { ...rest.ui_state, recent_pane_ids: ["t2-pane", "other-tab-pane"] };
+    const reported: string[] = [];
+    configurePaneVisits((paneId) => { reported.push(paneId); });
+    const outside = { kind: "none" } as const;
+    observePane(rest, "other-tab-pane");
+    expect(reported).toEqual(["other-tab-pane"]);
+    // The echo is still on the socket: the core's order has t2-pane first.
+    expect(panes(agentCycle(rest, outside))).toEqual(["other-tab-pane", "t2-pane"]);
+    rest.ui_state = { ...rest.ui_state, recent_pane_ids: ["other-tab-pane", "t2-pane"] };
+    observePane(rest, null);
+    expect(panes(agentCycle(rest, outside))).toEqual(["other-tab-pane", "t2-pane"]);
+    // Another window's visit moves the core's head afterwards: the core's order stands.
+    rest.ui_state = { ...rest.ui_state, recent_pane_ids: ["t2-pane", "other-tab-pane"] };
+    observePane(rest, null);
+    expect(panes(agentCycle(rest, outside))).toEqual(["t2-pane", "other-tab-pane"]);
+    expect(reported).toEqual(["other-tab-pane"]);
+  });
+
   it("opens recent agents on Main and Overview even with no drawn Agent area", () => {
     const rest = visited(); draw(rest);
     observePane(rest, "other-tab-pane");

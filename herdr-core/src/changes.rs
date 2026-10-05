@@ -501,17 +501,18 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
     fn a_closed_view_publishes_an_empty_projection_without_a_key() {
         let mut reader = ChangesReader::new();
-        for _ in 0..500 {
-            if let Some(answer) = reader.read_if_due(None) {
-                assert_eq!(answer.key, None);
-                assert_eq!(answer.changes, ChangesSnapshot::default());
-                return;
-            }
-            std::thread::sleep(Duration::from_millis(2));
-        }
-        panic!("the reader never answered");
+        // The first read starts the worker; once it has ended, the next read
+        // hands its answer back.
+        let answer = reader
+            .read_if_due(None)
+            .or_else(|| {
+                reader.inner.join_pending();
+                reader.read_if_due(None)
+            })
+            .expect("the reader answers a closed view");
+        assert_eq!(answer.key, None);
+        assert_eq!(answer.changes, ChangesSnapshot::default());
     }
 }

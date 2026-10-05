@@ -1,4 +1,5 @@
 import type { Page } from "@playwright/test";
+import fs from "node:fs";
 
 /**
  * Wait for the colour transitions and other finite animations the page has
@@ -60,4 +61,19 @@ export async function compositorPresents(page: Page): Promise<void> {
 export async function measureFor(page: Page, milliseconds: number, why: string): Promise<void> {
   void why;
   await sleep(page, milliseconds);
+}
+
+/**
+ * What a document the product saves holds on disk, or null while its name is
+ * absent. A Windows save replaces the file with `ReplaceFileW`, which leaves
+ * the name empty for a moment (`hide-host/src/save.rs`), so a poll reads that
+ * as not yet; any other read error still fails the poll.
+ */
+export function onDisk(file: string): string | null {
+  try {
+    return fs.readFileSync(file, "utf8");
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    throw error;
+  }
 }

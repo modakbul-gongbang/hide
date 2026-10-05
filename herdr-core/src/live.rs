@@ -49,7 +49,9 @@ pub(crate) mod cleanup;
 
 #[path = "worktree_control.rs"]
 mod worktree_control;
-pub(crate) use worktree_control::{CONFIRM_TIMEOUT, close_checkout_panes, prompt_argument};
+pub(crate) use worktree_control::{
+    CONFIRM_TIMEOUT, ProcessWait, close_checkout_panes, prompt_argument,
+};
 pub use worktree_control::{
     CheckoutTabRequest, HomeStartRequest, IssueWriteFailure, PendingAgentStart, PurposeMirror,
     PurposeTaskOutcome, PurposeTaskRequest, TabTarget, TaskAgentOutcome, WorktreeTarget,
@@ -3761,7 +3763,7 @@ impl Drop for TerminalSession {
     }
 }
 
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
+#[allow(clippy::disallowed_methods)] // a production wait, not test code
 fn reap_local_terminal_child(child: &mut OwnedChild, pane_id: &str) {
     for _ in 0..20 {
         match child.try_wait() {
@@ -5155,7 +5157,6 @@ mod tests {
 
     #[test]
     #[ignore = "requires an owned remote fixture and HERDR_TEST_REMOTE_CONTROL_* variables"]
-    #[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
     fn official_remote_control_fixture_probe() {
         let alias_name = std::env::var("HERDR_TEST_SSH_ALIAS")
             .expect("HERDR_TEST_SSH_ALIAS names a configured SSH host");
@@ -5279,10 +5280,41 @@ mod tests {
             execute_remote_control(&connector, &action).expect("mutate only the fixture pane");
         }
 
+        remote_snapshot_until(
+            &connector,
+            "authoritative snapshot did not converge after remote controls",
+            |snapshot| {
+                let created_tab_visible = snapshot["tabs"].as_array().is_some_and(|tabs| {
+                    tabs.iter()
+                        .any(|tab| tab["tab_id"].as_str() == Some(created_tab_id.as_str()))
+                });
+                let created_root_visible = snapshot["panes"].as_array().is_some_and(|panes| {
+                    panes
+                        .iter()
+                        .any(|pane| pane["pane_id"].as_str() == Some(created_root_pane_id.as_str()))
+                });
+                let closed_split_absent = snapshot["panes"].as_array().is_some_and(|panes| {
+                    panes.iter().all(|pane| {
+                        pane["pane_id"].as_str() != Some(created_split_pane_id.as_str())
+                    })
+                });
+                created_tab_visible && created_root_visible && closed_split_absent
+            },
+        );
+    }
+
+    /// Asks the remote Herdr for its snapshot until `ready` accepts it; the
+    /// remote server applies a control on its own time.
+    #[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
+    fn remote_snapshot_until(
+        connector: &dyn ApiConnector,
+        what: &str,
+        ready: impl Fn(&Value) -> bool,
+    ) {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
             let response = request_with_connector(
-                &connector,
+                connector,
                 "session.snapshot",
                 json!({}),
                 Duration::from_secs(5),
@@ -5292,27 +5324,10 @@ mod tests {
                 .as_object()
                 .map(|_| &response["snapshot"])
                 .expect("session.snapshot response contains a snapshot");
-            let created_tab_visible = snapshot["tabs"].as_array().is_some_and(|tabs| {
-                tabs.iter()
-                    .any(|tab| tab["tab_id"].as_str() == Some(created_tab_id.as_str()))
-            });
-            let created_root_visible = snapshot["panes"].as_array().is_some_and(|panes| {
-                panes
-                    .iter()
-                    .any(|pane| pane["pane_id"].as_str() == Some(created_root_pane_id.as_str()))
-            });
-            let closed_split_absent = snapshot["panes"].as_array().is_some_and(|panes| {
-                panes
-                    .iter()
-                    .all(|pane| pane["pane_id"].as_str() != Some(created_split_pane_id.as_str()))
-            });
-            if created_tab_visible && created_root_visible && closed_split_absent {
-                break;
+            if ready(snapshot) {
+                return;
             }
-            assert!(
-                Instant::now() < deadline,
-                "authoritative snapshot did not converge after remote controls"
-            );
+            assert!(Instant::now() < deadline, "{what}");
             std::thread::sleep(Duration::from_millis(50));
         }
     }

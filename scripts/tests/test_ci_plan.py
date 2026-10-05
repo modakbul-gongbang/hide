@@ -165,11 +165,22 @@ class Selection(unittest.TestCase):
             result = ci.plan("pull_request", "HEAD^1", "HEAD", repo, CRATES)
             self.assertEqual(result["lanes"], ["policy"])
 
-    def test_a_merge_group_plans_every_queued_change_from_its_base(self):
+    def test_a_merge_group_plans_its_own_change_on_the_groups_ahead(self):
         with tempfile.TemporaryDirectory() as directory:
             repo = Path(directory)
             def git(*args):
                 return subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True).stdout.strip()
+            def group(name, path, on):
+                # The queue builds a group commit by merging the pull request
+                # onto its base: main, or the group queued ahead.
+                git("checkout", "-qb", f"pr-{name}", main)
+                (repo / path).parent.mkdir(parents=True, exist_ok=True)
+                (repo / path).write_text(f"{name}\n")
+                git("add", ".")
+                git("commit", "-qm", name)
+                git("checkout", "-q", "--detach", on)
+                git("merge", "-q", "--no-ff", "-m", f"group {name}", f"pr-{name}")
+                return git("rev-parse", "HEAD")
             git("init", "-q", "-b", "main")
             git("config", "user.email", "ci@example.invalid")
             git("config", "user.name", "ci")
@@ -177,25 +188,22 @@ class Selection(unittest.TestCase):
             (repo / "docs/a.md").write_text("a\n")
             git("add", ".")
             git("commit", "-qm", "base")
-            base = git("rev-parse", "HEAD")
-            # Two queued pull requests, each merged onto the group ahead of it
-            # as the queue does with merge commits: a desktop change, then docs.
-            for branch, path in (("first", "desktop/src/preload/index.ts"), ("second", "docs/b.md")):
-                git("checkout", "-qb", branch, base)
-                (repo / path).parent.mkdir(parents=True, exist_ok=True)
-                (repo / path).write_text(f"{branch}\n")
-                git("add", ".")
-                git("commit", "-qm", branch)
-                git("checkout", "-q", "main")
-                git("merge", "-q", "--no-ff", "-m", f"merge {branch}", branch)
-            # The second group's own merge is documentation only, but main
-            # becomes both changes, so its plan has the first one's lanes too.
-            self.assertEqual(ci.plan("pull_request", "HEAD^1", "HEAD", repo, CRATES)["lanes"], ["policy"])
-            result = ci.plan("merge_group", base, "HEAD", repo, CRATES)
+            main = git("rev-parse", "HEAD")
+            # Two pull requests queued in order: a desktop change, then docs.
+            # The second group's base is the first group's commit, not main.
+            first = group("desktop", "desktop/src/preload/index.ts", main)
+            second = group("docs", "docs/b.md", first)
+            result = ci.plan("merge_group", main, first, repo, CRATES)
             self.assertFalse(result["full"])
             self.assertEqual(set(result["lanes"]), {"policy", "desktop-checks", "desktop-e2e"})
+            # The second group checks only its own change; the desktop lanes
+            # were checked by the first group's run on the same desktop files.
+            self.assertEqual(ci.plan("merge_group", first, second, repo, CRATES)["lanes"], ["policy"])
+            # When the first group fails, the queue rebuilds the second on main.
+            rebuilt = group("docs-again", "docs/c.md", main)
+            self.assertEqual(ci.plan("merge_group", main, rebuilt, repo, CRATES)["lanes"], ["policy"])
             # A base the checkout does not have runs every lane.
-            missing = ci.plan("merge_group", "0" * 40, "HEAD", repo, CRATES)
+            missing = ci.plan("merge_group", "0" * 40, second, repo, CRATES)
             self.assertTrue(missing["full"])
             self.assertIn("comparison unavailable", missing["reasons"]["rust"][0])
 

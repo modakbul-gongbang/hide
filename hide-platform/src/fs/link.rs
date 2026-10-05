@@ -44,8 +44,11 @@ pub fn create_link(target: &Path, link: &Path) -> io::Result<()> {
 
 /// Makes `link` lead to `target`, replacing a link that is already there in
 /// one step on every system where the system allows it: a link is made
-/// beside it and renamed over it, so the name never leads nowhere in
-/// between.
+/// beside it and renamed over it, so the name itself is never missing in
+/// between and reads as the old target or the new one. Opening a path
+/// through the link while it is replaced finds the old target or the new
+/// one on macOS and Windows; on Linux that open can, for a moment, find
+/// nothing and answer "not found".
 pub fn replace_link(target: &Path, link: &Path) -> io::Result<()> {
     let name = link
         .file_name()

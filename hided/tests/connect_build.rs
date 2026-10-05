@@ -62,6 +62,21 @@ fn wait_gone(pid: i32) -> bool {
     !alive(pid)
 }
 
+/// The first line of the daemon's log that names `kind`. The log is written
+/// on its own thread, after the daemon has answered.
+#[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
+fn logged(log: &Path, kind: &str) -> String {
+    let until = Instant::now() + Duration::from_secs(10);
+    loop {
+        let text = std::fs::read_to_string(log).unwrap_or_default();
+        if let Some(line) = text.lines().find(|line| line.contains(kind)) {
+            return line.to_owned();
+        }
+        assert!(Instant::now() < until, "no {kind} in {text}");
+        std::thread::sleep(Duration::from_millis(50));
+    }
+}
+
 /// A copy of `hide` beside a `hided` whose bytes differ from the cargo-built
 /// one only in its ad-hoc signature, as a package of the same source does.
 /// `dir` decides whether it is the app's own: an app bundle's
@@ -380,7 +395,6 @@ fn a_relocated_state_folder_moves_nothing() {
 /// With both folders present the new one is used, the legacy one is left
 /// whole, and the daemon's log names both (B5).
 #[test]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn with_both_folders_the_new_one_is_used_and_the_old_one_logged() {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");
@@ -403,20 +417,7 @@ fn with_both_folders_the_new_one_is_used_and_the_old_one_logged() {
         std::fs::read_to_string(legacy.join("core-state.json")).unwrap(),
         "{\"old\":true}"
     );
-    let log = moved.join("Logs/core.jsonl");
-    let until = Instant::now() + Duration::from_secs(10);
-    let mut text = String::new();
-    while Instant::now() < until {
-        text = std::fs::read_to_string(&log).unwrap_or_default();
-        if text.contains("state.legacy_left") {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    let entry = text
-        .lines()
-        .find(|line| line.contains("state.legacy_left"))
-        .unwrap_or_else(|| panic!("no legacy_left diagnostic in {text}"));
+    let entry = logged(&moved.join("Logs/core.jsonl"), "state.legacy_left");
     assert!(entry.contains(&legacy.display().to_string()), "{entry}");
     assert!(entry.contains(&moved.display().to_string()), "{entry}");
     let _ = isolated(&cli, &home, &moved).arg("stop").status();

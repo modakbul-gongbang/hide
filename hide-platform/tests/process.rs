@@ -593,6 +593,34 @@ fn killing_a_process_that_is_already_gone_is_not_an_error() {
     kill_tree(pid).unwrap();
 }
 
+/// What closing a worktree's panes waits for: a running process holds its
+/// working folder on Windows, so the folder cannot be renamed until the
+/// process has ended, and `start_time` is what says it has.
+#[test]
+fn a_folder_that_is_a_running_processes_working_folder_moves_once_it_has_ended() {
+    let _serial = serial();
+    let root = tempfile::tempdir().unwrap();
+    let folder = root.path().join("worktree");
+    std::fs::create_dir(&folder).unwrap();
+    let mut child = role_command("sleep").current_dir(&folder).spawn().unwrap();
+    ready_number(child.stdout.take().unwrap());
+    let started = start_time(child.id()).unwrap();
+    let aside = root.path().join("aside");
+    if cfg!(windows) {
+        let refused = std::fs::rename(&folder, &aside).unwrap_err();
+        assert!(folder.is_dir() && !aside.exists(), "{refused}");
+    }
+    let pid = child.id();
+    child.kill().unwrap();
+    child.wait().unwrap();
+    assert!(
+        start_time(pid).map_or(true, |now| now != started),
+        "an ended process is no longer the one that was read"
+    );
+    std::fs::rename(&folder, &aside).unwrap();
+    assert!(aside.is_dir() && !folder.exists());
+}
+
 #[test]
 fn a_pid_that_names_no_process_to_signal_is_refused() {
     let _serial = serial();

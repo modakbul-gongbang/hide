@@ -10,7 +10,7 @@ use std::io::Read;
 use std::path::Path;
 use std::process::{Command, Stdio};
 use std::sync::mpsc;
-use std::time::{Duration, Instant};
+use std::time::Duration;
 
 use serde_json::Value;
 
@@ -80,7 +80,6 @@ impl Drop for StopOnDrop<'_> {
 }
 
 #[test]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn connect_starts_the_daemon_beside_the_cli_and_stop_ends_it() {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");
@@ -95,6 +94,7 @@ fn connect_starts_the_daemon_beside_the_cli_and_stop_ends_it() {
     assert!(ok, "hide connect failed: {connected}");
     assert_eq!(connected["ok"], true, "{connected}");
     let pid = connected["pid"].as_u64().expect("a daemon pid") as u32;
+    let started = hide_platform::process::start_time(pid).expect("the daemon is running");
     let port = connected["port"].as_u64().expect("a daemon port");
     assert!(
         connected["url"]
@@ -110,14 +110,13 @@ fn connect_starts_the_daemon_beside_the_cli_and_stop_ends_it() {
         "status names the daemon connect started"
     );
 
+    // `hide stop` answers once the daemon has ended, so its pid no longer
+    // names the process that started then.
     let (stopped, _) = run(isolated(&home, &state).arg("stop"));
     assert!(stopped, "hide stop failed");
-    let until = Instant::now() + Duration::from_secs(10);
-    while hide_platform::process::is_alive(pid) && Instant::now() < until {
-        std::thread::sleep(Duration::from_millis(50));
-    }
-    assert!(
-        !hide_platform::process::is_alive(pid),
+    assert_ne!(
+        hide_platform::process::start_time(pid).ok(),
+        Some(started),
         "hide stop leaves no daemon running"
     );
     let (_, after) = json(isolated(&home, &state).args(["status", "--json"]));

@@ -91,9 +91,34 @@ pub(crate) fn install(state_path: &Path) -> io::Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+thread_local! {
+    static CAPTURED: std::cell::RefCell<Option<Vec<serde_json::Value>>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Runs `body` and returns, beside its result, every record it emitted on
+/// this thread, so a test can assert a reported shortfall; the records still
+/// reach stderr.
+#[cfg(test)]
+pub(crate) fn capture<T>(body: impl FnOnce() -> T) -> (T, Vec<serde_json::Value>) {
+    CAPTURED.with(|captured| *captured.borrow_mut() = Some(Vec::new()));
+    let value = body();
+    let records = CAPTURED
+        .with(|captured| captured.borrow_mut().take())
+        .unwrap_or_default();
+    (value, records)
+}
+
 /// Public so the daemon that owns this core can record its own events in the
 /// same Logs file; a detached daemon's stderr goes nowhere.
 pub fn emit(record: serde_json::Value) {
+    #[cfg(test)]
+    CAPTURED.with(|captured| {
+        if let Some(records) = captured.borrow_mut().as_mut() {
+            records.push(record.clone());
+        }
+    });
     let message = record.to_string();
     let sink = sink_slot()
         .lock()

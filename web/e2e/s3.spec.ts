@@ -14,7 +14,7 @@ import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, enterWorkspace, screenshot, showExplorer } from "./wire";
 import { chord } from "./chords";
-import { quietFor } from "./wait";
+import { onDisk, quietFor } from "./wait";
 
 const SOURCE = "export const answer = 41;\n";
 
@@ -277,7 +277,7 @@ test("editing a document marks it dirty, saves it, and a disk change asks how to
     // with the tab clean again (D-10).
     await expect.poll(() => sent.get("file_save"), { timeout: 5_000 }).toBeGreaterThanOrEqual(1);
     expect(lastSent.get("file_save")).toMatchObject({ path: file, contents_utf8: "export const answer = 42;\n" });
-    await expect.poll(() => fs.readFileSync(file, "utf8")).toBe("export const answer = 42;\n");
+    await expect.poll(() => onDisk(file)).toBe("export const answer = 42;\n");
     await expect(page.locator('[data-editor-dirty="true"]')).toHaveCount(0);
     await screenshot(page, "s3-editor-saved");
 
@@ -296,7 +296,7 @@ test("editing a document marks it dirty, saves it, and a disk change asks how to
     await page.keyboard.type("export const answer = 43;\n");
     await page.keyboard.press(chord("save_file"));
     await expect(page.locator("[data-editor-conflict]")).toBeVisible();
-    await expect.poll(() => fs.readFileSync(file, "utf8")).toBe("export const answer = 0;\n");
+    await expect.poll(() => onDisk(file)).toBe("export const answer = 0;\n");
     await screenshot(page, "s3-editor-conflict");
 
     // Reload takes the disk contents into the editor.
@@ -319,7 +319,7 @@ test("a refused save keeps the tab dirty and takes the saving mark off", async (
     await page.keyboard.press("ControlOrMeta+KeyA");
     await page.keyboard.type("export const answer = 42;\n");
     await expect.poll(() => sent.get("file_save"), { timeout: 5_000 }).toBeGreaterThanOrEqual(1);
-    await expect.poll(() => fs.readFileSync(file, "utf8")).toBe("export const answer = 42;\n");
+    await expect.poll(() => onDisk(file)).toBe("export const answer = 42;\n");
 
     // A file the process can no longer write: the next autosave is refused, so
     // the tab stops saying it is saving and stays dirty, with the detail in
@@ -333,7 +333,7 @@ test("a refused save keeps the tab dirty and takes the saving mark off", async (
     const tab = page.locator('[data-tab-kind="file"]');
     await expect(tab).toHaveAttribute("data-saving", "false", { timeout: 10_000 });
     await expect(page.locator('[data-editor-dirty="true"]')).toBeVisible();
-    await expect.poll(() => fs.readFileSync(file, "utf8")).toBe("export const answer = 42;\n");
+    await expect.poll(() => onDisk(file)).toBe("export const answer = 42;\n");
   } finally {
     fs.chmodSync(file, 0o644);
     close(fixture);
@@ -380,7 +380,7 @@ test("a draft that cannot be stored stays editable and holds other documents rea
     await page.locator('[data-tab-kind="file"][data-tab-only="true"]').click();
     await expect(page.locator('[data-editor-draft-hold="unstored"]')).toBeVisible();
     await page.keyboard.press(chord("save_file"));
-    await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 10_000 }).toBe("export const answer = 44;\n");
+    await expect.poll(() => onDisk(file), { timeout: 10_000 }).toBe("export const answer = 44;\n");
     await expect(page.locator("[data-editor-draft-hold]")).toHaveCount(0);
     await page.locator('[data-tab-kind="file"]', { hasText: "README.md" }).click();
     await expect(page.locator("[data-editor-draft-hold]")).toHaveCount(0);
@@ -436,7 +436,7 @@ test("leaving a dirty tab saves it and never writes it into the next file", asyn
     // Leave within the idle window: the draft still reaches its own file, and
     // the tab that takes the screen never receives it (D-10, D-14).
     await page.locator(`[data-explorer-row="${repo}/README.md"]`).click();
-    await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 10_000 }).toBe("export const answer = 99;\n");
+    await expect.poll(() => onDisk(file), { timeout: 10_000 }).toBe("export const answer = 99;\n");
     expect(fs.readFileSync(readme, "utf8")).toBe(readmeBefore);
     await expect(page.locator('[data-editor-body] .cm-content')).not.toContainText("answer = 99");
   } finally {
@@ -452,7 +452,7 @@ test("an undone edit is what the next save writes", async ({ page }) => {
     await content.click();
     await page.keyboard.press("ControlOrMeta+End");
     await page.keyboard.type("X");
-    await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 10_000 }).toBe(`${SOURCE}X`);
+    await expect.poll(() => onDisk(file), { timeout: 10_000 }).toBe(`${SOURCE}X`);
 
     // Undo that keystroke: the core hears it, so the save that follows writes
     // the text the editor shows rather than the text that was undone (B4).
@@ -461,7 +461,7 @@ test("an undone edit is what the next save writes", async ({ page }) => {
     const savesBefore = sent.get("file_save") ?? 0;
     await page.keyboard.press(chord("save_file"));
     await expect.poll(() => sent.get("file_save")).toBeGreaterThan(savesBefore);
-    await expect.poll(() => fs.readFileSync(file, "utf8")).toBe(SOURCE);
+    await expect.poll(() => onDisk(file)).toBe(SOURCE);
     await expect(page.locator('[data-editor-dirty="true"]')).toHaveCount(0);
   } finally {
     close(fixture);
@@ -505,7 +505,7 @@ test("closing a dirty tab saves the draft instead of dropping it", async ({ page
       .poll(() => (lastSent.get("view_layout.close")?.pending_save as { contents_utf8?: string } | null)?.contents_utf8)
       .toBe(`${SOURCE}X`);
     await expect(page.locator('[data-tab-kind="file"]')).toHaveCount(0);
-    await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 10_000 }).toBe(`${SOURCE}X`);
+    await expect.poll(() => onDisk(file), { timeout: 10_000 }).toBe(`${SOURCE}X`);
   } finally {
     close(fixture);
   }
@@ -523,7 +523,7 @@ test("a closed tab's draft is not written back when the file is reopened", async
     await tab.hover();
     await tab.locator('button[aria-label^="Close view"]').click();
     await expect(page.locator('[data-tab-kind="file"]')).toHaveCount(0);
-    await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 10_000 }).toBe("export const answer = 5;\n");
+    await expect.poll(() => onDisk(file), { timeout: 10_000 }).toBe("export const answer = 5;\n");
 
     // An agent rewrites the file, the operator reopens it, and saves with
     // nothing typed: the closed tab's draft must not come back with it (B5).
@@ -533,7 +533,7 @@ test("a closed tab's draft is not written back when the file is reopened", async
     const savesBefore = sent.get("file_save") ?? 0;
     await page.keyboard.press(chord("save_file"));
     await expect.poll(() => sent.get("file_save")).toBeGreaterThan(savesBefore);
-    await expect.poll(() => fs.readFileSync(file, "utf8")).toBe("export const answer = 0;\n");
+    await expect.poll(() => onDisk(file)).toBe("export const answer = 0;\n");
   } finally {
     close(fixture);
   }
@@ -567,7 +567,7 @@ test("a conflicted background tab is not closed away with its draft", async ({ p
     await conflicted.locator('button[aria-label^="Close view"]').click();
     await expect.poll(() => sent.get("view_layout.close")).toBe(1);
     await expect(page.locator(`[data-tab-kind="file"]`, { hasText: "main.ts" })).toHaveCount(1);
-    await expect.poll(() => fs.readFileSync(file, "utf8")).toBe("export const answer = 0;\n");
+    await expect.poll(() => onDisk(file)).toBe("export const answer = 0;\n");
 
     // The refused close kept the tab, the draft and the choice to resolve it.
     await page.locator(`[data-tab-kind="file"]`, { hasText: "main.ts" }).click();
@@ -793,7 +793,7 @@ test("the Explorer creates, renames, moves and trashes entries", { tag: "@platfo
     expect(lastSent.get("path_move")).toMatchObject({ root: repo, path: `${repo}/src/renamed.ts`, destination: `${repo}/dest` });
 
     // Trash behind the confirmation: nothing goes out until it is confirmed.
-    const destInode = fs.statSync(`${repo}/dest`).ino;
+    const destInode = fs.statSync(`${repo}/dest`, { bigint: true }).ino.toString();
     await page.locator(`[data-explorer-row="${repo}/dest"]`).click({ button: "right" });
     await page.locator('[data-menu-item="trash"]').click();
     const dialog = page.locator("[data-confirm-trash]");
@@ -1054,7 +1054,7 @@ test("an unsaved edit survives a socket drop and reconnect", async ({ page }) =>
     await page.context().setOffline(false);
     await expect(page.locator("[data-connection]")).toHaveCount(0, { timeout: 20_000 });
     await expect(content).toContainText("edited across a reconnect");
-    await expect.poll(() => fs.readFileSync(path.join(repo, "notes.md"), "utf8"), { timeout: 20_000 }).toContain("edited across a reconnect");
+    await expect.poll(() => onDisk(path.join(repo, "notes.md")), { timeout: 20_000 }).toContain("edited across a reconnect");
     await expect(page.locator('[data-editor-dirty="true"]')).toHaveCount(0);
     await screenshot(page, "s3-buffer-reconnect");
   } finally {
@@ -1090,7 +1090,7 @@ test("an existing v1 recovery draft survives the IndexedDB upgrade", async ({ pa
     await page.goto(app);
     await enterWorkspace(page, "repo");
     await expect(page.locator('[data-editor-codemirror] .cm-content')).toContainText("answer = 99");
-    await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 20_000 }).toBe("export const answer = 99;\n");
+    await expect.poll(() => onDisk(file), { timeout: 20_000 }).toBe("export const answer = 99;\n");
   } finally {
     close(fixture);
   }
@@ -1123,7 +1123,7 @@ test("a root-keyed v2 recovery draft survives the IndexedDB upgrade", async ({ p
     await page.goto(app);
     await enterWorkspace(page, "repo");
     await expect(page.locator('[data-editor-codemirror] .cm-content')).toContainText("answer = 98");
-    await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 20_000 }).toBe("export const answer = 98;\n");
+    await expect.poll(() => onDisk(file), { timeout: 20_000 }).toBe("export const answer = 98;\n");
   } finally {
     close(fixture);
   }
@@ -1159,7 +1159,7 @@ test("of two legacy drafts for one file the newer is restored, and the older is 
     await page.goto(app);
     await enterWorkspace(page, "repo");
     await expect(page.locator('[data-editor-codemirror] .cm-content')).toContainText("answer = 96");
-    await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 20_000 }).toBe("export const answer = 96;\n");
+    await expect.poll(() => onDisk(file), { timeout: 20_000 }).toBe("export const answer = 96;\n");
     const kept = await page.evaluate(() => new Promise<string[]>((resolve, reject) => {
       const opened = indexedDB.open("hide-shell");
       opened.onerror = () => reject(opened.error);
@@ -1210,7 +1210,7 @@ test("one draft id in both legacy stores migrates as its newer row (S5.5 B12)", 
     await page.goto(app);
     await enterWorkspace(page, "repo");
     await expect(page.locator('[data-editor-codemirror] .cm-content')).toContainText("answer = 96");
-    await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 20_000 }).toBe("export const answer = 96;\n");
+    await expect.poll(() => onDisk(file), { timeout: 20_000 }).toBe("export const answer = 96;\n");
   } finally {
     close(fixture);
   }
@@ -1226,7 +1226,7 @@ test("an old draft is restored, never discarded for its age (S5.5 B12)", async (
     });
     await page.reload();
     await expect(page.locator('[data-editor-codemirror] .cm-content')).toContainText("answer = 97");
-    await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 20_000 }).toBe("export const answer = 97;\n");
+    await expect.poll(() => onDisk(file), { timeout: 20_000 }).toBe("export const answer = 97;\n");
   } finally {
     close(fixture);
   }
@@ -1278,7 +1278,7 @@ test("a draft whose tab a daemon restart lost is kept for recovery and opens whe
     await page.locator(`[data-draft-open="${id}"]`).click();
     await expect(content).toContainText("answer = 77", { timeout: 20_000 });
     await expect(line).toHaveCount(0);
-    await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 20_000 }).toBe("export const answer = 77;\n");
+    await expect.poll(() => onDisk(file), { timeout: 20_000 }).toBe("export const answer = 77;\n");
     await expect(page.locator('[data-editor-dirty="true"]')).toHaveCount(0, { timeout: 10_000 });
     await expect.poll(async () => (await storedDrafts(page)).some((row) => row.path === file), { timeout: 10_000 }).toBe(false);
   } finally {
@@ -1393,7 +1393,7 @@ test("an interrupted draft store upgrade loses nothing and completes on the next
     await page.goto(app);
     await enterWorkspace(page, "repo");
     await expect(page.locator('[data-editor-codemirror] .cm-content')).toContainText("answer = 96");
-    await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 20_000 }).toBe("export const answer = 96;\n");
+    await expect.poll(() => onDisk(file), { timeout: 20_000 }).toBe("export const answer = 96;\n");
   } finally {
     close(fixture);
   }
@@ -1443,7 +1443,7 @@ test("a save refused at the daemon's boundary keeps the draft unsaved, across a 
     refusing = false;
     await content.click();
     await page.keyboard.press(chord("save_file"));
-    await expect.poll(() => fs.readFileSync(file, "utf8"), { timeout: 20_000 }).toBe("export const answer = 55;\n");
+    await expect.poll(() => onDisk(file), { timeout: 20_000 }).toBe("export const answer = 55;\n");
     await expect(page.locator('[data-editor-dirty="true"]')).toHaveCount(0);
   } finally {
     close(fixture);

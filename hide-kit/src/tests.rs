@@ -678,13 +678,22 @@ fn the_kit_runs_nothing_from_a_folder_another_account_can_change() {
 /// Two kits on one account take turns: while another holds the account,
 /// an apply waits and then installs; a quitting owner stops waiting.
 #[test]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
+#[allow(clippy::disallowed_methods)] // a window in which the apply must not finish: no state reports an event that has not happened
 fn an_apply_waits_for_another_kit_changing_the_same_account() {
     let fixture = Fixture::new();
     let settings = fixture.home().join(".claude/settings.json");
     let held = lock_account(&fixture.target).unwrap();
     let target = fixture.target.clone();
-    let waiting = std::thread::spawn(move || apply(&target, &Scope::automatic()));
+    let (starting, started) = std::sync::mpsc::channel();
+    let waiting = std::thread::spawn(move || {
+        starting.send(()).unwrap();
+        apply(&target, &Scope::automatic())
+    });
+    // The lock wait asks only the stop flag, so nothing says the apply has
+    // reached it: the window opens when the apply starts, not the thread.
+    started
+        .recv_timeout(std::time::Duration::from_secs(10))
+        .unwrap();
     std::thread::sleep(std::time::Duration::from_millis(300));
     assert!(!waiting.is_finished());
     assert_eq!(std::fs::read_to_string(&settings).unwrap(), OTHER_TOOL);

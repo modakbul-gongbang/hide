@@ -14,7 +14,7 @@ import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { countSent, enterWorkspace } from "../../web/e2e/wire";
-import { fitWindow, hostLog, isolate, launch, NEEDS_FOCUS, relaunch, screenshot, shellPage, test, type Isolated } from "./fixture";
+import { fitWindow, focusPage, hostLog, isolate, launch, NEEDS_FOCUS, relaunch, screenshot, shellPage, test, type Isolated } from "./fixture";
 import { compositorPresents, quietFor } from "../../web/e2e/wait";
 
 test.describe.configure({ timeout: 240_000 });
@@ -771,18 +771,7 @@ test("area cycle native: page input previews one exact area, releases once and c
   const outsideId = await displayIdOf(page, "Page A");
   const pid = app.process().pid!;
   const focus = async (url: string, displayId: string) => {
-    await app!.evaluate(({ app: electron, BrowserWindow }, url) => {
-      const window = BrowserWindow.getAllWindows()[0]!;
-      electron.focus({ steal: true }); window.focus();
-      const child = window.contentView.children.find(view => (view as { webContents?: Electron.WebContents }).webContents?.getURL() === url) as unknown as { webContents: Electron.WebContents };
-      // A page already holding native focus announces nothing when focused
-      // again, so the shell takes it first and the page enters as an operator's click would.
-      window.webContents.focus(); child.webContents.focus();
-    }, url);
-    // macOS activates the window asynchronously, and an activation still in
-    // flight can hand the keyboard back to the shell a moment after the page
-    // took it; keys posted then reach no page. Accept the page only once it
-    // has kept the keyboard in the key window for a while, refocusing it otherwise.
+    await focusPage(app!, { url });
     const holds = () => app!.evaluate(({ BrowserWindow }, url) => {
       const window = BrowserWindow.getAllWindows()[0]!;
       const child = window.contentView.children.find(view => (view as { webContents?: Electron.WebContents }).webContents?.getURL() === url) as unknown as { webContents: Electron.WebContents };
@@ -797,18 +786,7 @@ test("area cycle native: page input previews one exact area, releases once and c
     // native focus alone drew nothing.
     const admitted = async () => (await viewOf(url)).visible && (await page.evaluate((id) =>
       document.querySelector("[data-keyboard-area=true] [data-view-tab-bar] [aria-selected=true]")?.getAttribute("data-display") === id, displayId));
-    // eslint-disable-next-line hide-e2e/no-action-in-poll -- #433 retried interaction: native focus lands after the page is shown
-    await expect.poll(async () => {
-      await app!.evaluate(({ app: electron, BrowserWindow }, url) => {
-        const window = BrowserWindow.getAllWindows()[0]!;
-        electron.focus({ steal: true }); window.focus();
-        const child = window.contentView.children.find(view => (view as { webContents?: Electron.WebContents }).webContents?.getURL() === url) as unknown as { webContents: Electron.WebContents };
-        window.webContents.focus(); child.webContents.focus();
-      }, url);
-      if (!(await holds())) return false;
-      await new Promise((resolve) => setTimeout(resolve, 250));
-      return (await holds()) && (await admitted());
-    }).toBe(true);
+    await expect.poll(async () => (await holds()) && (await admitted()), { message: "the page keeps the keyboard and the shell admits it" }).toBe(true);
   };
   const capture = async (name: string) => {
     const dir = process.env.HIDE_E2E_SCREENSHOT_DIR;
@@ -942,19 +920,7 @@ test("zoom: the text-size commands zoom a focused page in Chrome's steps and a p
   // Chrome's steps, the page keeps the keyboard, and no text size moves. A
   // page holds the keyboard only in the key window, so this test's window
   // comes to the front.
-  // eslint-disable-next-line hide-e2e/no-action-in-poll -- #433 retried interaction: native focus lands after the page is shown
-  await expect
-    .poll(() =>
-      app!.evaluate(({ app: electron, BrowserWindow }, url) => {
-        const window = BrowserWindow.getAllWindows()[0]!;
-        electron.focus({ steal: true });
-        window.focus();
-        const child = window.contentView.children.find((view) => (view as { webContents?: Electron.WebContents }).webContents?.getURL() === url) as unknown as { webContents: Electron.WebContents };
-        child.webContents.focus();
-        return child.webContents.isFocused();
-      }, pageA),
-    )
-    .toBe(true);
+  await focusPage(app, { url: pageA });
   const steps: [string, number][] = [["text_larger", 1.1], ["text_larger", 1.25], ["text_smaller", 1.1], ["text_smaller", 1], ["text_smaller", 0.9], ["text_reset", 1]];
   for (const [command, factor] of steps) {
     await menuClick(command);

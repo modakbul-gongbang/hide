@@ -1291,6 +1291,7 @@ fn close_checkout(
         context.api_connector.as_ref(),
         &[path.to_owned()],
         &to_close,
+        super::ProcessWait::for_folder_removal(true),
         super::CONFIRM_TIMEOUT,
     )
     .map_err(|message| Refusal::failed("close_refused", message))
