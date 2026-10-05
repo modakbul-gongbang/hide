@@ -33,6 +33,14 @@ const CHILD = `<!doctype html><meta charset="utf-8"><title>Child</title>
 <input placeholder="Child name"><button onclick="document.querySelector('output').textContent='child: '+document.querySelector('input').value">Send</button>
 <output></output><button onclick="confirm('From the frame')">Frame confirm</button>`;
 
+// Another site's frame whose script never yields once the page has loaded, so
+// its renderer answers nothing. It tells the server when it starts spinning.
+const HUNG_CHILD = `<!doctype html><meta charset="utf-8"><title>Hung child</title>
+<script>addEventListener("load", () => setTimeout(() => { navigator.sendBeacon("/hung-now"); for (;;) {} }, 200));</script>`;
+const HUNG_PAGE = `<!doctype html><meta charset="utf-8"><title>Hung page</title>
+<h1>Beside a hung frame</h1><button>Still readable</button>`;
+let hung = false;
+
 function quote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }
 /** Runs `hide ...` in the isolated pane and returns its exit status and output. */
 async function hideCli(args: string[]): Promise<{ status: number; out: string }> {
@@ -99,7 +107,10 @@ async function start(): Promise<void> {
 test.beforeAll(async () => {
   herdr = await startHerdr({ agents: false });
   server = createServer((request, response) => {
+    if (request.url === "/hung-now") { hung = true; response.writeHead(204).end(); return; }
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    if (request.url === "/hang") { response.end(HUNG_CHILD); return; }
+    if (request.url === "/hung") { response.end(HUNG_PAGE.replace("</h1>", `</h1><iframe src="${origin.replace("127.0.0.1", "localhost")}/hang" width="300" height="100"></iframe>`)); return; }
     response.end(request.url?.startsWith("/child") ? CHILD : PAGE.replace("</h1>", `</h1><iframe id="child" src="${child}" width="420" height="120"></iframe>`));
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -198,12 +209,24 @@ test("hide browser: a dialog is reported, never answered, and holds the display 
   expect(held.next_action).toContain("operator must answer the dialog");
   await shown[0]!.accept();
   const confirm = ref(await snapshot(display), /button "Frame confirm"/);
-  // A cross-origin frame's dialog holds the page the same way.
+  // A cross-origin frame's dialog holds only that frame, which a later command
+  // cannot tell from a script that never yields: it is noted, not a failure.
   expect(await json(["click", display, confirm])).toMatchObject({ ok: true, dialog: { type: "confirm", message: "From the frame" } });
-  expect(await json(["snapshot", display])).toMatchObject({ ok: false, reason: "dialog_open" });
+  expect(await snapshot(display)).toMatch(/# OOPIF unresponsive origin=http:\/\/localhost:\d+/);
   await expect.poll(() => shown.length).toBe(2);
   await shown[1]!.dismiss();
-  expect(await snapshot(display)).toContain('button "Alert"');
+  expect(await snapshot(display)).toContain('button "Frame confirm"');
+});
+
+test("hide browser: a cross-origin frame that never answers is noted and the rest of the page is read", async () => {
+  hung = false;
+  await start();
+  const display = await openDisplay(`${origin}/hung`);
+  await expect.poll(() => hung, { timeout: 15_000 }).toBe(true);
+  const text = await snapshot(display);
+  expect(text).toContain('button "Still readable"');
+  expect(text).toMatch(/# OOPIF unresponsive origin=http:\/\/localhost:\d+ - no answer in time/);
+  expect(text).not.toMatch(/# OOPIF [a-z2-9]{4} /);
 });
 
 test("hide browser: a busy, hidden, file or missing display and a stale ref are refused with what to do next", async () => {
