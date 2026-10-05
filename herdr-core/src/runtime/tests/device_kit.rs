@@ -108,6 +108,7 @@ fn report(states: &[(ComponentId, ComponentState)]) -> KitReport {
             })
             .collect(),
         agents: Vec::new(),
+        held_for_onboarding: false,
         labels_retirement: Default::default(),
         legacy_retirement: Default::default(),
     }

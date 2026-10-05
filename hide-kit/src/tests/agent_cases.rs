@@ -469,3 +469,76 @@ fn switching_factory_droid_off_finds_its_entry_in_either_file() {
             .contains("hide-guidance")
     );
 }
+
+#[test]
+fn a_machine_the_kit_has_never_touched_waits_for_the_first_choice_before_any_agent_gets_anything() {
+    let fixture = Fixture::fresh();
+    set_up(&fixture, ".codex");
+
+    let report = apply(&fixture.target, &Scope::automatic());
+
+    assert!(report.held_for_onboarding);
+    for id in ["claude-code", "codex"] {
+        let held = agent(&report, id);
+        assert!(!held.enabled, "{held:?}");
+        assert_eq!(held.skill.state, ComponentState::Off);
+    }
+    assert_eq!(
+        state(&report, ComponentId::ClaudeCodeHook),
+        ComponentState::Off
+    );
+    assert!(!fixture.settings().contains("hide-subagents@"));
+    assert!(
+        !fixture
+            .home()
+            .join(".claude/skills")
+            .join(SKILL_NAME)
+            .exists()
+    );
+    assert!(!shared_skill(&fixture).exists());
+    // The CLI link and the retirement stage are not agents and are applied.
+    assert_eq!(state(&report, ComponentId::Cli), ComponentState::Installed);
+
+    // The next pass is not the first, and still waits.
+    let again = apply(&fixture.target, &Scope::automatic());
+    assert!(!again.held_for_onboarding);
+    assert!(!agent(&again, "claude-code").enabled);
+
+    // The operator's choice puts back what they chose and nothing else.
+    let chosen = apply(&fixture.target, &Scope::agents(["claude-code"], []));
+    assert!(agent(&chosen, "claude-code").enabled);
+    assert_eq!(
+        state(&chosen, ComponentId::ClaudeCodeHook),
+        ComponentState::Installed
+    );
+    assert!(!agent(&chosen, "codex").enabled);
+    assert!(!shared_skill(&fixture).exists());
+}
+
+#[test]
+fn the_choice_made_in_the_first_pass_wins_over_the_hold() {
+    let fixture = Fixture::fresh();
+
+    let report = apply(&fixture.target, &Scope::agents(["claude-code"], []));
+
+    assert!(report.held_for_onboarding);
+    assert!(agent(&report, "claude-code").enabled);
+    assert_eq!(
+        state(&report, ComponentId::ClaudeCodeHook),
+        ComponentState::Installed
+    );
+}
+
+#[test]
+fn a_machine_with_a_record_keeps_what_it_had_when_this_build_arrives() {
+    let fixture = Fixture::new();
+
+    let report = apply(&fixture.target, &Scope::automatic());
+
+    assert!(!report.held_for_onboarding);
+    assert!(agent(&report, "claude-code").enabled);
+    assert_eq!(
+        state(&report, ComponentId::ClaudeCodeHook),
+        ComponentState::Installed
+    );
+}

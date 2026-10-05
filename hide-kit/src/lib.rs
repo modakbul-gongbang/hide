@@ -168,6 +168,10 @@ pub struct KitReport {
     /// #517); empty in a report from a build that predates them.
     #[serde(default)]
     pub agents: Vec<AgentReport>,
+    /// This pass was the first on the machine and left the agents that are
+    /// on by default off until the operator chooses (first-run onboarding).
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub held_for_onboarding: bool,
     /// What an apply took out of the retired labels plugin; empty when there
     /// was nothing of it (PRD labels-in-hided D-12).
     #[serde(default, skip_serializing_if = "Retirement::is_empty")]
@@ -199,6 +203,7 @@ impl KitReport {
                 })
                 .collect(),
             agents: Vec::new(),
+            held_for_onboarding: false,
             labels_retirement: Retirement::default(),
             legacy_retirement: Retirement::default(),
         }
@@ -445,7 +450,7 @@ fn report(
         (None, Observed::Stale(reason)) => (ComponentState::Outdated, Some(reason)),
         // Gone after Hide applied it: the operator turned it off or undid it
         // by hand, and either way it is theirs now (B36).
-        (None, Observed::Missing) if recorded && (id.can_turn_off() || switched_off) => {
+        (None, Observed::Missing) if switched_off || (recorded && id.can_turn_off()) => {
             (ComponentState::Off, None)
         }
         (None, Observed::Missing) if recorded => (
@@ -529,6 +534,7 @@ pub fn status(target: &KitTarget) -> KitReport {
     KitReport {
         components,
         agents,
+        held_for_onboarding: false,
         labels_retirement: Retirement::default(),
         legacy_retirement: Retirement::default(),
     }
@@ -559,6 +565,9 @@ pub fn apply(target: &KitTarget, scope: &Scope) -> KitReport {
     };
     let labels_retirement = labels::retire(target);
     let mut changed = false;
+    let held_for_onboarding =
+        record_failure.is_none() && agent_kit::hold_for_onboarding(&mut record);
+    changed |= held_for_onboarding;
     if retirement_failure.is_none() && !record.has_retired(HCOORD_PLUGIN_ID) {
         record.mark_retired(HCOORD_PLUGIN_ID);
         changed = true;
@@ -676,6 +685,7 @@ pub fn apply(target: &KitTarget, scope: &Scope) -> KitReport {
     KitReport {
         components,
         agents,
+        held_for_onboarding,
         labels_retirement,
         legacy_retirement,
     }

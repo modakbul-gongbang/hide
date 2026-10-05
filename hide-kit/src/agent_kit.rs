@@ -52,6 +52,21 @@ pub(crate) fn enabled(record: &Record, scope: &Scope, adapter: &AgentAdapter) ->
         .unwrap_or(adapter.default_on)
 }
 
+/// A machine the kit has never been applied to waits for the operator's first
+/// choice before any agent gets anything: the agents that are on by default
+/// are recorded off, and an operator's switch on in the same pass still wins.
+/// A machine with a record keeps what it had, so an upgrade changes nothing.
+/// True when this pass held them.
+pub(crate) fn hold_for_onboarding(record: &mut Record) -> bool {
+    if !record.is_fresh() {
+        return false;
+    }
+    for adapter in ADAPTERS.iter().filter(|adapter| adapter.default_on) {
+        record.set_agent_choice(adapter.id, false);
+    }
+    true
+}
+
 /// What the agent switch says about the kit part that is its hook.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PartGate {

@@ -158,7 +158,15 @@ struct Fixture {
 }
 
 impl Fixture {
+    /// A machine that already has a kit record, as every machine has after
+    /// its first pass; [`Fixture::fresh`] is one that has never had one.
     fn new() -> Self {
+        let fixture = Self::fresh();
+        record::save(fixture.home(), &record::Record::default()).unwrap();
+        fixture
+    }
+
+    fn fresh() -> Self {
         // The private HOME must leave room for the legacy daemon's nested
         // socket under SUN_LEN, even when the harness gives TMPDIR a long
         // spelling. TempDir owns this unique private short-root fixture.
@@ -1774,7 +1782,7 @@ fn identified_sasu_run_with_unknown_status_blocks_and_other_artifacts_do_not() {
 #[test]
 fn intermediate_kit_links_refuse_before_services_status_or_any_mutation() {
     for linked_component in [".hide", ".hide/kit"] {
-        let mut fixture = Fixture::new();
+        let mut fixture = Fixture::fresh();
         let outside = fixture.root.join("outside-owned-folder");
         let copy = if linked_component == ".hide" {
             outside.join("kit/hcoord")

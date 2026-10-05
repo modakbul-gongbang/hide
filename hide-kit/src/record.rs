@@ -32,6 +32,10 @@ pub(crate) struct Record {
     /// A build that does not know the field ignores it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     agents: BTreeMap<String, bool>,
+    /// There was no record file when this one was loaded: the machine has
+    /// never had the kit applied. Never written.
+    #[serde(skip)]
+    fresh: bool,
 }
 
 impl Record {
@@ -55,6 +59,11 @@ impl Record {
 
     pub(crate) fn forget_piece(&mut self, code: &str) -> bool {
         self.installed.remove(code)
+    }
+
+    /// Whether the machine has never had the kit applied.
+    pub(crate) fn is_fresh(&self) -> bool {
+        self.fresh
     }
 
     pub(crate) fn agent_choice(&self, id: &str) -> Option<bool> {
@@ -124,6 +133,7 @@ pub(crate) fn load(home: &Path) -> Result<Record, String> {
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             return Ok(Record {
                 format: FORMAT,
+                fresh: true,
                 ..Record::default()
             });
         }
@@ -148,6 +158,7 @@ pub(crate) fn save(home: &Path, record: &Record) -> Result<(), String> {
         cli_destination: record.cli_destination.clone(),
         retired: record.retired.clone(),
         agents: record.agents.clone(),
+        fresh: false,
     };
     let mut bytes = serde_json::to_vec_pretty(&record).map_err(|error| error.to_string())?;
     bytes.push(b'\n');
