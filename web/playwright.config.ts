@@ -14,9 +14,17 @@ export default defineConfig({
   // instead of whole files, which is what keeps the CI shards even
   // (s3 alone is a third of the suite).
   fullyParallel: true,
+  // CI retries a failed test once. A test that passes the retry is flaky, not
+  // failing: the run passes and `scripts/ci-flaky-report.py` files it as an
+  // issue with a deadline; a test that fails twice fails the lane. The retry
+  // classifies and reports, it never replaces a fix (docs/TESTING.md, "Flaky
+  // tests"). Locally nothing retries, so a flaky test fails where it is
+  // written.
+  retries: process.env.CI ? 1 : 0,
   // The list reporter names every test with its duration, so a CI log says
-  // where the minutes went; the dot reporter CI would default to does not.
-  reporter: "list",
+  // where the minutes went; the dot reporter CI would default to does not. CI
+  // also writes the JSON report the flaky-test step reads.
+  reporter: process.env.CI ? [["list"], ["json", { outputFile: "e2e-report.json" }]] : "list",
   use: {
     baseURL: process.env.HIDE_E2E_ORIGIN ?? "http://127.0.0.1:4173",
     headless: true,

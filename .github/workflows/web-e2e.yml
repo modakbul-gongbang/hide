@@ -2,7 +2,11 @@
 # shards, its macOS and Windows `@platform` jobs and all three nightly OS lanes build, fetch and
 # run the suite the same way and differ only in what they are asked here: the
 # runner, which Herdr asset to run, how many shards deal the tests out, and
-# which tests (`grep` and `full-suite`) to keep.
+# which tests (`grep`) to keep.
+#
+# CI retries a failed test once (web/playwright.config.ts). A test that passes
+# the retry is flaky: the lane passes and `Report flaky tests` files it as an
+# issue (scripts/ci-flaky-report.py); a test that fails twice fails the lane.
 #
 # Each spec starts its own Herdr, hided and Chromium, so one worker per runner
 # keeps timing assertions honest; the shards are the parallelism.
@@ -36,19 +40,16 @@ on:
         type: string
         required: false
         default: ""
-      full-suite:
-        description: Include @flaky tests in the blocking suite (nightly only).
-        type: boolean
-        required: false
-        default: false
       quarantine:
         description: Run the `@flaky` tests once, in shard 1, in a step that cannot fail the lane.
         type: boolean
         required: false
         default: false
 
+# `issues: write` is for filing a flaky test; a caller must grant it.
 permissions:
   contents: read
+  issues: write
 
 jobs:
   # Fans the shard numbers out as a matrix; a matrix cannot count to an input.
@@ -238,13 +239,21 @@ jobs:
           HIDE_E2E_TRACE: "1"
           GREP: ${{ inputs.grep }}
           SHARD: ${{ matrix.shard }}/${{ inputs.shards }}
-          FULL_SUITE: ${{ inputs.full-suite }}
         run: |
           mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
-          args=(--shard="$SHARD")
-          if [ "$FULL_SUITE" != true ]; then args+=(--grep-invert @flaky); fi
+          args=(--shard="$SHARD" --grep-invert @flaky)
           if [ -n "$GREP" ]; then args+=(--grep "$GREP"); fi
           bash scripts/verify-web.sh web e2e "${args[@]}"
+      - name: Report flaky tests
+        # A test that failed and passed its retry becomes an issue with a
+        # seven-day deadline, or a comment on the issue that tracks it. A
+        # report that fails to file is a warning, not a failed lane.
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci-flaky-report.py --suite web --playwright web/e2e-report.json
       - name: Quarantined end-to-end (does not block verify)
         # A test tagged @flaky carries the issue that tracks its cause. It still
         # runs here, once, so a fix shows up as a pass and a regression of the

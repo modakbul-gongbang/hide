@@ -93,7 +93,8 @@ import {
   type KeySystem,
   sheetRows,
 } from "./shortcuts";
-import { bindingProblemText, commandLabel, commandTitle, sheetRowTitle } from "./shortcutLabels";
+import { commandTitle } from "./commandTitle";
+import { bindingProblemText, commandLabel, sheetRowTitle } from "./shortcutLabels";
 import type { Device, IssueSettings } from "./snapshot";
 import { latestDraft } from "./editor/draft";
 import { MobileTab } from "./MobileTab";

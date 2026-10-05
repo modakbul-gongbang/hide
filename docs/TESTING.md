@@ -102,12 +102,14 @@ When the behavior depends on the order of two events, the test fixes that order;
   The fixture uses `/bin/zsh` with its private `.zshrc` on Unix and the native `ComSpec` cmd shell with a controlled `PROMPT` on Windows.
   A missing native shell fails fixture setup before starting the server.
   Before each initial agent start, the fixture waits for the prompt and the shell to hold the foreground within the existing ten-second setup bound.
-  On Windows, the pinned Herdr can report the shell as foreground while a non-agent child remains, so one bounded, noninteractive PowerShell read also waits for that shell to have no children; a missing shell or failed read fails setup.
-  The fixture sends each `agent.start` once and retains the original input and PTY-log assertions.
+  Every `agent start` the fixture sends (setup's and every `fixture.run`'s) goes through `startAgentAtShell`, which sends it only while `pane process-info` says the shell alone holds the terminal, the condition the pinned Herdr checks (`docs/ARCHITECTURE.md`, Starting an agent), as the product's `agent_start::start_at_shell` does.
+  A refusal as `agent_pane_busy` typed nothing, so the fixture goes back to waiting within the same ten-second bound; any other answer is the start's.
+  A pane's shell that never gets there fails with the last process info and, on Windows, the children the shell still has, listed by the compiled `hide-children.exe` (a child count of zero is not the condition: a shell can keep a resident child).
 - Use `fixtureHomeEnv` from `web/e2e/platform-fixture.ts` to move `HOME`, provider config homes and, on Windows, `USERPROFILE`, `APPDATA` and `LOCALAPPDATA` together into the private fixture.
   The fixtures run a compiled `claude` shim instead, which proves the pipeline and not an agent or physical IME.
   On Windows the interactive shim writes its readiness line after console setup; provider/auth replies return before that line, and input logs record only received input.
   The native compiler is `cc` on Unix and `clang.exe` on Windows; its owned child has a 20-second bound and a compiler failure fails setup.
+  A worker compiles each distinct source once and copies the result into every test's private root, because compiling the same shim per test is what exceeded that bound; `compileFixtureC` takes the source text.
   The private Herdr server, panes and `hided` use `fixturePath`: the shim directory followed by system-tool directories, including `/usr/sbin` for `lsof` on Unix and native Windows and Git directories on Windows.
   `fixtureExecutable` supplies native `.exe` names and `fixtureToolPath` uses the native path delimiter while refusing missing or non-absolute Windows system-root or program-files values.
   Catalog discovery probes every provider, so appending the host's `PATH` also reaches its installed CLIs even when the test selects Claude.
@@ -128,10 +130,13 @@ Put new operating-system differences in that shared boundary rather than repeati
 The Windows fixture boundaries also preserve these requirements:
 
 - An endpoint is a named pipe on Windows: a fixture that would use the socket path `P` on Unix uses `\\.\pipe\P`, because listening on a Unix socket path there fails with `EACCES`.
+  `localEndpoint` in `web/e2e/platform-fixture.ts` spells it for both a listener and a client.
 - A key the core derives from a path is computed from the wire spelling the core uses (`/` between names, `hide-platform`'s `path`), never from the native spelling.
   `web/e2e/s2.spec.ts` hashes the checkout folder to find its owner workspace; hashed in the Windows spelling, the key named a different workspace than the one the core chose, and the new tab the test expected appeared elsewhere.
 - A program just copied or just exited can still be locked on Windows, so deleting it can fail with `EBUSY`.
   Confirm the process that ran it has exited before removing it; a deletion retry is not that confirmation.
+- A folder a pane's shell started in is locked until Herdr's server and its panes' processes are gone.
+  The `hided` fixture's directory holds the home those panes start in, so `Herdr`'s `afterStop` removes it, after those processes, whichever of the two a test stops first.
 
 ### Cleanup never hides the first failure
 
@@ -204,10 +209,10 @@ A piece that another open change is still building is marked as pending with the
    See [Operating-system differences belong to one fixture helper](#operating-system-differences-belong-to-one-fixture-helper); native home variables, executable names, the tool path, the compiler and the no-op opener live in `web/e2e/platform-fixture.ts`, not in a `process.platform` branch in a spec.
    The endpoint helper (`focusGate` spells the Windows pipe itself in `web/e2e/pane-focus-ordering.spec.ts`) is not there yet; add it to `platform-fixture.ts` when a second spec needs it.
 9. **A retry is a label, not a fix.**
-   Pending #419 (not merged): CI will run Playwright with `retries: 1` so that a test that fails and then passes is reported as `flaky` instead of failing the run; two failures still fail the lane.
-   That is a classification for the issue that tracks the test, with a seven-day expiry to fix or delete it.
+   CI runs Playwright with `retries: 1` (`web/playwright.config.ts`, `desktop/playwright.config.ts`), so a test that fails and then passes is reported as `flaky` instead of failing the run; two failures still fail the lane.
+   That is a classification for the issue `scripts/ci-flaky-report.py` files for the test, with a seven-day expiry to fix or delete it.
    It is never a reason to loosen a wait.
-   The rule is in [Flaky tests](#flaky-tests); until #419 merges, retries are off and `@flaky` is the policy there.
+   The rule is in [Flaky tests](#flaky-tests); locally nothing retries.
 
 ## Writing a Rust test
 
@@ -246,9 +251,9 @@ The crate's own `AGENTS.md` says where the file goes; this section says how the 
    Use a private folder per test and never a fixed name in `/tmp`.
    Why: a leaked process or file is inherited by the next test and by the next run.
 8. **Retries are a classification.**
-   Pending #419: CI will run the Rust suite with `cargo-nextest --retries 1`, so a test that fails once and then passes is reported as flaky and recorded in an issue with an expiry; two failures fail the lane.
-   `nextest` does not run doc tests, so those stay on `cargo test`.
-   This is part of #419 and is not merged; until then the Rust suite has no retry and an OS-contract test is quarantined with `ignore` as described in [Flaky tests](#flaky-tests).
+   CI runs the Linux Rust lane with `scripts/verify-cargo.sh nextest --profile ci` (`retries = 1` in `.config/nextest.toml`), so a test that fails once and then passes is reported as flaky and recorded in an issue with an expiry; two failures fail the lane.
+   `nextest` does not run doc tests; the workspace has none that runs today, and a runnable one needs its own `cargo test --doc` step.
+   The Windows and macOS lanes still run `cargo test`, which has no retry; an OS-contract test there is quarantined with `ignore` as described in [Flaky tests](#flaky-tests).
    The rule against raising a deadline to pass is unchanged.
 
 ## Which lanes a pull request runs
@@ -279,26 +284,42 @@ The `plan` job's summary lists each lane with the paths that chose it.
 
 ## Flaky tests
 
-A test is flaky when it both fails and passes on the same SHA; Playwright retries are off, so this shows up as a rerun or a nightly that disagrees with the pull request.
+A test is flaky when it both fails and passes on the same SHA.
 A failure on a different SHA is not evidence of flakiness by itself, and the same title can carry two different failures.
 
-- Record each failure in the issue that tracks the test: the run, job and attempt link, the tested SHA, the system, the failing assertion and its message, and the result of the first run and of each rerun.
+CI retries a failed test once, for classification and for the report, and for nothing else.
+
+- Playwright runs with `retries: 1` when `CI` is set (`web/playwright.config.ts`, `desktop/playwright.config.ts`), and the Rust workspace runs under `cargo nextest` with the `ci` profile's `retries = 1` (`.config/nextest.toml`, `scripts/verify-cargo.sh nextest`).
+  Neither retries locally: a flaky test fails where it is written.
+- A test that fails and passes its retry is flaky: the lane passes, the log marks it, and `scripts/ci-flaky-report.py` reads the tool's own report (Playwright's JSON, nextest's JUnit) and files it as an issue labelled `quarantine`, or comments on the open issue that already tracks it.
+  The issue names the first run, the change and the system, and carries a deadline seven days out.
+  A test that fails its retry too fails the lane; nothing else is retried anywhere.
+- At the deadline a flaky test is fixed or deleted.
+  Whoever knows the cause opens the fix or the deletion; if nobody does, the issue goes to the operator.
+  The deadline is not a timer that moves the test somewhere quieter, and a later flake on an issue past its deadline says so in its comment.
+- A green lane is not proof that a flaky test passed on that commit: its first attempt failed.
+  Read the `Report flaky tests` step and the `quarantine` issues before claiming a flow verified.
+- The report step cannot fail a lane: the run already passed, so a GitHub error costs one missed issue that the next flaky run files.
+- `cargo nextest` runs no doc test.
+  The workspace has none that runs (its three doc blocks are `ignore`, `text` and `sh`); a runnable doc test needs its own `cargo test --doc` step.
+- Windows and macOS Rust lanes still use `cargo test`, whose retry does not exist; their flaky Rust tests surface as a failed lane.
+
+What the retry does not do:
+
+- Record each failure in the issue that tracks the test: the run, job and attempt link, the tested SHA, the system, the failing assertion and its message.
   Group failures by assertion signature, not by title, so two causes under one name are not read as one.
-- A web or desktop e2e test that fails intermittently in CI before its cause is fixed can be quarantined, and that, with the Rust form below, is the only way a test leaves a required gate.
-  Tag it `@flaky` with an `issue` annotation naming the issue that tracks the cause; the required web shards and the required desktop step skip it with `--grep-invert @flaky`, and web shard 1 and the desktop job each still run every quarantined test in a step that cannot turn `verify` red, so a fix shows up as a pass.
-  Pull-request quarantined web tests run only in shard 1 of the Linux lane, never in the macOS or Windows `@platform` jobs; nightly runs `@flaky` tests in their normal shards and blocking suites.
-- A Rust OS contract test that fails intermittently on one system is quarantined there alone with `#[cfg_attr(target_os = "<system>", ignore = "<issue URL>")]`, so the other systems keep it in their required lanes.
-  Today only macOS `hide-platform` tests are run back: the desktop job's quarantine step runs them with `--ignored` where they cannot turn `verify` red (the plan includes `desktop-e2e` for every `hide-platform` change), and nightly's macOS OS contract step runs them blocking.
-- Quarantine is for a cause under investigation, not for a test nobody means to fix; removing the tag is part of the fix.
-- Quarantine does not decide the cause.
-  A failure that shows lost or misrouted input, a broken OS contract, or a missing tab the user asked for is a product defect candidate, and is investigated as one rather than tagged and left.
-- Do not make a flaky test pass by raising a timeout or deadline, adding retries, changing the number of clicks or keys, lowering an expected count, resending an action, accepting a partial string, or skipping it.
+- A flaky test is not a product-defect verdict.
+  A failure that shows lost or misrouted input, a broken OS contract, or a missing tab the user asked for is a product defect candidate, and is investigated as one.
+- Do not make a flaky test pass by raising a timeout or deadline, adding retries beyond the CI one, changing the number of clicks or keys, lowering an expected count, resending an action, accepting a partial string, or skipping it.
   Each of these hides the order or readiness problem the failure was reporting; fix the wait or the gate, or fix the product.
 
-These rules are checked by the reviewer; no CI check enforces them today:
+Until the last `@flaky` tag is gone, a tag removes a test from the required lanes:
 
-- A pull request that adds `@flaky` links an open issue holding at least one recorded failure, and says what would end the quarantine.
-- A pull request that touches a quarantined test, or closes its issue, either removes the tag with evidence the cause is fixed or records in the issue why the quarantine stays.
+- A web or desktop e2e test tagged `@flaky` with an `issue` annotation is skipped by the required web shards and the required desktop step (`--grep-invert @flaky`, nightly's suites included), and web shard 1 and the desktop job each still run every tagged test in a step that cannot turn `verify` red, so a fix shows up as a pass.
+  Pull-request tagged web tests run only in shard 1 of the Linux lane, never in the macOS or Windows `@platform` jobs.
+  The goal is no tag; a new one needs an open issue holding a recorded failure and a deadline, and removing the tag is part of the fix.
+- A Rust OS contract test that fails intermittently on one system is ignored there alone with `#[cfg_attr(target_os = "<system>", ignore = "<issue URL>")]`, so the other systems keep it in their required lanes.
+  Today only macOS `hide-platform` tests are run back: the desktop job's quarantine step runs them with `--ignored` where they cannot turn `verify` red (the plan includes `desktop-e2e` for every `hide-platform` change), and so does nightly's macOS step.
 
 ## Reviewing a pull request that adds or changes a test
 

@@ -150,7 +150,7 @@ fn the_pinned_herdr_answers_a_request_and_streams_events_over_the_local_stream()
 
     let subscription = subscribe(
         &herdr.socket,
-        &["workspace.created"],
+        json!({"subscriptions": [{"type": "workspace.created"}]}),
         Duration::from_secs(5),
     )
     .expect("subscribe");

@@ -1,5 +1,8 @@
 # Full web and desktop suites and package checks on all three OSes nightly.
-# Tracked flaky tests block this run; PR quarantine policy stays in pr.yml.
+# A test fails this run only when it fails its retry too (CI retries a failed
+# test once); a test that passes the retry is flaky, and
+# scripts/ci-flaky-report.py files it as an issue, as in pr.yml. A test tagged
+# `@flaky` is left out of these suites and runs in pr.yml's quarantine step.
 # Runner windows and Linux Xvfb exercise automation, not physical IME/device QA.
 # PRs retain the Linux shards and macOS `@platform` lane (see pr.yml).
 # A main-branch nightly failure opens one issue or comments on the existing
@@ -28,32 +31,38 @@ jobs:
   web-e2e-linux:
     name: web e2e (Linux full)
     uses: ./.github/workflows/web-e2e.yml
+    permissions:
+      contents: read
+      issues: write
     with:
       lane: nightly-linux
       runner: ubuntu-latest
       herdr-platform: linux-x86_64
       shards: 6
-      full-suite: true
 
   web-e2e-macos:
     name: web e2e (macOS full)
     uses: ./.github/workflows/web-e2e.yml
+    permissions:
+      contents: read
+      issues: write
     with:
       lane: nightly-macos
       runner: macos-15
       herdr-platform: macos-aarch64
       shards: 4
-      full-suite: true
 
   web-e2e-windows:
     name: web e2e (Windows full)
     uses: ./.github/workflows/web-e2e.yml
+    permissions:
+      contents: read
+      issues: write
     with:
       lane: nightly-windows
       runner: windows-latest
       herdr-platform: windows-x86_64
       shards: 4
-      full-suite: true
 
   os-contract:
     name: os contract
@@ -63,6 +72,9 @@ jobs:
     name: desktop e2e (${{ matrix.system }} full)
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 45
+    permissions:
+      contents: read
+      issues: write
     strategy:
       fail-fast: false
       matrix:
@@ -136,10 +148,15 @@ jobs:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
         run: |
           bash scripts/verify-cargo.sh test-scoped -p hide-platform -p hide-herdr-client
-          # The OS contract tests quarantined on macOS, blocking here like every tracked flaky test.
-          bash scripts/verify-cargo.sh test-scoped -p hide-platform -- --ignored
           bash scripts/verify-cargo.sh test-scoped -p hide-herdr-client --test real_herdr -- --ignored --nocapture
-      - name: Whole desktop suite, including tracked flaky tests
+      - name: OS contract tests quarantined on macOS (does not block)
+        # A Rust test ignored for an issue runs here and cannot turn the
+        # nightly red; the pull request lanes run it the same way.
+        if: runner.os == 'macOS'
+        continue-on-error: true
+        timeout-minutes: 10
+        run: bash scripts/verify-cargo.sh test-scoped -p hide-platform -- --ignored
+      - name: Whole desktop suite
         timeout-minutes: 20
         env:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
@@ -147,10 +164,17 @@ jobs:
         run: |
           mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
           if [ "$RUNNER_OS" = Linux ]; then
-            xvfb-run -a bash scripts/verify-web.sh desktop e2e
+            xvfb-run -a bash scripts/verify-web.sh desktop e2e --grep-invert @flaky
           else
-            bash scripts/verify-web.sh desktop e2e
+            bash scripts/verify-web.sh desktop e2e --grep-invert @flaky
           fi
+      - name: Report flaky tests
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci-flaky-report.py --suite desktop --playwright desktop/e2e-report.json
       - name: Keep the failed desktop run
         if: failure()
         uses: actions/upload-artifact@v7

@@ -12,6 +12,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { finishFixtureTurn, labelAgent, setFixtureLifecycle, spawnAgent, startHerdr, type FixtureLabel, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
+import { localEndpoint } from "./platform-fixture";
 import { countSent, enterWorkspace, screenshot } from "./wire";
 import { chord } from "./chords";
 
@@ -45,7 +46,7 @@ async function livePanes(herdr: HerdrFixture): Promise<Set<string>> {
  * caller closes it on every exit path.
  */
 async function watchCloseOrder(herdr: HerdrFixture, watched: string[]): Promise<{ order: Promise<string[]>; close: () => void }> {
-  const socket = net.createConnection(herdr.socket);
+  const socket = net.createConnection(localEndpoint(herdr.socket));
   const order: string[] = [];
   let buffer = "";
   let ack: (error?: Error) => void = () => undefined;

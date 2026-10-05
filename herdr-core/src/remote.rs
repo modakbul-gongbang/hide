@@ -4779,7 +4779,7 @@ mod tests {
 
         let subscription = hide_herdr_client::subscribe_with_connector(
             &connector,
-            &["pane.updated"],
+            crate::wire::subscription_params(&["pane.updated"]).expect("subscription params"),
             SSH_OPERATION_TIMEOUT,
         )
         .expect("official remote event subscription starts");
