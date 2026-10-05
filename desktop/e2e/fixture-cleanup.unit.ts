@@ -1,12 +1,13 @@
 // Exercise the real fixture teardown and filesystem with Electron and service
 // calls replaced at their external boundaries. No native process is started.
 import { afterEach, beforeEach, expect, test, vi } from "vitest";
-import { ChildProcess, execFileSync, spawnSync } from "node:child_process";
+import { ChildProcess, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { isolate, launch, type Isolated } from "./fixture";
-import { endWindowsProcesses, forgetCompiledFixtures } from "../../web/e2e/platform-fixture";
+import { endWindowsProcesses } from "../../web/e2e/platform-fixture";
+import { copyFixtureShim } from "../../web/e2e/shims/build";
 
 type Guard = (fixtures: Record<string, never>, use: () => Promise<void>, info: { tags: string[] }) => Promise<void>;
 const boundary = vi.hoisted(() => ({ launch: vi.fn(), guard: null as Guard | null }));
@@ -17,26 +18,6 @@ vi.mock("@playwright/test", () => ({
 }));
 vi.mock("node:child_process", async (original) => ({
   ...await original<typeof import("node:child_process")>(),
-  execFileSync: vi.fn((command: string, args?: readonly string[], options?: { timeout?: number }) => {
-    if (process.platform !== "win32" || command !== "clang.exe" || args?.length !== 4
-      || args[0] !== "-O1" || args[1] !== "-o" || options?.timeout !== 20_000
-      || Object.keys(options).some((key) => key !== "timeout")) {
-      throw new Error(`unexpected fixture compiler: ${command}`);
-    }
-    // A worker compiles into its own folder under the temp directory, and
-    // `fixtureOpenCommand` copies the result into the private root.
-    const [, , output, source] = args;
-    const cache = path.dirname(source);
-    if (!root || !path.isAbsolute(cache) || path.dirname(fs.realpathSync.native(cache)) !== fs.realpathSync.native(root)
-      || !path.basename(cache).startsWith("hide-e2e-cc-")
-      || path.extname(source) !== ".c" || path.extname(output) !== ".exe" || path.dirname(output) !== cache
-      || fs.readFileSync(source, "utf8") !== "int main(void) { return 0; }\n") {
-      throw new Error(`unexpected fixture compiler files: ${command}`);
-    }
-    // The real helper checks existence; native executable validity belongs to e2e.
-    fs.writeFileSync(output, Buffer.alloc(0), { flag: "wx" });
-    return Buffer.alloc(0);
-  }),
   spawnSync: vi.fn((command: string) => {
     throw new Error(`unexpected fixture process: ${command}`);
   }),
@@ -58,6 +39,25 @@ function expectRootEnded(run: Isolated): void {
   else expect(endWindowsProcesses).not.toHaveBeenCalled();
 }
 
+// The no-op opener is a finished program the e2e entry point built; here the
+// copy is the boundary: which program, and where in the private root it lands.
+vi.mock("../../web/e2e/shims/build", () => ({
+  copyFixtureShim: vi.fn((name: string, executable: string) => {
+    const privateRoot = path.dirname(path.dirname(executable));
+    if (name !== "noop" || path.basename(executable) !== "hide-open.exe" || path.basename(path.dirname(executable)) !== "bin"
+      || !path.basename(privateRoot).startsWith("hide-desktop-")) {
+      throw new Error(`unexpected fixture program copy: ${name} -> ${executable}`);
+    }
+    fs.writeFileSync(executable, Buffer.alloc(0), { flag: "wx" });
+  }),
+}));
+
+/** Windows gets the built no-op opener in the private root; elsewhere /usr/bin/true needs no program. */
+function expectOpenerCopied(run: Isolated): void {
+  if (process.platform === "win32") expect(copyFixtureShim).toHaveBeenCalledWith("noop", path.join(run.root, "bin", "hide-open.exe"));
+  else expect(copyFixtureShim).not.toHaveBeenCalled();
+}
+
 let root: string;
 let runs: Isolated[];
 let children: ChildProcess[];
@@ -65,9 +65,9 @@ beforeEach(() => {
   root = fs.mkdtempSync(path.join(os.tmpdir(), "hide-fixture-regression-"));
   vi.spyOn(os, "tmpdir").mockReturnValue(root);
   boundary.launch.mockReset();
-  vi.mocked(execFileSync).mockClear();
   vi.mocked(spawnSync).mockClear();
   vi.mocked(endWindowsProcesses).mockClear();
+  vi.mocked(copyFixtureShim).mockClear();
   runs = [];
   children = [];
 });
@@ -76,7 +76,6 @@ afterEach(() => {
   // so the same recovery entrypoint can clean every test's retained home.
   for (const child of children) reportExit(child);
   for (const run of runs) run.cleanup();
-  forgetCompiledFixtures();
   vi.restoreAllMocks();
   fs.rmSync(root, { recursive: true, force: true });
 });
@@ -141,6 +140,7 @@ test("a rejected close after confirmed candidate exit still cleans home and repo
   expect(error?.errors).toEqual([closeFailure]);
   expect(fs.existsSync(run.root)).toBe(false);
   expectRootEnded(run);
+  expectOpenerCopied(run);
 });
 
 test("a successful close must confirm exit before home deletion", async () => {

@@ -28,7 +28,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterCleanup, ownUntilWorkerExit } from "./worker-owned";
-import { compileFixtureC, endWindowsProcesses, fixtureExecutable, fixtureHomeEnv, fixtureToolPath, inheritedFixtureEnv, windowsProcessTree, type WindowsProcess } from "./platform-fixture";
+import { endWindowsProcesses, fixtureExecutable, fixtureHomeEnv, fixtureToolPath, inheritedFixtureEnv, windowsProcessTree, type WindowsProcess } from "./platform-fixture";
+import { copyFixtureShim } from "./shims/build";
 
 export type HerdrFixture = {
   bin: string;
@@ -56,173 +57,6 @@ export type HerdrFixture = {
   afterStop: (cleanup: () => void) => void;
 };
 
-// Lists the processes that have `argv[1]` as their parent, one `pid name` line
-// each (exit 2 when that process is not running). A failure message names
-// what a shell was still running without a PowerShell start, which a loaded
-// runner can stretch past a setup deadline.
-const CHILDREN_SOURCE = `#include <windows.h>
-#include <tlhelp32.h>
-#include <stdio.h>
-#include <stdlib.h>
-
-int main(int argc, char **argv) {
-  if (argc != 2) return 64;
-  DWORD parent = (DWORD)strtoul(argv[1], NULL, 10);
-  HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
-  if (snapshot == INVALID_HANDLE_VALUE) return 1;
-  PROCESSENTRY32 entry;
-  entry.dwSize = sizeof entry;
-  int running = 0;
-  for (BOOL more = Process32First(snapshot, &entry); more; more = Process32Next(snapshot, &entry)) {
-    if (entry.th32ProcessID == parent) running = 1;
-    if (entry.th32ParentProcessID == parent) printf("%lu %s\\n", (unsigned long)entry.th32ProcessID, entry.szExeFile);
-  }
-  CloseHandle(snapshot);
-  return running ? 0 : 2;
-}
-`;
-
-const SHIM_SOURCE = `#include <fcntl.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#ifdef _WIN32
-#include <windows.h>
-#include <io.h>
-#include <sys/stat.h>
-#define read _read
-#define write _write
-#define open _open
-typedef int fixture_count_t;
-static void raw_terminal(void) {
-  HANDLE input = GetStdHandle(STD_INPUT_HANDLE);
-  DWORD mode;
-  if (!GetConsoleMode(input, &mode)) { fputs("fixture console input unavailable\\n", stderr); exit(1); }
-  mode &= ~(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT);
-  mode |= ENABLE_VIRTUAL_TERMINAL_INPUT;
-  if (!SetConsoleMode(input, mode) || !SetConsoleCP(CP_UTF8) || !SetConsoleOutputCP(CP_UTF8)) exit(1);
-}
-static fixture_count_t terminal_read(char *bytes, size_t size) {
-  static WCHAR pending = 0;
-  WCHAR input[4096];
-  for (;;) {
-    DWORD prefix = pending ? 1 : 0, count;
-    input[0] = pending;
-    if (!ReadConsoleW(GetStdHandle(STD_INPUT_HANDLE), input + prefix, 4095 - prefix, &count, NULL)) return -1;
-    if (!count) return pending ? -1 : 0;
-    count += prefix;
-    pending = input[count - 1] >= 0xd800 && input[count - 1] <= 0xdbff ? input[--count] : 0;
-    if (count) {
-      int converted = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, input, (int)count, bytes, (int)size, NULL, NULL);
-      return converted ? converted : -1;
-    }
-  }
-}
-static fixture_count_t terminal_write(const char *bytes, size_t size) {
-  DWORD count;
-  return WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), bytes, (DWORD)size, &count, NULL) ? (fixture_count_t)count : -1;
-}
-#else
-#include <termios.h>
-#include <time.h>
-#include <unistd.h>
-typedef ssize_t fixture_count_t;
-#define terminal_read(bytes, size) read(0, bytes, size)
-#define terminal_write(bytes, size) write(1, bytes, size)
-static void raw_terminal(void) {
-  struct termios tio;
-  if (tcgetattr(0, &tio) == 0) {
-    tio.c_lflag &= ~(ICANON | ECHO | IEXTEN);
-    tio.c_cc[VMIN] = 1;
-    tio.c_cc[VTIME] = 0;
-    tcsetattr(0, TCSANOW, &tio);
-  }
-}
-#endif
-static char prompt[1 << 20];
-static int provider(int argc, char **argv) {
-  if (argc > 2 && strcmp(argv[1], "auth") == 0 && strcmp(argv[2], "status") == 0) {
-    puts("{\\"loggedIn\\":true}");
-    return 0;
-  }
-  size_t len = 0; fixture_count_t n;
-  while (len < sizeof prompt - 1 && (n = read(0, prompt + len, sizeof prompt - 1 - len)) > 0) len += (size_t)n;
-  prompt[len] = 0;
-  char *label = NULL;
-  for (char *at = prompt; (at = strstr(at, "HIDE_E2E_LABEL ")) != NULL; at++) label = at;
-  if (!label) {
-    puts("{\\"type\\":\\"result\\",\\"is_error\\":true,\\"subtype\\":\\"error_during_execution\\"}");
-    return 1;
-  }
-  char *delay = NULL;
-  for (char *at = prompt; (at = strstr(at, "HIDE_E2E_DELAY_MS ")) != NULL && at < label; at++) delay = at;
-  if (delay) {
-    long ms = atol(delay + strlen("HIDE_E2E_DELAY_MS "));
-#ifdef _WIN32
-    Sleep((DWORD)ms);
-#else
-    struct timespec wait = { ms / 1000, (ms % 1000) * 1000000L };
-    nanosleep(&wait, NULL);
-#endif
-  }
-  label += strlen("HIDE_E2E_LABEL ");
-  char *end = strchr(label, '\\n');
-  if (end) *end = 0;
-  const char *calls = getenv("HIDE_E2E_PROVIDER_LOG");
-  FILE *log = calls ? fopen(calls, "a") : NULL;
-  if (log) { fprintf(log, "%s\\n", label); fclose(log); }
-  printf("{\\"type\\":\\"result\\",\\"is_error\\":false,\\"structured_output\\":%s}\\n", label);
-  return 0;
-}
-int main(int argc, char **argv) {
-#ifdef _WIN32
-  _setmode(0, _O_BINARY);
-  _setmode(1, _O_BINARY);
-  if (strstr(argv[0], "hide-open.exe")) return 0;
-#endif
-  for (int i = 1; i < argc; i++) {
-    if (strcmp(argv[i], "--json-schema") == 0 || (i == 1 && strcmp(argv[i], "auth") == 0)) return provider(argc, argv);
-  }
-  const char *log_path = getenv("HIDE_E2E_INPUT_LOG");
-  int flags = O_WRONLY | O_CREAT | O_APPEND;
-#ifdef _WIN32
-  flags |= _O_BINARY;
-#endif
-  int log = log_path ? open(log_path, flags, 0644) : -1;
-  raw_terminal();
-#ifdef _WIN32
-  // Herdr's encoded PowerShell launch has no visible agent name.
-  // Announce from the initialized interactive process before reading input.
-  static const char ready[] = "claude fixture ready\\r\\n";
-  if (terminal_write(ready, sizeof ready - 1) != (fixture_count_t)(sizeof ready - 1)) return 1;
-  char b[16384];
-#else
-  char b[4096];
-#endif
-  fixture_count_t n;
-  while ((n = terminal_read(b, sizeof b)) > 0) {
-    if (log >= 0 && write(log, b, (size_t)n) < 0) return 1;
-#ifdef _WIN32
-    // A Unix tty turns Enter's CR into LF on input and LF into CRLF on
-    // output, so the line ends. A console delivers CR alone: echo it as the
-    // line end too, or the next line is drawn over this one.
-    static char echo[sizeof b * 2];
-    size_t out = 0;
-    for (fixture_count_t i = 0; i < n; i++) {
-      echo[out++] = b[i];
-      if (b[i] == '\\r' && (i + 1 == n || b[i + 1] != '\\n')) echo[out++] = '\\n';
-    }
-    if (terminal_write(echo, out) < 0) return 1;
-#else
-    if (terminal_write(b, (size_t)n) < 0) return 1;
-#endif
-  }
-#ifdef _WIN32
-  if (n < 0) return 1;
-#endif
-  return 0;
-}
-`;
 
 function pinnedHerdrVersion(): string {
   const manifest = path.resolve("..", "contracts/herdr-bundle.json");
@@ -315,6 +149,8 @@ function isolatedEnv(root: string, socket: string): NodeJS.ProcessEnv {
     XDG_CONFIG_HOME: path.join(root, "xdg-config"),
     XDG_STATE_HOME: path.join(root, "xdg-state"),
     HERDR_DISABLE_SOUND: "1",
+    // Every pane the server starts, however it is made, tells a fixture program where this run's files are.
+    HIDE_E2E_ROOT: root,
   };
 }
 
@@ -688,10 +524,10 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
   try {
     env = isolatedEnv(root, socket);
     const shim = path.join(root, "bin", fixtureExecutable("claude"));
-    compileFixtureC(SHIM_SOURCE, shim);
+    copyFixtureShim("claude-shim", shim);
     if (process.platform === "win32") {
-      fs.copyFileSync(shim, path.join(root, "bin", fixtureExecutable("hide-open")));
-      compileFixtureC(CHILDREN_SOURCE, path.join(root, "bin", "hide-children.exe"));
+      copyFixtureShim("noop", path.join(root, "bin", "hide-open.exe"));
+      copyFixtureShim("hide-children", path.join(root, "bin", "hide-children.exe"));
     }
     // Keep host-installed providers out while retaining system tools.
     fixturePath = fixtureToolPath(path.join(root, "bin"));

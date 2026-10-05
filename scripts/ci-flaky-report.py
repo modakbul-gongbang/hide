@@ -130,7 +130,8 @@ def comment(test, system, facts, expired):
 def gh(args, body=None):
     try:
         done = subprocess.run(
-            ["gh", "api", *args], input=None if body is None else json.dumps(body), capture_output=True, text=True,
+            # gh speaks UTF-8; without a named encoding a Windows runner reads it as cp1252.
+            ["gh", "api", *args], input=None if body is None else json.dumps(body), capture_output=True, encoding="utf-8",
         )
     except OSError as error:
         raise RuntimeError(f"gh could not run: {error}") from error
