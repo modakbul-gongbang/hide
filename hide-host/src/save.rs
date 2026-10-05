@@ -12,8 +12,11 @@
 //! 3. the temporary file and the original are exchanged by the platform layer
 //!    (`hide_platform::fs::atomic::exchange`: one atomic call on macOS and
 //!    Linux, a replace that keeps the old file under another name on
-//!    Windows), so the path names either the old file or the new one and
-//!    never a truncated one;
+//!    Windows), so the path never names a truncated file. On macOS and Linux
+//!    it names the old file or the new one at every moment; on Windows
+//!    `ReplaceFileW` moves the old file aside before the new one takes its
+//!    name, so for that moment the path names nothing, and a reader there is
+//!    told the file does not exist;
 //! 4. the file that was displaced is hashed again. If it is not the revision
 //!    the caller read, someone changed it between step 1 and step 3: the two
 //!    are exchanged back, their version stays at the path, and the save is a

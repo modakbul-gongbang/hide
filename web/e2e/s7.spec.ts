@@ -19,7 +19,7 @@ import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { bindChordlessCommand, countSent, enterWorkspace, screenshot, showExplorer, showTool } from "./wire";
 import { chord } from "./chords";
-import { quietFor } from "./wait";
+import { onDisk, quietFor } from "./wait";
 
 /** `--size-rail`: the always-shown device rail takes this much of a window that measured its areas without one. */
 const RAIL = 48;
@@ -260,7 +260,7 @@ test("a click previews in the last used area, a pin keeps a view, and a shown fi
     await row("f.txt").click();
     await expect.poll(() => shape(page)).toBe("@(b.txt d.txt e.txt >f.txt*) | (c.txt >a.txt*)");
     expect(stack.sent.get("file_open")).toBe(opensBefore + 1);
-    await expect.poll(() => fs.readFileSync(path.join(stack.root, "e.txt"), "utf8")).toBe("e line edited\n");
+    await expect.poll(() => onDisk(path.join(stack.root, "e.txt"))).toBe("e line edited\n");
 
     // Opening a file another area shows focuses that view: no tab is added (B3).
     await row("c.txt").click();
@@ -350,7 +350,7 @@ test("Open to the side shows one document twice: edits and Korean input reach bo
     ]);
     await expect(right).toContainText("line 001-B 한글안녕");
     await expect(left).toContainText("line 001-B 한글안녕");
-    await expect.poll(() => fs.readFileSync(shared, "utf8").split("\n")[0], { timeout: 10_000 }).toBe("line 001-B 한글안녕");
+    await expect.poll(() => onDisk(shared)?.split("\n")[0], { timeout: 10_000 }).toBe("line 001-B 한글안녕");
     await screenshot(page, "s7-beside-korean");
 
     // Each view keeps its own scroll and cursor: the left one scrolls to the
@@ -368,7 +368,7 @@ test("Open to the side shows one document twice: edits and Korean input reach bo
     await expect(left).toContainText("line 300-A");
     expect(await scrollers[1]!.evaluate((node) => node.scrollTop)).toBe(0);
     expect(await scrollers[0]!.evaluate((node) => node.scrollTop)).toBeGreaterThan(1000);
-    await expect.poll(() => fs.readFileSync(shared, "utf8"), { timeout: 10_000 }).toBe(
+    await expect.poll(() => onDisk(shared), { timeout: 10_000 }).toBe(
       LONG.replace("line 001\n", "line 001-B 한글안녕-C\n").replace("line 300\n", "line 300-A\n"),
     );
 
@@ -412,7 +412,7 @@ test("Open to the side shows one document twice: edits and Korean input reach bo
     await tab(page, "shared.txt").getByRole("button", { name: /Close view/ }).click();
     // The last view gone, the View areas leave and the panel keeps the Explorer.
     await expect(page.locator("[data-view-area]")).toHaveCount(0, { timeout: 10_000 });
-    await expect.poll(() => fs.readFileSync(shared, "utf8").split("\n")[0]).toBe("line 001-B 한글안녕-C-D");
+    await expect.poll(() => onDisk(shared)?.split("\n")[0]).toBe("line 001-B 한글안녕-C-D");
 
     // Unsaved text this page never loaded (a background view after a reload)
     // is closed only by the operator's explicit Don't save, which sends

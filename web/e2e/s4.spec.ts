@@ -11,6 +11,7 @@ import { startHided } from "./hided-fixture";
 import { countSent, registerFolder, screenshot, showExplorer, showTool } from "./wire";
 import { chord } from "./chords";
 import { toPage } from "../../desktop/src/main/wirePath";
+import { onDisk } from "./wait";
 
 test.describe.configure({ timeout: 90_000 });
 
@@ -80,7 +81,7 @@ test("History opens a scoped patch, then updates after editing the original file
     await content.click();
     await page.keyboard.press("ControlOrMeta+KeyA");
     await page.keyboard.type("first\nthird\n");
-    await expect.poll(() => fs.readFileSync(file, "utf8")).toBe("first\nthird\n");
+    await expect.poll(() => onDisk(file)).toBe("first\nthird\n");
     await showTool(page, "changes");
     await row.click();
     await expect(page.locator('[data-patch-view] .cm-content')).toContainText("+third");
