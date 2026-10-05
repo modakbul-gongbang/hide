@@ -6,12 +6,20 @@
 # unchanged on every system. Each leg then runs `hide-herdr-client` against the
 # pinned Herdr for that system, the one place the pinned Windows asset runs.
 # The crates are small, so this lane builds in minutes and does not wait for
-# the workspace. The macOS leg runs inside `desktop-e2e` in `pr.yml`, which
-# already holds a macOS runner, instead of taking a second one.
+# the workspace. A caller names the systems: `pr.yml` runs Linux and Windows for
+# a change to anything that differs by system and macOS, whose runners are the
+# scarce ones, only for a change to these two crates (`os-contract-macos`);
+# `nightly.yml` takes the default, all three.
 name: os contract
 
 on:
   workflow_call:
+    inputs:
+      systems:
+        description: The systems to run, as a JSON array of `linux`, `macos` and `windows`.
+        type: string
+        required: false
+        default: '["linux","macos","windows"]'
 
 # `issues: write` files a flaky test; a caller must grant it.
 permissions:
@@ -21,16 +29,12 @@ permissions:
 jobs:
   contract:
     name: os contract (${{ matrix.system }})
-    runs-on: ${{ matrix.runner }}
+    runs-on: ${{ fromJSON('{"linux":"ubuntu-latest","macos":"macos-15","windows":"windows-latest"}')[matrix.system] }}
     timeout-minutes: 25
     strategy:
       fail-fast: false
       matrix:
-        include:
-          - system: linux
-            runner: ubuntu-latest
-          - system: windows
-            runner: windows-latest
+        system: ${{ fromJSON(inputs.systems) }}
     defaults:
       run:
         shell: bash
@@ -61,11 +65,12 @@ jobs:
         # The manifest is the pin; both scripts verify the download against
         # its digest before the binary answers anything.
         run: |
-          if [ "${{ matrix.system }}" = linux ]; then
-            bin=$(zsh scripts/fetch-herdr-runtime.sh --platform linux-x86_64)
-          else
-            bin=$(pwsh -NoProfile -File scripts/fetch-herdr-runtime.ps1 | tr -d '\r')
-          fi
+          case "${{ matrix.system }}" in
+            linux) bin=$(zsh scripts/fetch-herdr-runtime.sh --platform linux-x86_64) ;;
+            macos) bin=$(zsh scripts/fetch-herdr-runtime.sh --platform macos-aarch64) ;;
+            windows) bin=$(pwsh -NoProfile -File scripts/fetch-herdr-runtime.ps1 | tr -d '\r') ;;
+            *) echo "unknown system: ${{ matrix.system }}" >&2; exit 1 ;;
+          esac
           echo "bin=$bin" >> "$GITHUB_OUTPUT"
       - name: Compare the binary schema and version with the pin
         run: python3 scripts/check-herdr-schema.py --herdr-bin "${{ steps.herdr.outputs.bin }}"
