@@ -1116,10 +1116,10 @@ impl Runtime {
                 fresh_until: now + fresh_for,
                 waiting: BTreeSet::new(),
             };
-            let mut now = Vec::new();
+            let mut read_now = Vec::new();
             for path in projects {
                 match self.sighted_read(&path) {
-                    SightedRead::Now => now.push(path),
+                    SightedRead::Now => read_now.push(path),
                     SightedRead::AfterAnswer => {
                         kept.waiting.insert(path);
                     }
@@ -1132,10 +1132,10 @@ impl Runtime {
                 "repository": sighting.repository,
                 "number": sighting.number,
                 "pane_id": sighting.pane_id,
-                "read": now,
+                "read": read_now,
                 "after_answer": kept.waiting,
             }));
-            read.extend(now);
+            read.extend(read_now);
             self.github_sighted.insert(address, kept);
         }
         for path in read {

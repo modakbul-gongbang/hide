@@ -63,12 +63,14 @@ const SIGHTED_LIMIT: usize = 32;
 const SIGHTING_FRESH_MS: u64 = 15 * 60 * 1_000;
 
 /// How much longer a sighting printed at `at_unix_ms` is recent enough to read
-/// for, or `None` once it is not.
+/// for, or `None` once it is not. Never more than the whole window: a
+/// transcript written while the clock ran ahead would otherwise hold its
+/// address for as long as the clock was wrong.
 pub(crate) fn sighting_fresh_for(at_unix_ms: u64, now_unix_ms: u64) -> Option<Duration> {
     at_unix_ms
         .saturating_add(SIGHTING_FRESH_MS)
         .checked_sub(now_unix_ms)
-        .map(Duration::from_millis)
+        .map(|left| Duration::from_millis(left.min(SIGHTING_FRESH_MS)))
 }
 
 /// Why a read produced nothing.

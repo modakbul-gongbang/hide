@@ -948,6 +948,31 @@ fn a_sighting_that_grew_old_waiting_for_its_answer_reads_nothing() {
     assert_eq!(generation(&runtime, "/tmp/a"), before);
 }
 
+/// A transcript written while the clock ran a day ahead is still only
+/// recent for fifteen minutes, so it neither reads after that nor keeps
+/// its address.
+#[test]
+fn a_sighting_dated_ahead_of_the_clock_is_recent_for_fifteen_minutes_at_most() {
+    let mut runtime = runtime();
+    runtime.snapshot.navigator.workspaces = vec![project_with_pane("a", "/tmp/a", "w1:p1")];
+    let start = Instant::now();
+    runtime.reread_stale_github(start);
+    let mut ahead = sighted("w1:p1", "owner/a", 1);
+    ahead.at_unix_ms = NOW_MS + 24 * 60 * 60 * 1_000;
+    runtime.read_sighted_pull_requests(&[ahead], (start, NOW_MS));
+    let before = generation(&runtime, "/tmp/a");
+
+    runtime.ingest_github_answer(
+        GithubSnapshot {
+            projects: vec![read_ok("/tmp/a", Vec::new(), 10)],
+        },
+        true,
+    );
+    runtime.reread_stale_github(start + Duration::from_secs(16 * 60));
+    assert_eq!(generation(&runtime, "/tmp/a"), before);
+    assert!(runtime.github_sighted.is_empty());
+}
+
 #[test]
 fn a_sighting_does_not_overtake_any_ask_its_project_has_out() {
     let mut runtime = runtime();
