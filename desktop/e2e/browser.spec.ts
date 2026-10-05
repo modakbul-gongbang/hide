@@ -104,6 +104,12 @@ async function viewOf(url: string): Promise<View> {
   return found!;
 }
 
+/** Waits until the host shows the page at `url` and the core's snapshot selects its display in its area. */
+async function shownAndSelected(page: Page, url: string, displayId: string): Promise<void> {
+  const selected = page.locator(`[data-view-tab-bar] [aria-selected=true][data-display="${displayId}"]`);
+  await expect.poll(async () => (await viewOf(url)).visible && (await selected.count()) === 1, { message: "the host shows the page and the core selects it in its area" }).toBe(true);
+}
+
 /** Runs `script` in the page of the view showing `url`. */
 function inPage<T>(url: string, script: string): Promise<T> {
   return app!.evaluate(
@@ -771,7 +777,6 @@ test("area cycle native: page input previews one exact area, releases once and c
   const outsideId = await displayIdOf(page, "Page A");
   const pid = app.process().pid!;
   const focus = async (url: string, displayId: string) => {
-    await focusPage(app!, { url });
     const holds = () => app!.evaluate(({ BrowserWindow }, url) => {
       const window = BrowserWindow.getAllWindows()[0]!;
       const child = window.contentView.children.find(view => (view as { webContents?: Electron.WebContents }).webContents?.getURL() === url) as unknown as { webContents: Electron.WebContents };
@@ -781,11 +786,13 @@ test("area cycle native: page input previews one exact area, releases once and c
     // only from a page it shows, and the shell only when its keyboard owner
     // is that page's area and the core's snapshot selects the page there
     // (`web/src/keyboard.ts`). A tab click or a closed sheet just before
-    // reaches both through a round trip, and the window's own activation can
-    // hand the owner to the shell element it focuses, so keys posted on
-    // native focus alone drew nothing.
+    // reaches both through a round trip, and a page focused before the host
+    // shows it does not hold the keyboard once shown, so the page is focused
+    // only once it is shown and selected; its focus then makes its area the owner.
     const admitted = async () => (await viewOf(url)).visible && (await page.evaluate((id) =>
       document.querySelector("[data-keyboard-area=true] [data-view-tab-bar] [aria-selected=true]")?.getAttribute("data-display") === id, displayId));
+    await shownAndSelected(page, url, displayId);
+    await focusPage(app!, { url });
     await expect.poll(async () => (await holds()) && (await admitted()), { message: "the page keeps the keyboard and the shell admits it" }).toBe(true);
   };
   const capture = async (name: string) => {
