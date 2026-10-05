@@ -299,7 +299,7 @@ test("hide browser: a press the page was too busy to answer took effect, and no 
   expect(failed.next_action).toContain("may already have taken effect");
   expect(failed.next_action).toContain(`hide browser snapshot ${display} --diff`);
   const log = () => inDisplay<string[]>(url, "window.log");
-  await expect.poll(async () => (await log().catch(() => [])).includes("down-done"), { timeout: 30_000 }).toBe(true);
+  await expect.poll(async () => (await log().catch((): string[] => [])).includes("down-done"), { timeout: 30_000 }).toBe(true);
   // Once the page yields, no release or click arrives later: the command ended
   // without sending one, and its session ending delivers none.
   await inDisplay(url, "new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(done, 0))))");
