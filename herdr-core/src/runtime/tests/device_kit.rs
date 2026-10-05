@@ -1091,3 +1091,50 @@ fn a_first_pass_that_did_not_run_does_not_decide_the_first_run_choice() {
         .ingest_kit_report(crate::workspace::LOCAL_DEVICE_ID, &held_report());
     assert_eq!(onboarding(&shared), Some(Pending));
 }
+
+/// An existing Mac is never asked, and a device added later gets what the Mac
+/// has on today (Claude Code and Codex by default), as it did before the
+/// first-run choice existed.
+#[test]
+fn an_existing_macs_agents_become_the_saved_choice_a_later_device_receives() {
+    use crate::model::AgentOnboarding::Done;
+    use hide_kit::Availability::Available;
+    let shared = with_consent(None);
+    let mut existing = ran(report(&[(ComponentId::Cli, ComponentState::Installed)]));
+    existing.agents = vec![
+        agent_report("claude-code", Available, true, ComponentState::Installed),
+        agent_report("codex", Available, true, ComponentState::Installed),
+        agent_report("gemini-cli", Available, false, ComponentState::Off),
+    ];
+    shared
+        .lock()
+        .unwrap()
+        .ingest_kit_report(crate::workspace::LOCAL_DEVICE_ID, &existing);
+    assert_eq!(onboarding(&shared), Some(Done));
+    assert_eq!(
+        shared
+            .lock()
+            .unwrap()
+            .snapshot
+            .ui_state
+            .agent_onboarding_agents,
+        ["claude-code", "codex"]
+    );
+
+    shared
+        .lock()
+        .unwrap()
+        .ingest_kit_report(DEVICE, &held_report());
+    let runtime = shared.lock().unwrap();
+    let Some(KitJob::Apply(scope)) = runtime.device_kit_pending.get(DEVICE) else {
+        panic!("the device is given the Mac's agents");
+    };
+    assert_eq!(
+        scope
+            .agent_on
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["claude-code", "codex"]
+    );
+}

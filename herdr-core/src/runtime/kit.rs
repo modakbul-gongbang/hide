@@ -239,7 +239,8 @@ impl Runtime {
 
     /// What a machine's first kit pass means for the first-run agent choice.
     /// This Mac's first answer decides it: a machine whose kit held the
-    /// agents back asks, one that already had the kit never does. A device
+    /// agents back asks, one that already had the kit never does and keeps
+    /// what it has on as the saved choice. A device
     /// that connects after the choice was made gets the same agents once,
     /// on its own first pass, by its own detection; with no choice made
     /// nothing is installed there.
@@ -259,6 +260,17 @@ impl Runtime {
             } else {
                 AgentOnboarding::Done
             });
+            if !report.held_for_onboarding {
+                // An existing Mac is never asked, and its devices must not
+                // get less than they did before this choice existed: what it
+                // has on today is the choice a device added later receives.
+                self.snapshot.ui_state.agent_onboarding_agents = report
+                    .agents
+                    .iter()
+                    .filter(|agent| agent.enabled)
+                    .map(|agent| agent.id.clone())
+                    .collect();
+            }
             self.persist_ui_state();
             return true;
         }
