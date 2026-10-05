@@ -201,7 +201,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
           )}
         </span>
         {line ? (
-          <span aria-hidden="true" data-agent-line={line.mode} className={cn("pointer-events-none truncate text-caption leading-(--size-sidebar-line-detail)", lineTone(line, agent.demand))}>
+          <span aria-hidden="true" data-agent-line={line.mode} className={cn("pointer-events-none truncate text-caption leading-(--size-sidebar-line-detail)", lineTone(line, agent))}>
             {line.text}
           </span>
         ) : null}
