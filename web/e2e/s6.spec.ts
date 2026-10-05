@@ -402,6 +402,24 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     const viewsWidth = (await viewsColumn.boundingBox())!.width;
     // The file that goes away is the one in front, so its state shows after the restart.
     await viewsColumn.locator('[data-tab-kind="file"]', { hasText: "gone.txt" }).click();
+    // The restart kills the daemon outright on Windows, so what is in front
+    // has to be in the saved file before it goes.
+    const savedFronts = (): string[] => {
+      const fronts: string[] = [];
+      const walk = (node: unknown): void => {
+        if (!node || typeof node !== "object") return;
+        if (Array.isArray(node)) return node.forEach(walk);
+        const area = node as { active?: unknown; displays?: { id: string; path: string }[] };
+        if (typeof area.active === "string" && Array.isArray(area.displays)) {
+          const shown = area.displays.find((display) => display.id === area.active);
+          if (shown) fronts.push(shown.path);
+        }
+        Object.values(node).forEach(walk);
+      };
+      walk(JSON.parse(fs.readFileSync(path.join(daemon!.stateDir, "workspace-views.json"), "utf8")));
+      return fronts;
+    };
+    await expect.poll(savedFronts).toEqual([expect.stringMatching(/\/gone\.txt$/)]);
     fs.rmSync(path.join(herdr.root, "fixture", "gone.txt"));
     daemon = await daemon.restart();
     // Reopening the app is a fresh page, not a reconnect of this one.

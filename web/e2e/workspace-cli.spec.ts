@@ -6,6 +6,7 @@ import { fixtureExecutable } from "./platform-fixture";
 import { runInPane, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { enterWorkspace } from "./wire";
+import { toPage } from "../../desktop/src/main/wirePath";
 
 test.describe.configure({ timeout: 90_000 });
 
@@ -34,11 +35,12 @@ test("pane CLI opens its own file and diff while another Workspace remains in fr
   let daemon: Daemon | null = null;
   try {
     const first = path.join(herdr.root, "fixture");
-    const checkout = fs.realpathSync(first);
+    // The CLI answers in the wire spelling (`/` between names).
+    const checkout = toPage(fs.realpathSync(first));
     const file = path.join(first, "보고서.md");
     const changed = path.join(first, "changed.txt");
-    const expectedFile = path.join(checkout, "보고서.md");
-    const expectedChanged = path.join(checkout, "changed.txt");
+    const expectedFile = `${checkout}/보고서.md`;
+    const expectedChanged = `${checkout}/changed.txt`;
     fs.writeFileSync(file, "한글 report\n");
     fs.writeFileSync(changed, "baseline\n");
     const git = (args: string[]) => {
