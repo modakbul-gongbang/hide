@@ -24,8 +24,6 @@
 //! reads Claude Code, so Hide itself never touches the keychain; see
 //! [`ClaudeCliBackend::usage_text`].
 
-use std::collections::BTreeMap;
-use std::ffi::OsString;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -80,13 +78,17 @@ const AUTH_TIMEOUT: Duration = Duration::from_secs(15);
 /// and the bound covers a cold Node start on a loaded machine. Past it the
 /// child is killed and the popover keeps its last answer or says so.
 const USAGE_TIMEOUT: Duration = Duration::from_secs(30);
-/// The only variables a `/usage` child receives. `USER` is what lets the CLI
-/// find its keychain account (without it the CLI prints `/cost` text as if
-/// logged out); `HOME` and `PATH` locate the login and Node; `LOGNAME` and
-/// `TMPDIR` are the shell's ordinary companions. Everything else is withheld
-/// on purpose: without `HERDR_ENV` the operator's Herdr and hide hooks exit
-/// early, and without `CLAUDECODE` the CLI does not think it is nested.
-pub const USAGE_ENVIRONMENT: &[&str] = &["HOME", "PATH", "USER", "LOGNAME", "TMPDIR"];
+/// The only variables a `/usage` child receives, and which they are is
+/// `hide-platform`'s rule for a child that must find the account's login
+/// (`process::LOGIN_CHILD_VARIABLES`). On macOS and Linux that is `HOME`,
+/// `PATH`, `USER`, `LOGNAME` and `TMPDIR`: `USER` is what lets the CLI find
+/// its keychain account (without it the CLI prints `/cost` text as if logged
+/// out), `HOME` and `PATH` locate the login and Node. On Windows it is the
+/// variables Node and the CLI read there instead (`USERPROFILE`,
+/// `SystemRoot`, `APPDATA`, ...). Everything else is withheld on purpose:
+/// without `HERDR_ENV` the operator's Herdr and hide hooks exit early, and
+/// without `CLAUDECODE` the CLI does not think it is nested.
+pub const USAGE_ENVIRONMENT: &[&str] = hide_platform::process::LOGIN_CHILD_VARIABLES;
 /// How long a child that has closed stdout is given to exit before it is
 /// killed. Its answer is already in hand at that point.
 const EXIT_GRACE: Duration = Duration::from_secs(5);
@@ -139,8 +141,8 @@ enum ChildEnvironment {
     /// The process environment with [`THINKING_OFF`] set: a model turn needs
     /// the same login and `PATH`, and never a thinking budget.
     ModelTurn,
-    /// Exactly these variables, each copied from this process when set.
-    Only(&'static [&'static str]),
+    /// Exactly [`USAGE_ENVIRONMENT`], each copied from this process when set.
+    Usage,
 }
 
 impl ChildEnvironment {
@@ -150,13 +152,7 @@ impl ChildEnvironment {
             Self::ModelTurn => {
                 command.env(THINKING_OFF.0, THINKING_OFF.1);
             }
-            Self::Only(keys) => {
-                let kept = keys
-                    .iter()
-                    .filter_map(|key| std::env::var_os(key).map(|value| (*key, value)))
-                    .collect::<BTreeMap<&str, OsString>>();
-                command.env_clear().envs(kept);
-            }
+            Self::Usage => hide_platform::process::restrict_to_login_environment(command),
         }
     }
 }
@@ -233,7 +229,7 @@ impl ClaudeCliBackend {
             &Self::usage_arguments(),
             &self.config.cwd,
             None,
-            ChildEnvironment::Only(USAGE_ENVIRONMENT),
+            ChildEnvironment::Usage,
             USAGE_TIMEOUT,
             cancel,
         )

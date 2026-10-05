@@ -163,7 +163,8 @@ It uses the user's existing CLI logins to read each provider's seven-day account
 For Claude Code, the core runs `claude -p "/usage" --output-format json --no-session-persistence` through `ClaudeCliBackend::usage_text` and parses the `result` text the CLI prints.
 `/usage` is a local command: the CLI authenticates against its own keychain item, makes no model turn (`duration_api_ms` 0, cost 0), and with `--no-session-persistence` leaves nothing under `~/.claude/projects/`, in `claude --resume`, or in Hide's Agent Conversation list.
 Hide holds no Claude token at any point and never opens the keychain itself; the earlier direct keychain read is gone because an ad hoc signed dev build has a new code identity on every rebuild, so macOS revoked "always allow" and the row fell to a three-second timeout.
-The child receives exactly `HOME`, `PATH`, `USER`, `LOGNAME` and `TMPDIR` (`hide_ai::USAGE_ENVIRONMENT`) and runs in Hide's state directory (`~/.hide/state` by default).
+The child receives exactly the variables `hide_platform::process::LOGIN_CHILD_VARIABLES` names (`hide_ai::USAGE_ENVIRONMENT`): `HOME`, `PATH`, `USER`, `LOGNAME` and `TMPDIR` on macOS and Linux, and `PATH`, `PATHEXT`, `SystemRoot`, `USERPROFILE`, `USERNAME`, `TEMP`, `TMP`, `APPDATA` and `LOCALAPPDATA` on Windows, where Node reads its home from `USERPROFILE` and does not start without `SystemRoot`.
+It runs in Hide's state directory (`~/.hide/state` by default).
 `USER` is what lets the CLI find its keychain account; without it the CLI prints `/cost` text as if logged out.
 `HERDR_*` and `CLAUDECODE` are withheld on purpose: without `HERDR_ENV` the operator's Herdr and hide agent hooks exit early, and any other hook in the operator's `settings.json` runs as it would for any `claude -p`.
 `--bare` cannot be used, because it never reads the keychain.

@@ -11,8 +11,17 @@ use hide_ai::{
 };
 use serde_json::{Value, json};
 
+/// A Windows process cannot be started from a `.py` file, so there the
+/// fixture is its batch launcher, which runs the same script.
 fn fixture() -> PathBuf {
-    PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures/fake-claude.py")
+    let name = if cfg!(windows) {
+        "fake-claude.cmd"
+    } else {
+        "fake-claude.py"
+    };
+    PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .join("tests/fixtures")
+        .join(name)
 }
 
 fn backend() -> ClaudeCliBackend {
@@ -426,15 +435,36 @@ mod usage {
 
         // The fixture's own interpreter shim adds variables of its own
         // (`PWD`, `PYENV_*`), so the assertion is on the three planted keys
-        // that must not cross and the five that must.
+        // that must not cross and the ones the account needs. Python reports
+        // Windows names in upper case, and Windows names do not differ by case.
         let keys: Vec<String> =
             serde_json::from_slice(&std::fs::read(dir.join("usage-env.json")).unwrap()).unwrap();
         for planted in ["HERDR_ENV", "CLAUDECODE", "FAKE_MODE"] {
             assert!(!keys.iter().any(|key| key == planted), "{planted} {keys:?}");
         }
+        let has = |name: &str| keys.iter().any(|key| key.eq_ignore_ascii_case(name));
+        // What the CLI cannot start or find its login without, spelled out
+        // here rather than read back from the list under test.
+        let needed: &[&str] = if cfg!(windows) {
+            &[
+                "SystemRoot",
+                "USERPROFILE",
+                "TEMP",
+                "TMP",
+                "PATHEXT",
+                "APPDATA",
+                "LOCALAPPDATA",
+                "PATH",
+            ]
+        } else {
+            &["HOME", "PATH"]
+        };
+        for kept in needed {
+            assert!(has(kept), "{kept} {keys:?}");
+        }
         for kept in USAGE_ENVIRONMENT {
             if std::env::var_os(kept).is_some() {
-                assert!(keys.iter().any(|key| key == kept), "{kept} {keys:?}");
+                assert!(has(kept), "{kept} {keys:?}");
             }
         }
     }
