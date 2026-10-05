@@ -675,3 +675,41 @@ fn a_pane_close_starts_while_an_unanswered_tab_focus_holds_the_lane() {
         "the close was not queued behind the focus"
     );
 }
+
+/// Zoom and resize are pane operations on their own worker, like a
+/// close: a pane focus that has not been answered holds the lane and nothing
+/// else (the s2 journey sends these right after clicks).
+#[test]
+fn a_zoom_and_resize_in_other_tabs_start_while_an_unanswered_pane_focus_holds_the_lane() {
+    let (mut runtime, _checkout_id) =
+        live_tab_order_runtime("/private/tmp/hide-control-order-zoom-while-focus");
+    let tabs = ["w-order:t1", "w-order:t2", "w-order:t3"];
+    runtime.ingest_session(Ok(tab_order_payload(
+        "/private/tmp/hide-control-order-zoom-while-focus",
+        &tabs,
+        &tabs,
+        "w-order:t1",
+    )));
+    assert!(runtime.dispatch_json(&correlated_pane_focus_event("w-order:t2:p", "pane-1")));
+    assert!(
+        runtime.pane_focus_in_flight.is_some(),
+        "the pane focus is on the lane"
+    );
+
+    for (index, event) in [
+        r#"{"schema_version":2,"kind":"toggle_zoom","payload":{"pane_id":"w-order:t2:p"}}"#,
+        r#"{"schema_version":2,"kind":"resize_pane","payload":{"pane_id":"w-order:t3:p","direction":"right","amount":0.1}}"#,
+    ]
+    .into_iter()
+    .enumerate()
+    {
+        runtime.dispatch_json(event.as_bytes());
+        assert_eq!(
+            runtime.pane_operations.len(),
+            index + 1,
+            "{event} began without waiting for the lane"
+        );
+    }
+    assert!(runtime.control_lane.is_busy());
+    assert_eq!(runtime.control_lane.queued_len(), 0);
+}
