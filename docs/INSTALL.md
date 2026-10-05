@@ -202,7 +202,8 @@ If you want to start agents from hide, install and sign in to the relevant CLI b
 
 ### What the first launch installs
 
-Every launch of the installed app installs Hide's kit on this Mac without asking, and puts back only what a newer app needs:
+Every launch of the installed app installs Hide's kit on this Mac without asking, and puts back only what a newer app needs.
+The one exception is a Mac the kit has never run on: it holds Claude Code's and Codex's hook entries and skills until the operator answers the first-run agent choice (UI_BEHAVIOR.md, Settings > Agents), and the rest below is installed as usual:
 
 - `~/.local/bin/hide`, a link to the app's `hide` command, unless a `hide` that is not Hide's is already there;
 - Hide's entries in `~/.claude/settings.json` and `~/.codex/hooks.json`, for each of Claude Code and Codex that is set up on this Mac, next to whatever other tools put there;

@@ -1301,6 +1301,14 @@ Settings > Agents lists, for every machine, This Mac first and then each device 
 An agent that is off reads `Off` with nothing else, an agent that is on reads the state of its worst piece with that piece's reason when it is not installed, and Reinstall sits on an agent's row only while that agent is on and one of its pieces needs it.
 The agents Hide knows that are not set up on the machine are one muted line, with no switch and no row each, so a machine with two agents shows two rows and not twenty.
 Settings > Devices shows the same agents on a machine's kit rows, each with its switch.
+
+The first-run agent choice is a dialog over the shell, PRD agent-adapters-onboarding, shown once when this Mac's kit has never run.
+It lists all twenty agents Hide knows as tiles in a grid, each with the agent's own mark (or a two-letter monogram where no official mark is bundled, `docs/BRAND.md`) and its state: the agents set up here are on and show a check, an agent not installed is dimmed and has no switch, and a tile is a switch (`role="switch"`) pressed with Space or Enter.
+Claude Code and Codex are on when they are set up; every other set-up agent is on too, since the operator chose the full set, and `Apply` installs what is left on.
+`Later`, Escape and a click outside all mean Later: nothing is installed and the dialog does not return, and the operator turns agents on in Settings, Agents.
+A Mac whose kit has already run (an existing install) never sees it, and nothing is held back from it.
+Until the choice is made the kit puts nothing for Claude Code or Codex on a fresh Mac either, so the hooks wait for Apply or for Settings, Agents.
+A device that connects afterwards gets the saved choice once, by what is installed there; with nothing chosen (Later) it installs nothing for agents.
 An agent installed later appears in these rows off and is never turned on by a pass.
 Its Background AI group ends with `에이전트 요약`, a switch on by default and kept on this Mac across launches (PRD overview-request-view D-11, B21): off, no agent label is asked for, the one being made is dropped, and every surface names each agent by its session's own title or its provider with no AI line or written question; on again, the kept labels return at once and each pane's current turn is asked for.
 

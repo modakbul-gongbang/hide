@@ -122,6 +122,10 @@ The Settings screen learns of it because the coordinator re-reads the diagnosis 
 
 ## Other agents: skill and guidance hook
 
+On a machine where the kit has never run (no `~/.hide/kit/installed.json`), the default-on agents are recorded off in the same pass, so nothing is written to any agent until the operator answers the first-run agent choice; an explicit choice in that pass wins, and an existing install is never held.
+The core asks once (`ui_state.agent_onboarding`), applies the answer to this Mac and to every Ready device, and a device that connects later gets the saved choice once.
+
+
 Claude Code and Codex are the agents the kit has always had a hook for.
 Every other agent Hide knows is one row of `hide-kit/src/agents.rs` (`ADAPTERS`), and one switch per agent per machine turns its pieces on and off, in Settings, Agents and in each device's row.
 A row carries the agent's detection (a program on the login `PATH` or the usual install folders, or a folder it creates under the home), the folder it reads skills from and the systems the documentation confirms that folder on, whether Hide writes a hook for it, the oldest version whose documentation has that hook, and the official page the row's answers come from (`doc_url`).
