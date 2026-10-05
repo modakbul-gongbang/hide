@@ -139,6 +139,25 @@ export function windowsProcessTree(pid: number): WindowsProcess[] {
 }
 
 /**
+ * Ends every `vctip.exe` and returns their pids once each has exited. MSVC's
+ * compiler and linker start that telemetry helper and leave it running after
+ * a build, still naming as its parent a linker that has exited; Windows
+ * reuses that pid, and a pane shell that gets it has the helper for a child,
+ * so Herdr 0.9.1, which counts a shell's children by parent pid alone, refuses
+ * `agent start` there for as long as the helper runs. Throws naming the
+ * survivors after five seconds.
+ */
+export function endVctip(): number[] {
+  const ended = powershell(`
+    $found = @(Get-Process -Name vctip -ErrorAction SilentlyContinue)
+    foreach ($process in $found) { Stop-Process -InputObject $process -Force -ErrorAction SilentlyContinue }
+    if ($found.Count -gt 0) { Wait-Process -InputObject $found -Timeout 5 }
+    ConvertTo-Json -Compress -InputObject @($found | ForEach-Object { $_.Id })
+  `);
+  return JSON.parse(ended) as number[];
+}
+
+/**
  * Ends `owned` and, given `root`, every process started from an executable
  * under it (the fixture's shims, which hided also runs), and returns once
  * none is left, so the caller can delete `root`. Throws naming the survivors
