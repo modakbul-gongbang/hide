@@ -14,9 +14,11 @@ use tokio::sync::Semaphore;
 
 const MAX_HOSTS: usize = 4;
 const MAX_REQUESTS: usize = 8;
-/// One relay per `hide browser` command in flight; the gateway admits eight
-/// CDP clients per window, so more could only wait to be refused.
-const MAX_RELAYS: usize = 8;
+/// One relay per `hide browser` command in flight. A relay holds one of the
+/// daemon's eight client connections for its whole life, so half stay free
+/// for the shell and other commands, and the gateway's eight CDP clients for
+/// external tools.
+const MAX_RELAYS: usize = 4;
 const MAX_ANSWER_BYTES: u64 = 16 * 1024;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(8);
 
