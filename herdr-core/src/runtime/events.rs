@@ -1113,10 +1113,6 @@ pub(super) struct AgentOnboardingApplyPayload {
     pub(super) agents: Vec<String>,
 }
 
-/// The operator closed the first-run agent choice without applying.
-#[derive(Debug, Deserialize)]
-pub(super) struct AgentOnboardingLaterPayload {}
-
 #[derive(Debug, Deserialize)]
 pub(super) struct InterfaceLanguageSetPayload {
     // Required, including an explicit null to return to system language.
@@ -1284,7 +1280,6 @@ pub(super) enum Event {
     ThemeSet(ThemeSetPayload),
     InterfaceLanguageSet(InterfaceLanguageSetPayload),
     AgentOnboardingApply(AgentOnboardingApplyPayload),
-    AgentOnboardingLater(AgentOnboardingLaterPayload),
     ChangesSelect(ChangesSelectPayload),
     GitWorktreeOpen(GitWorktreeOpenPayload),
     GitWorktreeSetBase(GitWorktreeSetBasePayload),
@@ -1493,7 +1488,6 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "theme_set" => decode!(ThemeSetPayload, ThemeSet),
         "interface_language_set" => decode!(InterfaceLanguageSetPayload, InterfaceLanguageSet),
         "agent_onboarding_apply" => decode!(AgentOnboardingApplyPayload, AgentOnboardingApply),
-        "agent_onboarding_later" => decode!(AgentOnboardingLaterPayload, AgentOnboardingLater),
         "changes_select" => decode!(ChangesSelectPayload, ChangesSelect),
         "git_worktree_open" => decode!(GitWorktreeOpenPayload, GitWorktreeOpen),
         "git_worktree_set_base" => decode!(GitWorktreeSetBasePayload, GitWorktreeSetBase),
@@ -3284,7 +3278,6 @@ impl Runtime {
                 true
             }
             Event::AgentOnboardingApply(payload) => self.apply_agent_onboarding(payload.agents),
-            Event::AgentOnboardingLater(_) => self.finish_agent_onboarding(Vec::new()),
             Event::InterfaceLanguageSet(payload) => {
                 if !payload.language.is_null()
                     && serde_json::from_value::<crate::model::InterfaceLanguage>(
