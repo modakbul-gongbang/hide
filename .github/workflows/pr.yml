@@ -240,6 +240,18 @@ jobs:
     defaults:
       run:
         shell: bash
+    env:
+      # Every Rust test step below names these same packages and targets and
+      # picks its tests with `-E`, so cargo resolves features once and the
+      # test binaries are built once, in `Build the Windows test binaries`.
+      # When each step named only its own package, each resolved features
+      # differently and rebuilt the crates under it: herdr-core compiled three
+      # times and compiling took about 6 of the job's 11 minutes (2026-10-05).
+      TEST_TARGETS: >-
+        -p hided -p hide-host -p hide-kit -p hide-agent-hooks -p herdr-core
+        --lib --bin hide-agent-hooks
+        --test opener_lifecycle --test connect_stop --test handshake --test real_herdr
+        --test hook_deadline --test windows_hook_command
     steps:
       - name: Keep line endings as committed
         # The runner converts to CRLF by default, which would make the unit
@@ -256,25 +268,33 @@ jobs:
         run: bash scripts/install-nextest.sh
       - name: Compile the workspace for Windows
         run: bash scripts/verify-cargo.sh check --workspace --all-targets --keep-going --message-format short
+      - name: Build the Windows test binaries
+        id: tests
+        # Built whatever the workspace check answered, so a compile error in
+        # one target does not hide the tests that still build.
+        if: ${{ !cancelled() }}
+        timeout-minutes: 25
+        run: bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS --no-run
       - name: hided's pane bootstrap, file opener, the device's workspace bridge, the CLI's daemon start and end-to-end tests
+        if: ${{ !cancelled() && steps.tests.outcome == 'success' }}
         timeout-minutes: 25
         run: |
-          bash scripts/verify-cargo.sh nextest --profile ci -p hided --lib pane_auth opener open_command workspace_cli
-          bash scripts/verify-cargo.sh nextest --profile ci -p hided --test opener_lifecycle
-          bash scripts/verify-cargo.sh nextest --profile ci -p hide-host --lib workspace_bridge
-          bash scripts/verify-cargo.sh nextest --profile ci -p hided --test connect_stop
-          bash scripts/verify-cargo.sh nextest --profile ci -p hided --test handshake
+          bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'package(hided) & kind(lib) & (test(pane_auth) | test(opener) | test(open_command) | test(workspace_cli))'
+          bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'binary_id(hided::opener_lifecycle)'
+          bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'package(hide-host) & kind(lib) & test(workspace_bridge)'
+          bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'binary_id(hided::connect_stop)'
+          bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'binary_id(hided::handshake)'
       - name: Install kit and its Windows command shim
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.tests.outcome == 'success' }}
         timeout-minutes: 10
-        run: bash scripts/verify-cargo.sh nextest --profile ci -p hide-kit
+        run: bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'package(hide-kit)'
       - name: Agent hooks, their Windows entries run through PowerShell
         # The hook file writer, the entries Claude Code and Codex run on
         # Windows, and the helper's stdin deadline. It stands on its own, so
         # it runs whatever the step above answered.
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.tests.outcome == 'success' }}
         timeout-minutes: 15
-        run: bash scripts/verify-cargo.sh nextest --profile ci -p hide-agent-hooks
+        run: bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'package(hide-agent-hooks)'
       - name: Fetch the pinned Herdr runtime
         id: herdr
         # The proof below stands on its own, so it runs whatever the step
@@ -286,20 +306,20 @@ jobs:
           bin=$(pwsh -NoProfile -File scripts/fetch-herdr-runtime.ps1 | tr -d '\r')
           echo "bin=$bin" >> "$GITHUB_OUTPUT"
       - name: hided against the pinned Herdr
-        if: ${{ !cancelled() && steps.herdr.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.tests.outcome == 'success' && steps.herdr.outcome == 'success' }}
         timeout-minutes: 10
         env:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
-        run: bash scripts/verify-cargo.sh nextest --profile ci -p hided --test real_herdr --run-ignored only --no-capture
+        run: bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'binary_id(hided::real_herdr)' --run-ignored only --no-capture
       - name: Attribute a native listening port to its working directory
         # Cleanup must refuse an unreadable in-use check. This unchanged core
         # contract exposes the native read reason that a browser error lacks.
-        if: ${{ !cancelled() }}
+        if: ${{ !cancelled() && steps.tests.outcome == 'success' }}
         timeout-minutes: 5
         run: |
           status=0
-          bash scripts/verify-cargo.sh nextest --profile ci -p herdr-core --lib -E 'test(=ports::tests::a_real_listener_is_found_and_attributed_to_the_directory_it_runs_in)' --no-capture || status=$?
-          bash scripts/verify-cargo.sh nextest --profile ci -p herdr-core --lib -E 'test(=ports::tests::cleanup_keeps_a_checkout_in_use_when_a_listener_starts_through_another_spelling)' --no-capture || status=$?
+          bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'package(herdr-core) & kind(lib) & test(=ports::tests::a_real_listener_is_found_and_attributed_to_the_directory_it_runs_in)' --no-capture || status=$?
+          bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'package(herdr-core) & kind(lib) & test(=ports::tests::cleanup_keeps_a_checkout_in_use_when_a_listener_starts_through_another_spelling)' --no-capture || status=$?
           exit "$status"
       - uses: pnpm/action-setup@v6
         if: ${{ !cancelled() }}
