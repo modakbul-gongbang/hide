@@ -331,7 +331,7 @@ When `HERDR_BIN_PATH` names a file that no longer exists, `hide connect` and the
 The packaged app replaces that pane value with its own bundled `herdr`, but the `hide` CLI run directly in such a pane, and an unpackaged development host, still inherit it; unset `HERDR_BIN_PATH` there, or hand the server off to the new bundle's `herdr`.
 
 <!-- herdr-provenance:start -->
-hide distributes the [upstream Herdr release v0.9.1](https://github.com/herdrdev/herdr/releases/tag/v0.9.1).
+hide distributes the [upstream Herdr release v0.9.3](https://github.com/herdrdev/herdr/releases/tag/v0.9.3).
 The bundled binary is not modified by hide.
 The weekly `herdr-update.yml` workflow proposes upstream stable releases with `--repo herdrdev/herdr`; updates must pass contract and runtime checks.
 <!-- herdr-provenance:end -->
