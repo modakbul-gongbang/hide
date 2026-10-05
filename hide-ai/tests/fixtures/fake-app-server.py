@@ -9,7 +9,8 @@ one models the process leak this change exists to cap: it starts a long-lived
 child process on every thread/start and answers the turn normally, and it ends
 all of those children when its stdin reaches EOF (the owner's shutdown signal)
 so a killed owner leaves no survivors. FAKE_ARGS_FILE records the argument
-vector when set.
+vector when set, and FAKE_STARTED_FILE is created once a slow turn has
+started and is waiting.
 """
 import atexit
 import json
@@ -95,6 +96,8 @@ for raw in sys.stdin:
         if MODE == "exit_after_turn_start":
             sys.exit(4)
         if MODE == "slow":
+            if path := os.environ.get("FAKE_STARTED_FILE"):
+                open(path, "w").close()
             continue
         if MODE == "usage_limit":
             notify("turn/completed", {"threadId": "thread-1", "turn": {"id": active_turn, "status": "failed", "items": [],

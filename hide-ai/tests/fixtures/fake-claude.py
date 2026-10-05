@@ -12,13 +12,15 @@ structured_output_retries, context_limit, no_result_frame, init_frame_only,
 slow, no_account, auth_broken, auth_without_field.
 FAKE_ARGS_FILE records the argument vector, FAKE_STDIN_FILE the prompt body,
 FAKE_THINKING_FILE the MAX_THINKING_TOKENS value the child received ("unset"
-when it had none).
+when it had none). FAKE_STARTED_FILE is created once a slow turn has started
+waiting.
 
 A `/usage` run receives a whitelisted environment, so it reads no FAKE_*
 variable. It takes its mode from a `usage-mode` file in its working directory
 (text, cost, slow, exit, is_error, not_json) and writes what it received -
 argv to `usage-args.json`, the environment's key set to `usage-env.json` -
-into that same directory.
+into that same directory; a slow read creates `usage-started` there once it
+has started waiting.
 """
 import json
 import os
@@ -65,6 +67,7 @@ if ARGS[:2] == ["-p", "/usage"]:
              "duration_api_ms": 0, "num_turns": 0, "total_cost_usd": 0,
              "local_command": "usage", "session_id": "s-usage"}
     if usage_mode == "slow":
+        open("usage-started", "w").close()
         time.sleep(60)
     if usage_mode == "exit":
         sys.stdout.write("fatal: something\n")
@@ -91,6 +94,8 @@ if path := os.environ.get("FAKE_STDIN_FILE"):
         handle.write(prompt)
 
 if MODE == "slow":
+    if path := os.environ.get("FAKE_STARTED_FILE"):
+        open(path, "w").close()
     time.sleep(60)
 
 if MODE == "no_result_frame":
