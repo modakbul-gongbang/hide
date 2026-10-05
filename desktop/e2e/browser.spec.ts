@@ -750,7 +750,7 @@ function releaseNativeModifiers(): ReturnType<typeof spawnSync> {
   return postEvents(null, events);
 }
 
-test("area cycle native: page input previews one exact area, releases once and cancels", { tag: [NEEDS_FOCUS, "@flaky"], annotation: { type: "issue", description: "https://github.com/modakbul-gongbang/hide/issues/311" } }, async () => {
+test("area cycle native: page input previews one exact area, releases once and cancels", { tag: NEEDS_FOCUS }, async () => {
   ({ app } = await launch(run.env));
   const page = await app.firstWindow();
   const sent = countSent(page);
