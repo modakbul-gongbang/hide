@@ -259,11 +259,13 @@ mod tests {
             |request: &u8| u32::from(*request),
         );
         assert_eq!(settle(&mut reader, 1), 1);
-        let started = Instant::now();
+        // The spacing runs from when the reader settled the first answer, not
+        // from whenever this thread next ran.
+        let (_, settled_at) = reader.settled.expect("the first answer settled");
         let answer = answer_after_spacing(&mut reader, 2);
         assert_eq!(answer, 2);
         assert!(
-            started.elapsed() >= Duration::from_millis(80),
+            settled_at.elapsed() >= Duration::from_millis(80),
             "the changed request waited out the spacing"
         );
     }
