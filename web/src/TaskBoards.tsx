@@ -839,7 +839,7 @@ export function CardAgentRow({ agent, depth, place, selected, onOpen }: { agent:
       </span>
       {said ? (
         <span className="relative pl-(--size-icon)">
-          <AgentMessageHint agent={agent} place={place} line={said.text} tone={lineTone(said, agent.demand)} onOpen={open} />
+          <AgentMessageHint agent={agent} place={place} line={said.text} tone={lineTone(said, agent)} onOpen={open} />
         </span>
       ) : null}
     </li>

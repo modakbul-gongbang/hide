@@ -122,7 +122,7 @@ export const AgentRowItem = memo(function AgentRowItem({
         {line ? (
           <span
             data-agent-line={line.mode}
-            className={`break-keep text-caption ${lineTone(line, agent.demand)} ${
+            className={`break-keep text-caption ${lineTone(line, agent)} ${
               shownAtRest ? "" : "hidden group-hover/row:block group-focus-within/row:block"
             } ${selected ? "line-clamp-2 break-words" : "truncate group-hover/row:line-clamp-2 group-hover/row:whitespace-normal group-hover/row:break-words"}`}
           >
