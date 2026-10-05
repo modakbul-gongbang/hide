@@ -432,7 +432,11 @@ fn repeated_guarded_work_releases_children_and_capture_resources() {
     let _serial = serial();
     let baseline = measure_tree(std::process::id()).unwrap().descendants;
     for _ in 0..10 {
-        let deadline = Instant::now() + Duration::from_millis(1850);
+        // What is asked here is what each launch leaves behind, not how fast
+        // a test binary starts, so the deadline only ends a child that never
+        // answers. It is the start wait `ready_number` gives the same child,
+        // not the 1850 ms budget the capture tests above hold.
+        let deadline = Instant::now() + Duration::from_secs(30);
         let mut command = role_command("echo");
         command.stdin(Stdio::null());
         let mut child = OwnedChild::spawn_guarded(command, deadline).unwrap();
