@@ -2,11 +2,16 @@
 from datetime import date
 import importlib.util
 import json
+import os
 from pathlib import Path
+import subprocess
+import sys
+import tempfile
 import unittest
 import xml.etree.ElementTree as ET
 
-SPEC = importlib.util.spec_from_file_location("ci_flaky_report", Path(__file__).parents[1] / "ci-flaky-report.py")
+SCRIPT = Path(__file__).parents[1] / "ci-flaky-report.py"
+SPEC = importlib.util.spec_from_file_location("ci_flaky_report", SCRIPT)
 r = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(r)
 
@@ -133,6 +138,27 @@ class Filing(unittest.TestCase):
 
     def test_a_missing_report_is_not_an_error(self):
         self.assertEqual(r.main(["--suite", "web", "--playwright", "/nonexistent/report.json"]), 0)
+
+
+class Gh(unittest.TestCase):
+    def test_an_answer_is_read_as_utf8_whatever_the_runner_locale(self):
+        # A child's text is read in the locale's encoding unless one is named, which is
+        # cp1252 on a Windows runner: an open issue with a Korean title broke every report there.
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = Path(tmp) / "gh"
+            fake.write_text("#!/bin/sh\nprintf '[{\"title\": \"\\355\\203\\255\"}]'\n")
+            fake.chmod(0o755)
+            load = (
+                "import importlib.util, sys; s = importlib.util.spec_from_file_location('r', sys.argv[1]); "
+                "m = importlib.util.module_from_spec(s); s.loader.exec_module(m); print(ascii(m.gh(['x'])))"
+            )
+            done = subprocess.run(
+                [sys.executable, "-X", "utf8=0", "-c", load, str(SCRIPT)],
+                env={"PATH": f"{tmp}{os.pathsep}{os.environ['PATH']}", "LC_ALL": "C", "PYTHONCOERCECLOCALE": "0"},
+                capture_output=True, text=True, encoding="utf-8",
+            )
+        self.assertEqual(done.returncode, 0, done.stderr)
+        self.assertEqual(done.stdout.strip(), ascii([{"title": "탭"}]))
 
 
 if __name__ == "__main__":
