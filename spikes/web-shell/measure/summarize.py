@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Nearest-rank percentiles for echo samples. Same definition as scripts/summarize-terminal-latency.py."""
+"""Nearest-rank percentiles for echo samples."""
 import json
 import math
 import sys
