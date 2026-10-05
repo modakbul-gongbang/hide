@@ -97,7 +97,8 @@ test("shared Overview preserves work, returns the keyboard and has direct sideba
     await page.keyboard.press(chord("sidebar_agents"));
     await expect(modal).toHaveCount(0);
     await expect(page.locator('[data-sidebar-mode="agents"]')).toHaveAttribute("aria-selected", "true");
-    expect(await page.locator('nav[data-sidebar="agents"]').evaluate((node) => node.contains(document.activeElement))).toBe(true);
+    // The sidebar takes the keyboard one frame after the list shows, so wait for it rather than read it the moment the modal is gone.
+    await expect.poll(() => page.locator('nav[data-sidebar="agents"]').evaluate((node) => node.contains(document.activeElement))).toBe(true);
     await page.keyboard.press(chord("sidebar_agents"));
     await page.keyboard.press(chord("sidebar_projects"));
     await expect(page.locator('[data-sidebar-mode="projects"]')).toHaveAttribute("aria-selected", "true");
