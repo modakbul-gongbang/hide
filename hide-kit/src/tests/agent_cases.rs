@@ -606,3 +606,33 @@ fn the_switch_works_while_either_the_skill_or_the_hook_does_here() {
         Availability::UnsupportedSystem
     );
 }
+
+#[test]
+fn cursor_augment_and_junie_get_the_guidance_hook_with_the_switch_and_lose_it_with_it() {
+    for (id, folder, file) in [
+        ("cursor", ".cursor", ".cursor/hooks.json"),
+        ("augment", ".augment", ".augment/settings.json"),
+        ("junie", ".junie", ".junie/config.json"),
+    ] {
+        let fixture = Fixture::new();
+        set_up(&fixture, folder);
+
+        let report = apply(&fixture.target, &Scope::agents([id], []));
+
+        let hook = agent(&report, id).hook.as_ref().unwrap();
+        assert_eq!(hook.state, ComponentState::Installed, "{id}: {hook:?}");
+        let written = std::fs::read_to_string(fixture.home().join(file)).unwrap();
+        assert!(written.contains("hide-guidance@1"), "{id}");
+
+        let report = apply(&fixture.target, &Scope::agents([], [id]));
+
+        assert_eq!(
+            agent(&report, id).hook.as_ref().unwrap().state,
+            ComponentState::Off,
+            "{id}"
+        );
+        // Hide created the file and nothing else was in it, so it goes.
+        let left = std::fs::read_to_string(fixture.home().join(file)).unwrap_or_default();
+        assert!(!left.contains("hide-guidance"), "{id}");
+    }
+}

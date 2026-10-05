@@ -187,6 +187,50 @@ fn kiro_writes_its_own_v1_file_with_an_action() {
 }
 
 #[test]
+fn cursor_augment_and_junie_write_the_shapes_their_documentation_gives() {
+    let fixture = Fixture::new(GuidanceAgent::Cursor);
+    install(GuidanceAgent::Cursor, fixture.home(), &fixture.helper).unwrap();
+    assert!(
+        GuidanceAgent::Cursor
+            .config_path(fixture.home())
+            .ends_with(".cursor/hooks.json")
+    );
+    let cursor = fixture.read(GuidanceAgent::Cursor);
+    assert_eq!(cursor["version"], 1);
+    let entry = &cursor["hooks"]["sessionStart"][0];
+    assert_eq!(entry["timeout"], 8, "Cursor counts seconds");
+    assert!(
+        entry["command"]
+            .as_str()
+            .unwrap()
+            .contains("--runtime cursor")
+    );
+
+    let fixture = Fixture::new(GuidanceAgent::Augment);
+    install(GuidanceAgent::Augment, fixture.home(), &fixture.helper).unwrap();
+    assert!(
+        GuidanceAgent::Augment
+            .config_path(fixture.home())
+            .ends_with(".augment/settings.json")
+    );
+    let hook = &fixture.read(GuidanceAgent::Augment)["hooks"]["SessionStart"][0]["hooks"][0];
+    assert_eq!(hook["type"], "command");
+    assert_eq!(hook["timeout"], 8000, "Augment counts milliseconds");
+
+    let fixture = Fixture::new(GuidanceAgent::Junie);
+    install(GuidanceAgent::Junie, fixture.home(), &fixture.helper).unwrap();
+    assert!(
+        GuidanceAgent::Junie
+            .config_path(fixture.home())
+            .ends_with(".junie/config.json")
+    );
+    let hook = &fixture.read(GuidanceAgent::Junie)["hooks"]["SessionStart"][0]["hooks"][0];
+    // A synchronous SessionStart hook's context is ignored; async is delivered with the next prompt.
+    assert_eq!(hook["async"], true);
+    assert!(hook.get("timeout").is_none(), "its unit is not documented");
+}
+
+#[test]
 fn another_tools_entries_survive_install_and_remove_in_every_shared_file() {
     for (agent, theirs) in [
         (
@@ -208,6 +252,18 @@ fn another_tools_entries_survive_install_and_remove_in_every_shared_file() {
         (
             GuidanceAgent::Kiro,
             r#"{"version":"v1","hooks":[{"name":"theirs","trigger":"SessionStart","action":{"type":"command","command":"/theirs.sh"}}]}"#,
+        ),
+        (
+            GuidanceAgent::Cursor,
+            r#"{"version":1,"hooks":{"sessionStart":[{"command":"/theirs.sh"}]},"theme":"x"}"#,
+        ),
+        (
+            GuidanceAgent::Augment,
+            r#"{"model":"x","hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"/theirs.sh"}]}]}}"#,
+        ),
+        (
+            GuidanceAgent::Junie,
+            r#"{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"/theirs.sh"}]}]},"theme":1}"#,
         ),
     ] {
         let fixture = Fixture::new(agent);
@@ -347,6 +403,16 @@ fn each_agent_reads_context_in_the_field_its_documentation_names() {
     let copilot: Value = serde_json::from_str(&stdout(GuidanceAgent::Copilot, &context)).unwrap();
     assert_eq!(copilot, json!({ "additionalContext": context }));
     assert_eq!(stdout(GuidanceAgent::Kiro, &context), context);
+    let augment: Value = serde_json::from_str(&stdout(GuidanceAgent::Augment, &context)).unwrap();
+    assert_eq!(
+        augment["hookSpecificOutput"]["hookEventName"],
+        "SessionStart"
+    );
+    assert_eq!(augment["hookSpecificOutput"]["additionalContext"], context);
+    let junie: Value = serde_json::from_str(&stdout(GuidanceAgent::Junie, &context)).unwrap();
+    assert_eq!(junie, json!({ "additionalContext": context }));
+    let cursor: Value = serde_json::from_str(&stdout(GuidanceAgent::Cursor, &context)).unwrap();
+    assert_eq!(cursor, json!({ "additional_context": context }));
 }
 
 #[test]
@@ -378,6 +444,14 @@ fn another_tools_hook_in_the_same_group_survives_a_reinstall_and_a_removal() {
         (
             GuidanceAgent::Droid,
             r#"{"SessionStart":[{"hooks":[{"type":"command","command":"/theirs.sh"}]}]}"#,
+        ),
+        (
+            GuidanceAgent::Augment,
+            r#"{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"/theirs.sh"}]}]}}"#,
+        ),
+        (
+            GuidanceAgent::Junie,
+            r#"{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"/theirs.sh"}]}]}}"#,
         ),
     ] {
         let fixture = Fixture::new(agent);

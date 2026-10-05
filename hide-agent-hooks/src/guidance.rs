@@ -22,6 +22,9 @@
 //! | Gemini CLI | `~/.gemini/settings.json` | `hooks.SessionStart[{matcher, hooks[{name, type, command, timeout ms}]}]` |
 //! | Qwen Code | `~/.qwen/settings.json` | `hooks.SessionStart[{hooks[{name, type, command, timeout s}]}]` |
 //! | Factory Droid | `~/.factory/hooks.json`, else the `hooks` key of `settings.json` | `SessionStart[{hooks[{type, command, timeout s}]}]` |
+//! | Cursor | `~/.cursor/hooks.json` | `{version 1, hooks.sessionStart[{command, timeout s}]}` |
+//! | Augment | `~/.augment/settings.json` | `hooks.SessionStart[{hooks[{type, command, timeout ms}]}]` |
+//! | Junie (Early Access) | `~/.junie/config.json` | `hooks.SessionStart[{hooks[{type, command, async}]}]` |
 //! | Copilot CLI | `~/.copilot/hooks/hide-guidance.json`, Hide's own | `{version 1, hooks.sessionStart[{type, bash, powershell, timeoutSec}]}` |
 //! | Kiro CLI 3.0 | `~/.kiro/hooks/hide-guidance.json`, Hide's own | `{version "v1", hooks[{name, trigger, action{type, command}, timeout s}]}` |
 
@@ -60,15 +63,21 @@ pub enum GuidanceAgent {
     Droid,
     Copilot,
     Kiro,
+    Cursor,
+    Augment,
+    Junie,
 }
 
 impl GuidanceAgent {
-    pub const ALL: [GuidanceAgent; 5] = [
+    pub const ALL: [GuidanceAgent; 8] = [
         Self::Gemini,
         Self::Qwen,
         Self::Droid,
         Self::Copilot,
         Self::Kiro,
+        Self::Cursor,
+        Self::Augment,
+        Self::Junie,
     ];
 
     /// The stable identifier: the agent's adapter id, and the `--runtime` of
@@ -80,6 +89,9 @@ impl GuidanceAgent {
             Self::Droid => "factory-droid",
             Self::Copilot => "copilot-cli",
             Self::Kiro => "kiro",
+            Self::Cursor => "cursor",
+            Self::Augment => "augment",
+            Self::Junie => "junie",
         }
     }
 
@@ -95,6 +107,9 @@ impl GuidanceAgent {
             Self::Droid => home.join(".factory"),
             Self::Copilot => home.join(".copilot"),
             Self::Kiro => home.join(".kiro"),
+            Self::Cursor => home.join(".cursor"),
+            Self::Augment => home.join(".augment"),
+            Self::Junie => home.join(".junie"),
         }
     }
 
@@ -141,6 +156,16 @@ impl GuidanceAgent {
                 shape: Shape::Kiro,
                 own_file: true,
             },
+            // Cursor's `hooks.json` is shared with the operator's own hooks;
+            // Hide creates it when missing and deletes it again only when
+            // nothing but the scaffolding is left.
+            Self::Cursor => Layout {
+                path: folder.join("hooks.json"),
+                shape: Shape::Cursor,
+                own_file: true,
+            },
+            Self::Augment => Layout::event_map(folder.join("settings.json"), true, "SessionStart"),
+            Self::Junie => Layout::event_map(folder.join("config.json"), true, "SessionStart"),
         }
     }
 }
@@ -174,6 +199,9 @@ enum Shape {
     Copilot,
     /// `{"version": "v1", "hooks": [entry]}`.
     Kiro,
+    /// `{"version": 1, "hooks": {"sessionStart": [entry]}}`, Cursor's own
+    /// file of camelCase events.
+    Cursor,
 }
 
 impl Layout {
@@ -214,14 +242,17 @@ pub fn stdout(agent: GuidanceAgent, context: &str) -> String {
         GuidanceAgent::Gemini => {
             json!({ "hookSpecificOutput": { "additionalContext": context } }).to_string()
         }
-        GuidanceAgent::Qwen | GuidanceAgent::Droid => json!({
+        GuidanceAgent::Qwen | GuidanceAgent::Droid | GuidanceAgent::Augment => json!({
             "hookSpecificOutput": {
                 "hookEventName": "SessionStart",
                 "additionalContext": context,
             }
         })
         .to_string(),
-        GuidanceAgent::Copilot => json!({ "additionalContext": context }).to_string(),
+        GuidanceAgent::Copilot | GuidanceAgent::Junie => {
+            json!({ "additionalContext": context }).to_string()
+        }
+        GuidanceAgent::Cursor => json!({ "additional_context": context }).to_string(),
         GuidanceAgent::Kiro => context.to_owned(),
     }
 }
@@ -294,6 +325,29 @@ fn entry(agent: GuidanceAgent, helper: &Path) -> Value {
             "powershell": powershell_command(helper, agent),
             "timeoutSec": TIMEOUT_SECONDS,
         }),
+        GuidanceAgent::Cursor => json!({
+            "command": command,
+            "timeout": TIMEOUT_SECONDS,
+        }),
+        GuidanceAgent::Augment => json!({
+            "hooks": [{
+                "type": "command",
+                "command": command,
+                // Augment counts milliseconds.
+                "timeout": TIMEOUT_SECONDS * 1000,
+            }],
+        }),
+        // Junie ignores context from a synchronous SessionStart hook; an
+        // asynchronous one is prepended to the next prompt, which is the
+        // nearest delivery its documentation offers. Its timeout unit is not
+        // documented, so none is written.
+        GuidanceAgent::Junie => json!({
+            "hooks": [{
+                "type": "command",
+                "command": command,
+                "async": true,
+            }],
+        }),
         GuidanceAgent::Kiro => json!({
             "name": GUIDANCE_SOURCE_NAME,
             "trigger": "SessionStart",
@@ -356,7 +410,7 @@ fn entries<'a>(
                 .map(Some)
                 .ok_or_else(|| failure_shape(path, &format!("\"{event}\" is not an array")))
         }
-        Shape::Copilot => {
+        Shape::Copilot | Shape::Cursor => {
             let hooks = if create {
                 root.entry("hooks")
                     .or_insert_with(|| Value::Object(Map::new()))
@@ -509,7 +563,7 @@ pub fn installed_helper_path(agent: GuidanceAgent, home: &Path) -> Option<String
 fn blank_document(layout: &Layout) -> Value {
     match layout.shape {
         Shape::EventMap { .. } => Value::Object(Map::new()),
-        Shape::Copilot => json!({ "version": 1 }),
+        Shape::Copilot | Shape::Cursor => json!({ "version": 1 }),
         Shape::Kiro => json!({ "version": "v1" }),
     }
 }
@@ -641,7 +695,7 @@ fn drop_empty(document: &mut Value, layout: &Layout) {
                 root.remove(*event);
             }
         }
-        Shape::Copilot => {
+        Shape::Copilot | Shape::Cursor => {
             if let Some(hooks) = root.get_mut("hooks").and_then(Value::as_object_mut) {
                 hooks.remove("sessionStart");
             }
@@ -658,7 +712,7 @@ fn only_scaffolding(document: &Value, layout: &Layout) -> bool {
         return false;
     };
     let hooks_empty = match &layout.shape {
-        Shape::Copilot => root
+        Shape::Copilot | Shape::Cursor => root
             .get("hooks")
             .and_then(Value::as_object)
             .is_none_or(Map::is_empty),

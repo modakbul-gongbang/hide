@@ -45,7 +45,16 @@ fn every_agent_gets_the_guidance_in_its_own_field_at_session_start() {
         assert!(stdout.contains("hide browser help"), "{agent:?}: {stdout}");
         match agent {
             GuidanceAgent::Kiro => assert!(stdout.starts_with("When you create a worktree")),
-            GuidanceAgent::Copilot => {
+            GuidanceAgent::Cursor => {
+                let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+                assert!(
+                    value["additional_context"]
+                        .as_str()
+                        .unwrap()
+                        .contains(GUIDANCE_LINE)
+                );
+            }
+            GuidanceAgent::Copilot | GuidanceAgent::Junie => {
                 let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
                 assert!(
                     value["additionalContext"]
