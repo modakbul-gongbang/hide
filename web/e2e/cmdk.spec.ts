@@ -406,8 +406,10 @@ test("⌘K lists the checkouts last brought to the front under Recent, keeps the
     // B6: a second project's checkout brought to the front goes to the top of the list.
     await registerFolder(page, daemon, `${daemon.home}/projects/alpha`);
     await expect(page.locator("[data-project]")).toHaveCount(2, { timeout: 20_000 });
-    await page.locator("[data-project]", { hasText: "alpha" }).locator("[data-checkout]").first().click();
-    await expect(page.locator("[data-workspace-screen]")).toBeVisible();
+    const alpha = page.locator("[data-project]", { hasText: "alpha" }).locator("[data-checkout]").first();
+    await alpha.click();
+    // ⌘K reads the front checkout once, when it opens: the click has to be in front first.
+    await expect(alpha).toHaveAttribute("aria-current", "true");
 
     // B1, B4: Recent follows Related and holds the checkout left behind, not the one in front.
     await openSearch(page);
