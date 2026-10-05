@@ -400,11 +400,15 @@ A relaunch forgets an end that was in flight, because it cannot know whether it 
 ## The Herdr wire boundary
 
 The bundled Herdr release is pinned in one place, `contracts/herdr-bundle.json` (the macOS asset, and the Linux and Windows assets that only CI runs), and `contracts/herdr-api.schema.json` is derived from it: it is what that exact binary answers to `api schema --json`, never a copy from a Herdr checkout.
-`hide-herdr-client/build.rs` turns the five sub-schemas into Rust modules under `hide_herdr_client::wire` at build time; generated source stays in `OUT_DIR` and is never committed.
-`herdr-core/src/wire.rs` is the only core boundary that converts generated values into the core's projection and event inputs; shared request and subscription encoding lives in `hide-herdr-client`.
-Do not write new wire deserialization structs in `session_sync/{projection,replica}.rs` or import generated types into domain, runtime or sidebar code.
+`herdr-core/build.rs` turns the five sub-schemas into Rust modules at build time; generated source stays in `OUT_DIR` and is never committed.
+The modules are included into a private `generated` module of `herdr-core/src/wire.rs`, so that file is the only place that can name a generated type, and an import from `runtime`, `domain`, `sidebar`, `session_sync` or any other crate does not compile.
+`wire.rs` converts generated values into the core's projection and event inputs and builds the request parameters, including the `events.subscribe` object; none of its `pub(crate)` signatures carries a generated type.
+Another crate that needs a typed answer gets it from the few `pub` functions at the end of `wire.rs` (`pane_rows_params`, `pane_rows`, `pane_reply_params`, `pane_key_params`, `pane_session`), which take and return plain values; hided's phone routes are their callers.
+`hide-herdr-client` is transport only (connectors, framing, timeouts, `ApiError`, the protocol revision) and generates nothing.
+The one answer a crate that cannot depend on the core reads is the plugin registry entry (`plugin.list` and Herdr's offline `plugins.json`, read by `hide-kit`), which `hide-herdr-client::plugin` states by hand, and `entry_matches_the_pinned_schema` fails when the pinned schema's required fields or source kinds stop agreeing with it.
+Do not write new wire deserialization structs in `session_sync/{projection,replica}.rs`.
 The event envelope is consumed as generated (`event` and `data`); the stream carries no protocol, host or sequence, and the snapshot names no host, so a remote snapshot's identity is the host Hide reached the socket through, stamped by the caller of `wire::remote_snapshot`.
-Request envelopes still name their method explicitly because generation does not discriminate method constants; use generated parameter types inside them.
+Request envelopes still name their method explicitly because generation does not discriminate method constants; use generated parameter types inside them, built in `wire.rs`.
 The envelope `id` is request correlation, never retry identity; mutation convergence must use an operation context on a method whose pinned schema actually carries one, or reconcile the resulting topology before retrying a method that does not.
 `live.rs` and `remote.rs` also use this boundary for response decoding and generated request parameters.
 The boundary preserves remote protocol diagnostics before decoding the complete generated snapshot, and the isolated pinned-server probe checks the control responses.
