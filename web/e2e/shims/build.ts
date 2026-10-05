@@ -9,6 +9,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 const windows = process.platform === "win32";
+const ext = windows ? ".exe" : "";
 
 /** A program the fixtures copy, by the name of its source in `web/e2e/shims`. */
 export type FixtureShim = "claude-shim" | "spawn-provider" | "noop" | "launcher" | "hide-children";
@@ -25,7 +26,7 @@ const sourceOf = (name: FixtureShim): string => path.join(sourceDir, `${name}.c`
 
 function programOf(name: FixtureShim): string {
   const hash = createHash("sha256").update(fs.readFileSync(sourceOf(name))).digest("hex").slice(0, 12);
-  return path.join(outputDir, `${name}-${hash}${windows ? ".exe" : ""}`);
+  return path.join(outputDir, `${name}-${hash}${ext}`);
 }
 
 /** Compiles every program whose current source has no finished build, and removes older builds of it. */
@@ -35,18 +36,27 @@ export function buildFixtureShims(): void {
   for (const name of BUILT) {
     const program = programOf(name);
     if (fs.existsSync(program)) continue;
-    const partial = `${program}.${process.pid}.partial`;
+    const partial = `${program.slice(0, program.length - ext.length)}.${process.pid}.partial${ext}`;
     try {
       execFileSync(compiler, ["-O1", "-o", partial, sourceOf(name)], { encoding: "utf8", stdio: "pipe" });
     } catch (error) {
       const failed = error as { stdout?: string; stderr?: string };
       fs.rmSync(partial, { force: true });
-      throw new Error(`fixture C compiler ${compiler} failed on ${sourceOf(name)}:\n${failed.stdout ?? ""}${failed.stderr ?? ""}`, { cause: error });
+      // A compiler that cannot start has no output; its error is the reason.
+      const output = `${failed.stdout ?? ""}${failed.stderr ?? ""}` || String(error);
+      throw new Error(`fixture C compiler ${compiler} failed on ${sourceOf(name)}:\n${output}`, { cause: error });
     }
-    for (const old of fs.readdirSync(outputDir)) {
-      if (old.startsWith(`${name}-`) && path.join(outputDir, old) !== partial) fs.rmSync(path.join(outputDir, old), { force: true });
+    // Another build of the same source may have finished first; keep its program.
+    if (fs.existsSync(program)) {
+      fs.rmSync(partial, { force: true });
+      continue;
     }
     fs.renameSync(partial, program);
+    // Older finished builds of this program; another process's partial file is not one.
+    const finished = new RegExp(`^${name}-[0-9a-f]{12}${windows ? "\\.exe" : ""}$`);
+    for (const old of fs.readdirSync(outputDir)) {
+      if (finished.test(old) && path.join(outputDir, old) !== program) fs.rmSync(path.join(outputDir, old), { force: true });
+    }
   }
 }
 

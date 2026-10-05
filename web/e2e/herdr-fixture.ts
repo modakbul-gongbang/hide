@@ -149,6 +149,8 @@ function isolatedEnv(root: string, socket: string): NodeJS.ProcessEnv {
     XDG_CONFIG_HOME: path.join(root, "xdg-config"),
     XDG_STATE_HOME: path.join(root, "xdg-state"),
     HERDR_DISABLE_SOUND: "1",
+    // Every pane the server starts, however it is made, tells a fixture program where this run's files are.
+    HIDE_E2E_ROOT: root,
   };
 }
 
@@ -618,8 +620,6 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
       `PATH=${fixturePath}`,
       "--env",
       `HIDE_E2E_INPUT_LOG=${inputLogs[0]}`,
-      "--env",
-      `HIDE_E2E_ROOT=${root}`,
       "--focus",
     ]) as { result: { workspace: { workspace_id: string }; tab: { tab_id: string }; root_pane: { pane_id: string } } };
     const first = created.result.root_pane.pane_id;
@@ -633,8 +633,6 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
       `PATH=${fixturePath}`,
       "--env",
       `HIDE_E2E_INPUT_LOG=${inputLogs[1]}`,
-      "--env",
-      `HIDE_E2E_ROOT=${root}`,
       "--no-focus",
     ]) as { result: { pane: { pane_id: string } } };
     const second = split.result.pane.pane_id;
