@@ -96,7 +96,7 @@ fn answer(
     (changed, started)
 }
 
-fn diagnostic_messages(runtime: &Runtime, kind: &str) -> Vec<String> {
+pub(super) fn diagnostic_messages(runtime: &Runtime, kind: &str) -> Vec<String> {
     runtime
         .snapshot()
         .status

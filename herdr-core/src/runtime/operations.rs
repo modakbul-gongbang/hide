@@ -243,6 +243,25 @@ pub(super) fn remote_mutation_descriptor(
     }
 }
 
+/// Which report settled a remote operation, so the diagnostic tells the two
+/// orderings apart.
+#[derive(Clone, Copy)]
+enum RemoteSettle {
+    /// The device's own report, read when it arrived.
+    FreshSession,
+    /// A report that arrived earlier, read when the operation began to wait.
+    HeldSession,
+}
+
+impl RemoteSettle {
+    fn source(self) -> &'static str {
+        match self {
+            Self::FreshSession => "fresh topology",
+            Self::HeldSession => "the session received before it waited",
+        }
+    }
+}
+
 /// Whether `session`, a device's session as its Herdr last reported it, shows
 /// the effect of `operation`.
 fn remote_operation_confirmed_by(
@@ -430,43 +449,69 @@ impl Runtime {
     /// A session that shows an operation's effect can arrive while the request
     /// is still unanswered, when only that session's own pass could have
     /// confirmed it; the device sends nothing more once its layout stops
-    /// moving, so the answer has to look at what was already received.
+    /// moving, so the answer, and every other step that leaves the operation
+    /// waiting, has to look at what was already received.
+    ///
+    /// The held session counts only when it belongs to the connection the
+    /// operation was sent on: a device's session is kept across a disconnected
+    /// interval, and one from before a reconnect says nothing about a request
+    /// made after it, so that case waits for the next pass.
     fn settle_remote_operation_from_known_session(&mut self, key: &(String, String)) -> bool {
         let Some(operation) = self.remote_operations.get(key) else {
             return false;
         };
-        let Some(status) = self
+        if !matches!(operation.phase.as_str(), "awaiting_topology" | "unknown")
+            || operation.connection_generation
+                != self
+                    .remote_connection_generations
+                    .get(&key.0)
+                    .copied()
+                    .unwrap_or(0)
+        {
+            return false;
+        }
+        let Some(session) = self
             .snapshot
             .status
             .remote
             .iter()
             .find(|status| status.target_id == key.0 && status.state == "connected")
+            .and_then(|status| status.session.as_ref())
         else {
-            return false;
-        };
-        let Some(session) = status.session.as_ref() else {
             return false;
         };
         if !remote_operation_confirmed_by(operation, session) {
             return false;
         }
-        self.settle_remote_operations(vec![key.clone()])
+        self.settle_remote_operations(vec![key.clone()], RemoteSettle::HeldSession)
     }
 
-    pub(super) fn observe_remote_operations(&mut self, session: &RemoteSessionSnapshot) -> bool {
+    /// Settles the operations of `target_id` that `session`, that device's
+    /// fresh report, shows the effect of. Another device's operation is not
+    /// judged by it: its pane being absent here proves nothing there.
+    pub(super) fn observe_remote_operations(
+        &mut self,
+        target_id: &str,
+        session: &RemoteSessionSnapshot,
+    ) -> bool {
         let completed = self
             .remote_operations
             .iter()
-            .filter(|(_, operation)| {
-                matches!(operation.phase.as_str(), "awaiting_topology" | "unknown")
+            .filter(|((target, _), operation)| {
+                target == target_id
+                    && matches!(operation.phase.as_str(), "awaiting_topology" | "unknown")
             })
             .filter(|(_, operation)| remote_operation_confirmed_by(operation, session))
             .map(|(key, _)| key.clone())
             .collect::<Vec<_>>();
-        self.settle_remote_operations(completed)
+        self.settle_remote_operations(completed, RemoteSettle::FreshSession)
     }
 
-    fn settle_remote_operations(&mut self, completed: Vec<(String, String)>) -> bool {
+    fn settle_remote_operations(
+        &mut self,
+        completed: Vec<(String, String)>,
+        via: RemoteSettle,
+    ) -> bool {
         let mut changed = false;
         for key in completed {
             if let Some(operation) = self.remote_operations.remove(&key) {
@@ -474,8 +519,11 @@ impl Runtime {
                 self.push_diagnostic(
                     "remote.control.topology_confirmed",
                     format!(
-                        "Confirmed {} for {} on {} from fresh topology",
-                        operation.kind, operation.target_id, key.0
+                        "Confirmed {} for {} on {} from {}",
+                        operation.kind,
+                        operation.target_id,
+                        key.0,
+                        via.source()
                     ),
                 );
             }
@@ -487,8 +535,8 @@ impl Runtime {
     }
 
     pub(super) fn expire_remote_operations(&mut self, now_unix_ms: u64) -> bool {
-        let mut changed = false;
-        for operation in self.remote_operations.values_mut() {
+        let mut expired = Vec::new();
+        for (key, operation) in &mut self.remote_operations {
             let Some(deadline) = operation.deadline_at_unix_ms else {
                 continue;
             };
@@ -507,10 +555,17 @@ impl Runtime {
                 );
                 operation.retryable = false;
                 operation.deadline_at_unix_ms = None;
-                changed = true;
+                expired.push(key.clone());
             }
         }
-        if changed {
+        let changed = !expired.is_empty();
+        // An unknown operation waits for the device's next session, which an
+        // idle device may never send; the one already held may show the effect.
+        let mut settled = false;
+        for key in &expired {
+            settled |= self.settle_remote_operation_from_known_session(key);
+        }
+        if changed && !settled {
             self.sync_async_operations();
         }
         changed
@@ -539,7 +594,9 @@ impl Runtime {
             "remote.control.unknown",
             format!("Remote operation {operation_id} requires fresh topology"),
         );
-        self.sync_async_operations();
+        if !self.settle_remote_operation_from_known_session(key) {
+            self.sync_async_operations();
+        }
         true
     }
 
