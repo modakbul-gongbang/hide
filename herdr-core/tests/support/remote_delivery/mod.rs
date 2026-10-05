@@ -17,7 +17,7 @@ use serde_json::{Value, json};
 
 pub use ssh::Ssh;
 
-const READY_BOUND: Duration = Duration::from_secs(30);
+const READY_BOUND: Duration = Duration::from_secs(150);
 const READ_CAP: usize = 1024 * 1024;
 
 #[derive(Clone)]
@@ -172,7 +172,15 @@ fn helper_diagnostics(remote: &Environment) -> String {
     match capture(processes) {
         Ok(answer) => {
             let text = String::from_utf8_lossy(&answer.stdout);
-            let shown: String = text.chars().take(8192).collect();
+            // Kernel threads (names in brackets) would fill the cap.
+            let shown: String = text
+                .lines()
+                .filter(|line| !line.trim_end().ends_with(']'))
+                .collect::<Vec<_>>()
+                .join("\n")
+                .chars()
+                .take(8192)
+                .collect();
             report.push_str(&format!("processes:\n{shown}\n"));
         }
         Err(error) => report.push_str(&format!("processes unavailable: {error}\n")),
