@@ -4,6 +4,8 @@
 // core reports. The core re-checks every one of these; they decide what the
 // screen offers, not what is allowed.
 
+import type { TFunction } from "i18next";
+import type { MessageKey } from "./i18n/catalogs";
 import { shownPullRequest } from "./projects";
 import { supportsRemotePurpose } from "./remote";
 import { revealExternalEntry, type RevealHost } from "./revealExternal";
@@ -23,8 +25,8 @@ export function normalizePurpose(text: string): string {
   return [...text.replace(/[\r\n]/g, " ")].slice(0, PURPOSE_HARD_LIMIT).join("");
 }
 
-export function purposeCountLabel(text: string): string {
-  return `${scalarCount(text)} / ${PURPOSE_RECOMMENDED}`;
+export function purposeCountLabel(text: string, t: TFunction<"translation">): string {
+  return t("workspace.purposeCount", { count: scalarCount(text), limit: PURPOSE_RECOMMENDED });
 }
 
 /**
@@ -32,10 +34,10 @@ export function purposeCountLabel(text: string): string {
  * Herdr's workspace metadata only; on this machine a branch also keeps it as
  * its Git description, which outlives the Herdr workspace.
  */
-export function purposeScope(deviceLabel: string | null, branch: string | null): string {
-  if (deviceLabel) return `Kept in Herdr's workspace metadata on ${deviceLabel}; its Git config is not changed.`;
-  if (branch) return `Kept in Herdr's workspace metadata and as the Git description of ${branch} on this machine.`;
-  return "Kept in Herdr's workspace metadata on this machine.";
+export function purposeScope(deviceLabel: string | null, branch: string | null, t: TFunction<"translation">): string {
+  if (deviceLabel) return t("workspace.purposeScopeRemote", { device: deviceLabel });
+  if (branch) return t("workspace.purposeScopeBranch", { branch });
+  return t("workspace.purposeScopeLocal");
 }
 
 export function purposeIsLong(text: string): boolean {
@@ -47,13 +49,13 @@ export function purposeIsLong(text: string): boolean {
  * daemon before anything is created; this catches the obvious cases while
  * the operator types, so the field says why before a round trip.
  */
-export function branchProblem(name: string): string | null {
+export function branchProblem(name: string): MessageKey | null {
   const branch = name.trim();
-  if (!branch) return "Enter a branch name.";
-  if (branch.startsWith("-")) return "A branch name cannot start with -.";
+  if (!branch) return "workspace.branchRequired";
+  if (branch.startsWith("-")) return "workspace.branchDash";
   const control = [...branch].some((character) => character.charCodeAt(0) < 0x20 || character.charCodeAt(0) === 0x7f);
   if (control || /[\s~^:?*[\\]|\.\.|@\{|\/\/|\.lock$|^\/|\/$|\.$/.test(branch)) {
-    return "Git does not accept this branch name.";
+    return "workspace.branchInvalid";
   }
   return null;
 }
@@ -98,8 +100,6 @@ function receiptDevice(deviceId: string | null | undefined): string {
   return deviceId ?? "local";
 }
 
-const ON_ANOTHER_DEVICE = "Not available for a checkout on another device.";
-
 function onDevice(workspace: Workspace): boolean {
   return workspace.device_id !== "local";
 }
@@ -112,8 +112,8 @@ export function primaryCheckout(workspace: Workspace): Checkout | null {
   return workspace.checkouts.find((checkout) => checkout.is_primary === true) ?? (workspace.is_git ? null : (workspace.checkouts[0] ?? null));
 }
 
-function revealItem(workspace: Workspace, host: MenuHost, separated: boolean): MenuItem[] {
-  return revealExternalEntry(host.reveal, workspace.device_id, null, separated);
+function revealItem(workspace: Workspace, host: MenuHost, t: TFunction<"translation">, separated: boolean): MenuItem[] {
+  return revealExternalEntry(host.reveal, workspace.device_id, t, null, separated);
 }
 
 /**
@@ -124,21 +124,21 @@ function revealItem(workspace: Workspace, host: MenuHost, separated: boolean): M
  * and pins it in the same event, and Remove closes its panes, after which the
  * row leaves with Herdr's workspace because there is no registration to keep it.
  */
-export function projectMenu(workspace: Workspace, host: MenuHost): MenuItem[] {
+export function projectMenu(workspace: Workspace, host: MenuHost, t: TFunction<"translation">): MenuItem[] {
   const primary = primaryCheckout(workspace);
-  const reveal = revealItem(workspace, host, true);
+  const reveal = revealItem(workspace, host, t, true);
   return [
-    { id: "new_worktree", label: "New worktree…", unavailable: workspace.is_git === false ? "This project is not a Git repository." : null },
+    { id: "new_worktree", label: t("workspace.menu.newWorktree"), unavailable: workspace.is_git === false ? t("workspace.unavailable.notGit") : null },
     {
       id: "new_tab_primary",
-      label: "New tab in main",
-      unavailable: !primary ? "This project has no default checkout to open a tab in." : primary.exists ? null : "The default checkout's folder is missing.",
+      label: t("workspace.menu.newTabMain"),
+      unavailable: !primary ? t("workspace.unavailable.noDefault") : primary.exists ? null : t("workspace.unavailable.defaultMissing"),
       shortcut: host.newTabChord,
     },
     ...reveal,
-    { id: "copy_path", label: "Copy path", unavailable: null, ...(reveal.length ? {} : { separated: true }) },
-    { id: workspace.pinned ? "unpin" : "pin", label: workspace.pinned ? "Unpin" : "Pin", unavailable: null, separated: true },
-    { id: "remove_project", label: "Remove project…", unavailable: null },
+    { id: "copy_path", label: t("workspace.menu.copyPath"), unavailable: null, ...(reveal.length ? {} : { separated: true }) },
+    { id: workspace.pinned ? "unpin" : "pin", label: workspace.pinned ? t("workspace.menu.unpin") : t("workspace.menu.pin"), unavailable: null, separated: true },
+    { id: "remove_project", label: t("workspace.menu.removeProject"), unavailable: null },
   ];
 }
 
@@ -147,15 +147,15 @@ export function projectMenu(workspace: Workspace, host: MenuHost): MenuItem[] {
  * one line (PRD close-agent-subtree D-42): the panes that close, the agents
  * that stop, and what stays on disk.
  */
-export function projectRemovalFacts(workspace: Workspace): string[] {
+export function projectRemovalFacts(workspace: Workspace, t: TFunction<"translation">): string[] {
   const panes = workspace.removal?.pane_count ?? 0;
   const running = workspace.removal?.running_agent_count ?? 0;
   const facts: string[] = [];
-  if (panes > 0) facts.push(panes === 1 ? "1 pane closes" : `${panes} panes close`);
-  if (panes > 0 && running > 0) facts.push(running === 1 ? "1 agent stops" : `${running} agents stop`);
+  if (panes > 0) facts.push(t("workspace.facts.panesClose", { count: panes }));
+  if (panes > 0 && running > 0) facts.push(t("workspace.facts.agentsStop", { count: running }));
   // A row Herdr shows without a registration leaves once its panes do.
-  facts.push(workspace.registered ? "registration only" : panes > 0 ? "the row goes with them" : "the row goes with Herdr's workspace");
-  facts.push("files stay on disk");
+  facts.push(workspace.registered ? t("workspace.facts.registrationOnly") : panes > 0 ? t("workspace.facts.rowWithPanes") : t("workspace.facts.rowWithWorkspace"));
+  facts.push(t("workspace.facts.filesStay"));
   return facts;
 }
 
@@ -168,21 +168,21 @@ export const FOLDER_CHECKOUT_ITEMS: ReadonlySet<MenuItem["id"]> = new Set<MenuIt
  * checkout, so its new tab, path and reveal items are the project's, and it
  * has no other checkout to make the default.
  */
-export function folderMenu(workspace: Workspace, checkout: Checkout, host: MenuHost, purposeProblem: string | null = null): MenuItem[] {
-  const [first, ...rest] = checkoutMenu(workspace, checkout, host, purposeProblem).filter((item) => FOLDER_CHECKOUT_ITEMS.has(item.id));
-  return first ? [...projectMenu(workspace, host), { ...first, separated: true }, ...rest.map((item) => ({ ...item, separated: false }))] : projectMenu(workspace, host);
+export function folderMenu(workspace: Workspace, checkout: Checkout, host: MenuHost, t: TFunction<"translation">, purposeProblem: string | null = null): MenuItem[] {
+  const [first, ...rest] = checkoutMenu(workspace, checkout, host, t, purposeProblem).filter((item) => FOLDER_CHECKOUT_ITEMS.has(item.id));
+  return first ? [...projectMenu(workspace, host, t), { ...first, separated: true }, ...rest.map((item) => ({ ...item, separated: false }))] : projectMenu(workspace, host, t);
 }
 
 /**
  * Why a remote checkout's purpose cannot be written: the core stores it in
  * that host's Herdr, which takes it from 0.9.1 (the native `purposeUnavailableReason`).
  */
-export function remotePurposeProblem(workspace: Workspace, remote: RemoteStatus[] | undefined): string | null {
+export function remotePurposeProblem(workspace: Workspace, remote: RemoteStatus[] | undefined, t: TFunction<"translation">): string | null {
   const targetId = workspace.remote_target_id;
   if (!targetId) return null;
   const version = remote?.find((row) => row.target_id === targetId)?.herdr_version ?? null;
   if (supportsRemotePurpose(version)) return null;
-  return `Set purpose requires Herdr 0.9.1 or newer on the remote device${version ? `; ${version} is installed` : "; its version is unavailable"}.`;
+  return version ? t("workspace.remotePurposeVersion", { minimum: "0.9.1", version }) : t("workspace.remotePurposeUnknownVersion", { minimum: "0.9.1" });
 }
 
 /**
@@ -190,12 +190,12 @@ export function remotePurposeProblem(workspace: Workspace, remote: RemoteStatus[
  * refuses the same cases): the choice is stored on this machine's
  * registration of a Git project, for a checkout whose folder exists.
  */
-function primaryProblem(workspace: Workspace, checkout: Checkout): string | null {
-  if (onDevice(workspace)) return ON_ANOTHER_DEVICE;
-  if (workspace.is_git === false) return "A plain folder has only this checkout.";
-  if (checkout.is_primary) return "Already the default checkout.";
-  if (!workspace.registered) return "Pin the project first to keep a default checkout.";
-  if (!checkout.exists) return "The folder is missing.";
+function primaryProblem(workspace: Workspace, checkout: Checkout, t: TFunction<"translation">): string | null {
+  if (onDevice(workspace)) return t("workspace.unavailable.otherDevice");
+  if (workspace.is_git === false) return t("workspace.unavailable.plainFolder");
+  if (checkout.is_primary) return t("workspace.unavailable.alreadyDefault");
+  if (!workspace.registered) return t("workspace.unavailable.pinFirst");
+  if (!checkout.exists) return t("workspace.unavailable.folderMissing");
   return null;
 }
 
@@ -206,23 +206,23 @@ function primaryProblem(workspace: Workspace, checkout: Checkout): string | null
  * linked worktree. Choices stored on this machine and the OS file manager
  * are this computer's only, so a device's checkout lists them disabled.
  */
-export function checkoutMenu(workspace: Workspace, checkout: Checkout, host: MenuHost, purposeProblem: string | null = null): MenuItem[] {
+export function checkoutMenu(workspace: Workspace, checkout: Checkout, host: MenuHost, t: TFunction<"translation">, purposeProblem: string | null = null): MenuItem[] {
   const pr = shownPullRequest(checkout);
   const items: MenuItem[] = [
-    { id: "open_checkout", label: "Open", unavailable: null },
-    { id: "new_tab_here", label: "New tab here", unavailable: checkout.exists ? null : "The folder is missing.", shortcut: host.newTabChord },
+    { id: "open_checkout", label: t("common.open"), unavailable: null },
+    { id: "new_tab_here", label: t("workspace.menu.newTabHere"), unavailable: checkout.exists ? null : t("workspace.unavailable.folderMissing"), shortcut: host.newTabChord },
   ];
-  if (pr) items.push({ id: "open_pull_request", label: `Open pull request #${pr.number}`, unavailable: null });
+  if (pr) items.push({ id: "open_pull_request", label: t("workspace.menu.openPr", { number: pr.number }), unavailable: null });
   items.push(
-    { id: "set_purpose", label: "Set purpose…", unavailable: purposeProblem, separated: true },
-    { id: "set_primary", label: "Set as default checkout", unavailable: primaryProblem(workspace, checkout) },
-    { id: "copy_branch", label: "Copy branch name", unavailable: checkout.branch ? null : "Detached HEAD has no branch name." },
-    { id: "copy_path", label: "Copy path", unavailable: null },
-    ...revealItem(workspace, host, false),
+    { id: "set_purpose", label: t("workspace.menu.setPurpose"), unavailable: purposeProblem, separated: true },
+    { id: "set_primary", label: t("workspace.menu.setPrimary"), unavailable: primaryProblem(workspace, checkout, t) },
+    { id: "copy_branch", label: t("workspace.menu.copyBranch"), unavailable: checkout.branch ? null : t("workspace.unavailable.detached") },
+    { id: "copy_path", label: t("workspace.menu.copyPath"), unavailable: null },
+    ...revealItem(workspace, host, t, false),
   );
   // Never disabled: what deleting would lose is the dialog's to say, with
   // the choice beside it, on any device and before Git has been read.
-  if (checkout.is_worktree) items.push({ id: "delete_worktree", label: "Delete worktree…", unavailable: null, separated: true, destructive: true });
+  if (checkout.is_worktree) items.push({ id: "delete_worktree", label: t("workspace.menu.deleteWorktree"), unavailable: null, separated: true, destructive: true });
   return items;
 }
 
@@ -241,12 +241,12 @@ export type AgentMenuItem = {
  * it holds no number on this host. Herdr 0.9.1 can neither mark a pane seen
  * nor stop an agent, so neither is offered (D-05).
  */
-export function agentMenu(agent: AgentRow, showChord: string): AgentMenuItem[] {
+export function agentMenu(agent: AgentRow, showChord: string, t: TFunction<"translation">): AgentMenuItem[] {
   return [
-    { id: "show_agent", label: "Show", unavailable: null, shortcut: showChord },
-    { id: "copy_title", label: "Copy title", unavailable: null, separated: true },
-    { id: "copy_session_id", label: "Copy session id", unavailable: agent.session_id ? null : "Herdr has reported no session id for this agent." },
-    { id: "close_tab", label: "Close tab…", unavailable: null, separated: true },
+    { id: "show_agent", label: t("workspace.menu.showAgent"), unavailable: null, shortcut: showChord },
+    { id: "copy_title", label: t("workspace.menu.copyTitle"), unavailable: null, separated: true },
+    { id: "copy_session_id", label: t("workspace.menu.copySession"), unavailable: agent.session_id ? null : t("workspace.unavailable.noSession") },
+    { id: "close_tab", label: t("workspace.menu.closeTab"), unavailable: null, separated: true },
   ];
 }
 
@@ -259,11 +259,11 @@ export function stoppedAgents(checkout: Checkout): string[] {
  * What deleting a worktree does, as the short facts its confirmation shows
  * on one line under the path (D-42); the core's warnings are its badges.
  */
-export function deletionFacts(checkout: Checkout, paneCount: number): string[] {
-  const facts = ["folder removed for good"];
-  if (paneCount > 0) facts.push(paneCount === 1 ? "1 pane closes" : `${paneCount} panes close`);
+export function deletionFacts(checkout: Checkout, paneCount: number, t: TFunction<"translation">): string[] {
+  const facts: string[] = [t("workspace.facts.folderRemoved")];
+  if (paneCount > 0) facts.push(t("workspace.facts.panesClose", { count: paneCount }));
   const agents = stoppedAgents(checkout);
-  if (agents.length > 0) facts.push(`stops ${agents.length === 1 ? "1 agent" : `${agents.length} agents`}: ${agents.join(", ")}`);
+  if (agents.length > 0) facts.push(t("workspace.facts.stopsNamed", { count: agents.length, names: agents.join(", ") }));
   return facts;
 }
 

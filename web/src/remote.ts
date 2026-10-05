@@ -6,6 +6,7 @@
 // the sidebar, the strip, the canvas and every command resolve one context the
 // same way and a remote action can never be built from a local id.
 
+import type { TFunction } from "i18next";
 import type { AgentRow, Checkout, Device, RemotePaneLayout, RemoteSession, RemoteStatus, SnapshotRest, Tab, Workspace } from "./snapshot";
 
 export type RemoteContext = {
@@ -201,36 +202,36 @@ export type DeviceCatalogLine = {
  * is the device's confirmed projects. A failure is never shown as an empty
  * list, and an unconfirmed list is never shown as a confirmed one.
  */
-export function deviceCatalogLine(context: RemoteContext): DeviceCatalogLine | null {
-  const label = context.device.label;
+export function deviceCatalogLine(context: RemoteContext, t: TFunction<"translation">): DeviceCatalogLine | null {
+  const device = context.device.label;
   const status = context.status;
   const session = context.session;
   const connected = status?.state === "connected";
   if (!session) {
     if (!status || status.state === "not_connected" || status.state === "connecting") {
-      return { state: "loading", text: `Reading projects from ${label}…` };
+      return { state: "loading", text: t("devices.catalog.loading", { device }) };
     }
-    return { state: "error", text: `${label} is ${status.state.replace(/_/g, " ")}${status.message ? `: ${status.message}` : ""}` };
+    const state = status.state.replace(/_/g, " ");
+    return { state: "error", text: status.message ? t("devices.catalog.errorMessage", { device, state, message: status.message }) : t("devices.catalog.error", { device, state }) };
   }
   if (!connected) {
-    return { state: "stale", text: `${label} is not connected. These are the projects it last reported.` };
+    return { state: "stale", text: t("devices.catalog.stale", { device }) };
   }
   if (session.workspaces.length === 0) {
-    return { state: "empty", text: `No Herdr workspace is open on ${label}.` };
+    return { state: "empty", text: t("devices.catalog.empty", { device }) };
   }
   const catalog = status?.catalog;
   if (catalog?.state === "resolving") {
-    return { state: "resolving", text: `Confirming the projects on ${label}…` };
+    return { state: "resolving", text: t("devices.catalog.resolving", { device }) };
   }
   if (catalog?.state === "unavailable") {
     return {
       state: "unavailable",
-      text: `Projects on ${label} are listed by workspace until its helper can confirm them${catalog.message ? `: ${catalog.message}` : "."}`,
+      text: catalog.message ? t("devices.catalog.unavailableMessage", { device, message: catalog.message }) : t("devices.catalog.unavailable", { device }),
     };
   }
   if (catalog && catalog.refused.length > 0) {
-    const count = catalog.refused.length;
-    return { state: "partial", text: `${count} folder${count === 1 ? "" : "s"} on ${label} could not be read and ${count === 1 ? "is" : "are"} listed by workspace.` };
+    return { state: "partial", text: t("devices.catalog.partial", { device, count: catalog.refused.length }) };
   }
   return null;
 }

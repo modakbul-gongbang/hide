@@ -4,14 +4,18 @@
 // section the core publishes (`project_sessions`); nothing is counted, dated
 // or titled that it does not carry.
 
+import type { TFunction } from "i18next";
+import { formatDateTime } from "./i18n/format";
+import type { InterfaceLanguage } from "./i18n/locale";
 import type { ArchiveDetail, ArchiveEvent, ProjectSessionDetail, ProjectSessions, SessionRow, Workspace } from "./snapshot";
 
 export type ProviderFilter = "all" | "codex" | "claude";
 
-export const PROVIDER_FILTERS: readonly { id: ProviderFilter; label: string }[] = [
-  { id: "all", label: "All" },
-  { id: "codex", label: "Codex" },
-  { id: "claude", label: "Claude Code" },
+/** `name` is a provider's product name, kept as it is; "all" has none and is worded by the screen. */
+export const PROVIDER_FILTERS: readonly { id: ProviderFilter; name: string | null }[] = [
+  { id: "all", name: null },
+  { id: "codex", name: "Codex" },
+  { id: "claude", name: "Claude Code" },
 ];
 
 /**
@@ -53,12 +57,11 @@ export function sessionCheckout(row: Pick<SessionRow, "checkout_path">, workspac
 }
 
 /** A session's time as the operator reads it, or null when neither the session nor its file carried one. */
-export function sessionTime(unixMs: number | null | undefined, now = new Date(), locale?: string): string | null {
+export function sessionTime(unixMs: number | null | undefined, language: InterfaceLanguage, now = new Date()): string | null {
   if (!unixMs) return null;
-  const date = new Date(unixMs);
   const options: Intl.DateTimeFormatOptions = { month: "short", day: "numeric", hour: "numeric", minute: "2-digit" };
-  if (date.getFullYear() !== now.getFullYear()) options.year = "numeric";
-  return new Intl.DateTimeFormat(locale, options).format(date);
+  if (new Date(unixMs).getFullYear() !== now.getFullYear()) options.year = "numeric";
+  return formatDateTime(language, unixMs, options);
 }
 
 /**
@@ -129,6 +132,6 @@ export function conversationTurns(archive: ArchiveDetail): ArchiveEvent[] {
 }
 
 /** A row read aloud: provider, first request, checkout, time and availability, in that order. */
-export function sessionAccessibleName(row: SessionRow, checkout: string, time: string | null): string {
-  return [row.provider_label, sessionTitle(row) ?? "Untitled session", checkout, time, row.unavailable_reason ? "unavailable" : "available"].filter(Boolean).join(", ");
+export function sessionAccessibleName(row: SessionRow, checkout: string, time: string | null, t: TFunction<"translation">): string {
+  return [row.provider_label, sessionTitle(row) ?? t("sessions.untitled"), checkout, time, row.unavailable_reason ? t("sessions.notAvailable") : t("sessions.available")].filter(Boolean).join(", ");
 }

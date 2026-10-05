@@ -84,7 +84,7 @@ describe("sidebar header (PRD sidebar-shell)", () => {
 
   it("turns the name into the device menu while the rail is hidden (B6)", () => {
     const html = header({ rail: false });
-    expect(tag(html, "data-sidebar-device-menu")).toContain('aria-label="This Mac, 기기 전환"');
+    expect(tag(html, "data-sidebar-device-menu")).toContain('aria-label="This Mac, switch device"');
     expect(texts(html, "data-sidebar-title-name")).toEqual(["This Mac"]);
     expect(header({ rail: true })).not.toContain("data-sidebar-device-menu");
   });

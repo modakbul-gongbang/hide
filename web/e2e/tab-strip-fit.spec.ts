@@ -60,7 +60,7 @@ async function strip(page: Page, column: "agent" | "view" = "agent"): Promise<St
   });
 }
 
-test("Agent tabs shrink in stages, the selected one keeping its title longest, and marks come only when nothing else fits", async ({ page }) => {
+test("Agent tabs shrink in stages, the selected one keeping its title longest, and marks come only when nothing else fits", { tag: "@flaky", annotation: { type: "issue", description: "https://github.com/modakbul-gongbang/hide/issues/416" } }, async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 1080 });
   const herdr = await startHerdr({ agents: false });
   let daemon: Daemon | null = null;

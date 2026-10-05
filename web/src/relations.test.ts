@@ -1,10 +1,13 @@
 import { describe, expect, it } from "vitest";
 import { CHILD, OTHER, PARENT, RICH } from "./gallery/cmdkSceneData";
+import { initializeInterfaceI18n } from "./i18n/instance";
 import { frontTarget, relationRows, relationsOf } from "./relations";
 import type { SnapshotRest } from "./snapshot";
 
+const { t } = initializeInterfaceI18n("en");
+
 const ids = (rest: SnapshotRest | null, target: Parameters<typeof relationsOf>[1], anchor = false) => {
-  const relations = relationsOf(rest, target, anchor);
+  const relations = relationsOf(rest, target, t, anchor);
   return relations ? relationRows(relations).map((row) => `${"  ".repeat(row.depth ?? 0)}${row.tag === "parent" ? "↑ " : ""}${row.id}${row.tag === "here" ? " *" : ""}`) : null;
 };
 
@@ -26,7 +29,7 @@ describe("relations of an agent (PRD cmdk-navigation B2-B4)", () => {
   });
 
   it("stands a child delegated to another checkout in that checkout's own group, naming its parent (B3)", () => {
-    const relations = relationsOf(RICH, { kind: "agent", paneId: PARENT.pane_id }, true)!;
+    const relations = relationsOf(RICH, { kind: "agent", paneId: PARENT.pane_id }, t, true)!;
     expect(relations.issues).toEqual([]);
     expect(relations.groups.map((group) => group.head.id)).toEqual(["checkout:c-main", "checkout:c-sand"]);
     const delegated = relations.groups[1]!.rows.find((row) => row.id === "agent:p-child")!;
@@ -38,7 +41,7 @@ describe("relations of an agent (PRD cmdk-navigation B2-B4)", () => {
   });
 
   it("is null for an agent no checkout holds", () => {
-    expect(relationsOf(RICH, { kind: "agent", paneId: "p-nowhere" })).toBeNull();
+    expect(relationsOf(RICH, { kind: "agent", paneId: "p-nowhere" }, t)).toBeNull();
   });
 });
 
@@ -53,7 +56,7 @@ describe("relations of other things", () => {
   });
 
   it("has none for a pull request no checkout carries", () => {
-    expect(relationsOf(RICH, { kind: "pr", workspaceId: "w1", number: 260 })).toBeNull();
+    expect(relationsOf(RICH, { kind: "pr", workspaceId: "w1", number: 260 }, t)).toBeNull();
   });
 });
 

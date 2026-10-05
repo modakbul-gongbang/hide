@@ -4,6 +4,7 @@
 // `terminal_attachment` flow. The caps are hided's and the core's; a refusal
 // is one line over the pane, and hided's reason codes become that line here.
 
+import type { TFunction } from "i18next";
 import { useShellStore } from "./store";
 import type { DispatchFn } from "./ws";
 
@@ -35,31 +36,32 @@ export function configureAttachments(value: Sender): void {
 }
 
 /** The one-line text a refusal reason becomes. */
-export function refusalText(reason: string): string {
+export function refusalText(reason: string, t: TFunction<"translation">): string {
+  const mib = (bytes: number) => bytes / (1024 * 1024);
   switch (reason) {
     case "too_large":
-      return "A file exceeds the 20 MiB attachment limit.";
+      return t("panes.attachment.tooLarge", { limit: mib(MAX_FILE_BYTES) });
     case "batch_too_large":
-      return "The selection exceeds the 40 MiB attachment limit.";
+      return t("panes.attachment.batchTooLarge", { limit: mib(MAX_BATCH_BYTES) });
     case "too_many_files":
-      return "Choose between 1 and 8 regular files.";
+      return t("panes.attachment.tooMany", { minimum: 1, maximum: MAX_FILES });
     case "staging_full":
-      return "Too many attachments are staged right now; try again in a moment.";
+      return t("panes.attachment.stagingFull");
     case "invalid_request_id":
-      return "That file name cannot be attached.";
+      return t("panes.attachment.invalidName");
     case "size_mismatch":
-      return "The file changed while it was being attached.";
+      return t("panes.attachment.sizeMismatch");
     case "unknown_stage":
     case "stage_incomplete":
-      return "The attachment upload did not finish.";
+      return t("panes.attachment.incomplete");
     case "stage_failed":
-      return "The file could not be staged for the terminal.";
+      return t("panes.attachment.stageFailed");
     case "forward_failed":
-      return "The attachment could not be delivered to the terminal.";
+      return t("panes.attachment.forwardFailed");
     case "no_pane":
-      return "There is no terminal pane to attach to.";
+      return t("panes.attachment.noPane");
     default:
-      return "The attachment was refused.";
+      return t("panes.attachment.refused");
   }
 }
 

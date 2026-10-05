@@ -1,9 +1,11 @@
 // The request view (PRD overview-request-view) as pure functions over the
-// snapshot: which rows it draws, in which group and order, the `요청` tile,
+// snapshot: which rows it draws, in which group and order, the Requests tile,
 // and the words each row's lines say. The verb is the core's (D-07); this
 // file only groups, orders and shortens. `RequestView.tsx` draws it.
 
 import { parser as markdownParser } from "@lezer/markdown";
+import type { TFunction } from "i18next";
+import type { MessageKey } from "./i18n/catalogs";
 import type { DeviceAvailability } from "./navigation";
 import type { LensAgent, Tile } from "./overviewLens";
 import type { AgentPullRequest, AgentRequest, AgentRow, LabelEnd, RequestSender, RequestVerb, Task, Workspace } from "./snapshot";
@@ -14,15 +16,15 @@ import { parseToken, type LinkTarget } from "./terminalLinks";
 /** The verbs that are the operator's to do, the groups the tile counts (D-06). */
 export const TODO_VERBS: readonly RequestVerb[] = ["answer", "fix", "review", "stopped", "result"];
 
-export const VERB_LABEL: Record<RequestVerb, string> = {
-  answer: "답할 것",
-  fix: "고칠 것",
-  review: "리뷰·머지",
-  stopped: "멈춤",
-  result: "결과 볼 것",
-  working: "일하는 중",
-  waiting: "기다리는 중",
-  idle: "쉬는 중",
+export const VERB_LABEL: Record<RequestVerb, MessageKey> = {
+  answer: "requests.verb.answer",
+  fix: "requests.verb.fix",
+  review: "requests.verb.review",
+  stopped: "requests.verb.stopped",
+  result: "requests.verb.result",
+  working: "requests.verb.working",
+  waiting: "requests.verb.waiting",
+  idle: "requests.verb.idle",
 };
 
 const VERB_ORDER: readonly RequestVerb[] = ["answer", "fix", "review", "stopped", "result", "working", "waiting", "idle"];
@@ -35,7 +37,7 @@ export type RequestRow = {
   children: AgentRow[];
 };
 
-export type RequestGroup = { verb: RequestVerb; label: string; rows: RequestRow[] };
+export type RequestGroup = { verb: RequestVerb; rows: RequestRow[] };
 
 /** A row the core has not laid a block on yet reads from its group: working while it works, else resting. */
 function verbOf(agent: AgentRow): RequestVerb {
@@ -76,7 +78,7 @@ export function requestGroups(rows: readonly RequestRow[]): RequestGroup[] {
   return VERB_ORDER.map((verb) => {
     const members = rows.filter((row) => row.verb === verb);
     members.sort(TODO_VERBS.includes(verb) ? (a, b) => since(a) - since(b) : (a, b) => activity(b).localeCompare(activity(a)));
-    return { verb, label: VERB_LABEL[verb], rows: members };
+    return { verb, rows: members };
   }).filter((group) => group.rows.length > 0);
 }
 
@@ -87,23 +89,23 @@ export function rowSince(row: RequestRow): number | null {
 }
 
 /**
- * The `요청` tile (B2): how many rows are the operator's to do as the big
+ * The Requests tile (B2): how many rows are the operator's to do as the big
  * number, the ones to answer as the yellow badge, and a bar of the to-do
  * verbs. Zero is drawn as zero; a device that has not answered has no count.
  */
-export function requestsTile(rows: readonly RequestRow[], availability: DeviceAvailability): Tile {
+export function requestsTile(rows: readonly RequestRow[], availability: DeviceAvailability, t: TFunction<"translation">): Tile {
   const known = availability.state === "ready";
   const count = (verb: RequestVerb) => rows.filter((row) => row.verb === verb).length;
   const todo = TODO_VERBS.reduce((sum, verb) => sum + count(verb), 0);
   const answer = count("answer");
   return {
     id: "requests",
-    label: "요청",
+    label: t("requests.title"),
     value: known ? todo : null,
     unit: null,
-    badge: known && answer > 0 ? { count: answer, label: VERB_LABEL.answer, parts: [] } : null,
-    bar: known ? TODO_VERBS.map((verb) => ({ key: verb, label: VERB_LABEL[verb], count: count(verb) })) : null,
-    failure: availability.state === "unavailable" ? `에이전트를 읽지 못함 · ${availability.text}` : null,
+    badge: known && answer > 0 ? { count: answer, label: t(VERB_LABEL.answer), parts: [] } : null,
+    bar: known ? TODO_VERBS.map((verb) => ({ key: verb, label: t(VERB_LABEL[verb]), count: count(verb) })) : null,
+    failure: availability.state === "unavailable" ? t("requests.unavailable", { reason: availability.text }) : null,
   };
 }
 
@@ -114,7 +116,7 @@ const NAME_MAX = 24;
 const NAME_HEAD = 12;
 /** The share of the line the end of a long request keeps. */
 export const TAIL_SHARE = 0.4;
-/** Lines of the full request the expanded row shows before `전부 보기`. */
+/** Lines of the full request the expanded row shows before `Show all`. */
 export const FULL_LINES = 20;
 
 /** Where Claude Code leaves an attached image in the prompt's text. */
@@ -161,7 +163,7 @@ function shortTarget(target: LinkTarget): string {
 
 /**
  * Whether a path-shaped word is a path for the line's purpose: rooted, or
- * deep, or a file name. `PR/이슈` in a sentence is a pair of words, not a
+ * deep, or a file name. `PR/issue` in a sentence is a pair of words, not a
  * place, and keeps both.
  */
 function plainlyPath(path: string): boolean {
@@ -180,15 +182,15 @@ function shortToken(token: string): string {
  * A request as the folded row's one line (D-42, B52): its lines joined by
  * ` · ` with blank lines and runs of spaces gone, each URL and path by its
  * last name (so a home folder never shows), and the attached images as
- * `이미지 N` at the end; an image alone is that mark alone.
+ * `N images` at the end; an image alone is that mark alone.
  */
-export function requestLine(text: string, images: number): string {
+export function requestLine(text: string, images: number, t: TFunction<"translation">): string {
   const lines = text
     .replace(IMAGE_MARK, " ")
     .split(/\r?\n/u)
     .map((line) => line.split(/\s+/u).filter(Boolean).map(shortToken).join(" "))
     .filter((line) => line.length > 0);
-  if (images > 0) lines.push(`이미지 ${images}`);
+  if (images > 0) lines.push(t("requests.images", { count: images }));
   return lines.join(" · ");
 }
 
@@ -211,9 +213,9 @@ export function splitTail(line: string, fits: (text: string) => boolean, fitsTai
   return { head: line.slice(0, line.length - tail.length).trimEnd(), tail };
 }
 
-/** `나 ›`, `<보낸 이> ›`, `에이전트 ›` (B26). */
-export function senderWords(sender: RequestSender): string {
-  return sender.kind === "operator" ? "나" : sender.kind === "named" ? sender.name : "에이전트";
+/** `Me ›`, `<sender> ›`, `Agent ›` (B26). */
+export function senderWords(sender: RequestSender, t: TFunction<"translation">): string {
+  return sender.kind === "operator" ? t("requests.sender.operator") : sender.kind === "named" ? sender.name : t("requests.sender.agent");
 }
 
 // --- the result line -----------------------------------------------------------
@@ -237,12 +239,12 @@ export function resultLine(row: RequestRow): string {
   return lastLine(reply);
 }
 
-const END_LABEL: Record<LabelEnd, string> = {
-  working: "진행 중",
-  question: "질문",
-  done: "끝남",
-  waiting: "기다림",
-  unfinished: "덜 끝남",
+const END_LABEL: Record<LabelEnd, MessageKey> = {
+  working: "requests.end.working",
+  question: "requests.end.question",
+  done: "requests.end.done",
+  waiting: "requests.end.waiting",
+  unfinished: "requests.end.unfinished",
 };
 
 /**
@@ -250,27 +252,28 @@ const END_LABEL: Record<LabelEnd, string> = {
  * how the turn ended and the line it wrote. Null without a label, which is
  * also every row while summaries are off.
  */
-export function verdictLine(block: AgentRequest | undefined): string | null {
+export function verdictLine(block: AgentRequest | undefined, t: TFunction<"translation">): string | null {
   if (!block?.end) return null;
   const line = block.line?.trim();
-  return line ? `AI 판정 · ${END_LABEL[block.end]} · ${line}` : `AI 판정 · ${END_LABEL[block.end]}`;
+  const end = t(END_LABEL[block.end]);
+  return line ? t("requests.verdictLine", { end, line }) : t("requests.verdict", { end });
 }
 
 /** The row's name for assistive technology (B8): title, agent kind, verb, result line. */
-export function requestAccessibleName(row: RequestRow, result: string): string {
-  return [row.lens.agent.identity_label, row.lens.agent.agent_kind, VERB_LABEL[row.verb], result].filter(Boolean).join(", ");
+export function requestAccessibleName(row: RequestRow, result: string, t: TFunction<"translation">): string {
+  return [row.lens.agent.identity_label, row.lens.agent.agent_kind, t(VERB_LABEL[row.verb]), result].filter(Boolean).join(", ");
 }
 
 // --- descendants (D-30, B13) -----------------------------------------------------
 
-/** `자식 N · 일하는 중 M` and the warning `질문 K`, or null with no live descendant. */
-export function childrenSummary(row: RequestRow): { text: string; asking: number } | null {
+/** `N descendants · Working M` and the warning `Questions K`, or null with no live descendant. */
+export function childrenSummary(row: RequestRow, t: TFunction<"translation">): { text: string; asking: number } | null {
   const total = row.children.length;
   if (total === 0) return null;
   const counts = row.lens.agent.descendant_counts;
   const working = counts?.working ?? 0;
   const asking = (counts?.question ?? 0) + (counts?.approval ?? 0);
-  return { text: [`자식 ${total}`, working > 0 ? `일하는 중 ${working}` : null].filter(Boolean).join(" · "), asking };
+  return { text: [t("requests.children", { count: total }), working > 0 ? t("requests.workingChildren", { count: working }) : null].filter(Boolean).join(" · "), asking };
 }
 
 // --- pull requests and issues (D-43, D-46, D-47) ---------------------------------

@@ -38,8 +38,7 @@ vi.mock("node:child_process", async (original) => ({
     return Buffer.alloc(0);
   }),
   spawnSync: vi.fn((command: string) => {
-    if (command !== "launchctl") throw new Error(`unexpected fixture process: ${command}`);
-    return { status: 113, stdout: "", stderr: "No such service" };
+    throw new Error(`unexpected fixture process: ${command}`);
   }),
 }));
 

@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 import type { ProviderUsage } from "./generated/hided-ws";
-import { resetCountdown, usagePercent, usageSummary, usageTone, usageValueLabel } from "./usage";
+import { initializeInterfaceI18n } from "./i18n/instance";
+import { resetCountdown as resetCountdownIn, usagePercent, usageSummary as usageSummaryIn, usageTone, usageValueLabel as usageValueLabelIn } from "./usage";
+
+const t = initializeInterfaceI18n("en").getFixedT(null, "translation");
+const korean = initializeInterfaceI18n("ko").getFixedT(null, "translation");
+const usageValueLabel = (reading: Parameters<typeof usageValueLabelIn>[0]) => usageValueLabelIn(reading, t);
+const usageSummary = (rows: Parameters<typeof usageSummaryIn>[0]) => usageSummaryIn(rows, t);
+const resetCountdown = (resetsAt: number, now: number) => resetCountdownIn(resetsAt, now, t);
 
 function row(patch: Partial<ProviderUsage>): ProviderUsage {
   return {
@@ -66,3 +73,13 @@ describe("the reset countdown", () => {
     expect(resetCountdown(at(-30), now)).toBe("in 1m");
   });
 });
+
+describe("in Korean", () => {
+  it("words the chips' name and the countdown in the interface language", () => {
+    expect(usageSummaryIn([row({}), row({ provider: "codex", label: "Codex", state: "unavailable", used_percent: null })], korean)).toBe("주간 사용량, Claude Code 62%, Codex 사용량 확인 불가");
+    expect(usageValueLabelIn(row({ state: "unavailable", used_percent: null }), korean)).toBe("사용할 수 없음");
+    const now = Date.UTC(2026, 8, 26, 0, 0, 0);
+    expect(resetCountdownIn(now / 1000 + 5 * 86_400 + 4 * 3_600, now, korean)).toBe("5일 4시간 후");
+  });
+});
+

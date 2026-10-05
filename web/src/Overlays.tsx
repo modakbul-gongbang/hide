@@ -2,24 +2,53 @@ import { ChevronDownIcon, ChevronUpIcon, FolderIcon, HouseIcon, XIcon } from "lu
 import { useEffect, useId, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import type { Actions } from "./actions";
+import { useInterfaceTranslation } from "./i18n/client";
+import type { MessageKey } from "./i18n/catalogs";
+import type { TFunction } from "i18next";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "./components/ui/alert-dialog";
 import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
 import { Input } from "./components/ui/input";
 import { useShellStore } from "./store";
 import { focusTerminal } from "./terminals";
-import { useUiStore } from "./ui";
+import { useUiStore, type Cycle } from "./ui";
 import { markTone } from "./agentRow";
 import { DeviceChip } from "./components/device-chip";
 import { StatusMark } from "./components/status-mark";
 import { Kbd } from "./components/ui/kbd";
-import { visibleWindow, type CycleItem } from "./recent";
+import { visibleWindow, type CycleDetail, type CycleItem } from "./recent";
+import type { SurfaceKind } from "./recent";
 import { commandLabel } from "./shortcutLabels";
 import { displayMark } from "./ViewAreas";
 import { AgentMark } from "./AgentMark";
 import { closeSheet, stopWorkCopy, subtreeTitle, type StopWork, type Subtree } from "./close";
 import { RowMark, SubtreeList } from "./components/subtree-list";
 import { knownProvider } from "./workspace";
+
+const CYCLE_TITLE: Record<Cycle["kind"], MessageKey> = {
+  area: "shell.recentViewTabs",
+  agents: "shell.recentAgentPanes",
+  panels: "shell.globalRecentPanels",
+  projects: "shell.recentProjects",
+};
+
+const SURFACE_LABEL: Record<SurfaceKind, MessageKey> = {
+  herdr: "common.terminal",
+  file: "shell.surface.file",
+  diff: "shell.diff",
+  browser: "shell.surface.browser",
+};
+
+function cycleDetail(detail: CycleDetail, t: TFunction<"translation">): string {
+  switch (detail.kind) {
+    case "surface":
+      return `${detail.place ?? t("common.home")} · ${t(SURFACE_LABEL[detail.surface])}`;
+    case "projects":
+      return t("overview.projects", { count: detail.count });
+    case "text":
+      return detail.text;
+  }
+}
 
 /**
  * Recent Panels or Recent Projects while the chord's modifier is held: at
@@ -29,11 +58,12 @@ import { knownProvider } from "./workspace";
  * (`web/src/browserViews.ts`).
  */
 export function CycleOverlay() {
+  const { t } = useInterfaceTranslation();
   const cycle = useUiStore((s) => s.cycle);
   const uiState = useShellStore((s) => s.rest?.ui_state);
   if (!cycle) return null;
   const { start, rows } = visibleWindow(cycle.items, cycle.index);
-  const title = cycle.kind === "area" ? "Recent View tabs" : cycle.kind === "agents" ? "Recent Agent panes" : cycle.kind === "panels" ? "Global Recent Panels" : "Recent Projects";
+  const title = t(CYCLE_TITLE[cycle.kind]);
   const chord = commandLabel(cycle.kind === "area" || cycle.kind === "agents" ? "recent_area_tab" : cycle.kind === "panels" ? "recent_panel" : "recent_project", uiState);
   return createPortal(
     <div className="fixed inset-x-0 top-[var(--size-tab-strip)] z-30 flex justify-center" data-cycle={cycle.kind}>
@@ -44,6 +74,8 @@ export function CycleOverlay() {
         </div>
         {rows.map((item, offset) => {
           const selected = start + offset === cycle.index;
+          const itemTitle = item.kind === "main" ? t("common.home") : item.title;
+          const itemDetail = cycleDetail(item.detail, t);
           return (
             <div
               key={item.key}
@@ -51,14 +83,14 @@ export function CycleOverlay() {
               data-cycle-row={item.target.kind === "surface" ? item.target.surface.id : item.target.kind === "pane" ? item.target.paneId : item.key}
               data-cycle-kind={item.kind}
               aria-selected={selected}
-              aria-label={[item.title, item.agent && `${item.agent.agent_kind} agent`, item.agent?.status_label, item.detail, item.chip?.label].filter(Boolean).join(", ")}
+              aria-label={[itemTitle, item.agent && t("agents.kindAgent", { kind: item.agent.agent_kind }), item.agent?.status_label, itemDetail, item.chip?.label].filter(Boolean).join(", ")}
               className={`flex items-center gap-sm px-md py-xxs ${selected ? "bg-secondary text-foreground" : "text-subtle-foreground"}`}
             >
-              <CycleMarks item={item} />
+              <CycleMarks item={item} title={itemTitle} />
               <span className="flex min-w-0 flex-1 flex-col">
-                <span className="truncate text-body">{item.title}</span>
+                <span className="truncate text-body">{itemTitle}</span>
                 <span className="flex min-w-0 items-center gap-xs text-caption text-muted-foreground">
-                  <span className="min-w-0 truncate">{item.detail}</span>
+                  <span className="min-w-0 truncate">{itemDetail}</span>
                   {item.chip ? <DeviceChip label={item.chip.label} local={item.chip.local} className="max-w-2/5" /> : null}
                 </span>
               </span>
@@ -77,25 +109,25 @@ export function CycleOverlay() {
  * tab with no single agent wears the neutral mark the tab strip draws. Other
  * rows keep the empty status slot, so every title starts in one column.
  */
-function CycleMarks({ item }: { item: CycleItem }) {
+function CycleMarks({ item, title }: { item: CycleItem; title: string }) {
   return (
     <span className="flex shrink-0 items-center gap-xs" data-cycle-marks={item.agent ? (knownProvider(item.agent.agent_kind) ?? "neutral") : item.kind}>
       <span className="flex w-(--size-agent-mark) shrink-0 justify-center">
         {item.agent ? <StatusMark symbol={item.agent.symbol} className={markTone(item.agent)} data-cycle-status={item.agent.status_label} /> : null}
       </span>
       <span className="flex w-(--size-agent-badge-compact) shrink-0 justify-center">
-        <KindMark item={item} />
+        <KindMark item={item} title={title} />
       </span>
     </span>
   );
 }
 
 /** The every-project Overview and a Project's Overview wear the marks their sidebar rows wear. */
-function KindMark({ item }: { item: CycleItem }) {
+function KindMark({ item, title }: { item: CycleItem; title: string }) {
   if (item.kind === "herdr") return <AgentMark kind={item.agent?.agent_kind} />;
   if (item.kind === "project") return <FolderIcon aria-hidden="true" className="size-(--size-icon) text-muted-foreground" />;
   if (item.kind === "main") return <HouseIcon aria-hidden="true" className="size-(--size-icon) text-muted-foreground" />;
-  return displayMark({ kind: item.kind, label: item.title });
+  return displayMark({ kind: item.kind, label: title });
 }
 
 /**
@@ -155,7 +187,8 @@ export function ConfirmClose({ actions }: { actions: Actions }) {
  * waits for the status check the sheet offers (B28, D-39).
  */
 function StopWorkClose({ actions, kind, stopWork, footer }: { actions: Actions; kind: "pane" | "tab"; stopWork: StopWork; footer: RefObject<HTMLDivElement | null> }) {
-  const copy = stopWorkCopy(kind);
+  const { t } = useInterfaceTranslation();
+  const copy = stopWorkCopy(kind, t);
   return (
     <>
       <AlertDialogHeader>
@@ -183,63 +216,64 @@ function StopWorkClose({ actions, kind, stopWork, footer }: { actions: Actions; 
       </ul>
       {stopWork.unknown ? (
         <p className="flex flex-wrap items-center gap-xs text-caption text-subtle-foreground" data-stop-work-blocked="true">
-          <span className="min-w-0 break-words">{stopWork.unknown.label}: status unknown.</span>
+          <span className="min-w-0 break-words">{t("shell.paneStatusUnknown", { label: stopWork.unknown.label })}</span>
           <Button size="sm" variant="secondary" onClick={() => actions.refreshStatus()} data-stop-work-check-status="true">
-            Check status
+            {t("workspace.checkStatus")}
           </Button>
         </p>
       ) : null}
       <AlertDialogFooter ref={footer}>
-        <AlertDialogCancel data-close-cancel="true">Keep open</AlertDialogCancel>
+        <AlertDialogCancel data-close-cancel="true">{t("commands.keep_open")}</AlertDialogCancel>
         <AlertDialogAction disabled={stopWork.unknown != null} onClick={() => actions.confirmClose()}>
-          Stop work and close
+          {t("shell.stopWorkClose")}
         </AlertDialogAction>
       </AlertDialogFooter>
     </>
   );
 }
 
-/** What 이것만 닫기 leaves, said by its tooltip and its accessible description (B5, D-42). */
-const CLOSE_ONLY_RESULT = "자식은 계속 실행되고 내 목록으로 올라옵니다.";
-
 /**
  * The close of an agent with descendants (D-07, D-17, D-18, D-19): one list
- * of what closes with it, and 취소 / 이것만 닫기 / 모두 닫기 with 모두 닫기 the
- * Enter default. While a listed descendant's activity is unknown, 모두 닫기
- * waits for a status check the sheet itself offers, and the default is 취소.
+ * of what closes with it, and Cancel / Close only this / Close all with Close
+ * all the Enter default. While a listed descendant's activity is unknown, Close
+ * all waits for a status check the sheet itself offers, and the default is Cancel.
+ * What Close only this leaves is said by its tooltip and its accessible
+ * description (B5, D-42).
  */
 function SubtreeClose({ actions, kind, targetId, subtree, footer }: { actions: Actions; kind: "pane" | "tab"; targetId: string | null; subtree: Subtree; footer: RefObject<HTMLDivElement | null> }) {
   const count = subtree.rows.filter((row) => !row.target).length;
   const targetDevice = subtree.rows.find((row) => row.target)?.agent.device_id;
   const closeAllBlocked = subtree.unknown || subtree.targetUnknown;
   const closeOnlyResult = useId();
+  const { t } = useInterfaceTranslation();
+  const closeOnlyWords = t("shell.closeOnlyResult");
   return (
     <>
       <AlertDialogHeader>
-        <AlertDialogTitle>{subtreeTitle(kind, count)}</AlertDialogTitle>
+        <AlertDialogTitle>{subtreeTitle(kind, count, t)}</AlertDialogTitle>
       </AlertDialogHeader>
       <SubtreeList subtree={subtree} targetDevice={targetDevice ?? (targetId ?? undefined)} />
       {closeAllBlocked ? (
         <p className="flex flex-wrap items-center gap-xs text-caption text-subtle-foreground" data-subtree-blocked="true">
           <span className="min-w-0 break-words">
-            {subtree.targetUnknown ? "상태를 모르는 에이전트가 있습니다." : "상태를 모르는 자식이 있습니다."}
+            {subtree.targetUnknown ? t("shell.agentStatusUnknown") : t("shell.childStatusUnknown")}
           </span>
           <Button size="sm" variant="secondary" onClick={() => actions.refreshStatus()} data-subtree-check-status="true">
-            상태 확인
+            {t("workspace.checkStatus")}
           </Button>
         </p>
       ) : null}
       <AlertDialogFooter ref={footer}>
         <AlertDialogCancel data-subtree-cancel="true" data-close-cancel="true">
-          취소
+          {t("common.cancel")}
         </AlertDialogCancel>
-        <Hint label={CLOSE_ONLY_RESULT} reveals>
+        <Hint label={closeOnlyWords} reveals>
           <Button variant="secondary" disabled={subtree.targetUnknown} onClick={() => actions.confirmClose()} aria-describedby={closeOnlyResult} data-subtree-close-only="true">
-            이것만 닫기
+            {t("shell.closeOnly")}
           </Button>
         </Hint>
         <span id={closeOnlyResult} className="sr-only">
-          {CLOSE_ONLY_RESULT}
+          {closeOnlyWords}
         </span>
         <Button
           variant="destructive"
@@ -248,7 +282,7 @@ function SubtreeClose({ actions, kind, targetId, subtree, footer }: { actions: A
           data-subtree-close-all="true"
           data-initial-focus={closeAllBlocked ? undefined : "true"}
         >
-          모두 닫기
+          {t("shell.closeAll")}
         </Button>
       </AlertDialogFooter>
     </>
@@ -257,21 +291,22 @@ function SubtreeClose({ actions, kind, targetId, subtree, footer }: { actions: A
 
 /** The trash confirmation: an irreversible effect is confirmed first (B10). */
 export function ConfirmTrash({ actions }: { actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const pending = useUiStore((s) => s.pendingTrash);
   return (
     <AlertDialog open={pending != null} onOpenChange={(open) => { if (!open) actions.cancelTrash(); }}>
       {pending ? (
         <AlertDialogContent data-confirm-trash={pending.path}>
           <AlertDialogHeader>
-            <AlertDialogTitle>Move to Trash</AlertDialogTitle>
+            <AlertDialogTitle>{t("commands.move_to_trash")}</AlertDialogTitle>
             <AlertDialogDescription>
-              {pending.name} {pending.isDirectory ? "and its contents" : ""} will move to the Trash.
+              {pending.isDirectory ? t("shell.trashDirectory", { name: pending.name }) : t("shell.trashFile", { name: pending.name })}
             </AlertDialogDescription>
           </AlertDialogHeader>
           <AlertDialogFooter>
-            <AlertDialogCancel data-trash-cancel="true">Cancel</AlertDialogCancel>
+            <AlertDialogCancel data-trash-cancel="true">{t("common.cancel")}</AlertDialogCancel>
             <AlertDialogAction data-trash-confirm="true" onClick={() => actions.confirmTrash()}>
-              Move to Trash
+              {t("commands.move_to_trash")}
             </AlertDialogAction>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -288,6 +323,7 @@ export function ConfirmTrash({ actions }: { actions: Actions }) {
  * act on (design 13).
  */
 export function NoticeBar({ actions }: { actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const notice = useUiStore((s) => s.notice);
   const setNotice = useUiStore((s) => s.setNotice);
   if (!notice) return null;
@@ -301,7 +337,7 @@ export function NoticeBar({ actions }: { actions: Actions }) {
       </Hint>
       {notice.refreshable ? (
         <Button variant="link" size="sm" className="h-auto px-none" onClick={() => actions.refreshStatus()}>
-          Check status
+          {t("workspace.checkStatus")}
         </Button>
       ) : null}
       {dontSave ? (
@@ -312,11 +348,11 @@ export function NoticeBar({ actions }: { actions: Actions }) {
           data-notice-dont-save={dontSave.displayId}
           onClick={() => actions.closeViewWithoutSaving(dontSave)}
         >
-          Don&apos;t save
+          {t("shell.dontSave")}
         </Button>
       ) : null}
-      <Hint label="Dismiss">
-        <Button variant="ghost" size="icon-sm" aria-label="Dismiss" onClick={() => setNotice(null)}>
+      <Hint label={t("workspace.dismiss")}>
+        <Button variant="ghost" size="icon-sm" aria-label={t("workspace.dismiss")} onClick={() => setNotice(null)}>
           <XIcon />
         </Button>
       </Hint>
@@ -326,6 +362,7 @@ export function NoticeBar({ actions }: { actions: Actions }) {
 
 /** ⌘F over the focused pane, through the core's `pane_find`; the count comes back in the snapshot. An agent with its own find gets this bar only when the core answers `bar`. */
 export function FindBar({ actions }: { actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const open = useUiStore((s) => s.overlay === "find");
   const close = useUiStore((s) => s.closeOverlay);
   const pushEscape = useUiStore((s) => s.pushEscape);
@@ -366,7 +403,7 @@ export function FindBar({ actions }: { actions: Actions }) {
       <Input
         ref={inputRef}
         value={term}
-        placeholder="Find in pane"
+        placeholder={t("commands.find_in_pane")}
         className="h-(--size-control-sm) flex-1"
         onChange={(event) => setTerm(event.target.value)}
         onKeyDown={(event) => {
@@ -378,21 +415,21 @@ export function FindBar({ actions }: { actions: Actions }) {
         }}
       />
       <span className="text-muted-foreground">{find?.unavailable_reason && find.pane_id === paneId ? find.unavailable_reason : count}</span>
-      <Hint label="Previous match">
-        <Button variant="ghost" size="icon-sm" aria-label="Previous match" onClick={() => submit(-1)}>
+      <Hint label={t("shell.previousMatch")}>
+        <Button variant="ghost" size="icon-sm" aria-label={t("shell.previousMatch")} onClick={() => submit(-1)}>
           <ChevronUpIcon />
         </Button>
       </Hint>
-      <Hint label="Next match">
-        <Button variant="ghost" size="icon-sm" aria-label="Next match" onClick={() => submit(1)}>
+      <Hint label={t("shell.nextMatch")}>
+        <Button variant="ghost" size="icon-sm" aria-label={t("shell.nextMatch")} onClick={() => submit(1)}>
           <ChevronDownIcon />
         </Button>
       </Hint>
-      <Hint label="Close find">
+      <Hint label={t("shell.closeFind")}>
         <Button
           variant="ghost"
           size="icon-sm"
-          aria-label="Close find"
+          aria-label={t("shell.closeFind")}
           onClick={() => dismiss.current()}
         >
           <XIcon />
@@ -404,12 +441,13 @@ export function FindBar({ actions }: { actions: Actions }) {
 
 /** A refused replacement close remains an explicit, retryable operator intent. */
 export function AgentCloseNotice({ actions }: { actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const pending = useShellStore((s) => s.rest?.recent_closed?.pending);
   const item = pending?.find((item) => item.phase === "failed" || item.phase === "refused");
   if (!item) return null;
   return <div role="status" data-agent-close-notice={item.key} className="flex items-center gap-md border-b border-border bg-card px-md py-xs text-caption text-subtle-foreground">
     <span className="min-w-0 flex-1">{item.message}</span>
-    {item.retryable && <Button variant="link" size="sm" onClick={() => actions.retryAgentClose(item.key)}>Retry close</Button>}
-    <Button variant="ghost" size="icon-sm" aria-label="Dismiss close" onClick={() => actions.dismissAgentClose(item.key)}><XIcon /></Button>
+    {item.retryable && <Button variant="link" size="sm" onClick={() => actions.retryAgentClose(item.key)}>{t("shell.retryClose")}</Button>}
+    <Button variant="ghost" size="icon-sm" aria-label={t("shell.dismissClose")} onClick={() => actions.dismissAgentClose(item.key)}><XIcon /></Button>
   </div>;
 }

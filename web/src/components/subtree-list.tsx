@@ -1,4 +1,7 @@
+import type { TFunction } from "i18next";
 import type { Subtree, SubtreeRow, SubtreeState } from "../close";
+import { useInterfaceTranslation } from "../i18n/client";
+import type { MessageKey } from "../i18n/catalogs";
 import { markTone } from "../agentRow";
 import { DeviceChip } from "./device-chip";
 import { StatusMark } from "./status-mark";
@@ -12,42 +15,43 @@ import { Hint } from "./ui/tooltip";
 // word; a quiet one is dimmed, and its mark's tooltip and the row's
 // accessible name carry its state.
 
-// The close sheet speaks Korean; a removal dialog keeps its own English (D-35).
-export type SubtreeWords = "ko" | "en";
-
-const SUMMARY: { state: Exclude<SubtreeState, "quiet">; symbol: string; tone: string; word: Record<SubtreeWords, string> }[] = [
-  { state: "working", symbol: "●", tone: "text-agent-working", word: { ko: "진행 중", en: "working" } },
-  { state: "waiting", symbol: "?", tone: "text-warning", word: { ko: "답 대기", en: "waiting for you" } },
-  { state: "unread", symbol: "✓", tone: "text-success", word: { ko: "확인 안 한 결과", en: "unread result" } },
-  { state: "unknown", symbol: "~", tone: "text-subtle-foreground", word: { ko: "상태 모름", en: "status unknown" } },
+const SUMMARY: { state: Exclude<SubtreeState, "quiet">; symbol: string; tone: string; word: MessageKey }[] = [
+  { state: "working", symbol: "●", tone: "text-agent-working", word: "agents.subtree.working" },
+  { state: "waiting", symbol: "?", tone: "text-warning", word: "agents.subtree.waiting" },
+  { state: "unread", symbol: "✓", tone: "text-success", word: "agents.subtree.unread" },
+  { state: "unknown", symbol: "~", tone: "text-subtle-foreground", word: "agents.subtree.unknown" },
 ];
 
-const LIST_LABEL: Record<SubtreeWords, string> = { ko: "함께 닫히는 에이전트", en: "Agents outside" };
+/** What the list is for: the agents that close with the one closed, or the agents outside a project that a removal stops. */
+export type SubtreeScope = "close" | "removal";
+
+const LIST_LABEL: Record<SubtreeScope, MessageKey> = { close: "agents.subtree.closesWith", removal: "agents.subtree.outside" };
 
 /** The summary in words, zero kinds left out, for a screen reader and a test. */
-export function subtreeSummaryWords(counts: Subtree["counts"], words: SubtreeWords = "ko"): string {
+export function subtreeSummaryWords(counts: Subtree["counts"], t: TFunction<"translation">): string {
   return SUMMARY.filter(({ state }) => counts[state] > 0)
-    .map(({ state, word }) => `${word[words]} ${counts[state]}`)
+    .map(({ state, word }) => `${t(word)} ${counts[state]}`)
     .join(" · ");
 }
 
-export function SubtreeList({ subtree, targetDevice, words = "ko" }: { subtree: Subtree; targetDevice: string | undefined; words?: SubtreeWords }) {
+export function SubtreeList({ subtree, targetDevice, scope = "close" }: { subtree: Subtree; targetDevice: string | undefined; scope?: SubtreeScope }) {
+  const { t } = useInterfaceTranslation();
   const parts = SUMMARY.filter(({ state }) => subtree.counts[state] > 0);
   return (
     <div className="flex min-w-0 flex-col gap-xs" data-subtree-list="true">
       {parts.length > 0 ? (
-        <p className="flex flex-wrap items-center gap-x-sm gap-y-xxs text-caption text-subtle-foreground" data-subtree-summary={subtreeSummaryWords(subtree.counts, words)}>
+        <p className="flex flex-wrap items-center gap-x-sm gap-y-xxs text-caption text-subtle-foreground" data-subtree-summary={subtreeSummaryWords(subtree.counts, t)}>
           {parts.map(({ state, symbol, tone, word }) => (
             <span key={state} className="inline-flex items-center gap-xxs" data-subtree-count={state}>
               <StatusMark symbol={symbol} className={tone} />
               <span>
-                {word[words]} {subtree.counts[state]}
+                {t(word)} {subtree.counts[state]}
               </span>
             </span>
           ))}
         </p>
       ) : null}
-      <ul className="flex max-h-(--size-relationship-list-max) min-w-0 flex-col gap-xxs overflow-y-auto rounded-md border border-border p-xs" aria-label={LIST_LABEL[words]}>
+      <ul className="flex max-h-(--size-relationship-list-max) min-w-0 flex-col gap-xxs overflow-y-auto rounded-md border border-border p-xs" aria-label={t(LIST_LABEL[scope])}>
         {subtree.rows.map((row) => (
           <SubtreeItem key={row.agent.pane_id} row={row} targetDevice={targetDevice} />
         ))}

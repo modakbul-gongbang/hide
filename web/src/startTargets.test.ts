@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { Checkout, Device, SnapshotRest, Workspace } from "./snapshot";
-import { checkoutKey, homeKey, NOT_CONNECTED, resolveTarget, startTargets } from "./startTargets";
+import { initializeInterfaceI18n } from "./i18n/instance";
+import { checkoutKey, homeKey, resolveTarget, startTargets as targetsWith } from "./startTargets";
 import type { Screen } from "./ui";
+
+const { t } = initializeInterfaceI18n("en");
+const startTargets = (rest: SnapshotRest | null, screen: Screen | null, settings = false, projectId: string | null = null) => targetsWith(rest, screen, t, settings, projectId);
 
 function checkout(id: string, workspaceId: string, path: string, over: Partial<Checkout> = {}): Checkout {
   return { id, workspace_id: workspaceId, label: path.split("/").pop() ?? id, path, exists: true, ...over } as Checkout;
@@ -123,17 +127,20 @@ describe("start target menu (B26)", () => {
     const labels = startTargets(rest(), null).groups.map((group) => group.items.map((item) => item.label));
     expect(labels[0]).toEqual(["Home", "herdr-ide · main", "herdr-ide · rail", "sasu · main"]);
     expect(labels[1]).toEqual(["mini · Home", "mini · app · main"]);
+    // Home is the one word this module words itself.
+    const ko = targetsWith(rest(), null, initializeInterfaceI18n("ko").t).groups.map((group) => group.items[0]!.label);
+    expect(ko).toEqual(["홈", "mini · 홈", "build-box · 홈"]);
   });
 
   it("disables every item of a device that is not connected, with the reason", () => {
     const all = startTargets(rest({ connected: false }), null).groups;
     const mini = all.find((group) => group.deviceId === "mini")!;
     expect(mini.connected).toBe(false);
-    expect(mini.items.every((item) => item.disabled === NOT_CONNECTED)).toBe(true);
+    expect(mini.items.every((item) => item.disabled === "not_connected")).toBe(true);
     expect(all[0]!.items.every((item) => item.disabled === null)).toBe(true);
     // A device that never answered still has its Home, disabled.
     const box = all.find((group) => group.deviceId === "box")!;
-    expect(box.items.map((item) => [item.key, item.disabled])).toEqual([[homeKey("box"), NOT_CONNECTED]]);
+    expect(box.items.map((item) => [item.key, item.disabled])).toEqual([[homeKey("box"), "not_connected"]]);
   });
 
   it("offers nothing before the first snapshot", () => {

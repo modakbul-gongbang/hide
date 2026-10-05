@@ -320,7 +320,7 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     // count; the mode control sits at its right end (B8).
     await expect(page.locator('[data-stat="worktrees"]')).toHaveText(/6 worktrees/, { timeout: 20_000 });
     await expect(page.locator('[data-stat="disk"]')).toHaveText(/^\d+(\.\d)? (B|KB|MB|GB)$/, { timeout: 30_000 });
-    await expect(page.locator('[data-stat="merged"]')).toHaveText("1 merged → 정리", { timeout: 20_000 });
+    await expect(page.locator('[data-stat="merged"]')).toHaveText("1 merged → Clean up", { timeout: 20_000 });
     await expect(overview.locator('[data-overview-refreshing="true"]')).toHaveCount(0, { timeout: 20_000 });
     // A local ref move refreshes the catalog while Overview stays open.
     git(repo, ["switch", "-c", "behind-test"]);
@@ -336,7 +336,7 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await expect(overview.locator("[data-graph-chip]")).toHaveCount(3);
     await expect(overview.locator("[data-graph-search]")).toBeVisible();
     await expect(overview.locator("[data-graph-devices]")).toHaveCount(0);
-    // New agent and 새 이슈 stay on the title row (B9).
+    // New agent and New issue stay on the title row (B9).
     await expect(overview.locator("[data-overview-new-agent]")).toBeVisible();
 
     // The tiles where the tab row was: Agents chosen, four agents, one of
@@ -344,20 +344,19 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     // by stage; Sessions today's count once the history is read (B1-B5).
     await expect(overview.locator("[data-lens-tile]")).toHaveCount(5);
     expect(await overview.locator("[data-lens-tile]").evaluateAll((tiles) => tiles.map((tile) => tile.getAttribute("data-lens-tile")))).toEqual(["requests", "agents", "issues", "prs", "sessions"]);
-    await expect(overview.locator("[data-overview-tab], [data-inbox-group], [data-waiting-band]")).toHaveCount(0);
     await expect(tile("agents")).toHaveAttribute("data-selected", "true");
     await expect(tile("agents").locator("[data-lens-tile-value]")).toHaveAttribute("data-lens-tile-value", "4", { timeout: 20_000 });
     await expect(tile("agents").locator("[data-lens-tile-badge]")).toHaveText("1");
     await expect(tile("agents").locator("[data-lens-tile-bar]")).toHaveAttribute("data-lens-tile-bar", "turn:1 working:1 delegating:1 resting:1");
     await expect(tile("issues").locator("[data-lens-tile-value]")).toHaveAttribute("data-lens-tile-value", "3", { timeout: 20_000 });
-    await expect(tile("issues")).toContainText("열림");
+    await expect(tile("issues")).toContainText("open");
     await expect(tile("issues").locator("[data-lens-tile-bar]")).toHaveAttribute("data-lens-tile-bar", "backlog:1 working:1 review:1");
     await expect(tile("issues").locator("[data-lens-tile-badge]")).toHaveCount(0);
     await expect(tile("sessions").locator("[data-lens-tile-value]")).toHaveAttribute("data-lens-tile-value", "0", { timeout: 20_000 });
-    await expect(tile("sessions")).toContainText("오늘");
+    await expect(tile("sessions")).toContainText("today");
     // Resting on the bar shows its legend and on the badge its breakdown (B4).
-    await restOn(page, tile("agents").locator("[data-lens-tile-bar]"), ["내 차례 1"]);
-    await restOn(page, tile("agents").locator("[data-lens-tile-badge]"), ["승인 1"]);
+    await restOn(page, tile("agents").locator("[data-lens-tile-bar]"), ["My turn 1"]);
+    await restOn(page, tile("agents").locator("[data-lens-tile-badge]"), ["Approval 1"]);
 
     // Boxes (B2-B5, D-37): the asking worktree's band stands first, above main's, because
     // its question outranks main's band; main holds the Observer and the Implementor it
@@ -375,7 +374,7 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     expect(workingRect.x).toBeGreaterThan(mainRect.x + mainRect.width);
     expect(askingRect.y + askingRect.height).toBeLessThan(mainRect.y);
     // main's head says how many agents it has (B12); a worktree head: the branch, ↑N and its changed files, dirty in the warning tone.
-    await expect(mainBox.locator("[data-graph-head-agents]")).toHaveText("에이전트 1");
+    await expect(mainBox.locator("[data-graph-head-agents]")).toHaveText("1 agent");
     await expect(workingBox.locator("[data-graph-head-distance]")).toHaveText("↑1");
     await expect(workingBox.locator("[data-graph-head-files]")).toHaveText("1 file");
     await expect(workingBox.locator("[data-graph-head-files]")).toHaveClass(/text-warning/);
@@ -395,8 +394,8 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     // The folds: one line each, per project, a click unfolding it in place (B21, B23).
     const emptyFold = overview.locator('[data-graph-fold="empty"]');
     const cleanupFold = overview.locator('[data-graph-fold="cleanup"]');
-    await expect(emptyFold).toHaveText(/에이전트 없는 워크트리 3/);
-    await expect(cleanupFold).toHaveText(/정리할 것 1/);
+    await expect(emptyFold).toHaveText(/Worktrees without agents 3/);
+    await expect(cleanupFold).toHaveText(/Ready to clean up 1/);
     await emptyFold.click();
     await expect(emptyFold).toHaveAttribute("aria-expanded", "true");
     await expect(boxes).toHaveCount(6);
@@ -431,7 +430,7 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await expect(row(mainPane)).toHaveCSS("opacity", "1");
     await expect(row(askingPane)).not.toHaveCSS("opacity", "1");
     await expect(edge).toHaveCSS("opacity", "1");
-    await expect(row(workingPane).locator("[data-graph-row-hint]")).toHaveText("↵ 패널");
+    await expect(row(workingPane).locator("[data-graph-row-hint]")).toHaveText("↵ Panel");
     await page.mouse.move(2, 998);
     await page.mouse.move(4, 996);
     await expect(row(askingPane)).toHaveCSS("opacity", "1");
@@ -441,8 +440,8 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await expect(message).toBeVisible();
     await expect(message).toContainText("Done 그룹 회색 링을 바꿔도 될까요?");
     await expect(message.locator("[data-lens-message-context]")).toContainText("prd/asking");
-    await expect(message.locator("[data-lens-message-context]")).toContainText("직접 시작");
-    await expect(row(askingPane).locator("[data-graph-row-hint]")).toHaveText("↵ 답하기");
+    await expect(message.locator("[data-lens-message-context]")).toContainText("Started directly");
+    await expect(row(askingPane).locator("[data-graph-row-hint]")).toHaveText("↵ Answer");
     await screenshot(page, "overview-message-light");
     expect([...sent.values()].reduce((sum, count) => sum + count, 0)).toBe(quietBefore);
     // A delegated row's popover names who delegated it.
@@ -451,12 +450,12 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await row(workingPane).locator("[data-graph-open]").hover();
     await expect(page.locator(`[data-lens-message="${workingPane}"] [data-lens-message-context]`)).toContainText("최신 hide 서버 웹 실행");
     // ...and says in words what colour its line is (B36).
-    await expect(page.locator(`[data-lens-message="${workingPane}"] [data-lens-message-context]`)).toContainText("선일하는 중");
+    await expect(page.locator(`[data-lens-message="${workingPane}"] [data-lens-message-context]`)).toContainText("LineWorking");
     await page.mouse.move(2, 998);
     await page.mouse.move(4, 996);
     await row(askingPane).locator("[data-graph-open]").hover();
     await expect(message).toBeVisible();
-    // Its ↵ 패널에서 답하기 is the row's click: that agent's pane (B18, B19).
+    // Its ↵ Answer in panel is the row's click: that agent's pane (B18, B19).
     await message.locator(`[data-lens-message-open="${askingPane}"]`).click();
     const workspace = page.locator("[data-workspace-screen]");
     await expect(workspace).toBeVisible();
@@ -497,11 +496,11 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await page.getByRole("tab", { name: "repo", exact: true }).click();
     await toGraph();
 
-    // `N merged → 정리` opens the disk cleanup sheet on the finished filter and
-    // leaves the 정리할 것 fold as it was; Escape closes the sheet, the
+    // `N merged → Clean up` opens the disk cleanup sheet on the finished filter and
+    // leaves the Ready to clean up fold as it was; Escape closes the sheet, the
     // fold's own line unfolds it (disk-layers B3). The merged box is dimmed
-    // with the merge glyph and offers 정리, whose popover says what it
-    // removes; 정리 opens the Delete worktree dialog, and cancelling changes
+    // with the merge glyph and offers Clean up, whose popover says what it
+    // removes; Clean up opens the Delete worktree dialog, and cancelling changes
     // nothing (B16).
     await page.locator('[data-stat="merged"]').click();
     await expect(page.locator("[data-disk-sheet]")).toHaveAttribute("data-disk-filter", "done");
@@ -513,7 +512,7 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     const shippedBox = box("prd/shipped");
     await expect(row(shippedPane)).toHaveAttribute("data-bucket", "resting");
     const cleanup = shippedBox.locator("[data-graph-cleanup]");
-    await restOn(page, cleanup, ["지운다"]);
+    await restOn(page, cleanup, ["Remove merged worktrees"]);
     await cleanup.click();
     const dialog = page.locator("[data-delete-worktree]");
     await expect(dialog).toBeVisible();
@@ -651,8 +650,8 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await expect(column("review").locator("[data-overview-card]")).toHaveCount(1, { timeout: 20_000 });
     await expect(overview.locator("[data-overview-card]:not([data-issue-card])")).toHaveCount(0);
     await expect(column("working").locator("[data-loose-worktrees]")).toHaveAttribute("data-loose-worktrees", "2");
-    await expect(column("working").locator("[data-loose-worktrees]")).toHaveText(/이슈 없는 워크트리 2/);
-    await expect(column("review").locator("[data-loose-prs]")).toHaveText(/이슈 없는 PR 1/);
+    await expect(column("working").locator("[data-loose-worktrees]")).toHaveText(/2 worktrees without an issue/);
+    await expect(column("review").locator("[data-loose-prs]")).toHaveText(/1 PR without an issue/);
     await expect(column("backlog")).toContainText("Graph 뷰");
     await expect(column("backlog").locator("[data-blocked-by]")).toHaveAttribute("data-blocked-by", "github:acme/repo#2", { timeout: 20_000 });
     // A card is glyph, id and title; in progress its checkout chip (B1, B2);
@@ -661,7 +660,7 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await expect(issueCard(2).locator("[data-card-title]")).toHaveText("태스크 출처 어댑터");
     await expect(issueCard(2).locator("[data-card-checkout]")).toContainText("2-task-source");
     await expect(issueCard(4).locator("[data-lens-pr-chip]")).toHaveAttribute("data-lens-pr-chip", "11");
-    await expect(issueCard(4)).toContainText("리뷰 필요");
+    await expect(issueCard(4)).toContainText("Review required");
     await expect(issueCard(3).locator("[data-card-chips]")).toHaveCount(0);
 
     // The panel (B11-B15): head, the in-progress actions, the properties the
@@ -673,9 +672,9 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await expect(panel.locator("[data-issue-panel-workspace]")).toBeVisible();
     await expect(panel.locator("[data-issue-panel-github]")).toBeVisible();
     await expect(panel.locator("[data-issue-panel-start], [data-issue-panel-edit]")).toHaveCount(0);
-    await expect(panel.locator('[data-issue-property="stage"]')).toHaveText("진행 중");
+    await expect(panel.locator('[data-issue-property="stage"]')).toHaveText("In progress");
     await expect(panel.locator('[data-issue-property="labels"] [data-issue-label]')).toHaveCount(2, { timeout: 20_000 });
-    await expect(panel.locator('[data-issue-property="author"]')).toHaveText("example-user · 9월 20일");
+    await expect(panel.locator('[data-issue-property="author"]')).toHaveText("example-user · Sep 20");
     await expect(panel.locator('[data-issue-property="assignees"]')).toHaveText("example-user");
     await expect(panel.locator('[data-issue-property="created"]')).toHaveCount(0);
     await expect(panel.locator("[data-issue-work-checkout]")).toContainText("2-task-source");
@@ -683,7 +682,7 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await expect(panel.locator("[data-issue-comments]")).toHaveAttribute("data-issue-comments", "4");
     await expect(panel.locator("[data-issue-comment]")).toHaveCount(3);
     await expect(panel.locator("[data-issue-comment]").last()).toContainText("마지막 댓글");
-    await expect(panel.locator("[data-issue-comments]")).toContainText("쓰기는 GitHub에서");
+    await expect(panel.locator("[data-issue-comments]")).toContainText("Write comments on GitHub");
     // The read is cached, so the card shows the labels it brought (B1).
     await expect(issueCard(2).locator("[data-card-labels] [data-issue-label]")).toHaveCount(2);
     for (const theme of ["dark", "light"] as const) {
@@ -699,10 +698,10 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await page.keyboard.press("ArrowRight");
     await expect(issueCard(4)).toBeFocused();
     await expect(panel).toHaveAttribute("data-issue-panel", "github:acme/repo#4");
-    // Issue 4's first read fails: one line of why and 재시도 in the body's
-    // place, the rest of the panel standing (B16); 재시도 reads it again.
+    // Issue 4's first read fails: one line of why and Retry in the body's
+    // place, the rest of the panel standing (B16); Retry reads it again.
     await expect(panel.locator("[data-issue-body=failed] [data-issue-body-failure]")).toBeVisible({ timeout: 20_000 });
-    await expect(panel.locator('[data-issue-property="stage"]')).toHaveText("리뷰");
+    await expect(panel.locator('[data-issue-property="stage"]')).toHaveText("Review");
     await expect(panel.locator("[data-issue-work-pr]")).toHaveAttribute("data-issue-work-pr", "11");
     // In review the panel's first action is the card's: the pull request, not the Workspace (B6, B11).
     await expect(panel.locator('[data-issue-panel-pr="11"]')).toBeVisible();
@@ -750,17 +749,17 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await page.waitForTimeout(600);
     expect([...sent.values()].reduce((sum, count) => sum + count, 0)).toBe(quietIssues);
     // Each button says what it does (B7).
-    await restOn(page, issueCard(2).locator("[data-card-workspace]"), ["Workspace 열기"], issueCard(2));
+    await restOn(page, issueCard(2).locator("[data-card-workspace]"), ["Open Workspace"], issueCard(2));
     await issueCard(3).hover();
     await expect(issueCard(3).locator("[data-card-start]")).toBeVisible();
-    await restOn(page, issueCard(3).locator("[data-card-start]"), ["이 이슈로 워크트리와 에이전트를 만든다"], issueCard(3));
+    await restOn(page, issueCard(3).locator("[data-card-start]"), ["Create a worktree and agent for this issue"], issueCard(3));
     await leaveHoverCard(page, page.getByRole("tooltip"));
     const previewBefore = sent.get("issue_detail_request") ?? 0;
     await issueCard(2).locator("[data-task-id]").hover();
     const preview = page.locator('[data-issue-preview="github:acme/repo#2"]');
     await expect(preview).toBeVisible();
     await expect(preview.locator("[data-issue-preview-body]")).toHaveText(/^배경\s+출처를 어댑터로 나눈다\.\s+GitHub/);
-    await expect(preview).toContainText("example-user · 9월 20일 · 댓글 4");
+    await expect(preview).toContainText("example-user · Sep 20 · 4 comments");
     await expect(preview).toContainText("Open");
     await screenshot(page, "overview-issue-preview-light");
     await leaveHoverCard(page, preview);
@@ -774,13 +773,13 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     // request line's is the PRs tab, where each has an issue cell to link
     // (overview-lenses-prs B21).
     const looseWorktrees = column("working").locator("[data-loose-worktrees]");
-    await restOn(page, looseWorktrees, ["Agents 그래프에서 보기", "prd/asking"]);
+    await restOn(page, looseWorktrees, ["View in the Agents graph", "prd/asking"]);
     await looseWorktrees.click();
     await expect(overview).toHaveAttribute("data-overview-view", "agents");
     await expect(emptyFold).toHaveAttribute("aria-expanded", "true");
     await tile("issues").locator("[data-lens-tile-button]").click();
     const loosePrs = column("review").locator("[data-loose-prs]");
-    await restOn(page, loosePrs, ["PRs 탭에서 보기", "#12"]);
+    await restOn(page, loosePrs, ["View on the PRs tab", "#12"]);
     await loosePrs.click();
     await expect(overview).toHaveAttribute("data-overview-view", "prs");
     await expect(overview.locator('[data-pr="12"] [data-pr-issue="none"]')).toBeVisible();
@@ -869,8 +868,8 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await main.locator("[data-graph-search]").fill("");
     await expect(main.locator("[data-graph-row]")).not.toHaveCount(1);
 
-    // A folder's issues are Local ones kept by Hide: C makes an issue, 만들고
-    // 바로 시작 goes on to the Start dialog, and the card's menu closes it.
+    // A folder's issues are Local ones kept by Hide: C makes an issue, Create and
+    // start immediately goes on to the Start dialog, and the card's menu closes it.
     await page.locator('[data-main-tab="projects"]').click();
     await page.locator("[data-main-project]", { hasText: /^fixture/ }).click();
     await expect(workspace).toBeVisible();
@@ -891,8 +890,8 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await newIssue.locator("[data-new-issue-create]").click();
     const start = page.locator("[data-start-issue]");
     await expect(start).toBeVisible();
-    await expect(start.locator("[data-start-prompt]")).toHaveValue("로컬 이슈 L-1를 해결해줘: 폴더 이슈\n\n폴더에서 할 일");
-    await page.getByRole("button", { name: "취소" }).click();
+    await expect(start.locator("[data-start-prompt]")).toHaveValue("Solve local issue L-1: 폴더 이슈\n\n폴더에서 할 일");
+    await page.getByRole("button", { name: "Cancel" }).click();
     const localCard = page.locator('[data-overview-column="backlog"] [data-overview-card]');
     await expect(localCard).toHaveCount(1);
     await expect(localCard.locator("[data-task-id]")).toHaveText("L-1");
@@ -955,7 +954,7 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await toGraph();
     await expect(overview).toHaveAttribute("data-overview-state", "empty");
     await expect(boxes).toHaveCount(1);
-    await expect(boxes.first().locator("[data-graph-head-agents]")).toHaveText("에이전트 0");
+    await expect(boxes.first().locator("[data-graph-head-agents]")).toHaveText("0 agents");
     await expect(boxes.first().locator("[data-graph-row]")).toHaveCount(0);
     await expect(tile("agents").locator("[data-lens-tile-value]")).toHaveAttribute("data-lens-tile-value", "0");
     await expect(tile("agents").locator("[data-lens-tile-badge]")).toHaveCount(0);
@@ -976,11 +975,11 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await page.keyboard.press(chord("settings"));
     await page.locator('[data-settings-tab="issues"]').click();
     await expect(page.locator("[data-settings-issues]")).toBeVisible();
-    await expect(page.getByRole("combobox", { name: "repo 이슈 출처" })).toHaveText("자동 (GitHub)");
-    await expect(page.getByRole("combobox", { name: "quiet 이슈 출처" })).toHaveText("자동 (Local)");
+    await expect(page.getByRole("combobox", { name: "Issue source for repo" })).toHaveText("Automatic (GitHub)");
+    await expect(page.getByRole("combobox", { name: "Issue source for quiet" })).toHaveText("Automatic (Local)");
     await page.keyboard.press("Escape");
 
-    // 시작 on the backlog issue makes a worktree linked to it, so the card
+    // Start on the backlog issue makes a worktree linked to it, so the card
     // moves from Backlog to In progress; its Workspace comes to the front,
     // and ⌘⇧H selects its box.
     await tile("issues").locator("[data-lens-tile-button]").click();

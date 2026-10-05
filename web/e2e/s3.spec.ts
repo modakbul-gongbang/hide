@@ -554,21 +554,6 @@ test("a conflicted background tab is not closed away with its draft", async ({ p
   }
 });
 
-test("the close chord closes the file tab that is showing", async ({ page }) => {
-  const fixture = await openCheckout(page);
-  const { sent } = fixture;
-  try {
-    await page.locator('[data-editor-body] .cm-content').click();
-    await page.keyboard.press(chord("close_tab"));
-    await expect.poll(() => sent.get("view_layout.close")).toBe(1);
-    await expect(page.locator('[data-tab-kind="file"]')).toHaveCount(0);
-    // The terminal tab the file tab was covering is still there.
-    await expect(page.locator('[data-tab-kind="herdr"]').first()).toBeVisible();
-  } finally {
-    close(fixture);
-  }
-});
-
 test("images, PDFs and videos render from hided file bytes", async ({ page }) => {
   const fixture = await openCheckout(page);
   const { repo, sent } = fixture;

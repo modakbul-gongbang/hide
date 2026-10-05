@@ -13,6 +13,8 @@ import { Button } from "./components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./components/ui/dialog";
 import { Input } from "./components/ui/input";
 import { Kbd } from "./components/ui/kbd";
+import { useInterfaceTranslation } from "./i18n/client";
+import type { TFunction } from "i18next";
 import { Note, Status } from "./components/settings-rows";
 import { AgentField, Field, submitOnCommandEnter, TextArea } from "./IssueDialogs";
 import { delegatePrompt } from "./prDelegate";
@@ -64,21 +66,22 @@ function issueNumber(task: Task): string | null {
 }
 
 /** What failed, in the operator's words; why is the core's one line, the rest is in the log (design 13). */
-function failureHeadline(answer: PrLink): string {
-  if (answer.step === "body") return answer.created ? `이슈 ${answer.issue_id ?? ""}은 만들었고 PR 본문 쓰기는 실패했습니다` : "이슈는 이었고 PR 본문 쓰기는 실패했습니다";
-  if (answer.step === "create") return "이슈를 만들지 못했습니다";
-  return "이슈를 잇지 못했습니다";
+function failureHeadline(answer: PrLink, t: TFunction<"translation">): string {
+  if (answer.step === "body") return answer.created ? t("prWork.createdBodyFailed", { issue: answer.issue_id ?? "" }) : t("prWork.linkedBodyFailed");
+  if (answer.step === "create") return t("prWork.createFailed");
+  return t("prWork.linkFailed");
 }
 
 /** The retry names what it does again: only the body once the issue is made and linked (B10, B13). */
-function retryLabel(answer: PrLink | null, created: string): string {
-  if (answer?.step === "body") return "본문 다시 쓰기";
+function retryLabel(answer: PrLink | null, created: string, t: TFunction<"translation">): string {
+  if (answer?.step === "body") return t("prWork.retryBody");
   if (answer?.step === "create") return created;
-  return "다시 잇기";
+  return t("prWork.retryLink");
 }
 
 function LinkFailure({ answer, refused }: { answer: PrLink | null; refused: string | null }) {
-  const headline = answer ? failureHeadline(answer) : "이슈를 잇지 못했습니다";
+  const { t } = useInterfaceTranslation();
+  const headline = answer ? failureHeadline(answer, t) : t("prWork.linkFailed");
   const reason = answer?.message ?? refused;
   return (
     <Note tone="error" data-pr-link-failure={answer?.step ?? "refused"}>
@@ -90,13 +93,14 @@ function LinkFailure({ answer, refused }: { answer: PrLink | null; refused: stri
 
 /**
  * An issue of the project's source chosen for a pull request (B10, B11,
- * B14). A GitHub issue asks once, `PR #N 본문에 "Closes #M"을 씁니다`, with
- * 그만두기 the default; confirming leaves Hide's link and writes the body. A
+ * B14). A GitHub issue asks once, `Add "Closes #M" to the body of PR #N`, with
+ * Cancel linking the default; confirming leaves Hide's link and writes the body. A
  * Local issue is Hide's link alone and asks nothing, so the dialog appears only
  * if that link fails. A failed body write keeps the link and offers to write
  * the body again, which the core finds already written if it was.
  */
 export function PrLinkDialog({ actions, workspace, pr, task, onClose }: { actions: Actions; workspace: Workspace; pr: PullRequest; task: Task; onClose: () => void }) {
+  const { t } = useInterfaceTranslation();
   const local = task.source === "local";
   const [sent, setSent] = useState<Sent | null>(null);
   const { answer, refused, working, failed } = useLinkAnswer(sent, onClose);
@@ -118,18 +122,18 @@ export function PrLinkDialog({ actions, workspace, pr, task, onClose }: { action
     <AlertDialog open onOpenChange={(next) => { if (!next) onClose(); }}>
       <AlertDialogContent initialFocus="cancel" data-pr-link={pr.number} data-pr-link-issue={task.key}>
         <AlertDialogHeader>
-          <AlertDialogTitle className="break-words">PR #{pr.number}을 {task.id ?? task.title}에 잇기</AlertDialogTitle>
+          <AlertDialogTitle className="break-words">{t("prWork.linkTitle", { number: String(pr.number), issue: task.id ?? task.title })}</AlertDialogTitle>
           <AlertDialogDescription className="break-words" data-pr-link-confirm="true">
-            {local ? `${task.id ?? task.title}을 이 PR의 이슈로 기록합니다.` : `PR #${pr.number} 본문에 "Closes #${number}"을 씁니다. 머지되면 GitHub가 이슈를 닫습니다.`}
+            {local ? t("prWork.confirmLocal", { issue: task.id ?? task.title }) : t("prWork.confirmGitHub", { number: String(pr.number), issueNumber: number ?? "" })}
           </AlertDialogDescription>
         </AlertDialogHeader>
         {failed ? <LinkFailure answer={answer} refused={refused} /> : null}
-        {working ? <Status tone="pending">PR 본문에 쓰는 중…</Status> : null}
+        {working ? <Status tone="pending">{t("prWork.writingBody")}</Status> : null}
         <AlertDialogFooter>
-          <AlertDialogCancel data-pr-link-cancel="true">{failed ? "닫기" : working ? "숨기기" : "그만두기"}</AlertDialogCancel>
+          <AlertDialogCancel data-pr-link-cancel="true">{t(failed ? "common.close" : working ? "issue.hide" : "prWork.stop")}</AlertDialogCancel>
           {!working ? (
             <Button onClick={() => send(answer?.issue_key ?? task.key)} data-pr-link-write={failed ? "retry" : "write"}>
-              {failed ? retryLabel(answer, "다시 쓰기") : "본문에 쓰기"}
+              {failed ? retryLabel(answer, t("prWork.retryWrite"), t) : t("prWork.writeBody")}
             </Button>
           ) : null}
         </AlertDialogFooter>
@@ -139,13 +143,14 @@ export function PrLinkDialog({ actions, workspace, pr, task, onClose }: { action
 }
 
 /**
- * `새 이슈 만들기` for a pull request (B12, B13): the title and body start as
+ * `Create new issue` for a pull request (B12, B13): the title and body start as
  * the pull request's own, and one confirmation makes the issue, then writes
- * `Closes #(새 번호)` into the body (a Local source's issue is only linked).
+ * `Closes #(new number)` into the body (a Local source's issue is only linked).
  * If the body write fails the issue stays made and linked, and the retry
  * writes only the body.
  */
 export function PrNewIssueDialog({ actions, workspace, pr, onClose }: { actions: Actions; workspace: Workspace; pr: PullRequest; onClose: () => void }) {
+  const { t } = useInterfaceTranslation();
   const github = workspace.tasks?.source?.kind === "github";
   const [title, setTitle] = useState(pr.title);
   const [body, setBody] = useState("");
@@ -166,20 +171,20 @@ export function PrNewIssueDialog({ actions, workspace, pr, onClose }: { actions:
     else actions.linkPullRequestIssue(id, workspace.id, pr.number, { title: title.trim(), body });
   };
   const made = answer?.issue_key != null;
-  const confirm = github ? `이슈를 만들고 PR #${pr.number} 본문에 "Closes #(새 번호)"를 씁니다` : "Local 이슈를 만들어 이 PR에 잇습니다. GitHub에는 쓰지 않습니다.";
+  const confirm = t(github ? "prWork.confirmCreateGitHub" : "prWork.confirmCreateLocal", { number: String(pr.number) });
   return (
     <Dialog open onOpenChange={(next) => { if (!next) onClose(); }}>
       <DialogContent data-pr-new-issue={pr.number}>
         <form className="flex min-h-0 flex-1 flex-col" onKeyDown={submitOnCommandEnter} onSubmit={(event) => { event.preventDefault(); submit(); }}>
           <DialogHeader>
-            <DialogTitle>PR #{pr.number}의 이슈 만들기</DialogTitle>
+            <DialogTitle>{t("prWork.newIssueTitle", { number: String(pr.number) })}</DialogTitle>
             <DialogDescription className="break-words" data-pr-new-issue-confirm="true">{confirm}</DialogDescription>
           </DialogHeader>
           <DialogBody className="space-y-sm">
-            <Field label="제목">
+            <Field label={t("issue.title")}>
               <Input value={title} autoFocus disabled={working || made} maxLength={256} onChange={(event) => setTitle(event.target.value.replace(/[\r\n]+/g, " "))} data-pr-new-issue-title="true" />
             </Field>
-            <Field label="내용" aside={read?.phase === "reading" ? <span className="text-muted-foreground">PR 본문 읽는 중…</span> : null}>
+            <Field label={t("issue.content")} aside={read?.phase === "reading" ? <span className="text-muted-foreground">{t("prWork.readingBody")}</span> : null}>
               <TextArea
                 value={body}
                 rows={5}
@@ -191,15 +196,15 @@ export function PrNewIssueDialog({ actions, workspace, pr, onClose }: { actions:
                 data-pr-new-issue-body="true"
               />
             </Field>
-            {read?.phase === "failed" ? <Note tone="warn" data-pr-new-issue-body-failed="true">PR 본문을 읽지 못해 제목만 채웠습니다.</Note> : null}
+            {read?.phase === "failed" ? <Note tone="warn" data-pr-new-issue-body-failed="true">{t("prWork.bodyReadFailed")}</Note> : null}
             {failed ? <LinkFailure answer={answer} refused={refused} /> : null}
-            {working ? <Status tone="pending">{answer?.step === "body" ? "PR 본문에 쓰는 중…" : "이슈를 만드는 중…"}</Status> : null}
+            {working ? <Status tone="pending">{t(answer?.step === "body" ? "prWork.writingBody" : "issue.creating")}</Status> : null}
           </DialogBody>
           <DialogFooter>
-            <Button variant="secondary" onClick={onClose} data-pr-new-issue-cancel="true">{failed ? "닫기" : working ? "숨기기" : "그만두기"}</Button>
+            <Button variant="secondary" onClick={onClose} data-pr-new-issue-cancel="true">{t(failed ? "common.close" : working ? "issue.hide" : "prWork.cancelCreate")}</Button>
             {!working ? (
               <Button type="submit" disabled={!title.trim()} data-pr-new-issue-submit={failed ? "retry" : "create"}>
-                {failed ? retryLabel(answer, github ? "다시 만들고 쓰기" : "다시 만들기") : github ? "만들고 쓰기" : "만들고 잇기"}
+                {failed ? retryLabel(answer, t(github ? "prWork.retryCreateWrite" : "prWork.retryCreate"), t) : t(github ? "prWork.createWrite" : "prWork.createLink")}
                 <Kbd>{fieldLabel("Enter")}</Kbd>
               </Button>
             ) : null}
@@ -211,14 +216,15 @@ export function PrNewIssueDialog({ actions, workspace, pr, onClose }: { actions:
 }
 
 /**
- * `▷ 맡기기` (B15, B16, B18): the Start dialog on the pull request's branch.
+ * `▷ Assign` (B15, B16, B18): the Start dialog on the pull request's branch.
  * The worktree is the branch, shown and fixed; with no checkout of it here
  * the start makes the worktree of that branch first and says so. The first
  * prompt is what the core read of the failed checks and change requests,
- * editable; a failed read leaves it empty with why and `다시 읽기`, and never
+ * editable; a failed read leaves it empty with why and `Read again`, and never
  * blocks the start. Started, the screen goes to the agent's pane.
  */
 export function PrDelegateDialog({ actions, workspace, pr, onClose }: { actions: Actions; workspace: Workspace; pr: PullRequest; onClose: () => void }) {
+  const { t } = useInterfaceTranslation();
   const branch = pr.head_branch ?? "";
   // The checkout the core holds this pull request for, which is what the start reuses.
   const checkout = workspace.checkouts.find((row) => row.exists && row.pull_request?.url === pr.url) ?? null;
@@ -230,8 +236,8 @@ export function PrDelegateDialog({ actions, workspace, pr, onClose }: { actions:
   const read = useFeedbackRead(actions, readId, workspace.id, pr.number);
   useEffect(() => {
     if (read?.phase !== "ready" || promptEdited.current) return;
-    setPrompt(delegatePrompt({ number: pr.number, title: pr.title, branch }, read));
-  }, [read, pr.number, pr.title, branch]);
+    setPrompt(delegatePrompt({ number: pr.number, title: pr.title, branch }, read, t));
+  }, [read, pr.number, pr.title, branch, t]);
   // Whether the start makes the branch's worktree is fixed when it is asked
   // for: the worktree it makes joins the checkouts while its agent is still
   // starting, and reading `checkout` then would wait for the wrong task.
@@ -244,7 +250,7 @@ export function PrDelegateDialog({ actions, workspace, pr, onClose }: { actions:
   );
   const refused = useErrorSince(request?.at ?? null, ["pr_delegate.", "worktree.create", "task_operation.", "agent_start.", "overview.unknown_checkout"]);
   const working = request !== null && refused === null && (started === null || started.phase === "working");
-  const failure = started?.phase === "failed" ? (started.message ?? "에이전트를 시작하지 못했습니다.") : refused;
+  const failure = started?.phase === "failed" ? (started.message ?? t("prWork.startFailed")) : refused;
   useEffect(() => {
     if (started?.phase !== "ready") return;
     if (started.agent_phase) useUiStore.getState().setWatchedTask(started.id);
@@ -261,20 +267,20 @@ export function PrDelegateDialog({ actions, workspace, pr, onClose }: { actions:
       <DialogContent data-pr-delegate={pr.number}>
         <form className="flex min-h-0 flex-1 flex-col" onKeyDown={submitOnCommandEnter} onSubmit={(event) => { event.preventDefault(); submit(); }}>
           <DialogHeader>
-            <DialogTitle>PR #{pr.number} 맡기기</DialogTitle>
+            <DialogTitle>{t("prWork.delegateTitle", { number: String(pr.number) })}</DialogTitle>
             <DialogDescription className="line-clamp-2 break-words">{pr.title}</DialogDescription>
           </DialogHeader>
           <DialogBody className="space-y-sm">
-            <Field label="워크트리 · 브랜치">
+            <Field label={t("issue.worktreeBranch")}>
               <Input value={branch} mono disabled readOnly data-pr-delegate-branch="true" />
             </Field>
             {newWorktree ? (
               <Note tone="muted" data-pr-delegate-new-worktree="true">
-                이 브랜치의 워크트리를 만들고 시작합니다
+                {t("prWork.newWorktree")}
               </Note>
             ) : null}
             <AgentField agent={agent} actions={actions} disabled={working} onChange={setAgent} />
-            <Field label="첫 지시" aside={<span className="text-muted-foreground">{read?.phase === "reading" || !read ? "실패한 검사 · 리뷰 코멘트 읽는 중…" : "실패한 검사 · 리뷰 코멘트에서 채움 · 고칠 수 있음"}</span>}>
+            <Field label={t("issue.firstPrompt")} aside={<span className="text-muted-foreground">{t(read?.phase === "reading" || !read ? "prWork.readingFeedback" : "prWork.feedbackPrefilled")}</span>}>
               <TextArea
                 value={prompt}
                 rows={7}
@@ -289,20 +295,20 @@ export function PrDelegateDialog({ actions, workspace, pr, onClose }: { actions:
             {read?.phase === "failed" ? (
               <Note tone="warn" data-pr-delegate-read-failed="true">
                 <span className="flex items-center gap-sm">
-                  <span className="min-w-0 flex-1 break-words">{`검사 · 리뷰 코멘트를 읽지 못했습니다: ${read.message ?? ""}`}</span>
+                  <span className="min-w-0 flex-1 break-words">{t("prWork.feedbackReadFailed", { message: read.message ?? "" })}</span>
                   <Button type="button" variant="secondary" size="sm" onClick={() => setReadId(requestId("pr-feedback", pr.number))} data-pr-delegate-reread="true">
-                    다시 읽기
+                    {t("prWork.readAgain")}
                   </Button>
                 </span>
               </Note>
             ) : null}
             {failure ? <Note tone="error" data-pr-delegate-error="true">{failure}</Note> : null}
-            {working ? <Status tone="pending">{newWorktree ? "워크트리를 만드는 중…" : "에이전트를 시작하는 중…"}</Status> : null}
+            {working ? <Status tone="pending">{t(newWorktree ? "issue.creatingWorktree" : "prWork.startingAgent")}</Status> : null}
           </DialogBody>
           <DialogFooter>
-            <Button variant="secondary" onClick={onClose}>{working ? "숨기기" : "취소"}</Button>
+            <Button variant="secondary" onClick={onClose}>{t(working ? "issue.hide" : "common.cancel")}</Button>
             <Button type="submit" disabled={working || !branch} data-pr-delegate-submit="true">
-              {working ? "시작하는 중…" : "시작"}
+              {t(working ? "issue.starting" : "common.start")}
               <Kbd>{fieldLabel("Enter")}</Kbd>
             </Button>
           </DialogFooter>

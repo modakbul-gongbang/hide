@@ -48,7 +48,8 @@ export const sessionsEnglish = {
   "sessions.openFailed": "This session cannot be opened",
   "sessions.noReadableTurns": "This session has no readable request or answer.",
   "sessions.request": "Request",
-  "sessions.available": "Available",
+  "sessions.available": "available",
+  "sessions.notAvailable": "unavailable",
 } as const;
 
 const ko = {
@@ -98,6 +99,7 @@ const ko = {
   "sessions.noReadableTurns": "이 세션에는 읽을 수 있는 요청이나 답변이 없습니다.",
   "sessions.request": "요청",
   "sessions.available": "사용 가능",
+  "sessions.notAvailable": "사용할 수 없음",
 } satisfies Catalog<typeof sessionsEnglish>;
 
 const zhCN = {
@@ -147,6 +149,7 @@ const zhCN = {
   "sessions.noReadableTurns": "此会话没有可读取的请求或回答。",
   "sessions.request": "请求",
   "sessions.available": "可使用",
+  "sessions.notAvailable": "不可用",
 } satisfies Catalog<typeof sessionsEnglish>;
 
 const ja = {
@@ -196,6 +199,7 @@ const ja = {
   "sessions.noReadableTurns": "このセッションに読み取れる依頼や回答はありません。",
   "sessions.request": "依頼",
   "sessions.available": "利用可能",
+  "sessions.notAvailable": "利用不可",
 } satisfies Catalog<typeof sessionsEnglish>;
 
 export const sessionsCatalogs = { en: sessionsEnglish, ko, "zh-CN": zhCN, ja } satisfies Catalogs<typeof sessionsEnglish>;

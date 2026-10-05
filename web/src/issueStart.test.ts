@@ -1,8 +1,12 @@
 // The Start dialog's first name and first prompt for an issue.
 
 import { describe, expect, it } from "vitest";
+import { initializeInterfaceI18n } from "./i18n/instance";
 import { branchSlug, defaultWorktreeName, firstPrompt, namePrefix } from "./issueStart";
 import type { Task } from "./snapshot";
+
+const t = initializeInterfaceI18n("ko").getFixedT(null, "translation");
+const english = initializeInterfaceI18n("en").getFixedT(null, "translation");
 
 const github: Task = { key: "github:acme/hide#192", source: "github", id: "#192", url: null, title: "hided has no SIGTERM handler: AI children are torn down", open: true };
 const local: Task = { key: "local:/p#3", source: "local", id: "L-3", url: null, title: "Overview 재설계 v4 보드", open: true };
@@ -25,10 +29,17 @@ describe("the worktree name an issue starts with", () => {
 
 describe("the first prompt", () => {
   it("names the issue, carries its body, and asks for a closing pull request only for a GitHub issue when asked to", () => {
-    expect(firstPrompt(github, "Steps:\n1. quit", true)).toBe(
+    expect(firstPrompt(github, "Steps:\n1. quit", true, t)).toBe(
       "Issue #192를 해결해줘: hided has no SIGTERM handler: AI children are torn down\n\nSteps:\n1. quit\n\n완료되면 이 이슈를 닫는 PR을 열어줘 (PR 본문에 Closes #192).",
     );
-    expect(firstPrompt(github, "", false)).toBe("Issue #192를 해결해줘: hided has no SIGTERM handler: AI children are torn down");
-    expect(firstPrompt(local, "본문", true)).toBe("로컬 이슈 L-3를 해결해줘: Overview 재설계 v4 보드\n\n본문");
+    expect(firstPrompt(github, "", false, t)).toBe("Issue #192를 해결해줘: hided has no SIGTERM handler: AI children are torn down");
+    expect(firstPrompt(local, "본문", true, t)).toBe("로컬 이슈 L-3를 해결해줘: Overview 재설계 v4 보드\n\n본문");
+  });
+
+  it("is written in the interface language, with the issue's id and title as data", () => {
+    expect(firstPrompt(github, "Steps", true, english)).toBe(
+      "Solve issue #192: hided has no SIGTERM handler: AI children are torn down\n\nSteps\n\nWhen done, open a PR that closes this issue (put Closes #192 in the PR body).",
+    );
+    expect(firstPrompt(local, null, true, english)).toBe("Solve local issue L-3: Overview 재설계 v4 보드");
   });
 });

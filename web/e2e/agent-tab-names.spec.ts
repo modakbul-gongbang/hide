@@ -127,7 +127,7 @@ test("rename refusal and timeout preserve text for retry", async ({ page }) => {
     await expect(input).toBeFocused();
     await input.fill("다시 저장할 이름");
     await input.press("Enter");
-    const caption = page.getByText("이름을 저장하지 못했습니다 · 다시 시도", { exact: true }).first();
+    const caption = page.getByText("The name could not be saved · Retry", { exact: true }).first();
     await expect(caption).toBeVisible({ timeout: 15_000 });
     await expect(input).toHaveValue("다시 저장할 이름");
     await expect(input).toBeFocused();

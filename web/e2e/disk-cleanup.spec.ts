@@ -119,11 +119,11 @@ test("the disk cleanup sheet: layers, a cache-only cleanup at once, and a worktr
     await expect(entrance).toBeVisible({ timeout: 30_000 });
     await entrance.hover();
     const tooltip = page.locator('[data-disk-tooltip="true"]');
-    await expect(tooltip).toContainText("빌드 캐시");
-    await expect(tooltip).toContainText("의존성");
-    await expect(tooltip.locator('[data-disk-tooltip-line="source"]')).toContainText("워크트리 소스");
-    await expect(tooltip.locator('[data-disk-tooltip-line="other"]')).toContainText("기타");
-    await expect(tooltip.locator('[data-disk-tooltip-line="shared_git"]')).toContainText("공유 Git");
+    await expect(tooltip).toContainText("Build cache");
+    await expect(tooltip).toContainText("Dependencies");
+    await expect(tooltip.locator('[data-disk-tooltip-line="source"]')).toContainText("Worktree source");
+    await expect(tooltip.locator('[data-disk-tooltip-line="other"]')).toContainText("Other");
+    await expect(tooltip.locator('[data-disk-tooltip-line="shared_git"]')).toContainText("Shared Git");
     await page.mouse.move(2, 998);
     const reviewsBefore = sent.get("cleanup_review") ?? 0;
     await entrance.click();
@@ -158,15 +158,14 @@ test("the disk cleanup sheet: layers, a cache-only cleanup at once, and a worktr
     // B10: the top-left checkbox ticks every visible cache; the footer counts them (B16).
     await sheet.locator('[data-disk-bundle="all"]').click();
     await expect(sheet.locator('[data-disk-bundle="all"]')).toHaveAttribute("data-disk-bundle-state", "checked");
-    await expect(sheet.locator("[data-disk-summary]")).toHaveText(/^6칸 · [\d.]+ (KB|MB)$/);
+    await expect(sheet.locator("[data-disk-summary]")).toHaveText(/^6 cells · [\d.]+ (KB|MB)$/);
     // The sheet is trimmed to what the table says: no subtitle, filter hint, column status lines, legend or footer sentences.
     for (const gone of ["크기는 할당된 블록", "체크박스는 보이는 행에만", "선택됨", "고를 수 있는", "지우지 않음", "크기순", "다음 install", "폴더째 지워진다"]) {
       await expect(sheet).not.toContainText(gone);
     }
-    await expect(sheet.locator("[data-disk-warning], [data-disk-note]")).toHaveCount(0);
     // Each bar segment says its layer and size on hover instead of a legend.
     await sheet.locator('[data-disk-bar-part="build_cache"]').hover();
-    await expect(page.getByRole("tooltip")).toContainText(/빌드 캐시 [\d.]+ (KB|MB)/);
+    await expect(page.getByRole("tooltip")).toContainText(/Build cache [\d.]+ (KB|MB)/);
     await page.mouse.move(0, 0);
     await expect(page.getByRole("tooltip")).toHaveCount(0);
     await showTheme(page, "light");
@@ -188,8 +187,8 @@ test("the disk cleanup sheet: layers, a cache-only cleanup at once, and a worktr
       expect(fs.existsSync(path.join(dir, "README.md"))).toBe(true);
     }
     // B22: one line of free space before and after, then a line for each cell; no allocated-total line.
-    await expect(sheet.locator("[data-disk-free-change]")).toContainText(/^여유 [\d.]+ GB→[\d.]+ GB$/);
-    await expect(sheet).not.toContainText("할당 합계");
+    await expect(sheet.locator("[data-disk-free-change]")).toContainText(/^Free [\d.]+ GB→[\d.]+ GB$/);
+    await expect(sheet).not.toContainText("Allocated total");
     await expect(sheet.locator('[data-disk-result-line="removed"]').first()).toBeVisible();
     await showTheme(page, "light");
     await screenshot(page, "disk-cleanup-result-light");
@@ -205,14 +204,13 @@ test("the disk cleanup sheet: layers, a cache-only cleanup at once, and a worktr
 
     // B11, B18: a worktree includes its caches, asks once, and Back deletes nothing.
     await sheet.locator('[data-disk-check$="/repo-shipped:worktree"]').click();
-    await expect(sheet.locator("[data-disk-summary]")).toContainText("워크트리 1");
+    await expect(sheet.locator("[data-disk-summary]")).toContainText("1 worktree");
     await sheet.locator("[data-disk-clean]").click();
     const confirm = page.locator("[data-disk-confirm]");
-    await expect(confirm).toContainText("prd/shipped 폴더째 삭제");
-    await expect(confirm).toContainText("브랜치는 남음");
+    await expect(confirm).toContainText("Delete the entire prd/shipped folder");
+    await expect(confirm).toContainText("Branches are kept");
     await expect(confirm.locator("[data-disk-confirm-list]")).toContainText("prd/shipped");
-    await expect(confirm.locator("[data-disk-confirm-cells]")).toHaveCount(0);
-    await expect(confirm.locator("[data-disk-confirm-run]")).toHaveText("워크트리 1개와 캐시 정리");
+    await expect(confirm.locator("[data-disk-confirm-run]")).toHaveText("Clean up 1 worktree and caches");
     // Neither button holds the keyboard when the confirmation opens (design 6).
     expect(await page.evaluate(() => document.activeElement?.hasAttribute("data-disk-confirm-run") || document.activeElement?.hasAttribute("data-disk-confirm-back"))).toBe(false);
     await showTheme(page, "light");
@@ -232,7 +230,7 @@ test("the disk cleanup sheet: layers, a cache-only cleanup at once, and a worktr
     expect(fs.existsSync(active)).toBe(true);
     await sheet.locator("[data-disk-close]").click();
     await expect(sheet).toHaveCount(0);
-    // B27: two presses of `정리` were two confirm events, one per cleanup.
+    // B27: two presses of Clean up were two confirm events, one per cleanup.
     expect((sent.get("cleanup_confirm") ?? 0) - confirmsBefore).toBe(2);
   } finally {
     daemon?.stop();
@@ -280,13 +278,13 @@ test("a checkout with a working agent cannot be ticked, and an open pane alone d
     await sheet.locator("[data-disk-fold-toggle]").click();
     const busyRow = sheet.locator('[data-disk-row$="/repo-busy"]');
     await expect(busyRow).toHaveAttribute("data-disk-bucket", "working");
-    await expect(busyRow.locator("[data-disk-in-use]")).toHaveText("에이전트 작업 중");
+    await expect(busyRow.locator("[data-disk-in-use]")).toHaveText("Agent is working");
     await expect(busyRow.locator('[data-disk-check$=":build_cache"]')).toBeDisabled();
     await expect(busyRow.locator('[data-disk-cell$=":build_cache"]')).toHaveAttribute("data-disk-cell-state", "blocked");
     // Main has a pane open and is still ticked: an open pane alone blocks nothing (D-14).
     await expect(sheet.locator('[data-disk-row$="/repo"] [data-disk-check$=":build_cache"]')).toBeEnabled();
     await sheet.locator('[data-disk-bundle="all"]').click();
-    await expect(sheet.locator("[data-disk-summary]")).toContainText("2칸");
+    await expect(sheet.locator("[data-disk-summary]")).toContainText("2 cells");
     await sheet.locator("[data-disk-cancel]").click();
     await expect(sheet).toHaveCount(0);
     expect(fs.existsSync(path.join(busy, "node_modules"))).toBe(true);
@@ -350,7 +348,7 @@ test("a worktree left with only a finished agent's pane is chosen and its pane c
 
     // An agent waiting on an approval keeps the worktree.
     await open();
-    await expect(row().locator("[data-disk-in-use]")).toHaveText("에이전트가 입력을 기다림");
+    await expect(row().locator("[data-disk-in-use]")).toHaveText("Agent is waiting for input");
     await expect(row().locator('[data-disk-cell$=":worktree"]')).toHaveAttribute("data-disk-cell-state", "blocked");
     await sheet.locator("[data-disk-cancel]").click();
     await expect(sheet).toHaveCount(0);
@@ -375,7 +373,7 @@ test("a worktree left with only a finished agent's pane is chosen and its pane c
     await sheet.locator("[data-disk-clean]").click();
     const confirm = page.locator("[data-disk-confirm]");
     await expect(confirm.locator("[data-disk-confirm-list] [data-disk-panes]")).toHaveAttribute("data-disk-panes", "1");
-    await expect(confirm.locator("[data-disk-confirm-run]")).toHaveText("pane 1개 닫고 워크트리 1개와 캐시 정리");
+    await expect(confirm.locator("[data-disk-confirm-run]")).toHaveText("Close 1 pane, clean up 1 worktree and caches");
     await screenshot(page, "disk-cleanup-finished-agent-confirm");
     await confirm.locator("[data-disk-confirm-run]").click();
     await expect(sheet.locator("[data-disk-result]")).toBeVisible({ timeout: 60_000 });

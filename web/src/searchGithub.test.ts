@@ -1,9 +1,12 @@
 import { describe, expect, it } from "vitest";
 import { RICH } from "./gallery/cmdkSceneData";
+import { initializeInterfaceI18n } from "./i18n/instance";
 import { githubEntries } from "./search";
 import { githubRow, hasGithubProject, lastReadWords, ownAnswer, projectRead, projectToRead, startsSearch } from "./searchGithub";
 import type { Checkout, GithubSearch, SnapshotRest } from "./snapshot";
 
+const { t } = initializeInterfaceI18n("en");
+const ko = initializeInterfaceI18n("ko").t;
 const WORKSPACE = RICH.navigator!.workspaces![0]!;
 const NEVER_READ = (() => {
   const rest = structuredClone(RICH) as SnapshotRest;
@@ -37,24 +40,27 @@ describe("a project's read as its checkouts show it (B8, B9)", () => {
   it("is nothing for a project nobody asked for, even while the source says reading", () => {
     const rest = structuredClone(NEVER_READ) as SnapshotRest;
     rest.navigator!.workspaces![0]!.tasks!.source!.reading = true;
-    expect(projectRead(rest.navigator!.workspaces![0]!, new Set(), now)).toBeNull();
+    expect(projectRead(rest.navigator!.workspaces![0]!, new Set(), now, t, "en")).toBeNull();
   });
 
   it("reads while ⌘K's request has no answer yet", () => {
-    expect(projectRead(NEVER_READ.navigator!.workspaces![0]!, new Set(["w1"]), now)).toEqual({ state: "reading" });
-    expect(projectRead(WORKSPACE, new Set(["w1"]), now)).toBeNull();
+    expect(projectRead(NEVER_READ.navigator!.workspaces![0]!, new Set(["w1"]), now, t, "en")).toEqual({ state: "reading" });
+    expect(projectRead(WORKSPACE, new Set(["w1"]), now, t, "en")).toBeNull();
   });
 
   it("says a failed read with the last value's age and no reason (B9)", () => {
     const failed = structuredClone(RICH) as SnapshotRest;
     failed.navigator!.workspaces![0]!.checkouts[0]!.github = { failure_category: "network or rate limit", available: false, loading: false, stale: true, last_success_at_unix_ms: 1_000_000, unavailable_reason: "gh timed out" };
-    const read = projectRead(failed.navigator!.workspaces![0]!, new Set(["w1"]), now);
-    expect(read).toEqual({ state: "failed", tooltip: "GitHub 읽기 실패 · 5분 전 값 · 이유는 로그에" });
+    const read = projectRead(failed.navigator!.workspaces![0]!, new Set(["w1"]), now, t, "en");
+    expect(read).toEqual({ state: "failed", tooltip: "GitHub read failed · last value: 5 min. ago · reason in logs" });
+    expect(projectRead(failed.navigator!.workspaces![0]!, new Set(["w1"]), now, ko, "ko")).toEqual({ state: "failed", tooltip: "GitHub 읽기 실패 · 5분 전 값 · 이유는 로그에" });
     expect(JSON.stringify(read)).not.toContain("timed out");
   });
 
   it("says when its pull requests and issues were read", () => {
-    expect(lastReadWords(WORKSPACE, now)).toBe("5분 전 읽음");
+    expect(lastReadWords(WORKSPACE, now, t, "en")).toBe("Last read: 5 min. ago");
+    expect(lastReadWords(WORKSPACE, now, ko, "ko")).toBe("5분 전 읽음");
+    expect(lastReadWords(WORKSPACE, 1_000_000 + 30_000, t, "en")).toBe("Last read: Just now");
   });
 });
 
@@ -67,17 +73,20 @@ describe("the explicit GitHub search (B16-B19)", () => {
   });
 
   it("words the row for each state", () => {
-    expect(githubRow("sandbox", null)).toEqual({ state: "idle", label: 'GitHub에서 "sandbox" 검색' });
-    expect(githubRow("sandbox", answer({ phase: "working" })).state).toBe("working");
-    expect(githubRow("sandbox", answer({ phase: "failed" }))).toEqual({ state: "failed", label: "GitHub 검색 실패 · 다시 시도" });
-    expect(githubRow("sandbox", answer({}))).toEqual({ state: "none", label: "GitHub에도 없음" });
-    expect(githubRow("sandbox", answer({ message: "저장소 25개 중 20개만 검색했습니다." })).label).toBe("찾은 결과 없음 · 일부 저장소만 검색");
+    expect(githubRow("sandbox", null, t)).toEqual({ state: "idle", label: 'Search GitHub for "sandbox"' });
+    expect(githubRow("sandbox", answer({ phase: "working" }), t).state).toBe("working");
+    expect(githubRow("sandbox", answer({ phase: "failed" }), t)).toEqual({ state: "failed", label: "GitHub search failed · retry" });
+    expect(githubRow("sandbox", answer({}), t)).toEqual({ state: "none", label: "No results on GitHub either" });
+    expect(githubRow("sandbox", answer({ message: "Searched 20 of 25 repositories." }), t).label).toBe("No results found · only some repositories searched");
+    expect(githubRow("sandbox", null, ko)).toEqual({ state: "idle", label: 'GitHub에서 "sandbox" 검색' });
+    expect(githubRow("sandbox", answer({ phase: "failed" }), ko)).toEqual({ state: "failed", label: "GitHub 검색 실패 · 다시 시도" });
+    expect(githubRow("sandbox", answer({}), ko)).toEqual({ state: "none", label: "GitHub에도 없음" });
   });
 
   it("does not start the same query again while it runs, and does after a failure (B19)", () => {
-    expect(startsSearch(githubRow("sandbox", answer({ phase: "working" })))).toBe(false);
-    expect(startsSearch(githubRow("sandbox", answer({ phase: "failed" })))).toBe(true);
-    expect(startsSearch(githubRow("sandbox", null))).toBe(true);
+    expect(startsSearch(githubRow("sandbox", answer({ phase: "working" }), t))).toBe(false);
+    expect(startsSearch(githubRow("sandbox", answer({ phase: "failed" }), t))).toBe(true);
+    expect(startsSearch(githubRow("sandbox", null, t))).toBe(true);
   });
 
   it("drops an answer for another request or another query, so changing the query clears the results (B19)", () => {
@@ -94,7 +103,7 @@ describe("the explicit GitHub search (B16-B19)", () => {
       { kind: "pr" as const, repository: "acme/herdr-ide", number: 12, title: "Old", state: "merged", url: "https://github.com/acme/herdr-ide/pull/12" },
     ];
     const held = [{ url: "https://github.com/acme/herdr-ide/pull/275" }] as unknown as Parameters<typeof githubEntries>[1];
-    const shown = githubEntries(results, held);
+    const shown = githubEntries(results, held, t);
     expect(shown.map((entry) => entry.id)).toEqual(["github:pr:acme/herdr-ide#12"]);
     expect(shown[0]).toMatchObject({ external: true, kind: "pr", url: "https://github.com/acme/herdr-ide/pull/12" });
   });

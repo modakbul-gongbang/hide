@@ -280,7 +280,7 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     await openMobileSettings(page, daemon);
     const toggle = page.locator('[data-mobile-switch="true"]');
     await expect(toggle).toHaveAttribute("aria-checked", "false");
-    await expect(page.locator('[data-mobile-tab="true"]')).toContainText("자기가 만든 항목만 지웁니다");
+    await expect(page.locator('[data-mobile-tab="true"]')).toContainText("removes only its own entry");
     await expect(page.locator("[data-push-choice]")).toHaveCount(3);
     await expect(page.locator('[role="radio"][value="off"]')).toHaveAttribute("aria-checked", "true");
     expect(tailscale.calls()).toBe("");
@@ -292,14 +292,14 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     await expect(page.locator('[data-mobile-step-link="installed"]')).toHaveAttribute("href", "https://tailscale.com/download");
     for (const id of ["logged_in", "https", "phone"]) await expect(step(id)).toHaveAttribute("data-step-state", "waiting");
     await expect(page.locator("[data-mobile-qr]")).toHaveCount(0);
-    await expect(page.locator('[data-mobile-pairing="waiting"]')).toContainText("QR이 여기 나타납니다");
+    await expect(page.locator('[data-mobile-pairing="waiting"]')).toContainText("The QR code will appear here");
 
     // B3: installed and logged out, then HTTPS off, each seen without reopening the tab.
     tailscale.loggedOut();
     tailscale.install();
     await expect(step("installed")).toHaveAttribute("data-step-state", "ok", { timeout: 20_000 });
     await expect(step("logged_in")).toHaveAttribute("data-step-state", "failed");
-    await expect(step("logged_in")).toContainText("Tailscale 앱에서 로그인");
+    await expect(step("logged_in")).toContainText("Sign in in the Tailscale app");
     tailscale.httpsOff();
     await expect(step("https")).toHaveAttribute("data-step-state", "failed", { timeout: 20_000 });
     await expect(step("logged_in")).toContainText("mac");
@@ -312,7 +312,7 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     expect(tailscale.proxy()).toBe(daemon.origin);
     await expect(step("phone")).toHaveAttribute("data-step-state", "ok");
     await expect(page.locator("[data-mobile-url]")).toHaveAttribute("data-mobile-url", `https://${DNS}`);
-    await expect(page.locator("[data-mobile-countdown]")).toHaveText(/코드는 [45]:\d\d 후 만료/);
+    await expect(page.locator("[data-mobile-countdown]")).toHaveText(/Code expires in [45]:\d\d/);
 
     // B10: a new code voids the one before it.
     await page.locator('[data-mobile-new-code="true"]').click();
@@ -342,8 +342,8 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     await expect(phone.locator('[data-phone-connected="true"]')).toBeVisible({ timeout: 20_000 });
     await expect(phone.locator('[data-phone-install-hint="true"]')).toBeVisible();
     await expect(page.locator("[data-mobile-phones]")).toHaveAttribute("data-mobile-phones", "1");
-    await expect(page.locator("[data-mobile-phone-line]")).toHaveText("방금");
-    await expect(page.getByText("연결된 폰 · 1 / 4")).toBeVisible();
+    await expect(page.locator("[data-mobile-phone-line]")).toHaveText("Just now");
+    await expect(page.getByText("Connected phones · 1 / 4")).toBeVisible();
     // The spent code gives way to the next one while the tab is open.
     await expect.poll(async () => pairingUrl(page, daemon as Daemon)).not.toBe(pairUrl);
     // B10: the code that paired is spent.
@@ -487,7 +487,7 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     await expect(enable).toBeVisible({ timeout: 20_000 });
     await enable.tap();
     await expect(enable).toHaveCount(0, { timeout: 20_000 });
-    await expect(page.locator("[data-mobile-phone-line]")).toHaveText("방금 · 알림 받는 중");
+    await expect(page.locator("[data-mobile-phone-line]")).toHaveText("Just now · Receiving notifications");
 
     // B31, B33 (항상): two finishes; one notification for it, with no terminal content.
     await finish(two);
@@ -656,7 +656,7 @@ test("an empty list, the unreachable line, the phone limit and the seven-day rev
       fs.writeFileSync(file, JSON.stringify(current));
     });
     await openMobileSettings(page, daemon);
-    await expect(page.getByText("연결된 폰 · 4 / 4")).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText("Connected phones · 4 / 4")).toBeVisible({ timeout: 20_000 });
     const fifth = await (await phoneContext(browser)).newPage();
     contexts.push(fifth.context());
     await fifth.goto(await pairingUrl(page, daemon));
@@ -678,7 +678,7 @@ test("an empty list, the unreachable line, the phone limit and the seven-day rev
     await phoneContextA.setOffline(false);
     await expect(phone.locator('[data-phone-guidance="revoked"]')).toHaveText("이 폰의 연결이 해지됐어요. 맥에서 QR을 다시 여세요.", { timeout: 30_000 });
     await openMobileSettings(page, daemon);
-    await expect(page.getByText("연결된 폰 · 3 / 4")).toBeVisible({ timeout: 20_000 });
+    await expect(page.getByText("Connected phones · 3 / 4")).toBeVisible({ timeout: 20_000 });
   } finally {
     for (const context of contexts) await context.close();
     daemon?.stop();

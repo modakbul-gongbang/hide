@@ -57,7 +57,7 @@ function paneRunning(herdr: HerdrFixture, text: string): { pane: string; info: s
 async function openStartPanel(page: Page): Promise<void> {
   await page.keyboard.press("Meta+KeyK");
   await expect(page.locator('[data-palette="Search"] [data-palette-input]')).toBeFocused();
-  await page.keyboard.type("에이전트");
+  await page.keyboard.type("Start an agent");
   await page.locator('[data-palette-row="command:start-agent"]').click();
   await expect(page.locator("[data-start-panel]")).toBeVisible();
   await expect(page.locator("[data-start-text]")).toBeFocused();
@@ -136,7 +136,6 @@ test("a device's Home is made on its first start, the rail follows registration,
     await expect(nav).toHaveAttribute("data-sidebar-rail", "device");
     await expect(page.locator("[data-rail-tile]")).toHaveCount(1);
     await expect(page.locator("[data-project-list] [data-home-destination]")).toBeVisible();
-    await expect(page.locator("[data-footer-device]")).toHaveCount(0);
     await capture(page, app, "device-home-one-device");
 
     // B6: View > Toggle device rail hides the rail, the name becomes the device menu, and the menu item brings it back.

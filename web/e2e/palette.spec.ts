@@ -45,7 +45,7 @@ test("⌘K lists results by kind with a detail beside them, and the sidebar Sear
     await field.click();
     const input = page.locator('[data-palette="Search"] [data-palette-input]');
     await expect(input).toBeFocused();
-    await expect(input).toHaveAttribute("placeholder", "이름이나 #번호를 입력하세요");
+    await expect(input).toHaveAttribute("placeholder", "Enter a name or #number");
     await expect(page.locator("[data-palette-esc]")).toHaveText("Esc");
     await expect(page.locator("[data-cmdk]")).toHaveAttribute("data-cmdk", "open");
     await expect(headings(page)).toHaveText(["Recent"]);
@@ -111,7 +111,7 @@ test("⌘K lists results by kind with a detail beside them, and the sidebar Sear
     await page.keyboard.press(chord("search"));
     await expect(input).toBeFocused();
     await page.keyboard.type("zzzz-no-such-agent");
-    await expect(page.locator('[data-palette-state="no-match"]')).toHaveText("일치하는 항목 없음");
+    await expect(page.locator('[data-palette-state="no-match"]')).toHaveText("No matching items");
     await expect(headings(page)).toHaveCount(0);
     await expect(page.locator('[data-palette-row="github-search"]')).toHaveCount(0);
     await screenshot(page, "palette-dark-no-match");

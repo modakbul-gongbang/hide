@@ -192,7 +192,7 @@ int main(int argc, char **argv) {
 }
 `;
 
-export function pinnedHerdrVersion(): string {
+function pinnedHerdrVersion(): string {
   const manifest = path.resolve("..", "contracts/herdr-bundle.json");
   return (JSON.parse(fs.readFileSync(manifest, "utf8")) as { version: string }).version;
 }
@@ -474,7 +474,7 @@ export function continueFixtureTranscript(fixture: Pick<HerdrFixture, "root">, s
  * letters, digits, `.`, `_` and `-`, and the core's transcript read refuses
  * any other, so the pane id's `:` becomes `-`.
  */
-export function fixtureSessionId(pane: string): string {
+function fixtureSessionId(pane: string): string {
   return `fixture-${pane.replaceAll(":", "-")}`;
 }
 

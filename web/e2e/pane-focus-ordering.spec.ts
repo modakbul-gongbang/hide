@@ -181,8 +181,16 @@ function observeFocusFrames(page: Page) {
   };
 }
 
+// Headless Chromium composites in software, so each frame of xterm's WebGL
+// canvas is read back synchronously on the page's main thread (ReadPixels in
+// the layer commit), up to half a second per frame in a local trace. Those
+// stalls delay clicks and snapshot frames inside the held request's real
+// five-second budget. Focus does not depend on the terminal renderer, so these
+// cases run the DOM renderer the shell falls back to when WebGL is missing.
+test.use({ launchOptions: { args: ["--disable-webgl"] } });
+
 // Both cases exercise real terminal input/focus through the platform's Herdr.
-test("rapid pane clicks coalesce behind one request and leave keys on the last pane", { tag: ["@platform", "@flaky"], annotation: { type: "issue", description: "https://github.com/modakbul-gongbang/hide/issues/397" } }, async ({ page }) => {
+test("rapid pane clicks coalesce behind one request and leave keys on the last pane", { tag: "@platform" }, async ({ page }) => {
   const herdr = await startHerdr();
   const focusFrames = observeFocusFrames(page);
   // Two fixed bursts produce at most 32 stage records, with no input contents.

@@ -3,31 +3,31 @@
 // small fixtures. Expected answers are the PRD's Behaviors (B2, B4, B10-B16, B22).
 
 import { describe, expect, it } from "vitest";
+import { initializeInterfaceI18n } from "./i18n/instance";
 import { projectStats } from "./projectBoard";
 import {
   EMPTY_SELECTION,
   LOW_FREE_BYTES,
   SMALL_CHECKOUT_BYTES,
-  BUSY_TEXT,
+  BUSY_KEY,
   bundleRefs,
   bundleState,
-  cellReasonText,
+  cellReasonText as cellReasonTextIn,
   entranceBytes,
-  exclusionText,
+  exclusionText as exclusionTextIn,
   filterCounts,
-  footerOf,
-  gigabytes,
-  layerLines,
+  footerOf as footerOfIn,
+  layerLines as layerLinesIn,
   layoutRows,
   lowFree,
   needsConfirm,
   planOf,
   pruneSelection,
-  reasonText,
+  reasonText as reasonTextIn,
   reclaimable,
   cleanupElsewhere,
-  resultLines,
-  sheetModel,
+  resultLines as resultLinesIn,
+  sheetModel as sheetModelIn,
   toggleBundle,
   toggleCell,
   visibleRows,
@@ -37,6 +37,17 @@ import type { Checkout, CleanupCellResult, CleanupExclusionCode, CleanupInUse, C
 
 const GB = 1024 ** 3;
 const MB = 1024 ** 2;
+
+// The Korean wording is what the sheet shipped with; the model reads the same under it.
+const t = initializeInterfaceI18n("ko").getFixedT(null, "translation");
+const english = initializeInterfaceI18n("en").getFixedT(null, "translation");
+const sheetModel = (workspace: Workspace, elsewhere: Parameters<typeof sheetModelIn>[1]) => sheetModelIn(workspace, elsewhere, t);
+const footerOf = (rows: readonly SheetRow[], selection: Parameters<typeof footerOfIn>[1], state?: Parameters<typeof footerOfIn>[4]) => footerOfIn(rows, selection, t, "ko", state);
+const layerLines = (workspace: Workspace) => layerLinesIn(workspace, t);
+const resultLines = (cleanup: DiskCleanup) => resultLinesIn(cleanup, t);
+const exclusionText = (row: CleanupRow) => exclusionTextIn(row, t);
+const reasonText = (code: Parameters<typeof reasonTextIn>[0], count?: number | null) => reasonTextIn(code, count, t);
+const cellReasonText = (code: Parameters<typeof cellReasonTextIn>[0]) => cellReasonTextIn(code, t);
 
 function layers(build: number, deps: number, other = 0): DiskLayers {
   const cell = (bytes: number) => ({ bytes, folders: bytes > 0 ? 1 : 0, largest_name: bytes > 0 ? "x" : null });
@@ -201,7 +212,7 @@ describe("cell availability (B5, B6, B14, B15, B25)", () => {
     expect(cleanupElsewhere([other, mine], "p")).toBe("removing");
     expect(cleanupElsewhere([other], "other")).toBeNull();
     expect(sheetModel(mine, "removing").state).toBe("busy");
-    expect(BUSY_TEXT.removing).toBe("다른 정리가 진행 중");
+    expect(t(BUSY_KEY.removing)).toBe("다른 정리가 진행 중");
   });
 
   it("is busy while another project's review still reads, and ready again once that worker ends", () => {
@@ -210,7 +221,7 @@ describe("cell availability (B5, B6, B14, B15, B25)", () => {
     const mine = workspace([checkout("a")], null);
     expect(cleanupElsewhere([reading, mine], "p")).toBe("loading");
     expect(sheetModel(mine, "loading").state).toBe("busy");
-    expect(BUSY_TEXT.loading).toBe("다른 프로젝트를 검토하는 중");
+    expect(t(BUSY_KEY.loading)).toBe("다른 프로젝트를 검토하는 중");
     // The other review ends and stays open with nobody closing it: it no longer holds this project back.
     const finished = workspace([checkout("a")], { phase: "review" }, {}, "other");
     expect(cleanupElsewhere([finished, mine], "p")).toBeNull();
@@ -564,8 +575,13 @@ describe("result (B22)", () => {
     expect(by("worktree:/r/refused")).toMatchObject({ outcome: "failed", reason: "Git이 워크트리를 지우지 못함" });
   });
 
-  it("writes free space to one decimal", () => {
-    expect(gigabytes(18.3 * GB)).toBe("18.3 GB");
-    expect(gigabytes(1.6 * GB)).toBe("1.6 GB");
+  it("words the same model in the interface language", () => {
+    const rows = sheetModelIn(workspace([checkout("a", { working: 1 }), checkout("b")], { phase: "review", usage_ready: true }), null, english).rows;
+    expect(rows[0]?.inUse).toBe("Agent is working");
+    expect(footerOfIn(rows, EMPTY_SELECTION, english, "en").summary).toBe("No cells selected");
+    expect(reasonTextIn("dirty", 3, english)).toBe("3 changed files");
+    expect(reasonTextIn("dirty", 1, english)).toBe("1 changed file");
+    expect(exclusionTextIn(core("/r/x", { in_use: { code: "port", name: null, port: 5173 } }), english)).toBe("Server on port 5173");
+    expect(cellReasonTextIn("symlink", english)).toBe("Skipped a symbolic link");
   });
 });

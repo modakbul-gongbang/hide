@@ -19,7 +19,7 @@ export const boardEnglish = {
   "board.noMatch": "No issues match the filter",
   "board.clearFilter": "Clear filter",
   "board.mergedPr": "PR #{{number}} merged",
-  "board.mode.label": "Issue view mode",
+  "board.mode.label": "Tasks mode",
   "board.mode.board": "Board",
   "board.mode.list": "List",
   "board.mode.dependencies": "Dependencies",
@@ -52,6 +52,13 @@ export const boardEnglish = {
   "board.prGroup.fixing": "Agent is fixing",
   "board.prGroup.blocked": "CI failed · no agent assigned",
   "board.prGroup.merged": "Recently merged",
+  "board.stage.done": "Done",
+  "board.unit.open": "open",
+  "board.unit.today": "today",
+  "board.turn.question": "Question",
+  "board.prLineage": "Issue and agent lineage of this PR",
+  "board.showOnPrsTab": "View on the PRs tab",
+  "board.openPr": "Open PR",
 } as const;
 
 const ko = {
@@ -73,7 +80,7 @@ const ko = {
   "board.noMatch": "필터에 맞는 이슈 없음",
   "board.clearFilter": "필터 지우기",
   "board.mergedPr": "PR #{{number}} 머지",
-  "board.mode.label": "이슈 보기 방식",
+  "board.mode.label": "태스크 보기 방식",
   "board.mode.board": "보드",
   "board.mode.list": "목록",
   "board.mode.dependencies": "의존 관계",
@@ -106,6 +113,13 @@ const ko = {
   "board.prGroup.fixing": "에이전트가 고치는 중",
   "board.prGroup.blocked": "CI 실패 · 맡은 에이전트 없음",
   "board.prGroup.merged": "최근 머지",
+  "board.stage.done": "완료",
+  "board.unit.open": "열림",
+  "board.unit.today": "오늘",
+  "board.turn.question": "질문",
+  "board.prLineage": "이 PR의 이슈와 에이전트 계보",
+  "board.showOnPrsTab": "PRs 탭에서 보기",
+  "board.openPr": "PR 열기",
 } satisfies Catalog<typeof boardEnglish>;
 
 const zhCN = {
@@ -127,7 +141,7 @@ const zhCN = {
   "board.noMatch": "没有符合筛选条件的议题",
   "board.clearFilter": "清除筛选",
   "board.mergedPr": "PR #{{number}} 已合并",
-  "board.mode.label": "议题视图模式",
+  "board.mode.label": "任务视图模式",
   "board.mode.board": "看板",
   "board.mode.list": "列表",
   "board.mode.dependencies": "依赖关系",
@@ -160,6 +174,13 @@ const zhCN = {
   "board.prGroup.fixing": "智能体正在修复",
   "board.prGroup.blocked": "CI 失败 · 未分配智能体",
   "board.prGroup.merged": "最近合并",
+  "board.stage.done": "已完成",
+  "board.unit.open": "打开",
+  "board.unit.today": "今天",
+  "board.turn.question": "提问",
+  "board.prLineage": "此 PR 的议题和智能体谱系",
+  "board.showOnPrsTab": "在 PR 标签页中查看",
+  "board.openPr": "打开 PR",
 } satisfies Catalog<typeof boardEnglish>;
 
 const ja = {
@@ -181,7 +202,7 @@ const ja = {
   "board.noMatch": "フィルターに一致する課題はありません",
   "board.clearFilter": "フィルターをクリア",
   "board.mergedPr": "PR #{{number}}をマージ",
-  "board.mode.label": "課題の表示モード",
+  "board.mode.label": "タスクの表示モード",
   "board.mode.board": "ボード",
   "board.mode.list": "リスト",
   "board.mode.dependencies": "依存関係",
@@ -214,6 +235,13 @@ const ja = {
   "board.prGroup.fixing": "エージェントが修正中",
   "board.prGroup.blocked": "CI 失敗 · 担当エージェントなし",
   "board.prGroup.merged": "最近のマージ",
+  "board.stage.done": "完了",
+  "board.unit.open": "オープン",
+  "board.unit.today": "今日",
+  "board.turn.question": "質問",
+  "board.prLineage": "この PR の課題とエージェントの系譜",
+  "board.showOnPrsTab": "PR タブで表示",
+  "board.openPr": "PR を開く",
 } satisfies Catalog<typeof boardEnglish>;
 
 export const boardCatalogs = { en: boardEnglish, ko, "zh-CN": zhCN, ja } satisfies Catalogs<typeof boardEnglish>;

@@ -1,4 +1,4 @@
-# Version updates for the three ecosystems this repository builds from. Each
+# Version updates for the two ecosystems it covers, cargo and GitHub Actions. Each
 # waits seven days after a release before proposing it, so a version that is
 # yanked or patched within its first week never reaches a pull request here.
 # The bundled Herdr runtime is not a package; herdr-update.yml owns that pin.

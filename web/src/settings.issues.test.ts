@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { githubAccess, githubAccessLine, issueSourceChoices } from "./settings";
+import { initializeInterfaceI18n } from "./i18n/instance";
+import { githubAccess, githubAccessLine as githubAccessLineIn, issueSourceChoices as issueSourceChoicesIn } from "./settings";
 import type { Checkout, GithubStatus, TaskSource, Workspace } from "./snapshot";
+
+// Korean is the wording Settings > Issues shipped with; the rules read the same under it.
+const t = initializeInterfaceI18n("ko").getFixedT(null, "translation");
+const english = initializeInterfaceI18n("en").getFixedT(null, "translation");
+const githubAccessLine = (access: Parameters<typeof githubAccessLineIn>[0]) => githubAccessLineIn(access, t);
+const issueSourceChoices = (workspace: Workspace, stored: string | undefined) => issueSourceChoicesIn(workspace, stored, t);
 
 const status = (patch: Partial<GithubStatus>): GithubStatus => ({
   failure_category: null,
@@ -85,5 +92,12 @@ describe("Settings › Issues", () => {
         { id: "local", label: "Local" },
       ],
     });
+  });
+
+  it("words the same choices and the gh state in English", () => {
+    expect(githubAccessLineIn({ state: "failed", category: "not logged in", reason: null }, english).text).toBe("Not signed in to gh");
+    expect(githubAccessLineIn({ state: "failed", category: "from a newer gh", reason: null }, english).text).toBe("from a newer gh");
+    const onDefault = project({ tasks: { source: source({}), tasks: [], overflow: false } });
+    expect(issueSourceChoicesIn(onDefault, undefined, english).options.map((option) => option.label)).toEqual(["Automatic (GitHub)", "GitHub · acme/app", "Local"]);
   });
 });

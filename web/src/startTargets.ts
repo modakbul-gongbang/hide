@@ -4,12 +4,11 @@
 // listed but cannot be chosen. A target is never remembered: the default is
 // read from the page when the panel opens, so nothing here is state.
 
+import type { TFunction } from "i18next";
 import { remoteContext } from "./remote";
 import type { Checkout, Device, SnapshotRest, Workspace } from "./snapshot";
 import { frontCheckout } from "./snapshot";
 import type { Screen } from "./ui";
-
-export const NOT_CONNECTED = "연결 안 됨";
 
 type TargetBase = {
   /** Unique across devices; the menu's value. */
@@ -17,7 +16,7 @@ type TargetBase = {
   deviceId: string;
   label: string;
   /** Why the target cannot be chosen now, or null. */
-  disabled: string | null;
+  disabled: "not_connected" | null;
 };
 
 export type StartTarget =
@@ -46,12 +45,12 @@ function deviceWorkspaces(rest: SnapshotRest, device: Device): { workspaces: Wor
   return { workspaces: session?.workspaces ?? [], connected: status?.state === "connected" && session !== null };
 }
 
-function groupOf(rest: SnapshotRest, device: Device, front: boolean): TargetGroup {
+function groupOf(rest: SnapshotRest, device: Device, front: boolean, t: TFunction<"translation">): TargetGroup {
   const { workspaces, connected } = deviceWorkspaces(rest, device);
-  const disabled = connected ? null : NOT_CONNECTED;
+  const disabled = connected ? null : "not_connected";
   // Only the front device's items go unprefixed: the trigger already sits where that device is.
   const prefix = front ? "" : `${device.label} · `;
-  const items: StartTarget[] = [{ kind: "home", key: homeKey(device.id), deviceId: device.id, label: `${prefix}Home`, disabled }];
+  const items: StartTarget[] = [{ kind: "home", key: homeKey(device.id), deviceId: device.id, label: `${prefix}${t("common.home")}`, disabled }];
   for (const workspace of workspaces) {
     if (workspace.is_home || workspace.temporary) continue;
     for (const checkout of workspace.checkouts) {
@@ -101,13 +100,13 @@ function frontKey(rest: SnapshotRest, screen: Screen | null, noProject: boolean,
  * Home is the default. A device's own Home screen names its device, which is
  * then the front device.
  */
-export function startTargets(rest: SnapshotRest | null, screen: Screen | null, settings = false, projectId: string | null = null): StartTargets {
+export function startTargets(rest: SnapshotRest | null, screen: Screen | null, t: TFunction<"translation">, settings = false, projectId: string | null = null): StartTargets {
   if (!rest) return { groups: [], defaultKey: null };
   const devices = rest.navigator?.devices?.length ? rest.navigator.devices : [LOCAL];
   const named = screen?.kind === "main" ? screen.deviceId : undefined;
   const frontId = named && devices.some((device) => device.id === named) ? named : (remoteContext(rest)?.device.id ?? "local");
   const ordered = [...devices.filter((device) => device.id === frontId), ...devices.filter((device) => device.id !== frontId)];
-  const groups = ordered.map((device) => groupOf(rest, device, device.id === frontId));
+  const groups = ordered.map((device) => groupOf(rest, device, device.id === frontId, t));
   const items = groups.flatMap((group) => group.items);
   const usable = (key: string) => items.some((item) => item.key === key && item.disabled === null);
   const front = groups[0];
