@@ -161,9 +161,8 @@ A piece that another open change is still building is marked as pending with the
    If the product has no signal for the readiness the next step needs, add one to the product (a data attribute, a diagnostic) in the same pull request.
    A signal added for a test is still a product contract: it is an attribute or a diagnostic, not a banner ([UI_BEHAVIOR.md](UI_BEHAVIOR.md)).
 3. **Fix the order with a gate when two events race.**
-   [The test decides the order](#the-test-decides-the-order) owns the rule; `focusGate` in `web/e2e/pane-focus-ordering.spec.ts` is the reference.
-   It holds `pane.focus` only, and only while armed.
-   Pending: a change in progress (no pull request yet) generalizes it into a shared gate that can hold any Herdr method; once that merges, import the shared gate and do not write a second proxy.
+   [The test decides the order](#the-test-decides-the-order) owns the rule; `herdrGate` in `web/e2e/herdr-gate.ts` is the shared gate and `web/e2e/pane-focus-ordering.spec.ts` is the reference use.
+   It forwards every request to the pinned Herdr, records what arrived (`params`, `maximum`), and holds the next request of the one method `arm` names until the test calls `release`; import it and do not write a second proxy.
 4. **Control UI timers with `page.clock`, not with a wait.**
    A timer the page owns (a toast timeout, a debounce, a hover delay) is advanced with `page.clock.install()` and `page.clock.fastForward()`.
    Why: waiting out a 3-second timer costs 3 seconds on every run and still races a slow runner.
