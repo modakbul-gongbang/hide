@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
-import type { ServerFrame, StartCatalog } from "./protocol";
+import { initializeInterfaceI18n } from "../i18n/instance";
+import { noticeText, type ServerFrame, type StartCatalog } from "./protocol";
 import { NO_CHOICE, mayHaveStarted, modelsOf, selectionOf, startFailure, startProblem, targetText } from "./start";
 import { CLOSED_SHEET, applyFrame, patch, usePhone } from "./store";
 
@@ -19,6 +20,7 @@ const FRAME = `{
 }`;
 
 const catalog = JSON.parse(FRAME) as StartCatalog;
+const korean = initializeInterfaceI18n("ko").getFixedT(null, "translation");
 
 describe("selectionOf", () => {
   it("defaults to This Mac's Home with the remembered kind and its model", () => {
@@ -63,10 +65,10 @@ describe("startProblem", () => {
 
 describe("startFailure", () => {
   it("names the core's refusals and never shows a raw kind", () => {
-    expect(startFailure("task_operation.busy")).toContain("진행 중");
-    expect(startFailure("home.conflict")).toContain("~/hide");
-    expect(startFailure("something.new")).toBe("시작하지 못했어요. 다시 시작하세요.");
-    expect(startFailure(null)).toBe("시작하지 못했어요. 다시 시작하세요.");
+    expect(noticeText(korean, startFailure("task_operation.busy"))).toContain("진행 중");
+    expect(noticeText(korean, startFailure("home.conflict"))).toContain("~/hide");
+    expect(noticeText(korean, startFailure("something.new"))).toBe("시작하지 못했어요. 다시 시작하세요.");
+    expect(noticeText(korean, startFailure(null))).toBe("시작하지 못했어요. 다시 시작하세요.");
   });
 });
 

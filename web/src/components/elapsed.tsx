@@ -1,5 +1,5 @@
 import { useSyncExternalStore, type HTMLAttributes } from "react";
-import { useInterfaceTranslation } from "../i18n/client";
+import { useInterfaceTranslation } from "../i18n/translator";
 import { formatUnit } from "../i18n/format";
 import { requireInterfaceLanguage, type InterfaceLanguage } from "../i18n/locale";
 

@@ -186,7 +186,7 @@ export function openDetail(key: AgentKey): void {
   send({ type: "open", device_id: key.device_id, pane_id: key.pane_id, view });
 }
 
-/** 대화 or 터미널: hided reads only what the phone shows. */
+/** Conversation or terminal: hided reads only what the phone shows. */
 export function setView(view: DetailView): void {
   const detail = usePhone.getState().detail;
   if (!detail || detail.view === view) return;
@@ -357,7 +357,7 @@ function onStartResult(frame: Extract<ServerFrame, { type: "start_result" }>): v
   }, STARTED_WAIT_MS);
 }
 
-/** The user tapped 연결 on the pairing screen (B11). */
+/** The user tapped Connect on the pairing screen (B11). */
 export function pairNow(): void {
   const pair = usePhone.getState().pair;
   if (!pair) return;
