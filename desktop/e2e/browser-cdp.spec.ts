@@ -146,12 +146,10 @@ async function targets(capability: Capability): Promise<Target[]> {
 }
 async function expandViews(shell: Page): Promise<void> {
   await fitWindow(app!, { width: 1024, height: 640 });
-  await shell.locator("[data-workspace-location]").click({ button: "right" });
-  await shell.locator('[data-menu-item="panel:expanded"]').click();
-  await expect(shell.locator("[data-workspace-screen]")).toHaveAttribute("data-panel", "expanded");
-  const tools = shell.locator('[data-tools-toggle="on"]');
-  if (await tools.count()) await tools.click();
-  await expect(shell.locator("[data-workspace-tools]")).toHaveCount(0);
+  const views = shell.locator('[data-column="views"]');
+  if ((await views.count()) === 0) await shell.locator('[data-column-toggle="views"]').click();
+  await expect(views).toBeVisible();
+  await expect(shell.locator('[data-column="tools"]')).toHaveCount(0);
 }
 /** Attest the real Chromium IDs through each candidate WebContents itself. */
 async function excludedRendererIds(foreignUrl: string): Promise<string[]> {
