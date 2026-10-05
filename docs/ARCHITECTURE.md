@@ -258,7 +258,11 @@ When no workspace is bound to the checkout but an unbound one already sits in it
 A newly opened owner's first tab is the new tab; an owner already open gets `tab.create`.
 A workspace Herdr newly opened is renamed as the sidebar names the checkout (a linked worktree by its branch, the primary checkout and a plain folder by the project) with `workspace.rename`; `worktree.open` carries no label, because Herdr applies one to a workspace that was already open too, and an operator's workspace is never renamed.
 A refusal fails the request through the existing tab-creation failure and Retry, with the checkout and reason in the diagnostic log (`tab.control.failed`, `owner.mark_failed`), and nothing is created in any other workspace.
-A tab already in a workspace that is not the owner stays under the checkout its pane cwd names and is never moved (`pane.move` would change its pane id and cut its lineage, read and sleep state); the protected primary close's replacement shell and a delegated child's own tab stay in their workspace.
+A tab Hide created belongs to the checkout it was created for, never to the checkout its pane cwd names: a new pane reports the cwd it was born with until its shell has entered the start folder, and Herdr sends no event when that settles, so a pane-cwd read put a new tab under another checkout until an unrelated publish (#400).
+The core keeps the checkout from the creation's acknowledgment (`CreateTab` and `OpenOwner` with their created tab id, at most 64 tabs, reported to the diagnostic log past that) until the session has carried the tab and then lost it, and when the session placed the tab before the acknowledgment arrived the local coordinator republishes once on its next operation tick.
+The record is runtime only, so after hided restarts a tab Hide created is placed like any other; a checkout no longer in the catalog also falls back to that rule.
+Any other tab, one made outside Hide by Herdr, a shell or another tool, belongs to the checkout its first pane's cwd names.
+A tab already in a workspace that is not the owner stays in that workspace and is never moved (`pane.move` would change its pane id and cut its lineage, read and sleep state); the protected primary close's replacement shell and a delegated child's own tab stay in their workspace.
 Tools outside Hide, such as sasu dispatch, choose their own workspace; `hide agent spawn` uses the core's checkout and device start paths.
 
 What an agent has spawned in-process is not on Herdr's wire at all.

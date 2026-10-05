@@ -1162,6 +1162,13 @@ pub struct Runtime {
     /// A shell-requested read-only `agent.list` refresh, drained by the
     /// coordinator on its next pass.
     status_refresh_requested: bool,
+    /// The checkout each tab Hide created was created for, keyed by the tab
+    /// id Herdr acknowledged; it decides the tab's checkout instead of the
+    /// pane cwd (`session.rs`, `CreatedTabCheckout`).
+    created_tab_checkouts: BTreeMap<String, session::CreatedTabCheckout>,
+    /// An acknowledgment arrived for a tab the session had already placed
+    /// under another checkout, so the local coordinator republishes once.
+    created_tab_republish_requested: bool,
     next_async_operation_id: u64,
     /// Panes that were scrolled before any view reported their size. One
     /// diagnostic answers for the whole wait; a wheel burst against a pane
@@ -1697,6 +1704,8 @@ impl Runtime {
             reopen_in_flight: None,
             live_generation: 0,
             status_refresh_requested: false,
+            created_tab_checkouts: BTreeMap::new(),
+            created_tab_republish_requested: false,
             next_async_operation_id: 0,
             #[cfg(test)]
             suppress_terminal_session_workers: false,
