@@ -332,7 +332,7 @@ function AgentMarks({ row, place, onUnfold, handlers }: { row: PrRow; place: str
       {row.agents.slice(0, MARKS).map((agent) => {
         const said = rowLine(agent);
         return (
-          <AgentMessagePopover key={agent.pane_id} agent={agent} place={place} fallback={said?.text ?? agent.identity_label} tone={said ? lineTone(said, agent.demand) : "text-muted-foreground"} onOpen={() => handlers.openAgent(agent.pane_id)}>
+          <AgentMessagePopover key={agent.pane_id} agent={agent} place={place} fallback={said?.text ?? agent.identity_label} tone={said ? lineTone(said, agent) : "text-muted-foreground"} onOpen={() => handlers.openAgent(agent.pane_id)}>
             <button type="button" aria-label={agent.identity_label} className="inline-flex rounded-xs outline-none focus-visible:ring-1 focus-visible:ring-ring" onClick={own(() => (one ? handlers.openAgent(agent.pane_id) : onUnfold()))} data-pr-agent={agent.pane_id}>
               <StatusMark symbol={agent.symbol} className={markTone(agent)} />
             </button>
