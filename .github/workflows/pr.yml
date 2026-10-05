@@ -12,11 +12,13 @@
 # claims plan every lane; main's full run is the net under a lane a pull
 # request left out.
 #
-# A draft pull request runs the `plan` job only: the lanes wait for the pull
-# request to be marked ready for review, and `verify` is skipped meanwhile.
-# GitHub itself refuses to merge a draft, so the skipped check opens no way
-# around the gate; the ready-for-review run plans and checks every lane as
-# for any pull request.
+# A draft pull request runs the `plan` job and `verify` only: the lanes wait
+# for the pull request to be marked ready for review, and `verify` fails with
+# "draft: lanes not run" until then. It must fail rather than be skipped: a
+# skipped required check counts as passed, and `verify` waits on the lanes, so
+# right after the pull request is marked ready the draft run's skipped `verify`
+# would be the only check on that commit and the pull request could merge before
+# the ready run's lanes start. A failed `verify` blocks it until that run ends.
 #
 # Each gate here has a local command in CONTRIBUTING.md under "CI gates".
 #
@@ -46,7 +48,7 @@ name: verify
 
 on:
   pull_request:
-    # `ready_for_review` starts the run a draft skipped.
+    # `ready_for_review` starts the run that plans and runs the lanes.
     types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
@@ -529,7 +531,7 @@ jobs:
   verify:
     name: verify
     needs: [plan, policy, rust, web-checks, desktop-checks, os-contract, windows-check, windows-e2e, web-e2e, web-e2e-platform, desktop-e2e]
-    if: ${{ always() && github.event.pull_request.draft != true }}
+    if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

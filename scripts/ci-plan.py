@@ -245,8 +245,9 @@ def changed_entries(base, head, root=ROOT):
 
 def plan(event, base, head, root=ROOT, crates=None, draft=False):
     if draft:
-        # A draft is not a merge candidate: only this job runs, and marking
-        # the pull request ready for review starts the run that plans lanes.
+        # A draft is not a merge candidate: no lane runs, `aggregate` fails
+        # `verify` for it, and marking the pull request ready for review
+        # starts the run that plans lanes.
         return {"full": False, "lanes": [], "rust_packages": [], "reasons": {}, "draft": True}
     if crates is None:
         try:
@@ -282,6 +283,10 @@ def aggregate(needs):
         raise ValueError(f"verify's needs do not match the lanes: missing {missing}, unknown {unknown}")
     if needs["plan"]["result"] != "success":
         raise ValueError(f"plan: {needs['plan']['result']}")
+    # A skipped required check counts as passed, so a draft's `verify` fails
+    # instead; the run that follows marking it ready replaces this one.
+    if needs["plan"]["outputs"].get("draft") == "true":
+        raise ValueError("draft: lanes not run, mark ready for review")
     planned = json.loads(needs["plan"]["outputs"]["lanes"])
     if not planned or not set(planned) <= set(LANES):
         raise ValueError(f"plan named no lane or an unknown one: {planned}")
@@ -327,6 +332,7 @@ def main():
             with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
                 output.write(f"lanes={json.dumps(result['lanes'])}\n")
                 output.write(f"full={str(result['full']).lower()}\n")
+                output.write(f"draft={str(result.get('draft', False)).lower()}\n")
                 output.write(f"rust-packages={json.dumps(result['rust_packages'])}\n")
         if os.environ.get("GITHUB_STEP_SUMMARY"):
             with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as output:
