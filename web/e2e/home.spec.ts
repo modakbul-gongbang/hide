@@ -12,6 +12,7 @@ import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { enterWorkspace, screenshot } from "./wire";
 import { chord } from "./chords";
+import { toPage } from "../../desktop/src/main/wirePath";
 
 test.describe.configure({ timeout: 120_000 });
 
@@ -79,7 +80,8 @@ async function recordFailure(page: Page, herdr: HerdrFixture, daemon: Daemon | n
   await test.info().attach("home-diagnostics", { path: file, contentType: "application/json" });
 }
 
-test("Home's + makes ~/hide with a link per project and opens a tab there", async ({ page }) => {
+/** Home's `+` pressed on a pinned project: `~/hide` is made and a tab is open in it, Herdr's pane included. */
+async function inOpenedHome(page: Page, check: (home: string, herdr: HerdrFixture) => Promise<void>): Promise<void> {
   await page.setViewportSize({ width: 1280, height: 800 });
   const herdr = await startHerdr({ agents: false });
   let daemon: Daemon | null = null;
@@ -94,22 +96,12 @@ test("Home's + makes ~/hide with a link per project and opens a tab there", asyn
 
     await openHomeTab(page);
     // B17: the tab opens in Home once Home's sync answered, so everything the
-    // sync writes is on disk by the time Herdr has a pane there.
+    // sync writes is on disk by the time Herdr has a pane there. Herdr spells a
+    // pane's folder as the system does, so both sides are read as the wire spells it.
     await expect
-      .poll(() => fs.existsSync(home) && JSON.stringify(herdr.run(["api", "snapshot"])).includes(fs.realpathSync(home)), { timeout: 30_000 })
+      .poll(() => fs.existsSync(home) && panesAt(herdr, toPage(fs.realpathSync(home))), { timeout: 30_000 })
       .toBe(true);
-    await expect(page.locator("[data-workspace-screen]")).toBeVisible();
-    for (const file of [".hide-home.json", "AGENTS.md", "CLAUDE.md"]) expect(fs.existsSync(path.join(home, file))).toBe(true);
-    const link = path.join(home, "fixture");
-    expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
-    expect(fs.realpathSync(link)).toBe(fs.realpathSync(path.join(herdr.root, "fixture")));
-
-    // The Home is still no project (B16).
-    await expect(page.locator("[data-home-count]")).toHaveText("1 project");
-    await expect(page.locator("nav[data-sidebar]").getByRole("button", { name: /^(hide|Home)$/ })).toHaveCount(0);
-    // The path back names Home and its folder, never Home as a project.
-    await expect(page.locator('nav[aria-label="Location"]')).toHaveText("Home/~/hide");
-    await screenshot(page, "home-tab-opened");
+    await check(home, herdr);
   } catch (error) {
     await recordFailure(page, herdr, daemon);
     throw error;
@@ -117,6 +109,43 @@ test("Home's + makes ~/hide with a link per project and opens a tab there", asyn
     daemon?.stop();
     herdr.stop();
   }
+}
+
+/** Whether a pane of Herdr's snapshot is in `folder` (a wire spelling) or below it. */
+function panesAt(herdr: HerdrFixture, folder: string): boolean {
+  const snapshot = herdr.run(["api", "snapshot"]) as HerdrSnapshot;
+  const onWire = (native: string | null | undefined): string => {
+    if (!native) return "";
+    try {
+      return toPage(native);
+    } catch {
+      return "";
+    }
+  };
+  return snapshot.result.snapshot.panes.some((pane) => [pane.cwd, pane.foreground_cwd].some((cwd) => onWire(cwd).startsWith(folder)));
+}
+
+test("Home's + makes ~/hide with its guide files and opens a tab there", async ({ page }) => {
+  await inOpenedHome(page, async (home) => {
+    await expect(page.locator("[data-workspace-screen]")).toBeVisible();
+    for (const file of [".hide-home.json", "AGENTS.md", "CLAUDE.md"]) expect(fs.existsSync(path.join(home, file))).toBe(true);
+
+    // The Home is still no project (B16).
+    await expect(page.locator("[data-home-count]")).toHaveText("1 project");
+    await expect(page.locator("nav[data-sidebar]").getByRole("button", { name: /^(hide|Home)$/ })).toHaveCount(0);
+    // The path back names Home and its folder, never Home as a project.
+    await expect(page.locator('nav[aria-label="Location"]')).toHaveText("Home/~/hide");
+    await screenshot(page, "home-tab-opened");
+  });
+});
+
+// @platform: The link Home makes to a project: a symbolic link on macOS and Linux, a junction on Windows.
+test("Home's ~/hide holds a link to each registered project", { tag: "@platform" }, async ({ page }) => {
+  await inOpenedHome(page, async (home, herdr) => {
+    const link = path.join(home, "fixture");
+    expect(fs.lstatSync(link).isSymbolicLink()).toBe(true);
+    expect(fs.realpathSync(link)).toBe(fs.realpathSync(path.join(herdr.root, "fixture")));
+  });
 });
 
 test("a ~/hide that is not Hide's is left alone, and the reason shows under the Home row and in the start panel", async ({ page }) => {
