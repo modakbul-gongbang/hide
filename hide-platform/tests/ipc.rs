@@ -242,6 +242,55 @@ fn bind_keeps_a_regular_file_at_the_path() {
     assert_eq!(std::fs::read(&path).unwrap(), b"mine");
 }
 
+#[test]
+fn a_listener_with_a_full_backlog_is_still_live_to_a_second_bind() {
+    // macOS refuses a connect the same way for a dead socket and for a live
+    // listener whose queue is full (#403), so the refusal cannot tell them
+    // apart. Nobody accepts and the clients stay, so the queue fills where
+    // the system's queue is small; Linux queues every one and Windows waits,
+    // and the answer is the same.
+    const PAST_EVERY_SMALL_BACKLOG: usize = 300;
+    let (_folder, path) = endpoint();
+    let first = LocalListener::bind(&path).unwrap();
+    let mut queued = Vec::new();
+    while queued.len() < PAST_EVERY_SMALL_BACKLOG {
+        match LocalStream::connect(&path) {
+            Ok(client) => queued.push(client),
+            Err(_) => break,
+        }
+    }
+    let error = LocalListener::bind(&path).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::AddrInUse, "{error:?}");
+    assert!(
+        is_endpoint(&path).unwrap(),
+        "the live listener's socket was removed"
+    );
+
+    // The first listener still serves: it is not a replaced one.
+    let closer = first.closer();
+    let server = serve_lines(first);
+    for (index, mut client) in queued.into_iter().enumerate() {
+        client.write_all(b"queued\n").unwrap();
+        assert_eq!(read_line(&mut client), "QUEUED\n", "queued connect {index}");
+    }
+    closer.close();
+    server.join().unwrap();
+}
+
+#[test]
+fn a_listener_leaves_nothing_but_its_path_and_a_dropped_one_leaves_nothing() {
+    // Whatever bind uses to know a listener is alive goes with the listener.
+    let (folder, path) = endpoint();
+    let listener = LocalListener::bind(&path).unwrap();
+    drop(listener);
+    let left: Vec<_> = std::fs::read_dir(folder.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert!(left.is_empty(), "left behind: {left:?}");
+    drop(LocalListener::bind(&path).unwrap());
+}
+
 /// Serves `listener` until it is closed: answers each line in capitals, and
 /// passes over a stream whose client already left.
 fn serve_lines(listener: LocalListener) -> thread::JoinHandle<()> {

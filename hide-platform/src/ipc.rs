@@ -19,7 +19,10 @@
 //!   that is blocked, with `Ok(0)`; later reads return `Ok(0)` and later
 //!   writes fail with `BrokenPipe`.
 //! - [`LocalListener::bind`] fails with `AddrInUse` while another listener
-//!   answers at the path, and replaces what a dead one left behind.
+//!   lives at the path, whether or not its queue is full (#403), and replaces
+//!   what a dead one left behind. A listener is alive while it holds a lock
+//!   on `<path>.lock`, which the kernel ends with the process and the
+//!   listener's drop removes along with its path.
 //! - Clients that connect and leave never hold up the next connect, whether
 //!   or not anyone is in `accept`, up to the listener's backlog (#315): a
 //!   socket's queue on Unix, 64 connections plus the listening instances on
@@ -232,6 +235,9 @@ pub struct LocalListener {
     path: PathBuf,
     #[cfg(windows)]
     marker: String,
+    // Last, so it is released after the socket is gone: a bind that finds the
+    // lock free finds no listener's socket either.
+    _presence: Presence,
 }
 
 impl fmt::Debug for LocalListener {
@@ -251,6 +257,10 @@ impl LocalListener {
         if let Some(parent) = path.parent() {
             fs::create_dir_all(parent)?;
         }
+        // Held from before the leftover check to the end of the listener, so
+        // two binds at one path take turns and a live listener is known by
+        // its lock, not by how a connect to it fails.
+        let presence = Presence::claim(path)?;
         clear_leftover(path)?;
         let inner = sys::Listener::bind(path)?;
         #[cfg(windows)]
@@ -260,6 +270,7 @@ impl LocalListener {
             path: path.to_path_buf(),
             #[cfg(windows)]
             marker,
+            _presence: presence,
         })
     }
 
@@ -328,11 +339,80 @@ pub fn is_endpoint(path: &Path) -> io::Result<bool> {
     fs::symlink_metadata(path).map(|metadata| sys::is_leftover_kind(&metadata))
 }
 
+/// An exclusive lock on `<endpoint>.lock`, held by a listener from before it
+/// binds until it is dropped.
+///
+/// A refused connect cannot say whether a listener lives: macOS refuses it for
+/// a dead socket and for a live listener whose queue is full alike (#403). The
+/// kernel ends a lock with its holder, whatever way that holder ends, so a
+/// held lock means a live listener and a free one means none.
+struct Presence {
+    path: PathBuf,
+    _lock: crate::fs::lock::Lock,
+}
+
+impl Presence {
+    /// How often a claim opens the lock file again because a listener ending
+    /// at that moment removed it. Past it, something binds and drops at this
+    /// path without pause, which is reported rather than waited out.
+    const REOPENS: usize = 8;
+
+    /// `AddrInUse` while another listener holds the lock.
+    fn claim(endpoint: &Path) -> io::Result<Self> {
+        use crate::fs::identity::{file_id_nofollow, file_id_of};
+        use crate::fs::lock::{Mode, Waited, lock_file};
+
+        let mut name = endpoint.as_os_str().to_owned();
+        name.push(".lock");
+        let path = PathBuf::from(name);
+        for _ in 0..Self::REOPENS {
+            let file = open_presence_file(&path)?;
+            let opened = file_id_of(&file)?;
+            match lock_file(file, Mode::Exclusive, Duration::ZERO, &|| false)? {
+                Waited::Locked(lock) => {
+                    // A listener that ended removed its file while it still
+                    // held the lock, so a file opened just before that is no
+                    // longer the one at the path; locking it excludes no one.
+                    if file_id_nofollow(&path).is_ok_and(|current| current == opened) {
+                        return Ok(Self { path, _lock: lock });
+                    }
+                }
+                Waited::TimedOut | Waited::Cancelled => return Err(already_answers(endpoint)),
+            }
+        }
+        Err(io::Error::new(
+            io::ErrorKind::WouldBlock,
+            format!("{} kept changing while it was claimed", path.display()),
+        ))
+    }
+}
+
+impl Drop for Presence {
+    fn drop(&mut self) {
+        // Removed while the lock is still held, which is what `claim`'s
+        // identity check relies on; the lock is released as the field drops.
+        let _ = fs::remove_file(&self.path);
+    }
+}
+
+fn open_presence_file(path: &Path) -> io::Result<fs::File> {
+    let mut options = fs::OpenOptions::new();
+    options.read(true).write(true).create(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options.open(path)
+}
+
 /// Removes what a dead listener left at `path`, and refuses a live one.
 ///
 /// Only what a listener leaves is removed: a socket on Unix, the marker file
 /// on Windows. Anything else at the path is the caller's, and `bind` fails
-/// rather than delete it.
+/// rather than delete it. The caller holds the path's [`Presence`], so no
+/// listener of this build is alive; the connect that follows still refuses a
+/// listener of a build that took no lock.
 fn clear_leftover(path: &Path) -> io::Result<()> {
     let Ok(metadata) = fs::symlink_metadata(path) else {
         return Ok(());
