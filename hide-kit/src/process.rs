@@ -55,6 +55,7 @@ pub fn run(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hide_platform::process::start_time;
     use std::process::Stdio;
     use std::sync::atomic::Ordering;
     use std::thread;
@@ -68,6 +69,8 @@ mod tests {
         "--nocapture",
         "--test-threads=1",
     ];
+    /// Only ends a wait for something that never happens.
+    const HANG_LIMIT: Duration = Duration::from_secs(30);
 
     // A real portable child, as hide-platform's process contract uses. The
     // assertions below are unchanged: a deadline/stop ends the whole tree,
@@ -92,10 +95,16 @@ mod tests {
                 grandchild.wait().unwrap();
             }
             "grandchild" => {
-                thread::sleep(Duration::from_secs(2));
-                std::fs::write(std::env::var_os(MARKER).unwrap(), "survived").unwrap();
+                // Names itself once it runs, renamed into place so a reader
+                // never sees half of it.
+                let marker = std::path::PathBuf::from(std::env::var_os(MARKER).unwrap());
+                let partial = marker.with_extension("partial");
+                let pid = std::process::id();
+                std::fs::write(&partial, format!("{pid} {}", start_time(pid).unwrap())).unwrap();
+                std::fs::rename(&partial, &marker).unwrap();
+                // Outlives the tests' wait, so only a kill ends it in time.
+                thread::sleep(HANG_LIMIT * 2);
             }
-            "sleep" => thread::sleep(Duration::from_secs(30)),
             "output" => {
                 println!(
                     "RESULT {}|{}|{}",
@@ -110,11 +119,47 @@ mod tests {
         }
     }
 
+    /// The grandchild's pid and start time, once it has written them.
+    fn grandchild(marker: &Path) -> Option<(u32, u64)> {
+        let named = std::fs::read_to_string(marker).ok()?;
+        let (pid, started) = named.split_once(' ').unwrap();
+        Some((pid.parse().unwrap(), started.parse().unwrap()))
+    }
+
+    #[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
+    fn named_grandchild(marker: &Path) -> (u32, u64) {
+        let started = Instant::now();
+        loop {
+            if let Some(named) = grandchild(marker) {
+                return named;
+            }
+            assert!(started.elapsed() < HANG_LIMIT, "the grandchild never ran");
+            thread::sleep(Duration::from_millis(10));
+        }
+    }
+
+    /// Whether the process `pid` that started at `started` has ended. A
+    /// group killed with its leader leaves an orphan for the system to reap,
+    /// so this waits for that.
+    #[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
+    fn ended(pid: u32, started: u64) -> bool {
+        let waited = Instant::now();
+        while start_time(pid).is_ok_and(|now| now == started) {
+            if waited.elapsed() > HANG_LIMIT {
+                return false;
+            }
+            thread::sleep(Duration::from_millis(10));
+        }
+        true
+    }
+
+    /// Whether the grandchild runs before 300 ms pass is the scheduler's
+    /// choice; when it does, it ends with its group. The stop test below
+    /// ends a tree whose grandchild is known to run.
     #[test]
-    #[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
     fn a_child_past_its_deadline_is_stopped_with_its_group() {
         let home = tempfile::tempdir().unwrap();
-        let marker = home.path().join("grandchild-survived");
+        let marker = home.path().join("grandchild");
         let started = Instant::now();
         let result = run(
             &std::env::current_exe().unwrap(),
@@ -127,36 +172,44 @@ mod tests {
             Duration::from_millis(300),
             &AtomicBool::new(false),
         );
-        assert!(result.unwrap_err().contains("did not finish"));
+        let error = result.unwrap_err();
+        assert!(error.contains("did not finish"), "{error}");
         assert!(started.elapsed() < Duration::from_secs(5));
-        thread::sleep(Duration::from_millis(2500));
-        assert!(!marker.exists(), "the grandchild outlived the deadline");
+        if let Some((pid, started)) = grandchild(&marker) {
+            assert!(ended(pid, started), "the grandchild outlived the deadline");
+        }
     }
 
+    /// The stop is raised once the grandchild runs, so it ends a whole tree.
     #[test]
-    #[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
     fn a_raised_stop_ends_the_child_before_its_deadline() {
         let home = tempfile::tempdir().unwrap();
-        let stop = std::sync::Arc::new(AtomicBool::new(false));
-        let raiser = {
-            let stop = stop.clone();
-            thread::spawn(move || {
-                thread::sleep(Duration::from_millis(200));
+        let marker = home.path().join("grandchild");
+        let stop = AtomicBool::new(false);
+        let (result, (pid, born), raised) = thread::scope(|scope| {
+            let raiser = scope.spawn(|| {
+                let named = named_grandchild(&marker);
                 stop.store(true, Ordering::Relaxed);
-            })
-        };
-        let started = Instant::now();
-        let result = run(
-            &std::env::current_exe().unwrap(),
-            CHILD_ARGS,
-            &[(ROLE.into(), "sleep".into())],
-            home.path(),
-            Duration::from_secs(60),
-            &stop,
-        );
-        raiser.join().unwrap();
-        assert!(result.unwrap_err().contains("quitting"));
-        assert!(started.elapsed() < Duration::from_secs(5));
+                (named, Instant::now())
+            });
+            let result = run(
+                &std::env::current_exe().unwrap(),
+                CHILD_ARGS,
+                &[
+                    (ROLE.into(), "tree".into()),
+                    (MARKER.into(), marker.display().to_string()),
+                ],
+                home.path(),
+                Duration::from_secs(60),
+                &stop,
+            );
+            let (named, raised) = raiser.join().unwrap();
+            (result, named, raised)
+        });
+        let error = result.unwrap_err();
+        assert!(error.contains("quitting"), "{error}");
+        assert!(raised.elapsed() < Duration::from_secs(5));
+        assert!(ended(pid, born), "the grandchild outlived the stop");
     }
 
     #[test]
