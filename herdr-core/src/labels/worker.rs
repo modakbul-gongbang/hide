@@ -43,7 +43,7 @@ use super::facts::{InputView, LogTarget, PullRequestTimes, ReadFacts};
 use super::generator::GeneratorLock;
 use super::input::{OperatorInput, Submit};
 use super::overlay::LabelOverlay;
-use super::store::{LabelStore, PaneRecord};
+use super::store::{LOCAL_TARGET, LabelStore, PaneRecord};
 
 /// How long after a turn starts a pane whose prompt was not in the
 /// transcript yet is read once more.
@@ -55,6 +55,17 @@ const UNAVAILABLE_RETRY: Duration = Duration::from_secs(15);
 /// The most sighted pull requests waiting between two takes; a read that
 /// finds more keeps the newest.
 const SIGHTED_LIMIT: usize = 32;
+/// How long after a session printed a pull request's address its absence from
+/// GitHub's answer still sets off a read: a session prints the address of a
+/// pull request it has just made, while an older sighting is a session read
+/// again from its start, or a pull request past the newest 200 the list
+/// holds, which a read would only answer the same way.
+const SIGHTING_FRESH_MS: u64 = 15 * 60 * 1_000;
+
+/// Whether a sighting printed at `at_unix_ms` is recent enough to read for.
+pub(crate) fn sighting_is_fresh(at_unix_ms: u64, now_unix_ms: u64) -> bool {
+    at_unix_ms.saturating_add(SIGHTING_FRESH_MS) >= now_unix_ms
+}
 
 /// Why a read produced nothing.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -424,13 +435,19 @@ impl LabelWorker {
         changed
     }
 
-    /// Keeps each address this read sighted that the core's pull requests do
-    /// not hold, once, so the core can read its project before the next
-    /// re-read would (a session prints the address of a pull request it has
-    /// just made). Whether it is recent enough to ask for is the core's
-    /// decision; this only bounds what waits for it.
-    fn note_sighted(&mut self, pane_id: &str, sightings: &[PrSighting]) {
+    /// Keeps each recent address this read sighted that the core's pull
+    /// requests do not hold, once, so the core can read its project before
+    /// the next re-read would (a session prints the address of a pull request
+    /// it has just made). Only this Mac's projects have their pull requests
+    /// read, so a device's worker keeps none.
+    fn note_sighted(&mut self, pane_id: &str, sightings: &[PrSighting], now_unix_ms: u64) {
+        if self.target != LOCAL_TARGET {
+            return;
+        }
         for sighting in sightings {
+            if !sighting_is_fresh(sighting.at_unix_ms, now_unix_ms) {
+                continue;
+            }
             let repository = sighting.repository.to_ascii_lowercase();
             let known =
                 self.pull_request_times
@@ -496,7 +513,7 @@ impl LabelWorker {
 
     /// Takes the reader's and the analyzer's results. Returns whether
     /// anything shown changed.
-    pub(crate) fn drain(&mut self, now: Instant) -> bool {
+    pub(crate) fn drain(&mut self, now: Instant, now_unix_ms: u64) -> bool {
         let mut changed = false;
         while let Ok(result) = self.results.try_recv() {
             changed |= match result {
@@ -513,7 +530,7 @@ impl LabelWorker {
                     &reference,
                     (from_start, from_beginning),
                     *result,
-                    now,
+                    (now, now_unix_ms),
                 ),
                 WorkerResult::Analysis(outcome) => self.handle_analysis(outcome, now),
             };
@@ -685,7 +702,7 @@ impl LabelWorker {
         reference: &str,
         (from_start, from_beginning): (bool, bool),
         result: Result<LabelTranscript, ReadFailure>,
-        now: Instant,
+        (now, now_unix_ms): (Instant, u64),
     ) -> bool {
         if self.read_in_flight.as_deref() == Some(pane_id) {
             self.read_in_flight = None;
@@ -789,7 +806,7 @@ impl LabelWorker {
             },
         );
         changed |= record.facts.judge_created(&self.pull_request_times);
-        self.note_sighted(pane_id, &transcript.pr_sightings);
+        self.note_sighted(pane_id, &transcript.pr_sightings, now_unix_ms);
         let pane = self.panes.get_mut(pane_id).expect("checked above");
         let new_reason = transcript
             .skipped_reasons

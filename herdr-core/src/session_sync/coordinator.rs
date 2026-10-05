@@ -693,7 +693,8 @@ fn run_coordinator(
                 // A disconnected replica is stale; its labels wait for the
                 // reconnect's first publish rather than clearing the error.
                 if labels.as_mut().is_some_and(|worker| {
-                    worker.drain(Instant::now()) | exchange_pull_requests(&context, worker)
+                    worker.drain(Instant::now(), unix_now_ms())
+                        | exchange_pull_requests(&context, worker)
                 }) && subscription.is_some()
                     && let Some(current) = replica.as_mut()
                     && !publish_replica(
@@ -1086,26 +1087,30 @@ fn start_label_worker(
 /// answer did not hold, and the worker the runtime's pull request creation
 /// times, under one brief lock. Only this Mac's projects have their pull
 /// requests read (a device's rows link none), so a device's worker is handed
-/// no times and its sightings are dropped. Returns whether a session's pull
-/// requests changed.
+/// no times and keeps no sightings. Returns whether a session's pull requests
+/// changed.
 fn exchange_pull_requests(context: &SessionSyncContext, worker: &mut LabelWorker) -> bool {
-    let sighted = worker.take_sighted();
     if !context.is_local() {
         return false;
     }
+    let sighted = worker.take_sighted();
+    let now_unix_ms = (!sighted.is_empty()).then(unix_now_ms);
     let times = context.runtime.upgrade().and_then(|runtime| {
         runtime.lock().ok().map(|mut guard| {
-            if !sighted.is_empty() {
-                let now_unix_ms = SystemTime::now()
-                    .duration_since(UNIX_EPOCH)
-                    .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64)
-                    .unwrap_or(0);
+            if let Some(now_unix_ms) = now_unix_ms {
                 guard.read_sighted_pull_requests(&sighted, now_unix_ms);
             }
             guard.pull_request_times()
         })
     });
     times.is_some_and(|times| worker.set_pull_request_times(times))
+}
+
+fn unix_now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64)
+        .unwrap_or(0)
 }
 
 /// Hands the worker the operator's agent-summary switch, under a brief lock,
