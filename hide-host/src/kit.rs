@@ -220,7 +220,9 @@ fn expand(path: &str, home: &Path) -> HostResult<PathBuf> {
 }
 
 /// Points `<root>/current` at `version` through a link made beside it and
-/// renamed over it, so the name never leads nowhere in between.
+/// renamed over it, so the name is never missing in between. On Linux a
+/// program started through `current` at that moment can, rarely, be told it
+/// does not exist (see `replace_link`).
 fn point_current(root: &Path, version: &str) -> HostResult<()> {
     let current = root.join(hide_kit::CURRENT);
     if hide_platform::fs::link::is_link_to(&current, Path::new(version)) {
