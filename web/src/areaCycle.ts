@@ -102,7 +102,7 @@ export function agentOrigin(rest: SnapshotRest | null, owner: KeyboardOwner = ke
 export function agentCycle(rest: SnapshotRest | null, owner: KeyboardOwner = keyboardOwner()): Cycle | null {
   if (owner.kind === "view" && useUiStore.getState().screen?.kind === "workspace" && !useUiStore.getState().overviewOpen) return null;
   const origin = agentOrigin(rest, owner) ?? { paneId: null };
-  const ids = [...(origin.paneId ? [origin.paneId] : []), ...recentPanes().filter((id) => id !== origin.paneId)];
+  const ids = [...(origin.paneId ? [origin.paneId] : []), ...recentPanes(rest).filter((id) => id !== origin.paneId)];
   const items = ids.map((id) => paneItem(rest, id)).filter((item): item is CycleItem => item !== null);
   const originKey = origin.paneId ? paneKey(origin.paneId) : undefined;
   const atOrigin = items[0] !== undefined && items[0].key === originKey;

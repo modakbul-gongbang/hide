@@ -28,6 +28,7 @@ mod project_sessions;
 mod projects;
 mod pull_requests;
 mod recent_checkouts;
+mod recent_panes;
 mod rename;
 mod request_view;
 mod session;

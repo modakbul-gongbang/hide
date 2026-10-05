@@ -13,7 +13,7 @@ import { OverviewModal, OverviewPage } from "./Overview";
 import { AgentCloseNotice, ConfirmClose, ConfirmTrash, CycleOverlay, NoticeBar } from "./Overlays";
 import { Palette } from "./Palette";
 import { installProbe, probeEnabled } from "./probe";
-import { expectPane, expectSurface, focusSignature } from "./recent";
+import { configurePaneVisits, expectPane, expectSurface, focusSignature } from "./recent";
 import { SettingsGate } from "./SettingsSheet";
 import { StartPanelHost } from "./StartPanel";
 import { FONT_SIZE_BASE, usableAccent, usableFontSize } from "./settings";
@@ -50,6 +50,7 @@ export function App() {
     });
     dispatchRef.current = session.dispatch;
     configureFileBytes(session.dispatch);
+    configurePaneVisits(actions.paneVisit);
     const keyboard = installKeyboard(actions);
     if (probeEnabled()) {
       installProbe(
@@ -137,6 +138,7 @@ export function App() {
       unsubscribeScreen();
       unsubscribe();
       keyboard();
+      configurePaneVisits(() => {});
       session.close();
     };
   }, [actions]);

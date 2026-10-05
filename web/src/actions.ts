@@ -1686,6 +1686,11 @@ export function createActions(send: DispatchFn) {
       dispatch({ schema_version: 2, kind: "inactive_checkouts_toggle", payload: { project_path: projectPath } });
     },
 
+    /** Reports the keyboard's visit to a pane; the core keeps the Agent cycle's order (`ui_state.recent_pane_ids`). */
+    paneVisit(paneId: string) {
+      dispatch({ schema_version: 2, kind: "pane_visit", payload: { pane_id: paneId } });
+    },
+
     /** Folds or unfolds an agent's descendants in the Agents list; the core keeps the choice. */
     toggleAgentTree(paneId: string) {
       dispatch({ schema_version: 2, kind: "agent_tree_toggle", payload: { pane_id: paneId } });
