@@ -10,7 +10,9 @@
 // folder: Herdr reports the pinned version, the device helper and the hook
 // helper start, and the bundled
 // `hide connect` starts the bundled daemon, which serves the web shell it
-// embeds, installs the CLI and both agent hooks, and is replaced by a second
+// embeds, installs the CLI and holds both agents for the first-run choice
+// (their files untouched), installs both hooks once that choice is answered
+// over the daemon's socket, and is replaced by a second
 // package fixture with a changed daemon hash, before `hide stop` ends it. Every process runs with a private home
 // and state folder, so none reaches a daemon or Herdr of the runner's account.
 //
@@ -194,9 +196,14 @@ try {
       throw new Error(`GET ${route}: ${error.message}`);
     });
 
-  /** Wait on the completed pass, not a fixed startup delay or a live PID. */
+  /**
+   * Wait on the completed pass, not a fixed startup delay or a live PID.
+   * A fresh machine is held for the first-run agent choice: its finished
+   * state has the command and the retirement installed and both hooks off
+   * (`held`), and only the operator's answer installs them (`applied`).
+   */
   const log = path.join(state, "Logs", "core.jsonl");
-  async function kitInstalled(after = 0) {
+  async function kitInstalled(after = 0, expect = "applied") {
     const deadline = Date.now() + 25_000;
     let last = "no kit completion";
     while (Date.now() < deadline) {
@@ -207,12 +214,52 @@ try {
         if (record.component !== "kit" || record.kind !== "apply.completed") continue;
         last = JSON.stringify(record.components);
         const parts = new Map(record.components.map((part) => [part.id, part]));
-        if (["cli", "claude_code_hook", "codex_hook"].every((id) => parts.get(id)?.state === "installed")
-          && parts.get("coordination_retirement")?.state === "installed") return;
+        const hooks = expect === "held" ? "off" : "installed";
+        if (parts.get("cli")?.state === "installed" && parts.get("coordination_retirement")?.state === "installed"
+          && ["claude_code_hook", "codex_hook"].every((id) => parts.get(id)?.state === hooks)) return;
       }
       await delay(100);
     }
     throw new Error(`kit installation did not complete: ${last}`);
+  }
+
+  /** What a fresh user has before answering: the command, and no hook of Hide's in either agent's file. */
+  function heldFiles() {
+    for (const [folder, file] of [[".claude", "settings.json"], [".codex", "hooks.json"]]) {
+      const config = JSON.parse(fs.readFileSync(path.join(home, folder, file), "utf8"));
+      const text = JSON.stringify(config);
+      if (config.smokeForeign !== "preserve" || !text.includes("echo smoke-foreign")) throw new Error(`${folder} lost unrelated settings`);
+      if (text.includes("--source hide-subagents@")) throw new Error(`${folder} got Hide's hook before the first-run choice was answered`);
+    }
+    return "both agents' files untouched until the first-run choice is answered";
+  }
+
+  /**
+   * The operator's answer to the first-run choice, sent as the web shell sends
+   * it. The event does nothing until this Mac's kit has reported, so it is
+   * sent again until the answered pass shows in the log.
+   */
+  async function answerFirstRunChoice(port, agents, after) {
+    const { token } = JSON.parse(fs.readFileSync(path.join(state, "hided.json"), "utf8"));
+    // The daemon admits a socket from its own origin; Node sends none unless told to.
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/ws`, { headers: { Origin: `http://127.0.0.1:${port}` } });
+    await new Promise((resolve, reject) => {
+      socket.addEventListener("open", resolve, { once: true });
+      socket.addEventListener("error", () => reject(new Error("the daemon's socket did not open")), { once: true });
+    });
+    try {
+      socket.send(JSON.stringify({ token, schema_version: 2, client_kind: "web", have_revision: 0, have_terminal_sequence: 0 }));
+      const deadline = Date.now() + 25_000;
+      while (Date.now() < deadline) {
+        socket.send(JSON.stringify({ schema_version: 2, kind: "agent_onboarding_apply", payload: { agents } }));
+        await delay(1_000);
+        const records = fs.readFileSync(log).subarray(after).toString("utf8").split("\n");
+        if (records.some((line) => line.includes('"apply.completed"') && line.includes('"scope":"operator"'))) return;
+      }
+      throw new Error("the first-run choice was not applied");
+    } finally {
+      socket.close();
+    }
   }
 
   function installedFiles() {
@@ -265,8 +312,12 @@ try {
       if (connected.ok !== true) throw new Error(JSON.stringify(connected));
       return `pid ${connected.pid}, port ${connected.port}`;
     });
-    await kitInstalled();
-    check("first launch installs the kit", installedFiles);
+    await kitInstalled(0, "held");
+    check("first launch installs the command and holds both agents for the first-run choice", heldFiles);
+    const beforeChoice = fs.statSync(log).size;
+    await answerFirstRunChoice(connected.port, ["claude-code", "codex"], beforeChoice);
+    await kitInstalled(beforeChoice);
+    check("the first-run choice installs both hooks", installedFiles);
     const origin = `http://127.0.0.1:${connected.port}`;
     const health = await (await get(origin, "/health")).json();
     check("the daemon answers /health", () => {
