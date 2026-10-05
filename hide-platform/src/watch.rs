@@ -20,6 +20,13 @@
 //! answer Windows gives when its buffer overflows (no entries, or
 //! `ERROR_NOTIFY_ENUM_DIR`, on which it also stops watching), which would be
 //! silence.
+//!
+//! inotify watches each folder by itself, and `notify` starts watching a
+//! folder made under a watched one only once it reads that folder's
+//! creation, so on Linux what is made in a new folder before then is
+//! reported as that folder alone. A [`Change::Path`] names what changed or a
+//! folder something under it changed in; a caller that waits for one exact
+//! path makes it in a folder that existed when the watch began.
 
 use std::collections::{HashMap, VecDeque};
 use std::io;

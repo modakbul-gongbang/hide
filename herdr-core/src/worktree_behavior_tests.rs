@@ -529,7 +529,10 @@ fn next_answer(
 /// watch reported before it. The watch queues paths in the order the system
 /// reported them, so a change made before the sentinel is either already
 /// pending in the reader or queued ahead of the sentinel: once the sentinel
-/// arrives, an empty answer means nothing else happened before it.
+/// arrives, an empty answer means nothing else happened before it. The
+/// sentinel is written straight into `refs`, a folder the watch saw from its
+/// start: on Linux a file made in a folder the watch has not yet heard of can
+/// be reported as that folder alone (`hide_platform::watch`).
 fn changes_before_sentinel(
     repo: &Repository,
     reader: &mut WorktreeReader,
@@ -538,7 +541,7 @@ fn changes_before_sentinel(
     let mut before: Vec<PathBuf> = reader.git_watch.pending.keys().cloned().collect();
     git(
         &repo.0,
-        &["update-ref", &format!("refs/sentinel/{name}"), "HEAD"],
+        &["update-ref", &format!("refs/sentinel-{name}"), "HEAD"],
     )
     .unwrap();
     let (_, changes) = reader
@@ -546,7 +549,7 @@ fn changes_before_sentinel(
         .watch
         .as_ref()
         .expect("the Git watch started");
-    let sentinel = Path::new("refs/sentinel").join(name);
+    let sentinel = Path::new("refs").join(format!("sentinel-{name}"));
     loop {
         match changes.recv_timeout(Duration::from_secs(15)) {
             Some(Change::Path { path, .. }) => {
@@ -560,7 +563,7 @@ fn changes_before_sentinel(
                 if relative == sentinel {
                     return before;
                 }
-                // The sentinel's own writes: the folders it is written in,
+                // The sentinel's own writes: the folder it is written in,
                 // and the lock file git writes it through.
                 if !sentinel.starts_with(&relative) && relative != sentinel.with_extension("lock") {
                     before.push(relative);
