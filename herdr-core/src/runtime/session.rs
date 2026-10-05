@@ -1,5 +1,19 @@
 use super::*;
 
+/// The most tabs Hide can have created and not yet seen leave Herdr. A tab
+/// past it is placed by its pane cwd and the crossing is reported.
+const CREATED_TAB_CHECKOUT_LIMIT: usize = 64;
+
+/// The checkout a tab Hide created was created for. The creation intent named
+/// it, so it outranks the pane cwd, which Herdr reports from birth and never
+/// announces settling.
+pub(super) struct CreatedTabCheckout {
+    path: String,
+    /// The session has carried the tab at least once, so its absence from a
+    /// later session means it closed.
+    seen: bool,
+}
+
 enum SessionFocusCheck {
     Unchecked,
     Readback(Option<(PendingPaneFocusControl, bool)>),
@@ -222,6 +236,16 @@ impl Runtime {
             },
         );
 
+        // A created tab's record lives as long as its tab: it is kept until
+        // the session has carried the tab once and then drops it. A blocked
+        // workspace republishes its last published tabs, so a tab the session
+        // carried does not vanish from here while its workspace waits.
+        self.created_tab_checkouts.retain(|tab_id, created| {
+            let present = payload.tabs.iter().any(|tab| &tab.tab_id == tab_id);
+            created.seen |= present;
+            present || !created.seen
+        });
+
         // Herdr's tab order is the navigator's tab order. A layout is the
         // per-tab detail looked up by tab id, never what decides where a tab
         // sits: layouts arrive in the order each tab was first drawn, so a tab
@@ -232,6 +256,7 @@ impl Runtime {
         // snapshot's tabs carry the formatted form, so the free number has to
         // be taken here or read back out of display text later.
         let mut raw_tab_labels: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let mut missing_created: Vec<String> = Vec::new();
         for session_tab in &payload.tabs {
             let Some(layout) = payload
                 .layouts
@@ -240,43 +265,83 @@ impl Runtime {
             else {
                 continue;
             };
-            // A plain terminal pane is not necessarily represented in the
-            // agent list. Its cwd is still authoritative for attaching the
-            // live layout to the registered checkout. Falling back to the
-            // agent record keeps agent-specific cwd handling intact.
-            let context_path = layout.panes.iter().find_map(|pane| {
-                payload
-                    .panes
-                    .iter()
-                    .find(|source| source.pane_id == pane.pane_id)
-                    .and_then(|source| source.cwd.clone())
-                    .filter(|path| !path.trim().is_empty())
-                    .or_else(|| {
+            // A tab Hide created belongs to the checkout it was created for.
+            // Its pane cwd is a birth value until the shell has entered the
+            // start folder, and Herdr sends no event when it settles, so
+            // reading it placed a new tab under another checkout until the
+            // next unrelated publish (#400). A checkout no longer in the
+            // catalog is reported once, and the tab falls back to the pane
+            // rule below from then on.
+            let created = self
+                .created_tab_checkouts
+                .get(&session_tab.tab_id)
+                .and_then(|created| {
+                    let found = workspaces
+                        .iter()
+                        .enumerate()
+                        .find_map(|(index, workspace)| {
+                            workspace
+                                .checkouts
+                                .iter()
+                                .position(|checkout| checkout.path == created.path)
+                                .map(|checkout| (index, checkout))
+                        });
+                    if found.is_none() {
+                        missing_created.push(session_tab.tab_id.clone());
+                        crate::diagnostic!(serde_json::json!({
+                            "component": "session",
+                            "kind": "created_tab.checkout_missing",
+                            "tab_id": session_tab.tab_id,
+                            "checkout_path": created.path,
+                        }));
+                    }
+                    found
+                });
+            let (workspace_snapshot, checkout_index) = match created {
+                Some((index, checkout)) => (&mut workspaces[index], Some(checkout)),
+                None => {
+                    // Any other tab has no recorded intent, so its pane cwd
+                    // is all there is. A plain terminal pane is not necessarily
+                    // represented in the agent list. Its cwd is still
+                    // authoritative for attaching the live layout to the
+                    // registered checkout. Falling back to the agent record
+                    // keeps agent-specific cwd handling intact.
+                    let context_path = layout.panes.iter().find_map(|pane| {
                         payload
-                            .agents
+                            .panes
                             .iter()
-                            .find(|agent| {
-                                agent.pane_id.as_deref().or(agent.id.as_deref())
-                                    == Some(pane.pane_id.as_str())
+                            .find(|source| source.pane_id == pane.pane_id)
+                            .and_then(|source| source.cwd.clone())
+                            .filter(|path| !path.trim().is_empty())
+                            .or_else(|| {
+                                payload
+                                    .agents
+                                    .iter()
+                                    .find(|agent| {
+                                        agent.pane_id.as_deref().or(agent.id.as_deref())
+                                            == Some(pane.pane_id.as_str())
+                                    })
+                                    .and_then(|agent| agent.cwd.clone())
                             })
-                            .and_then(|agent| agent.cwd.clone())
-                    })
-            });
-            let Some(workspace_snapshot) = find_workspace_for_context(
-                &mut workspaces,
-                context_path.as_deref(),
-                &layout.workspace_id,
-                &roots,
-                &mut unresolved_roots,
-            ) else {
-                continue;
+                    });
+                    let Some(workspace_snapshot) = find_workspace_for_context(
+                        &mut workspaces,
+                        context_path.as_deref(),
+                        &layout.workspace_id,
+                        &roots,
+                        &mut unresolved_roots,
+                    ) else {
+                        continue;
+                    };
+                    let checkout_index = context_path.as_deref().and_then(|path| {
+                        workspace_snapshot
+                            .checkouts
+                            .iter()
+                            .position(|checkout| path_is_within_checkout(path, &checkout.path))
+                    });
+                    (workspace_snapshot, checkout_index)
+                }
             };
-            let checkout_index = context_path.as_deref().and_then(|path| {
-                workspace_snapshot
-                    .checkouts
-                    .iter()
-                    .position(|checkout| path_is_within_checkout(path, &checkout.path))
-            });
             let Some(checkout) = workspace_snapshot
                 .checkouts
                 .get_mut(checkout_index.unwrap_or(0))
@@ -354,6 +419,9 @@ impl Runtime {
                 .entry(checkout.id.clone())
                 .or_default()
                 .push(session_tab.label.clone());
+        }
+        for tab_id in missing_created {
+            self.created_tab_checkouts.remove(&tab_id);
         }
 
         // A worktree earns its row from git, not from a pane, so which rows
@@ -1878,6 +1946,10 @@ impl Runtime {
         if let Ok(payload) = fetched.as_mut() {
             self.label_overlay.apply(payload);
             self.settle_agent_sleep(payload);
+        } else {
+            // Herdr's tab ids are its own server's; a later connection may
+            // hand one to a tab Hide never created.
+            self.created_tab_checkouts.clear();
         }
         // The session update is this runtime's only regular tick, so it is
         // also where a notification Herdr never answered stops being pending.
@@ -3134,10 +3206,16 @@ impl Runtime {
                 let live::WorktreeTaskOutcome {
                     path,
                     pane_id,
+                    created_tab_id,
                     purpose_error,
                     unconfirmed_purpose_token,
                     issue_error,
                 } = outcome;
+                if device.is_none()
+                    && let Some(tab_id) = created_tab_id.as_deref()
+                {
+                    self.record_created_tab_checkout(tab_id, &path);
+                }
                 if let Some(detail) = issue_error {
                     self.push_diagnostic(
                         "checkout_issue.create_failed",
@@ -3967,6 +4045,14 @@ impl Runtime {
                 created_tab_id,
                 created_pane_id,
             }) => {
+                if let (
+                    Some(tab_id),
+                    RemoteControlAction::CreateTab { cwd, .. }
+                    | RemoteControlAction::OpenOwner { cwd, .. },
+                ) = (created_tab_id.as_deref(), &action)
+                {
+                    self.record_created_tab_checkout(tab_id, cwd);
+                }
                 if let Some(tab_id) = created_tab_id.as_ref() {
                     let placement = match &action {
                         RemoteControlAction::CreateTab {
@@ -4724,5 +4810,51 @@ impl Runtime {
                 "git_init": if git_init_failed { "failed" } else { "complete_or_skipped" },
         }));
         true
+    }
+}
+
+impl Runtime {
+    /// Remembers which checkout a created tab was asked for. When the session
+    /// already placed the tab under another checkout, the local coordinator is
+    /// asked to republish, because nothing else would place it again until an
+    /// unrelated change.
+    fn record_created_tab_checkout(&mut self, tab_id: &str, path: &str) {
+        if self.created_tab_checkouts.len() >= CREATED_TAB_CHECKOUT_LIMIT
+            && !self.created_tab_checkouts.contains_key(tab_id)
+        {
+            crate::diagnostic!(serde_json::json!({
+                "component": "session",
+                "kind": "created_tab.checkout_limit",
+                "tab_id": tab_id,
+                "checkout_path": path,
+                "limit": CREATED_TAB_CHECKOUT_LIMIT,
+            }));
+            return;
+        }
+        self.created_tab_checkouts.insert(
+            tab_id.to_owned(),
+            CreatedTabCheckout {
+                path: path.to_owned(),
+                seen: false,
+            },
+        );
+        let misplaced = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|workspace| &workspace.checkouts)
+            .any(|checkout| {
+                checkout.path != path
+                    && checkout
+                        .tabs
+                        .iter()
+                        .any(|tab| tab.id.as_deref() == Some(tab_id))
+            });
+        self.created_tab_republish_requested |= misplaced;
+    }
+
+    pub(crate) fn take_created_tab_republish(&mut self) -> bool {
+        std::mem::take(&mut self.created_tab_republish_requested)
     }
 }

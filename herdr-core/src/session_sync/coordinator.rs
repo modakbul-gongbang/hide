@@ -270,10 +270,15 @@ fn run_coordinator(
                 .duration_since(UNIX_EPOCH)
                 .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64)
                 .unwrap_or(0);
+            let mut republish_created_tab = false;
             if let Some(runtime) = context.runtime.upgrade() {
                 let changed = match runtime.lock() {
                     Ok(mut guard) => {
                         let changed = guard.tick_async_operations(now_unix_ms);
+                        // Hide creates tabs only on this machine's Herdr, so
+                        // only its replica can place one again.
+                        republish_created_tab =
+                            context.is_local() && guard.take_created_tab_republish();
                         // Agent sleep is this machine's alone (PRD agent-sleep).
                         changed | (context.is_local() && guard.tick_agent_sleep(now_unix_ms))
                     }
@@ -283,6 +288,20 @@ fn run_coordinator(
                 if changed {
                     context.notifier.notify();
                 }
+            }
+            if republish_created_tab
+                && subscription.is_some()
+                && let Some(current) = replica.as_mut()
+                && !publish_replica(
+                    &context,
+                    current,
+                    &mut catalog_cache,
+                    &mut purpose_mirror,
+                    &mut labels,
+                )
+            {
+                stop_subscription(&mut subscription);
+                return;
             }
             if labels.as_mut().is_some_and(|worker| {
                 take_label_switch(&context, worker) | worker.tick(Instant::now())
