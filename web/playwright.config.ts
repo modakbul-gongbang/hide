@@ -20,6 +20,15 @@ export default defineConfig({
   use: {
     baseURL: process.env.HIDE_E2E_ORIGIN ?? "http://127.0.0.1:4173",
     headless: true,
+    // Headless Chromium composites in software, so every frame of xterm's WebGL
+    // canvas is read back synchronously on the page's main thread (ReadPixels
+    // in the layer commit), 250 to 500 ms per frame in a local trace. That
+    // stalls input and WebSocket frames for every spec, and a timing assertion
+    // or a product deadline reads the stall as a failure. No spec tests the
+    // terminal renderer, so the shell runs the DOM renderer it falls back to
+    // when WebGL is missing. A spec that does need WebGL sets its own
+    // `launchOptions`.
+    launchOptions: { args: ["--disable-webgl"] },
     // Wide enough for the Workspace body's three columns side by side (PRD
     // three-column-panel D-07); a test about a narrower body sets its own.
     viewport: { width: 1920, height: 1080 },

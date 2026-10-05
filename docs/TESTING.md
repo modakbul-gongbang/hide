@@ -59,8 +59,10 @@ The cause was found by timestamping each stage against the first request, not by
 A second cost was the page's own rendering: headless Chromium composites in software, so every frame of xterm's WebGL canvas is read back synchronously on the page's main thread.
 A local trace of the held window showed long tasks of 250 to 500 ms, most of them in `GLES2::ReadPixels`, which delayed both the clicks and the snapshot frames the test observes.
 On the failing macOS run, the stage timings and the hided log showed the first diagnostic taking 2.5 seconds to reach the page and the forty clicks another 2.3 seconds, so the held request hit its deadline before the test could release it.
-The spec now launches Chromium with `--disable-webgl`, so the shell uses xterm's DOM renderer, its existing fallback, and the held window stays near 0.2 seconds.
-A spec that holds a product deadline and does not test the terminal renderer should do the same.
+`web/playwright.config.ts` now launches every web e2e Chromium with `--disable-webgl`, so the shell uses xterm's DOM renderer, its existing fallback, and the held window stays near 0.2 seconds.
+No web spec tests the terminal renderer; the probe reads the parsed buffer, not the canvas.
+A spec that needs the WebGL renderer sets its own `launchOptions` and says why.
+The desktop suite is not covered: Electron has its own GPU path.
 
 ## The test decides the order
 
