@@ -128,19 +128,20 @@ test("the close sheet counts and brightens what needs the operator, stays live w
     await agentsMode(page);
     await expect(page.locator(`[data-agent-tree-toggle="${target}"]`)).toBeVisible({ timeout: 30_000 });
 
+    // The sheet chooses where the keyboard starts from the states it opens
+    // on, so it opens once the sidebar shows every child's: a row whose
+    // state is not in yet reads Unknown, which is the core's close guard.
+    await page.locator(`[data-agent-tree-toggle="${target}"]`).click();
+    for (const [pane, status] of [[working, "Working"], [asking, "Question"], [finished, "Done"], [quiet, "Idle"]]) {
+      await expect(page.locator(`[data-pane="${pane}"] [data-agent-status-mark]`)).toHaveAttribute("data-agent-status-mark", status, { timeout: 30_000 });
+    }
+    await expect(page.locator(`[data-agent-open="${target}"]`)).not.toHaveAccessibleName(/\bUnknown\b/);
+
     const sheet = page.locator("[data-confirm-subtree]");
     const summary = sheet.locator("[data-subtree-summary]");
-    // Every state has to be in before the sheet opens on it.
-    // eslint-disable-next-line hide-e2e/no-action-in-poll -- #433 retried interaction: the sheet opens only once every state is in
-    await expect(async () => {
-      if (await sheet.isVisible()) {
-        await page.keyboard.press("Escape");
-        await expect(sheet).toHaveCount(0);
-      }
-      await page.locator(`[data-terminal-host="${target}"]`).click();
-      await page.keyboard.press(chord("close_tab"));
-      await expect(summary).toHaveAttribute("data-subtree-summary", "working 1 · waiting for you 1 · unread result 1", { timeout: 3_000 });
-    }).toPass({ timeout: 30_000, intervals: [500] });
+    await page.locator(`[data-terminal-host="${target}"]`).click();
+    await page.keyboard.press(chord("close_tab"));
+    await expect(summary).toHaveAttribute("data-subtree-summary", "working 1 · waiting for you 1 · unread result 1");
     await expect(sheet.getByRole("heading")).toHaveText("Close this agent and 4 children?");
     await expect(sheet.locator(`[data-subtree-row="${working}"]`)).toHaveAttribute("data-subtree-state", "working");
     await expect(sheet.locator(`[data-subtree-row="${asking}"]`)).toHaveAttribute("data-subtree-state", "waiting");
@@ -366,16 +367,18 @@ test("Delete worktree closes the agents its checkout spawned outside it before t
 
     const feature = page.locator("[data-checkout-row]").filter({ has: page.locator(`[data-checkout][aria-label^="${branch}"]`) });
     // The fixture branch has nothing ahead of main, so the core folds its row
-    // under Inactive whenever it reads that, which may be mid-step: opening
-    // the menu and choosing Delete is retried as one step, unfolding first.
-    // eslint-disable-next-line hide-e2e/no-action-in-poll -- #433 retried interaction: the checkout row folds mid-step
-    await expect(async () => {
-      if (await page.getByRole("menu").isVisible()) await page.keyboard.press("Escape");
-      const folded = page.locator('[data-inactive-checkouts][aria-expanded="false"]');
-      if (await folded.isVisible()) await folded.click();
-      await feature.locator("[data-checkout-menu]").click({ button: "right", timeout: 2_000 });
-      await page.getByRole("menu", { name: `${branch} actions` }).locator('[data-menu-item="delete_worktree"]').click({ timeout: 2_000 });
-    }).toPass({ timeout: 30_000, intervals: [500] });
+    // under Inactive once it reads that, unless the row is the focused
+    // checkout, which never folds; which checkout the core starts focused on
+    // is not the test's. Focusing main first makes the fold certain, and the
+    // fold is opened after it comes, so the row stays where the menu opens.
+    await page.locator("[data-project]", { hasText: "repo" }).locator('[data-checkout][aria-label^="main"]').click();
+    await expect(page.locator("[data-workspace-screen]")).toBeVisible();
+    const inactive = page.locator("[data-inactive-checkouts]");
+    await expect(inactive).toHaveText("Inactive 1", { timeout: 30_000 });
+    await inactive.click();
+    await expect(inactive).toHaveAttribute("aria-expanded", "true");
+    await feature.locator("[data-checkout-menu]").click({ button: "right" });
+    await page.getByRole("menu", { name: `${branch} actions` }).locator('[data-menu-item="delete_worktree"]').click();
 
     const dialog = page.locator("[data-delete-worktree]");
     await expect(dialog.locator("[data-removal-subtree]")).toContainText("1 agent outside this worktree", { timeout: 30_000 });

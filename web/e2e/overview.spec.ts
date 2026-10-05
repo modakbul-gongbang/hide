@@ -186,7 +186,7 @@ async function chooseTheme(page: Page, theme: "light" | "dark"): Promise<void> {
  * open for good (overview.spec on CI, 2026-09-29..10-01).
  */
 async function leaveHoverCard(page: Page, gone: Locator): Promise<void> {
-  // eslint-disable-next-line hide-e2e/no-action-in-poll -- #433 retried interaction: a bare move can land before the card's leave listener
+  // eslint-disable-next-line hide-e2e/no-action-in-poll -- Radix hoverable tooltip arms its grace-area pointermove listener on the next render; no DOM state reports it, so a synthetic leave is repeated
   await expect(async () => {
     await page.mouse.move(2, 998);
     await page.mouse.move(4, 996, { steps: 4 });
