@@ -176,7 +176,11 @@ jobs:
         if: ${{ inputs.shards == 1 }}
         with:
           workspaces: ". -> target"
-          shared-key: web-e2e
+          # The mailbox lane builds 48 dependencies the hided build does not.
+          # The cache saves only under a new key, so a key shared with the
+          # mailbox-less lanes (nightly macOS, and this lane before it ran the
+          # mailbox) kept a cache without them and every run compiled them.
+          shared-key: ${{ inputs.remote-mailbox && 'web-e2e-mailbox' || 'web-e2e' }}
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build hided for Playwright
         if: ${{ inputs.shards == 1 }}
