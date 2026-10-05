@@ -367,8 +367,12 @@ test("Delete worktree closes the agents its checkout spawned outside it before t
 
     const feature = page.locator("[data-checkout-row]").filter({ has: page.locator(`[data-checkout][aria-label^="${branch}"]`) });
     // The fixture branch has nothing ahead of main, so the core folds its row
-    // under Inactive once it reads that; the fold is opened after it has, so
-    // the row stays where the menu opens.
+    // under Inactive once it reads that, unless the row is the focused
+    // checkout, which never folds; which checkout the core starts focused on
+    // is not the test's. Focusing main first makes the fold certain, and the
+    // fold is opened after it comes, so the row stays where the menu opens.
+    await page.locator("[data-project]", { hasText: "repo" }).locator('[data-checkout][aria-label^="main"]').click();
+    await expect(page.locator("[data-workspace-screen]")).toBeVisible();
     const inactive = page.locator("[data-inactive-checkouts]");
     await expect(inactive).toHaveText("Inactive 1", { timeout: 30_000 });
     await inactive.click();
