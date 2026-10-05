@@ -414,29 +414,8 @@ fn read_issues(
         .to_owned();
     crate::issues::IssueReference::parse(&format!("{repository}#1"), None)
         .map_err(GhFailure::network)?;
-    // One sentinel proves overflow; ordinary gh list sorts by creation.
     let (listed, mut warning) = with_optional_projects(|include_projects| {
-        let fields = if include_projects {
-            "number,title,url,state,projectItems,updatedAt,createdAt,closedAt"
-        } else {
-            "number,title,url,state,updatedAt,createdAt,closedAt"
-        };
-        let output = gh(
-            Some(root),
-            &[
-                "issue",
-                "list",
-                "--state",
-                "open",
-                "--limit",
-                "201",
-                "--search",
-                "sort:updated-desc",
-                "--json",
-                fields,
-            ],
-        )?;
-        crate::issues::parse_issues(&output).map_err(GhFailure::network)
+        list_issues(&|arguments| gh(Some(root), arguments), include_projects)
     })?;
     let mut overflow = listed.len() > crate::issues::ISSUE_LIMIT;
     let mut issues = Vec::new();
@@ -516,6 +495,38 @@ fn read_issues(
         warning,
     ))
 }
+
+/// The open issues, most recently changed first (an ordinary `gh issue list`
+/// sorts by creation), with their labels in the same answer, so every card
+/// shows them without a read of its own. One more than `ISSUE_LIMIT` is asked
+/// for, so the sentinel proves overflow.
+fn list_issues(
+    run: &impl Fn(&[&str]) -> Result<String, GhFailure>,
+    include_projects: bool,
+) -> Result<Vec<crate::issues::IssueSnapshot>, GhFailure> {
+    let fields = if include_projects {
+        "number,title,url,state,labels,projectItems,updatedAt,createdAt,closedAt"
+    } else {
+        "number,title,url,state,labels,updatedAt,createdAt,closedAt"
+    };
+    let output = run(&[
+        "issue",
+        "list",
+        "--state",
+        "open",
+        "--limit",
+        "201",
+        "--search",
+        "sort:updated-desc",
+        "--json",
+        fields,
+    ])?;
+    crate::issues::parse_issues(&output).map_err(GhFailure::network)
+}
+
+/// How many labels of one issue the linked-issue query reads, the number
+/// `gh issue list --json labels` asks GitHub for.
+const LABELS_PER_ISSUE: usize = 100;
 
 /// How many blockers of one issue a read keeps; GitHub orders them, and an
 /// issue blocked by more than this is drawn with the first ones.
@@ -723,6 +734,7 @@ pub(crate) fn create_issue(
         closed_at_unix_ms: None,
         blocked_by: Vec::new(),
         sub_issues: Default::default(),
+        labels: Vec::new(),
     })
 }
 
@@ -798,13 +810,7 @@ fn parse_issue_detail(output: &str) -> Result<crate::tasks::TaskDetail, String> 
         labels: viewed
             .labels
             .into_iter()
-            .map(|label| crate::tasks::TaskLabel {
-                name: label.name,
-                // A colour is drawn from data, so only six hex digits pass.
-                color: label.color.filter(|color| {
-                    color.len() == 6 && color.bytes().all(|byte| byte.is_ascii_hexdigit())
-                }),
-            })
+            .map(|label| crate::tasks::TaskLabel::from_source(label.name, label.color))
             .collect(),
         author: viewed.author.map(|person| person.login),
         created_at_unix_ms: viewed.created_at.as_deref().and_then(parse_rfc3339_ms),
@@ -1274,7 +1280,7 @@ fn issue_query(
             .repository
             .split_once('/')
             .expect("validated repository");
-        query.push_str(&format!("r{index}:repository(owner:\"{owner}\",name:\"{name}\"){{issue(number:{}){{number title url state updatedAt createdAt closedAt{projects}}}}}", valid.number));
+        query.push_str(&format!("r{index}:repository(owner:\"{owner}\",name:\"{name}\"){{issue(number:{}){{number title url state updatedAt createdAt closedAt labels(first:{LABELS_PER_ISSUE}){{nodes{{name color}}}}{projects}}}}}", valid.number));
     }
     query.push('}');
     Ok(query)
@@ -1304,11 +1310,15 @@ fn parse_linked_issues(output: &str) -> Result<Vec<crate::issues::IssueSnapshot>
             );
             continue;
         };
-        let items = issue
-            .pointer("/projectItems/nodes")
-            .cloned()
-            .unwrap_or_else(|| serde_json::json!([]));
-        issue["projectItems"] = items;
+        // GraphQL nests a connection's items under `nodes`; `gh issue list`
+        // prints them as the list itself, which `parse_issues` reads.
+        for connection in ["projectItems", "labels"] {
+            let items = issue
+                .pointer(&format!("/{connection}/nodes"))
+                .cloned()
+                .unwrap_or_else(|| serde_json::json!([]));
+            issue[connection] = items;
+        }
         issues.push(issue);
     }
     crate::issues::parse_issues(&serde_json::Value::Array(issues).to_string())
@@ -1956,6 +1966,85 @@ mod tests {
         assert!(warning.is_some());
         assert_eq!(issues[0].reference, reference);
         assert!(issues[0].project_status.is_none());
+    }
+
+    fn label(name: &str, color: Option<&str>) -> crate::tasks::TaskLabel {
+        crate::tasks::TaskLabel {
+            name: name.into(),
+            color: color.map(Into::into),
+        }
+    }
+
+    #[test]
+    fn the_issue_list_brings_each_issues_labels_to_its_task() {
+        // What `gh issue list --json ...,labels,...` prints for a label (gh 2.76).
+        let listed = r#"[{"number":7,"title":"Fix","url":"https://github.com/acme/app/issues/7","state":"OPEN","labels":[{"id":"LA_1","name":"bug","description":"","color":"d73a4a"},{"id":"LA_2","name":"odd","description":"","color":"red;x"}],"projectItems":[],"updatedAt":"2026-10-01T00:00:00Z"},{"number":8,"title":"Plain","url":"https://github.com/acme/app/issues/8","state":"OPEN","labels":[],"projectItems":[],"updatedAt":"2026-09-30T00:00:00Z"}]"#;
+        for include_projects in [true, false] {
+            let asked = Mutex::new(Vec::<String>::new());
+            let issues = list_issues(
+                &|arguments: &[&str]| {
+                    let fields =
+                        arguments[arguments.iter().position(|a| *a == "--json").unwrap() + 1];
+                    asked.lock().unwrap().push(fields.to_owned());
+                    Ok(listed.to_owned())
+                },
+                include_projects,
+            )
+            .expect("the list answers");
+            let fields = asked.into_inner().unwrap();
+            assert_eq!(fields.len(), 1, "one list call, no read per issue");
+            assert!(
+                fields[0].split(',').any(|field| field == "labels"),
+                "the list asks for labels whether or not it asks for projects: {}",
+                fields[0]
+            );
+            let tasks = crate::tasks::github_tasks(
+                &crate::issues::ProjectIssuesSnapshot {
+                    repository: Some("acme/app".into()),
+                    issues,
+                    ..Default::default()
+                },
+                &GithubStatusSnapshot::default(),
+                false,
+            )
+            .tasks;
+            assert_eq!(
+                tasks[0].labels,
+                vec![label("bug", Some("d73a4a")), label("odd", None)],
+                "a colour that is not six hex digits is no colour"
+            );
+            assert!(tasks[1].labels.is_empty());
+            let wire = serde_json::to_value(&tasks).unwrap();
+            assert_eq!(
+                wire[0]["labels"],
+                serde_json::json!([{"name": "bug", "color": "d73a4a"}, {"name": "odd", "color": null}])
+            );
+            assert!(
+                wire[1].get("labels").is_none(),
+                "an issue with no label carries none on the wire"
+            );
+        }
+    }
+
+    #[test]
+    fn a_linked_issue_read_by_number_carries_its_labels() {
+        let reference = crate::issues::IssueReference::parse("acme/other#12", None).unwrap();
+        for include_projects in [true, false] {
+            let query = issue_query(&[&reference], include_projects).unwrap();
+            assert!(
+                query.contains("labels(first:100){nodes{name color}}"),
+                "{query}"
+            );
+        }
+        let issues = parse_linked_issues(r#"{"data":{"r0":{"issue":{"number":12,"title":"Elsewhere","url":"https://github.com/acme/other/issues/12","state":"CLOSED","updatedAt":null,"labels":{"nodes":[{"name":"blocked","color":"000000"}]}}},"r1":{"issue":{"number":13,"title":"Bare","url":"https://github.com/acme/other/issues/13","state":"OPEN","updatedAt":null}}}}"#).unwrap();
+        let by_number = |number: u32| {
+            issues
+                .iter()
+                .find(|issue| issue.reference.number == number)
+                .expect("issue answered")
+        };
+        assert_eq!(by_number(12).labels, vec![label("blocked", Some("000000"))]);
+        assert!(by_number(13).labels.is_empty());
     }
 
     #[cfg(unix)]
@@ -2867,6 +2956,7 @@ esac"#,
             closed_at_unix_ms: None,
             blocked_by: Vec::new(),
             sub_issues: Default::default(),
+            labels: Vec::new(),
         };
         let query = dependency_query(&[
             issue("acme/app", 171),

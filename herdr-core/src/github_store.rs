@@ -343,6 +343,34 @@ mod tests {
     }
 
     #[test]
+    fn an_issues_labels_are_restored_and_a_file_saved_before_labels_still_restores() {
+        let mut sent = answer("/repo", Some(100));
+        sent.issues = crate::issues::ProjectIssuesSnapshot {
+            repository: Some("acme/app".into()),
+            issues: crate::issues::parse_issues(r#"[{"number":7,"title":"Fix","url":"https://github.com/acme/app/issues/7","state":"OPEN","labels":[{"name":"bug","color":"d73a4a"}]}]"#).unwrap(),
+            ..Default::default()
+        };
+        let github = GithubSnapshot {
+            projects: vec![sent],
+        };
+        let restored = saved_then_restored(github.clone()).expect("the file is restored");
+        assert_eq!(
+            restored.projects[0].issues.issues[0].labels,
+            github.projects[0].issues.issues[0].labels
+        );
+        let mut older: serde_json::Value =
+            serde_json::from_slice(&encode(&github).unwrap()).unwrap();
+        older["projects"][0]["issues"]["issues"][0]
+            .as_object_mut()
+            .unwrap()
+            .remove("labels")
+            .expect("the saved issue carried its labels");
+        let restored =
+            decode(&serde_json::to_vec(&older).unwrap()).expect("an older file restores");
+        assert!(restored.projects[0].issues.issues[0].labels.is_empty());
+    }
+
+    #[test]
     fn a_project_never_read_successfully_is_not_saved() {
         let restored = saved_then_restored(GithubSnapshot {
             projects: vec![answer("/never", None), answer("/repo", Some(1))],

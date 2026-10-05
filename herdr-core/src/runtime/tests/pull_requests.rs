@@ -16,6 +16,7 @@ fn issue(number: u32) -> IssueSnapshot {
         closed_at_unix_ms: None,
         blocked_by: Vec::new(),
         sub_issues: Default::default(),
+        labels: Vec::new(),
     }
 }
 
