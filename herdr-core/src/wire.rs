@@ -1524,6 +1524,7 @@ pub(crate) fn created_tab(value: Value) -> Result<(String, String), String> {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct CreatedWorktree {
     pub workspace_id: String,
+    pub tab_id: String,
     pub pane_id: String,
     pub path: String,
     pub branch: Option<String>,
@@ -1534,11 +1535,13 @@ pub(crate) fn created_worktree(value: Value) -> Result<CreatedWorktree, String> 
     match response(value, missing)? {
         res::ResponseResult::WorktreeCreated {
             workspace,
+            tab,
             root_pane,
             worktree,
             ..
         } => Ok(CreatedWorktree {
             workspace_id: nonempty_id(workspace.workspace_id, missing)?,
+            tab_id: nonempty_id(tab.tab_id, missing)?,
             pane_id: nonempty_id(root_pane.pane_id, missing)?,
             path: herdr_path(nonempty_id(worktree.path, missing)?),
             branch: worktree.branch,
