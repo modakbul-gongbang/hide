@@ -5,7 +5,7 @@
 // sidebar and any other list of agents (the Overview) cannot disagree.
 
 import type { TFunction } from "i18next";
-import { chipTone } from "./lineage";
+import { chipTone, demandTone } from "./lineage";
 import type { AgentRow, MarkCounts } from "./snapshot";
 
 /**
@@ -48,9 +48,9 @@ export function lineShownAtRest(line: RowLine, selected: boolean): boolean {
   return line.mode !== "quiet" || selected;
 }
 
-/** The colour of a line: a request in its demand's colour, news bright, a revealed line subdued. */
-export function lineTone(line: RowLine, demand: string | undefined): string {
-  if (line.mode === "request") return demand === "error" ? "text-destructive" : "text-warning";
+/** The colour of a line: a request in its demand's colour, dimmed like its mark once read, news bright, a revealed line subdued. */
+export function lineTone(line: RowLine, agent: Pick<AgentRow, "demand" | "emphasized">): string {
+  if (line.mode === "request") return demandTone(agent.demand ?? "none", agent.emphasized) ?? "text-warning";
   if (line.mode === "news") return "text-foreground";
   return "text-subtle-foreground";
 }
