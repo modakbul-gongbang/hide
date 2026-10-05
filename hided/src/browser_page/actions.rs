@@ -531,12 +531,24 @@ async fn input(page: &mut Page, session: &str, method: &str, params: Value) -> R
         .await
     {
         Ok(_) => Ok(()),
-        Err(error) => Err(unanswered(page, error).await),
+        Err(error) => {
+            let mut failure = unanswered(page, error).await;
+            // The event was sent. A page held by a script takes it when the
+            // script yields, so the failure does not say it was not delivered.
+            if failure.reason == "page_unresponsive" {
+                failure.next_action = Some(format!(
+                    "The input was sent and the page did not answer in time, so it may already have taken effect; run hide browser snapshot {} --diff before repeating it",
+                    page.display
+                ));
+            }
+            Err(failure)
+        }
     }
 }
 
-/// Input and pixels go unanswered on a page that is not shown, such as a
-/// View of a Workspace that is not in front; any other silence is the page's.
+/// Input and pixels go unanswered on a page Chromium treats as hidden; any
+/// other silence is the page's. A View the host hides, such as one of a
+/// Workspace that is not in front, is not such a page: it answers at once.
 async fn unanswered(page: &mut Page, error: CdpError) -> Failure {
     if !matches!(error, CdpError::Timeout) || page.cdp.dialog.is_some() {
         return page.blocked(error);

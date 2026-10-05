@@ -179,21 +179,28 @@ Nothing outlives the command in hided or on disk, except the file `screenshot` w
 Every CDP step has an eight-second deadline, below the gateway's ten-second command deadline, which would otherwise end the whole lease, and a whole command ends with `page_unresponsive` after two minutes.
 
 Cross-origin frames are auto-attached, up to 24 per page, and each frame's document carries a tag of four random characters; a snapshot shows it as `# OOPIF <tag> origin=<origin>` with refs `@<tag>:N`, and its field values and link targets reduced to their origin.
+A frame has its own renderer, so one that answers nothing within a step (its `Page.enable`, or a read of its document) does not fail the command: the snapshot notes it as `# OOPIF unresponsive origin=<origin> - no answer in time; ...` with the origin its target attached at, reads the rest of the page, and gives it no tag, refs or `--diff` baseline.
+Such a frame costs one step each time a command first meets it, and is not read again by that command.
 An action on such a ref goes to that frame's own session in its own coordinates, so a ref from a frame that navigated fails `ref_stale` instead of touching another element.
 Same-origin frames and open shadow roots are read and acted on through the top document.
 `changed` compares a snapshot of every frame taken before the action with one after it, read again after 0.7 and 1.2 seconds when nothing changed yet; clickable detection is capped in document order so a scroll alone never reads as a change.
 
-Input and screenshots need the display on screen, because a hidden page answers no input and would take it later unseen.
+Input and screenshots go only to a display on screen, so the operator sees what an action does.
 A display that is not its area's selected View fails them at once with `display_hidden` and names `hide view select <display> --reveal`; hided reads that from the core's view list when it opens the relay.
-A selected View of a Workspace that is not in front fails the same way when its first input goes unanswered within the step deadline.
-Whether Chromium delivers that unanswered input later, once the Workspace comes to the front, has not been measured.
-The page's own visibility is not the test: a selected View in a window another app covers reads `hidden` and still takes input and screenshots.
+That is hided's own rule, not Chromium's: a View the host hides still answers.
+A selected View of a Workspace that is not in front is not refused: the host hides it, yet Chromium reports its document visible and answers input and screenshots within the step, so no input times out there and none waits to be delivered when the Workspace returns, and the operator does not see the action drawn.
+The page's own visibility is not the test either: a selected View in a window another app covers reads `hidden` and still takes input and screenshots.
+An input the page does not answer within the step, because a script holds it, fails `page_unresponsive` and is not undone: the event was sent and takes effect when the script yields, so the failure's `next_action` says it may already have happened and to look with `snapshot --diff` before repeating it.
+A press that held the page this way ran its handler to the end, and no release or click arrives later, since the command sends none after the failure and its session ending delivers none.
 Reading commands work on a hidden display.
 No command calls `Page.bringToFront`, moves the operator's mouse, changes the View in front or takes keyboard focus.
-A JavaScript dialog is never answered for the operator: an action that opens one reports its type and message, and while it is open the next command's `Page.enable` on that frame's session gets no answer within the step deadline and fails `dialog_open`, for the top document and each cross-origin frame alike; Electron shows the dialog as a sheet on the window, where the operator answers it.
+A JavaScript dialog is never answered for the operator: an action that opens one reports its type and message, and while it is open the next command's `Page.enable` on the top document's session gets no answer within the step deadline and fails `dialog_open`; Electron shows the dialog as a sheet on the window, where the operator answers it.
+`dialog_open` also fails a command that received a dialog event from any frame while it ran.
+A dialog that a cross-origin frame opened before the command started cannot be told from a frame whose script never yields, since Chromium sends no event again to a new client, so that frame is noted as unresponsive and the rest of the page is read.
 `console` relies on Chromium replaying the messages the current document logged to a session that enables `Runtime`, and shows the newest 50; `network` reads the document's resource timing, the newest 100 rows, and has no request or response headers or bodies.
 `wait --timeout` is at most 60 seconds and `--verify` at most 10.
 There is no file upload and no download: `DOM.setFileInputFiles` stays refused by the gateway and downloads stay disabled for a page that has held a debugger lease.
+`Input.dispatchDragEvent` with a `data.files` list that is not empty is refused for the same reason, since dropping files hands the page local files as an upload does; a drag that carries no files passes.
 
 Each action draws on the operator's view of the page: an arrow cursor in the accent color glides to the target, a click ripples, a drag leaves a line, filled fields flash, a pressed key is named beside its field and a scroll shows an arrow.
 It is one `<hide-agent-overlay>` element, a direct child of the document element with a closed shadow root, `aria-hidden` and `pointer-events: none`, so it never enters a snapshot and lets the operator's clicks through; it removes itself two seconds after the last action.
@@ -362,7 +369,8 @@ The separate app-owned pre-first-load, post-disconnect and native iframe file at
 Each run stores its iframe provenance in a new private evidence directory, preserving earlier results.
 Its download witness confines the candidate app and owned page session to a private sink before every attempt, observes production cancellation on every native callback, and requires one refusal diagnostic and an empty sink.
 `web/e2e/browser-agent-assets.spec.ts` runs the agent page assets in plain Chromium on chromux's own cases: masking, state suffixes, stable refs, `--diff`, `--grep`, clickable divs, covering overlays, frame and shadow reach, fill, the refusals of hidden, covered and stale targets, `click --text`, and `changed` ignoring a scroll.
-`desktop/e2e/browser-agent.spec.ts` runs `hide browser` from an isolated pane against its own candidate: snapshot, fill and click in a page and its cross-site frame, `--diff`, the overlay, console, network, eval and screenshot, a dialog that holds the display until it is answered, and busy, hidden, file and missing displays.
+`desktop/e2e/browser-agent.spec.ts` runs `hide browser` from an isolated pane against its own candidate: snapshot, fill and click in a page and its cross-site frame, `--diff`, the overlay, console, network, eval and screenshot, a dialog that holds the display until it is answered, a cross-site frame that never answers, a selected View of a Workspace behind another that still takes input and screenshots, a press that holds the page past a step, and busy, hidden, file and missing displays.
+`hided/src/browser_page/page.rs` tests the frame rules against a scripted gateway, and `desktop/src/main/browserCdp.test.ts` the drag refusal.
 Playwright dismisses a dialog no listener handles, so that test listens and answers it the way the operator would.
 `desktop/e2e/remote-browser-agent.spec.ts` runs the same snapshot and click from a device pane over the isolated SSH server, and the Workspace commands' `renderer_unavailable` once the desktop is gone.
 `desktop/e2e/remote-workspace.spec.ts` additionally uses an isolated SSH server, whose sessions get the private HOME `desktop/e2e/device-home.ts` proves because connecting installs Hide's kit there, and two private Herdr servers to prove remote CLI origin, HTTP and WebSocket forwarding, absolute loopback subrequests, local and remote cookie separation, remote popup address ownership, relative HTML assets, refusal of undeclared files and external requests, explicit reveal, background View cleanup, route cleanup on close and forced candidate exit, and a return route that comes back after the device's helper connection ends and reconnects, with every remote command run through the `hide` Hide installed and linked on the device.

@@ -52,6 +52,7 @@ Password, card number, CVC, one-time code and similar values are never shown; yo
 `@N` names an element of the top document, including open shadow roots and same-origin frames.
 A ref stays the same across snapshots of the same document, new elements get the next numbers, and a navigation starts again at `@1`.
 A cross-origin frame shows as its own section, `# OOPIF <tag> origin=<origin>`, and its elements are `@<tag>:N`; its values and links show only their origin.
+A frame that answers nothing in time shows as `# OOPIF unresponsive origin=<origin>` with no refs, and the rest of the page is read; its script may never yield, or a dialog it opened is waiting for the operator.
 A ref from an older document, or from a frame that navigated, fails `ref_stale` instead of touching another element: take a fresh snapshot.
 
 ## Acting and checking
@@ -78,7 +79,8 @@ The usual loop:
 The display stays on the operator's screen while you work, and an arrow cursor in hide's accent color shows each action: it glides to the target, a click ripples, a drag leaves a line, filled fields flash, pressed keys are named, scrolls show an arrow.
 It fades two seconds after the last action, lets clicks through, and never appears in a snapshot.
 No command moves the operator's mouse, changes which View is in front, or takes keyboard focus.
-Input and screenshots need the display shown: one behind another tab of its area, or in a Workspace that is not in front, fails `display_hidden`; reading commands still work there.
+Input and screenshots need the display to be its area's selected View: one behind another tab of its area fails `display_hidden`, and reading commands still work there.
+A selected View of a Workspace that is not in front takes input and screenshots like any other, though the operator does not see the action.
 
 ## When something fails
 
@@ -108,7 +110,7 @@ Follow `next_action`; the reasons you will meet:
 | `display_busy` | Another debugger (agent-browser, Playwright) or another `hide browser` command holds the display; let it finish. |
 | `display_unsupported` | Only http(s) and blank displays can be driven; open the page with `hide browser open <url>`. |
 | `display_missing`, `display_closed` | Run `hide view list` and choose a current browser display. |
-| `page_unresponsive` | The page did not answer in time; retry or ask the operator. |
+| `page_unresponsive` | The page did not answer in time; retry or ask the operator. After an input (click, type, press, drag, scroll) the event was sent and may already have taken effect: look with `snapshot --diff` before repeating it. |
 | `browser_relay_limit`, `browser_control_busy` | Other `hide browser` commands or CDP clients are running; let one finish. |
 | `browser_relay_message_limit`, `browser_limit` | A message crossed a size or rate limit; capture a region with `screenshot --ref`, narrow the request, or wait a minute. |
 | `browser_control_unavailable` | Reconnect the Hide desktop app. |

@@ -269,10 +269,12 @@ impl Page {
         self.dom(&top, "probe", json!({})).await
     }
 
-    /// Input and pixels need a display on screen: a View behind another
-    /// tab never answers input, and would take it later, unseen. The page's
-    /// own visibility cannot tell: a selected View in a window covered by
-    /// another app reads hidden and still takes input.
+    /// Input and pixels go only to a display on screen, so the operator sees
+    /// the action. A View behind another tab of its area is hidden by the
+    /// host but still answers, so this refusal is hided's own rule, read
+    /// from the area's selection. The page's own visibility cannot tell: a
+    /// selected View in a window covered by another app reads hidden and
+    /// still takes input.
     pub async fn require_visible(&mut self) -> Result<Value, Failure> {
         if !self.selected {
             return Err(Failure::new("display_hidden", None));
