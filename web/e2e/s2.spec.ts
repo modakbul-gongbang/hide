@@ -131,15 +131,18 @@ async function startFlow(page: Page): Promise<Flow> {
 async function splitShell(page: Page, flow: Flow): Promise<string> {
   await expect.poll(() => screen(page), { timeout: 15_000 }).toContain("claude");
   const focusedPane = () => page.evaluate(() => window.__hideProbe?.paneId() ?? null);
-  const agentPaneId = await focusedPane();
+  const paneIds = () => page.locator("[data-pane-view]").evaluateAll((views) => views.map((view) => view.getAttribute("data-pane-view")!));
+  const before = await paneIds();
   await page.keyboard.press(chord("split_right"));
   await expect(page.locator("[data-pane-view]")).toHaveCount(3);
   await expect.poll(() => flow.sent.get("create_pane")).toBe(1);
-  // The core publishes the new pane's layout first and follows Herdr's focus
-  // onto it in the update after, so three panes do not yet say which one is
-  // the shell: wait for the core's focus to leave the agent's pane.
-  await expect.poll(focusedPane).not.toBe(agentPaneId);
-  const shellPaneId = (await focusedPane())!;
+  // The split's new pane is the one the grid gained.
+  const created = (await paneIds()).filter((id) => !before.includes(id));
+  expect(created).toHaveLength(1);
+  const shellPaneId = created[0];
+  // The core publishes that pane's layout first and follows Herdr's focus onto
+  // it in the update after, so wait for exactly that pane to hold the focus.
+  await expect.poll(focusedPane).toBe(shellPaneId);
   const shellPane = page.locator(`[data-pane-view="${shellPaneId}"]`);
   await expect(shellPane).toHaveAttribute("data-transport", /connected|controlling|idle/, { timeout: 15_000 });
   await expect.poll(() => screen(page), { timeout: 15_000 }).toContain("fixture %");
