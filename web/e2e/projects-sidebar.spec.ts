@@ -16,6 +16,7 @@ import { declareParent, elsewhereTab, finishFixtureTurn, labelAgent, setFixtureL
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, keyboardFocus, rest, rowGeometry, screenshot, sidebarColumns, sidebarOverflow, sidebarRowsFit } from "./wire";
 import { chord } from "./chords";
+import { animationsFinished, quietFor } from "./wait";
 
 test.describe.configure({ timeout: 180_000 });
 
@@ -91,7 +92,7 @@ async function chooseTheme(page: Page, theme: "light" | "dark"): Promise<void> {
   await expect(page.locator("html")).toHaveClass(new RegExp(`\\b${theme}\\b`));
   await page.keyboard.press("Escape");
   await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
-  await page.waitForTimeout(400);
+  await animationsFinished(page);
 }
 
 test("the Projects tab: kind, age, status badges, opened checkouts and folded projects", async ({ page }) => {
@@ -217,7 +218,7 @@ test("the Projects tab: kind, age, status badges, opened checkouts and folded pr
     await page.keyboard.press("Escape");
     await expect(projectMenu).toHaveCount(0);
     // Looking at a row sends nothing: hover, focus and an open menu are the list's own.
-    await page.waitForTimeout(300);
+    await quietFor(page, 300, "looking at a row sends nothing");
     expect([...sent].filter(([kind, count]) => count !== (beforeLooking.get(kind) ?? 0)).map(([kind]) => kind)).toEqual([]);
     const overview = page.locator("[data-home-destination]");
     await expect(project.locator("[data-project-overview]")).toHaveCount(0);

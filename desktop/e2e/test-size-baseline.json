@@ -1,0 +1,52 @@
+{
+  "limit": {
+    "lines": 120,
+    "expect": 40
+  },
+  "tests": {
+    "browser.spec.ts::browser: a page opens from an agent's pane, follows its area, moves without loading again, freezes under the palette and ends with its display": {
+      "lines": 212,
+      "expect": 56
+    },
+    "browser.spec.ts::area cycle native: page input previews one exact area, releases once and cancels": {
+      "lines": 161,
+      "expect": 42
+    },
+    "device-home.spec.ts::a device's Home is made on its first start, the rail follows registration, and a device start lands on that device": {
+      "lines": 127,
+      "expect": 36
+    },
+    "digit-shortcuts.spec.ts::⌘n selects a tab, ⌥n an agent, and holding ⌘ or ⌥ shows the numbers without moving anything": {
+      "lines": 184,
+      "expect": 44
+    },
+    "keys.spec.ts::cycles: ⌃Tab and ⌥Tab commit once, on releasing the held modifier": {
+      "lines": 121,
+      "expect": 19
+    },
+    "remote-workspace.spec.ts::remote pane CLI reaches its own Workspace over SSH and leaves the local Workspace in front": {
+      "lines": 722,
+      "expect": 165
+    },
+    "terminal-links.spec.ts::links: a pane's URLs and paths open in the Workspace on a click and in macOS on ⌘-click, with no confirm dialog and no click for the program": {
+      "lines": 159,
+      "expect": 24
+    },
+    "terminal-links.spec.ts::Korean prose links only the real path and opens that file": {
+      "lines": 144,
+      "expect": 14
+    },
+    "terminal-links.spec.ts::dense terminal path hover measures cold and warm native work": {
+      "lines": 124,
+      "expect": 14
+    },
+    "workspace-columns.spec.ts::Workspace columns preserve geometry, dock once on release and show native idle and driven echo": {
+      "lines": 338,
+      "expect": 100
+    },
+    "workspace-columns.spec.ts::SSH Workspace columns keep chords, fallback and saved widths separate from the same local path": {
+      "lines": 140,
+      "expect": 38
+    }
+  }
+}

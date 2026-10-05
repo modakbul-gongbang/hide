@@ -10,6 +10,7 @@ import path from "node:path";
 import { startHerdr } from "../../web/e2e/herdr-fixture";
 import { sendEvent } from "../../web/e2e/wire";
 import { isolate, launch, test } from "./fixture";
+import { quietFor } from "../../web/e2e/wait";
 
 type Pick = { canceled: boolean; filePaths: string[] };
 
@@ -300,7 +301,7 @@ async function captureWindow(app: ElectronApplication, page: Page, name: string)
   if (!dir) return;
   // The window paints on its own frame; capture after two, so the state just asserted is on screen.
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
-  await page.waitForTimeout(200);
+  await quietFor(page, 200, "the macOS compositor presents the frame before the native capture");
   const source = await app.evaluate(({ BrowserWindow }) => {
     const windows = BrowserWindow.getAllWindows();
     if (windows.length !== 1) throw new Error("Expected exactly one candidate window");

@@ -19,6 +19,7 @@ import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { bindChordlessCommand, countSent, enterWorkspace, screenshot, showExplorer, showTool } from "./wire";
 import { chord } from "./chords";
+import { quietFor } from "./wait";
 
 /** `--size-rail`: the always-shown device rail takes this much of a window that measured its areas without one. */
 const RAIL = 48;
@@ -401,7 +402,7 @@ test("Open to the side shows one document twice: edits and Korean input reach bo
     await expect.poll(() => (stack.last.get("view_layout.close")?.pending_save as { contents_utf8?: string } | undefined)?.contents_utf8?.split("\n")[0]).toBe(
       "line 001-B 한글안녕-C-D",
     );
-    await page.waitForTimeout(1500);
+    await quietFor(page, 1500, "the unsaved close stays pending while the save cannot land");
     await expect.poll(() => shape(page)).toBe("@(>shared.txt)");
     await expect(editor(page, 0)).toContainText("-C-D");
     await expect(area(page, 0).locator("[data-editor-save-state]")).toBeVisible();
@@ -795,7 +796,7 @@ test("splits, moves, resizes, focus and closes run from the tab menu, area comma
     expect(pageSplits).toBe(1);
     expect(duplicated).toBe(1);
     expect(count("view_layout.split")).toBe(2);
-    await page.waitForTimeout(500);
+    await quietFor(page, 500, "no further split follows");
     await expect.poll(() => shape(page)).toBe("(a.txt b.txt >c.txt) | @(>d.txt)");
     await expect(editor(page, 1)).toBeFocused();
 
@@ -838,7 +839,7 @@ test("splits, moves, resizes, focus and closes run from the tab menu, area comma
     await expect.poll(() => count("view_layout.resize")).toBe(1);
     await expect.poll(async () => Number(await divider.getAttribute("aria-valuenow"))).toBeGreaterThan(ratio + 5);
     await expect.poll(async () => Math.round((await boxOf(area(page, 0))).width - before[0]!.width)).toBeGreaterThan(140);
-    await page.waitForTimeout(300);
+    await quietFor(page, 300, "the divider settles");
     expect(count("view_layout.resize")).toBe(1);
 
     // The focused divider moves one step per arrow key, one event each (B9, B20).

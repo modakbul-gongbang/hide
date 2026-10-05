@@ -18,6 +18,7 @@ import { labelAgent, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, rest, rowGeometry, screenshot } from "./wire";
 import { chord } from "./chords";
+import { animationsFinished, quietFor } from "./wait";
 
 test.describe.configure({ timeout: 180_000 });
 
@@ -93,7 +94,7 @@ async function chooseTheme(page: Page, theme: "light" | "dark"): Promise<void> {
   await expect(page.locator("html")).toHaveClass(new RegExp(`\\b${theme}\\b`));
   await page.keyboard.press("Escape");
   await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
-  await page.waitForTimeout(400);
+  await animationsFinished(page);
 }
 
 test("a checkout's pull request: the glyph opens it, the row's card describes it, the menu names it", async ({ page }) => {
@@ -165,7 +166,7 @@ test("a checkout's pull request: the glyph opens it, the row's card describes it
 
     // B9: the card stays while the pointer crosses onto it, and Escape closes it.
     await card.locator("[data-checkout-card-title]").hover();
-    await page.waitForTimeout(700);
+    await quietFor(page, 700, "the card stays while the pointer crosses onto it");
     await expect(card).toBeVisible();
     await page.keyboard.press("Escape");
     await expect(card).toHaveCount(0);
@@ -253,7 +254,7 @@ test("a checkout's pull request: the glyph opens it, the row's card describes it
     await expect(page.locator('[data-view-tab-bar] [role="tab"]')).toHaveCount(1);
     await expect(address).toHaveText(url.replace(/^https?:\/\//, ""));
     await expect(feature.locator("[data-checkout]")).toBeFocused();
-    await page.waitForTimeout(300);
+    await quietFor(page, 300, "focus stays on the checkout after the address is read");
     await expect(page.locator("[data-checkout-card]")).toHaveCount(0);
     await primary.locator("[data-checkout]").click({ button: "right" });
     const primaryMenu = page.getByRole("menu", { name: "main actions" });

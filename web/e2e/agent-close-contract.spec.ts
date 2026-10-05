@@ -61,7 +61,7 @@ test("primary last tab and last pane close retain the linked workspace boundary"
     const replacement = currentTabs().tabs.find((tab) => tab.workspace_id === workspaceId)!;
     const replacementTab = page.locator(`[data-agent-tab-bar] [data-tab="${replacement.tab_id}"]`);
     await expect(replacementTab).toBeVisible();
-    expect(await replacementTab.locator("xpath=ancestor::*[@data-agent-area-id]").getAttribute("data-agent-area-id")).toBe(area);
+    await expect(replacementTab.locator("xpath=ancestor::*[@data-agent-area-id]")).toHaveAttribute("data-agent-area-id", area);
     expect(currentTabs().workspaces.some((workspace) => workspace.workspace_id === sibling.result.workspace.workspace_id)).toBe(true);
     await screenshot(page, "agent-primary-replacement-tab");
     const replacementPane = currentTabs().panes.find((pane) => pane.tab_id === replacement.tab_id)!;

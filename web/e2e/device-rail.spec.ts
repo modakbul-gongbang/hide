@@ -17,6 +17,7 @@ import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, screenshot } from "./wire";
 import { SYSTEM } from "./chords";
+import { animationsFinished } from "./wait";
 
 test.describe.configure({ timeout: 180_000 });
 
@@ -130,7 +131,7 @@ test("the rail follows the registered devices; a device that cannot be reached i
         document.documentElement.classList.toggle("dark", next === "dark");
         document.documentElement.classList.toggle("light", next === "light");
       }, theme);
-      await page.waitForTimeout(400);
+      await animationsFinished(page);
       await screenshot(page, `device-rail-this-mac-${theme}`);
     }
 

@@ -5,6 +5,7 @@ import path from "node:path";
 import { labelAgent, startHerdr } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace } from "../../web/e2e/wire";
 import { isolate, launch, test } from "./fixture";
+import { animationsFinished } from "../../web/e2e/wait";
 
 test("native tab composition and Korean inline naming", async () => {
   const herdr = await startHerdr();
@@ -56,7 +57,7 @@ test("native tab composition and Korean inline naming", async () => {
         await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
         await expect(tab).toContainText("검토할 탭 이름");
         // Let the existing theme transitions finish before the native capture.
-        await page.waitForTimeout(400);
+        await animationsFinished(page);
         execFileSync("/usr/sbin/screencapture", ["-x", "-o", "-l", candidate.source.split(":")[1]!, path.join(dir, `tab-names-native-${theme}.png`)]);
       }
     }

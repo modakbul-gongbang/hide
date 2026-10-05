@@ -185,7 +185,7 @@ test("the production build hided serves has no gallery", async ({ page }) => {
   try {
     daemon = await startHided(herdr, "gallery");
     await page.goto(`${daemon.origin}/gallery#token=${daemon.token}`);
-    await page.waitForLoadState("networkidle");
+    await expect(page.locator("[data-main-screen], [data-workspace-screen]").first()).toBeVisible();
     await expect(page.locator("[data-gallery-section]")).toHaveCount(0);
   } finally {
     daemon?.stop();

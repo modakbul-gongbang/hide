@@ -22,6 +22,7 @@ import { claudeProjects, declareParent, elsewhereTab, finishFixtureTurn, labelAg
 import { startHided, type Daemon } from "./hided-fixture";
 import { chord, field } from "./chords";
 import { countSent, screenshot } from "./wire";
+import { animationsFinished, quietFor } from "./wait";
 
 test.describe.configure({ timeout: 240_000 });
 
@@ -87,7 +88,7 @@ async function chooseTheme(page: Page, theme: "light" | "dark"): Promise<void> {
   await expect(page.locator("html")).toHaveClass(new RegExp(`\\b${theme}\\b`));
   await page.keyboard.press("Escape");
   await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
-  await page.waitForTimeout(400);
+  await animationsFinished(page);
 }
 
 async function atRest(page: Page): Promise<void> {
@@ -231,9 +232,9 @@ test("the request view: what each agent was asked, what came of it, and what is 
 
     // Nothing changes, nothing is sent (B30).
     await atRest(page);
-    await page.waitForTimeout(500);
+    await quietFor(page, 500, "nothing changes, nothing is sent (B30)");
     const quiet = [...sent.values()].reduce((sum, count) => sum + count, 0);
-    await page.waitForTimeout(3_000);
+    await quietFor(page, 3_000, "still nothing is sent after the longer window (B30)");
     expect([...sent.values()].reduce((sum, count) => sum + count, 0)).toBe(quiet);
 
     // The keyboard (B8): the arrows step through heads, rows and chips in
