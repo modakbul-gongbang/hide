@@ -6,6 +6,7 @@ import { GALLERY, type Section } from "./manifest";
 import { ServerSessionScene } from "./ServerSessionScene";
 import { sceneParams, SidebarScene } from "./SidebarScene";
 import { AreaFocusScene } from "./AreaFocusScene";
+import { AgentOnboardingScene } from "./AgentOnboardingScene";
 
 export function mountGallery(root: Root) {
   const params = new URLSearchParams(window.location.search);
@@ -18,6 +19,11 @@ export function mountGallery(root: Root) {
     // A scene seeds the app's own stores, so it is one document per scene.
     if (scene === "workspace-servers" || scene === "session-search") {
       root.render(<StrictMode><ServerSessionScene scene={scene} {...sceneParams(params)}/></StrictMode>);
+      return;
+    }
+    if (scene === "agent-onboarding") {
+      document.title = "hide · Agent onboarding scene";
+      root.render(<StrictMode><AgentOnboardingScene theme={params.get("theme") === "light" ? "light" : "dark"} /></StrictMode>);
       return;
     }
     if (scene === "search-palette") {
