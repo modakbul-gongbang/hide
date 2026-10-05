@@ -24,3 +24,41 @@ strip = "symbols"
 # cache never repays what it costs; what it does instead is grow one cache
 # per worktree. See `Build Output Belongs To Its Worktree` in AGENTS.md.
 incremental = false
+
+# The workspace's own crates keep file and line tables, enough for a panic's
+# backtrace, and leave out the rest of the debug info, which is most of what a
+# debug build of them writes and links. Dependencies keep the default, so the
+# builds CI has cached for them stay valid. A crate added to `members` without
+# an entry here builds with full debug info, which is only slower.
+[profile.dev.package.herdr-core]
+debug = "line-tables-only"
+
+[profile.dev.package.hide-agent-hooks]
+debug = "line-tables-only"
+
+[profile.dev.package.hide-ai]
+debug = "line-tables-only"
+
+[profile.dev.package.hide-herdr-client]
+debug = "line-tables-only"
+
+[profile.dev.package.hide-host]
+debug = "line-tables-only"
+
+[profile.dev.package.hide-kit]
+debug = "line-tables-only"
+
+[profile.dev.package.hide-memory]
+debug = "line-tables-only"
+
+[profile.dev.package.hide-platform]
+debug = "line-tables-only"
+
+[profile.dev.package.hide-project]
+debug = "line-tables-only"
+
+[profile.dev.package.hide-session]
+debug = "line-tables-only"
+
+[profile.dev.package.hided]
+debug = "line-tables-only"
