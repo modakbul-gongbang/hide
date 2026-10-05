@@ -196,7 +196,7 @@ A piece that another open change is still building is marked as pending with the
    The timers of `hided` and the core are not the page's; those are injected in Rust (see [Writing a Rust test](#writing-a-rust-test)).
 5. **Keep the size of a test bounded.**
    One representative journey per user-visible flow, and one small spec per independent contract.
-   A long journey that joins several contracts is quarantined whole, because quarantine is per test, so one shaky step takes every contract in it out of the required lane; split a test so the part that shakes can be fixed alone.
+   A long journey that joins several contracts fails whole, so one shaky step hides every contract after it and turns the lane red for all of them; split a test so the part that shakes can be fixed alone.
    The reference splits are `agent-close-contract.spec.ts` (one Herdr contract, two UI contracts), the drag contracts in `agent-tab-groups.spec.ts`, the row menus in `sidebar-menus.spec.ts` and the view caps in `s7.spec.ts`: each spec starts from one shared `start...` helper, puts itself into the shape it needs as setup, and asserts one contract.
    Splitting costs a stack start per spec, so say in the pull request what the split bought.
    `web/scripts/check-e2e-test-size.mjs` (run by `lint` in `web` and `desktop`) fails a test over 120 lines or 40 `expect` calls, counted on the `test(...)` call itself.
@@ -333,12 +333,10 @@ What the retry does not do:
 - Do not make a flaky test pass by raising a timeout or deadline, adding retries beyond the CI one, changing the number of clicks or keys, lowering an expected count, resending an action, accepting a partial string, or skipping it.
   Each of these hides the order or readiness problem the failure was reporting; fix the wait or the gate, or fix the product.
 
-Until the last `@flaky` tag is gone, a tag removes a test from the required lanes:
+No test leaves a required lane:
 
-- A web or desktop e2e test tagged `@flaky` with an `issue` annotation is skipped by the required web shards and the required desktop step (`--grep-invert @flaky`, nightly's suites included), and web shard 1 and the desktop job each still run every tagged test in a step that cannot turn `verify` red, so a fix shows up as a pass.
-  Pull-request tagged web tests run only in shard 1 of the Linux lane, never in the macOS or Windows `@platform` jobs.
-  The goal is no tag; a new one needs an open issue holding a recorded failure and a deadline, and removing the tag is part of the fix.
-- Rust has no quarantine: a flaky Rust test is retried, filed and fixed or deleted, and the policy is zero `ignore`.
+- There is no quarantine tag and no quarantine step: every web and desktop e2e test runs in the lanes its plan picks, and a flaky one is retried, filed and fixed or deleted like any other.
+- Rust has no quarantine either: a flaky Rust test is retried, filed and fixed or deleted, and the policy is zero `ignore`.
   An `ignore` that names an external binary, such as `real_herdr` and `remote_delivery`, is an opt-in run with its own step and says what it needs; it is not a quarantine.
 
 ## Reviewing a pull request that adds or changes a test
@@ -351,4 +349,4 @@ Until the last `@flaky` tag is gone, a tag removes a test from the required lane
 - [ ] An order the result depends on is fixed by a gate at a real boundary, with the barrier asserted before release.
 - [ ] The fixture copies the whole isolation environment, owns every process it starts on every exit path, and reports cleanup failures without replacing the original error.
 - [ ] A system difference lives beside the fixture that owns the resource, not in the spec.
-- [ ] No timeout, retry, count or skip was changed to make the test pass; a new `@flaky` tag meets the policy above.
+- [ ] No timeout, retry, count or skip was changed to make the test pass, and no test was tagged out of a required lane.
