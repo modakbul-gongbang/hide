@@ -255,7 +255,7 @@ The crate's own `AGENTS.md` says where the file goes; this section says how the 
    A `thread::sleep` that stands in for a state is the same mistake in the other direction: the test waits a time chosen by a person, not the state the next line needs.
    A sleep that is the subject of the test, such as a fake peer that answers late, is the exception and says so in a comment.
 6. **Poll the state, once, with a named condition.**
-   When a test must wait for another thread, use the module's helper that names what it waits for (`wait_for` in `herdr-core/src/runtime/tests/home.rs`, `wait_for` in `herdr-core/tests/support/remote_delivery/mod.rs`) rather than a new loop with a sleep.
+   When a test must wait for another thread, use the module's helper that names what it waits for (`wait` and `wait_for` in `herdr-core/src/runtime/tests.rs`, which every runtime test module shares, `wait_for` in `herdr-core/tests/support/remote_delivery/mod.rs`) rather than a new loop with a sleep.
    The helper fails with the name of the thing it waited for, so a hang is readable.
 7. **Own and remove what the test starts.**
    Put a child process, a thread, a socket or a temp folder behind a value that cleans up on `Drop`, as `FakeHerdr` does: it wakes its accept loop, joins the thread, and re-raises a panic from the responder on the test thread.
