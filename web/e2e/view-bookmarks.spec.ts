@@ -1,8 +1,8 @@
 import { expect, test, type Locator, type Page } from "@playwright/test";
-import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { startHerdr, type HerdrFixture } from "./herdr-fixture";
+import { fixtureExecutable } from "./platform-fixture";
+import { runInPane, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, enterWorkspace, screenshot } from "./wire";
 
@@ -12,19 +12,11 @@ import { countSent, enterWorkspace, screenshot } from "./wire";
 test.describe.configure({ timeout: 180_000 });
 test.use({ actionTimeout: 15_000 });
 
-function quote(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
-}
-
 /** Runs `hide <args>` in the shell of `pane`, as an agent in that tab would. */
 async function hideFrom(herdr: HerdrFixture, daemon: Daemon, pane: string, args: string[], sequence: number): Promise<void> {
-  const status = path.join(herdr.root, `cli-${sequence}.status`);
-  const error = path.join(herdr.root, `cli-${sequence}.err`);
-  const hide = path.resolve("..", "target", "debug", "hide");
-  const command = `HIDE_STATE_DIR=${quote(daemon.stateDir)} ${[hide, ...args].map(quote).join(" ")} > /dev/null 2> ${quote(error)}; printf '%s' "$?" > ${quote(status)}\n`;
-  const sent = spawnSync(herdr.bin, ["pane", "send-text", pane, command], { env: herdr.env, encoding: "utf8", timeout: 10_000 });
-  expect(sent.status, sent.stderr).toBe(0);
-  await expect.poll(() => (fs.existsSync(status) ? fs.readFileSync(status, "utf8") : null), { timeout: 20_000 }).toBe("0");
+  const hide = path.resolve("..", "target", "debug", fixtureExecutable("hide"));
+  const ran = await runInPane(herdr, pane, `cli-${sequence}`, { env: { HIDE_STATE_DIR: daemon.stateDir }, argv: [hide, ...args] });
+  expect(ran.status, ran.stderr).toBe(0);
 }
 
 async function box(node: Locator) {

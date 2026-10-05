@@ -2,7 +2,7 @@ import { expect, test, type Locator, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { startHerdr, declareParent } from "./herdr-fixture";
+import { startHerdr, declareParent, printLinesCommand } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, enterWorkspace, screenshot, showTool } from "./wire";
 import { chord } from "./chords";
@@ -62,7 +62,7 @@ test("Agent pointer drags split live canvases, reorder, move, cancel, resize, co
     await expect(page.locator('[data-transport="released"]')).toHaveCount(0);
     // Both shown tabs keep receiving fresh output while the other owns focus.
     const live = [herdr.panes[0], created[1]!.result.root_pane.pane_id];
-    for (const [index, pane] of live.entries()) execFileSync(herdr.bin, ["pane", "run", pane, `for n in 1 2 3; do printf 'area-${index}-live-%s\\n' "$n"; sleep 0.1; done`], { env: herdr.env, timeout: 10_000 });
+    for (const [index, pane] of live.entries()) execFileSync(herdr.bin, ["pane", "run", pane, printLinesCommand(herdr.shell, `area-${index}-live-`, 3)], { env: herdr.env, timeout: 10_000 });
     for (const [index, pane] of live.entries()) await expect.poll(() => page.evaluate((id) => window.__hideProbe?.paneText(id) ?? "", pane)).toContain(`area-${index}-live-3`);
     await screenshot(page, "agent-groups-two-live-areas");
     await page.keyboard.press(chord("settings"));

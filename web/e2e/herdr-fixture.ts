@@ -43,6 +43,8 @@ export type HerdrFixture = {
   inputLogs: [string, string];
   /** The controlled shim and system-tool PATH for the server, panes and daemon. */
   fixturePath: string;
+  /** The family of the shell Herdr starts in a pane, read from the shell its config names. */
+  shell: PaneShell;
   /** Runs a pinned-herdr CLI command against the private server and parses its JSON. */
   run: (args: string[]) => unknown;
   stop: () => void;
@@ -168,7 +170,20 @@ int main(int argc, char **argv) {
   fixture_count_t n;
   while ((n = terminal_read(b, sizeof b)) > 0) {
     if (log >= 0 && write(log, b, (size_t)n) < 0) return 1;
+#ifdef _WIN32
+    // A Unix tty turns Enter's CR into LF on input and LF into CRLF on
+    // output, so the line ends. A console delivers CR alone: echo it as the
+    // line end too, or the next line is drawn over this one.
+    static char echo[sizeof b * 2];
+    size_t out = 0;
+    for (fixture_count_t i = 0; i < n; i++) {
+      echo[out++] = b[i];
+      if (b[i] == '\\r' && (i + 1 == n || b[i + 1] != '\\n')) echo[out++] = '\\n';
+    }
+    if (terminal_write(echo, out) < 0) return 1;
+#else
     if (terminal_write(b, (size_t)n) < 0) return 1;
+#endif
   }
 #ifdef _WIN32
   if (n < 0) return 1;
@@ -298,6 +313,82 @@ async function waitFor(predicate: () => boolean, what: string, ms = 10_000, deta
   }
   throw new Error(`timed out waiting for ${what}${detail ? `; last seen: ${detail()}` : ""}`);
 }
+
+export type PaneShell = "posix" | "cmd";
+
+/**
+ * The family of the shell `isolatedEnv` named for Herdr's panes. The shell
+ * is read from that name, never from the host OS, so a command is written
+ * for the shell the pane really runs.
+ */
+export function paneShellOf(env: NodeJS.ProcessEnv): PaneShell {
+  const shell = env.SHELL ?? "";
+  const name = shell.split(/[\\/]/).pop()!.toLowerCase();
+  if (name === "cmd.exe") return "cmd";
+  if (name === "zsh") return "posix";
+  throw new Error(`the fixture cannot write commands for the pane shell ${JSON.stringify(shell)}`);
+}
+
+/** A tab named for its pane's shell, or numbered when none has named it yet; cmd.exe titles its console with its own path. */
+export function paneShellTabName(shell: PaneShell): RegExp {
+  return shell === "cmd" ? /cmd\.exe|Tab \d+/i : /zsh|Tab \d+/;
+}
+
+/** The line that makes a pane's shell print `lines`, one at a time. */
+export function printLinesCommand(shell: PaneShell, prefix: string, count: number): string {
+  if (shell === "cmd") return `for %n in (${Array.from({ length: count }, (_, i) => i + 1).join(" ")}) do @echo ${prefix}%n`;
+  return `for n in ${Array.from({ length: count }, (_, i) => i + 1).join(" ")}; do printf '${prefix}%s\\n' "$n"; sleep 0.1; done`;
+}
+
+export type PaneProgram = {
+  /** Variables set for this program, and for the rest of the pane's session under cmd.exe. */
+  env?: Record<string, string>;
+  argv: string[];
+  stdout?: string;
+  stderr: string;
+  /** Written last, with the exit status, so its presence says the program has finished. */
+  status: string;
+};
+
+const posixQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
+
+function cmdQuote(value: string): string {
+  if (/["%\r\n]/.test(value)) throw new Error(`cmd.exe cannot carry ${JSON.stringify(value)} in a pane command`);
+  return `"${value}"`;
+}
+
+/** The text that runs `program` in a pane's shell, ready for `pane run`. */
+export function paneProgramLine(shell: PaneShell, program: PaneProgram): string {
+  const env = Object.entries(program.env ?? {});
+  if (shell === "cmd") {
+    const sets = env.map(([key, value]) => `set ${cmdQuote(`${key}=${value}`)} && `).join("");
+    const run = program.argv.map(cmdQuote).join(" ");
+    // `call echo %^errorlevel%` reads the status when it runs, not when the line is parsed.
+    return `${sets}${run} > ${cmdQuote(program.stdout ?? "nul")} 2> ${cmdQuote(program.stderr)} & >${cmdQuote(program.status)} call echo %^errorlevel%`;
+  }
+  const sets = env.map(([key, value]) => `${key}=${posixQuote(value)} `).join("");
+  return `${sets}${program.argv.map(posixQuote).join(" ")} > ${posixQuote(program.stdout ?? "/dev/null")} 2> ${posixQuote(program.stderr)}; printf '%s' "$?" > ${posixQuote(program.status)}`;
+}
+
+/**
+ * Runs `argv` in the shell of `pane`, as an agent in that tab would, and
+ * returns its exit status once the shell has written it. Output goes to
+ * `<root>/<name>.out` and `<name>.err`; `name` is unique per call.
+ */
+export async function runInPane(
+  fixture: Pick<HerdrFixture, "bin" | "env" | "root" | "shell">,
+  pane: string,
+  name: string,
+  program: { env?: Record<string, string>; argv: string[]; stdout?: boolean },
+): Promise<{ status: number; stdout: string; stderr: string }> {
+  const files = { stdout: path.join(fixture.root, `${name}.out`), stderr: path.join(fixture.root, `${name}.err`), status: path.join(fixture.root, `${name}.status`) };
+  const line = paneProgramLine(fixture.shell, { env: program.env, argv: program.argv, stdout: program.stdout ? files.stdout : undefined, stderr: files.stderr, status: files.status });
+  execFileSync(fixture.bin, ["pane", "run", pane, line], { env: fixture.env, timeout: 10_000 });
+  const read = (file: string): string => (fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "");
+  await waitFor(() => /^\d+/.test(read(files.status)), `${name} to finish in pane ${pane}`, 20_000, () => `${paneText(fixture.env, fixture.bin, pane).trimEnd().split("\n").slice(-6).join(" | ")}; stderr ${JSON.stringify(read(files.stderr))}`);
+  return { status: Number.parseInt(read(files.status), 10), stdout: read(files.stdout), stderr: read(files.stderr) };
+}
+
 
 /** What the fixture provider answers for one transcript. */
 export type FixtureLabel = {
@@ -689,6 +780,7 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
       panes: [first, second],
       inputLogs,
       fixturePath,
+      shell: paneShellOf(env),
       run: (args) => {
         const result = herdr(env, bin, args);
         if (args[0] === "agent" && args[1] === "start") {

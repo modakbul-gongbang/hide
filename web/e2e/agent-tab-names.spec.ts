@@ -1,5 +1,5 @@
 import { expect, test } from "@playwright/test";
-import { labelAgent, startHerdr } from "./herdr-fixture";
+import { labelAgent, paneShellTabName, startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { enterWorkspace, screenshot } from "./wire";
 
@@ -13,7 +13,7 @@ test("focused agent titles, inline rename, clear and reconnect", async ({ page }
     await enterWorkspace(page, "fixture");
     const tab = page.locator(`[data-tab="${herdr.tab}"]`);
     await expect(tab).toBeVisible();
-    await expect(tab).toContainText(/zsh|Tab \d+/);
+    await expect(tab).toContainText(paneShellTabName(herdr.shell));
     const [first, second] = herdr.panes;
     for (const [pane, name, title] of [[first, "one", "첫 번째 작업 진행"], [second, "two", "두 번째 작업 진행"]]) {
       herdr.run(["agent", "start", name!, "--kind", "claude", "--pane", pane!]);
