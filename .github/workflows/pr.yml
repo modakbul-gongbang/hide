@@ -332,10 +332,13 @@ jobs:
           bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'binary_id(hided::handshake)'
       - name: The weekly usage child's environment
         # The `/usage` child is started with a restricted environment, which
-        # on Windows has to carry what Node and the CLI need to start.
+        # on Windows has to carry what Node and the CLI need to start, and the
+        # reset time it prints is read through a tz database Windows lacks.
         if: ${{ !cancelled() && steps.tests.outcome == 'success' }}
         timeout-minutes: 10
-        run: bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'binary_id(hide-ai::claude_cli) & test(usage::)'
+        run: |
+          bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'binary_id(hide-ai::claude_cli) & test(usage::)'
+          bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'package(herdr-core) & kind(lib) & (test(zoneinfo::) | test(usage::tests))'
       - name: Install kit and its Windows command shim
         if: ${{ !cancelled() && steps.tests.outcome == 'success' }}
         timeout-minutes: 10
