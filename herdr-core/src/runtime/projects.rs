@@ -48,6 +48,17 @@ fn github_wait(failures: u32) -> std::time::Duration {
     }
 }
 
+/// How long after a session printed a pull request's address its absence from
+/// GitHub's answer still sets off a read: a session prints the address of a
+/// pull request it has just made, while an older sighting is a session read
+/// again from its start, or a pull request past the newest 200 the list
+/// holds, which a read would only answer the same way.
+const SIGHTING_FRESH_MS: u64 = 15 * 60 * 1_000;
+
+/// The most sighted addresses remembered at once as having set off their read;
+/// one past it sets off nothing and is a reported shortfall.
+const SIGHTED_ASKED_LIMIT: usize = 64;
+
 /// The most local Git projects the core reads GitHub for. Every registered one
 /// is read, and each costs `gh` calls every `GITHUB_REREAD`; a count past this
 /// is a reported shortfall, not a larger number.
@@ -1012,6 +1023,103 @@ impl Runtime {
                 Some(_) => {}
             }
         }
+    }
+
+    /// Reads GitHub again, now, for each project a session just printed the
+    /// address of a pull request in that the last answer does not hold, so a
+    /// pull request an agent opens reaches its row without waiting for the
+    /// five-minute re-read. The read is the existing one: the project's
+    /// generation moves, as the request view's check re-read moves it, and
+    /// its answer restarts the clock like any other. An address sets off one
+    /// read while it is recent (`SIGHTING_FRESH_MS`); one the read still does
+    /// not return (another repository, past the newest 200) is not asked for
+    /// again.
+    pub(crate) fn read_sighted_pull_requests(
+        &mut self,
+        sighted: &[crate::labels::worker::SightedPullRequest],
+        now_unix_ms: u64,
+    ) {
+        let fresh = |at: u64| at.saturating_add(SIGHTING_FRESH_MS) >= now_unix_ms;
+        self.github_sighted.retain(|_, at| fresh(*at));
+        let mut read = BTreeSet::new();
+        for sighting in sighted {
+            let address = (sighting.repository.clone(), sighting.number);
+            // Every pull request read is keyed here by its address, so a
+            // sighting it holds needs no read.
+            if !fresh(sighting.at_unix_ms)
+                || self.pull_request_times.contains_key(&address)
+                || self.github_sighted.contains_key(&address)
+            {
+                continue;
+            }
+            if self.github_sighted.len() >= SIGHTED_ASKED_LIMIT {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "github",
+                    "kind": "read.sighted_over_limit",
+                    "limit": SIGHTED_ASKED_LIMIT,
+                    "repository": sighting.repository,
+                    "number": sighting.number,
+                }));
+                continue;
+            }
+            self.github_sighted.insert(address, sighting.at_unix_ms);
+            let projects = self.sighted_projects(sighting);
+            crate::diagnostic!(serde_json::json!({
+                "component": "github",
+                "kind": "read.sighted",
+                "repository": sighting.repository,
+                "number": sighting.number,
+                "pane_id": sighting.pane_id,
+                "projects": projects,
+            }));
+            read.extend(projects);
+        }
+        for path in read {
+            self.bump_github_generation(&path);
+        }
+    }
+
+    /// The read local projects a sighted pull request belongs to: those whose
+    /// pull requests are in its repository; when none is, the project of the
+    /// pane whose session printed it, unless that project's pull requests
+    /// name another repository. A repository's first pull request has no
+    /// earlier one to name it, and the session that made it works in it.
+    fn sighted_projects(
+        &self,
+        sighting: &crate::labels::worker::SightedPullRequest,
+    ) -> Vec<String> {
+        let repository_of = |path: &str| {
+            self.github.project(path).and_then(|project| {
+                project
+                    .pull_requests
+                    .iter()
+                    .find_map(|pull_request| pull_request_address(&pull_request.url))
+                    .map(|(repository, _)| repository)
+            })
+        };
+        let read: Vec<&WorkspaceSnapshot> = self.github_projects().0;
+        let matching: Vec<String> = read
+            .iter()
+            .filter(|workspace| {
+                repository_of(&workspace.path).as_deref() == Some(sighting.repository.as_str())
+            })
+            .map(|workspace| workspace.path.clone())
+            .collect();
+        if !matching.is_empty() {
+            return matching;
+        }
+        read.iter()
+            .find(|workspace| {
+                workspace.checkouts.iter().any(|checkout| {
+                    checkout
+                        .tabs
+                        .iter()
+                        .any(|tab| tab.panes.iter().any(|pane| pane.id == sighting.pane_id))
+                })
+            })
+            .filter(|workspace| repository_of(&workspace.path).is_none())
+            .map(|workspace| vec![workspace.path.clone()])
+            .unwrap_or_default()
     }
 
     /// Whether `path` is read for GitHub and no read has answered for it yet.
@@ -3540,6 +3648,14 @@ fn associate_pull_requests(
     changed
 }
 
+/// A pull request's lowercase `owner/name` and number, from its address.
+fn pull_request_address(url: &str) -> Option<(String, u64)> {
+    hide_session::pull_request_addresses(url)
+        .into_iter()
+        .next()
+        .map(|(repository, number)| (repository.to_ascii_lowercase(), number))
+}
+
 /// When GitHub made each pull request read, by the address's lowercase
 /// `owner/name` and number.
 fn pull_request_times(
@@ -3551,10 +3667,7 @@ fn pull_request_times(
         .flat_map(|project| project.pull_requests.iter())
         .filter_map(|pull_request| {
             let created = pull_request.created_at_unix_ms?;
-            let (repository, number) = hide_session::pull_request_addresses(&pull_request.url)
-                .into_iter()
-                .next()?;
-            Some(((repository.to_ascii_lowercase(), number), created))
+            Some((pull_request_address(&pull_request.url)?, created))
         })
         .collect()
 }

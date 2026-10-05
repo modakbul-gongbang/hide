@@ -1,8 +1,10 @@
 //! The core reads GitHub for every local Git project from the start, asks
-//! again on a clock, and draws the last run's answer until a read replaces it.
+//! again on a clock or when a session prints a pull request it does not hold,
+//! and draws the last run's answer until a read replaces it.
 
 use super::*;
 use crate::github_store::GithubStore;
+use crate::labels::worker::SightedPullRequest;
 use crate::model::{
     GithubProjectSnapshot, GithubSnapshot, GithubStatusSnapshot, PullRequestBadge,
     PullRequestChecks, PullRequestSnapshot,
@@ -685,5 +687,93 @@ fn a_checkouts_commit_is_the_readers_when_it_has_one_and_the_files_before_that()
         checkout.head_sha(),
         Some("b".repeat(40).as_str()),
         "a reader row with no commit leaves the file value standing"
+    );
+}
+
+/// A pull request in `repository` at its GitHub address.
+fn pull_request_in(repository: &str, number: u32) -> PullRequestSnapshot {
+    PullRequestSnapshot {
+        url: format!("https://github.com/{repository}/pull/{number}"),
+        ..pull_request(number, "main", PullRequestBadge::Open)
+    }
+}
+
+fn sighted(pane_id: &str, repository: &str, number: u64, at_unix_ms: u64) -> SightedPullRequest {
+    SightedPullRequest {
+        pane_id: pane_id.to_owned(),
+        repository: repository.to_owned(),
+        number,
+        at_unix_ms,
+    }
+}
+
+const NOW_MS: u64 = 10_000_000;
+
+#[test]
+fn a_pull_request_a_session_just_printed_is_read_for_once_in_its_repository() {
+    let mut runtime = runtime();
+    runtime.snapshot.navigator.workspaces = vec![
+        git_project("a", "/tmp/a", "main"),
+        git_project("b", "/tmp/b", "main"),
+    ];
+    runtime.ingest_github_answer(
+        GithubSnapshot {
+            projects: vec![
+                read_ok("/tmp/a", vec![pull_request_in("owner/a", 1)], 10),
+                read_ok("/tmp/b", vec![pull_request_in("owner/b", 7)], 10),
+            ],
+        },
+        true,
+    );
+    let before = generations(&runtime);
+
+    runtime.read_sighted_pull_requests(&[sighted("w9:p1", "owner/a", 2, NOW_MS - 1_000)], NOW_MS);
+    assert_eq!(
+        generations(&runtime),
+        vec![("/tmp/a".to_owned(), before[0].1 + 1), before[1].clone()],
+        "only the project whose pull requests are in that repository is read again"
+    );
+
+    let after = generations(&runtime);
+    runtime.read_sighted_pull_requests(
+        &[
+            sighted("w9:p1", "owner/a", 2, NOW_MS - 500),
+            sighted("w9:p1", "owner/a", 1, NOW_MS - 500),
+            sighted("w9:p1", "owner/b", 8, NOW_MS - 16 * 60 * 1_000),
+        ],
+        NOW_MS,
+    );
+    assert_eq!(
+        generations(&runtime),
+        after,
+        "an address already asked for, one the answer holds, and an old sighting read nothing"
+    );
+}
+
+#[test]
+fn a_repositorys_first_pull_request_is_read_in_the_project_its_session_works_in() {
+    let mut runtime = runtime();
+    let mut first = git_project("c", "/tmp/c", "main");
+    first.checkouts[0] = checkout("c", "c-checkout", "/tmp/c", Some(pane("w1:p1", "/tmp/c")));
+    let mut other = git_project("d", "/tmp/d", "main");
+    other.checkouts[0] = checkout("d", "d-checkout", "/tmp/d", Some(pane("w2:p1", "/tmp/d")));
+    runtime.snapshot.navigator.workspaces = vec![first, other];
+    runtime.ingest_github_answer(
+        GithubSnapshot {
+            projects: vec![
+                read_ok("/tmp/c", Vec::new(), 10),
+                read_ok("/tmp/d", vec![pull_request_in("owner/d", 3)], 10),
+            ],
+        },
+        true,
+    );
+    let before = generations(&runtime);
+
+    runtime.read_sighted_pull_requests(&[sighted("w1:p1", "owner/c", 1, NOW_MS)], NOW_MS);
+    runtime.read_sighted_pull_requests(&[sighted("w2:p1", "owner/elsewhere", 4, NOW_MS)], NOW_MS);
+    assert_eq!(
+        generations(&runtime),
+        vec![("/tmp/c".to_owned(), before[0].1 + 1), before[1].clone()],
+        "a project with no pull request yet is its session's; one whose pull requests name another repository is not"
     );
 }

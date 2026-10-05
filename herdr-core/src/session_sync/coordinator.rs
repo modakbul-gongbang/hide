@@ -693,7 +693,7 @@ fn run_coordinator(
                 // A disconnected replica is stale; its labels wait for the
                 // reconnect's first publish rather than clearing the error.
                 if labels.as_mut().is_some_and(|worker| {
-                    worker.drain(Instant::now()) | take_pull_request_times(&context, worker)
+                    worker.drain(Instant::now()) | exchange_pull_requests(&context, worker)
                 }) && subscription.is_some()
                     && let Some(current) = replica.as_mut()
                     && !publish_replica(
@@ -842,7 +842,7 @@ fn publish_replica(
         }
     }
     let overlay = labels.as_mut().map(|worker| {
-        take_pull_request_times(context, worker);
+        exchange_pull_requests(context, worker);
         take_label_switch(context, worker);
         observe_labels(worker, replica);
         worker.overlay()
@@ -1082,18 +1082,29 @@ fn start_label_worker(
     })
 }
 
-/// Hands this Mac's worker the runtime's pull request creation times, under
-/// a brief lock. Only this Mac's projects have their pull requests read (a
-/// device's rows link none), so a device's worker is handed none. Returns
-/// whether a session's pull requests changed.
-fn take_pull_request_times(context: &SessionSyncContext, worker: &mut LabelWorker) -> bool {
+/// Hands the runtime the pull requests this Mac's worker sighted that GitHub's
+/// answer did not hold, and the worker the runtime's pull request creation
+/// times, under one brief lock. Only this Mac's projects have their pull
+/// requests read (a device's rows link none), so a device's worker is handed
+/// no times and its sightings are dropped. Returns whether a session's pull
+/// requests changed.
+fn exchange_pull_requests(context: &SessionSyncContext, worker: &mut LabelWorker) -> bool {
+    let sighted = worker.take_sighted();
     if !context.is_local() {
         return false;
     }
-    let times = context
-        .runtime
-        .upgrade()
-        .and_then(|runtime| runtime.lock().ok().map(|guard| guard.pull_request_times()));
+    let times = context.runtime.upgrade().and_then(|runtime| {
+        runtime.lock().ok().map(|mut guard| {
+            if !sighted.is_empty() {
+                let now_unix_ms = SystemTime::now()
+                    .duration_since(UNIX_EPOCH)
+                    .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64)
+                    .unwrap_or(0);
+                guard.read_sighted_pull_requests(&sighted, now_unix_ms);
+            }
+            guard.pull_request_times()
+        })
+    });
     times.is_some_and(|times| worker.set_pull_request_times(times))
 }
 

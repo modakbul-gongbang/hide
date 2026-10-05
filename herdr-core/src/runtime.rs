@@ -1420,6 +1420,10 @@ pub struct Runtime {
     /// Projects a screen named with `github_request` or `overview_refresh`;
     /// they are read before the others when the count passes the limit.
     github_wanted: HashSet<String>,
+    /// Each pull request address a session printed that set off a read
+    /// (`read_sighted_pull_requests`), with when it was printed, so it sets
+    /// off one read while it is recent and none after.
+    github_sighted: HashMap<(String, u64), u64>,
     /// Projects an answer arrived for since the clock last looked, each with
     /// whether that read failed to get its pull requests; the next wake starts
     /// their wait.
@@ -1830,6 +1834,7 @@ impl Runtime {
             worktree_project_generations: HashMap::new(),
             github_clock: HashMap::new(),
             github_wanted: HashSet::new(),
+            github_sighted: HashMap::new(),
             github_answered: HashMap::new(),
             github_read_generation: HashMap::new(),
             github_settled: HashSet::new(),

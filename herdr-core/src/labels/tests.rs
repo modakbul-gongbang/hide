@@ -1202,3 +1202,46 @@ fn a_restarted_transcript_keeps_the_operators_request_the_operators() {
         "the request is not read as another agent's"
     );
 }
+
+#[test]
+fn a_read_hands_on_each_pull_request_the_core_has_not_read_once() {
+    let harness = Harness::new();
+    let (mut worker, woken, _) = harness.worker(harness.store());
+    let project = harness.home.path().join(".claude/projects/-project");
+    std::fs::create_dir_all(&project).unwrap();
+    let path = project.join("pr.jsonl");
+    let records = [
+        json!({"type":"user","sessionId":"native-pr","timestamp":"2026-10-01T00:00:00Z",
+            "origin":{"kind":"human"},"message":{"role":"user","content":"PR 올려줘"}}),
+        json!({"type":"user","sessionId":"native-pr","timestamp":"2026-10-01T00:00:01Z",
+            "message":{"role":"user","content":[{"type":"tool_result","tool_use_id":"t1",
+            "content":"https://github.com/Owner/Repo/pull/12\nhttps://github.com/owner/repo/pull/3"}]}}),
+        json!({"type":"assistant","sessionId":"native-pr","timestamp":"2026-10-01T00:00:02Z",
+            "message":{"role":"assistant","content":[{"type":"text","text":"올렸습니다"}]}}),
+    ];
+    let lines: String = records.iter().map(|record| format!("{record}\n")).collect();
+    std::fs::write(&path, lines).unwrap();
+    worker.set_pull_request_times(Arc::new(super::facts::PullRequestTimes::from([(
+        ("owner/repo".to_owned(), 3),
+        1,
+    )])));
+    harness.backend.answer("PR 작업", "done", "");
+    let idle = agent(&path, "idle", 3);
+
+    observe(&mut worker, &idle);
+    settle(&mut worker, &woken);
+    let sighted = worker.take_sighted();
+    assert_eq!(
+        sighted
+            .iter()
+            .map(|sighting| (
+                sighting.pane_id.as_str(),
+                sighting.repository.as_str(),
+                sighting.number
+            ))
+            .collect::<Vec<_>>(),
+        vec![("w1:p1", "owner/repo", 12)],
+        "the address the core holds stays; the other is handed on once, in lowercase"
+    );
+    assert!(worker.take_sighted().is_empty());
+}

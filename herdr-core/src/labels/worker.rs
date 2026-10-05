@@ -28,7 +28,7 @@ use std::time::{Duration, Instant};
 use hide_session::label_transcript::{
     LabelEvent, LabelEventKind, LabelTranscript, LabelTranscriptRequest,
 };
-use hide_session::{Agent, label_reference_token};
+use hide_session::{Agent, PrSighting, label_reference_token};
 use serde_json::json;
 
 use super::analysis::{AnalysisFailure, LabelEnd};
@@ -52,6 +52,9 @@ const FOLLOW_UP_READ: Duration = Duration::from_secs(3);
 /// not connected) waits before it is tried again, so the pane catches up
 /// after a reconnect without waiting for its next state change (B14).
 const UNAVAILABLE_RETRY: Duration = Duration::from_secs(15);
+/// The most sighted pull requests waiting between two takes; a read that
+/// finds more keeps the newest.
+const SIGHTED_LIMIT: usize = 32;
 
 /// Why a read produced nothing.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -67,6 +70,18 @@ pub(crate) enum ReadFailure {
 /// device's through its helper. Blocks; called only on the reader thread.
 pub(crate) trait TranscriptSource: Send + Sync {
     fn read(&self, request: &LabelTranscriptRequest) -> Result<LabelTranscript, ReadFailure>;
+}
+
+/// A pull request address a read found in a session's tool output that the
+/// core's GitHub answer did not hold, with the pane whose session printed it;
+/// the coordinator hands it to `Runtime::read_sighted_pull_requests`.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct SightedPullRequest {
+    pub(crate) pane_id: String,
+    /// `owner/name`, lowercase, as `PullRequestTimes` keys it.
+    pub(crate) repository: String,
+    pub(crate) number: u64,
+    pub(crate) at_unix_ms: u64,
 }
 
 /// One agent as the coordinator's replica holds it.
@@ -181,6 +196,9 @@ pub(crate) struct LabelWorker {
     dirty: bool,
     /// GitHub's creation time of each pull request the core has read.
     pull_request_times: Arc<PullRequestTimes>,
+    /// What the reads since the last `take_sighted` found that the core has
+    /// not read; see `note_sighted`.
+    sighted: Vec<SightedPullRequest>,
     /// The operator's agent-summary switch (D-11). Off, no analysis is
     /// asked for and the overlay lays no AI field; reads go on, because the
     /// rows stand on what they find.
@@ -215,6 +233,7 @@ impl LabelWorker {
             next_generation: 0,
             dirty: false,
             pull_request_times: Arc::default(),
+            sighted: Vec::new(),
             summaries: true,
         })
     }
@@ -403,6 +422,48 @@ impl LabelWorker {
             self.persist();
         }
         changed
+    }
+
+    /// Keeps each address this read sighted that the core's pull requests do
+    /// not hold, once, so the core can read its project before the next
+    /// re-read would (a session prints the address of a pull request it has
+    /// just made). Whether it is recent enough to ask for is the core's
+    /// decision; this only bounds what waits for it.
+    fn note_sighted(&mut self, pane_id: &str, sightings: &[PrSighting]) {
+        for sighting in sightings {
+            let repository = sighting.repository.to_ascii_lowercase();
+            let known =
+                self.pull_request_times
+                    .contains_key(&(repository.clone(), sighting.number))
+                    || self.sighted.iter().any(|kept| {
+                        kept.number == sighting.number && kept.repository == repository
+                    });
+            if !known {
+                self.sighted.push(SightedPullRequest {
+                    pane_id: pane_id.to_owned(),
+                    repository,
+                    number: sighting.number,
+                    at_unix_ms: sighting.at_unix_ms,
+                });
+            }
+        }
+        if self.sighted.len() > SIGHTED_LIMIT {
+            let dropped = self.sighted.len() - SIGHTED_LIMIT;
+            self.sighted.sort_by_key(|sighting| sighting.at_unix_ms);
+            self.sighted.drain(..dropped);
+            crate::diagnostic!(json!({
+                "component": "labels",
+                "kind": "read.sighted_capped",
+                "target": self.target,
+                "pane_id": pane_id,
+                "dropped": dropped,
+            }));
+        }
+    }
+
+    /// Takes what the reads since the last take sighted (`note_sighted`).
+    pub(crate) fn take_sighted(&mut self) -> Vec<SightedPullRequest> {
+        std::mem::take(&mut self.sighted)
     }
 
     /// Runs what came due: the generator role, provider waits, follow-up
@@ -728,6 +789,7 @@ impl LabelWorker {
             },
         );
         changed |= record.facts.judge_created(&self.pull_request_times);
+        self.note_sighted(pane_id, &transcript.pr_sightings);
         let pane = self.panes.get_mut(pane_id).expect("checked above");
         let new_reason = transcript
             .skipped_reasons
