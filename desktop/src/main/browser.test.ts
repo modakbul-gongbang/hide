@@ -35,6 +35,7 @@ function candidate() {
     (Reflect.get(subject, "pages") as Map<string, unknown>).set(id, value);
     return {
       pageFocus,
+      takeFocus: () => contents.emit("focus"),
       focus: (next: boolean) => { focused = next; },
       show: (visible: boolean) => Reflect.get(subject, "show").call(subject, value, visible),
       visibility: value.view.setVisible,
@@ -116,12 +117,65 @@ describe("native held cycle delivery", () => {
     expect(origin.pageFocus).toHaveBeenCalledOnce();
     windowReturn();
     expect(origin.pageFocus).toHaveBeenCalledOnce();
-    // An origin hidden while the window was away stays unfocused.
+    // An origin hidden while the window was away stays unfocused until the shell shows it.
     hidden.input();
     blur();
     hidden.show(false);
     windowReturn();
     expect(hidden.pageFocus).not.toHaveBeenCalled();
+    hidden.show(true);
+    expect(hidden.pageFocus).toHaveBeenCalledOnce();
+  });
+  it("owes a blur-cancelled origin the keyboard until the shell shows it again, once", () => {
+    const { page, blur, windowReturn } = candidate();
+    const origin = page("origin");
+    // The overlay covered the origin, so the window comes back before the
+    // shell's sync has shown it again.
+    origin.input();
+    origin.show(false);
+    blur();
+    windowReturn();
+    expect(origin.pageFocus).not.toHaveBeenCalled();
+    origin.show(true);
+    expect(origin.pageFocus).toHaveBeenCalledOnce();
+    origin.show(false);
+    origin.show(true);
+    expect(origin.pageFocus).toHaveBeenCalledOnce();
+  });
+  it("pays the debt only to its page, and only with the window key", () => {
+    const { page, blur, windowReturn, windowFocus } = candidate();
+    const origin = page("origin"), other = page("other");
+    origin.input();
+    origin.show(false);
+    blur();
+    windowFocus(false);
+    origin.show(true);
+    expect(origin.pageFocus).not.toHaveBeenCalled();
+    windowFocus(true);
+    other.show(false);
+    other.show(true);
+    expect(origin.pageFocus).not.toHaveBeenCalled();
+    windowReturn();
+    expect(origin.pageFocus).toHaveBeenCalledOnce();
+    expect(other.pageFocus).not.toHaveBeenCalled();
+  });
+  it("forgets the debt when another page takes the keyboard or a new hold starts", () => {
+    const { page, blur, windowReturn } = candidate();
+    const origin = page("origin"), other = page("other");
+    origin.input();
+    origin.show(false);
+    blur();
+    other.takeFocus();
+    origin.show(true);
+    windowReturn();
+    expect(origin.pageFocus).not.toHaveBeenCalled();
+    origin.input();
+    blur();
+    origin.show(false);
+    other.input();
+    origin.show(true);
+    windowReturn();
+    expect(origin.pageFocus).not.toHaveBeenCalled();
   });
   it("release and Escape from another page reach the frozen origin once", () => {
     for (const key of ["Control", "Escape"]) {
