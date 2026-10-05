@@ -12,6 +12,11 @@ policy.
     ci-flaky-report.py --suite web --playwright web/e2e-report.json
     ci-flaky-report.py --suite rust --junit target/nextest/ci/junit.xml
 
+A run with a flaky test also sets the step output `flaky=true`, so the lane
+keeps the same logs it keeps for a failure: the first attempt's daemon, Herdr
+and input logs are the evidence its issue needs, and a passing job uploads
+nothing otherwise.
+
 It talks to GitHub through `gh` (GH_TOKEN, GITHUB_REPOSITORY and the run's
 GITHUB_* variables come from Actions) and needs `issues: write`. A step that
 runs it must not fail the lane: the flaky run already passed, and the report is
@@ -200,6 +205,9 @@ def main(argv=None):
     if not tests:
         print("no flaky test in this run")
         return 0
+    if os.environ.get("GITHUB_OUTPUT"):
+        with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
+            output.write("flaky=true\n")
     try:
         report(tests, args.system, os.environ)
     except (RuntimeError, KeyError, ValueError) as error:

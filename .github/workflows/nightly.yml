@@ -173,6 +173,7 @@ jobs:
             bash scripts/verify-web.sh desktop e2e
           fi
       - name: Report flaky tests
+        id: flaky
         if: ${{ !cancelled() }}
         continue-on-error: true
         timeout-minutes: 5
@@ -184,7 +185,8 @@ jobs:
           python3 scripts/ci-flaky-report.py --suite rust --junit target/nextest/ci/junit*.xml || status=$?
           exit "$status"
       - name: Keep the failed desktop run
-        if: failure()
+        # A flaky run keeps it as a failed one does; see web-e2e.yml.
+        if: ${{ failure() || steps.flaky.outputs.flaky == 'true' }}
         uses: actions/upload-artifact@v7
         with:
           name: hide-nightly-desktop-${{ matrix.system }}

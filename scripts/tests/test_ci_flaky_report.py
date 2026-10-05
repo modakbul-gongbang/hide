@@ -4,6 +4,7 @@ import importlib.util
 import json
 import os
 from pathlib import Path
+import re
 import subprocess
 import sys
 import tempfile
@@ -138,6 +139,43 @@ class Filing(unittest.TestCase):
 
     def test_a_missing_report_is_not_an_error(self):
         self.assertEqual(r.main(["--suite", "web", "--playwright", "/nonexistent/report.json"]), 0)
+
+    def test_only_a_run_with_a_flaky_test_says_so_in_its_step_output(self):
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        output = Path(folder.name) / "output"
+        saved = dict(os.environ)
+        os.environ["GITHUB_OUTPUT"] = str(output)
+        self.addCleanup(lambda: (os.environ.clear(), os.environ.update(saved)))
+        saved_report, r.report = r.report, lambda *args, **kwargs: None
+        self.addCleanup(setattr, r, "report", saved_report)
+        for name, status in (("steady", "expected"), ("failed", "unexpected"), ("flaky", "flaky")):
+            report = Path(folder.name) / f"{name}.json"
+            report.write_text(json.dumps({"suites": [{"title": "a.spec.ts", "specs": [spec(name, status)]}]}))
+            self.assertEqual(r.main(["--suite", "web", "--playwright", str(report)]), 0)
+            self.assertEqual(output.read_text() if output.exists() else "", "flaky=true\n" if status == "flaky" else "")
+
+
+class Workflows(unittest.TestCase):
+    def test_every_e2e_log_upload_keeps_a_flaky_run_as_it_keeps_a_failed_one(self):
+        # A flaky run passed, but its first attempt failed, and the daemon,
+        # Herdr and input logs of that attempt are the only evidence its issue
+        # gets. Each job that reports flaky Playwright tests and keeps those
+        # logs reads the output of its own report.
+        uploads = 0
+        for workflow in sorted((SCRIPT.parents[1] / ".github" / "workflows").glob("*.yml")):
+            for job in re.split(r"\n  (?=[\w-]+:\n)", workflow.read_text()):
+                steps = re.split(r"\n      - ", job)
+                if not any(re.search(r"ci-flaky-report\.py --suite (web|desktop)", step) for step in steps):
+                    continue
+                reports = [step for step in steps if "ci-flaky-report.py" in step and "\n        id: flaky\n" in step]
+                for step in steps:
+                    if "upload-artifact" not in step or "hide-e2e" not in step:
+                        continue
+                    uploads += 1
+                    self.assertIn("if: ${{ failure() || steps.flaky.outputs.flaky == 'true' }}", step, workflow.name)
+                    self.assertEqual(len(reports), 1, f"{workflow.name}: the job's report step has id flaky")
+        self.assertEqual(uploads, 3)
 
 
 class Gh(unittest.TestCase):
