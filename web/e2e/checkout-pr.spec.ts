@@ -4,7 +4,7 @@
 // opens the pull request in a browser display of the Workspace in front, and
 // in the default browser with ⌘ or while no Workspace is in front; hovering
 // the row opens the card with the badge, number, title and the Review,
-// Checks, Branch, Agents, Commit and Path rows, which stays while the pointer
+// Checks, Branch, Agents and Commit rows, which stays while the pointer
 // is on it and closes on Escape; the row's menu offers Open pull request #n;
 // a checkout with no pull request keeps a plain glyph and a plain card. Light
 // and Dark captures land in HIDE_E2E_SCREENSHOT_DIR.
@@ -19,6 +19,7 @@ import { startHided, type Daemon } from "./hided-fixture";
 import { fixtureProgram } from "./platform-fixture";
 import { countSent, rest, rowGeometry, screenshot } from "./wire";
 import { chord } from "./chords";
+import { toPage } from "../../desktop/src/main/wirePath";
 import { animationsFinished, quietFor } from "./wait";
 
 test.describe.configure({ timeout: 180_000 });
@@ -157,8 +158,6 @@ test("a checkout's pull request: the glyph opens it, the row's card describes it
     await expect(card.locator('[data-checkout-card-row="branch"]')).toHaveText(BRANCH);
     await expect(card.locator('[data-checkout-card-row="agents"] [data-badge-part="idle"]')).toHaveText("1");
     await expect(card.locator('[data-checkout-card-row="commit"]')).toHaveText("now");
-    // The core names the checkout by its real path.
-    await expect(card.locator('[data-checkout-card-row="path"]')).toHaveText(fs.realpathSync(worktree));
     await expect(card.locator("[data-checkout-card-open]")).toHaveText("Open PR");
     expect(await rowGeometry(featureRow, project.locator("[data-inactive-checkouts]").or(project.locator("[data-checkout-row]").last()), parts)).toEqual(atRest);
     await screenshot(page, "checkout-pr-card-dark");
@@ -263,7 +262,7 @@ test("a checkout's pull request: the glyph opens it, the row's card describes it
     await expect(primaryMenu).toHaveCount(0);
 
     // B8: a checkout without a pull request has a card with no header: its
-    // branch, agents, commit and path. B9: the card also opens on keyboard focus.
+    // branch, agents and commit. B9: the card also opens on keyboard focus.
     await rest(page);
     await page.keyboard.press("Shift");
     await primary.locator("[data-checkout]").focus();
@@ -272,7 +271,6 @@ test("a checkout's pull request: the glyph opens it, the row's card describes it
     await expect(plain.locator("[data-checkout-card-badge]")).toHaveCount(0);
     await expect(plain.locator('[data-checkout-card-row="branch"]')).toHaveText("main");
     await expect(plain.locator('[data-checkout-card-row="review"]')).toHaveCount(0);
-    await expect(plain.locator('[data-checkout-card-row="path"]')).toHaveText(fs.realpathSync(repo));
     await rest(page);
     await expect(plain).toHaveCount(0);
 
@@ -296,5 +294,48 @@ test("a checkout's pull request: the glyph opens it, the row's card describes it
     daemon?.stop();
     herdr.stop();
     site.close();
+  }
+});
+
+// @platform: The card names a checkout by the path the core reads it at, which the system spells (`C:\...` on Windows, /private/var on macOS) and the page shows in the wire spelling.
+test("a checkout's card names the checkout by its real path", { tag: "@platform" }, async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  const herdr = await startHerdr();
+  let daemon: Daemon | null = null;
+  try {
+    const repo = path.join(herdr.root, "repo");
+    fs.mkdirSync(repo);
+    git(repo, ["init"]);
+    fs.writeFileSync(path.join(repo, "README.md"), "# repo\n");
+    git(repo, ["add", "README.md"]);
+    git(repo, ["commit", "-m", "initial"]);
+    const worktree = path.join(herdr.root, "repo-pr");
+    git(repo, ["worktree", "add", "-b", BRANCH, worktree]);
+    await workspaceAt(herdr, repo, "메인 체크아웃 정리");
+    await workspaceAt(herdr, worktree, "PR 카드 구현");
+
+    daemon = await startHided(herdr, "checkout-path");
+    await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+    await expect(page.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
+    await page.locator('[data-sidebar-mode="projects"]').click();
+
+    const project = page.locator("[data-project]").filter({ has: page.locator("[data-project-row]", { hasText: /^repo/ }) });
+    const plain = page.locator('[data-checkout-card="plain"]');
+    for (const [row, folder] of [
+      [project.locator("[data-checkout-row]", { hasText: /^main/ }), repo],
+      [project.locator("[data-checkout-row]").filter({ has: page.locator(`[data-checkout][aria-label^="${BRANCH}"]`) }), worktree],
+    ] as const) {
+      // The card opens on keyboard focus (B9), once the row's purpose and age are on line two.
+      await expect(row.locator("[data-checkout-age]")).toHaveText(/.+/);
+      await rest(page);
+      await expect(plain).toHaveCount(0);
+      await page.keyboard.press("Shift");
+      await row.locator("[data-checkout]").focus();
+      await expect(plain).toBeVisible();
+      await expect(plain.locator('[data-checkout-card-row="path"]')).toHaveText(toPage(fs.realpathSync(folder)));
+    }
+  } finally {
+    daemon?.stop();
+    herdr.stop();
   }
 });
