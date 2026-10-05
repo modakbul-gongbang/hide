@@ -12,6 +12,7 @@ import type { SettingsTab } from "./settings";
 import type { CycleItem } from "./recent";
 import type { NumberedFamily } from "./shortcuts";
 import type { ViewFocusRequest, ViewWorkspace } from "./viewLayout";
+import type { KeyboardOwner } from "./viewFocus";
 import { DEFAULT_SLOTS, NO_CALLS_SEEN, type BodyStep, type CallsSeen, type Column, type ColumnSlots } from "./workspace";
 
 export type HomeStart = { requestId: string; deviceId: string; refusal: string | null };
@@ -240,8 +241,8 @@ type UiStore = {
   editorFindRequest: number;
   /** The display the latest ⌘F is for; one display answers it, whichever else shows the document. */
   editorFindDisplay: string | null;
-  /** The `pane_find_open` whose answer ⌘F waits for, until the find bar or the agent's own search takes it. */
-  agentFindRequest: string | null;
+  /** The `pane_find_open` whose answer ⌘F waits for, until the find bar or the agent's own search takes it, with where the keyboard was when ⌘F was pressed. */
+  agentFindRequest: { id: string; owner: KeyboardOwner } | null;
   viewFocusRequest: ViewFocusRequest | null;
   /**
    * Which column a narrow Workspace body shows (PRD three-column-panel D-07):
@@ -316,7 +317,7 @@ type UiStore = {
   toggleSidebarMode: () => void;
   setExplorerSelection: (path: string | null) => void;
   requestEditorFind: (displayId: string | null) => void;
-  setAgentFindRequest: (requestId: string | null) => void;
+  setAgentFindRequest: (request: { id: string; owner: KeyboardOwner } | null) => void;
   setViewFocusRequest: (request: ViewFocusRequest | null) => void;
   /** A column was called (an open, a tool, an agent chosen): a narrow body shows it. */
   callColumn: (column: Column) => void;
