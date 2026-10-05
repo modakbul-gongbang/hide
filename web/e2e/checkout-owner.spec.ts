@@ -77,7 +77,7 @@ test("A new tab in a Git checkout goes to the workspace Herdr binds to it, not t
   }
 });
 
-test("With no workspace bound, Herdr binds the unbound one already at the checkout, and Hide leaves its name", { tag: "@flaky", annotation: { type: "issue", description: "https://github.com/modakbul-gongbang/hide/issues/400" } }, async ({ page }) => {
+test("With no workspace bound, Herdr binds the unbound one already at the checkout, and Hide leaves its name", async ({ page }) => {
   test.setTimeout(120_000);
   const herdr = await startHerdr({ agents: false });
   let daemon: Daemon | null = null;
@@ -160,7 +160,7 @@ test("A new tab in a linked worktree with no workspace opens one bound to it, na
   }
 });
 
-test("A new tab in a plain folder opens one marked workspace and the next tab reuses it", { tag: "@flaky", annotation: { type: "issue", description: "https://github.com/modakbul-gongbang/hide/issues/400" } }, async ({ page }) => {
+test("A new tab in a plain folder opens one marked workspace and the next tab reuses it", async ({ page }) => {
   test.setTimeout(120_000);
   const herdr = await startHerdr({ agents: false });
   let daemon: Daemon | null = null;
