@@ -326,7 +326,11 @@ function agentWorstPiece(agent: KitAgent): KitPiece {
 
 /** An agent's state as its row words it (agent adapters): off, or the state of its worst piece. */
 export function kitAgentLine(agent: KitAgent, t: Translate): { text: string; tone: "ok" | "warn" | "error" | "muted"; reason: string | null } {
-  if (!agent.enabled) return { text: t("common.off"), tone: "muted", reason: null };
+  if (!agent.enabled) {
+    // A switch-off whose removal did not finish is not Off.
+    const left = agentPieces(agent).find((piece) => piece.state === "failed");
+    return left ? { text: t("settings.kit.failed"), tone: "error", reason: left.reason } : { text: t("common.off"), tone: "muted", reason: null };
+  }
   const piece = agentWorstPiece(agent);
   const line = kitPartLine(piece, t);
   return { ...line, reason: piece.state === "installed" ? null : piece.reason };

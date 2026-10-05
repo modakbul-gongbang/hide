@@ -123,7 +123,9 @@ fn observe_guidance(target: &KitTarget, adapter: &AgentAdapter, agent: GuidanceA
     }
     match version_gate(target, adapter) {
         Ok(()) => observed,
-        Err(reason) => Observed::Blocked(reason),
+        // Nothing a Reinstall can change: the agent is too old, or its
+        // version cannot be read, so the row says why and is not repairable.
+        Err(reason) => Observed::Unsupported(reason),
     }
 }
 
@@ -187,7 +189,7 @@ fn dir_state(
         ),
         SkillObserved::Missing => (ComponentState::NotInstalled, None),
         SkillObserved::Foreign => (
-            ComponentState::Failed,
+            ComponentState::Absent,
             Some(format!(
                 "a skill named {} that Hide did not write is already there; Hide left it alone",
                 crate::agents::SKILL_NAME
@@ -267,10 +269,23 @@ fn report_agent(
         Availability::Available
     };
     let skill = if !on {
-        PieceReport {
-            state: ComponentState::Off,
-            reason: None,
-            location: Some(skill_location(adapter.skill_dir, &target.home)),
+        let location = skill_location(adapter.skill_dir, &target.home);
+        // A switch-off whose removal failed, or that left Hide's stub behind,
+        // is not Off: the stub is still read by the agent.
+        let left = failures
+            .and_then(|failures| failures.skill.get(&adapter.skill_dir).cloned())
+            .or_else(|| left_behind(record, adapter, dirs, &location));
+        match left {
+            Some(reason) => PieceReport {
+                state: ComponentState::Failed,
+                reason: Some(reason),
+                location: Some(location),
+            },
+            None => PieceReport {
+                state: ComponentState::Off,
+                reason: None,
+                location: Some(location),
+            },
         }
     } else if availability != Availability::Available {
         PieceReport {
@@ -294,7 +309,22 @@ fn report_agent(
             .unwrap_or(SkillObserved::Missing);
         let recorded = record.contains_piece(&skill_code(adapter.skill_dir));
         let failure = failures.and_then(|failures| failures.skill.get(&adapter.skill_dir).cloned());
-        let (state, reason) = dir_state(&observed, recorded, failure);
+        let (state, reason) = if observed == SkillObserved::Missing
+            && failure.is_none()
+            && !adapter.skill_dir.writable(&target.home)
+        {
+            // Hide does not create an agent's own folder, so a Reinstall
+            // cannot help until the agent has made it.
+            (
+                ComponentState::Absent,
+                Some(format!(
+                    "{} has not created its own folder yet; the skill is put in once it has",
+                    adapter.label
+                )),
+            )
+        } else {
+            dir_state(&observed, recorded, failure)
+        };
         let reason = match (state, record_readable) {
             (ComponentState::NotInstalled, false) => {
                 Some("Hide's record of what it installed could not be read".to_owned())
@@ -345,6 +375,28 @@ fn report_agent(
     }
 }
 
+/// Hide's skill stub is still in the folder of an agent the operator switched
+/// off, with no agent that is on and set up reading it: the removal failed
+/// or never ran, and the row must not read Off over it.
+fn left_behind(
+    record: &Record,
+    adapter: &AgentAdapter,
+    dirs: &[(SkillDir, SkillObserved, bool)],
+    location: &str,
+) -> Option<String> {
+    if record.agent_choice(adapter.id) != Some(false)
+        || !record.contains_piece(&skill_code(adapter.skill_dir))
+    {
+        return None;
+    }
+    let (_, observed, wanted) = dirs.iter().find(|(dir, _, _)| *dir == adapter.skill_dir)?;
+    (!wanted && matches!(observed, SkillObserved::Current | SkillObserved::Stale)).then(|| {
+        format!(
+            "Hide's skill is still in {location}; switch the agent on and off again to remove it"
+        )
+    })
+}
+
 fn guidance_piece(
     target: &KitTarget,
     adapter: &AgentAdapter,
@@ -356,10 +408,29 @@ fn guidance_piece(
 ) -> PieceReport {
     let location = Some(agent.config_path(&target.home).display().to_string());
     if !on {
-        return PieceReport {
-            state: ComponentState::Off,
-            reason: None,
-            location,
+        let left = failures
+            .and_then(|failures| failures.hook.get(adapter.id).cloned())
+            .or_else(|| {
+                matches!(
+                    hide_agent_hooks::guidance::status(agent, &target.home),
+                    HookStatus::Installed { .. } | HookStatus::Outdated { .. }
+                )
+                .then(|| {
+                    "Hide's entry is still in the file; switch the agent on and off again to remove it"
+                        .to_owned()
+                })
+            });
+        return match left {
+            Some(reason) => PieceReport {
+                state: ComponentState::Failed,
+                reason: Some(reason),
+                location,
+            },
+            None => PieceReport {
+                state: ComponentState::Off,
+                reason: None,
+                location,
+            },
         };
     }
     if availability != Availability::Available {
@@ -485,7 +556,6 @@ pub(crate) fn apply(
                 && adapter.detected(&target.home)
                 && dir.writable(&target.home)
         });
-        let kept = readers().any(|adapter| enabled(record, scope, adapter));
         let switched_off = readers().any(|adapter| scope.agent_off.contains(adapter.id));
         let switched_on = readers()
             .any(|adapter| scope.agent_on.contains(adapter.id) && adapter.detected(&target.home));
@@ -510,7 +580,7 @@ pub(crate) fn apply(
             if matches!(after, SkillObserved::Current) && record_readable {
                 changed |= record.insert_piece(&code);
             }
-        } else if switched_off && !kept {
+        } else if switched_off {
             match remove_skill(dir, &target.home) {
                 Ok(_) => changed |= record.forget_piece(&code),
                 Err(reason) => {

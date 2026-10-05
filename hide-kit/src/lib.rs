@@ -605,7 +605,12 @@ pub fn apply(target: &KitTarget, scope: &Scope) -> KitReport {
                 | Observed::Unsupported(_)
                 | Observed::SupportedAbsent(_) => false,
             };
-        let undo_now = turning_off && matches!(observed, Observed::Current | Observed::Stale(_));
+        // A hook part comes out whatever blocks judging it (a missing helper,
+        // an older CLI): only Hide's marked entries are taken.
+        let hook_part = matches!(id, ComponentId::ClaudeCodeHook | ComponentId::CodexHook);
+        let undo_now = turning_off
+            && (matches!(observed, Observed::Current | Observed::Stale(_))
+                || (hook_part && matches!(observed, Observed::Blocked(_))));
         let mut failure = None;
         if install_now {
             match install(id, target) {

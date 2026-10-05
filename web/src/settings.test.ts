@@ -290,6 +290,8 @@ describe("the install kit rows (PRD device-parity B7, B8, B27)", () => {
   it("words an agent by its switch and its worst piece, and switches only what can be switched (issue #517)", () => {
     expect(kitAgentLine(agent("a", { enabled: false, skill: piece("off") }))).toEqual({ text: "Off", tone: "muted", reason: null });
     expect(kitAgentLine(agent("a"))).toEqual({ text: "Installed", tone: "ok", reason: null });
+    // A switch-off whose removal did not finish is not Off.
+    expect(kitAgentLine(agent("a", { enabled: false, skill: piece("failed", "still there") }))).toEqual({ text: "Failed", tone: "error", reason: "still there" });
     expect(kitAgentLine(agent("a", { hook: piece("failed", "needs 3.0.0") }))).toEqual({ text: "Failed", tone: "error", reason: "needs 3.0.0" });
     expect(kitAgentLine(agent("a", { skill: piece("removed"), hook: piece("outdated") })).text).toBe("Removed");
     expect(kitAgentSwitch(agent("a"))).toEqual({ on: true });

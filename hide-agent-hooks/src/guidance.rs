@@ -524,7 +524,35 @@ pub fn install(
 /// Takes out only the entries carrying Hide's marker; a file that was Hide's
 /// alone goes with them.
 pub fn remove(agent: GuidanceAgent, home: &Path) -> Result<RemoveOutcome, InstallFailure> {
-    let layout = agent.layout(home);
+    // Every file Hide could have written to, so an entry written beside a
+    // settings file is still found after a `hooks.json` appeared (Droid).
+    let mut layouts = vec![agent.layout(home)];
+    if agent == GuidanceAgent::Droid {
+        let folder = agent.home_directory(home);
+        for layout in [
+            Layout::event_map(folder.join("hooks.json"), false, "SessionStart"),
+            Layout::event_map(folder.join("settings.json"), true, "SessionStart"),
+        ] {
+            if !layouts.iter().any(|known| known.path == layout.path) {
+                layouts.push(layout);
+            }
+        }
+    }
+    let mut total = RemoveOutcome {
+        changed: false,
+        removed_entries: 0,
+        preserved_entries: 0,
+    };
+    for layout in &layouts {
+        let outcome = remove_in(layout)?;
+        total.changed |= outcome.changed;
+        total.removed_entries += outcome.removed_entries;
+        total.preserved_entries += outcome.preserved_entries;
+    }
+    Ok(total)
+}
+
+fn remove_in(layout: &Layout) -> Result<RemoveOutcome, InstallFailure> {
     let Some(mut document) = read_document(&layout.path)? else {
         return Ok(RemoveOutcome {
             changed: false,
@@ -532,7 +560,7 @@ pub fn remove(agent: GuidanceAgent, home: &Path) -> Result<RemoveOutcome, Instal
             preserved_entries: 0,
         });
     };
-    let Some(list) = entries(&mut document, &layout, false)? else {
+    let Some(list) = entries(&mut document, layout, false)? else {
         return Ok(RemoveOutcome {
             changed: false,
             removed_entries: 0,
@@ -551,9 +579,9 @@ pub fn remove(agent: GuidanceAgent, home: &Path) -> Result<RemoveOutcome, Instal
         });
     }
     if preserved == 0 {
-        drop_empty(&mut document, &layout);
+        drop_empty(&mut document, layout);
     }
-    if layout.own_file && only_scaffolding(&document, &layout) {
+    if layout.own_file && only_scaffolding(&document, layout) {
         std::fs::remove_file(&layout.path).map_err(|error| InstallFailure::NotWritable {
             path: layout.path.display().to_string(),
             detail: error.to_string(),

@@ -241,8 +241,9 @@ fn a_skill_that_hide_did_not_write_is_left_alone_and_reported() {
 
     assert_eq!(
         agent(&report, "gemini-cli").skill.state,
-        ComponentState::Failed
+        ComponentState::Absent
     );
+    assert!(!agent(&report, "gemini-cli").needs_attention());
     assert_eq!(
         std::fs::read_to_string(&own).unwrap(),
         "---\nname: hide-browser\n---\nmine\n"
@@ -331,7 +332,9 @@ fn an_agent_with_a_documented_minimum_gets_the_hook_only_from_that_version() {
     let kiro = agent(&report, "kiro");
     assert_eq!(kiro.skill.state, ComponentState::Installed);
     let hook = kiro.hook.as_ref().unwrap();
-    assert_eq!(hook.state, ComponentState::Failed);
+    // Nothing a Reinstall changes, so the row is not offered one.
+    assert_eq!(hook.state, ComponentState::Absent);
+    assert!(!kiro.needs_attention());
     assert!(
         hook.reason.as_deref().unwrap().contains("older than 3.0.0"),
         "{hook:?}"
@@ -380,5 +383,89 @@ fn removing_a_machine_takes_every_marked_piece_and_nothing_else() {
         !std::fs::read_to_string(gemini_settings(&fixture))
             .map(|text| text.contains("hide-guidance"))
             .unwrap_or(false)
+    );
+}
+
+#[test]
+fn the_shared_stub_goes_when_the_last_agent_reading_it_is_switched_off_even_with_codex_not_set_up()
+{
+    let fixture = Fixture::new();
+    set_up(&fixture, ".gemini");
+    apply(&fixture.target, &Scope::agents(["gemini-cli"], []));
+    assert!(shared_skill(&fixture).is_file());
+
+    // Codex is on by default but not set up here, so it reads nothing.
+    apply(&fixture.target, &Scope::agents([], ["gemini-cli"]));
+
+    assert!(!shared_skill(&fixture).exists());
+}
+
+#[test]
+fn a_switch_off_that_left_hides_stub_behind_does_not_read_as_off() {
+    let fixture = Fixture::new();
+    set_up(&fixture, ".gemini");
+    apply(&fixture.target, &Scope::agents(["gemini-cli"], []));
+    // The choice is off and Hide's stub is still there, as a removal that
+    // failed would leave it.
+    let mut text = record(&fixture);
+    text["agents"]["gemini-cli"] = serde_json::json!(false);
+    std::fs::write(
+        fixture.home().join(".hide/kit/installed.json"),
+        text.to_string(),
+    )
+    .unwrap();
+
+    let report = status(&fixture.target);
+
+    let gemini = agent(&report, "gemini-cli");
+    assert_eq!(gemini.skill.state, ComponentState::Failed, "{gemini:?}");
+    assert!(
+        gemini
+            .skill
+            .reason
+            .as_deref()
+            .unwrap()
+            .contains("switch the agent on and off again")
+    );
+}
+
+#[test]
+fn an_agent_found_only_by_its_program_reports_its_folder_as_not_made_yet() {
+    let fixture = Fixture::new();
+    std::fs::remove_dir_all(fixture.home().join(".claude")).unwrap();
+    executable(&fixture.home().join(".local/bin/claude"), "#!/bin/sh\n");
+
+    let report = apply(&fixture.target, &Scope::automatic());
+
+    let claude = agent(&report, "claude-code");
+    assert_eq!(claude.skill.state, ComponentState::Absent);
+    assert!(!claude.needs_attention());
+}
+
+#[test]
+fn switching_factory_droid_off_finds_its_entry_in_either_file() {
+    let fixture = Fixture::new();
+    set_up(&fixture, ".factory");
+    std::fs::write(
+        fixture.home().join(".factory/settings.json"),
+        r#"{"hooks":{"SessionStart":[]}}"#,
+    )
+    .unwrap();
+    apply(&fixture.target, &Scope::agents(["factory-droid"], []));
+    let settings = fixture.home().join(".factory/settings.json");
+    assert!(
+        std::fs::read_to_string(&settings)
+            .unwrap()
+            .contains("hide-guidance")
+    );
+    // The operator later makes a hooks.json: Droid now reads that file.
+    std::fs::write(fixture.home().join(".factory/hooks.json"), "{}").unwrap();
+
+    apply(&fixture.target, &Scope::agents([], ["factory-droid"]));
+
+    assert!(
+        !std::fs::read_to_string(&settings)
+            .unwrap()
+            .contains("hide-guidance")
     );
 }
