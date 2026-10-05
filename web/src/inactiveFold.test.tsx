@@ -2,6 +2,7 @@
 import { act } from "react";
 import { createRoot } from "react-dom/client";
 import { afterAll, expect, it, vi } from "vitest";
+import tokensText from "../../design/tokens.json?raw";
 import { createActions } from "./actions";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { Sidebar } from "./sidebar";
@@ -26,8 +27,10 @@ afterAll(() => browserCanvas.restore());
 it("sends the project's path when the Inactive fold is clicked and draws the fold the core says is open", async () => {
   vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
   vi.stubGlobal("ResizeObserver", class { observe() {} unobserve() {} disconnect() {} });
-  // jsdom loads no stylesheet, and the sidebar reads its width tokens from the document.
-  for (const [name, value] of [["--size-sidebar-ideal", "280px"], ["--size-sidebar-min", "200px"], ["--size-sidebar-max", "480px"]] as const) document.documentElement.style.setProperty(name, value);
+  // jsdom loads no stylesheet, and the sidebar reads its width tokens from the document: take them from the token source.
+  const tokens = (JSON.parse(tokensText) as { tokens: Record<string, { value: number }> }).tokens;
+  const widthTokens = ["--size-sidebar-ideal", "--size-sidebar-min", "--size-sidebar-max"];
+  for (const name of widthTokens) document.documentElement.style.setProperty(name, `${tokens[name]?.value}px`);
   const shell = useShellStore.getState();
   const ui = useUiStore.getState();
   const row = (id: string, branch: string, primary: boolean) =>
@@ -67,7 +70,7 @@ it("sends the project's path when the Inactive fold is clicked and draws the fol
     container.remove();
     useShellStore.setState(shell, true);
     useUiStore.setState(ui, true);
-    for (const name of ["--size-sidebar-ideal", "--size-sidebar-min", "--size-sidebar-max"]) document.documentElement.style.removeProperty(name);
+    for (const name of widthTokens) document.documentElement.style.removeProperty(name);
     vi.unstubAllGlobals();
   }
 });
