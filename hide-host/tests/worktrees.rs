@@ -333,7 +333,7 @@ fn a_refused_removal_leaves_the_folder_in_place() {
 /// the registration leaves an entry Git still registers: a sweep keeps it,
 /// and retrying the removal drops the registration and then deletes it, once.
 #[test]
-#[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
+#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn an_entry_left_before_git_dropped_the_registration_is_kept_until_a_retry_removes_it() {
     let (_directory, root, linked) = linked_worktree(10);
     let trash = root.join(".git").join(hide_host::worktrees::TRASH);
@@ -358,7 +358,7 @@ fn an_entry_left_before_git_dropped_the_registration_is_kept_until_a_retry_remov
 /// folder: a stray entry keeps its files, and a trash that is a link leads
 /// nowhere.
 #[test]
-#[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
+#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn a_sweep_keeps_names_no_removal_made_and_never_follows_a_linked_trash() {
     let (directory, root, _linked) = linked_worktree(10);
     let common = root.join(".git");

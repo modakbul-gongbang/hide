@@ -73,7 +73,7 @@ mod tests {
     // assertions below are unchanged: a deadline/stop ends the whole tree,
     // and the caller receives output, status and only its explicit env.
     #[test]
-    #[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
+    #[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
     fn child_role() {
         let Ok(role) = std::env::var(ROLE) else {
             return;
@@ -111,7 +111,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
+    #[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
     fn a_child_past_its_deadline_is_stopped_with_its_group() {
         let home = tempfile::tempdir().unwrap();
         let marker = home.path().join("grandchild-survived");
@@ -134,7 +134,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
+    #[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
     fn a_raised_stop_ends_the_child_before_its_deadline() {
         let home = tempfile::tempdir().unwrap();
         let stop = std::sync::Arc::new(AtomicBool::new(false));

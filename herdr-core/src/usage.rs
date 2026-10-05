@@ -1472,7 +1472,7 @@ mod tests {
     /// The worker runs once per attempt: an answer arrives on a later wake,
     /// nothing runs between attempts, and a child in flight is not doubled.
     #[test]
-    #[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
+    #[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
     fn one_claude_read_per_attempt_and_its_answer_lands_on_a_later_wake() {
         let calls = Arc::new(std::sync::atomic::AtomicU32::new(0));
         let counted = Arc::clone(&calls);

@@ -526,7 +526,7 @@ mod tests {
     use crate::model::ProjectSessionsSnapshot;
     use std::fs;
     #[test]
-    #[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
+    #[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
     fn drop_drains_off_that_was_still_queued_with_copied_rows() {
         let temp = tempfile::tempdir().unwrap();
         let database = temp.path().join("session-search.sqlite3");

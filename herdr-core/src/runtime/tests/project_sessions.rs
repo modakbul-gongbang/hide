@@ -745,7 +745,7 @@ fn rejected_search_keeps_its_identity_and_fences_late_valid_answers() {
 }
 
 #[test]
-#[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
+#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn search_setup_failures_are_observable_and_successful_retry_recovers() {
     use crate::runtime::session_search::{SearchPayload, SearchWorker};
     let dir = tempfile::tempdir().unwrap();
@@ -809,7 +809,7 @@ fn search_setup_failures_are_observable_and_successful_retry_recovers() {
 }
 
 #[test]
-#[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
+#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn search_capacity_reason_survives_publication() {
     use crate::runtime::session_search::{SearchPayload, SearchWorker};
     let dir = tempfile::tempdir().unwrap();

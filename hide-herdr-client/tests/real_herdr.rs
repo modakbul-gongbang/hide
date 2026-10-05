@@ -53,7 +53,7 @@ struct PrivateHerdr {
 }
 
 impl PrivateHerdr {
-    #[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
+    #[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
     fn start(bin: PathBuf) -> Self {
         let version = String::from_utf8(
             Command::new(&bin)

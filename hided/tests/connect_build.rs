@@ -380,7 +380,7 @@ fn a_relocated_state_folder_moves_nothing() {
 /// With both folders present the new one is used, the legacy one is left
 /// whole, and the daemon's log names both (B5).
 #[test]
-#[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
+#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn with_both_folders_the_new_one_is_used_and_the_old_one_logged() {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");

@@ -996,7 +996,7 @@ mod tests {
         fn models(&self) -> ModelCatalog {
             ModelCatalog::Offered(vec![format!("{}-model", self.id)])
         }
-        #[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
+        #[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
         fn execute(&self, _: &AiRequest, _: &CancelToken) -> Result<AiResponse, AiError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             std::thread::sleep(self.delay);
@@ -1200,7 +1200,7 @@ mod tests {
 
     /// A leader that panics must not strand its joiners or its key.
     #[test]
-    #[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
+    #[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
     fn a_panicking_leader_settles_every_joiner_with_an_error_and_frees_the_key() {
         struct Panicking {
             started: Arc<(Mutex<bool>, Condvar)>,
@@ -1328,7 +1328,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
+    #[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
     fn a_usage_limit_parks_the_provider_account_wide_until_it_resets() {
         let sink = Arc::new(Recorder::default());
         let codex = Scripted::new(
@@ -1529,7 +1529,7 @@ mod tests {
     /// When the reason ends the router asks the selected provider once and
     /// goes back to it; nobody has to tell it the limit reset.
     #[test]
-    #[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
+    #[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
     fn an_expired_cooldown_re_reads_availability_once_and_returns_to_the_selected_provider() {
         let sink = Arc::new(Recorder::default());
         let codex = Scripted::new(
@@ -1741,7 +1741,7 @@ mod tests {
     /// A second concurrent intent is refused by the concurrency cap without
     /// touching a provider, and the first request is untouched.
     #[test]
-    #[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
+    #[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
     fn a_second_concurrent_request_is_over_budget_in_flight() {
         let sink = Arc::new(Recorder::default());
         let codex = Arc::new(Scripted {

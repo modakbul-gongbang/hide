@@ -398,7 +398,7 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    #[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
+    #[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
     fn polling_stays_on_the_opened_directory_after_its_path_is_replaced() {
         use std::os::unix::fs::symlink;
         let sandbox = tempfile::tempdir().unwrap();

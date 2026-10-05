@@ -146,7 +146,7 @@ fn descendant_count_stays_bounded_across_many_requests() {
 /// `Session` does; on `kill -9` its pipe closes and the fake and its child go.
 #[cfg(target_os = "macos")]
 #[test]
-#[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
+#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn kill_dash_nine_on_the_owner_leaves_no_survivors() {
     let owner_script = r#"
 import json, os, subprocess, sys, time

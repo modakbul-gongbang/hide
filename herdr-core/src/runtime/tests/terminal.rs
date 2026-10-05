@@ -846,7 +846,7 @@ fn an_observed_wheel_that_cannot_reach_herdr_is_logged_not_held() {
 /// that Herdr knows it by; a device that is not connected answers the reason
 /// in the find bar instead of searching this machine.
 #[test]
-#[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
+#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn a_device_pane_is_searched_on_its_own_herdr() {
     let herdr = FakeHerdr::start("device-find", |method, params| {
         assert_eq!(method, "pane.read");
@@ -1243,7 +1243,7 @@ fn close_projection_a_failure_on_a_living_pane_still_reports_ended() {
 /// names the request that asked. Claude Code's transcript toggles on the key
 /// that opens it, so a second ⌘F inside it only starts a new search.
 #[test]
-#[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
+#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn find_opens_the_agents_own_search_only_where_herdr_holds_no_history() {
     let history = Arc::new(Mutex::new(0_u64));
     let screen = Arc::new(Mutex::new(String::from("❯ \n  ? for shortcuts\n")));

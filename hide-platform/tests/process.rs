@@ -37,7 +37,7 @@ fn serial() -> MutexGuard<'static, ()> {
 }
 
 #[test]
-#[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
+#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn child_role() {
     let Ok(role) = std::env::var(ROLE) else {
         return;
@@ -823,7 +823,7 @@ fn a_child_past_its_deadline_is_ended_with_its_tree() {
 }
 
 #[test]
-#[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
+#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn a_raised_stop_ends_the_child_before_its_deadline() {
     let _serial = serial();
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -843,7 +843,7 @@ fn a_raised_stop_ends_the_child_before_its_deadline() {
 
 /// Recovery is armed before the parent exits, so a hanging public call fails
 /// within a bound and only its known helper is ended.
-#[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
+#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn inherited_pipe_run(
     role: &str,
     deadline: Duration,

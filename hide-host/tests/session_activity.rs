@@ -271,7 +271,7 @@ fn owner_fixture() {
 }
 
 #[test]
-#[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
+#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn helper_exits_when_owner_dies_with_stdin_still_open() {
     let home = tempfile::tempdir().unwrap();
     let started = Instant::now();

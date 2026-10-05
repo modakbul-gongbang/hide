@@ -169,7 +169,7 @@ fn only_a_folder_that_exists_can_be_watched() {
 }
 
 #[test]
-#[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
+#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn a_filtered_watch_reports_only_what_it_keeps_and_a_burst_it_drops_is_not_an_overflow() {
     let dir = tempfile::tempdir().unwrap();
     let (mut watcher, changes) = Watcher::keeping(|relative| relative.starts_with("refs")).unwrap();

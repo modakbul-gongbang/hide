@@ -501,7 +501,7 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
+    #[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
     fn a_closed_view_publishes_an_empty_projection_without_a_key() {
         let mut reader = ChangesReader::new();
         for _ in 0..500 {

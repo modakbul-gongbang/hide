@@ -678,7 +678,7 @@ fn the_kit_runs_nothing_from_a_folder_another_account_can_change() {
 /// Two kits on one account take turns: while another holds the account,
 /// an apply waits and then installs; a quitting owner stops waiting.
 #[test]
-#[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
+#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn an_apply_waits_for_another_kit_changing_the_same_account() {
     let fixture = Fixture::new();
     let settings = fixture.home().join(".claude/settings.json");

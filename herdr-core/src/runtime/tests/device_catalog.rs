@@ -264,7 +264,7 @@ fn a_directory_the_helper_has_not_confirmed_is_shown_as_its_workspace_and_says_w
 /// still unconfirmed is the same record once the helper's facts group it into
 /// its repository, so a rename of the project's id costs the list nothing.
 #[test]
-#[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
+#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn a_device_checkout_recorded_before_grouping_is_the_same_record_after_it() {
     let t = tree();
     let mut runtime = runtime();
@@ -354,7 +354,7 @@ fn a_device_checkout_recorded_before_grouping_is_the_same_record_after_it() {
 /// The published session follows the helper: unconfirmed while it is asked
 /// on a worker, grouped when it answers.
 #[test]
-#[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
+#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn a_device_session_is_grouped_when_its_helper_answers() {
     let t = tree();
     let mut runtime = runtime();
@@ -804,7 +804,7 @@ fn device_strip(runtime: &Runtime, checkout_id: &str) -> Vec<String> {
 /// when the device reports the new order. A device that is not connected
 /// takes no move.
 #[test]
-#[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
+#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn a_device_tab_moves_on_its_own_herdr_and_a_file_tab_keeps_the_slot_it_was_dropped_in() {
     let t = tree();
     let mut runtime = runtime();

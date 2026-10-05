@@ -102,7 +102,7 @@ struct OutputPressure {
 }
 
 impl OutputPressure {
-    #[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
+    #[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
     fn new() -> (Self, PipeWriter) {
         let (reader, mut writer) = std::io::pipe().unwrap();
         let hook_output = writer.try_clone().unwrap();
