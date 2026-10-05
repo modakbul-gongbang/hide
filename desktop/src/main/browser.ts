@@ -161,10 +161,10 @@ export class BrowserViews {
     if (contents && !contents.isDestroyed()) contents.send(BROWSER_EVENT_CHANNEL, { kind: "attached", workspace: page.workspace, id: page.id, attached });
   }
 
-  private cancelCycle(): void {
+  private cancelCycle(windowLost = false): void {
     const held = this.cycleInput;
     this.cycleInput = null;
-    if (held) this.emit({ kind: "cycle-cancel", cycleId: held.cycleId, workspace: held.page.workspace, id: held.page.id });
+    if (held) this.emit({ kind: "cycle-cancel", cycleId: held.cycleId, workspace: held.page.workspace, id: held.page.id, windowLost });
   }
 
   constructor(
@@ -241,9 +241,9 @@ export class BrowserViews {
     window.webContents.on("did-start-navigation", (details) => {
       if (details.isMainFrame && !details.isSameDocument) this.hideAll();
     });
-    // The cancel is reported to the shell, which asks for the page's
+    // The cancel says the window was lost; the shell asks for the page's
     // keyboard back when the window returns (`web/src/keyboard.ts`).
-    window.on("blur", () => this.cancelCycle());
+    window.on("blur", () => this.cancelCycle(true));
     window.on("closed", () => {
       this.cancelCycle();
       for (const page of [...this.pages.values()]) this.destroy(page, "window_closed");

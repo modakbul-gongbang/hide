@@ -253,6 +253,11 @@ class BrowserSyncLoop {
     this.schedule();
   }
 
+  /** Withdraws a request that no flush has delivered yet. */
+  cancelFocus(): void {
+    this.focus = null;
+  }
+
   /** The rects of the pages the last sync showed, in the shell's points. */
   visibleRects(): readonly BrowserRect[] {
     return this.visible;
@@ -516,6 +521,11 @@ export function registerBrowserSlot(id: string, element: HTMLElement): () => voi
 }
 
 /** One focus intent, delivered after the host has the current visible slots. */
+/** Withdraws the focus request no flush has delivered yet. */
+export function cancelBrowserFocus(): void {
+  syncLoop()?.cancelFocus();
+}
+
 export function focusBrowserDisplay(workspace: string, id: string): void {
   syncLoop()?.requestFocus(workspace, id);
 }

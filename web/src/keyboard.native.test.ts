@@ -207,4 +207,28 @@ describe("native cycle responder return", () => {
     flushFrames();
     expect(pageCommands).toEqual([]);
   });
+
+  it("a pointerdown after the window's return but before the request is delivered withdraws it", () => {
+    input();
+    window.dispatchEvent(new Event("blur"));
+    window.dispatchEvent(new Event("focus"));
+    window.dispatchEvent(new Event("pointerdown"));
+    flushFrames();
+    expect(pageCommands).toEqual([]);
+  });
+
+  it("a hold a page's failure ended, or another page's focus, leaves nothing owed", () => {
+    const cancel = (windowLost: boolean) => { for (const listener of browserListeners) listener({ kind: "cycle-cancel", workspace: "local\u0000/fixture", id: "d1", cycleId: 1, windowLost }); };
+    input();
+    cancel(false);
+    window.dispatchEvent(new Event("focus"));
+    flushFrames();
+    expect(pageCommands).toEqual([]);
+    input();
+    window.dispatchEvent(new Event("blur"));
+    for (const listener of browserListeners) listener({ kind: "focus", workspace: "local\u0000/fixture", id: "d2" });
+    window.dispatchEvent(new Event("focus"));
+    flushFrames();
+    expect(pageCommands).toEqual([]);
+  });
 });

@@ -19,7 +19,7 @@
 
 import { agentCycle, agentOrigin, areaCycle, focusedCycleScope, focusedSurface, scopedSurfaces } from "./areaCycle";
 import type { Actions } from "./actions";
-import { focusBrowserDisplay } from "./browserViews";
+import { cancelBrowserFocus, focusBrowserDisplay } from "./browserViews";
 import { advanceHint, clearHint, holdModifiers, idleHint, modifiersOf, NO_MODIFIERS, revealedFamily, type HintState } from "./hints";
 import { browserBridge, hostBridge, hostKind, keySystem } from "./host";
 import { agentListOrder, numberedAgents, numberedTabs } from "./numbering";
@@ -472,7 +472,10 @@ export function installKeyboard(actions: Actions): () => void {
     owedPage = null;
     if (owed) focusBrowserDisplay(owed.workspace, owed.id);
   };
-  const forgetOwed = () => { owedPage = null; };
+  const forgetOwed = () => {
+    owedPage = null;
+    cancelBrowserFocus();
+  };
 
   // A menu item names a command id; one this registry does not know is a
   // host/shell version mismatch, recorded rather than guessed at.
@@ -480,6 +483,13 @@ export function installKeyboard(actions: Actions): () => void {
   const unsubscribeBrowser = browserBridge()?.onEvent((input) => {
     if (input.kind === "cycle-cancel") {
       if (nativeCycle?.cycleId === input.cycleId) onBlur();
+      // A page that failed or closed, not the window, ended the hold: nothing is owed.
+      if (!input.windowLost) owedPage = null;
+      return;
+    }
+    // Another page taking the keyboard settles the debt: it is not the page the hold began on.
+    if (input.kind === "focus") {
+      if (owedPage && owedPage.id !== input.id) owedPage = null;
       return;
     }
     if (input.kind !== "cycle-input") return;

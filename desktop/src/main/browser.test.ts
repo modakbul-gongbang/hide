@@ -76,8 +76,8 @@ function candidate() {
     (Reflect.get(subject, "pages") as Map<string, unknown>).set(id, value);
     return {
       pageFocus,
-      takeFocus: () => contents.emit("focus"),
       focus: (next: boolean) => { focused = next; },
+      crash: () => contents.emit("render-process-gone", {}, { reason: "crashed" }),
       show: (visible: boolean) => Reflect.get(subject, "show").call(subject, value, visible),
       visibility: value.view.setVisible,
       input: (type?: string, key?: string, control?: boolean, alt?: boolean) => input(contents, type, key, control, alt),
@@ -145,17 +145,21 @@ describe("native held cycle delivery", () => {
     blur();
     expect(forwarded()).toEqual([
       expect.objectContaining({ kind: "cycle-input", cycleId: 1 }),
-      expect.objectContaining({ kind: "cycle-cancel", id: "origin", cycleId: 1 }),
+      expect.objectContaining({ kind: "cycle-cancel", id: "origin", cycleId: 1, windowLost: true }),
     ]);
     expect(shellInput("keyUp", "Control", false)).not.toHaveBeenCalled();
   });
-  it("leaves the keyboard to the shell when the window returns after a blur cancelled the hold", () => {
-    const { page, blur, windowReturn } = candidate();
+  it("says whether the window or the page ended a hold, and never refocuses the page itself", () => {
+    const { page, blur, windowReturn, forwarded } = candidate();
     const origin = page("origin");
     origin.input();
     blur();
     windowReturn();
+    expect(forwarded().at(-1)).toMatchObject({ kind: "cycle-cancel", windowLost: true });
     expect(origin.pageFocus).not.toHaveBeenCalled();
+    origin.input();
+    origin.crash();
+    expect(forwarded().at(-1)).toMatchObject({ kind: "cycle-cancel", windowLost: false });
   });
   it("release and Escape from another page reach the frozen origin once", () => {
     for (const key of ["Control", "Escape"]) {

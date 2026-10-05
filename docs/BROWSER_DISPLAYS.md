@@ -275,8 +275,10 @@ The shell also reports the matching identifier when release arrived in its rende
 Release or Escape received by another native page still ends the frozen initiating cycle.
 Window blur, page renderer failure and destruction of the held page cancel the host slot, and a hidden or unfocused page cannot begin a cycle.
 After a blur cancels a hold, the shell owes the initiating page the keyboard and asks for it when the window returns, as Escape does.
-The request follows the shell's next visible-slot sync, so a page the overlay still covered is shown before the host focuses it, and the host holds no debt of its own; it can neither miss the cancel nor focus the page ahead of the shell's own focus restore.
-A key or click in the shell before the window returns, or a new hold, ends the debt.
+The host's cancel says whether the window or the page ended the hold, and only a lost window leaves a debt.
+The request follows the shell's next visible-slot sync, so a page the overlay still covered is shown before the host focuses it, and the host holds no debt of its own, so it cannot focus the page ahead of the shell's own focus restore.
+A request the sync has not yet delivered is dropped when its display is not shown then, as every focus request is.
+A key or click in the shell, another page taking the keyboard, a new hold, or a page that failed or closed ends the debt, including a request not yet delivered.
 After the core confirms a selected display, the existing keyboard-follow request focuses its document or diff, or schedules one trusted native-page focus command after visible-slot sync.
 The host focuses only a visible page in its already-focused candidate window; it never brings a window forward for this command.
 Cycle menu items are immediate command clicks without accelerators, so one physical key cannot also dispatch a menu selection.
