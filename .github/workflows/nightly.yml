@@ -181,7 +181,7 @@ jobs:
     steps:
       - uses: actions/checkout@v7
       - name: Report each failed attempt once in the nightly issue
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         env:
           NIGHTLY_RESULTS: ${{ toJSON(needs) }}
         with:
