@@ -105,6 +105,12 @@ async function refusedWebSocket(url: string): Promise<number> {
 async function browserCommand(url: string, method: string, params: Record<string, unknown>): Promise<Reply> {
   return withCdp(url, (send) => send(method, params));
 }
+/** The core's own diagnostic lines, which say why a page report was not applied. */
+function coreLog(env: Record<string, string>): { kind?: unknown; scheme?: unknown }[] {
+  const file = path.join(env.HIDE_STATE_DIR!, "Logs", "core.jsonl");
+  if (!fs.existsSync(file)) return [];
+  return fs.readFileSync(file, "utf8").split("\n").filter(Boolean).flatMap((line) => { try { return [JSON.parse(line) as { kind?: unknown }]; } catch { return []; } });
+}
 async function fromPane(args: string[], succeeds = true): Promise<Record<string, unknown>> {
   const stem = path.join(herdr.root, `cdp-command-${++sequence}`);
   const output = `${stem}.json`, status = `${stem}.status`;
@@ -131,7 +137,8 @@ async function fromPane(args: string[], succeeds = true): Promise<Record<string,
       }))).catch(() => [{ unavailable: true }]);
     const page = reply.page as { state?: string; load?: number } | undefined;
     console.log("Workspace page failure", JSON.stringify({ reason, state: page?.state, load: page?.load, native,
-      events: hostLog(run.env).filter((row) => row.event.startsWith("browser.")).slice(-12).map((row) => ({ event: row.event, reason: row.reason, protocol: row.protocol, method: row.method, code: row.code })) }));
+      events: hostLog(run.env).filter((row) => row.event.startsWith("browser.")).slice(-12).map((row) => ({ event: row.event, reason: row.reason, protocol: row.protocol, method: row.method, code: row.code })),
+      core: coreLog(run.env).filter((row) => String(row.kind ?? "").startsWith("browser.")).slice(-12).map((row) => ({ kind: row.kind, scheme: row.scheme })) }));
   }
   expect(Number(fs.readFileSync(status, "utf8")) === 0, `isolated Workspace command result (${reason})`).toBe(succeeds);
   return reply;
