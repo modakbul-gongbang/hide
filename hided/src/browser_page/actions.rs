@@ -14,7 +14,7 @@ use super::{Command, DragMode, Failure, Output, Target, Verify, Wait};
 const CONSOLE_LIMIT: usize = 50;
 const NETWORK_LIMIT: usize = 100;
 const EVAL_TIMEOUT: Duration = Duration::from_secs(9);
-const WAIT_POLL: Duration = Duration::from_millis(100);
+const WAIT_POLL: Duration = Duration::from_millis(150);
 /// Three actions in a row that changed nothing usually mean a dead control,
 /// an overlay taking the click, or a loop (chromux STALL_STREAK_THRESHOLD).
 const STALL_STREAK: u64 = 3;
@@ -72,7 +72,6 @@ pub async fn run(page: &mut Page, command: Command) -> Result<Output, Failure> {
     let display = page.display.clone();
     let next = json!(format!("hide browser snapshot {display} --diff"));
     match command {
-        Command::Help => unreachable!("help runs without a page"),
         Command::Snapshot {
             interactive,
             diff,
@@ -121,7 +120,7 @@ pub async fn run(page: &mut Page, command: Command) -> Result<Output, Failure> {
             verify,
             ..
         } => {
-            let (session, sel, offset) = element(page, &target).await?;
+            let (session, sel, frame) = element(page, &target).await?;
             let before = capture(page, &verify).await?;
             let filled = page
                 .dom(&session, "fill", json!({"selector": sel, "text": text}))
@@ -134,7 +133,10 @@ pub async fn run(page: &mut Page, command: Command) -> Result<Output, Failure> {
                     let observed = page
                         .dom(&session, "editableText", json!({"selector": sel}))
                         .await?;
-                    if observed["text"].as_str() != Some(text.as_str()) {
+                    // Editors keep a trailing newline and turn spaces they
+                    // would collapse into no-break spaces.
+                    let settled = |text: &str| text.replace('\u{a0}', " ").trim_end().to_owned();
+                    if settled(observed["text"].as_str().unwrap_or("")) != settled(&text) {
                         return Err(Failure::new(
                             "fill_rejected",
                             Some(format!(
@@ -149,6 +151,7 @@ pub async fn run(page: &mut Page, command: Command) -> Result<Output, Failure> {
                 answer["selected"] = json!({"value": filled["value"], "label": label});
             }
             if let Ok(rect) = page.dom(&session, "box", json!({"selector": sel})).await {
+                let offset = overlay_offset(page, frame.as_ref()).await;
                 flash(page, &rect, offset).await;
             }
             finish(page, &verify, before, acted(&target), &mut answer, next).await;
@@ -271,7 +274,6 @@ pub async fn run(page: &mut Page, command: Command) -> Result<Output, Failure> {
                         probe["height"].as_f64().unwrap_or(0.0),
                     );
                     let top = page.top.clone();
-                    let start = probe["scroll"]["y"].as_f64().unwrap_or(0.0);
                     let delta = (height * 0.85).round().max(1.0);
                     input(page, &top, "Input.dispatchMouseEvent", json!({"type": "mouseWheel",
                         "x": width / 2.0, "y": height / 2.0, "deltaX": 0, "deltaY": if up { -delta } else { delta }}))
@@ -282,9 +284,6 @@ pub async fn run(page: &mut Page, command: Command) -> Result<Output, Failure> {
                     )
                     .await;
                     answer["scrolled"] = json!(if up { "up" } else { "down" });
-                    if let Ok(after) = page.dom(&top, "scrollY", json!({})).await {
-                        answer["moved"] = json!(after["y"].as_f64().unwrap_or(start) - start);
-                    }
                 }
                 (None, Some(target)) => {
                     let (session, sel, _) = element(page, &target).await?;
@@ -353,12 +352,12 @@ fn acted(target: &Target) -> Option<String> {
     }
 }
 
-/// The frame session and selector an element ref names, and the frame's
-/// offset in the top viewport when it is a cross-origin frame.
+/// The frame session and selector an element ref names, and the
+/// cross-origin frame that holds it, if any.
 async fn element(
     page: &mut Page,
     target: &Target,
-) -> Result<(String, String, Option<(f64, f64)>), Failure> {
+) -> Result<(String, String, Option<Frame>), Failure> {
     match target {
         Target::Ref { tag: None, number } => Ok((page.top.clone(), selector(*number), None)),
         Target::Ref {
@@ -366,10 +365,18 @@ async fn element(
             number,
         } => {
             let frame = page.frame(tag).await?;
-            let offset = page.frame_offset(&frame).await.ok();
-            Ok((frame.session, selector(*number), offset))
+            Ok((frame.session.clone(), selector(*number), Some(frame)))
         }
-        _ => Err(Failure::new("ref_required", None)),
+        _ => unreachable!("fill, scroll and screenshot parse only refs"),
+    }
+}
+
+/// Where a frame's viewport starts in the top viewport, for drawing; a frame
+/// that cannot be placed is drawn as if at the origin rather than failing.
+async fn overlay_offset(page: &mut Page, frame: Option<&Frame>) -> Option<(f64, f64)> {
+    match frame {
+        None => None,
+        Some(frame) => page.frame_offset(frame).await.ok(),
     }
 }
 
@@ -424,19 +431,14 @@ async fn locate(page: &mut Page, target: &Target, scroll: bool) -> Result<Point,
         Target::Point { x, y, image } => {
             let probe = page.probe().await?;
             let (x, y) = if *image {
-                let (width, height) = screenshot_size(page).await?;
-                if *x < 0.0 || *y < 0.0 || *x >= width || *y >= height {
-                    return Err(Failure::new(
-                        "outside_viewport",
-                        Some(format!("image point {x},{y} outside {width}x{height}")),
-                    ));
-                }
+                // A screenshot of the view has one pixel per device pixel of
+                // the visible viewport, which `screenshot` reports as its css box.
                 let vv = &probe["vv"];
+                let pixel =
+                    probe["dpr"].as_f64().unwrap_or(1.0) * vv["scale"].as_f64().unwrap_or(1.0);
                 (
-                    vv["left"].as_f64().unwrap_or(0.0)
-                        + x * vv["width"].as_f64().unwrap_or(width) / width,
-                    vv["top"].as_f64().unwrap_or(0.0)
-                        + y * vv["height"].as_f64().unwrap_or(height) / height,
+                    vv["left"].as_f64().unwrap_or(0.0) + x / pixel,
+                    vv["top"].as_f64().unwrap_or(0.0) + y / pixel,
                 )
             } else {
                 (*x, *y)
@@ -529,15 +531,19 @@ async fn input(page: &mut Page, session: &str, method: &str, params: Value) -> R
         .await
     {
         Ok(_) => Ok(()),
-        Err(CdpError::Timeout) => {
-            let probe = page.probe().await;
-            if probe.is_ok_and(|probe| probe["visibility"] == "hidden") {
-                Err(Failure::new("display_hidden", None))
-            } else {
-                Err(Failure::new("page_unresponsive", None))
-            }
-        }
-        Err(error) => Err(page.failure(error)),
+        Err(error) => Err(unanswered(page, error).await),
+    }
+}
+
+/// Input and pixels go unanswered on a page that is not shown, such as a
+/// View of a Workspace that is not in front; any other silence is the page's.
+async fn unanswered(page: &mut Page, error: CdpError) -> Failure {
+    if !matches!(error, CdpError::Timeout) || page.cdp.dialog.is_some() {
+        return page.blocked(error);
+    }
+    match page.probe().await {
+        Ok(probe) if probe["visibility"] == "hidden" => Failure::new("display_hidden", None),
+        _ => Failure::new("page_unresponsive", None),
     }
 }
 
@@ -609,7 +615,8 @@ async fn drag_moves(
         Ok::<(), Failure>(())
     }
     .await;
-    // The button is released on every path, so the page never keeps a drag.
+    // The button is released on every path; when a dialog holds the page the
+    // release cannot be sent, and Chromium releases it as the session ends.
     let release = input(page, &session, "Input.dispatchMouseEvent", json!({"type": "mouseReleased",
         "x": pressed_at.0, "y": pressed_at.1, "button": "left", "buttons": 0, "clickCount": 1, "pointerType": "mouse"}))
     .await;
@@ -738,17 +745,23 @@ async fn wait_for(page: &mut Page, wait: Wait, timeout: Duration) -> Result<Outp
     let started = Instant::now();
     let deadline = started + timeout;
     loop {
+        let mut polled = 1;
         let found = match &wait {
             Wait::Text(text) => {
                 let mut sessions = vec![page.top.clone()];
                 sessions.extend(page.frames().await?.into_iter().map(|frame| frame.session));
+                polled = sessions.len();
                 let mut found = false;
                 for session in sessions {
-                    if let Ok(answer) = page.dom(&session, "waitText", json!({"text": text})).await
-                        && answer["found"] == true
-                    {
-                        found = true;
-                        break;
+                    match page.dom(&session, "waitText", json!({"text": text})).await {
+                        Ok(answer) if answer["found"] == true => {
+                            found = true;
+                            break;
+                        }
+                        Ok(_) => {}
+                        // A frame that navigated mid-poll is read again next time.
+                        Err(failure) if failure.page_side() => {}
+                        Err(failure) => return Err(failure),
                     }
                 }
                 found
@@ -810,7 +823,10 @@ async fn wait_for(page: &mut Page, wait: Wait, timeout: Duration) -> Result<Outp
             };
             return Ok(Output::Json(answer));
         }
-        if Instant::now() + WAIT_POLL > deadline {
+        // The gateway admits 600 commands a minute; one poll costs one per
+        // frame read.
+        let interval = WAIT_POLL * polled as u32;
+        if Instant::now() + interval > deadline {
             let what = match &wait {
                 Wait::Text(text) => format!("text {} not found", json!(text)),
                 Wait::Selector {
@@ -827,16 +843,8 @@ async fn wait_for(page: &mut Page, wait: Wait, timeout: Duration) -> Result<Outp
                 Some(format!("{what} after {} ms", timeout.as_millis())),
             ));
         }
-        sleep(WAIT_POLL).await;
+        sleep(interval).await;
     }
-}
-
-/// The size of a full screenshot now, which `--space image` points refer to.
-async fn screenshot_size(page: &mut Page) -> Result<(f64, f64), Failure> {
-    let bytes = capture_png(page, None).await?;
-    let (width, height) =
-        png_size(&bytes).ok_or_else(|| Failure::new("screenshot_failed", None))?;
-    Ok((f64::from(width), f64::from(height)))
 }
 
 async fn capture_png(page: &mut Page, clip: Option<Value>) -> Result<Vec<u8>, Failure> {
@@ -848,8 +856,11 @@ async fn capture_png(page: &mut Page, clip: Option<Value>) -> Result<Vec<u8>, Fa
     let shot = page
         .cdp
         .call("Page.captureScreenshot", params, Some(&top), STEP)
-        .await
-        .map_err(|error| page.blocked(error))?;
+        .await;
+    let shot = match shot {
+        Ok(shot) => shot,
+        Err(error) => return Err(unanswered(page, error).await),
+    };
     base64::engine::general_purpose::STANDARD
         .decode(shot["data"].as_str().unwrap_or(""))
         .map_err(|_| Failure::new("screenshot_failed", None))
@@ -875,9 +886,14 @@ async fn screenshot(
     page.require_visible().await?;
     let mut crop = None;
     if let Some(target) = target {
-        let (session, sel, offset) = element(page, target).await?;
+        let (session, sel, frame) = element(page, target).await?;
         page.dom(&session, "scrollIntoView", json!({"selector": sel}))
             .await?;
+        // A crop placed at the wrong offset would be a wrong picture.
+        let offset = match &frame {
+            None => None,
+            Some(frame) => Some(page.frame_offset(frame).await?),
+        };
         let rect = shift(
             &page.dom(&session, "box", json!({"selector": sel})).await?,
             offset,

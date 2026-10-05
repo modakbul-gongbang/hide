@@ -52,7 +52,6 @@ pub enum Wait {
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Command {
-    Help,
     Snapshot {
         display: String,
         interactive: bool,
@@ -124,7 +123,6 @@ pub enum Command {
 impl Eq for Command {}
 
 pub const VERBS: &[&str] = &[
-    "help",
     "snapshot",
     "click",
     "fill",
@@ -209,13 +207,6 @@ fn number(text: &str) -> Option<f64> {
 pub fn parse<'a>(verb: &str, args: impl Iterator<Item = &'a String>) -> Result<Command, String> {
     let words: Vec<&str> = args.map(String::as_str).collect();
     let fail = || usage(verb);
-    if verb == "help" {
-        return if words.is_empty() {
-            Ok(Command::Help)
-        } else {
-            Err(fail())
-        };
-    }
     let (display, rest) = words.split_first().ok_or_else(fail)?;
     if display.is_empty() || display.starts_with('-') {
         return Err(fail());
@@ -441,6 +432,12 @@ impl Failure {
             next_action: None,
         }
     }
+
+    /// A refusal from one document (a protocol error, a script that threw as
+    /// its frame navigated), not from the connection or a held page.
+    pub fn page_side(&self) -> bool {
+        matches!(self.reason.as_str(), "cdp_error" | "page_script_failed")
+    }
 }
 
 fn next_action(reason: &str, display: &str) -> String {
@@ -458,7 +455,9 @@ fn next_action(reason: &str, display: &str) -> String {
         "text_ambiguous" => "Several controls match; click by @ref or a longer label".to_owned(),
         "target_not_fillable" => format!("Fill an input, select, textarea or contenteditable ref from {snapshot}"),
         "option_missing" => "Fill the select with one of the listed option values or labels".to_owned(),
-        "fill_rejected" => "The page rewrote the text; type it with hide browser type, then check with snapshot --diff".to_owned(),
+        "fill_rejected" => format!(
+            "The text was inserted but the page shows something else; look with {snapshot} --diff before inserting it again"
+        ),
         "key_unsupported" => "Press one of the listed keys".to_owned(),
         "invalid_selector" => "Use a valid CSS selector or an @ref".to_owned(),
         "drag_across_frames" => "Drag between two points of the same frame".to_owned(),
@@ -473,13 +472,22 @@ fn next_action(reason: &str, display: &str) -> String {
             "Run hide view list and choose a current browser display".to_owned()
         }
         "display_closed" => "The display closed during the command; run hide view list".to_owned(),
-        "dialog_open" => "A JavaScript dialog holds the page; the operator must answer it in hide before the next command".to_owned(),
+        "dialog_open" => "A JavaScript dialog, or a script that never yields, holds the page; the operator must answer the dialog in hide before the next command".to_owned(),
         "page_unresponsive" => "The page did not answer in time; retry, or ask the operator to check the page".to_owned(),
         "timeout" => format!("The condition did not hold in time; run {snapshot} to see the page"),
         "eval_error" => "Fix the expression and retry".to_owned(),
         "screenshot_unwritable" => "Choose a path in a writable folder".to_owned(),
         "browser_relay_message_limit" | "browser_limit" => {
-            "The answer was too large; capture a region with screenshot --ref or narrow the request".to_owned()
+            "A message crossed a size or rate limit; capture a region with screenshot --ref, narrow the request, or wait a minute, then retry".to_owned()
+        }
+        "browser_relay_limit" | "browser_control_busy" => {
+            "Other hide browser commands or CDP clients are running; let one finish, then retry".to_owned()
+        }
+        "browser_control_unavailable" => "Reconnect the Hide desktop app and retry".to_owned(),
+        "drag_not_started" => "The source did not start a native drag; retry with --mode pointer".to_owned(),
+        "screenshot_failed" => "Retry the screenshot; if it keeps failing, check the display with hide view status".to_owned(),
+        "cdp_error" | "page_script_failed" => {
+            format!("The page changed under the command; run {snapshot} and retry against what it shows")
         }
         _ => "Check Hide status and the display (hide view list), then retry".to_owned(),
     }
@@ -494,14 +502,40 @@ fn relay_reason(reason: &str) -> &str {
     }
 }
 
+/// No command runs longer: `wait` is at most a minute, and a page that stays
+/// silent past this is not going to answer.
+const COMMAND_DEADLINE: Duration = Duration::from_secs(120);
+
+/// Page text reaches the caller's terminal: control characters (except
+/// newlines and tabs) and the bidirectional and invisible format characters
+/// would let a page rewrite or hide what is printed, so each becomes U+FFFD.
+fn printable(text: &str) -> String {
+    text.chars()
+        .map(|c| {
+            let format = matches!(c, '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{feff}');
+            if (c.is_control() && c != '\n' && c != '\t') || format {
+                '\u{fffd}'
+            } else {
+                c
+            }
+        })
+        .collect()
+}
+
 pub fn run(env: &Env, command: Command) -> Result<(), String> {
     let runtime = tokio::runtime::Builder::new_current_thread()
         .enable_all()
         .build()
         .map_err(|_| "runtime_unavailable".to_owned())?;
     let display = display_of(&command).to_owned();
-    match runtime.block_on(execute(env, command)) {
+    let outcome = runtime.block_on(async {
+        tokio::time::timeout(COMMAND_DEADLINE, execute(env, command))
+            .await
+            .unwrap_or_else(|_| Err(Failure::new("page_unresponsive", None)))
+    });
+    match outcome {
         Ok(Output::Text(text)) => {
+            let text = printable(&text);
             print!("{text}");
             if !text.ends_with('\n') {
                 println!();
@@ -509,7 +543,7 @@ pub fn run(env: &Env, command: Command) -> Result<(), String> {
             Ok(())
         }
         Ok(Output::Json(value)) => {
-            println!("{value}");
+            println!("{}", printable(&value.to_string()));
             Ok(())
         }
         Err(failure) => {
@@ -523,7 +557,7 @@ pub fn run(env: &Env, command: Command) -> Result<(), String> {
             if let Some(detail) = failure.detail {
                 answer["detail"] = json!(detail);
             }
-            println!("{answer}");
+            println!("{}", printable(&answer.to_string()));
             Err(reason)
         }
     }
@@ -531,7 +565,6 @@ pub fn run(env: &Env, command: Command) -> Result<(), String> {
 
 fn display_of(command: &Command) -> &str {
     match command {
-        Command::Help => "",
         Command::Snapshot { display, .. }
         | Command::Click { display, .. }
         | Command::Fill { display, .. }
@@ -582,6 +615,15 @@ mod tests {
     fn parsed(words: &[&str]) -> Result<Command, String> {
         let words: Vec<String> = words.iter().map(|word| (*word).to_owned()).collect();
         parse(&words[0], words[1..].iter())
+    }
+
+    #[test]
+    fn page_text_cannot_steer_the_terminal() {
+        assert_eq!(
+            printable("@1 button \"Go\u{1b}]52;c;x\u{7}\"\n\u{202e}gnp.exe\tok\u{9b}2J"),
+            "@1 button \"Go\u{fffd}]52;c;x\u{fffd}\"\n\u{fffd}gnp.exe\tok\u{fffd}2J"
+        );
+        assert_eq!(printable("한글 값 -> /x"), "한글 값 -> /x");
     }
 
     #[test]
@@ -706,7 +748,6 @@ mod tests {
                 expression: "--x".into()
             }
         );
-        assert_eq!(parsed(&["help"]).unwrap(), Command::Help);
     }
 
     #[test]
@@ -728,7 +769,6 @@ mod tests {
             &["screenshot", "b"],
             &["drag", "b", "@1", "1;2"],
             &["eval", "b", "1", "--verify", "10"],
-            &["help", "me"],
         ] {
             let error = parsed(words).unwrap_err();
             assert!(

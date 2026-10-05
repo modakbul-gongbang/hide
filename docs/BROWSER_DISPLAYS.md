@@ -176,7 +176,7 @@ Each command is one connection and one debugger lease: the CLI asks hided for a 
 A display another debugger holds, an external client or another `hide browser` command, fails `display_busy` at once; nothing queues.
 A display that is not HTTP(S) or blank fails `display_unsupported`, a missing one `display_missing`, and one that closes during the command `display_closed`.
 Nothing outlives the command in hided or on disk, except the file `screenshot` writes: refs are `data-ct-ref` attributes of the page's elements, so they survive a re-snapshot of the same document and start again at `@1` after a navigation, and the `--diff` baselines and the no-change streak live in a non-enumerable property of each frame's document.
-Every CDP step has an eight-second deadline, below the gateway's ten-second command deadline, which would otherwise end the whole lease.
+Every CDP step has an eight-second deadline, below the gateway's ten-second command deadline, which would otherwise end the whole lease, and a whole command ends with `page_unresponsive` after two minutes.
 
 Cross-origin frames are auto-attached, up to 24 per page, and each frame's document carries a tag of four random characters; a snapshot shows it as `# OOPIF <tag> origin=<origin>` with refs `@<tag>:N`, and its field values and link targets reduced to their origin.
 An action on such a ref goes to that frame's own session in its own coordinates, so a ref from a frame that navigated fails `ref_stale` instead of touching another element.
@@ -186,10 +186,11 @@ Same-origin frames and open shadow roots are read and acted on through the top d
 Input and screenshots need the display on screen, because a hidden page answers no input and would take it later unseen.
 A display that is not its area's selected View fails them at once with `display_hidden` and names `hide view select <display> --reveal`; hided reads that from the core's view list when it opens the relay.
 A selected View of a Workspace that is not in front fails the same way when its first input goes unanswered within the step deadline.
+Whether Chromium delivers that unanswered input later, once the Workspace comes to the front, has not been measured.
 The page's own visibility is not the test: a selected View in a window another app covers reads `hidden` and still takes input and screenshots.
 Reading commands work on a hidden display.
 No command calls `Page.bringToFront`, moves the operator's mouse, changes the View in front or takes keyboard focus.
-A JavaScript dialog is never answered for the operator: an action that opens one reports its type and message, and while it is open the next command's attach probe (`Page.enable` with a two-second deadline) times out and fails `dialog_open`; Electron shows the dialog as a sheet on the window, where the operator answers it.
+A JavaScript dialog is never answered for the operator: an action that opens one reports its type and message, and while it is open the next command's `Page.enable` on that frame's session gets no answer within the step deadline and fails `dialog_open`, for the top document and each cross-origin frame alike; Electron shows the dialog as a sheet on the window, where the operator answers it.
 `console` relies on Chromium replaying the messages the current document logged to a session that enables `Runtime`, and shows the newest 50; `network` reads the document's resource timing, the newest 100 rows, and has no request or response headers or bodies.
 `wait --timeout` is at most 60 seconds and `--verify` at most 10.
 There is no file upload and no download: `DOM.setFileInputFiles` stays refused by the gateway and downloads stay disabled for a page that has held a debugger lease.

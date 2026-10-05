@@ -17,8 +17,6 @@ pub const OVERLAY_JS: &str = include_str!("../../assets/browser/overlay.js");
 /// Below the gateway's ten-second command deadline, which would otherwise
 /// release the whole debugger lease mid-command.
 pub const STEP: Duration = Duration::from_secs(8);
-/// A page whose main thread answers nothing this long is held by a dialog.
-const PROBE: Duration = Duration::from_secs(2);
 const OVERLAY: Duration = Duration::from_secs(1);
 /// Nested cross-origin frames a snapshot follows; the gateway admits 64
 /// sessions per client.
@@ -47,24 +45,34 @@ pub struct Page {
 }
 
 /// What a snapshot of every frame read: the top document's text and one
-/// section per cross-origin frame, each already in its displayed form.
+/// section per cross-origin frame with the session it came from, each
+/// already in its displayed form.
 pub struct Composite {
     pub top: String,
-    pub sections: Vec<(usize, String)>,
+    pub sections: Vec<(String, String)>,
 }
 
 impl Composite {
     pub fn text(&self) -> String {
-        if self.sections.is_empty() {
-            return self.top.clone();
-        }
-        let sections: Vec<&str> = self
-            .sections
-            .iter()
-            .map(|(_, text)| text.as_str())
-            .collect();
-        format!("{}\n\n{}\n", self.top.trim_end(), sections.join("\n\n"))
+        let sections: Vec<String> = self.sections.iter().map(|(_, text)| text.clone()).collect();
+        compose(&self.top, &sections)
     }
+}
+
+/// The displayed text of a top document and its frames' sections.
+fn compose(top: &str, sections: &[String]) -> String {
+    if sections.is_empty() {
+        return top.to_owned();
+    }
+    format!("{}\n\n{}\n", top.trim_end(), sections.join("\n\n"))
+}
+
+/// The four characters `dom.js` draws a frame tag from.
+fn valid_tag(tag: &str) -> bool {
+    tag.len() == 4
+        && tag
+            .bytes()
+            .all(|b| b"abcdefghijkmnpqrstuvwxyz23456789".contains(&b))
 }
 
 pub fn call(asset: &str, op: &str, args: &Value) -> String {
@@ -111,17 +119,24 @@ impl Page {
             }
             Err(error) => return Err(page.failure(error)),
         };
-        // An open JavaScript dialog holds the renderer: nothing on a new
-        // session answers, and the dialog event is not sent again.
         let top = page.top.clone();
-        match page
+        page.enable(&top).await?;
+        Ok(page)
+    }
+
+    /// Turns on the dialog events of one session. An open JavaScript dialog
+    /// holds the renderer, so nothing on a new session answers and the
+    /// dialog event is not sent again; a page silent for a whole step is
+    /// taken to be held by one.
+    async fn enable(&mut self, session: &str) -> Result<(), Failure> {
+        match self
             .cdp
-            .call("Page.enable", json!({}), Some(&top), PROBE)
+            .call("Page.enable", json!({}), Some(session), STEP)
             .await
         {
-            Ok(_) => Ok(page),
+            Ok(_) => Ok(()),
             Err(CdpError::Timeout) => Err(Failure::new("dialog_open", None)),
-            Err(error) => Err(page.failure(error)),
+            Err(error) => Err(self.failure(error)),
         }
     }
 
@@ -134,7 +149,13 @@ impl Page {
                 crate::browser_relay::CLOSE_MESSAGE_LIMIT => {
                     Failure::new("browser_relay_message_limit", None)
                 }
-                crate::browser_relay::CLOSE_IDLE => Failure::new("browser_relay_idle", None),
+                // The relay saw no answer for a minute, or outlived any command.
+                crate::browser_relay::CLOSE_IDLE => {
+                    Failure::new("page_unresponsive", (!reason.is_empty()).then_some(reason))
+                }
+                crate::browser_relay::CLOSE_GATEWAY_LOST => {
+                    Failure::new("browser_control_unavailable", None)
+                }
                 // The gateway's resource limit (an oversized reply).
                 1013 => Failure::new("browser_limit", Some(reason)),
                 _ => Failure::new("display_closed", (!reason.is_empty()).then_some(reason)),
@@ -268,9 +289,12 @@ impl Page {
             }
             // A frame that navigated or closed while attaching is no longer
             // part of the page.
-            let Ok(tag) = self.dom(&session, "tag", json!({})).await else {
-                continue;
+            let tag = match self.dom(&session, "tag", json!({})).await {
+                Ok(tag) => tag,
+                Err(failure) if failure.page_side() => continue,
+                Err(failure) => return Err(failure),
             };
+            self.enable(&session).await?;
             parents.push(session.clone());
             frames.push(Frame {
                 session,
@@ -280,6 +304,13 @@ impl Page {
                 origin: tag["origin"].as_str().unwrap_or("opaque").to_owned(),
             });
         }
+        // The tag lives in the frame's own document, so a hostile frame can
+        // set any: a malformed one, or one that two frames share, names no
+        // frame, and refs never reach a frame by guesswork.
+        let tags: Vec<String> = frames.iter().map(|frame| frame.tag.clone()).collect();
+        frames.retain(|frame| {
+            valid_tag(&frame.tag) && tags.iter().filter(|tag| **tag == frame.tag).count() == 1
+        });
         self.frames = Some(frames.clone());
         Ok(frames)
     }
@@ -386,8 +417,8 @@ impl Page {
             .await?;
         let top_text = text.as_str().unwrap_or("").to_owned();
         let mut sections = Vec::new();
-        for (index, frame) in self.frames().await?.into_iter().enumerate() {
-            let Ok(text) = self
+        for frame in self.frames().await? {
+            let read = self
                 .eval(
                     &frame.session,
                     &format!(
@@ -396,16 +427,26 @@ impl Page {
                         json!(clickable)
                     ),
                 )
-                .await
-            else {
-                continue;
+                .await;
+            // A frame that navigated mid-read has a new document, and its
+            // refs a new tag; the next snapshot reads it again.
+            let text = match read {
+                Ok(text) => text,
+                Err(failure) if failure.page_side() => continue,
+                Err(failure) => return Err(failure),
             };
+            match self.dom(&frame.session, "tag", json!({})).await {
+                Ok(current) if current["tag"] == frame.tag.as_str() => {}
+                Ok(_) => continue,
+                Err(failure) if failure.page_side() => continue,
+                Err(failure) => return Err(failure),
+            }
             let body = section_body(text.as_str().unwrap_or(""), &frame.tag);
             if body.is_empty() {
                 continue;
             }
             sections.push((
-                index,
+                frame.session,
                 format!("# OOPIF {} origin={}\n{body}", frame.tag, frame.origin),
             ));
         }
@@ -429,28 +470,22 @@ impl Page {
             .await?["previous"]
             .as_str()
             .map(str::to_owned);
-        let frames = self.frames().await?;
         let mut previous_sections = Vec::new();
-        for (index, section) in &composite.sections {
-            let session = frames[*index].session.clone();
-            if let Ok(answer) = self
-                .dom(&session, "baseline", json!({"key": key, "text": section}))
+        for (session, section) in &composite.sections {
+            match self
+                .dom(session, "baseline", json!({"key": key, "text": section}))
                 .await
-                && let Some(previous) = answer["previous"].as_str()
             {
-                previous_sections.push(previous.to_owned());
+                Ok(answer) => {
+                    if let Some(previous) = answer["previous"].as_str() {
+                        previous_sections.push(previous.to_owned());
+                    }
+                }
+                Err(failure) if failure.page_side() => {}
+                Err(failure) => return Err(failure),
             }
         }
-        Ok(previous_top.map(|top| {
-            Composite {
-                top,
-                sections: previous_sections
-                    .into_iter()
-                    .map(|text| (0, text))
-                    .collect(),
-            }
-            .text()
-        }))
+        Ok(previous_top.map(|top| compose(&top, &previous_sections)))
     }
 
     /// Runs render.js in a fresh isolated world of the top frame: it sees
@@ -554,7 +589,10 @@ mod tests {
     fn a_composite_puts_each_frame_section_after_the_top_document() {
         let composite = Composite {
             top: "# T\n# http://a/\n\n@1 button \"A\"\n".into(),
-            sections: vec![(0, "# OOPIF k7q2 origin=http://b\n@k7q2:1 link \"B\"".into())],
+            sections: vec![(
+                "s1".into(),
+                "# OOPIF k7q2 origin=http://b\n@k7q2:1 link \"B\"".into(),
+            )],
         };
         assert_eq!(
             composite.text(),

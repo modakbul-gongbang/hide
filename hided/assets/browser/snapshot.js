@@ -249,7 +249,7 @@
     // word boundaries as otp-code.
     const hints = ((el.getAttribute('autocomplete') || '') + ' ' + (el.name || '') + ' ' + (el.id || ''))
       .toLowerCase().replace(/[_\s]+/g, '-');
-    return /cc-number|cc-csc|cc-exp|card-?(number|no)|cardnumber|cvv|cvc|one-?time-?code|\botp\b|otpcode|verification-?code|ssn|social-?security|\bpin\b|pincode|passport|routing-?number|iban/.test(hints);
+    return /cc-number|cc-csc|cc-exp|card-?(number|no)|cardnumber|cvv|cvc|one-?time-?code|\botp\b|otpcode|verification-?code|ssn|social-?security|\bpin\b|pincode|passport|routing-?number|iban|passw|secret|token|api-?key|\brrn\b|resident/.test(hints);
   }
   function getLabel(el, clickable) {
     const tag = el.tagName.toLowerCase();
@@ -369,7 +369,9 @@
       ? 'iframe (cross-origin opaque)'
       : overlay ? 'overlay (covers page; interact or dismiss first)'
       : clickable ? (role ? role + ' (clickable)' : 'clickable') : (role || tag);
-    if (label) line += ' "' + label.replace(/"/g, '\\"') + '"';
+    // A label or address is one line: newlines in page text would otherwise
+    // forge snapshot lines of their own.
+    if (label) line += ' "' + label.replace(/\s+/g, ' ').trim().replace(/"/g, '\\"') + '"';
     else if (clickable) {
       // Icon-only clickables: developer-facing id/class names are the best
       // available handle ("#close-email", ".star.clicked" - state included).
@@ -383,7 +385,7 @@
       line += ' [' + (el.type || 'text') + (checkish && el.checked ? ' checked' : '') + ']';
     }
     if (!REDACT_FIELDS && tag === 'select' && el.selectedOptions && el.selectedOptions[0] && !isSensitiveInput(el)) {
-      const sel = el.selectedOptions[0].textContent.trim().substring(0, 40);
+      const sel = el.selectedOptions[0].textContent.replace(/\s+/g, ' ').trim().substring(0, 40);
       if (sel && sel !== label) line += ' = "' + sel.replace(/"/g, '') + '"';
     }
     if (el.disabled) line += ' (disabled)';
@@ -402,7 +404,7 @@
             shownHref = 'opaque';
           }
         }
-        line += ' -> ' + shownHref.substring(0, 80);
+        line += ' -> ' + shownHref.replace(/\s+/g, ' ').trim().substring(0, 80);
       }
     }
     return line + '\n' + children;

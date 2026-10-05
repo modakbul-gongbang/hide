@@ -37,6 +37,8 @@ pub enum CommandKind {
     },
     /// `hide browser <verb> <display> ...`: read or act on a page.
     BrowserPage(crate::browser_page::Command),
+    /// `hide browser help`: the agent guide for the page commands.
+    BrowserHelp,
     WorkspaceBootstrap,
     WorkspaceInfo,
     ViewList,
@@ -218,6 +220,12 @@ fn parse_view<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<CommandK
 
 fn parse_browser<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<CommandKind, String> {
     let verb = iter.next().map(String::as_str);
+    if verb == Some("help") {
+        return match iter.next() {
+            None => Ok(CommandKind::BrowserHelp),
+            Some(_) => Err(BROWSER_USAGE.to_owned()),
+        };
+    }
     if let Some(verb) = verb.filter(|verb| crate::browser_page::VERBS.contains(verb)) {
         return crate::browser_page::parse(verb, iter).map(CommandKind::BrowserPage);
     }
@@ -270,7 +278,7 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
         return Ok(());
     }
     // The agent guide needs no daemon and no environment.
-    if kind == CommandKind::BrowserPage(crate::browser_page::Command::Help) {
+    if kind == CommandKind::BrowserHelp {
         print!("{}", crate::browser_page::HELP);
         return Ok(());
     }
@@ -311,7 +319,7 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
                 crate::delivery_cli::run(&env, command)
             }
         }
-        CommandKind::Help => unreachable!("handled above"),
+        CommandKind::Help | CommandKind::BrowserHelp => unreachable!("handled above"),
         CommandKind::Open => open(&env),
         CommandKind::Connect => connect_json(&env),
         CommandKind::Status { json: true } => status_json(&env),

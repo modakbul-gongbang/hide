@@ -12,9 +12,19 @@ use tokio_tungstenite::tungstenite::Message;
 
 use crate::workspace_cli::WorkspaceSocket;
 
+/// The events a command reads; every other event is dropped on arrival.
+const KEPT: &[&str] = &[
+    "Target.attachedToTarget",
+    "Target.detachedFromTarget",
+    "Input.dragIntercepted",
+    "Runtime.consoleAPICalled",
+    "Runtime.exceptionThrown",
+];
 /// Events kept between replies. A console replay is at most V8's 1000 stored
-/// messages, so this never drops one a command reads.
+/// messages, so the count never drops one a command reads; the byte bound
+/// keeps a page that logs large values from growing the client.
 const MAX_EVENTS: usize = 4096;
+const MAX_EVENT_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Debug)]
 pub enum CdpError {
@@ -37,7 +47,8 @@ pub struct Event {
 pub struct Cdp {
     socket: WorkspaceSocket,
     next_id: u64,
-    events: VecDeque<Event>,
+    events: VecDeque<(Event, usize)>,
+    event_bytes: usize,
     /// A JavaScript dialog the page opened while this client listened.
     pub dialog: Option<Value>,
 }
@@ -48,6 +59,7 @@ impl Cdp {
             socket,
             next_id: 0,
             events: VecDeque::new(),
+            event_bytes: 0,
             dialog: None,
         }
     }
@@ -132,7 +144,9 @@ impl Cdp {
                 }
                 return Ok(Some(value.get("result").cloned().unwrap_or(Value::Null)));
             }
-            if let Some(method) = value["method"].as_str() {
+            if let Some(method) = value["method"].as_str()
+                && (method == "Page.javascriptDialogOpening" || KEPT.contains(&method))
+            {
                 let event = Event {
                     method: method.to_owned(),
                     params: value.get("params").cloned().unwrap_or(Value::Null),
@@ -144,20 +158,24 @@ impl Cdp {
                         "message": event.params["message"].as_str().unwrap_or("").chars().take(300).collect::<String>(),
                     }));
                     if stop_on_dialog {
-                        self.push(event);
                         return Ok(None);
                     }
+                    continue;
                 }
-                self.push(event);
+                self.push(event, text.len());
             }
         }
     }
 
-    fn push(&mut self, event: Event) {
-        if self.events.len() == MAX_EVENTS {
-            self.events.pop_front();
+    fn push(&mut self, event: Event, bytes: usize) {
+        self.events.push_back((event, bytes));
+        self.event_bytes += bytes;
+        while self.events.len() > MAX_EVENTS || self.event_bytes > MAX_EVENT_BYTES {
+            let Some((_, dropped)) = self.events.pop_front() else {
+                break;
+            };
+            self.event_bytes -= dropped;
         }
-        self.events.push_back(event);
     }
 
     fn closed_error(&self) -> CdpError {
@@ -170,14 +188,17 @@ impl Cdp {
     /// Takes the buffered events that match, leaving the rest in order.
     pub fn take_events(&mut self, keep: impl Fn(&Event) -> bool) -> Vec<Event> {
         let mut taken = Vec::new();
-        self.events.retain(|event| {
+        let mut freed = 0;
+        self.events.retain(|(event, bytes)| {
             if keep(event) {
                 taken.push(event.clone());
+                freed += bytes;
                 false
             } else {
                 true
             }
         });
+        self.event_bytes -= freed;
         taken
     }
 

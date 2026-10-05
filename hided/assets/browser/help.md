@@ -92,16 +92,26 @@ Follow `next_action`; the reasons you will meet:
 | `target_covered` | Another element (named in `detail`) covers it; act on that first. |
 | `target_outside_viewport`, `outside_viewport` | Scroll the element into view, or use a point inside the viewport. |
 | `text_not_found`, `text_ambiguous` | Use `snapshot --grep`, then click by `@ref`. |
-| `target_not_fillable`, `option_missing`, `fill_rejected` | Fill a field that takes a value, with a listed option, or type the text instead. |
+| `target_not_fillable`, `option_missing` | Fill a field that takes a value, with a listed option. |
+| `fill_rejected` | The page shows something other than the text; look with `snapshot --diff` before inserting it again. |
 | `key_unsupported` | Press one of the listed keys. |
+| `invalid_selector` | Use a valid CSS selector or an `@ref`. |
+| `drag_across_frames` | Drag between two points of the same frame. |
+| `drag_not_started` | The source did not start a native drag; retry with `--mode pointer`. |
 | `timeout` | The condition did not hold in time; look at a snapshot. |
 | `eval_error` | Fix the expression. |
-| `dialog_open` | A JavaScript dialog holds the page; the operator must answer it in hide. Dialogs are never accepted for you. |
+| `cdp_error`, `page_script_failed` | The page changed under the command; take a fresh snapshot and retry. |
+| `screenshot_unwritable` | Choose a path in a writable folder. |
+| `screenshot_failed` | Retry; if it keeps failing, check the display with `hide view status`. |
+| `dialog_open` | A JavaScript dialog, or a script that never yields, holds the page; the operator must answer it in hide. Dialogs are never accepted for you. |
 | `display_hidden` | Ask the operator to show the display, or run `hide view select <display> --reveal`. |
 | `display_busy` | Another debugger (agent-browser, Playwright) or another `hide browser` command holds the display; let it finish. |
 | `display_unsupported` | Only http(s) and blank displays can be driven; open the page with `hide browser open <url>`. |
 | `display_missing`, `display_closed` | Run `hide view list` and choose a current browser display. |
 | `page_unresponsive` | The page did not answer in time; retry or ask the operator. |
+| `browser_relay_limit`, `browser_control_busy` | Other `hide browser` commands or CDP clients are running; let one finish. |
+| `browser_relay_message_limit`, `browser_limit` | A message crossed a size or rate limit; capture a region with `screenshot --ref`, narrow the request, or wait a minute. |
+| `browser_control_unavailable` | Reconnect the Hide desktop app. |
 
 Network rows come from the page's resource timing: no request or response headers or bodies.
 `console` shows the messages the current document logged, newest first.

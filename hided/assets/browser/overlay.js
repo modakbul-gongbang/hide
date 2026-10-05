@@ -111,7 +111,6 @@
       place(args.x, args.y, ms);
       return { ms };
     }
-    case 'press': cursor.classList.toggle('pressed', Boolean(args.down)); return {};
     case 'click': add('ripple', `left:${args.x}px;top:${args.y}px`, '', 600); return {};
     case 'drag': {
       const line = add('line', `left:${args.x1}px;top:${args.y1}px;width:0;--glide:${args.ms}ms;transform:rotate(${Math.atan2(args.y2 - args.y1, args.x2 - args.x1)}rad)`);
