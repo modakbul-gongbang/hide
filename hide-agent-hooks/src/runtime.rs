@@ -62,6 +62,15 @@ pub fn hook_stdout_with_context(
     serde_json::to_string(&output).ok()
 }
 
+/// Whether this hook process was started by Cursor. Cursor documents
+/// `CURSOR_VERSION` as set for every hook it runs; its page on Claude Code
+/// hooks it loads does not say whether those get it too (the same runner and
+/// the `CLAUDE_PROJECT_DIR` alias it documents suggest they do), so this
+/// rests on that documented variable and nothing more.
+pub fn run_by_cursor<V>(variable: impl Fn(&str) -> Option<V>) -> bool {
+    variable("CURSOR_VERSION").is_some()
+}
+
 /// `json` with every character outside ASCII written as a `\u` escape,
 /// which every JSON reader decodes to the same value.
 ///

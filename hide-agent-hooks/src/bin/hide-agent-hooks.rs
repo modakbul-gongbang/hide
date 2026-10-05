@@ -51,6 +51,15 @@ fn main() -> ExitCode {
                 run_guidance_hook(agent, &arguments);
                 return ExitCode::SUCCESS;
             }
+            // Cursor loads Claude Code's hooks from `~/.claude/settings.json`
+            // beside its own and runs both, so under Cursor Claude Code's hook
+            // stays out and Cursor's own guidance hook is the one that speaks
+            // (`docs/agent-hooks.md`, Other agents).
+            if argument_value("--runtime", &arguments).as_deref() == Some("claude-code")
+                && hide_agent_hooks::runtime::run_by_cursor(|name| std::env::var_os(name))
+            {
+                return ExitCode::SUCCESS;
+            }
             if argument_value("--event", &arguments).as_deref()
                 == Some(HookEvent::UserPromptSubmit.name())
             {
@@ -89,7 +98,7 @@ fn usage() -> String {
     "usage: hide-agent-hooks hook --runtime <claude-code|codex> \
      --event <SessionStart|UserPromptSubmit|SubagentStart|SubagentStop|Stop> \
      [--memory-injection] [--source <install marker>]\n       \
-     hide-agent-hooks hook --runtime <gemini-cli|qwen-code|factory-droid|copilot-cli|kiro> \
+     hide-agent-hooks hook --runtime <gemini-cli|qwen-code|factory-droid|copilot-cli|kiro|cursor|augment|junie> \
      --event SessionStart [--source <install marker>]\n       hide-agent-hooks doctor [--json]"
         .to_owned()
 }
