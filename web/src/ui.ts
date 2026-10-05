@@ -228,6 +228,8 @@ type UiStore = {
   relation: Relation | null;
   sidebarMode: SidebarMode;
   sidebarFocus: number;
+  /** The raised Projects sections the operator unfolded past their cap; this page's alone, so a fresh list starts short. */
+  raisedOpen: readonly string[];
   /**
    * The Home row's new-tab start this page sent: its `request_id` until its
    * pane is opened, then, when it was refused, the reason that device's Home
@@ -315,6 +317,7 @@ type UiStore = {
   setSidebarMode: (mode: SidebarMode) => void;
   setHomeStart: (homeStart: HomeStart | null) => void;
   toggleSidebarMode: () => void;
+  toggleRaised: (group: string) => void;
   setExplorerSelection: (path: string | null) => void;
   requestEditorFind: (displayId: string | null) => void;
   setAgentFindRequest: (request: { id: string; owner: KeyboardOwner } | null) => void;
@@ -362,6 +365,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
   relation: null,
   sidebarMode: "projects",
   sidebarFocus: 0,
+  raisedOpen: [],
   homeStart: null,
   explorerSelection: null,
   editorFindRequest: 0,
@@ -418,6 +422,10 @@ export const useUiStore = create<UiStore>((set, get) => ({
   toggleSidebarMode: () => {
     const index = SIDEBAR_MODES.indexOf(get().sidebarMode);
     set({ sidebarMode: SIDEBAR_MODES[(index + 1) % SIDEBAR_MODES.length] });
+  },
+  toggleRaised: (group) => {
+    const open = get().raisedOpen;
+    set({ raisedOpen: open.includes(group) ? open.filter((row) => row !== group) : [...open, group] });
   },
   setExplorerSelection: (explorerSelection) => set({ explorerSelection }),
   requestEditorFind: (displayId) => set({ editorFindRequest: get().editorFindRequest + 1, editorFindDisplay: displayId }),

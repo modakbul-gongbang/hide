@@ -507,7 +507,7 @@ test("the Projects tab: kind, age, status badges, opened checkouts and folded pr
   }
 });
 
-test("Needs You is raised above Pinned and stays in its tree, whatever is folded; Done is the Agents tab's", async ({ page }) => {
+test("Needs You and Done are raised above Pinned and stay in their tree, whatever is folded", async ({ page }) => {
   await page.setViewportSize({ width: 1400, height: 900 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
@@ -537,11 +537,13 @@ test("Needs You is raised above Pinned and stays in its tree, whatever is folded
     const done = page.locator('[data-raised-group="done"]');
     await expect(needsYou.locator(`[data-pane="${asking}"]`)).toBeVisible({ timeout: 20_000 });
     await expect(needsYou.locator('[data-section="needs_you"]')).toHaveText("Needs You · 1");
-    // Done is not raised: the finished agent is in the Agents tab and its checkout's tree.
-    await expect(done).toHaveCount(0);
-    // Needs You, then Pinned, at the top of the list.
+    await expect(done.locator(`[data-pane="${finished}"]`)).toBeVisible();
+    await expect(done.locator('[data-section="done"]')).toHaveText("Done · 1");
+    // Needs You, then Done, then Pinned, at the top of the list; neither is past its cap, so nothing folds.
     const top = async (locator: Locator) => (await locator.boundingBox())!.y;
-    expect(await top(needsYou)).toBeLessThan(await top(pinned));
+    expect(await top(needsYou)).toBeLessThan(await top(done));
+    expect(await top(done)).toBeLessThan(await top(pinned));
+    await expect(page.locator("[data-raised-more]")).toHaveCount(0);
     await expect(page.locator("[data-project-list] > li").first()).toHaveAttribute("data-raised-group", "needs_you");
     // The raised row names where the agent runs, as the Agents list does.
     await expect(needsYou.locator(`[data-pane="${asking}"] [data-agent-place]`)).toHaveText("raised › main");

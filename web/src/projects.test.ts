@@ -50,7 +50,7 @@ describe("projectRows", () => {
     expect(rows[0]).toEqual({ kind: "header", section: "recent", count: 1 });
   });
 
-  it("raises Needs You alone above Pinned, in the core's order, and keeps them in the tree", () => {
+  it("raises Needs You then Done above Pinned, in the core's order, and keeps them in the tree", () => {
     const withPanes = (id: string, panes: string[], extra: Partial<Workspace> = {}) =>
       workspace(id, { checkouts: [{ id: `${id}-main`, tabs: [{ id: `${id}-t`, panes: panes.map((pane) => ({ id: pane })) }] } as unknown as Checkout], ...extra });
     const agent = (pane: string, group: string, extra: Partial<AgentRow> = {}) => ({ agent: { pane_id: pane, id: pane, group, ...extra } as AgentRow, device: null });
@@ -66,14 +66,32 @@ describe("projectRows", () => {
     const shape = rows.map((row) =>
       row.kind === "raised" ? `${row.group}:${row.agents.map(({ agent }) => agent.pane_id).join(",")}` : row.kind === "header" ? row.section : `${row.kind}:${row.kind === "workspace" ? row.workspace.id : ""}`,
     );
-    // Done is the Agents tab's: the Projects list does not raise it.
-    expect(shape).toEqual(["needs_you:ask-2,ask-1", "pinned", "workspace:a", "recent", "workspace:b"]);
+    // Working is the Agents tab's: the Projects list raises Needs You and Done only.
+    expect(shape).toEqual(["needs_you:ask-2,ask-1", "done:done-1", "pinned", "workspace:a", "recent", "workspace:b"]);
     // A raised row never unfolds, whatever the tree below has open.
     const needsYou = rows[0] as Extract<(typeof rows)[number], { kind: "raised" }>;
     expect(needsYou.agents.map(({ agent }) => agent.lineage_collapsed !== false)).toEqual([true, true]);
     expect(listed[1]!.agent.lineage_collapsed).toBe(false);
     // An empty group draws no section.
     expect(projectRows([withPanes("b", ["run"])], [], listed).map((row) => row.kind)).toEqual(["header", "workspace"]);
+  });
+
+  it("draws the five latest Needs You and three latest Done, folding the rest until their group is opened", () => {
+    const panes = [...Array.from({ length: 7 }, (_, i) => `ask-${i}`), ...Array.from({ length: 4 }, (_, i) => `done-${i}`)];
+    const projects = [workspace("a", { checkouts: [{ id: "a-main", tabs: [{ id: "a-t", panes: panes.map((pane) => ({ id: pane })) }] } as unknown as Checkout] })];
+    const listed = panes.map((pane) => ({ agent: { pane_id: pane, id: pane, group: pane.startsWith("ask") ? "needs_you" : "done" } as AgentRow, device: null }));
+    const sections = (open: string[]) =>
+      projectRows(projects, [], listed, null, open).flatMap((row) =>
+        row.kind === "raised" ? [{ group: row.group, drawn: row.agents.map(({ agent }) => agent.pane_id), more: row.more.map(({ agent }) => agent.pane_id), expanded: row.expanded }] : [],
+      );
+    expect(sections([])).toEqual([
+      { group: "needs_you", drawn: ["ask-0", "ask-1", "ask-2", "ask-3", "ask-4"], more: ["ask-5", "ask-6"], expanded: false },
+      { group: "done", drawn: ["done-0", "done-1", "done-2"], more: ["done-3"], expanded: false },
+    ]);
+    expect(sections(["done"]).map((row) => [row.group, row.expanded])).toEqual([
+      ["needs_you", false],
+      ["done", true],
+    ]);
   });
 });
 
