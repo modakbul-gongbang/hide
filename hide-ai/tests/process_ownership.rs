@@ -146,7 +146,6 @@ fn descendant_count_stays_bounded_across_many_requests() {
 /// `Session` does; on `kill -9` its pipe closes and the fake and its child go.
 #[cfg(target_os = "macos")]
 #[test]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn kill_dash_nine_on_the_owner_leaves_no_survivors() {
     let owner_script = r#"
 import json, os, subprocess, sys, time
@@ -184,18 +183,11 @@ time.sleep(600)
         .parse()
         .expect("app-server pid is a number");
 
-    // Wait for the fake's own child (the leaked `sleep`) to exist.
-    let mut grandchild = None;
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while Instant::now() < deadline {
-        let kids = child_pids(app_server_pid);
-        if let Some(first) = kids.first() {
-            grandchild = Some(*first);
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    let grandchild = grandchild.expect("the fake started a child");
+    // The fake starts its child (the leaked `sleep`) before it answers
+    // `thread/start`, and the owner prints only after that answer.
+    let grandchild = *child_pids(app_server_pid)
+        .first()
+        .expect("the fake started a child");
 
     // Kill the owner the way an OOM or a crash would: no destructor runs.
     Command::new("kill")
@@ -205,21 +197,28 @@ time.sleep(600)
     let _ = owner.wait();
 
     // Within the grace period the whole tree is gone.
-    let deadline = Instant::now() + Duration::from_secs(5);
+    let survivors = survivors_after(&[app_server_pid, grandchild], Duration::from_secs(5));
+    for pid in &survivors {
+        // Do not leave the test's own strays behind on failure.
+        let _ = Command::new("kill").args(["-9", &pid.to_string()]).status();
+    }
+    assert!(
+        survivors.is_empty(),
+        "survivors after kill -9: {survivors:?}"
+    );
+}
+
+/// The processes of `pids` still alive once `grace` has passed, or none as
+/// soon as all have ended. They are not this test's children, so nothing
+/// reports their end; they are polled.
+#[cfg(target_os = "macos")]
+#[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
+fn survivors_after(pids: &[i32], grace: Duration) -> Vec<i32> {
+    let deadline = Instant::now() + grace;
     loop {
-        let survivors = [app_server_pid, grandchild]
-            .into_iter()
-            .filter(|pid| alive(*pid))
-            .collect::<Vec<_>>();
-        if survivors.is_empty() {
-            break;
-        }
-        if Instant::now() >= deadline {
-            for pid in &survivors {
-                // Do not leave the test's own strays behind on failure.
-                let _ = Command::new("kill").args(["-9", &pid.to_string()]).status();
-            }
-            panic!("survivors after kill -9: {survivors:?}");
+        let survivors: Vec<i32> = pids.iter().copied().filter(|pid| alive(*pid)).collect();
+        if survivors.is_empty() || Instant::now() >= deadline {
+            return survivors;
         }
         std::thread::sleep(Duration::from_millis(100));
     }
