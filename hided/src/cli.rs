@@ -606,6 +606,7 @@ fn view_status(env: &Env, view_id: &str) -> Result<(), String> {
     Ok(())
 }
 
+#[allow(clippy::disallowed_methods)] // a production wait, not test code
 fn browser_open(
     env: &Env,
     target: &str,
@@ -947,6 +948,7 @@ fn still_the_daemon(state: &DaemonState) -> bool {
 /// Ends the daemon `state` names: SIGTERM and five seconds for its graceful
 /// stop, which ends its AI requests and provider processes, then SIGKILL.
 /// An error only when it is still alive after that.
+#[allow(clippy::disallowed_methods)] // a production wait, not test code
 fn stop_daemon(state_dir: &Path, state: &DaemonState) -> Result<(), String> {
     // A pid that is gone, or is another process now, has nothing to stop:
     // only the state is cleared.
@@ -1059,6 +1061,7 @@ fn spawn_daemon(env: &Env, keep_alive: bool) -> Result<(), String> {
     Ok(())
 }
 
+#[allow(clippy::disallowed_methods)] // a production wait, not test code
 fn wait_healthy(env: &Env) -> Result<DaemonState, String> {
     for _ in 0..100 {
         if let Some(state) = healthy_state(env) {

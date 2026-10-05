@@ -62,6 +62,7 @@ fn fake_opener(dir: &Path) -> PathBuf {
 /// passing test of anything; it is an entry point.
 #[test]
 #[ignore = "subprocess entry point; the fake helper script runs it with --ignored --exact"]
+#[allow(clippy::disallowed_methods)] // a child process the test kills later: it sleeps to stay alive
 fn fake_program() {
     let marker = PathBuf::from(std::env::var_os(MARKER).expect("run by a fake helper script"));
     let write_pid =
@@ -135,6 +136,7 @@ impl Started {
     }
 }
 
+#[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
 fn wait_for_pid(path: &Path) -> Started {
     // A test binary's first start on a Windows runner can take seconds.
     let until = Instant::now() + Duration::from_secs(20);
@@ -158,6 +160,7 @@ fn sidecar(path: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(format!("{}.{}", path.display(), suffix))
 }
 
+#[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
 fn assert_gone(process: Started) {
     let until = Instant::now() + Duration::from_secs(5);
     while process.alive() && Instant::now() < until {
@@ -171,6 +174,7 @@ fn assert_gone(process: Started) {
 /// counts it as a passing test of anything; it is an entry point.
 #[test]
 #[ignore = "subprocess entry point; the owner tests run it with --ignored --exact"]
+#[allow(clippy::disallowed_methods)] // a child process the test kills later: it sleeps to stay alive
 fn owner_process() {
     let marker = PathBuf::from(
         std::env::var_os("HIDED_OWNED_OPENER_TEST_MARKER")
@@ -275,6 +279,7 @@ fn normal_close_reaps_cli_and_its_child() {
 
 #[cfg(unix)]
 #[test]
+#[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
 fn unexpected_supervisor_exit_still_ends_owned_cli_group() {
     let dir = tempfile::tempdir().unwrap();
     let script = fake_opener(dir.path());

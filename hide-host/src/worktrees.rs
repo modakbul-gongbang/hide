@@ -969,6 +969,7 @@ impl WithinDeadline for Command {
 /// the deadline stops the whole tree, so a hook, filter or fsmonitor Git
 /// started cannot keep a pipe open past it; a descendant that left the tree is
 /// waited for only a moment and then left behind with its pipe.
+#[allow(clippy::disallowed_methods)] // a production wait, not test code
 pub fn output_within(
     command: &mut Command,
     deadline: Duration,
@@ -1386,6 +1387,7 @@ pub fn trash_entries(common: &Path) -> std::collections::BTreeSet<PathBuf> {
 /// every few seconds so a deletion that stopped is retried. Entries another
 /// process put there are swept too but never waited for. Returns how many of
 /// `ours` remain.
+#[allow(clippy::disallowed_methods)] // a production wait, not test code
 pub fn drain_trash(
     common: &Path,
     ours: &std::collections::BTreeSet<PathBuf>,

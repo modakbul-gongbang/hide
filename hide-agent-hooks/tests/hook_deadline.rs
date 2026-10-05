@@ -102,6 +102,7 @@ struct OutputPressure {
 }
 
 impl OutputPressure {
+    #[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
     fn new() -> (Self, PipeWriter) {
         let (reader, mut writer) = std::io::pipe().unwrap();
         let hook_output = writer.try_clone().unwrap();
@@ -145,6 +146,7 @@ impl OutputPressure {
         (pressure, hook_output)
     }
 
+    #[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
     fn finish(&mut self) -> bool {
         self.reader.take();
         let deadline = Instant::now() + Duration::from_secs(2);

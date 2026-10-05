@@ -76,6 +76,7 @@ fn agents_with_timeout(
     .map_err(|error| format!("{error}"))?;
     crate::wire::agents_response(result).map_err(|_| "native_identity_unavailable".into())
 }
+#[allow(clippy::disallowed_methods)] // a production wait, not test code
 fn wait_native_identity(
     connector: &dyn ApiConnector,
     pane: &str,

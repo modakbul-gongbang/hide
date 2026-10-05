@@ -14,6 +14,7 @@ import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, enterWorkspace, screenshot, showExplorer } from "./wire";
 import { chord } from "./chords";
+import { quietFor } from "./wait";
 
 const SOURCE = "export const answer = 41;\n";
 
@@ -769,7 +770,7 @@ test("the Explorer creates, renames, moves and trashes entries", { tag: "@platfo
     // The closing menu hands focus back a tick later; the field it opened
     // keeps the keyboard and nothing is sent until the operator commits.
     await expect(rename).toBeFocused();
-    await page.waitForTimeout(250);
+    await quietFor(page, 250, "nothing is sent until the operator commits the rename");
     await expect(rename).toBeFocused();
     expect(sent.get("path_rename") ?? 0).toBe(0);
     await rename.fill("renamed.ts");
@@ -1045,9 +1046,11 @@ test("an unsaved edit survives a socket drop and reconnect", async ({ page }) =>
     await page.evaluate(() => window.__hideProbe?.dropSocket());
     await page.context().setOffline(true);
     await expect(page.locator("[data-connection]")).toHaveText(/reconnecting/, { timeout: 15_000 });
-    // Keep the socket down past the 600 ms autosave window. A dropped save
-    // must be retried after reconnection, then reach the actual file (D-10).
-    await page.waitForTimeout(800);
+    // Keep the socket down past the 600 ms autosave window: no save reaches the
+    // file meanwhile. A dropped save must be retried after reconnection, then
+    // reach the actual file (D-10).
+    await quietFor(page, 800, "no save reaches the file while the socket is down, past the 600 ms autosave window");
+    expect(fs.readFileSync(path.join(repo, "notes.md"), "utf8")).not.toContain("edited across a reconnect");
     await page.context().setOffline(false);
     await expect(page.locator("[data-connection]")).toHaveCount(0, { timeout: 20_000 });
     await expect(content).toContainText("edited across a reconnect");
@@ -1252,6 +1255,8 @@ test("a draft whose tab a daemon restart lost is kept for recovery and opens whe
     const restarted = await fixture.daemon.restart((state) => fs.rmSync(path.join(state, "workspace-views.json"), { force: true }));
     fixture.daemon = restarted;
     expect(restarted.hostId).toBe(hostBefore);
+    // The page under test survives the restart and reconnects: it must not be reloaded.
+    // eslint-disable-next-line hide-e2e/reopen-after-restart-through-blank -- the reconnect of the same page is the subject
     await page.goto(`${restarted.origin}/?probe=1#token=${restarted.token}`);
     const line = page.locator("[data-draft-recovery]");
     await expect(line).toBeVisible({ timeout: 20_000 });
@@ -1295,6 +1300,8 @@ test("a View tab a daemon restart restores takes its unsaved draft back (S6 B19)
     await expect.poll(async () => (await storedDrafts(page)).find((row) => row.path === file)?.contents, { timeout: 5_000 }).toBe("export const answer = 78;\n");
 
     fixture.daemon = await fixture.daemon.restart();
+    // The page under test survives the restart and reconnects: it must not be reloaded.
+    // eslint-disable-next-line hide-e2e/reopen-after-restart-through-blank -- the reconnect of the same page is the subject
     await page.goto(`${fixture.daemon.origin}/?probe=1#token=${fixture.daemon.token}`);
     // The Workspace brings the tab back and the draft returns into it,
     // unsaved; nothing reached the disk and nothing asks for recovery.

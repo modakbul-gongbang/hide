@@ -6,6 +6,7 @@ import { startHerdr, declareParent } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, enterWorkspace, screenshot, showTool } from "./wire";
 import { chord } from "./chords";
+import { quietFor } from "./wait";
 
 test.describe.configure({ timeout: 180_000 });
 test.use({ actionTimeout: 15_000 });
@@ -350,13 +351,14 @@ test("An external focused creation joins a bar without replacing either shown ca
     // Wait through the actual separate creation/layout/focus stream, including
     // the next read-only projection, rather than asserting its first frame.
     await expect.poll(async () => (await shape(page)).map(({ id, active, shown }) => ({ id, active, shown }))).toEqual(before);
-    await page.waitForTimeout(1500);
+    await quietFor(page, 1500, "an externally created tab does not move the layout");
     expect((await shape(page)).map(({ id, active, shown }) => ({ id, active, shown }))).toEqual(before);
     // A genuinely later external focus still selects a known tab.
     // Pinned Herdr emits no event for a no-op focus on its current tab.
     // Exercise an observable external focus transition after creation instead.
     herdr.run(["tab", "focus", second.result.tab.tab_id]);
-    await page.waitForTimeout(300);
+    // `herdr tab focus` returns once Herdr has applied it, and its events reach the core in order,
+    // so the first focus (already the shown tab of its bar, nothing to observe) precedes the second.
     herdr.run(["tab", "focus", external.result.tab.tab_id]);
     await expect(tab(page, external.result.tab.tab_id)).toHaveAttribute("aria-selected", "true");
     await expect(page.locator(`[data-canvas="${external.result.tab.tab_id}"]`)).toBeVisible();

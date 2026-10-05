@@ -66,8 +66,9 @@ test("Recent Panels crosses checkouts onto a display and a tab; Recent Projects 
     const editor = page.locator("[data-view-area-id] [data-editor-body] .cm-content").first();
     await expect(editor).toContainText("plan line");
     await editor.click();
-    const display = await page.locator('[data-view-tab-bar] [role="tab"][data-display][aria-selected="true"]').first().getAttribute("data-display");
-    expect(display).toBeTruthy();
+    const displayLocator = page.locator('[data-view-tab-bar] [role="tab"][data-display][aria-selected="true"]').first();
+    await expect(displayLocator).toHaveAttribute("data-display", /./);
+    const display = await displayLocator.getAttribute("data-display");
 
     // Then beta's terminal, from the sidebar.
     await page.locator('[data-sidebar-mode="projects"]').click();

@@ -79,6 +79,7 @@ const ROLE: &str = "HIDE_PLATFORM_ROLE";
 const ENDPOINT: &str = "HIDE_PLATFORM_ENDPOINT";
 
 #[test]
+#[allow(clippy::disallowed_methods)] // a child process the test kills later: it sleeps to stay alive
 fn child_role() {
     let Ok(role) = std::env::var(ROLE) else {
         return;
@@ -451,6 +452,7 @@ fn one_connect_is_one_accepted_connection() {
 /// whole, however slowly the client reads: the pane bootstrap answers that
 /// way, and a Windows pipe closed with unread bytes throws them away.
 #[test]
+#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn an_answer_written_just_before_the_end_is_dropped_arrives_whole() {
     const ANSWER: usize = 256 * 1024;
     let (_folder, path) = endpoint();
@@ -468,6 +470,7 @@ fn an_answer_written_just_before_the_end_is_dropped_arrives_whole() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn close_from_another_thread_frees_a_blocked_accept() {
     let (_folder, path) = endpoint();
     let listener = LocalListener::bind(&path).unwrap();
@@ -492,6 +495,7 @@ fn close_from_another_thread_frees_a_blocked_accept() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn a_read_timeout_fires_after_the_time_and_not_much_later() {
     let (_folder, path) = endpoint();
     let listener = LocalListener::bind(&path).unwrap();
@@ -518,6 +522,7 @@ fn a_read_timeout_fires_after_the_time_and_not_much_later() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn a_timeout_does_not_lose_bytes_that_arrive_later() {
     let (_folder, path) = endpoint();
     let listener = LocalListener::bind(&path).unwrap();
@@ -540,6 +545,7 @@ fn a_timeout_does_not_lose_bytes_that_arrive_later() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn a_timeout_can_be_set_after_the_peer_has_closed_and_its_bytes_still_read() {
     let (_folder, path) = endpoint();
     let listener = LocalListener::bind(&path).unwrap();
@@ -574,6 +580,7 @@ fn a_zero_timeout_is_refused() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn shutdown_from_another_thread_frees_a_blocked_read() {
     let (_folder, path) = endpoint();
     let listener = LocalListener::bind(&path).unwrap();
@@ -606,6 +613,7 @@ fn shutdown_from_another_thread_frees_a_blocked_read() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn shutdown_frees_a_read_that_has_a_timeout_too() {
     let (_folder, path) = endpoint();
     let listener = LocalListener::bind(&path).unwrap();
@@ -632,6 +640,7 @@ fn shutdown_frees_a_read_that_has_a_timeout_too() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn the_accepted_stream_names_the_connecting_process() {
     let (_folder, path) = endpoint();
     let listener = LocalListener::bind(&path).unwrap();

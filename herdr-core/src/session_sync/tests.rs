@@ -437,6 +437,7 @@ fn accept_request_for(listener: &LocalListener, method: &str) -> (LocalStream, V
     panic!("the coordinator never asked for {method}");
 }
 
+#[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
 fn wait_until(deadline: Instant, mut predicate: impl FnMut() -> bool) {
     while Instant::now() < deadline {
         if predicate() {

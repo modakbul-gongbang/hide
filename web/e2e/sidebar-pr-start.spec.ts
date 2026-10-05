@@ -130,6 +130,7 @@ test("the sidebar draws every project's pull request with no screen asking, and 
     /** A fresh page on the daemon: on the Workspace, the sidebar's Projects tab, and nothing else opened. */
     const attach = async (next: Daemon) => {
       const sent = countSent(page);
+      await page.goto("about:blank");
       await page.goto(`${next.origin}/#token=${next.token}`);
       await expect(page.locator("[data-workspace-screen]")).toBeVisible({ timeout: 20_000 });
       await page.locator('[data-sidebar-mode="projects"]').click();

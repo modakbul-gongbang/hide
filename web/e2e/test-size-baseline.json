@@ -1,0 +1,88 @@
+{
+  "limit": {
+    "lines": 120,
+    "expect": 40
+  },
+  "tests": {
+    "checkout-pr.spec.ts::a checkout's pull request: the glyph opens it, the row's card describes it, the menu names it": {
+      "lines": 202,
+      "expect": 63
+    },
+    "cmdk.spec.ts::⌘K relates the agent in front to its issue and pull request, finds them by #number, and searches GitHub only from its own row": {
+      "lines": 128,
+      "expect": 41
+    },
+    "device-rail.spec.ts::the rail follows the registered devices; a device that cannot be reached is dimmed and offers Reconnect": {
+      "lines": 154,
+      "expect": 59
+    },
+    "disk-cleanup.spec.ts::the disk cleanup sheet: layers, a cache-only cleanup at once, and a worktree after one confirmation": {
+      "lines": 163,
+      "expect": 58
+    },
+    "mobile.spec.ts::Settings > Mobile to a paired phone: list, detail, reply, quick keys, push rules and revoke": {
+      "lines": 323,
+      "expect": 115
+    },
+    "overview-prs.spec.ts::a project's PRs tab: grouped pull requests, Link issue, Assign and Clean up": {
+      "lines": 290,
+      "expect": 103
+    },
+    "overview-requests.spec.ts::the request view: what each agent was asked, what came of it, and what is the operator's": {
+      "lines": 202,
+      "expect": 61
+    },
+    "overview.spec.ts::a project's Overview: tiles, the Agents graph, and the Issues board": {
+      "lines": 827,
+      "expect": 331
+    },
+    "palette.spec.ts::⌘K lists results by kind with a detail beside them, and the sidebar Search icon opens the same palette": {
+      "lines": 120,
+      "expect": 44
+    },
+    "pane-focus-ordering.spec.ts::rapid pane clicks coalesce behind one request and leave keys on the last pane": {
+      "lines": 148,
+      "expect": 23
+    },
+    "projects-sidebar.spec.ts::the Projects tab: kind, age, status badges, opened checkouts and folded projects": {
+      "lines": 411,
+      "expect": 153
+    },
+    "recent.spec.ts::Recent Panels crosses checkouts onto a display and a tab; Recent Projects restores the last surface": {
+      "lines": 221,
+      "expect": 72
+    },
+    "s2.spec.ts::checkouts, tabs, splits, zoom, close and the sheet": {
+      "lines": 440,
+      "expect": 132
+    },
+    "s6.spec.ts::Main, Overview and a Workspace with its columns, tools and delegated child": {
+      "lines": 388,
+      "expect": 150
+    },
+    "s7.spec.ts::Open to the side shows one document twice: edits and Korean input reach both, each keeps its place, and closing keeps unsaved text": {
+      "lines": 143,
+      "expect": 44
+    },
+    "s7.spec.ts::splits, moves, resizes, focus and closes run from the tab menu, area commands and chords by keyboard, each landing once": {
+      "lines": 140,
+      "expect": 41
+    },
+    "s8.spec.ts::a Project's Sessions: history, filters, a read-only session, failures and two windows": {
+      "lines": 244,
+      "expect": 88
+    },
+    "server-session-search.spec.ts::running Workspace ports and conversation content: keyboard, jump, scroll, policy and scope": {
+      "lines": 126,
+      "expect": 31
+    },
+    "sidebar-status.spec.ts::a root waiting on its child, the badge's child list, and the progress line rules": {
+      "lines": 144,
+      "expect": 47
+    },
+    "worktree-delete.spec.ts::an open deletion dialog receives refreshed Git facts and retires Discard through an A-to-B-to-A return": {
+      "lines": 136,
+      "expect": 32
+    }
+  }
+}
