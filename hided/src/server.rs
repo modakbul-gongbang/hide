@@ -1403,11 +1403,11 @@ fn device_listing(
                 .entries
                 .into_iter()
                 .map(|entry| {
-                    json!({
-                        "path": format!("{base}/{}", entry.name),
-                        "name": entry.name,
-                        "is_directory": entry.is_directory,
-                        "inode": entry.inode,
+                    json!(crate::boundary::Entry {
+                        path: format!("{base}/{}", entry.name),
+                        name: entry.name,
+                        is_directory: entry.is_directory,
+                        inode: Some(entry.inode),
                     })
                 })
                 .collect();

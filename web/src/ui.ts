@@ -200,7 +200,7 @@ export type PendingTrash = {
   isDirectory: boolean;
   selectAfter: string;
   /** The row's inode when the prompt opened: the host refuses an item that replaced it. */
-  inode: number | null;
+  inode: string | null;
   /**
    * The checkout and device the prompt was opened for. A device's front
    * checkout follows its own Herdr focus and can move while the prompt is

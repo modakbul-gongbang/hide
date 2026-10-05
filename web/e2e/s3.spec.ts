@@ -793,7 +793,7 @@ test("the Explorer creates, renames, moves and trashes entries", { tag: "@platfo
     expect(lastSent.get("path_move")).toMatchObject({ root: repo, path: `${repo}/src/renamed.ts`, destination: `${repo}/dest` });
 
     // Trash behind the confirmation: nothing goes out until it is confirmed.
-    const destInode = fs.statSync(`${repo}/dest`).ino;
+    const destInode = fs.statSync(`${repo}/dest`, { bigint: true }).ino.toString();
     await page.locator(`[data-explorer-row="${repo}/dest"]`).click({ button: "right" });
     await page.locator('[data-menu-item="trash"]').click();
     const dialog = page.locator("[data-confirm-trash]");

@@ -223,7 +223,7 @@
               "name": { "type": "string" },
               "path": { "type": "string" },
               "is_directory": { "type": "boolean" },
-              "inode": { "type": "integer", "minimum": 0, "description": "The entry's own inode (a link's, not its target's) in a `file_list` answer: the identity a `path_trash` of this row sends, so the host moves only the item the operator confirmed." }
+              "inode": { "type": "string", "pattern": "^[0-9]+$", "description": "The entry's own inode (a link's, not its target's) in a `file_list` answer, as decimal text: the identity a `path_trash` of this row sends back unchanged, so the host moves only the item the operator confirmed. Text because a JSON number reaches the browser as a double, which rounds a 64-bit id past 2^53 (an NTFS file id once its sequence number reaches 32)." }
             }
           }
         },
