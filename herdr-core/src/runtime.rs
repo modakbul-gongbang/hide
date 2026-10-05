@@ -1175,6 +1175,10 @@ pub struct Runtime {
     confirmed_pane_layout_signatures: HashMap<String, PaneTopologySignature>,
     recent_closed_sequence: u64,
     reopen_in_flight: Option<String>,
+    /// A reopen asked for while this machine's newest close was still
+    /// settling: it runs once that close completes, and is dropped by any
+    /// other outcome or by a newer close.
+    reopen_after_close: Option<String>,
     /// Advances on every `set_live`, so a worker started against an earlier
     /// local Herdr connection cannot settle an operation on the current one.
     live_generation: u64,
@@ -1738,6 +1742,7 @@ impl Runtime {
             confirmed_pane_layout_signatures: HashMap::new(),
             recent_closed_sequence: 0,
             reopen_in_flight: None,
+            reopen_after_close: None,
             live_generation: 0,
             status_refresh_requested: false,
             created_tab_checkouts: BTreeMap::new(),

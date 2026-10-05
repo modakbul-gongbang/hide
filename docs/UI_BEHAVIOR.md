@@ -1109,6 +1109,7 @@ The Agent pane cycle reads the core's order of pane visits (`ui_state.recent_pan
 The shown tab of the recorded keyboard area is the current visit, including native browser pages; intermediate commit frames are not visits.
 
 Reopen Closed Tab is disabled when the session-local recent-close stack is empty or a restore is already running, and restoration works regardless of which surface currently owns focus.
+Pressed while this machine's newest close is still being confirmed, it is accepted and waits: the closed item reopens as soon as Herdr confirms the close, and nothing reopens if that close is refused or fails, or if another close starts first.
 Restoration is one action with no confirmation: an in-flight pane shows inline progress, and a restore without a target pane shows a compact inline warning.
 Missing cwd, an unavailable prior conversation, a missing file, and a retryable failure all use the same inline notice vocabulary, without a banner, card, or modal.
 A definitive close refusal removes its reserved reopen entry, while an unconfirmed result keeps the entry and explains inline that Hide could not determine whether the item closed.

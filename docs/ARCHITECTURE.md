@@ -391,6 +391,7 @@ The captured item is a reservation separate from the twenty confirmed entries, s
 A definitive Herdr refusal releases only that reservation; a transport failure or malformed acknowledgement keeps it available, starts one read-only status check, and reports the uncertainty inline.
 The status check applies its fresh session snapshot to the navigator before classifying the reservation, so a target confirmed absent cannot remain drawn until another unrelated event arrives.
 Only an authoritative absence promotes a reservation into the confirmed LIFO stack, in original user request order; the newest unresolved reservation blocks reopen from silently selecting an older item.
+A reopen asked for while that newest close is still settling is held (`reopen_after_close`) instead of refused, because its tab has already left the screen: it runs when that close is promoted with a captured item and this machine is in front, and is dropped when the close ends any other way or a newer close starts, so it never reaches an older item.
 The snapshot exposes the count, top label, pending reservations, in-flight state, async operation records, and inline notices; the shell routes the menu and shortcut and renders those values without keeping a second stack.
 Unknown agent activity is a separate close guard: the core refuses local and remote destructive close until a fresh status is available, while ordinary working or unresolved demand uses the existing one-time confirmation.
 

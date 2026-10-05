@@ -692,15 +692,19 @@ impl Runtime {
                 },
             )
             .collect();
-        self.snapshot.recent_closed.can_reopen = self.reopenable().is_some()
-            && (!local || self.close_capture_order.is_empty())
-            && self.reopen_in_flight.is_none();
-        self.snapshot.recent_closed.reopen_blocked_reason = self
+        let newest_close = self
             .close_capture_order
             .back()
             .filter(|_| local)
-            .and_then(|key| self.close_operations.get(key))
-            .map(|operation| {
+            .and_then(|key| self.close_operations.get(key));
+        let queueable =
+            newest_close.is_some_and(PendingClose::settling) && self.reopen_after_close.is_none();
+        self.snapshot.recent_closed.can_reopen = queueable
+            || (self.reopenable().is_some()
+                && (!local || self.close_capture_order.is_empty())
+                && self.reopen_in_flight.is_none());
+        self.snapshot.recent_closed.reopen_blocked_reason =
+            newest_close.filter(|_| !queueable).map(|operation| {
                 if operation.phase == "unknown" {
                     "The latest close result needs checking before it can be reopened.".to_owned()
                 } else {
@@ -1294,6 +1298,14 @@ impl Runtime {
             },
         );
         self.close_capture_order.push_back(request.key.clone());
+        // A reopen waiting for an earlier close meant that item, not this one.
+        if let Some(key) = self.reopen_after_close.take() {
+            crate::diagnostic!(serde_json::json!({
+                "component": "recent_closed",
+                "kind": "recent_closed.reopen_dropped",
+                "key": key,
+            }));
+        }
         self.panes_closing.extend(pane_ids);
         self.move_from_closing_target(&request.target, &tab);
         let selection_after = self.close_selection_state(restore_checkout_id.as_deref());
@@ -1753,6 +1765,7 @@ impl Runtime {
 
     pub(super) fn promote_close_reservations(&mut self) -> bool {
         let mut changed = false;
+        let mut queued_close_completed = false;
         while let Some(key) = self.close_capture_order.front().cloned() {
             let Some(operation) = self.close_operations.get(&key).cloned() else {
                 self.close_capture_order.pop_front();
@@ -1770,6 +1783,10 @@ impl Runtime {
             self.close_capture_order.pop_front();
             self.close_operations.remove(&key);
             self.clear_close_guards(&operation);
+            // Without a captured item the reopen would reach an older close.
+            queued_close_completed |= self.reopen_after_close.as_deref() == Some(key.as_str())
+                && operation.phase == "completed"
+                && operation.item.is_some();
             if operation.phase == "completed"
                 && let Some(item) = operation.item
             {
@@ -1780,7 +1797,32 @@ impl Runtime {
         if changed {
             self.sync_recent_closed_snapshot();
         }
+        self.release_queued_reopen(queued_close_completed);
         changed
+    }
+
+    /// Runs the reopen that waited for a close once that close is confirmed
+    /// and nothing newer stands in front of it; a close that ended any other
+    /// way, or a device now in front, drops it.
+    fn release_queued_reopen(&mut self, close_completed: bool) {
+        let Some(key) = self.reopen_after_close.clone() else {
+            return;
+        };
+        if self.close_operations.contains_key(&key) {
+            return;
+        }
+        self.reopen_after_close = None;
+        let runs = close_completed && self.reopen_device() == workspace::LOCAL_DEVICE_ID;
+        crate::diagnostic!(serde_json::json!({
+            "component": "recent_closed",
+            "kind": if runs { "recent_closed.reopen_released" } else { "recent_closed.reopen_dropped" },
+            "key": key,
+        }));
+        if runs {
+            self.reopen_closed();
+        } else {
+            self.sync_recent_closed_snapshot();
+        }
     }
 
     /// Completes a close only after a fresh topology says the requested
@@ -2196,6 +2238,20 @@ impl Runtime {
             && let Some(key) = self.close_capture_order.back().cloned()
             && let Some(operation) = self.close_operations.get(&key)
         {
+            // The tab already left the screen, so a reopen pressed right
+            // after the close is the operator's intent, not a mistake: it
+            // waits for that close and runs when Herdr confirms it.
+            if operation.settling() {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "recent_closed",
+                    "kind": "recent_closed.reopen_queued",
+                    "key": key,
+                    "phase": operation.phase,
+                }));
+                self.reopen_after_close = Some(key);
+                self.sync_recent_closed_snapshot();
+                return true;
+            }
             crate::diagnostic!(serde_json::json!({
                 "component": "recent_closed",
                 "kind": "recent_closed.reopen_waits_for_close",

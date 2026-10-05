@@ -1003,17 +1003,39 @@ fn close_tab(runtime: &mut Runtime, tab_id: &str) {
     ));
 }
 
-/// Herdr's answer to the close's `layout.export` and then to its close.
+/// Herdr's answer to the close's `layout.export`, which captures the tab as
+/// a reopen item, and then to its close.
 fn answer_close(runtime: &mut Runtime, result: Result<(), hide_herdr_client::ApiError>) {
     let request = runtime
         .close_operations
         .values()
-        .next()
+        .find(|operation| operation.phase == "preparing")
         .expect("a close in progress")
         .request
         .clone();
-    let (_, effects) =
-        runtime.ingest_close_capture_result(&request, Ok(live::CloseCaptureOutcome { item: None }));
+    let live::CloseCaptureTarget::Tab { tab_id } = &request.target else {
+        panic!("a tab close");
+    };
+    let item = ClosedItem::Tab {
+        key: request.key.clone(),
+        context: request.context.clone(),
+        panes: request.panes.clone(),
+        layout: crate::recent_closed::ClosedLayout {
+            workspace_id: "w-order".into(),
+            tab_id: tab_id.clone(),
+            zoomed: false,
+            focused_pane_id: format!("{tab_id}:p"),
+            root: crate::recent_closed::ClosedLayoutNode::Pane {
+                pane_id: Some(format!("{tab_id}:p")),
+                label: None,
+                cwd: Some("/agent-groups".into()),
+                command: None,
+                env: BTreeMap::new(),
+            },
+        },
+    };
+    let (_, effects) = runtime
+        .ingest_close_capture_result(&request, Ok(live::CloseCaptureOutcome { item: Some(item) }));
     let [effect] = effects.as_slice() else {
         panic!("one close effect, got {effects:?}");
     };
@@ -1153,4 +1175,76 @@ fn a_close_that_needs_a_replacement_shell_keeps_its_tab_in_place() {
     let operation = runtime.close_operations.values().next().expect("a close");
     assert!(operation.request.context.replacement_shell);
     assert_eq!(drawn(&mut runtime), [area("w-order:t1", &["w-order:t1"])]);
+}
+
+fn reopen(runtime: &mut Runtime) {
+    runtime.dispatch_json(&explorer_event("reopen_closed", serde_json::json!({})));
+}
+
+/// The chip is gone before Herdr confirms the close, so a reopen pressed at
+/// once is offered, waits for that close, and starts when it is confirmed.
+#[test]
+fn a_reopen_pressed_while_the_close_settles_starts_once_herdr_confirms_the_close() {
+    let (mut runtime, _) = two_areas_on_t1();
+    close_tab(&mut runtime, "w-order:t1");
+    answer_close(&mut runtime, Ok(()));
+    assert!(runtime.snapshot().recent_closed.can_reopen);
+
+    reopen(&mut runtime);
+    assert!(
+        !runtime.snapshot().recent_closed.restoring,
+        "nothing reopens before the close is confirmed"
+    );
+    assert!(runtime.snapshot().recent_closed.notices.is_empty());
+    assert!(
+        !runtime.snapshot().recent_closed.can_reopen,
+        "one reopen waits"
+    );
+
+    runtime.ingest_session(Ok(tab_order_payload(
+        "/agent-groups",
+        &["w-order:t2", "w-order:t3"],
+        &["w-order:t2", "w-order:t3"],
+        "w-order:t3",
+    )));
+    assert!(
+        runtime.snapshot().recent_closed.restoring,
+        "the reopen started"
+    );
+}
+
+/// A refused close brings its tab back, so the reopen waiting for it is
+/// dropped rather than reaching the older close still on the stack.
+#[test]
+fn a_reopen_waiting_for_a_refused_close_is_dropped_and_never_reopens_an_older_close() {
+    let (mut runtime, _) = two_areas_on_t1();
+    close_tab(&mut runtime, "w-order:t3");
+    answer_close(&mut runtime, Ok(()));
+    runtime.ingest_session(Ok(tab_order_payload(
+        "/agent-groups",
+        &["w-order:t1", "w-order:t2"],
+        &["w-order:t1", "w-order:t2"],
+        "w-order:t1",
+    )));
+    assert_eq!(
+        runtime.snapshot().recent_closed.count,
+        1,
+        "t3 can be reopened"
+    );
+
+    close_tab(&mut runtime, "w-order:t1");
+    reopen(&mut runtime);
+    answer_close(
+        &mut runtime,
+        Err(hide_herdr_client::ApiError::Remote {
+            code: "tab_not_closable".into(),
+            message: "refused".into(),
+        }),
+    );
+    assert!(
+        runtime.close_operations.is_empty(),
+        "the refusal ended the close"
+    );
+    assert!(!runtime.snapshot().recent_closed.restoring);
+    assert_eq!(runtime.snapshot().recent_closed.count, 1);
 }
