@@ -71,7 +71,9 @@ Terminal pixels in a web e2e screenshot come from the DOM renderer, so a claim a
 When the behavior depends on the order of two events, the test fixes that order; it does not hope the scheduler produces it.
 
 - Hold one side at a real boundary and release it after the competing event has been observed.
-  `focusGate` in `web/e2e/pane-focus-ordering.spec.ts` is the reference: a proxy on the private Herdr socket that holds one `pane.focus` request, forwards everything else, and lets the test release it, so every answer still comes from the pinned Herdr.
+  `herdrGate` in `web/e2e/herdr-gate.ts` is the shared gate, used by `web/e2e/pane-focus-ordering.spec.ts`: a proxy on the private Herdr socket that holds one request of the method the test arms, forwards everything else, and lets the test release it, so every answer still comes from the pinned Herdr.
+- A rule the core decides is gated one layer lower, in `herdr-core/src/runtime/tests/control_order.rs`: `FakeHerdr` records what actually left over the socket, and the test hands the runtime each answer itself (`complete_lane_tab`, `complete_lane_pane_focus`), so late, replaced, refused and lost answers arrive in the order the test chooses.
+  Put an order rule there; an e2e spec keeps one representative journey that shows the pieces are connected.
 - Before releasing, assert the barrier the race needs, such as the number of accepted requests, so a stale snapshot or an earlier diagnostic cannot satisfy it.
 - After releasing, assert the outcome and the boundary's own record (`gate.requests`, `gate.maximum()`), which show the order the product actually saw.
 - A race the test cannot order proves nothing either way; find the boundary to gate before writing the assertion.
@@ -180,9 +182,8 @@ A piece that another open change is still building is marked as pending with the
    If the product has no signal for the readiness the next step needs, add one to the product (a data attribute, a diagnostic) in the same pull request.
    A signal added for a test is still a product contract: it is an attribute or a diagnostic, not a banner ([UI_BEHAVIOR.md](UI_BEHAVIOR.md)).
 3. **Fix the order with a gate when two events race.**
-   [The test decides the order](#the-test-decides-the-order) owns the rule; `focusGate` in `web/e2e/pane-focus-ordering.spec.ts` is the reference.
-   It holds `pane.focus` only, and only while armed.
-   Pending #438 (not merged): it generalizes it into a shared gate that can hold any Herdr method; once that merges, import the shared gate and do not write a second proxy.
+   [The test decides the order](#the-test-decides-the-order) owns the rule; `herdrGate` in `web/e2e/herdr-gate.ts` is the shared gate and `web/e2e/pane-focus-ordering.spec.ts` is the reference use.
+   It forwards every request to the pinned Herdr, records what arrived (`params`, `maximum`), and holds the next request of the one method `arm` names until the test calls `release`; import it and do not write a second proxy.
 4. **Control UI timers with `page.clock`, not with a wait.**
    A timer the page owns (a toast timeout, a debounce, a hover delay) is advanced with `page.clock.install()` and `page.clock.fastForward()`.
    Why: waiting out a 3-second timer costs 3 seconds on every run and still races a slow runner.
@@ -213,7 +214,7 @@ A piece that another open change is still building is marked as pending with the
    A test whose subject is a surviving page reconnecting to the restarted daemon (`web/e2e/s3.spec.ts`, the two draft recovery tests) must not reload it, and says so in a line allow.
 8. **Put a system difference in one fixture helper.**
    See [Operating-system differences belong to one fixture helper](#operating-system-differences-belong-to-one-fixture-helper); native home variables, executable names, the tool path, the compiler and the no-op opener live in `web/e2e/platform-fixture.ts`, not in a `process.platform` branch in a spec.
-   The endpoint helper (`focusGate` spells the Windows pipe itself in `web/e2e/pane-focus-ordering.spec.ts`) is not there yet; add it to `platform-fixture.ts` when a second spec needs it.
+   The endpoint helper (`herdrGate` spells the Windows pipe itself in `web/e2e/herdr-gate.ts`) is not there yet; add it to `platform-fixture.ts` when a second spec needs it.
 9. **A retry is a label, not a fix.**
    CI runs Playwright with `retries: 1` (`web/playwright.config.ts`, `desktop/playwright.config.ts`), so a test that fails and then passes is reported as `flaky` instead of failing the run; two failures still fail the lane.
    That is a classification for the issue `scripts/ci-flaky-report.py` files for the test, with a seven-day expiry to fix or delete it.

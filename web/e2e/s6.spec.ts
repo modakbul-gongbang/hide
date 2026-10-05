@@ -132,21 +132,21 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     await toolsToggle.click();
     await expect(workspace).toHaveAttribute("data-tools", "shown");
     await expect(toolsToggle).toHaveAttribute("aria-pressed", "true");
-    expect(last.get("workspace_view")).toEqual({ tools: true });
+    await expect.poll(() => last.get("workspace_view")).toEqual({ tools: true });
     await expect(page.locator('[data-tool="explorer"]')).toBeVisible();
     const toolColumn = await page.evaluate(() => Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--size-panel-ideal")));
     expect((await toolsColumn.boundingBox())!.width).toBeCloseTo(toolColumn, 0);
     await chooseColumn(page, "tools");
     await expect(workspace).toHaveAttribute("data-tools", "off");
     expect(sent.get("workspace_view")).toBe(before + 2);
-    expect(last.get("workspace_view")).toEqual({ tools: false });
+    await expect.poll(() => last.get("workspace_view")).toEqual({ tools: false });
 
     // ⌘E turns Tools on; its icon tabs swap the one tool it holds, and a
     // tool kept while Tools is off comes back with it.
     await page.keyboard.press(chord("toggle_explorer"));
     await expect(workspace).toHaveAttribute("data-tools", "shown");
     await toolsColumn.locator('[data-tool-tab="changes"]').click();
-    expect(last.get("workspace_view")).toEqual({ tool: "changes" });
+    await expect.poll(() => last.get("workspace_view")).toEqual({ tool: "changes" });
     await expect(page.locator('[data-tool="changes"]')).toBeVisible();
     await expect(page.locator('[data-tool="explorer"]')).toHaveCount(0);
     await page.keyboard.press(chord("toggle_explorer"));
@@ -172,7 +172,7 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     await expect(page.locator("[data-column-guide] [data-column-grip]")).toBeVisible();
     await page.mouse.up();
     await expect(page.locator("[data-column-guide]")).toHaveCount(0);
-    expect(last.get("workspace_view")).toEqual({ tools_width: expect.any(Number) });
+    await expect.poll(() => last.get("workspace_view")).toEqual({ tools_width: expect.any(Number) });
     await expect.poll(async () => (await toolsColumn.boundingBox())!.width).toBeCloseTo(496, -1);
     await page.mouse.move(bodyBox.x + 40, bodyBox.y + 40);
     await expect(toolsDivider).toHaveAttribute("role", "separator");
@@ -180,7 +180,7 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     // ⌘⇧B with no view open opens File Views on the New tab page (B16), and
     // closing that untouched tab turns File Views off again; Tools stays.
     await page.keyboard.press(chord("toggle_right_panel"));
-    expect(last.get("workspace_view")).toEqual({ views: true });
+    await expect.poll(() => last.get("workspace_view")).toEqual({ views: true });
     await expect(workspace).toHaveAttribute("data-file-views", "shown");
     await expect(viewsColumn.locator("[data-new-tab-page]")).toBeVisible();
     await viewsColumn.locator('button[aria-label^="Close view"]').first().click();
@@ -229,7 +229,7 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     const widthBefore = Number(await viewsDivider.getAttribute("aria-valuenow"));
     await page.keyboard.press("ArrowRight");
     await expect(viewsDivider).toHaveAttribute("aria-valuenow", String(widthBefore - 32));
-    expect(last.get("workspace_view")).toEqual({ views_width: widthBefore - 32, width_request_id: expect.any(String) });
+    await expect.poll(() => last.get("workspace_view")).toEqual({ views_width: widthBefore - 32, width_request_id: expect.any(String) });
     await settled();
     const widened = (await viewsColumn.boundingBox())!;
     const resizesBeforeDrag = resizes();
@@ -243,7 +243,7 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     await page.mouse.up();
     await expect(page.locator("[data-column-guide]")).toHaveCount(0);
     await expect.poll(async () => (await viewsColumn.boundingBox())!.width).toBeCloseTo(widened.width - 150, -1);
-    expect(last.get("workspace_view")).toEqual({ views_width: expect.any(Number) });
+    await expect.poll(() => last.get("workspace_view")).toEqual({ views_width: expect.any(Number) });
 
     // The divider between File Views and Tools trades their widths, so the
     // agents keep theirs and no terminal resizes.
@@ -267,7 +267,7 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     const childHost = page.locator(`[data-pane-view="${child}"] [data-terminal-host]`);
     await childHost.click({ position: { x: 40, y: 60 } });
     await expect(page.locator(`[data-pane-view="${child}"]`)).toHaveAttribute("data-focused", "true", { timeout: 15_000 });
-    expect(last.get("focus_pane")).toEqual({ pane_id: child, origin: "operator" });
+    await expect.poll(() => last.get("focus_pane")).toEqual({ pane_id: child, origin: "operator" });
     await page.keyboard.type("typed beside the columns");
     await expect.poll(() => fs.readFileSync(herdr.inputLogs[1], "utf8"), { timeout: 10_000 }).toContain("typed beside the columns");
     await expect(workspace).toHaveAttribute("data-file-views", "shown");
@@ -278,7 +278,7 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     const heardBefore = fs.readFileSync(herdr.inputLogs[1], "latin1").length;
     await page.keyboard.press(chord("find_in_pane"));
     await expect.poll(() => JSON.stringify(fs.readFileSync(herdr.inputLogs[1], "latin1").slice(heardBefore)), { timeout: 10_000 }).toBe(JSON.stringify("\x0f/"));
-    expect(last.get("pane_find_open")).toMatchObject({ pane_id: child });
+    await expect.poll(() => last.get("pane_find_open")).toMatchObject({ pane_id: child });
     await expect(page.locator(".cm-search")).toHaveCount(0);
     await expect(page.locator("[data-find-bar]")).toHaveCount(0);
     await viewsColumn.locator("[data-editor-body] .cm-content").click();
@@ -295,7 +295,7 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     await viewsColumn.locator("[data-editor-body] .cm-content").click();
     await page.keyboard.press(chord("toggle_right_panel"));
     await expect(workspace).toHaveAttribute("data-file-views", "off");
-    expect(last.get("workspace_view")).toEqual({ views: false });
+    await expect.poll(() => last.get("workspace_view")).toEqual({ views: false });
     await expect(workspace).toHaveAttribute("data-tools", "shown");
     await expect(viewsToggle).toHaveAttribute("aria-pressed", "false");
     await expect(page.locator("[data-column-badge]")).toHaveText("2");
@@ -314,7 +314,7 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     expect(resizes() - resizesBeforeHide).toBe(panesShown);
     await screenshot(page, "s6-columns-views-off");
     await viewsToggle.click();
-    expect(last.get("workspace_view")).toEqual({ views: true });
+    await expect.poll(() => last.get("workspace_view")).toEqual({ views: true });
     await expect(viewsColumn.locator('[data-tab-kind="file"]')).toHaveCount(2);
     await expect(page.locator("[data-column-badge]")).toHaveCount(0);
 

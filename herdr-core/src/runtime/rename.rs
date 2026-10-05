@@ -139,12 +139,7 @@ impl Runtime {
                 request_id: payload.request_id.clone(),
             };
             match target.as_deref() {
-                None => live::spawn_local_control(
-                    self.live
-                        .clone()
-                        .ok_or_else(|| "Herdr control is unavailable".to_owned())?,
-                    action,
-                ),
+                None => self.submit_local_control(action),
                 Some(target) => {
                     let context = self
                         .remote_controls
