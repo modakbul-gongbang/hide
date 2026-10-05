@@ -755,6 +755,12 @@ Dropping on a folder puts the item inside it, on a file puts it beside that file
 The same parent, the item itself, and a folder inside the item show no drop indicator and accept nothing.
 The drag never leaves a copy that a different app (such as Finder) could read as a file.
 
+The filter field is the Explorer's first row.
+Typing narrows the tree to the files hided's file index matches, the index and ranking ⌘P uses, each under its ancestor folders with every folder open, so a match inside a folder the tree never listed is found and its place stays readable; a folder is shown because a file under it matches, and the index answers at most 80 files, as ⌘P lists.
+The filtered tree opens and selects files as the tree does, but pressing a folder only selects it, and New File and Rename end the filter first.
+The filter never reads or writes the expansion the core keeps: clearing the field, Escape, or switching checkout shows the tree as it was.
+While the index is being built the tree says so, and a checkout whose files cannot be listed says why, in the words ⌘P uses.
+
 Git status decorates each row with one status mark: Modified, Added, Untracked, Renamed, and Conflict render as `M`, `A`, `U`, `R`, and `!` with a semantic color and a matching status name in tooltip and accessibility help.
 A folder with any changed descendant renders a dot mark; the mark describes derived folder state and never relabels the folder as a modified file.
 Deleted descendants still mark an existing ancestor folder but never create a file row that no longer exists.
