@@ -85,7 +85,8 @@ const USAGE_TIMEOUT: Duration = Duration::from_secs(30);
 /// its keychain account (without it the CLI prints `/cost` text as if logged
 /// out), `HOME` and `PATH` locate the login and Node. On Windows it is the
 /// variables Node and the CLI read there instead (`USERPROFILE`,
-/// `SystemRoot`, `APPDATA`, ...). Everything else is withheld on purpose:
+/// `SystemRoot`, `APPDATA`, the standard system folders, and
+/// `CLAUDE_CODE_GIT_BASH_PATH` for the Git Bash the CLI needs). Everything else is withheld on purpose:
 /// without `HERDR_ENV` the operator's Herdr and hide hooks exit early, and
 /// without `CLAUDECODE` the CLI does not think it is nested.
 pub const USAGE_ENVIRONMENT: &[&str] = hide_platform::process::LOGIN_CHILD_VARIABLES;

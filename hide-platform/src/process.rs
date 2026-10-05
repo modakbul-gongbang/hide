@@ -64,7 +64,12 @@ pub const OWNER_LAUNCH_KEYS: &[&str] = &["HIDE_PROCESS_OWNER_FD", "HIDE_PROCESS_
 /// Windows needs more than Unix because its programs read them where Unix
 /// programs read `HOME`: Node takes the home folder from `USERPROFILE`, its
 /// network and crypto start-up fail without `SystemRoot`, and credentials and
-/// caches sit under `APPDATA` and `LOCALAPPDATA`. Anything a caller wants kept
+/// caches sit under `APPDATA` and `LOCALAPPDATA`. The rest are the standard
+/// system folders and shell a normal login has (`ComSpec`, `windir`,
+/// `SystemDrive`, `ProgramFiles`, `ProgramFiles(x86)`, `ProgramData`,
+/// `HOMEDRIVE`, `HOMEPATH`), and `CLAUDE_CODE_GIT_BASH_PATH`: the Claude CLI
+/// needs Git Bash on native Windows and finds it through that variable or
+/// `ProgramFiles`. None is a hook switch or a secret. Anything a caller wants kept
 /// out of the child (a hook switch, a nested-session marker) is left out by
 /// not being listed.
 pub const LOGIN_CHILD_VARIABLES: &[&str] = if cfg!(windows) {
@@ -78,6 +83,15 @@ pub const LOGIN_CHILD_VARIABLES: &[&str] = if cfg!(windows) {
         "TMP",
         "APPDATA",
         "LOCALAPPDATA",
+        "ComSpec",
+        "windir",
+        "SystemDrive",
+        "ProgramFiles",
+        "ProgramFiles(x86)",
+        "ProgramData",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "CLAUDE_CODE_GIT_BASH_PATH",
     ]
 } else {
     &["HOME", "PATH", "USER", "LOGNAME", "TMPDIR"]
