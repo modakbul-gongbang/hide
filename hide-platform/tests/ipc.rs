@@ -258,7 +258,7 @@ fn a_listener_with_a_full_backlog_is_still_live_to_a_second_bind() {
         thread::spawn(move || {
             let mut queued = Vec::new();
             while queued.len() < PAST_EVERY_SMALL_BACKLOG {
-                match LocalStream::connect(&path) {
+                match connect_and_ask(&path, "queued\n") {
                     Ok(client) => queued.push(client),
                     Err(error) => {
                         let _ = done.send(());
@@ -270,6 +270,10 @@ fn a_listener_with_a_full_backlog_is_still_live_to_a_second_bind() {
             (queued, None)
         })
     };
+    // Each client asks as it connects, because `serve_lines` answers one
+    // stream at a time in the order the system hands them out, which on
+    // Windows is not the order they connected: a client that waited to be
+    // served before asking would deadlock the server on another's silence.
     // A connect that waits for room never ends the flood, so the wait is
     // bounded as the overflow test bounds it; the queue is as full as that
     // system lets it get.
@@ -297,7 +301,6 @@ fn a_listener_with_a_full_backlog_is_still_live_to_a_second_bind() {
         assert!(queued.len() >= IN_FLIGHT, "refused after {}", queued.len());
     }
     for (index, mut client) in queued.into_iter().enumerate() {
-        client.write_all(b"queued\n").unwrap();
         assert_eq!(read_line(&mut client), "QUEUED\n", "queued connect {index}");
     }
     closer.close();
