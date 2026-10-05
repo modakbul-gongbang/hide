@@ -68,17 +68,23 @@ impl CreatedTabClamp {
     }
 }
 
-/// The worktrees below `path` among the repositories' listed ones.
+/// The worktrees below `path` among the repositories' listed ones. Both sides
+/// are spelled by Git and by the registry, so they are related by their names
+/// alone: this runs under the runtime lock on every session, where a file
+/// system lookup per worktree is not affordable.
 fn nested_worktrees<'a>(
     projects: impl Iterator<Item = &'a crate::model::ProjectWorktreesSnapshot>,
     path: &str,
-    within: fn(&str, &str) -> bool,
 ) -> Vec<String> {
+    let wire = |path: &str| hide_platform::path::to_wire_lossy(Path::new(path));
+    let path = wire(path);
     projects
         .flat_map(|project| &project.worktrees)
-        .map(|worktree| worktree.path.as_str())
-        .filter(|candidate| within(candidate, path) && !within(path, candidate))
-        .map(str::to_owned)
+        .map(|worktree| wire(&worktree.path))
+        .filter(|candidate| {
+            candidate.trim_end_matches('/') != path.trim_end_matches('/')
+                && device_path_within(candidate, &path)
+        })
         .collect()
 }
 
@@ -1780,7 +1786,8 @@ impl Runtime {
                 self.snapshot.navigator.focused_device_id.as_deref() == Some(target_id),
             )
         });
-        // Herdr's session is kept as it came; the published one groups its
+        // The session is kept as Herdr sent it except for the cwds of tabs Hide
+        // created (`clamp_device_created_tabs`); the published one groups its
         // workspaces into the device's projects (`device_catalog`).
         let mut dropped_moves = Vec::new();
         if fetched.is_err() {
@@ -1790,7 +1797,7 @@ impl Runtime {
                 .retain(|(target, _), _| target != target_id);
         }
         let fetched = fetched.map(|mut raw| {
-            self.clamp_device_created_tabs(target_id, &mut raw);
+            self.clamp_device_created_tabs(target_id, &mut raw, None);
             let mut derived = self.derive_device_session(target_id, &raw);
             self.device_raw_sessions.insert(target_id.to_owned(), raw);
             self.place_device_strips(target_id, &mut derived, &mut dropped_moves);
@@ -5072,13 +5079,8 @@ impl Runtime {
     /// is, not where it was born.
     fn settle_created_tabs(&mut self, payload: &SessionSnapshotPayload) {
         let now = (self.birth_clock)();
-        let clamps = self
-            .created_tab_clamps()
-            .into_iter()
-            .map(|clamp| (clamp.tab_id.clone(), clamp))
-            .collect::<BTreeMap<_, _>>();
-        for (tab_id, created) in &mut self.created_tab_checkouts {
-            let Some(clamp) = clamps.get(tab_id) else {
+        for clamp in self.created_tab_clamps() {
+            let Some(created) = self.created_tab_checkouts.get_mut(&clamp.tab_id) else {
                 continue;
             };
             let mut carried = false;
@@ -5086,7 +5088,7 @@ impl Runtime {
             for pane in payload
                 .layouts
                 .iter()
-                .filter(|layout| &layout.tab_id == tab_id)
+                .filter(|layout| layout.tab_id == clamp.tab_id)
                 .flat_map(|layout| &layout.panes)
             {
                 carried = true;
@@ -5094,7 +5096,7 @@ impl Runtime {
                     inside |= clamp.holds(&cwd, path_is_within_checkout);
                 }
             }
-            created.settled = inside || (carried && created.birth_window_over(now, tab_id));
+            created.settled = inside || (carried && created.birth_window_over(now, &clamp.tab_id));
         }
     }
 
@@ -5116,11 +5118,7 @@ impl Runtime {
     /// checkout of its own, so a folder in one is not in the checkout around
     /// it.
     fn nested_checkouts(&self, path: &str) -> Vec<String> {
-        nested_worktrees(
-            self.worktree_catalog.projects.iter(),
-            path,
-            path_is_within_checkout,
-        )
+        nested_worktrees(self.worktree_catalog.projects.iter(), path)
     }
 
     /// Reads a created tab's panes as inside the checkout the tab was created
@@ -5195,8 +5193,11 @@ impl Runtime {
                 recorded_at: (self.birth_clock)(),
             },
         );
+        // The stored session was clamped for the records that existed when it
+        // arrived, so the other tabs' panes already read as their folder and
+        // would look settled; only the new record reads it.
         if let Some(mut raw) = self.device_raw_sessions.remove(target_id) {
-            self.clamp_device_created_tabs(target_id, &mut raw);
+            self.clamp_device_created_tabs(target_id, &mut raw, Some(tab_id));
             self.device_raw_sessions.insert(target_id.to_owned(), raw);
             self.refresh_device_catalog(target_id);
         }
@@ -5206,14 +5207,21 @@ impl Runtime {
     fn device_nested_checkouts(&self, target_id: &str, path: &str) -> Vec<String> {
         self.device_worktrees
             .get(target_id)
-            .map(|listed| nested_worktrees(listed.projects.values(), path, device_path_within))
+            .map(|listed| nested_worktrees(listed.projects.values(), path))
             .unwrap_or_default()
     }
 
     /// Reads a device tab Hide created as in the folder it was created for
     /// until a pane of it reports a cwd there, before the device's projects
     /// are grouped, and drops the record of a tab the device no longer has.
-    fn clamp_device_created_tabs(&mut self, target_id: &str, raw: &mut RemoteSessionSnapshot) {
+    ///
+    /// `only` limits the clamp to one tab's record.
+    fn clamp_device_created_tabs(
+        &mut self,
+        target_id: &str,
+        raw: &mut RemoteSessionSnapshot,
+        only: Option<&str>,
+    ) {
         self.created_device_tabs
             .retain(|(target, tab_id), created| {
                 if target != target_id {
@@ -5236,7 +5244,9 @@ impl Runtime {
         let clamps = self
             .created_device_tabs
             .iter()
-            .filter(|((target, _), created)| target == target_id && !created.settled)
+            .filter(|((target, tab_id), created)| {
+                target == target_id && !created.settled && only.is_none_or(|only| only == tab_id)
+            })
             .map(|((_, tab_id), created)| CreatedTabClamp {
                 tab_id: tab_id.clone(),
                 nested: self.device_nested_checkouts(target_id, &created.path),

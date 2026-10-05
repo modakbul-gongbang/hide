@@ -423,7 +423,8 @@ fn a_birth_cwd_inside_a_nested_linked_worktree_is_not_inside_the_outer_checkout(
 /// Herdr answers a pane's cwd resolved and without a trailing separator, even
 /// when the folder was asked for through a link and a trailing `/` (pinned
 /// 0.9.1, `workspace.create` and `tab.create`). The comparison reads both
-/// sides as the folder they name, so any of those spellings settles the tab.
+/// sides as the folder they name, so a checkout recorded in one spelling
+/// settles from a cwd reported in another, in either direction.
 #[cfg(unix)]
 #[test]
 fn a_created_tab_settles_whichever_way_the_reported_cwd_is_spelled() {
@@ -437,19 +438,21 @@ fn a_created_tab_settles_whichever_way_the_reported_cwd_is_spelled() {
     std::os::unix::fs::symlink(&directory, &alias).expect("a link to the checkout");
     let alias = alias.to_string_lossy().into_owned();
 
-    for reported in [
-        format!("{checkout_path}/"),
-        format!("{alias}/notes-folder"),
-        alias.clone(),
+    // (the spelling the tab was created with, the spelling Herdr reports)
+    for (recorded, reported) in [
+        (checkout_path.clone(), format!("{checkout_path}/")),
+        (checkout_path.clone(), format!("{alias}/notes-folder")),
+        (checkout_path.clone(), alias.clone()),
+        (format!("{alias}/"), checkout_path.clone()),
     ] {
-        acknowledge_created_tab(&mut runtime, &checkout_path, "w-order:t2");
+        acknowledge_created_tab(&mut runtime, &recorded, "w-order:t2");
         runtime.ingest_session(Ok(two_tab_payload(&checkout_path, &parent)));
         runtime.ingest_session(Ok(two_tab_payload(&checkout_path, &reported)));
         runtime.ingest_session(Ok(two_tab_payload(&checkout_path, &parent)));
         assert_eq!(
             pane_cwd_of(&runtime, "w-order:t2:p").as_deref(),
             Some(parent.as_str()),
-            "{reported} did not settle the tab"
+            "{reported} did not settle a tab created as {recorded}"
         );
         // The tab leaves with the session that no longer carries it.
         runtime.ingest_session(Ok(two_tab_payload_without_second_tab(&checkout_path)));
