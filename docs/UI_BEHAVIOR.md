@@ -121,6 +121,9 @@ Agent and View areas share the drag, divider and narrow-window controls describe
 A drag keeps its original tab in place and changes no terminal size until a valid drop.
 Dropping on a tab bar reorders or moves the tab; dropping on a content edge highlights the new half with Split left/right/up/down and creates another area on release.
 Moving the last tab out collapses its area, as does closing it or its disappearance from Herdr.
+Closing a tab, or its only pane, takes the tab out of its area the moment the close is approved, without waiting for Herdr: the area shows the tab it showed before it, or collapses when the tab was its last, and when the closed tab held the keyboard the keyboard goes to what is now shown in its place (the area's next tab, or the neighbouring area's), never to the next tab in Herdr's order.
+A close Herdr refuses, or one that fails before it is sent, puts the tab back where it stood, and the keyboard with it when nothing has moved since; a close whose result is unknown shows the tab again until the status check settles it.
+A pane closing inside a tab that keeps other panes stays drawn as closing until Herdr confirms it, because Herdr decides how its neighbours fill the space.
 A sole empty area shows No agent tab is open and New tab.
 Agent tabs cannot enter the View column, and a sole tab cannot split its own area.
 Invalid size, area or depth limits show the forbidden cursor without an overlay; Escape, outside release and a vanished target leave the layout unchanged.
@@ -142,6 +145,7 @@ An older build may discard Agent layout state; returning starts with all current
 SSH device Workspaces use the same component with one area, retain device Herdr reorder, and disable splitting with a local-Workspaces-only reason.
 
 Closing a primary Herdr workspace's last tab or last pane while a linked worktree remains first creates a shell at the checkout root in the same area and position.
+That tab stays in its area, marked closing, until Herdr confirms the close, so the area is never empty while the shell is made.
 The existing close guards run first, and linked workspaces remain untouched.
 If shell creation fails, nothing closes; if closing is refused, the shell remains.
 Retry close reuses that intent's shell, while Dismiss ends the failed intent; detailed Herdr failures are diagnostic-only.

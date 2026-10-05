@@ -915,3 +915,242 @@ fn cross_machine_lineage_updates_agent_tab_placement_in_every_arrival_order() {
         }
     }
 }
+
+// A close takes its tab out of the Agent areas when it is approved and puts
+// it back when it does not happen (docs/UI_BEHAVIOR.md, Agent areas).
+
+/// `setup` with a Herdr connection whose workers cannot report back, so each
+/// close result reaches the runtime only when the test hands it over.
+fn live_setup() -> (Runtime, String) {
+    let (runtime, checkout) = live_tab_order_runtime("/agent-groups");
+    let mut runtime = with_views(runtime, &views_path("agent-groups-close"));
+    ingest(&mut runtime, &["w-order:t1", "w-order:t2", "w-order:t3"]);
+    (runtime, checkout)
+}
+
+/// Each Agent area a snapshot read publishes, as the tab it shows and the
+/// chips in its strip.
+fn drawn(runtime: &mut Runtime) -> Vec<(Option<String>, Vec<String>)> {
+    fn walk(
+        node: &crate::split_tree::Node<crate::agent_layout::Tab>,
+        out: &mut Vec<(Option<String>, Vec<String>)>,
+    ) {
+        match node {
+            crate::split_tree::Node::Area(area) => out.push((
+                area.active.clone(),
+                area.displays.iter().map(|tab| tab.id.clone()).collect(),
+            )),
+            crate::split_tree::Node::Split(split) => {
+                walk(&split.first, out);
+                walk(&split.second, out);
+            }
+        }
+    }
+    runtime.sync_workspace_view();
+    let mut areas = Vec::new();
+    walk(
+        &runtime
+            .snapshot()
+            .workspace_view
+            .as_ref()
+            .expect("the front Workspace's view")
+            .agent_layout
+            .root,
+        &mut areas,
+    );
+    areas
+}
+
+fn area(shown: &str, tabs: &[&str]) -> (Option<String>, Vec<String>) {
+    (
+        Some(shown.to_owned()),
+        tabs.iter().map(|tab| (*tab).to_owned()).collect(),
+    )
+}
+
+/// The left area holds t1 and t3, the right one t2, and the operator is on
+/// t1, having been on t3 before it.
+fn two_areas_on_t1() -> (Runtime, String) {
+    let (mut runtime, checkout) = live_setup();
+    action(
+        &mut runtime,
+        serde_json::json!({"action":"split","tab_id":"w-order:t2","area_id":"a1","edge":"right","request_id":"split-1"}),
+    );
+    for tab in ["w-order:t3", "w-order:t1"] {
+        action(
+            &mut runtime,
+            serde_json::json!({"action":"focus","tab_id":tab}),
+        );
+    }
+    // Herdr never answers this fixture, so the focuses above wait until they
+    // expire; a settled session has none, and a later Herdr move must not
+    // read as their late answer.
+    runtime.expire_pending_view_focus(unix_milliseconds() + 3_600_000);
+    assert_eq!(
+        drawn(&mut runtime),
+        [
+            area("w-order:t1", &["w-order:t1", "w-order:t3"]),
+            area("w-order:t2", &["w-order:t2"])
+        ]
+    );
+    (runtime, checkout)
+}
+
+fn close_tab(runtime: &mut Runtime, tab_id: &str) {
+    runtime.dispatch_json(&explorer_event(
+        "close_tab",
+        serde_json::json!({"tab_id": tab_id, "confirmed": false}),
+    ));
+}
+
+/// Herdr's answer to the close's `layout.export` and then to its close.
+fn answer_close(runtime: &mut Runtime, result: Result<(), hide_herdr_client::ApiError>) {
+    let request = runtime
+        .close_operations
+        .values()
+        .next()
+        .expect("a close in progress")
+        .request
+        .clone();
+    let (_, effects) =
+        runtime.ingest_close_capture_result(&request, Ok(live::CloseCaptureOutcome { item: None }));
+    let [effect] = effects.as_slice() else {
+        panic!("one close effect, got {effects:?}");
+    };
+    runtime.ingest_close_effect_result(effect, result);
+}
+
+/// The keyboard follows the area, not Herdr's tab order: t2 is next in
+/// Herdr's order but sits in the other area.
+#[test]
+fn a_closing_tab_leaves_its_area_at_once_and_a_refusal_puts_it_and_the_operator_back() {
+    let (mut runtime, checkout) = two_areas_on_t1();
+    let before = drawn(&mut runtime);
+
+    close_tab(&mut runtime, "w-order:t1");
+    assert_eq!(
+        drawn(&mut runtime),
+        [
+            area("w-order:t3", &["w-order:t3"]),
+            area("w-order:t2", &["w-order:t2"])
+        ]
+    );
+    assert_eq!(
+        checkout_active_tab_id(&runtime, &checkout).as_deref(),
+        Some("w-order:t3")
+    );
+    assert_eq!(
+        runtime.snapshot().terminal.pane_id.as_deref(),
+        Some("w-order:t3:p")
+    );
+
+    answer_close(
+        &mut runtime,
+        Err(hide_herdr_client::ApiError::Remote {
+            code: "tab_not_closable".into(),
+            message: "refused".into(),
+        }),
+    );
+    assert!(
+        runtime.close_operations.is_empty(),
+        "the refusal ended the close"
+    );
+    assert_eq!(drawn(&mut runtime), before);
+    assert_eq!(
+        checkout_active_tab_id(&runtime, &checkout).as_deref(),
+        Some("w-order:t1")
+    );
+    assert_eq!(
+        runtime.snapshot().terminal.pane_id.as_deref(),
+        Some("w-order:t1:p")
+    );
+}
+
+/// Herdr focuses the closed tab's neighbour on its own; that move arrives
+/// while Hide's focus on the area's next tab is unanswered, so it is read as
+/// the answer and the operator stays where the screen went.
+#[test]
+fn an_accepted_close_stays_out_of_its_area_and_herdrs_own_next_tab_does_not_move_the_operator() {
+    let (mut runtime, checkout) = two_areas_on_t1();
+    let during = [
+        area("w-order:t3", &["w-order:t3"]),
+        area("w-order:t2", &["w-order:t2"]),
+    ];
+    close_tab(&mut runtime, "w-order:t1");
+    answer_close(&mut runtime, Ok(()));
+    assert_eq!(
+        runtime.close_operations.values().next().unwrap().phase,
+        "awaiting_topology"
+    );
+    assert_eq!(drawn(&mut runtime), during);
+
+    runtime.ingest_session(Ok(tab_order_payload(
+        "/agent-groups",
+        &["w-order:t2", "w-order:t3"],
+        &["w-order:t2", "w-order:t3"],
+        "w-order:t2",
+    )));
+    assert!(runtime.close_operations.is_empty(), "the close completed");
+    assert_eq!(drawn(&mut runtime), during);
+    assert!(layout(&runtime).tree.display("w-order:t1").is_none());
+    assert_eq!(
+        checkout_active_tab_id(&runtime, &checkout).as_deref(),
+        Some("w-order:t3")
+    );
+}
+
+/// A close of a tab the operator is not on, by its chip or by its only
+/// pane, takes the chip and leaves the operator where they are.
+#[test]
+fn closing_a_tab_in_the_background_takes_its_chip_and_leaves_the_operator_in_place() {
+    let (mut runtime, checkout) = live_setup();
+    action(
+        &mut runtime,
+        serde_json::json!({"action":"focus","tab_id":"w-order:t2"}),
+    );
+    close_tab(&mut runtime, "w-order:t3");
+    runtime.dispatch_json(&explorer_event(
+        "close_pane",
+        serde_json::json!({"pane_id": "w-order:t1:p", "confirmed": false}),
+    ));
+    assert_eq!(runtime.close_operations.len(), 2);
+    assert_eq!(drawn(&mut runtime), [area("w-order:t2", &["w-order:t2"])]);
+    assert_eq!(
+        checkout_active_tab_id(&runtime, &checkout).as_deref(),
+        Some("w-order:t2")
+    );
+    assert_eq!(
+        runtime.snapshot().terminal.pane_id.as_deref(),
+        Some("w-order:t2:p")
+    );
+}
+
+/// A close that must open a replacement shell first keeps its tab, so the
+/// area never stands empty while that shell is made.
+#[test]
+fn a_close_that_needs_a_replacement_shell_keeps_its_tab_in_place() {
+    let (runtime, _) = live_tab_order_runtime("/agent-groups");
+    let mut runtime = with_views(runtime, &views_path("agent-groups-shell"));
+    ingest(&mut runtime, &["w-order:t1"]);
+    let primary = crate::domain::WorktreeProjection {
+        repo_key: "repo".into(),
+        repo_name: "repo".into(),
+        repo_root: "/repo".into(),
+        checkout_path: "/repo".into(),
+        is_linked_worktree: false,
+    };
+    runtime
+        .herdr_worktrees
+        .insert("w-order".into(), primary.clone());
+    runtime.herdr_worktrees.insert(
+        "linked".into(),
+        crate::domain::WorktreeProjection {
+            is_linked_worktree: true,
+            ..primary
+        },
+    );
+    close_tab(&mut runtime, "w-order:t1");
+    let operation = runtime.close_operations.values().next().expect("a close");
+    assert!(operation.request.context.replacement_shell);
+    assert_eq!(drawn(&mut runtime), [area("w-order:t1", &["w-order:t1"])]);
+}

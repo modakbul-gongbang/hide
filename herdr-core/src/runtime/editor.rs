@@ -1111,25 +1111,34 @@ impl Runtime {
             return;
         }
         if let Some(checkout_id) = restore.checkout_id.as_deref() {
-            if let Some(checkout) = self
-                .snapshot
-                .navigator
-                .workspaces
-                .iter_mut()
-                .flat_map(|workspace| workspace.checkouts.iter_mut())
-                .find(|checkout| checkout.id == checkout_id)
-            {
-                checkout.active_tab_id = restore.before.active_tab_id.clone();
-            }
             match restore.before.visible_tab_id.clone() {
-                Some(tab_id) => {
-                    self.visible_tab_ids.insert(checkout_id.to_owned(), tab_id);
+                // The close moved the operator, and Herdr with them, to
+                // another tab; going back tells Herdr too.
+                Some(tab_id) if restore.after.visible_tab_id.as_ref() != Some(&tab_id) => {
+                    self.focus_close_alternative(checkout_id, tab_id);
                 }
-                None => {
-                    self.visible_tab_ids.remove(checkout_id);
+                visible => {
+                    if let Some(checkout) = self
+                        .snapshot
+                        .navigator
+                        .workspaces
+                        .iter_mut()
+                        .flat_map(|workspace| workspace.checkouts.iter_mut())
+                        .find(|checkout| checkout.id == checkout_id)
+                    {
+                        checkout.active_tab_id = restore.before.active_tab_id.clone();
+                    }
+                    match visible {
+                        Some(tab_id) => {
+                            self.visible_tab_ids.insert(checkout_id.to_owned(), tab_id);
+                        }
+                        None => {
+                            self.visible_tab_ids.remove(checkout_id);
+                        }
+                    }
+                    self.sync_active_tab_projection();
                 }
             }
-            self.sync_active_tab_projection();
         }
         self.select_terminal_pane(restore.before.terminal_pane_id.clone());
         self.snapshot.focused.pane_id = restore.before.focused_pane_id.clone();
@@ -1308,8 +1317,9 @@ impl Runtime {
     }
 
     /// Keeps the operator on a confirmed alternative as soon as a close is
-    /// approved. The alternative is chosen from the existing projection, so
-    /// this never invents geometry or follows a global Herdr focus change.
+    /// approved, and only when the closing item is the one in use. The
+    /// alternative is chosen from the existing projection, so this never
+    /// invents geometry or follows a global Herdr focus change.
     pub(super) fn move_from_closing_target(
         &mut self,
         target: &live::CloseCaptureTarget,
@@ -1321,79 +1331,109 @@ impl Runtime {
         if self.snapshot.navigator.focused_checkout_id.as_deref() != Some(checkout_id) {
             return;
         }
-        match target {
-            live::CloseCaptureTarget::Pane { pane_id } => {
-                let replacement = tab
-                    .panes
-                    .iter()
-                    .map(|pane| pane.id.as_str())
-                    .filter(|candidate| *candidate != pane_id)
-                    .find(|candidate| !self.panes_closing.contains(*candidate))
-                    .map(str::to_owned);
-                if self.snapshot.terminal.pane_id.as_deref() == Some(pane_id.as_str()) {
-                    self.select_terminal_pane(replacement);
-                }
+        if let live::CloseCaptureTarget::Pane { pane_id } = target
+            && tab.panes.iter().any(|pane| pane.id != *pane_id)
+        {
+            let replacement = tab
+                .panes
+                .iter()
+                .map(|pane| pane.id.as_str())
+                .filter(|candidate| *candidate != pane_id)
+                .find(|candidate| !self.panes_closing.contains(*candidate))
+                .map(str::to_owned);
+            if self.snapshot.terminal.pane_id.as_deref() == Some(pane_id.as_str()) {
+                self.select_terminal_pane(replacement);
             }
-            live::CloseCaptureTarget::Tab { tab_id } => {
-                let replacement = self
-                    .snapshot
-                    .navigator
-                    .workspaces
-                    .iter()
-                    .flat_map(|workspace| workspace.checkouts.iter())
-                    .find(|checkout| checkout.id == checkout_id)
-                    .and_then(|checkout| {
-                        checkout
-                            .tabs
-                            .iter()
-                            .filter(|candidate| candidate.id.as_deref() != Some(tab_id.as_str()))
-                            .filter(|candidate| {
-                                candidate.id.as_deref().is_some_and(|candidate_id| {
-                                    !self
-                                        .close_operations
-                                        .values()
-                                        .any(|operation| operation.target_id == candidate_id)
-                                })
-                            })
-                            .find_map(|candidate| candidate.id.clone())
-                    });
-                let Some(replacement) = replacement else {
-                    return;
-                };
-                if let Some(checkout) = self
-                    .snapshot
-                    .navigator
-                    .workspaces
-                    .iter_mut()
-                    .flat_map(|workspace| workspace.checkouts.iter_mut())
-                    .find(|checkout| checkout.id == checkout_id)
-                {
-                    checkout.active_tab_id = Some(replacement.clone());
-                }
-                self.visible_tab_ids
-                    .insert(checkout_id.to_owned(), replacement.clone());
-                let pane_id =
-                    self.snapshot
-                        .navigator
-                        .workspaces
-                        .iter()
-                        .flat_map(|workspace| workspace.checkouts.iter())
-                        .find(|checkout| checkout.id == checkout_id)
-                        .and_then(|checkout| {
-                            checkout.tabs.iter().find(|candidate| {
-                                candidate.id.as_deref() == Some(replacement.as_str())
-                            })
-                        })
-                        .and_then(|replacement_tab| {
-                            self.tab_focus_pane_id(
-                                &replacement,
-                                replacement_tab.panes.first().map(|pane| pane.id.clone()),
-                            )
-                        });
-                self.select_terminal_pane(pane_id);
-                self.sync_active_tab_projection();
-            }
+            return;
         }
+        // The tab's own close, or its only pane's, which takes the tab.
+        let Some(tab_id) = tab.id.as_deref() else {
+            return;
+        };
+        let in_use = self
+            .visible_tab_ids
+            .get(checkout_id)
+            .is_some_and(|id| id == tab_id)
+            || self
+                .snapshot
+                .terminal
+                .pane_id
+                .as_ref()
+                .is_some_and(|pane_id| tab.panes.iter().any(|pane| &pane.id == pane_id));
+        if !in_use {
+            return;
+        }
+        if let Some(replacement) = self.closing_tab_replacement(checkout_id, tab_id) {
+            self.focus_close_alternative(checkout_id, replacement);
+        }
+    }
+
+    /// Puts the operator on a tab the way a click on its chip does, so Herdr
+    /// is told: its own choice of tab after the close then reads as the
+    /// answer to this focus rather than as a move to follow.
+    fn focus_close_alternative(&mut self, checkout_id: &str, tab_id: String) {
+        let Some(workspace_id) = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .find(|workspace| {
+                workspace
+                    .checkouts
+                    .iter()
+                    .any(|checkout| checkout.id == checkout_id)
+            })
+            .map(|workspace| workspace.id.clone())
+        else {
+            return;
+        };
+        let prior = self.focused_visible_tab_id();
+        self.apply(Event::FocusTab(FocusTabPayload {
+            workspace_id,
+            checkout_id: checkout_id.to_owned(),
+            tab_id,
+            focus_device: false,
+        }));
+        self.agent_sleep_visit(prior.as_deref());
+    }
+
+    /// The tab the operator lands on when the tab in use closes: the one its
+    /// Workspace's Agent areas show once it has left (`shown_agent_layout`),
+    /// so the keyboard lands where the screen does; with no Agent layout, the
+    /// checkout's first tab that no close is taking.
+    fn closing_tab_replacement(&self, checkout_id: &str, tab_id: &str) -> Option<String> {
+        let (device_id, checkout) = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|workspace| {
+                workspace
+                    .checkouts
+                    .iter()
+                    .map(move |checkout| (&workspace.device_id, checkout))
+            })
+            .find(|(_, checkout)| checkout.id == checkout_id)?;
+        let key = (device_id.clone(), checkout.path.clone());
+        if let Some(layout) = self.agent_layout_of(&key) {
+            return self
+                .shown_agent_layout(&key, layout)
+                .active()
+                .filter(|id| *id != tab_id)
+                .map(str::to_owned);
+        }
+        checkout
+            .tabs
+            .iter()
+            .filter_map(|candidate| candidate.id.as_deref())
+            .filter(|candidate| *candidate != tab_id)
+            .find(|candidate| {
+                !self
+                    .close_operations
+                    .values()
+                    .any(|operation| operation.target_id == *candidate)
+            })
+            .map(str::to_owned)
     }
 
     pub(super) fn fail_close_operation(&mut self, key: &str, message: String) {
@@ -1417,6 +1457,9 @@ impl Runtime {
             );
         }
         self.clear_close_guards(&operation);
+        // Nothing was closed, so the tab returns to its place and so does the
+        // operator, as after a refusal.
+        self.restore_close_selection(operation.selection_restore.as_ref());
         self.set_reopen_notices(vec![live::ReopenNotice {
             pane_id: matches!(
                 &operation.request.target,

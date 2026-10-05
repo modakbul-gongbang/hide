@@ -72,7 +72,7 @@ Read `docs/ARCHITECTURE.md` in full before changing anything under `herdr-core/`
 - The core owns all state behind one `Mutex<Runtime>`; the shell dispatches typed events in and pulls one snapshot out when the notifier announces, and holds no authority of its own.
 - Herdr owns pane existence, split geometry, zoom, cwd, agent lifecycle and the PTY; the core owns each checkout's visible tab, the keyboard focus pane, panel visibility and text scale, and changes those on the event that asked for it, telling Herdr afterwards.
   While that notification is pending, Herdr's move is read as confirmation; with nothing pending, a move Herdr makes on its own is followed and a diagnostic records it; a refusal or a timeout keeps the core's value and records a diagnostic.
-  Zoom, splits, closes and resizes still wait for Herdr, because their geometry decides the PTY size.
+  Zoom, splits, closes and resizes still wait for Herdr, because their geometry decides the PTY size; a close that removes a whole tab waits too, but its tab leaves the Agent areas at once and returns if the close does not happen.
 - The notifier announces once per burst, and `herdr_core_snapshot` clears its latch **before** it takes the lock; clearing it after the read would swallow a change that landed during the read.
   Launch creates the core once, after the runtime resolution has finished, and never replaces it.
 - A user action is one event, not a sequence: dispatch is fire-and-forget, so four events would arrive as four frames and a refusal partway would leave the screen half moved.
