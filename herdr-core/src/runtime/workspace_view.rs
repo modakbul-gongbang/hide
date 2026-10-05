@@ -15,7 +15,7 @@ use serde::Deserialize;
 
 use super::view_areas::Reconciled;
 use super::*;
-use crate::model::{BrowserViewInventoryRow, WorkspaceViewSnapshot};
+use crate::model::{BrowserAreaScopeRow, BrowserViewInventoryRow, WorkspaceViewSnapshot};
 use crate::view_layout::DisplayKind;
 use crate::workspace_views::{self, Tool, WorkspaceView, WorkspaceViews};
 
@@ -50,6 +50,10 @@ pub(super) struct WorkspaceViewStore {
     /// Counts the layout changes made outside the reconcile, so an unchanged
     /// state costs the reconcile one comparison.
     pub(super) generation: u64,
+    /// The live catalog identities behind the browser inventory, at most
+    /// MAX_WORKSPACES saved layouts. A removed or disconnected checkout
+    /// keeps its saved layout but cannot keep a native page eligible.
+    browser_inventory_scope: Vec<WorkspaceKey>,
     /// What the last reconcile saw (`view_areas.rs`).
     pub(super) reconciled: Option<Reconciled>,
     /// The editor's active tab as the last reconcile set it; any other value
@@ -241,6 +245,7 @@ impl WorkspaceViewStore {
                 front: None,
                 width_request: None,
                 generation: 0,
+                browser_inventory_scope: Vec::new(),
                 reconciled: None,
                 derived_active: None,
                 split_requests: HashMap::new(),
@@ -567,27 +572,132 @@ impl Runtime {
         if self.track_view_bookmarks() {
             self.reconcile_view_displays();
         }
+        self.refresh_browser_inventory_scope();
         if let Some(store) = self.workspace_views.as_ref()
             && self.snapshot.browser_views_revision != Some(store.generation)
         {
-            self.snapshot.browser_views = store
-                .views
-                .workspaces
+            // Retain authority across ordinary layout changes, but not
+            // across a revoke/regrant coalesced into one outgoing frame.
+            // This bounded map is rebuilt only on a changed generation.
+            let incarnations: HashMap<_, _> = self
+                .snapshot
+                .browser_scopes
                 .iter()
-                .flat_map(|view| {
-                    view.layout
-                        .displays()
-                        .filter(|display| display.kind == DisplayKind::Browser)
-                        .map(|display| BrowserViewInventoryRow {
-                            device_id: view.device_id.clone(),
-                            path: view.path.clone(),
-                            view_id: display.id.clone(),
-                        })
+                .map(|scope| {
+                    (
+                        (
+                            scope.device_id.as_str(),
+                            scope.path.as_str(),
+                            scope.area_id.as_str(),
+                        ),
+                        scope.incarnation,
+                    )
                 })
                 .collect();
+            let mut displays = Vec::new();
+            let mut scopes = Vec::new();
+            for view in store.views.workspaces.iter().filter(|view| {
+                store
+                    .browser_inventory_scope
+                    .iter()
+                    .any(|key| key.0 == view.device_id && key.1 == view.path)
+            }) {
+                for area in view.layout.areas() {
+                    scopes.push(BrowserAreaScopeRow {
+                        device_id: view.device_id.clone(),
+                        path: view.path.clone(),
+                        area_id: area.id.clone(),
+                        incarnation: incarnations
+                            .get(&(
+                                view.device_id.as_str(),
+                                view.path.as_str(),
+                                area.id.as_str(),
+                            ))
+                            .copied()
+                            .unwrap_or(store.generation),
+                    });
+                    displays.extend(
+                        area.displays
+                            .iter()
+                            .filter(|display| display.kind == DisplayKind::Browser)
+                            .map(|display| BrowserViewInventoryRow {
+                                device_id: view.device_id.clone(),
+                                path: view.path.clone(),
+                                area_id: area.id.clone(),
+                                view_id: display.id.clone(),
+                            }),
+                    );
+                }
+            }
+            self.snapshot.browser_views = displays;
+            self.snapshot.browser_scopes = scopes;
             self.snapshot.browser_views_revision = Some(store.generation);
         }
         self.publish_workspace_view(front.as_ref());
+    }
+
+    /// Records authority transitions before an asynchronous catalog/session
+    /// update can be coalesced with a later regrant. This does not reconcile
+    /// the front tree or publish another notification.
+    pub(super) fn refresh_browser_inventory_scope(&mut self) -> bool {
+        // Compare borrowed identities without allocating on unchanged input.
+        let changed = self.workspace_views.as_ref().is_some_and(|store| {
+            !self.browser_inventory_scope().eq(store
+                .browser_inventory_scope
+                .iter()
+                .map(|key| (key.0.as_str(), key.1.as_str())))
+        });
+        if !changed {
+            return false;
+        }
+        let scope: Vec<_> = self
+            .browser_inventory_scope()
+            .map(|(device, path)| (device.to_owned(), path.to_owned()))
+            .collect();
+        let allowed: HashSet<_> = scope
+            .iter()
+            .map(|key| (key.0.as_str(), key.1.as_str()))
+            .collect();
+        // Forget the old incarnation at the authority boundary, even if no
+        // snapshot read occurs before the same checkout becomes live again.
+        self.snapshot
+            .browser_scopes
+            .retain(|row| allowed.contains(&(row.device_id.as_str(), row.path.as_str())));
+        let store = self
+            .workspace_views
+            .as_mut()
+            .expect("scope requires a store");
+        store.browser_inventory_scope = scope;
+        store.generation += 1;
+        true
+    }
+
+    /// Positive page authority follows the current connected catalog, never
+    /// a saved layout alone. The iterator is bounded by MAX_WORKSPACES (256)
+    /// and allocates only when its identity sequence changes.
+    fn browser_inventory_scope(&self) -> impl Iterator<Item = (&str, &str)> {
+        self.workspace_views
+            .as_ref()
+            .into_iter()
+            .flat_map(|store| &store.views.workspaces)
+            .filter(|view| {
+                let connected = if view.device_id == workspace::LOCAL_DEVICE_ID {
+                    self.snapshot.status.herdr.state == "connected"
+                } else {
+                    self.snapshot.status.remote.iter().any(|remote| {
+                        remote.target_id == view.device_id && remote.state == "connected"
+                    })
+                };
+                connected
+                    && self.catalog_workspaces().any(|workspace| {
+                        workspace.device_id == view.device_id
+                            && workspace
+                                .checkouts
+                                .iter()
+                                .any(|checkout| checkout.path == view.path)
+                    })
+            })
+            .map(|view| (view.device_id.as_str(), view.path.as_str()))
     }
 
     /// Reads the front Workspace's displays back the first time in this

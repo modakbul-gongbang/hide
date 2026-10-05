@@ -2,7 +2,8 @@ import { EventEmitter } from "node:events";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import { REGISTRY, type Command } from "../../../web/src/shortcuts";
 import { BROWSER_CYCLE_END_CHANNEL, BROWSER_EVENT_CHANNEL } from "../channel";
-import { BrowserViews } from "./browser";
+import { BrowserViews, type ResolvedPage } from "./browser";
+import { browserPartition } from "./browserSync";
 import type { HostLog } from "./log";
 
 const ipc = vi.hoisted(() => new Map<string, (event: unknown, value?: unknown) => void>());
@@ -11,6 +12,44 @@ vi.mock("electron", () => ({
   Menu: { getApplicationMenu: () => null },
   BrowserWindow: {}, WebContentsView: {}, session: {}, shell: {},
 }));
+
+describe("native browser load generations", () => {
+  it.each(["canonical", "superseded", "partition"] as const)("handles a delayed %s route after its loading report", async (scenario) => {
+    vi.useFakeTimers();
+    try {
+      let answer!: (route: ResolvedPage) => void;
+      const resolve = vi.fn(() => new Promise<ResolvedPage>((done) => { answer = done; }));
+      const subject = new BrowserViews({ event: vi.fn() } as unknown as HostLog, () => true, resolve, vi.fn(), vi.fn());
+      const workspace = "local\u0000/checkout";
+      const requested = "file:///var/checkout/manual.html";
+      const canonical = "file:///private/var/checkout/manual.html";
+      const loadURL = vi.fn().mockResolvedValue(undefined);
+      const page = {
+        key: "manual", workspace, id: "manual", applied: 1,
+        partition: browserPartition(workspace, requested), route: null,
+        state: { url: requested, loading: true, failure: null }, report: null,
+        view: { webContents: { loadURL } },
+      };
+      (Reflect.get(subject, "pages") as Map<string, unknown>).set(page.key, page);
+      Reflect.get(subject, "load").call(subject, page, requested);
+      await vi.advanceTimersByTimeAsync(100);
+      if (scenario === "superseded") page.applied = 2;
+      const source = scenario === "partition" ? "https://example.test/" : canonical;
+      answer({ url: source, source_url: source, load: 1 });
+      await vi.advanceTimersByTimeAsync(0);
+      if (scenario === "canonical") {
+        expect(loadURL).toHaveBeenCalledExactlyOnceWith(canonical);
+        expect(page.route).toEqual({ url: canonical, source_url: canonical, load: 1 });
+      } else {
+        expect(loadURL).not.toHaveBeenCalled();
+        if (scenario === "partition") expect(page.state).toMatchObject({ loading: false, failure: expect.any(String) });
+      }
+    } finally {
+      vi.clearAllTimers();
+      vi.useRealTimers();
+    }
+  });
+});
 
 function candidate() {
   const send = vi.fn();
