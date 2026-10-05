@@ -12,7 +12,6 @@ test.describe.configure({ timeout: 180_000 });
 test("running Workspace ports and conversation content: keyboard, jump, scroll, policy and scope", async ({ page }) => {
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  const attempts: unknown[] = [];
   const frames: { at: number; payload: Record<string, unknown> }[] = [];
   page.on("websocket", (socket) => socket.on("framereceived", ({ payload }) => { if (typeof payload === "string") { const frame = JSON.parse(payload); if (frame.payload) frames.push({ at: Date.now(), payload: frame.payload }); } }));
   let holdOld = false;
@@ -42,32 +41,18 @@ test("running Workspace ports and conversation content: keyboard, jump, scroll, 
     await globe.click();
     await expect(page.getByText("No running servers in this Workspace.")).toBeVisible({ timeout: 15_000 });
     await page.keyboard.press("Escape");
+    // The globe's name says how many listeners the core knows, so each click
+    // waits for that count: one listener opens its page at once, two open the
+    // picker.
     const first = await startServer(root); servers.push(first.child);
-    // eslint-disable-next-line hide-e2e/no-action-in-poll -- #433 retried interaction: the picker opens before the server is listed
-    await expect.poll(async () => {
-      await globe.click();
-      const opened = await page.getByRole("tab", { name: new RegExp(String(first.port)) }).waitFor({state:"visible",timeout:1000}).then(() => 1).catch(() => 0);
-      if (!opened) await page.keyboard.press("Escape");
-      return opened;
-    }, { timeout: 20_000 }).toBeGreaterThan(0);
+    await expect(globe).toHaveAccessibleName("Open server, 1 running", { timeout: 20_000 });
+    await globe.click();
+    await expect(page.getByRole("tab", { name: new RegExp(String(first.port)) })).toBeVisible();
     await expect(page.locator("[data-browser-address]")).toHaveText(`127.0.0.1:${first.port}`);
     const second = await startServer(root); servers.push(second.child);
-    // eslint-disable-next-line hide-e2e/no-action-in-poll -- #433 retried interaction: the picker opens before the second server is listed
-    try { await expect.poll(async () => {
-      if (!await page.locator("[data-server-port]").count()) await globe.click();
-      await page.locator("[data-server-port]").first().waitFor({state:"visible",timeout:1000}).catch(() => {});
-      const count = await page.locator("[data-server-port]").count();
-      attempts.push(await globe.evaluate((element) => { const box = element.getBoundingClientRect(); return { box: box.toJSON(), top: document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2)?.tagName, state: element.getAttribute("data-state"), picker: document.querySelector('[data-server-port]')?.parentElement?.textContent }; }));
-      if (count < 2) await page.keyboard.press("Escape");
-      return count;
-    }, { timeout: 20_000 }).toBe(2); } catch (error) {
-      const dir = process.env.HIDE_E2E_SCREENSHOT_DIR;
-      if (dir) {
-        fs.writeFileSync(path.join(dir, "server-poll-failure.json"), JSON.stringify({errors, attempts, body: await page.locator("body").innerText(), frames: frames.filter((row) => row.payload.rest).slice(-3)}, null, 2));
-        await page.screenshot({path:path.join(dir,"server-poll-failure.png")});
-      }
-      throw error;
-    }
+    await expect(globe).toHaveAccessibleName("Open server, 2 running", { timeout: 20_000 });
+    await globe.click();
+    await expect(page.locator("[data-server-port]")).toHaveCount(2);
     await page.keyboard.press("End");
     await expect(page.locator("[data-server-port]").last()).toBeFocused();
     await page.keyboard.press("Enter");

@@ -14,6 +14,7 @@ Web owner: `web/src/WorkspaceScreen.tsx`, `web/src/ViewAreas.tsx`, `web/src/Tool
 The toolbar spans the Workspace's full width and holds the path back (`Home / Project / Workspace`, where `Home` opens the Overview), led by the device's colored band when the Workspace is not this Mac's; a tab in Home reads `Home / ~/hide`, since Home is no project.
 Its right end holds three icons and nothing else, in this order: `Open server`, File Views and Tools.
 `Open server` (a globe): one known listener opens directly as a page in File Views, and multiple listeners open a compact keyboard picker.
+Its accessible name carries how many listeners are known (`Open server, 2 running`), so a screen reader tells a globe that opens a page at once from one that opens the picker; while the count is unknown (a remote Workspace, no connection, a discovery that is still reading or failed) the name is `Open server`, and the tooltip always says `Open server`.
 The picker shows each real bind address and port, preserves IPv4/IPv6 scope, and supports arrows, Home, End, Enter and Escape.
 An empty, loading, disconnected, failed or stale catalog gives small feedback in the same popover; a remote Workspace explicitly has no local discovery.
 Discovery never starts or stops a server, and an opened page retains the Browser View’s own connection failure and recovery controls.

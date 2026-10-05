@@ -70,8 +70,11 @@ test("server picker and conversation search in a background native window", asyn
       await theme(value);
       const globe = openServerButton(page);
       await expect(globe).toHaveCount(1);
-      // eslint-disable-next-line hide-e2e/no-action-in-poll -- #433 retried interaction: the picker opens before the servers are listed
-      await expect.poll(async () => { await globe.click(); await page.locator("[data-server-port]").first().waitFor({state:"visible",timeout:1000}).catch(() => {}); const count = await page.locator("[data-server-port]").count(); if (count !== 2) await page.keyboard.press("Escape"); return count; }, { timeout: 20_000 }).toBe(2);
+      // The globe's name says how many listeners the core knows; with two it
+      // opens the picker rather than a page.
+      await expect(globe).toHaveAccessibleName("Open server, 2 running", { timeout: 20_000 });
+      await globe.click();
+      await expect(page.locator("[data-server-port]")).toHaveCount(2);
       await shot(`native-server-picker-${value}`);
       await page.getByRole("button", { name: `127.0.0.1:${servers[0]!.port}`, exact: true }).click();
       await expect.poll(() => app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.contentView.children.map((view) => (view as unknown as { webContents?: Electron.WebContents }).webContents?.getURL()))).toContain(`http://127.0.0.1:${servers[0]!.port}/`);
