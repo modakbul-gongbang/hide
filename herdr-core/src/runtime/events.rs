@@ -550,8 +550,9 @@ pub(super) struct PathTrashPayload {
     pub(super) select_after: String,
     /// The inode the tree read when it built the prompt, so the core moves
     /// the item the modal named and refuses one that replaced it while the
-    /// modal was open. Absent when the tree could not read one.
-    #[serde(default)]
+    /// modal was open. Absent when the tree could not read one; decimal
+    /// text, as the listing sent it (`inode_text`).
+    #[serde(default, deserialize_with = "crate::files::inode_text::deserialize")]
     pub(super) inode: Option<u64>,
 }
 
