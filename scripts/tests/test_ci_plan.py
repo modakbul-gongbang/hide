@@ -165,6 +165,49 @@ class Selection(unittest.TestCase):
             result = ci.plan("pull_request", "HEAD^1", "HEAD", repo, CRATES)
             self.assertEqual(result["lanes"], ["policy"])
 
+    def test_a_merge_group_plans_every_queued_change_from_its_base(self):
+        with tempfile.TemporaryDirectory() as directory:
+            repo = Path(directory)
+            def git(*args):
+                return subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True).stdout.strip()
+            git("init", "-q", "-b", "main")
+            git("config", "user.email", "ci@example.invalid")
+            git("config", "user.name", "ci")
+            (repo / "docs").mkdir()
+            (repo / "docs/a.md").write_text("a\n")
+            git("add", ".")
+            git("commit", "-qm", "base")
+            base = git("rev-parse", "HEAD")
+            # Two queued pull requests, each merged onto the group ahead of it
+            # as the queue does with merge commits: a desktop change, then docs.
+            for branch, path in (("first", "desktop/src/preload/index.ts"), ("second", "docs/b.md")):
+                git("checkout", "-qb", branch, base)
+                (repo / path).parent.mkdir(parents=True, exist_ok=True)
+                (repo / path).write_text(f"{branch}\n")
+                git("add", ".")
+                git("commit", "-qm", branch)
+                git("checkout", "-q", "main")
+                git("merge", "-q", "--no-ff", "-m", f"merge {branch}", branch)
+            # The second group's own merge is documentation only, but main
+            # becomes both changes, so its plan has the first one's lanes too.
+            self.assertEqual(ci.plan("pull_request", "HEAD^1", "HEAD", repo, CRATES)["lanes"], ["policy"])
+            result = ci.plan("merge_group", base, "HEAD", repo, CRATES)
+            self.assertFalse(result["full"])
+            self.assertEqual(set(result["lanes"]), {"policy", "desktop-checks", "desktop-e2e"})
+            # A base the checkout does not have runs every lane.
+            missing = ci.plan("merge_group", "0" * 40, "HEAD", repo, CRATES)
+            self.assertTrue(missing["full"])
+            self.assertIn("comparison unavailable", missing["reasons"]["rust"][0])
+
+    def test_the_merge_queue_runs_verify_from_the_groups_base(self):
+        workflow = (ROOT / ".github/workflows/pr.yml").read_text()
+        self.assertRegex(workflow, r"\n  merge_group:\n    types: \[checks_requested\]\n")
+        self.assertIn("${{ github.event.merge_group.base_sha || 'HEAD^1' }}", workflow)
+        self.assertIn('--base "$BASE"', workflow)
+        # Only a pull request's newer push cancels a run; a group's ref is its
+        # own, and main's runs are the net under narrowed plans.
+        self.assertIn("cancel-in-progress: ${{ github.event_name == 'pull_request' }}", workflow)
+
 
 class NamedPaths(unittest.TestCase):
     """The paths `ci-plan.py` names; every other path still plans every lane."""

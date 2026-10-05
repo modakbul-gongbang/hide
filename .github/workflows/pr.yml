@@ -1,5 +1,5 @@
-# Every pull request and every push to main runs this workflow, and the single
-# `verify` job is what branch protection requires. Adding a lane means adding
+# Every pull request, every merge queue group and every push to main runs this
+# workflow, and the single `verify` job is what branch protection requires. Adding a lane means adding
 # it to `scripts/ci-plan.py`'s LANES and to `verify`'s `needs`; the protection
 # rule never changes.
 #
@@ -51,6 +51,10 @@ on:
   pull_request:
     # `ready_for_review` starts the run that plans and runs the lanes.
     types: [opened, synchronize, reopened, ready_for_review]
+  # The merge queue's group commit: the queued pull requests merged onto main,
+  # which `verify` checks before main moves to it.
+  merge_group:
+    types: [checks_requested]
   push:
     branches: [main]
 
@@ -58,8 +62,10 @@ permissions:
   contents: read
 
 # A new push to a pull request replaces that pull request's run. Main's runs
-# queue instead: each merge's full run is the net under the lanes a pull
-# request's plan left out, so a later merge must not cancel it.
+# are not cancelled once they start: each merge's full run is the net under the
+# lanes a plan left out. GitHub keeps one pending run per group, so in a burst
+# of merges a newer run replaces the pending one and tests their combined
+# state. A merge queue group's ref is its own, so groups never cancel each other.
 concurrency:
   group: verify-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
@@ -81,8 +87,18 @@ jobs:
           fetch-depth: 2
       - name: Choose the lanes this change needs
         id: plan
-        # The crate graph comes from `cargo metadata`, which needs no build.
-        run: python3 scripts/ci-plan.py plan --event "$GITHUB_EVENT_NAME" --draft "${{ github.event.pull_request.draft || false }}"
+        env:
+          # A merge queue group names the main commit it starts from.
+          BASE: ${{ github.event.merge_group.base_sha || 'HEAD^1' }}
+        # The crate graph comes from `cargo metadata`, which needs no build. A
+        # group's base can be several queued merges back, past the checkout's
+        # depth, so it is fetched; one that cannot be leaves the comparison
+        # unavailable, and the plan runs every lane.
+        run: |
+          if [ "$GITHUB_EVENT_NAME" = merge_group ]; then
+            git fetch --no-tags --depth=1 origin "$BASE" || echo "::warning::the merge group's base $BASE could not be fetched"
+          fi
+          python3 scripts/ci-plan.py plan --event "$GITHUB_EVENT_NAME" --base "$BASE" --draft "${{ github.event.pull_request.draft || false }}"
 
   policy:
     name: policy checks
