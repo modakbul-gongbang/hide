@@ -1868,14 +1868,14 @@ impl Runtime {
                     self.set_error("tab.invalid_label", "Tab label cannot be empty", false);
                     return true;
                 }
-                let Some(context) = self.live.as_ref().cloned() else {
+                if self.live.is_none() {
                     self.set_error(
                         "tab.control_unavailable",
                         "Tab creation requires a live Herdr connection",
                         true,
                     );
                     return true;
-                };
+                }
                 self.snapshot.navigator.focused_workspace_id = Some(workspace_id.clone());
                 self.snapshot.navigator.focused_checkout_id = Some(checkout_id);
                 self.snapshot.navigator.root_path = Some(cwd.clone());
@@ -1915,7 +1915,7 @@ impl Runtime {
                     "tab.create.requested",
                     format!("Creating {}", action.kind()),
                 );
-                if let Err(message) = live::spawn_local_control(context, action) {
+                if let Err(message) = self.submit_local_control(action) {
                     self.finish_agent_admission(&admission_path, admission_id);
                     self.set_error("tab.create_worker_failed", message, true);
                 }
@@ -2091,28 +2091,34 @@ impl Runtime {
                 {
                     return true;
                 }
-                let Some(context) = self.live.as_ref().cloned() else {
+                if self.live.is_none() {
                     self.set_error(
                         "tab.control_unavailable",
                         "Tab focus requires a live Herdr connection",
                         true,
                     );
                     return true;
-                };
-                if let Err(message) = live::spawn_local_control(
-                    context,
-                    RemoteControlAction::FocusTab {
-                        tab_id: payload.tab_id.clone(),
-                    },
-                ) {
-                    self.set_error("tab.focus_worker_failed", message, true);
-                    return true;
                 }
                 // Latest request wins. A second switch while the first is
                 // unconfirmed replaces it, so Herdr's answer to the first
                 // cannot pull the canvas back off the tab the operator is
-                // now on.
+                // now on. The wait is armed before the control is submitted,
+                // because an idle lane sends it at once and marks it sent.
+                let tab_id = payload.tab_id.clone();
                 self.await_tab_focus(PendingViewFocus::new(payload.checkout_id, payload.tab_id));
+                if let Err(message) =
+                    self.submit_local_control(RemoteControlAction::FocusTab { tab_id })
+                {
+                    // Nothing left for Herdr, so there is no answer to wait for.
+                    if self
+                        .pending_tab_focus
+                        .as_ref()
+                        .is_some_and(|pending| !pending.sent)
+                    {
+                        self.pending_tab_focus = None;
+                    }
+                    self.set_error("tab.focus_worker_failed", message, true);
+                }
                 true
             }
             Event::RenameTab(payload) => self.rename_tab(payload),

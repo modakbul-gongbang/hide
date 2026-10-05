@@ -69,6 +69,8 @@ When the behavior depends on the order of two events, the test fixes that order;
 
 - Hold one side at a real boundary and release it after the competing event has been observed.
   `focusGate` in `web/e2e/pane-focus-ordering.spec.ts` is the reference: a proxy on the private Herdr socket that holds one `pane.focus` request, forwards everything else, and lets the test release it, so every answer still comes from the pinned Herdr.
+- A rule the core decides is gated one layer lower, in `herdr-core/src/runtime/tests/control_order.rs`: `FakeHerdr` records what actually left over the socket, and the test hands the runtime each answer itself (`complete_lane_tab`, `complete_lane_pane_focus`), so late, replaced, refused and lost answers arrive in the order the test chooses.
+  Put an order rule there; an e2e spec keeps one representative journey that shows the pieces are connected.
 - Before releasing, assert the barrier the race needs, such as the number of accepted requests, so a stale snapshot or an earlier diagnostic cannot satisfy it.
 - After releasing, assert the outcome and the boundary's own record (`gate.requests`, `gate.maximum()`), which show the order the product actually saw.
 - A race the test cannot order proves nothing either way; find the boundary to gate before writing the assertion.

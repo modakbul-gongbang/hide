@@ -10,6 +10,8 @@ mod agent_sleep;
 mod agents_settings_remote;
 #[path = "tests/appearance.rs"]
 mod appearance;
+#[path = "tests/control_order.rs"]
+mod control_order;
 #[path = "tests/device_catalog.rs"]
 mod device_catalog;
 #[path = "tests/device_kit.rs"]

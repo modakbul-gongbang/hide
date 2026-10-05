@@ -31,7 +31,7 @@ use crate::recent_closed::{
     PanePlacement, resume_arguments,
 };
 use crate::remote::RusshRemoteClient;
-use crate::runtime::{PendingPaneFocusControl, Runtime};
+use crate::runtime::{LaneStart, PendingPaneFocusControl, Runtime};
 use crate::sidebar::{
     SessionLayoutPanePayload, SessionLayoutPayload, SessionLayoutRect, SessionSnapshotPayload,
 };
@@ -2157,42 +2157,67 @@ fn confirm_pane_focus_with_timeout(
     Ok(layout)
 }
 
-/// One worker owns the complete focus burst, including its coalesced successor.
-/// Every socket read is outside the runtime lock, and only the latest intent
-/// can be settled by the result carrying its serial and connection generation.
-pub(crate) fn spawn_pane_focus(
-    mut context: LiveContext,
-    mut control: PendingPaneFocusControl,
-) -> Result<(), String> {
+/// One worker runs the control lane: it sends a job, settles its result under
+/// the runtime lock, and takes the next job the lane hands back, until the
+/// lane is idle. Every socket read is outside the runtime lock, and a job's
+/// result can only settle the request carrying its own identity.
+pub(crate) fn spawn_control_lane(first: LaneStart) -> Result<(), String> {
     thread::Builder::new()
-        .name("herdr-core-pane-focus".to_owned())
+        .name("herdr-core-control-lane".to_owned())
         .spawn(move || {
+            let mut current = first;
             loop {
                 let started = Instant::now();
-                let result = execute_pane_focus(context.api_connector.as_ref(), &control.target_id);
+                let (context, finished) = match current {
+                    LaneStart::Tab { context, action } => {
+                        let result = execute_local_control(context.api_connector.as_ref(), &action);
+                        (context, Finished::Tab(action, result))
+                    }
+                    LaneStart::PaneFocus { context, control } => {
+                        let result =
+                            execute_pane_focus(context.api_connector.as_ref(), &control.target_id);
+                        (context, Finished::PaneFocus(control, result))
+                    }
+                };
                 let elapsed_ms = started.elapsed().as_millis();
                 let Some(runtime) = context.runtime.upgrade() else {
                     return;
                 };
                 let (changed, next) = match runtime.lock() {
-                    Ok(mut guard) => {
-                        guard.ingest_pane_focus_completion(control, result, elapsed_ms)
-                    }
+                    Ok(mut guard) => match finished {
+                        Finished::Tab(action, result) => {
+                            guard.complete_lane_tab(action, result, elapsed_ms)
+                        }
+                        Finished::PaneFocus(control, result) => {
+                            guard.complete_lane_pane_focus(control, result, elapsed_ms)
+                        }
+                    },
                     Err(_) => return,
                 };
                 drop(runtime);
                 if changed {
                     context.notifier.notify();
                 }
-                let Some((next_context, next_control)) = next else {
+                let Some(next) = next else {
                     return;
                 };
-                context = next_context;
-                control = next_control;
+                current = next;
             }
         })
         .map(|_| ())
-        .map_err(|error| format!("pane focus worker could not be started: {error}"))
+        .map_err(|error| format!("control lane worker could not be started: {error}"))
+}
+
+/// What a lane job produced, waiting to be settled under the runtime lock.
+enum Finished {
+    Tab(
+        RemoteControlAction,
+        Result<RemoteControlOutcome, ControlFailure>,
+    ),
+    PaneFocus(
+        PendingPaneFocusControl,
+        Result<PaneLayoutSnapshot, ControlFailure>,
+    ),
 }
 
 pub fn spawn_pane_control(context: LiveContext, action: PaneControlAction) -> Result<(), String> {
@@ -2781,41 +2806,6 @@ fn recover_local_creation(
         }
     }
     found.ok_or_else(|| "Creation is not yet confirmed".into())
-}
-
-pub fn spawn_local_control(
-    context: LiveContext,
-    action: RemoteControlAction,
-) -> Result<(), String> {
-    let worker_name = match &action {
-        RemoteControlAction::FocusTab { .. } => "herdr-core-tab-focus",
-        RemoteControlAction::CreateTab { .. } => "herdr-core-tab-create",
-        RemoteControlAction::OpenOwner { .. } => "herdr-core-owner-open",
-        RemoteControlAction::CloseTab { .. } => "herdr-core-tab-close",
-        RemoteControlAction::MoveTab { .. } => "herdr-core-tab-move",
-        RemoteControlAction::RenameTab { .. } => "herdr-core-tab-rename",
-        _ => return Err(format!("{} is not a local tab action", action.kind())),
-    };
-    thread::Builder::new()
-        .name(worker_name.to_owned())
-        .spawn(move || {
-            let started = Instant::now();
-            let result = execute_local_control(context.api_connector.as_ref(), &action);
-            let elapsed_ms = started.elapsed().as_millis();
-            let Some(runtime) = context.runtime.upgrade() else {
-                return;
-            };
-            let changed = match runtime.lock() {
-                Ok(mut guard) => guard.ingest_local_control_failure(action, result, elapsed_ms),
-                Err(_) => return,
-            };
-            drop(runtime);
-            if changed {
-                context.notifier.notify();
-            }
-        })
-        .map(|_| ())
-        .map_err(|error| format!("local tab control worker could not be started: {error}"))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
