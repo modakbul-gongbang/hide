@@ -271,3 +271,38 @@ fn a_settled_created_tab_reads_its_cwd_as_reported() {
         .map(|pane| pane.cwd.clone());
     assert_eq!(cwd.as_deref(), Some(parent.as_str()));
 }
+
+/// A pane that never reports its checkout within the birth window is believed:
+/// the clamp ends instead of hiding the shell's real folder for the life of
+/// the tab, and a record whose tab never arrives costs nothing.
+#[test]
+fn a_created_tab_whose_pane_never_reports_its_checkout_is_believed_after_the_window() {
+    let (mut runtime, _checkout_id, directory) = strip_checkout("birth-window");
+    let checkout_path = directory.to_string_lossy().into_owned();
+    let parent = directory.parent().unwrap().to_string_lossy().into_owned();
+    acknowledge_created_tab(&mut runtime, &checkout_path, "w-order:t2");
+    let cwd_of_t2 = |runtime: &Runtime| {
+        runtime
+            .snapshot()
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .flat_map(|checkout| checkout.tabs.iter())
+            .flat_map(|tab| tab.panes.iter())
+            .find(|pane| pane.id == "w-order:t2:p")
+            .map(|pane| pane.cwd.clone())
+    };
+
+    runtime.ingest_session(Ok(two_tab_payload(&checkout_path, &parent)));
+    assert_eq!(cwd_of_t2(&runtime).as_deref(), Some(checkout_path.as_str()));
+
+    // The clock is the record's own stamp, which the test moves back.
+    runtime
+        .created_tab_checkouts
+        .get_mut("w-order:t2")
+        .expect("the record")
+        .recorded_at_unix_ms = 0;
+    runtime.ingest_session(Ok(two_tab_payload(&checkout_path, &parent)));
+    assert_eq!(cwd_of_t2(&runtime).as_deref(), Some(parent.as_str()));
+}

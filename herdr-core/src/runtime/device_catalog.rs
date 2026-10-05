@@ -531,6 +531,8 @@ impl Runtime {
         self.device_recent_tabs.remove(target);
         self.device_facts.remove(target);
         self.device_worktrees.remove(target);
+        self.created_device_tabs
+            .retain(|(owner, _), _| owner != target);
     }
 }
 

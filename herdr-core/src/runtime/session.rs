@@ -3,6 +3,11 @@ use super::*;
 /// The most tabs Hide can have created and not yet seen leave Herdr. A tab
 /// past it is placed by its pane cwd and the crossing is reported.
 const CREATED_TAB_CHECKOUT_LIMIT: usize = 64;
+/// How long a created tab's pane may keep reporting a cwd outside its
+/// checkout before the report is believed: the birth value lasted about 20
+/// seconds on a loaded runner (#400), so a longer silence is the shell's own
+/// choice, or a path that never compares equal, and it is reported once.
+const CREATED_TAB_BIRTH_WINDOW_MS: u64 = 30_000;
 
 /// The checkout a tab Hide created was created for. The creation intent named
 /// it, so it outranks the pane cwd, which Herdr reports from birth and never
@@ -15,6 +20,26 @@ pub(super) struct CreatedTabCheckout {
     /// A pane of the tab has reported a cwd inside the checkout, so the cwd
     /// is no longer a birth value and is read as it is.
     settled: bool,
+    pub(super) recorded_at_unix_ms: u64,
+}
+
+impl CreatedTabCheckout {
+    /// The window for believing a birth cwd has ended without a pane ever
+    /// reporting the checkout. Reported once, by the settle that follows.
+    fn birth_window_over(&self, now_unix_ms: u64, tab_id: &str) -> bool {
+        let over =
+            now_unix_ms.saturating_sub(self.recorded_at_unix_ms) > CREATED_TAB_BIRTH_WINDOW_MS;
+        if over {
+            crate::diagnostic!(serde_json::json!({
+                "component": "session",
+                "kind": "created_tab.cwd_unsettled",
+                "tab_id": tab_id,
+                "checkout_path": self.path,
+                "window_ms": CREATED_TAB_BIRTH_WINDOW_MS,
+            }));
+        }
+        over
+    }
 }
 
 enum SessionFocusCheck {
@@ -4849,6 +4874,7 @@ impl Runtime {
                 path: path.to_owned(),
                 seen: false,
                 settled: false,
+                recorded_at_unix_ms: unix_milliseconds(),
             },
         );
         let misplaced = self
@@ -4871,17 +4897,25 @@ impl Runtime {
     /// the session as Herdr sent it: from then on the cwd is where the shell
     /// is, not where it was born.
     fn settle_created_tabs(&mut self, payload: &SessionSnapshotPayload) {
+        let now = unix_milliseconds();
         for (tab_id, created) in &mut self.created_tab_checkouts {
             if created.settled {
                 continue;
             }
-            created.settled = payload
+            let mut carried = false;
+            let mut inside = false;
+            for pane in payload
                 .layouts
                 .iter()
                 .filter(|layout| &layout.tab_id == tab_id)
                 .flat_map(|layout| &layout.panes)
-                .filter_map(|pane| Self::pane_cwd(payload, &pane.pane_id))
-                .any(|cwd| path_is_within_checkout(&cwd, &created.path));
+            {
+                carried = true;
+                if let Some(cwd) = Self::pane_cwd(payload, &pane.pane_id) {
+                    inside |= path_is_within_checkout(&cwd, &created.path);
+                }
+            }
+            created.settled = inside || (carried && created.birth_window_over(now, tab_id));
         }
     }
 
@@ -4961,6 +4995,7 @@ impl Runtime {
                 path: path.to_owned(),
                 seen: false,
                 settled: false,
+                recorded_at_unix_ms: unix_milliseconds(),
             },
         );
     }
@@ -5007,7 +5042,8 @@ impl Runtime {
                         created.settled = tab
                             .panes
                             .iter()
-                            .any(|pane| path_is_within_checkout(&pane.cwd, &created.path));
+                            .any(|pane| path_is_within_checkout(&pane.cwd, &created.path))
+                            || created.birth_window_over(unix_milliseconds(), native);
                     }
                     if created.settled {
                         continue;

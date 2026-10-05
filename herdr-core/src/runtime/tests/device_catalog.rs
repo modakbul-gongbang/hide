@@ -1880,4 +1880,10 @@ fn a_device_tab_hide_created_stays_in_its_folder_while_its_pane_reports_the_birt
     runtime.ingest_remote_session(TARGET, Ok(raw(&t.main)));
     runtime.ingest_remote_session(TARGET, Ok(raw(&t.other)));
     assert_eq!(tabs_in_main(&runtime), ["t1"]);
+
+    // Removing the device takes its records along.
+    acknowledge(&mut runtime);
+    assert!(!runtime.created_device_tabs.is_empty());
+    runtime.forget_device_catalog(TARGET);
+    assert!(runtime.created_device_tabs.is_empty());
 }

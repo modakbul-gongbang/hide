@@ -921,6 +921,17 @@ fn publish_replica(
 
     // The catalog is built here, outside the lock, from the cwd the runtime
     // will read for a created tab, not the one it was born with.
+    // Only a tab this session carries has a cwd to clamp; a record whose tab
+    // has not arrived costs a publish nothing.
+    let created_tab_clamps = created_tab_clamps
+        .into_iter()
+        .filter(|(tab_id, _)| {
+            payload
+                .layouts
+                .iter()
+                .any(|layout| &layout.tab_id == tab_id)
+        })
+        .collect::<Vec<_>>();
     let clamped;
     let birth_free = if created_tab_clamps.is_empty() {
         &payload
