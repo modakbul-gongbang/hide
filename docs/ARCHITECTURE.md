@@ -660,6 +660,14 @@ Client frames are core events (`schema_version`, `kind`, `payload`).
 HTTP serves static assets, `GET /health` (`pid`, `version`, `build`, `schema_version`, `clients`), and token-authenticated Browser route resolution and release for the desktop host.
 The same desktop authentication registers and releases its process-bound private CDP gateway at `/browser-control`; the pane's scoped `browser_connect` query discovers a checkout capability without receiving either private token (`hided/src/browser_control.rs`).
 `/browser-control/action` accepts only browser open, close and select from that registered desktop process and routes them through Workspace prepare/read/commit, not the shell's unrestricted event dispatcher.
+`hide browser` page commands reach a display through the same `/ws`: the CLI's scoped request `browser_relay` names a display, hided runs `browser_connect`'s checkout and display checks, connects to the desktop gateway itself, and answers with the display id and whether it is its area's selected View, so the capability URL never reaches the CLI (`hided/src/browser_relay.rs`).
+After the CLI claims its credential, the socket carries CDP text frames both ways until either side closes; the gateway's close code and reason reach the CLI unchanged.
+The relay runs in the connection's own task, outside `Mutex<Runtime>`, and changes no core state or snapshot wire.
+At most four relays run at once (`browser_relay_limit` past that), because each holds one of hided's eight client connections and half stay free for the shell and other clients.
+A message is at most 4 MiB and a binary frame is refused, both closing with 4009; a relay closes with 4008 after 60 seconds without a CDP text frame in either direction (pings do not count) or after five minutes whatever it carries, and a peer that does not take a frame within five seconds ends it.
+A close other than a normal one is logged as a `browser_relay` record with the display and the code.
+A device pane reaches the same `/ws` through its reverse Workspace forward, so its commands take the same path and refusals as a local pane's.
+The CDP client, the frame routing and the command flow live in `hided/src/browser_page/`, and the page-side code it evaluates in `hided/assets/browser/` ([BROWSER_DISPLAYS.md](BROWSER_DISPLAYS.md#agent-page-commands)).
 New CDP targets name their existing View area and create a distinct display there; default CLI opens retain URL deduplication and active-area placement.
 The native inventory carries each browser's area ID from the core-owned layout, including background Workspaces.
 Positive browser area scopes ride the same revisioned projection, including empty areas, and require a currently connected catalog checkout.
