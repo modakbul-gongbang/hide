@@ -105,8 +105,7 @@ jobs:
           pattern: hide-package-*
           path: packages
           merge-multiple: true
-      - name: Prepare an exact draft with append-only assets and enforced immutability
+      - name: Prepare an exact draft with append-only assets
         env:
           GH_TOKEN: ${{ github.token }}
-          HIDE_RELEASE_POLICY_TOKEN: ${{ secrets.RELEASE_POLICY_TOKEN }}
         run: node scripts/release-draft.mjs "$GITHUB_REF_NAME" "$GITHUB_SHA" packages
