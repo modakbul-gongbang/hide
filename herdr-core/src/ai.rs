@@ -381,21 +381,18 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
     fn an_unobserved_request_asks_no_provider_anything() {
         let mut reader = AiReader::new();
         let request = AiRequest {
             observing: false,
             models: models(),
         };
-        let mut answer = None;
-        for _ in 0..500 {
-            if let Some(read) = reader.read_if_due(request.clone()) {
-                answer = Some(read);
-                break;
-            }
-            std::thread::sleep(Duration::from_millis(2));
-        }
+        // The first read starts the worker; once it has ended, the next read
+        // hands its answer back.
+        let answer = reader.read_if_due(request.clone()).or_else(|| {
+            reader.inner.join_pending();
+            reader.read_if_due(request)
+        });
         let answer = answer.expect("the reader answers an unobserved request");
         assert_eq!(
             answer,

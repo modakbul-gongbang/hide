@@ -526,7 +526,6 @@ mod tests {
     use crate::model::ProjectSessionsSnapshot;
     use std::fs;
     #[test]
-    #[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
     fn drop_drains_off_that_was_still_queued_with_copied_rows() {
         let temp = tempfile::tempdir().unwrap();
         let database = temp.path().join("session-search.sqlite3");
@@ -562,20 +561,22 @@ mod tests {
                 run(worker_client, Weak::new(), ChangeNotifier::noop(), |_| {});
             })),
         };
+        // Drop raises `stop` and wakes the mailbox, so this waits on the
+        // mailbox's own condition variable rather than a time.
         let check = thread::spawn(move || {
-            loop {
-                let mailbox = client.0.0.lock().unwrap();
-                if mailbox.stop {
-                    assert_eq!(
-                        mailbox.controls.len(),
-                        1,
-                        "Off must still be queued at Drop"
-                    );
-                    break;
-                }
-                drop(mailbox);
-                thread::sleep(Duration::from_millis(1));
-            }
+            let (lock, wake) = &*client.0;
+            let (mailbox, timeout) = wake
+                .wait_timeout_while(lock.lock().unwrap(), Duration::from_secs(10), |mailbox| {
+                    !mailbox.stop
+                })
+                .unwrap();
+            assert!(!timeout.timed_out(), "Drop never raised stop");
+            assert_eq!(
+                mailbox.controls.len(),
+                1,
+                "Off must still be queued at Drop"
+            );
+            drop(mailbox);
             release.send(()).unwrap();
         });
         let started = Instant::now();
