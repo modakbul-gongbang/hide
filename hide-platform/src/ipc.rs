@@ -251,7 +251,9 @@ impl fmt::Debug for LocalListener {
 
 impl LocalListener {
     /// Binds `path`, private to the current account from the moment it
-    /// exists. `AddrInUse` when a listener there still answers; what a dead
+    /// exists. `AddrInUse` while another listener holds the path's lock
+    /// (`<path>.lock`), whatever state its queue is in, or still answers a
+    /// connect (a listener of a build that took no lock); what a dead
     /// listener left at the path is replaced.
     pub fn bind(path: &Path) -> io::Result<Self> {
         if let Some(parent) = path.parent() {

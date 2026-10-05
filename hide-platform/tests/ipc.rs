@@ -252,13 +252,28 @@ fn a_listener_with_a_full_backlog_is_still_live_to_a_second_bind() {
     const PAST_EVERY_SMALL_BACKLOG: usize = 300;
     let (_folder, path) = endpoint();
     let first = LocalListener::bind(&path).unwrap();
-    let mut queued = Vec::new();
-    while queued.len() < PAST_EVERY_SMALL_BACKLOG {
-        match LocalStream::connect(&path) {
-            Ok(client) => queued.push(client),
-            Err(_) => break,
-        }
-    }
+    let (done, finished) = mpsc::channel();
+    let flood = {
+        let path = path.clone();
+        thread::spawn(move || {
+            let mut queued = Vec::new();
+            while queued.len() < PAST_EVERY_SMALL_BACKLOG {
+                match LocalStream::connect(&path) {
+                    Ok(client) => queued.push(client),
+                    Err(error) => {
+                        let _ = done.send(());
+                        return (queued, Some(error.kind()));
+                    }
+                }
+            }
+            let _ = done.send(());
+            (queued, None)
+        })
+    };
+    // A connect that waits for room never ends the flood, so the wait is
+    // bounded as the overflow test bounds it; the queue is as full as that
+    // system lets it get.
+    let _ = finished.recv_timeout(Duration::from_secs(10));
     let error = LocalListener::bind(&path).unwrap_err();
     assert_eq!(error.kind(), std::io::ErrorKind::AddrInUse, "{error:?}");
     assert!(
@@ -269,6 +284,18 @@ fn a_listener_with_a_full_backlog_is_still_live_to_a_second_bind() {
     // The first listener still serves: it is not a replaced one.
     let closer = first.closer();
     let server = serve_lines(first);
+    let (queued, refusal) = flood.join().unwrap();
+    if std::env::consts::OS == "macos" {
+        // The case this test exists for: the system refused while the
+        // listener lived.
+        assert_eq!(
+            refusal,
+            Some(std::io::ErrorKind::ConnectionRefused),
+            "{} connects queued without the refusal #403 needs",
+            queued.len()
+        );
+        assert!(queued.len() >= IN_FLIGHT, "refused after {}", queued.len());
+    }
     for (index, mut client) in queued.into_iter().enumerate() {
         client.write_all(b"queued\n").unwrap();
         assert_eq!(read_line(&mut client), "QUEUED\n", "queued connect {index}");
@@ -278,7 +305,7 @@ fn a_listener_with_a_full_backlog_is_still_live_to_a_second_bind() {
 }
 
 #[test]
-fn a_listener_leaves_nothing_but_its_path_and_a_dropped_one_leaves_nothing() {
+fn a_dropped_listener_leaves_nothing_behind() {
     // Whatever bind uses to know a listener is alive goes with the listener.
     let (folder, path) = endpoint();
     let listener = LocalListener::bind(&path).unwrap();
