@@ -8,6 +8,7 @@ import { HostLog } from "./log";
 import { SHOW_INACTIVE_SWITCH } from "./launchSwitches";
 import { keySystemOf, systemRegistry, type Command } from "../../../web/src/shortcuts";
 import { menuBindings, menuTemplate } from "./menu";
+import { HostLanguage, languageFile } from "./language";
 
 const env = loadEnv(process.env);
 // Pinned before anything reads it: the single-instance lock, web storage and
@@ -21,7 +22,13 @@ if (!app.requestSingleInstanceLock()) {
 } else {
   const log = new HostLog(app.getPath("logs"));
   const showInactive = app.commandLine.hasSwitch(SHOW_INACTIVE_SWITCH);
-  const host = new DesktopHost(env, log, showInactive);
+  // The system's language is asked when a word is drawn: the app must be ready first.
+  const language = new HostLanguage(
+    languageFile(app.getPath("userData")),
+    () => env.systemLanguage ?? app.getPreferredSystemLanguages()[0],
+    log,
+  );
+  const host = new DesktopHost(env, log, showInactive, language);
   log.event("host.start", { packaged: app.isPackaged, version: app.getVersion(), electron: process.versions.electron, show_inactive: showInactive });
 
   app.on("second-instance", () => host.reopen("second-instance"));
@@ -32,18 +39,24 @@ if (!app.requestSingleInstanceLock()) {
   });
   app.on("before-quit", () => host.quit());
 
-  // The menu is rebuilt only when the chords it shows change.
+  // The menu is rebuilt only when the chords it shows or its language change.
   const system = keySystemOf(process.platform);
   let shown: string | null = null;
+  let current: readonly Command[] = systemRegistry(system);
   const showMenu = (registry: readonly Command[]) => {
+    current = registry;
     host.setBrowserRegistry(registry);
-    const chords = JSON.stringify(registry.map((command) => command.electron));
-    if (chords === shown) return;
-    shown = chords;
+    const key = JSON.stringify([language.language, registry.map((command) => command.electron)]);
+    if (key === shown) return;
+    shown = key;
     Menu.setApplicationMenu(
-      Menu.buildFromTemplate(menuTemplate({ appName: app.getName(), send: (id) => host.sendCommand(id), developer: !app.isPackaged, system, registry })),
+      Menu.buildFromTemplate(menuTemplate({ appName: app.getName(), send: (id) => host.sendCommand(id), developer: !app.isPackaged, system, registry, t: language.t })),
     );
   };
+  host.listenLanguage(() => {
+    showMenu(current);
+    host.languageChanged();
+  });
   host.listenBindings((reported) => {
     const resolved = menuBindings(reported, system);
     if ("refused" in resolved) {
@@ -56,7 +69,7 @@ if (!app.requestSingleInstanceLock()) {
 
   app.whenReady().then(
     () => {
-      showMenu(systemRegistry(system));
+      showMenu(current);
       host.start();
     },
     (error: unknown) => {

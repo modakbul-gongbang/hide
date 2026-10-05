@@ -14,7 +14,7 @@ import { fixtureExecutable, fixtureHomeEnv, fixtureOpenCommand, fixtureToolPath,
 import { SHOW_INACTIVE_SWITCH } from "../src/main/launchSwitches";
 
 export const DESKTOP_DIR = path.resolve(__dirname, "..");
-const REPO = path.resolve(DESKTOP_DIR, "..");
+export const REPO = path.resolve(DESKTOP_DIR, "..");
 export const HIDE_CLI = path.join(REPO, "target", "debug", fixtureExecutable("hide"));
 const isolations = new Map<string, { cleanup: () => void; candidates: Set<ChildProcess>; launching: number }>();
 const MAX_ISOLATIONS = 16;
@@ -48,6 +48,8 @@ export function isolate(herdr: Pick<HerdrFixture, "socket" | "bin"> & Partial<Pi
       ...fixtureHomeEnv(home),
       HIDE_STATE_DIR: path.join(root, "state"),
       HIDE_DESKTOP_USER_DATA_DIR: path.join(root, "user-data"),
+      // The words the host draws follow the system when no language was chosen; the run must not depend on the machine.
+      HIDE_DESKTOP_SYSTEM_LANGUAGE: "en-US",
       HIDE_CLI_PATH: HIDE_CLI,
       HIDED_UI_DIR: path.join(REPO, "web", "dist"),
       HERDR_SOCKET_PATH: herdr.socket,

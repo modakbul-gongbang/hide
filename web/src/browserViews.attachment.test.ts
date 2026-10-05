@@ -26,7 +26,7 @@ const nativeAttached = new Set<string>();
 let replayAttachments = false;
 let lastNativeEpoch: string | undefined;
 const bridge: HostBridge = {
-  kind: "electron", platform: "darwin", onCommand: () => () => {}, reportBindings() {},
+  kind: "electron", platform: "darwin", onCommand: () => () => {}, reportBindings() {}, reportLanguage() {},
   revealPath() {}, pickFolder: async () => null, probePaths: async () => [], openPath() {},
   browser: {
     sync: (state: BrowserSync) => {

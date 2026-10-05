@@ -14,7 +14,7 @@ import path from "node:path";
 import { pathToFileURL } from "node:url";
 import { app, BrowserWindow, dialog, ipcMain, screen, session, shell, type IpcMainEvent, type IpcMainInvokeEvent } from "electron";
 import type { CommandId } from "../../../web/src/shortcuts";
-import { BINDINGS_CHANNEL, COMMAND_CHANNEL, OPEN_PATH_CHANNEL, PICK_FOLDER_CHANNEL, PROBE_PATHS_CHANNEL, REVEAL_CHANNEL } from "../channel";
+import { BINDINGS_CHANNEL, COMMAND_CHANNEL, LANGUAGE_CHANNEL, OPEN_PATH_CHANNEL, PICK_FOLDER_CHANNEL, PROBE_PATHS_CHANNEL, REVEAL_CHANNEL } from "../channel";
 import { BrowserViews, type ResolvedPage } from "./browser";
 import { BrowserCdpGateway, CdpActionUncertain, parseBrowserControlResult, type CdpAction, type CdpActionResult, type CdpScope } from "./browserCdp";
 import {
@@ -36,6 +36,7 @@ import {
 } from "./cli";
 import type { DesktopEnv } from "./env";
 import { readJsonFile, writeJsonFile } from "./jsonFile";
+import type { HostLanguage } from "./language";
 import { chooseHerdr, ensureServer, parseServerStatus, serverEnvironment, type HerdrChoice } from "./herdr";
 import { loadFailureFields, type HostLog } from "./log";
 import { ChildRunner, startDetached, type ChildResult } from "./spawn";
@@ -126,6 +127,8 @@ export class DesktopHost {
     private readonly log: HostLog,
     /** `SHOW_INACTIVE_SWITCH` was passed: no window ever activates the app. */
     private readonly showInactive: boolean,
+    /** The language the host's own words are drawn in. */
+    private readonly language: HostLanguage,
   ) {}
 
   // --- lifecycle ------------------------------------------------------------
@@ -144,6 +147,7 @@ export class DesktopHost {
       // A popup that may not take the keyboard is ordered in without
       // activating the app, behind the operator's windows under the test switch.
       (window, focus) => (focus || this.showInactive ? this.present(window, focus) : window.showInactive()),
+      () => this.language.t,
     );
     this.startBrowserControl(this.browsers);
     this.listenReveal();
@@ -200,6 +204,23 @@ export class DesktopHost {
   }
 
   /**
+   * The core's explicit interface language, which the shell reports once a
+   * snapshot confirms it (null: the system's). Only this window's page on the
+   * daemon origin is heard; `apply` runs when the language in effect changed.
+   */
+  listenLanguage(apply: () => void): void {
+    ipcMain.on(LANGUAGE_CHANNEL, (event: IpcMainEvent, reported: unknown) => {
+      if (!this.fromShell(event)) {
+        this.log.event("language.refused", { reason: "sender" });
+        return;
+      }
+      const outcome = this.language.report(reported);
+      if (outcome === "refused") this.log.event("language.refused", { reason: "value" });
+      else if (outcome === "changed") apply();
+    });
+  }
+
+  /**
    * A menu's `reveal_external` (issue 324) on an Explorer, History, View tab
    * or sidebar row: the OS file manager selects the file or folder in its
    * parent folder and opens nothing, so no program on this computer starts
@@ -237,7 +258,8 @@ export class DesktopHost {
         this.log.event("pick_folder.refused", { reason: "sender" });
         return null;
       }
-      const picked = await dialog.showOpenDialog(this.window, { properties: ["openDirectory", "createDirectory"] });
+      const t = this.language.t;
+      const picked = await dialog.showOpenDialog(this.window, { title: t("native.folderPicker.title"), buttonLabel: t("native.folderPicker.button"), properties: ["openDirectory", "createDirectory"] });
       const folder = picked.canceled ? null : (picked.filePaths[0] ?? null);
       if (folder === null) {
         this.log.event("pick_folder.answered", { picked: false });
@@ -680,18 +702,45 @@ export class DesktopHost {
       return;
     }
     const hash = state.kind === "failed" ? `failed=${state.reason}` : "connecting";
-    if (window.webContents.getURL().startsWith(STATUS_PAGE_URL)) {
-      // Already on the status page: only its hash moves, which it follows itself.
+    const words = this.statusWords();
+    const shown = window.webContents.getURL();
+    if (shown.startsWith(STATUS_PAGE_URL) && new URL(shown).searchParams.get("lang") === words.lang) {
+      // Already on the status page in this language: only its hash moves, which it follows itself.
       this.load(window.webContents.executeJavaScript(`location.hash = ${JSON.stringify(hash)}`), state.kind);
       return;
     }
-    const loading = window.loadFile(STATUS_PAGE, { hash });
+    const loading = window.loadFile(STATUS_PAGE, { hash, query: words.query });
     this.statusLoad = loading;
     const settled = () => {
       if (this.statusLoad === loading) this.statusLoad = null;
     };
     loading.then(settled, settled);
     this.load(loading, state.kind);
+  }
+
+  /**
+   * The status page's sentences in the language in effect, passed in its
+   * address so the catalogs stay the one source of the words. The page has
+   * no bridge, so a language change reloads it (`render` compares `lang`).
+   */
+  private statusWords(): { query: Record<string, string>; lang: string } {
+    const t = this.language.t;
+    const query = {
+      lang: this.language.language,
+      connecting: t("native.status.connecting"),
+      failed: t("native.status.failed"),
+      retry: t("common.retry"),
+      cli_missing: t("native.status.cliMissing"),
+      start_failed: t("native.status.startFailed"),
+      no_response: t("native.status.noResponse"),
+      other_build: t("native.status.otherBuild"),
+    };
+    return { query, lang: query.lang };
+  }
+
+  /** Draws the status page again in the language now in effect; the daemon's page follows the core itself and is left alone. */
+  languageChanged(): void {
+    if (this.window?.webContents.getURL().startsWith(STATUS_PAGE_URL)) this.render();
   }
 
   private load(pending: Promise<unknown>, state: HostState["kind"]): void {
