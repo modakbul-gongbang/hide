@@ -275,19 +275,47 @@ fn an_expired_deadline_kills_the_child_and_reports_timeout() {
     });
 }
 
+/// Waits until a slow fake has created `marker`, which it does once it is
+/// running and waiting. The fake is another process, so the file is polled.
+#[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
+fn wait_for_start(marker: &std::path::Path) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while !marker.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the child never started: {}",
+            marker.display()
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// The cancel is raised only once the child is running, so it is the
+/// running child that is killed, not one still starting.
+fn cancel_once_started(marker: PathBuf) -> (CancelToken, std::thread::JoinHandle<()>) {
+    let cancel = CancelToken::new();
+    let canceller = cancel.clone();
+    let raised = std::thread::spawn(move || {
+        wait_for_start(&marker);
+        canceller.cancel();
+    });
+    (cancel, raised)
+}
+
 #[test]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn a_cancelled_request_kills_the_child() {
     with_mode("slow", || {
-        let cancel = CancelToken::new();
-        let canceller = cancel.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(300));
-            canceller.cancel();
-        });
+        let marker = scratch("started");
+        let _ = std::fs::remove_file(&marker);
+        // SAFETY: `with_mode` holds the lock every writer of FAKE_* takes.
+        unsafe { std::env::set_var("FAKE_STARTED_FILE", &marker) };
+        let (cancel, raised) = cancel_once_started(marker.clone());
         let error = backend()
             .execute(&request(Duration::from_secs(30)), &cancel)
             .unwrap_err();
+        unsafe { std::env::remove_var("FAKE_STARTED_FILE") };
+        let _ = std::fs::remove_file(&marker);
+        raised.join().unwrap();
         assert_eq!(error, AiError::Cancelled);
     });
 }
@@ -439,20 +467,15 @@ mod usage {
     }
 
     #[test]
-    #[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
     fn a_cancelled_read_kills_the_child() {
         let dir = usage_dir("slow");
-        let cancel = CancelToken::new();
-        let canceller = cancel.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(300));
-            canceller.cancel();
-        });
+        let (cancel, raised) = cancel_once_started(dir.join("usage-started"));
         let started = std::time::Instant::now();
         assert_eq!(
             usage_backend(&dir).usage_text(&cancel),
             Err(UsageError::Cancelled)
         );
+        raised.join().unwrap();
         assert!(
             started.elapsed() < Duration::from_secs(20),
             "the child was not killed"
