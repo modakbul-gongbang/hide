@@ -57,7 +57,7 @@ mod terminal_recovery;
 mod usage;
 mod view_bookmarks;
 mod view_layout;
-mod wire;
+pub mod wire;
 pub mod workspace;
 pub mod workspace_control;
 pub mod workspace_views;

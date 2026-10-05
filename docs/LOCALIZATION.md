@@ -40,8 +40,9 @@ Text that a helper composes outside a render uses the `translate` function of `c
 A module the desktop host imports (`host.ts` and everything it reaches) stays free of the translator and names a label by key, as `revealExternal.ts` does.
 Where `UI_BEHAVIOR.md` quotes shipped Korean wording (`요청`, `정리`, `맡기기`), that is the Korean catalog text; English and the other languages read their own catalog entries.
 Sentences the core sends as data (a `reason`, `message` or `status_label` in a snapshot) are not translated by the client; they remain a boundary until the core sends codes the catalogs can name.
-Remaining #339 work: phone screens and push notifications, and native host menus and connection screens.
-Native or closed-window consumers may retain only the last core-confirmed explicit choice; they must resolve an unset choice on their own host.
+The desktop host draws its native menu, its role items (Undo, Quit, Services and the rest, labeled explicitly because the system's own follow the OS language), the connection screen, the folder picker and the browser display dialogs from the same catalogs (`native.*`, `commands.*`).
+It keeps only the last core-confirmed explicit choice in its profile (`interface-language.json`) and resolves an unset choice on its own host, as this document requires of any native or closed-window consumer; `ARCHITECTURE.md`, The desktop host, owns the details.
+Remaining #339 work: phone screens and push notifications.
 The issue stays open until those integrations and four-language native evidence are complete.
 
 ## Verification owners
@@ -51,4 +52,5 @@ The issue stays open until those integrations and four-language native evidence 
 It checks shared choices, four-language headings, refresh, daemon restart, system reset, unsupported-system fallback and invalid-store diagnostics.
 It also checks Overview scope labels, sidebar tabs, navigation command labels and unchanged shortcut keycaps in all four languages.
 Catalog, translator and locale unit tests remain beside their modules.
+`desktop/src/main/language.test.ts` and `menu.test.ts` hold the host's resolution, persistence and four-language menu labels, and `desktop/e2e/language.spec.ts` drives the real app: stored choices in all four languages before any daemon answers, the system fallback, and a choice made in Settings relabeling the menu, persisting and returning to the system language.
 Run artifacts stay under `agents/runs/`; browser checks do not establish native menu or phone behavior.

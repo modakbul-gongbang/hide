@@ -15,6 +15,7 @@ fn issue(number: u32) -> IssueSnapshot {
         created_at_unix_ms: None,
         closed_at_unix_ms: None,
         blocked_by: Vec::new(),
+        sub_issues: Default::default(),
     }
 }
 fn issue_runtime() -> Runtime {

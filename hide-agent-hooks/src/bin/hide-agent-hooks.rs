@@ -226,6 +226,7 @@ fn memory_output_before_deadline(
 }
 
 #[cfg(unix)]
+#[allow(clippy::disallowed_methods)] // a production wait, not test code
 fn read_stdin_before_deadline(deadline: Instant) -> Option<(Vec<u8>, bool)> {
     use std::os::fd::AsRawFd;
 

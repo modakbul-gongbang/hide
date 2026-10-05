@@ -83,8 +83,10 @@ async function launch(herdr: HerdrFixture, label: string, dir: string, home: str
     child.once("close", () => log.end());
   }
   const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
-  const { stop, disown } = ownUntilWorkerExit(() => {
-    child.kill();
+  // Panes Herdr started under the home keep their working folders locked on
+  // Windows until its server's processes are gone, so the daemon's directory
+  // (the home is inside it) is removed by Herdr's stop, after them.
+  const removeDir = () => {
     // The daemon may still be writing its state file (and, with S3, staged
     // files) as it dies; removing the directory under it fails with ENOTEMPTY.
     for (let attempt = 0; attempt < 40; attempt += 1) {
@@ -98,6 +100,10 @@ async function launch(herdr: HerdrFixture, label: string, dir: string, home: str
       }
     }
     fs.rmSync(dir, { recursive: true, force: true });
+  };
+  const { stop, disown } = ownUntilWorkerExit(() => {
+    child.kill();
+    herdr.afterStop(removeDir);
   });
   for (let i = 0; i < 50; i += 1) {
     if (spawnFailed) {

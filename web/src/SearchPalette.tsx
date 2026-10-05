@@ -1,4 +1,4 @@
-import { CircleDotIcon, FolderIcon, GitBranchIcon, GitPullRequestIcon, LoaderCircleIcon, SearchIcon, ServerIcon, TriangleAlertIcon, ChevronRightIcon } from "lucide-react";
+import { CircleDotIcon, FolderIcon, GlobeIcon, GitBranchIcon, GitPullRequestIcon, LoaderCircleIcon, SearchIcon, ServerIcon, TriangleAlertIcon, ChevronRightIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { useEffect, useLayoutEffect, useMemo, useState } from "react";
 import type { Actions } from "./actions";
@@ -7,9 +7,10 @@ import { DeviceChip } from "./components/device-chip";
 import { Command, CommandDialog, CommandGroup, CommandInput, CommandItem, CommandList } from "./components/ui/command";
 import { Kbd } from "./components/ui/kbd";
 import { frontTarget, relationRows, relationsOf, type Relations } from "./relations";
-import { filterEntries, githubEntries, groupEntries, recentEntries, GITHUB_GROUP, RECENT_GROUP, RELATED_GROUP, searchEntries, type SearchEntry, type SearchSection, type Tone } from "./search";
+import { filterEntries, githubEntries, groupEntries, openUrlEntry, recentEntries, GITHUB_GROUP, RECENT_GROUP, RELATED_GROUP, searchEntries, type SearchEntry, type SearchSection, type Tone } from "./search";
 import { detailOf, type Detail } from "./searchDetail";
 import { githubRow, hasGithubProject, ownAnswer, projectRead, projectToRead, startsSearch, type GithubRow, type ProjectRead } from "./searchGithub";
+import { browserBridge } from "./host";
 import { frontCheckout } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
@@ -103,10 +104,13 @@ export function SearchPalette({ actions }: { actions: Actions }) {
 
   const sections: SearchSection[] = useMemo(() => {
     if (!trimmed) return [];
-    const found = groupEntries(filterEntries(entries, trimmed));
+    // A page opens in the desktop app's View area, so a browser tab or a screen without a Workspace in front lists the row with the reason.
+    const unavailable = !browserBridge() ? t("search.openUrlDesktopOnly") : !front.checkout ? t("search.openUrlNoWorkspace") : null;
+    const link = openUrlEntry(trimmed, unavailable, t);
+    const found = [...(link ? [{ group: link.group, entries: [link] }] : []), ...groupEntries(filterEntries(entries, trimmed))];
     const searched = answer?.phase === "ready" ? githubEntries(answer.results, entries, t) : [];
     return searched.length > 0 ? [...found, { group: GITHUB_GROUP, entries: searched }] : found;
-  }, [entries, trimmed, answer, t]);
+  }, [entries, trimmed, answer, front, t]);
 
   const relatedRows = useMemo(() => (trimmed || !related ? [] : relationRows(related)), [trimmed, related]);
   // Recent follows Related on the empty query and leaves out the checkouts already on screen: the one in front and every one Related lists (PRD cmdk-recent B4).
@@ -134,7 +138,7 @@ export function SearchPalette({ actions }: { actions: Actions }) {
     close();
     switch (entry.kind) {
       case "command":
-        return actions.openStartPanel();
+        return entry.command === "open_url" && entry.url ? actions.openBrowser(entry.url) : actions.openStartPanel();
       case "device":
         return entry.deviceId ? actions.focusDevice(entry.deviceId) : undefined;
       case "agent":
@@ -249,7 +253,7 @@ export function SearchPalette({ actions }: { actions: Actions }) {
 function EntryIcon({ entry }: { entry: SearchEntry }) {
   if (entry.kind === "agent") return <AgentMark kind={entry.agentKind} />;
   const Icon =
-    entry.kind === "project" ? FolderIcon : entry.kind === "checkout" ? GitBranchIcon : entry.kind === "device" ? ServerIcon : entry.kind === "issue" ? CircleDotIcon : entry.kind === "pr" ? GitPullRequestIcon : ChevronRightIcon;
+    entry.command === "open_url" ? GlobeIcon : entry.kind === "project" ? FolderIcon : entry.kind === "checkout" ? GitBranchIcon : entry.kind === "device" ? ServerIcon : entry.kind === "issue" ? CircleDotIcon : entry.kind === "pr" ? GitPullRequestIcon : ChevronRightIcon;
   const tone = entry.kind === "issue" || entry.kind === "pr" ? TONE_CLASS[entry.status?.tone ?? "muted"] : "";
   return (
     <span className={`flex w-(--size-agent-badge-compact) shrink-0 justify-center ${tone}`} aria-hidden="true">

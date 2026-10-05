@@ -4,14 +4,13 @@ import net from "node:net";
 import path from "node:path";
 import { herdrHasFocus, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
+import { localEndpoint } from "./platform-fixture";
 import { enterWorkspace, screenshot } from "./wire";
 
 /** Holds one request at the real socket boundary, released by the test's
  * completed user-click burst. Every response still comes from pinned Herdr. */
 async function focusGate(herdr: HerdrFixture) {
   const socket = path.join(herdr.root, "focus.sock");
-  // Herdr maps a filesystem path to the Windows named-pipe namespace.
-  const endpoint = (address: string) => process.platform === "win32" ? `\\\\.\\pipe\\${address}` : address;
   const clientSocket = socket.replace(/\.sock$/, "-client.sock");
   const peers = new Set<net.Socket>();
   const requests: string[] = [];
@@ -39,7 +38,7 @@ async function focusGate(herdr: HerdrFixture) {
         maximum = Math.max(maximum, ++active);
       }
       const forward = (received?: () => void, failed?: (error: Error) => void) => {
-        const upstream = net.connect(endpoint(herdr.socket), () => upstream.write(buffer));
+        const upstream = net.connect(localEndpoint(herdr.socket), () => upstream.write(buffer));
         peers.add(upstream);
         upstream.on("close", () => peers.delete(upstream));
         upstream.on("error", (error) => { client.destroy(); failed?.(error); });
@@ -64,7 +63,7 @@ async function focusGate(herdr: HerdrFixture) {
   const markers: string[] = [];
   const listen = (listener: net.Server, address: string) => new Promise<void>((resolve, reject) => {
     listener.once("error", reject);
-    listener.listen(endpoint(address), resolve);
+    listener.listen(localEndpoint(address), resolve);
   });
   const stop = async () => {
     for (const peer of peers) peer.destroy();
@@ -77,7 +76,7 @@ async function focusGate(herdr: HerdrFixture) {
       // HERDR_SOCKET_PATH takes precedence over a client-only override.
       // Forward the CLI's derived endpoint as bytes, without JSON gating.
       const clientServer = net.createServer((client) => {
-        const upstream = net.connect(endpoint(herdr.socket.replace(/\.sock$/, "-client.sock")));
+        const upstream = net.connect(localEndpoint(herdr.socket.replace(/\.sock$/, "-client.sock")));
         for (const peer of [client, upstream]) {
           peers.add(peer);
           peer.on("close", () => { peers.delete(peer); client.destroy(); upstream.destroy(); });
@@ -180,14 +179,6 @@ function observeFocusFrames(page: Page) {
     }),
   };
 }
-
-// Headless Chromium composites in software, so each frame of xterm's WebGL
-// canvas is read back synchronously on the page's main thread (ReadPixels in
-// the layer commit), up to half a second per frame in a local trace. Those
-// stalls delay clicks and snapshot frames inside the held request's real
-// five-second budget. Focus does not depend on the terminal renderer, so these
-// cases run the DOM renderer the shell falls back to when WebGL is missing.
-test.use({ launchOptions: { args: ["--disable-webgl"] } });
 
 // Both cases exercise real terminal input/focus through the platform's Herdr.
 test("rapid pane clicks coalesce behind one request and leave keys on the last pane", { tag: "@platform" }, async ({ page }) => {

@@ -17,6 +17,7 @@ import path from "node:path";
 import { claudeProjects, setFixtureSession, startHerdr, writeFixtureTranscript } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace } from "../../web/e2e/wire";
 import { isolate, launchShell, test } from "./fixture";
+import { compositorPresents, quietFor } from "../../web/e2e/wait";
 
 const A = "세션 A의 한글 작업";
 const A_REPLY = "현재 세션 답변 요청";
@@ -80,7 +81,7 @@ test("a label belongs to its session: never shown for another, restored for its 
       const dir = process.env.HIDE_E2E_SCREENSHOT_DIR;
       if (!dir) return;
       fs.mkdirSync(dir, { recursive: true });
-      await page.waitForTimeout(200);
+      await compositorPresents(page);
       execFileSync("/usr/sbin/screencapture", ["-x", "-o", "-l", window.source.split(":")[1]!, path.join(dir, `session-labels-${name}.png`)]);
     };
     const tab = page.locator(`[data-tab="${herdr.tab}"]`);
@@ -105,7 +106,7 @@ test("a label belongs to its session: never shown for another, restored for its 
     // session the pane no longer has, and is never drawn.
     setFixtureSession(herdr, pane, "session-b");
     await expect(tab).toContainText(B, { timeout: 30_000 });
-    await page.waitForTimeout(5_000);
+    await quietFor(page, 5_000, "the replaced session's late answer is never drawn");
     await expect(tab).toContainText(B);
     expect(await forbiddenSeen(page)).toBe(0);
     await capture("b");
@@ -127,7 +128,7 @@ test("a label belongs to its session: never shown for another, restored for its 
     run.hide(["stop"]);
     ({ page, window } = await open());
     await expect(page.locator(`[data-tab="${herdr.tab}"]`)).toContainText(A, { timeout: 30_000 });
-    await page.waitForTimeout(2_000);
+    await quietFor(page, 2_000, "no later answer replaces the drawn label");
     expect(answered()).toBe(before);
     await capture("restarted");
   } finally {

@@ -90,6 +90,7 @@ fn start_within(
     }
 }
 
+#[allow(clippy::disallowed_methods)] // a production wait, not test code
 fn wait_for_shell(
     connector: &dyn ApiConnector,
     correlation_id: &str,

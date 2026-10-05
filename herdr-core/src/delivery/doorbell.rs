@@ -55,6 +55,7 @@ pub(crate) fn eligible(observation: &Observation, now: u64) -> bool {
         )
 }
 
+#[allow(clippy::disallowed_methods)] // a production wait, not test code
 pub(crate) fn run(runtime: Weak<Mutex<Runtime>>, client: Client, stop: Arc<AtomicBool>) {
     // Both maps are bounded by the <=1024 pending letters in this pass.
     // A refusal is retried only after state/input changes, never by screen diff.

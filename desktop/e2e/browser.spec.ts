@@ -15,6 +15,7 @@ import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { countSent, enterWorkspace } from "../../web/e2e/wire";
 import { fitWindow, hostLog, isolate, launch, NEEDS_FOCUS, relaunch, screenshot, shellPage, test, type Isolated } from "./fixture";
+import { compositorPresents, quietFor } from "../../web/e2e/wait";
 
 test.describe.configure({ timeout: 240_000 });
 test.use({ actionTimeout: 15_000 });
@@ -502,8 +503,9 @@ test("browser: waiting for a hidden page does not take the operator's keyboard t
   ({ app } = await launch(run.env));
   const page = await app.firstWindow();
   await enterWorkspace(page, "fixture");
-  const focused = await page.locator('[data-pane-view][data-focused="true"]').getAttribute("data-pane-view");
-  expect(focused).toBeTruthy();
+  const focusedLocator = page.locator('[data-pane-view][data-focused="true"]');
+  await expect(focusedLocator).toHaveAttribute("data-pane-view", /./);
+  const focused = await focusedLocator.getAttribute("data-pane-view");
   const hidden = await openFromCli(`${origin}/b.html`, ["--wait"]);
   expect(hidden).toMatchObject({ status: 2, ok: false, applied: "applied", reason: "page_wait_timeout", page: { state: "pending" } });
   expect(await cliFromPane(["view", "status", hidden.view_id as string])).toMatchObject({ status: 0, ok: true, view: { page: { state: "pending" } } });
@@ -666,7 +668,7 @@ test("new-tab: empty page creates no native renderer and address loads in the sa
   await expect.poll(async () => (await views()).filter((view) => view.visible).length).toBe(0);
   await screenshot(page, "new-tab-native-empty-shell");
   // Let macOS present the shell frame before capturing this background window.
-  await page.waitForTimeout(500);
+  await compositorPresents(page);
   await windowShot("new-tab-native-empty");
   await address.fill(`${origin}/b.html`);
   await address.press("Enter");
@@ -795,6 +797,7 @@ test("area cycle native: page input previews one exact area, releases once and c
     // native focus alone drew nothing.
     const admitted = async () => (await viewOf(url)).visible && (await page.evaluate((id) =>
       document.querySelector("[data-keyboard-area=true] [data-view-tab-bar] [aria-selected=true]")?.getAttribute("data-display") === id, displayId));
+    // eslint-disable-next-line hide-e2e/no-action-in-poll -- #433 retried interaction: native focus lands after the page is shown
     await expect.poll(async () => {
       await app!.evaluate(({ app: electron, BrowserWindow }, url) => {
         const window = BrowserWindow.getAllWindows()[0]!;
@@ -830,7 +833,7 @@ test("area cycle native: page input previews one exact area, releases once and c
   await expect(page.locator("[data-cycle]")).toHaveCount(0);
   await expect(tab(page, "Page B")).toHaveAttribute("aria-selected", "true");
   await expect.poll(() => sent.get("view_layout") ?? 0).toBe(commits + 1);
-  await page.waitForTimeout(300);
+  await quietFor(page, 300, "no further layout commit follows");
   expect(sent.get("view_layout") ?? 0).toBe(commits + 1);
   expect(await inPage(current, "window.tabKeys")).toBe(0);
   await expect.poll(async () => (await zoomOf(previous)).focused).toBe(true);
@@ -939,6 +942,7 @@ test("zoom: the text-size commands zoom a focused page in Chrome's steps and a p
   // Chrome's steps, the page keeps the keyboard, and no text size moves. A
   // page holds the keyboard only in the key window, so this test's window
   // comes to the front.
+  // eslint-disable-next-line hide-e2e/no-action-in-poll -- #433 retried interaction: native focus lands after the page is shown
   await expect
     .poll(() =>
       app!.evaluate(({ app: electron, BrowserWindow }, url) => {
@@ -963,7 +967,7 @@ test("zoom: the text-size commands zoom a focused page in Chrome's steps and a p
     child.webContents.sendInputEvent({ type: "keyDown", keyCode: "=", modifiers: ["meta", "shift"] });
   }, pageA);
   await expect.poll(async () => (await zoomOf(pageA)).factor).toBe(1.1);
-  await page.waitForTimeout(300);
+  await quietFor(page, 300, "the zoom factor holds");
   expect(textScales(), "a text size changed while the page held the keyboard").toBe(0);
 
   // With the shell holding the keyboard, the same command sizes the terminal's text and leaves the page alone.

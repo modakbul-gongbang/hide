@@ -74,6 +74,7 @@ pub struct AppState {
     pub token: Arc<String>,
     pub pane_capabilities: Arc<Registry>,
     pub browser_routes: Arc<crate::browser_routes::BrowserRoutes>,
+    pub browser_control: Arc<crate::browser_control::BrowserControl>,
     pub herdr_socket: Option<PathBuf>,
     pub allowed_origins: Arc<HashSet<String>>,
     pub clients: Arc<AtomicUsize>,
@@ -151,12 +152,23 @@ impl CloseReason {
 }
 
 pub fn router(state: AppState) -> Router {
+    let browser_control_limit = axum::extract::DefaultBodyLimit::max(16 * 1024);
     Router::new()
         .route("/health", get(health))
         .route("/ws", get(ws_upgrade))
         .route(
             "/browser-route",
             post(resolve_browser_route).delete(release_browser_route),
+        )
+        .route(
+            "/browser-control",
+            post(register_browser_control)
+                .delete(release_browser_control)
+                .layer(browser_control_limit),
+        )
+        .route(
+            "/browser-control/action",
+            post(browser_control_action).layer(browser_control_limit),
         )
         .route("/", get(static_asset))
         .route("/assets/{*path}", get(static_asset))
@@ -286,6 +298,123 @@ async fn release_browser_route(
         )
         .await;
     StatusCode::NO_CONTENT.into_response()
+}
+
+fn browser_control_failure((reason, next_action): crate::browser_control::Failure) -> Response {
+    eprintln!(
+        "{}",
+        json!({"component":"browser_control","kind":"request.refused","reason":reason})
+    );
+    (
+        StatusCode::CONFLICT,
+        axum::Json(json!({"ok":false,"reason":reason,"next_action":next_action})),
+    )
+        .into_response()
+}
+
+async fn register_browser_control(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::Json(request): axum::Json<crate::browser_control::Registration>,
+) -> Response {
+    if !browser_route_authorized(&headers, &state) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    match state.browser_control.register(request) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(failure) => browser_control_failure(failure),
+    }
+}
+
+async fn release_browser_control(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::Json(request): axum::Json<crate::browser_control::Registration>,
+) -> Response {
+    if !browser_route_authorized(&headers, &state) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    match state.browser_control.release(&request) {
+        Ok(()) => StatusCode::NO_CONTENT.into_response(),
+        Err(failure) => browser_control_failure(failure),
+    }
+}
+
+/// A desktop gateway never writes View state itself. Its authenticated,
+/// scoped page action uses the same prepare/read/commit boundary as hide CLI.
+async fn browser_control_action(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    axum::Json(request): axum::Json<crate::browser_control::BrowserAction>,
+) -> Response {
+    use herdr_core::workspace_control::{ActionPreparation, Query};
+    if !browser_route_authorized(&headers, &state) {
+        return StatusCode::UNAUTHORIZED.into_response();
+    }
+    if !request.valid() {
+        return StatusCode::BAD_REQUEST.into_response();
+    }
+    let slot = match state.browser_control.acquire() {
+        Ok(slot) => slot,
+        Err(failure) => return browser_control_failure(failure),
+    };
+    let result = tokio::task::spawn_blocking(move || {
+        let _slot = slot;
+        if state.desktop_renderers.load(Ordering::SeqCst) == 0 {
+            return Err(("browser_unsupported", "Open the Hide desktop app and retry"));
+        }
+        let caller = state
+            .browser_control
+            .caller(request.owner_pid, &request.checkout_path)?;
+        let source = state
+            .core
+            .workspace_query(&request.device_id, &caller, Query::ViewList)
+            .map_err(|refusal| (refusal.reason, refusal.next_action))?;
+        let action = request.command(&source)?;
+        let preparation = state
+            .core
+            .workspace_prepare_action(
+                &request.device_id,
+                &caller,
+                &source.context,
+                &request.request_id,
+                &action,
+            )
+            .map_err(|refusal| (refusal.reason, refusal.next_action))?;
+        let material = match preparation {
+            ActionPreparation::Cached(result) => {
+                return result.map_err(|refusal| (refusal.reason, refusal.next_action));
+            }
+            ActionPreparation::Ready => {
+                request.validate_scope(&source)?;
+                Ok(None)
+            }
+            ActionPreparation::Read(read) => {
+                request.validate_scope(&source)?;
+                read.read().map(Some)
+            }
+        };
+        state
+            .core
+            .workspace_action(
+                &request.device_id,
+                &caller,
+                &source.context,
+                &request.request_id,
+                action,
+                material,
+            )
+            .map_err(|refusal| (refusal.reason, refusal.next_action))
+    })
+    .await;
+    match result {
+        Ok(Ok(result)) => axum::Json(json!({"ok":true,"result":result})).into_response(),
+        Ok(Err(failure)) => browser_control_failure(failure),
+        Err(_) => browser_control_failure((
+            "browser_control_unavailable",
+            "Reconnect the desktop app and retry",
+        )),
+    }
 }
 
 fn idle_remaining_secs(state: &AppState) -> Option<u64> {
@@ -755,6 +884,7 @@ async fn scoped_client_loop(
     enum ScopedRequest {
         Query(herdr_core::workspace_control::Query),
         Action(herdr_core::workspace_control::Action),
+        BrowserConnect(Option<String>),
         Delivery(herdr_core::delivery::Command, Option<String>),
     }
     let previous = state.clients.fetch_add(1, Ordering::SeqCst);
@@ -777,6 +907,15 @@ async fn scoped_client_loop(
                             Some("view_list") => Some(ScopedRequest::Query(
                                 herdr_core::workspace_control::Query::ViewList,
                             )),
+                            Some("browser_connect") => match value.get("display_id") {
+                                None | Some(Value::Null) => {
+                                    Some(ScopedRequest::BrowserConnect(None))
+                                }
+                                Some(Value::String(id)) if !id.is_empty() && id.len() <= 256 => {
+                                    Some(ScopedRequest::BrowserConnect(Some(id.clone())))
+                                }
+                                _ => None,
+                            },
                             _ => None,
                         },
                         Some("workspace_action") => {
@@ -828,6 +967,7 @@ async fn scoped_client_loop(
                         let registry = Arc::clone(&state.pane_capabilities);
                         let renderers = Arc::clone(&state.renderers);
                         let desktop_renderers = Arc::clone(&state.desktop_renderers);
+                        let browser_control = Arc::clone(&state.browser_control);
                         let herdr_socket = state.herdr_socket.clone();
                         let query_token = token.clone();
                         let command_request_id = request_id.clone();
@@ -842,6 +982,20 @@ async fn scoped_client_loop(
                                 ));
                             }
                             let result = match command {
+                                ScopedRequest::BrowserConnect(display_id) => {
+                                    if desktop_renderers.load(Ordering::SeqCst) == 0 {
+                                        return Err(("browser_unsupported".to_owned(), "Open the Hide desktop app and retry"));
+                                    }
+                                    let result = core.workspace_query(&cap.context.device_id, &cap.pane_id,
+                                        herdr_core::workspace_control::Query::ViewList)
+                                        .map_err(|refusal| (refusal.reason.to_owned(), refusal.next_action))?;
+                                    if result.context != cap.context {
+                                        let (reason, next_action) = cap.changed_refusal();
+                                        return Err((reason.to_owned(), next_action));
+                                    }
+                                    browser_control.connect(&result, display_id.as_deref())
+                                        .map_err(|(reason, next_action)| (reason.to_owned(), next_action))?
+                                }
                                 ScopedRequest::Delivery(command, hint) => {
                                     core.prepare_delivery(&cap.context.device_id, &cap.pane_id, &cap.context, hint, command)
                                         .and_then(|prepared| prepared.run(Duration::from_secs(5)))
@@ -1030,7 +1184,7 @@ fn start_device_read(
 
 /// Constant in the token's length, so a byte-by-byte mismatch does not leak
 /// how much of the token a caller guessed.
-fn token_matches(offered: &str, expected: &str) -> bool {
+pub(crate) fn token_matches(offered: &str, expected: &str) -> bool {
     use subtle::ConstantTimeEq;
     offered.len() == expected.len() && offered.as_bytes().ct_eq(expected.as_bytes()).into()
 }
@@ -2462,7 +2616,12 @@ fn browser_url(boundary: &Boundary, event: &mut Value, kind: &str) -> Option<Val
     let Some((path, suffix)) = crate::file_url::file_path(&raw) else {
         return Some(refused(kind, &raw, Refusal::InvalidPath));
     };
-    match boundary.resolve_target(&path) {
+    let checked = if kind == "browser_state" {
+        boundary.resolve_browser_report(&path)
+    } else {
+        boundary.resolve_target(&path)
+    };
+    match checked {
         Ok(real) => {
             let url = crate::file_url::file_url(&hide_platform::path::to_wire_lossy(&real), suffix);
             event["payload"]["url"] = Value::String(url);
@@ -3175,6 +3334,86 @@ mod tests {
             assert_eq!(apply_boundary(&boundary, &mut event), None);
             assert_eq!(event, before);
         }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_browser_file_report_keeps_its_load_through_a_registered_root_alias() {
+        let home = tempfile::tempdir().unwrap();
+        let physical = home.path().join("physical");
+        let alias = home.path().join("alias");
+        std::fs::create_dir(&physical).unwrap();
+        std::os::unix::fs::symlink(&physical, &alias).unwrap();
+        let checkout = alias.join("checkout");
+        std::fs::create_dir(&checkout).unwrap();
+        std::fs::write(checkout.join("manual.html"), "<title>Manual file</title>").unwrap();
+        let boundary = Boundary::new(home.path()).unwrap();
+        boundary.set_roots(vec![
+            crate::boundary::Root {
+                workspace_id: "w0".to_owned(),
+                checkout_id: "c0".to_owned(),
+                path: alias.clone(),
+            },
+            crate::boundary::Root {
+                workspace_id: "w1".to_owned(),
+                checkout_id: "c1".to_owned(),
+                path: checkout.clone(),
+            },
+        ]);
+        let native = checkout.join("manual.html").canonicalize().unwrap();
+        let native_url = crate::file_url::file_url(&native.display().to_string(), "#loaded");
+        let checked_url = crate::file_url::file_url(
+            &checkout.join("manual.html").display().to_string(),
+            "#loaded",
+        );
+        let mut report = json!({"schema_version": 2, "kind": "browser_state", "payload": {
+            "workspace": {"device_id": "local", "path": checkout},
+            "display_id": "d1", "url": native_url, "title": "Manual file",
+            "load": 7, "loading": false, "failure": null, "present": true,
+        }});
+        assert_eq!(apply_boundary(&boundary, &mut report), None);
+        assert_eq!(report["payload"]["url"], checked_url);
+        assert_eq!(report["payload"]["load"], 7);
+        assert_eq!(report["payload"]["loading"], false);
+
+        // Report spelling support grants no new file-open authority.
+        let mut open = json!({"schema_version": 2, "kind": "browser_open", "payload": {
+            "url": native_url,
+        }});
+        assert!(apply_boundary(&boundary, &mut open).is_some());
+
+        // An unrelated path still cannot become a browser load report.
+        std::fs::write(home.path().join("secret.html"), "outside").unwrap();
+        let outside =
+            crate::file_url::file_url(&home.path().join("secret.html").display().to_string(), "");
+        std::os::unix::fs::symlink(
+            home.path().join("secret.html"),
+            checkout.join("escape.html"),
+        )
+        .unwrap();
+        let escape = crate::file_url::file_url(
+            &native
+                .parent()
+                .unwrap()
+                .join("escape.html")
+                .display()
+                .to_string(),
+            "",
+        );
+        for url in [outside, escape] {
+            report["payload"]["url"] = Value::String(url);
+            let answer = apply_boundary(&boundary, &mut report).expect("outside file refused");
+            assert_eq!(answer["payload"]["reason"], Refusal::OutsideCheckout.code());
+        }
+
+        // Resolving a native spelling cannot revive a replaced root, even
+        // when its still-current parent is registered too.
+        std::fs::rename(&checkout, alias.join("retired")).unwrap();
+        std::fs::create_dir(&checkout).unwrap();
+        std::fs::write(checkout.join("manual.html"), "replacement").unwrap();
+        report["payload"]["url"] = Value::String(native_url);
+        let answer = apply_boundary(&boundary, &mut report).expect("replaced root refused");
+        assert_eq!(answer["payload"]["reason"], Refusal::OutsideCheckout.code());
     }
 
     /// A clone's folder is checked on the `$HOME` line before the core sees

@@ -46,6 +46,26 @@ pub struct TaskSnapshot {
     /// The open tasks this one waits on, which may belong to another project
     /// (PRD task-agents-views D-09, D-10); the source records them.
     pub blocked_by: Vec<TaskRefSnapshot>,
+    /// The task's sub-issues with GitHub's own progress count; `None` for a
+    /// task that has none, as every Local issue does.
+    pub sub_issues: Option<TaskSubIssuesSnapshot>,
+}
+
+/// GitHub's `completed` of `total` sub-issues and the sub-issues themselves.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct TaskSubIssuesSnapshot {
+    pub total: u32,
+    pub completed: u32,
+    pub items: Vec<TaskSubIssueSnapshot>,
+}
+
+/// One sub-issue, by the key a pull request's closing reference names it with.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct TaskSubIssueSnapshot {
+    pub key: String,
+    pub id: Option<String>,
+    pub title: String,
+    pub open: bool,
 }
 
 /// Another task, named by its key and by the id this task's source shows for it.
@@ -280,6 +300,7 @@ pub fn local_tasks(project_path: &str, read: LocalRead<'_>, chosen: bool) -> Pro
                         created_at_unix_ms: Some(issue.created_at_unix_ms),
                         closed_at_unix_ms: issue.closed_at_unix_ms,
                         blocked_by: Vec::new(),
+                        sub_issues: None,
                     })
                     .collect()
             })
@@ -317,6 +338,21 @@ fn github_task(issue: &IssueSnapshot, repository: Option<&str>) -> TaskSnapshot 
                 id: Some(github_id(blocker, repository)),
             })
             .collect(),
+        sub_issues: (issue.sub_issues.total > 0).then(|| TaskSubIssuesSnapshot {
+            total: issue.sub_issues.total,
+            completed: issue.sub_issues.completed,
+            items: issue
+                .sub_issues
+                .listed
+                .iter()
+                .map(|sub| TaskSubIssueSnapshot {
+                    key: github_key(&sub.reference),
+                    id: Some(github_id(&sub.reference, repository)),
+                    title: sub.title.clone(),
+                    open: sub.open,
+                })
+                .collect(),
+        }),
     }
 }
 
@@ -338,6 +374,7 @@ mod tests {
             created_at_unix_ms: None,
             closed_at_unix_ms: None,
             blocked_by: Vec::new(),
+            sub_issues: Default::default(),
         }
     }
 
@@ -402,6 +439,32 @@ mod tests {
                     id: Some("acme/other#12".into())
                 },
             ]
+        );
+    }
+
+    #[test]
+    fn sub_issues_keep_githubs_counts_and_name_each_by_key() {
+        let mut issues = answered();
+        issues.issues[0].sub_issues = crate::issues::SubIssuesSnapshot {
+            total: 5,
+            completed: 3,
+            listed: vec![crate::issues::SubIssueSnapshot {
+                reference: IssueReference {
+                    repository: "acme/app".into(),
+                    number: 171,
+                },
+                title: "A piece".into(),
+                open: false,
+            }],
+        };
+        let tasks = github_tasks(&issues, &healthy(), false);
+        let sub_issues = tasks.tasks[0].sub_issues.as_ref().expect("has sub-issues");
+        assert_eq!((sub_issues.total, sub_issues.completed), (5, 3));
+        assert_eq!(sub_issues.items[0].key, "github:acme/app#171");
+        assert_eq!(sub_issues.items[0].id.as_deref(), Some("#171"));
+        assert!(
+            tasks.tasks[1].sub_issues.is_none(),
+            "an issue with none has no progress to show"
         );
     }
 

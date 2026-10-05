@@ -9,6 +9,8 @@ import type { BrowserCommand, BrowserPlacement, BrowserRect, BrowserSync } from 
 /** A Workspace holds at most this many displays (`MAX_VIEW_DISPLAYS`). */
 export const MAX_SYNCED_DISPLAYS = 64;
 export const MAX_RETAINED_DISPLAYS = 16_384;
+/** Positive areas across at most 256 Workspaces, each with at most six View areas. */
+export const MAX_AUTHORIZED_SCOPES = 1_536;
 /** Live pages at once; a hidden one past this is closed and loads again when shown. */
 export const MAX_LIVE_VIEWS = 12;
 /** Popup windows open at once across every page; a page asking for one more is refused. */
@@ -37,6 +39,16 @@ function text(value: unknown): value is string {
   return typeof value === "string" && value.length > 0 && value.length <= MAX_TEXT;
 }
 
+function identity(value: unknown): value is string {
+  return text(value) && !value.includes("\u0000") && !value.includes("\u0001");
+}
+
+function workspaceIdentity(value: unknown): value is string {
+  if (!text(value) || value.includes("\u0001")) return false;
+  const at = value.indexOf("\u0000");
+  return at > 0 && at < value.length - 1 && value.indexOf("\u0000", at + 1) === -1;
+}
+
 function rect(value: unknown): BrowserRect | null | undefined {
   if (value === null) return null;
   if (typeof value !== "object") return undefined;
@@ -50,35 +62,56 @@ function rect(value: unknown): BrowserRect | null | undefined {
 /** A sync message, or null when any part of it is out of shape. */
 export function parseSync(value: unknown): BrowserSync | null {
   if (typeof value !== "object" || value === null) return null;
-  const { workspace, displays, retained } = value as Record<string, unknown>;
-  if (workspace !== null && !text(workspace)) return null;
+  const { workspace, displays, retained, attachment_epoch, authorized_scopes } = value as Record<string, unknown>;
+  if (attachment_epoch !== undefined && (typeof attachment_epoch !== "string" || attachment_epoch.length === 0 || attachment_epoch.length > 64 || /[^A-Za-z0-9-]/.test(attachment_epoch))) return null;
+  if (workspace !== null && !workspaceIdentity(workspace)) return null;
   if (!Array.isArray(displays) || displays.length > MAX_SYNCED_DISPLAYS) return null;
   if (!Array.isArray(retained) || retained.length > MAX_RETAINED_DISPLAYS) return null;
+  const scopes: NonNullable<BrowserSync["authorized_scopes"]> = [];
+  if (authorized_scopes !== undefined) {
+    if (!Array.isArray(authorized_scopes) || authorized_scopes.length > MAX_AUTHORIZED_SCOPES) return null;
+    const scopeKeys = new Set<string>();
+    for (const entry of authorized_scopes as unknown[]) {
+      if (typeof entry !== "object" || entry === null) return null;
+      const { workspace: owner, area_id, incarnation } = entry as Record<string, unknown>;
+      if (!workspaceIdentity(owner) || !identity(area_id) || typeof incarnation !== "number" || !Number.isSafeInteger(incarnation) || incarnation < 0) return null;
+      const key = viewKey(owner, area_id);
+      if (scopeKeys.has(key)) return null;
+      scopeKeys.add(key);
+      scopes.push({ workspace: owner, area_id, incarnation });
+    }
+  }
   const owned: BrowserSync["retained"] = [];
-  const ownedKeys = new Set<string>();
+  const ownedAreas = new Map<string, string>();
   for (const entry of retained as unknown[]) {
     if (typeof entry !== "object" || entry === null) return null;
-    const { workspace: owner, id } = entry as Record<string, unknown>;
-    if (!text(owner) || !text(id)) return null;
+    const { workspace: owner, id, area_id } = entry as Record<string, unknown>;
+    if (!workspaceIdentity(owner) || !identity(id) || !identity(area_id)) return null;
     const key = viewKey(owner, id);
-    if (ownedKeys.has(key)) return null;
-    ownedKeys.add(key);
-    owned.push({ workspace: owner, id });
+    if (ownedAreas.has(key)) return null;
+    ownedAreas.set(key, area_id);
+    owned.push({ workspace: owner, id, area_id });
   }
   const parsed: BrowserPlacement[] = [];
   const ids = new Set<string>();
   for (const entry of displays as unknown[]) {
     if (typeof entry !== "object" || entry === null) return null;
-    const { id, url, load, visible } = entry as Record<string, unknown>;
+    const { id, area_id, url, load, visible } = entry as Record<string, unknown>;
     const placed = rect((entry as Record<string, unknown>).rect);
-    if (!text(id) || ids.has(id) || !text(url) || typeof load !== "number" || !Number.isSafeInteger(load) || load < 0) return null;
+    if (!identity(id) || !identity(area_id) || ids.has(id) || !text(url) || typeof load !== "number" || !Number.isSafeInteger(load) || load < 0) return null;
     if (placed === undefined || typeof visible !== "boolean") return null;
     ids.add(id);
-    parsed.push({ id, url, load, rect: placed, visible });
+    parsed.push({ id, area_id, url, load, rect: placed, visible });
   }
   if (workspace === null && parsed.length > 0) return null;
-  if (workspace && parsed.some((display) => !ownedKeys.has(viewKey(workspace, display.id)))) return null;
-  return { workspace: workspace as string | null, displays: parsed, retained: owned };
+  if (workspace && parsed.some((display) => ownedAreas.get(viewKey(workspace, display.id)) !== display.area_id)) return null;
+  return {
+    workspace: workspace as string | null,
+    displays: parsed,
+    retained: owned,
+    ...(attachment_epoch === undefined ? {} : { attachment_epoch }),
+    ...(authorized_scopes === undefined ? {} : { authorized_scopes: scopes }),
+  };
 }
 
 /** A display named by the shell for a still or a command. */

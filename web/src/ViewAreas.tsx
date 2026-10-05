@@ -1,10 +1,11 @@
-import { GlobeIcon, LoaderCircleIcon, XIcon } from "lucide-react";
+import { GlobeIcon, Link2Icon, LoaderCircleIcon, XIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { Actions } from "./actions";
 import { createAreaTree, tabFit, type AreaAdapter, type AreaTabInteraction } from "./AreaTree";
 import { AreaEmpty } from "./AreaEmpty";
 import { BrowserDisplay } from "./BrowserDisplay";
-import { focusBrowserDisplay } from "./browserViews";
+import { focusBrowserDisplay, hostKey, useBrowserStore } from "./browserViews";
+import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
 import { revealHost } from "./host";
@@ -89,7 +90,7 @@ function ViewTree({ layout, deviceId, path, actions }: { layout: ViewLayoutSnaps
     keyboardArea: owner.kind === "view" && owner.workspace === checkoutId ? owner.areaId : null,
     label: (display) => display.label,
     sameContent: showsSameDocument,
-    tab: (display, interaction) => <DisplayTab display={display} interaction={interaction} actions={actions} />,
+    tab: (display, interaction) => <DisplayTab display={display} workspace={workspace} interaction={interaction} actions={actions} />,
     body: (display) => <DisplayBody key={display.id} display={display} workspace={workspace} actions={actions} />,
     empty: () => <AreaEmpty state="no-view" text={t("documents.view.empty")} />,
     floating: (display) => <>{displayMark(display)}<span className={`truncate ${display.preview ? "italic" : ""}`}>{display.label}</span></>,
@@ -137,7 +138,7 @@ function DisplayBody({ display, workspace, actions }: { display: ViewDisplaySnap
 }
 
 /** One display's tab: its kind's mark, italic while a preview, its save marks, and its whole identity (B2, B21). */
-export function DisplayTab({ display, interaction, actions }: { display: ViewDisplaySnapshot; interaction: AreaTabInteraction; actions: Actions }) {
+export function DisplayTab({ display, workspace, interaction, actions }: { display: ViewDisplaySnapshot; workspace?: ViewWorkspace; interaction: AreaTabInteraction; actions: Actions }) {
   const { selected, areaActive } = interaction;
   const fit = tabFit(selected, interaction.fit);
   const { t } = useInterfaceTranslation();
@@ -145,8 +146,9 @@ export function DisplayTab({ display, interaction, actions }: { display: ViewDis
   const saving = useShellStore((s) => display.tab_id !== null && s.savingTabs.has(display.tab_id));
   const tabOnly = useShellStore((s) => display.tab_id !== null && s.bufferWarnings.has(display.tab_id));
   const unavailable = display.state === "unavailable";
+  const attached = useBrowserStore((s) => display.kind === "browser" && workspace !== undefined && s.attached[hostKey(workspaceKey(workspace), display.id)] === true);
   const state = saving ? t("documents.tabSaving") : dirty ? t("documents.unsaved") : null;
-  const identity = [displayIdentity(display, t), state, tabOnly ? t("documents.tabOnly") : null].filter(Boolean).join(" · ");
+  const identity = [displayIdentity(display, t), state, tabOnly ? t("documents.tabOnly") : null, attached ? t("documents.agentAttached") : null].filter(Boolean).join(" · ");
   const closeLabel = t("documents.closeView", { label: display.label });
   return (
     <Hint label={identity} reveals>
@@ -185,6 +187,7 @@ export function DisplayTab({ display, interaction, actions }: { display: ViewDis
             : <span aria-hidden="true" data-view-save-mark={tabOnly ? "tab-only" : "dirty"} className="absolute right-0 top-0 size-(--size-tab-status-dot) rounded-full bg-warning" />
         ) : null}
       </span>
+      {attached ? <Badge aria-hidden="true" data-browser-attached="true"><Link2Icon /></Badge> : null}
       <span className={`min-w-0 flex-1 truncate ${fit.title} ${display.preview ? "italic" : ""} ${unavailable ? "text-muted-foreground line-through" : ""}`}>
         {display.label}
         {saving ? <span className="text-muted-foreground"> {t("documents.tabSaving")}</span> : dirty ? <span className="text-warning"> ●</span> : null}

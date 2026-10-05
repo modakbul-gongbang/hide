@@ -99,6 +99,13 @@ export const ENV_REGISTRY: readonly EnvKey[] = [
     note: "Names the Windows folder whose `System32`, `System32\\Wbem`, PowerShell and OpenSSH folders make the system's default Path, which a child gets when PATH is absent",
   },
   {
+    key: "HIDE_DESKTOP_SYSTEM_LANGUAGE",
+    requirement: "optional",
+    shape: "a BCP 47 language tag such as ko-KR",
+    fallback: "the operating system's primary language (`app.getPreferredSystemLanguages()`)",
+    note: "Stands in for the system language when the operator has made no explicit choice, so a QA or e2e instance draws the menu and status page in a known language",
+  },
+  {
     key: "PATH",
     requirement: "optional",
     shape: "directories separated by the system's PATH separator (`:`, `;` on Windows)",
@@ -112,6 +119,8 @@ export type DesktopEnv = {
   userDataDir: string | null;
   herdrBinPath: string | null;
   herdrPaneId: string | null;
+  /** A language tag standing in for the system's; null on a normal launch. */
+  systemLanguage: string | null;
   /** The login shell; null on Windows, and where neither SHELL nor the user database names one. */
   shell: string | null;
   home: string;
@@ -154,6 +163,7 @@ export function loadEnv(source: Record<string, string | undefined>): DesktopEnv 
     userDataDir: absolute("HIDE_DESKTOP_USER_DATA_DIR"),
     herdrBinPath: absolute("HERDR_BIN_PATH"),
     herdrPaneId: source.HERDR_PANE_ID || null,
+    systemLanguage: source.HIDE_DESKTOP_SYSTEM_LANGUAGE || null,
     shell: HAS_LOGIN_SHELL ? (absolute("SHELL") ?? accountShell()) : null,
     home: (process.platform === "win32" ? absolute("USERPROFILE") : absolute("HOME")) ?? os.userInfo().homedir,
     localAppData: windows("LOCALAPPDATA"),

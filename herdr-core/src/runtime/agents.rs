@@ -1852,6 +1852,14 @@ impl Runtime {
                 if is_pane_focus {
                     self.finish_pane_focus_request_by_id(request_id, "succeeded", None, false);
                 }
+                if let (
+                    Some(tab_id),
+                    RemoteControlAction::CreateTab { cwd, .. }
+                    | RemoteControlAction::OpenOwner { cwd, .. },
+                ) = (created_tab_id.as_deref(), &action)
+                {
+                    self.record_created_device_tab(target_id, tab_id, cwd);
+                }
                 let mut receipt = String::new();
                 if let Some(tab_id) = created_tab_id.as_deref() {
                     receipt.push_str(&format!("; created tab {tab_id}"));

@@ -12,6 +12,7 @@ import path from "node:path";
 import { promisify } from "node:util";
 import { finishFixtureTurn, labelAgent, setFixtureLifecycle, spawnAgent, startHerdr, type FixtureLabel, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
+import { localEndpoint } from "./platform-fixture";
 import { countSent, enterWorkspace, screenshot } from "./wire";
 import { chord } from "./chords";
 
@@ -45,7 +46,7 @@ async function livePanes(herdr: HerdrFixture): Promise<Set<string>> {
  * caller closes it on every exit path.
  */
 async function watchCloseOrder(herdr: HerdrFixture, watched: string[]): Promise<{ order: Promise<string[]>; close: () => void }> {
-  const socket = net.createConnection(herdr.socket);
+  const socket = net.createConnection(localEndpoint(herdr.socket));
   const order: string[] = [];
   let buffer = "";
   let ack: (error?: Error) => void = () => undefined;
@@ -130,6 +131,7 @@ test("the close sheet counts and brightens what needs the operator, stays live w
     const sheet = page.locator("[data-confirm-subtree]");
     const summary = sheet.locator("[data-subtree-summary]");
     // Every state has to be in before the sheet opens on it.
+    // eslint-disable-next-line hide-e2e/no-action-in-poll -- #433 retried interaction: the sheet opens only once every state is in
     await expect(async () => {
       if (await sheet.isVisible()) {
         await page.keyboard.press("Escape");
@@ -366,6 +368,7 @@ test("Delete worktree closes the agents its checkout spawned outside it before t
     // The fixture branch has nothing ahead of main, so the core folds its row
     // under Inactive whenever it reads that, which may be mid-step: opening
     // the menu and choosing Delete is retried as one step, unfolding first.
+    // eslint-disable-next-line hide-e2e/no-action-in-poll -- #433 retried interaction: the checkout row folds mid-step
     await expect(async () => {
       if (await page.getByRole("menu").isVisible()) await page.keyboard.press("Escape");
       const folded = page.locator('[data-inactive-checkouts][aria-expanded="false"]');

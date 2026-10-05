@@ -512,8 +512,25 @@ export function installKeyboard(actions: Actions): () => void {
     reported = text;
     bridge?.reportBindings(stored ?? {});
   };
-  const unsubscribeBindings = bridge ? useShellStore.subscribe(report) : null;
-  if (bridge) report();
+  // The native menu and status page follow the core's explicit language
+  // choice, which only a confirmed snapshot carries; null means the system's.
+  let languageReported: string | null | undefined;
+  const reportLanguage = () => {
+    const rest = useShellStore.getState().rest;
+    if (!rest) return;
+    const choice = rest.ui_state?.interface_language ?? null;
+    if (choice === languageReported) return;
+    languageReported = choice;
+    bridge?.reportLanguage(choice);
+  };
+  const unsubscribeBindings = bridge ? useShellStore.subscribe(() => {
+    report();
+    reportLanguage();
+  }) : null;
+  if (bridge) {
+    report();
+    reportLanguage();
+  }
 
   window.addEventListener("keydown", onKeyDown, true);
   window.addEventListener("keyup", onKeyUp, true);

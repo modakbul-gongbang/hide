@@ -23,9 +23,11 @@ pub(crate) fn connect(
     has_projection: bool,
 ) -> Result<Connected, SessionFetchError> {
     require_local_socket(context)?;
+    let params = crate::wire::subscription_params(TOPOLOGY_SUBSCRIPTIONS)
+        .map_err(SessionFetchError::Malformed)?;
     let subscription = hide_herdr_client::subscribe_with_connector(
         context.api_connector.as_ref(),
-        TOPOLOGY_SUBSCRIPTIONS,
+        params,
         SYNC_REQUEST_TIMEOUT,
     )
     .map_err(|error| connect_failure_from_api(error, has_projection))?;

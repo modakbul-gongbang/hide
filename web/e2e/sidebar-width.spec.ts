@@ -11,6 +11,7 @@ import path from "node:path";
 import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided } from "./hided-fixture";
 import { countSent, rest, screenshot } from "./wire";
+import { quietFor } from "./wait";
 
 test.describe.configure({ timeout: 120_000 });
 
@@ -111,7 +112,7 @@ test("the sidebar's edge drags between its bounds, lands once, survives a reload
     // A press that does not move sends nothing; a double-click returns to 292 and keeps it.
     const quiet = new Map(sent);
     await edge.click();
-    await page.waitForTimeout(300);
+    await quietFor(page, 300, "a click on the edge sends nothing");
     expect((sent.get("ui_state_update") ?? 0) - (quiet.get("ui_state_update") ?? 0)).toBe(0);
     await edge.dblclick();
     await expect.poll(() => width(box)).toBe(292 + RAIL);

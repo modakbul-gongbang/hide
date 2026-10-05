@@ -12,7 +12,7 @@ import type { TFunction } from "i18next";
 import { formatDateTime } from "./i18n/format";
 import type { MessageKey } from "./i18n/catalogs";
 import { requireInterfaceLanguage } from "./i18n/locale";
-import type { AgentRow, Checkout, PullRequest, Task, Workspace } from "./snapshot";
+import type { AgentRow, Checkout, PullRequest, Task, TaskSubIssue, Workspace } from "./snapshot";
 
 export type Stage = "backlog" | "working" | "review" | "done";
 
@@ -136,7 +136,14 @@ export type TaskCard = {
   blockedBy: Blocker[];
   /** When the issue last changed, or null; the backlog's order. */
   updatedAt: number | null;
+  /** GitHub's progress over the issue's sub-issues and each one's closing pull request; null for an issue with none. */
+  subIssues: CardSubIssues | null;
 };
+
+/** A sub-issue of a card with the pull request whose body closes it, when the project has one. */
+export type CardSubIssue = TaskSubIssue & { pr: PrChip | null };
+
+export type CardSubIssues = { total: number; completed: number; items: CardSubIssue[] };
 
 /** A worktree with no issue, one of `N worktrees without an issue` under In progress (B4). */
 export type LooseWorktree = { branch: string };
@@ -296,6 +303,26 @@ function card(id: string, workspace: Workspace, scope: BoardScope, checkout: Che
     sourceFailure: sourceFailure(workspace, now),
     blockedBy: [],
     updatedAt: task.updated_at_unix_ms ?? null,
+    subIssues: subIssuesOf(workspace, task),
+  };
+}
+
+/** A sub-issue's pull request is the one whose body closes it (`closing_issues`); a mention that does not close it is not one. */
+function subIssuesOf(workspace: Workspace, task: Task): CardSubIssues | null {
+  const subIssues = task.sub_issues;
+  if (!subIssues) return null;
+  const pulls = workspace.pull_requests ?? [];
+  const closing = (key: string) => {
+    const closes = pulls.filter((pr) => (pr.closing_issues ?? []).some((reference) => `github:${reference.repository}#${reference.number}` === key));
+    return closes.find((pr) => pr.badge !== "closed") ?? closes[0];
+  };
+  return {
+    total: subIssues.total,
+    completed: subIssues.completed,
+    items: subIssues.items.map((item) => {
+      const pr = closing(item.key);
+      return { ...item, pr: pr ? prChip(pr) : null };
+    }),
   };
 }
 

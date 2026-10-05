@@ -542,6 +542,7 @@ fn daemon_socket_present(path: &Path) -> Result<bool, String> {
     Ok(true)
 }
 
+#[allow(clippy::disallowed_methods)] // a production wait, not test code
 fn stop_daemon(home: &Path) -> Result<(), String> {
     let path = home.join("api.sock");
     if !daemon_socket_present(&path)? {
@@ -674,7 +675,7 @@ fn remove_links(target: &KitTarget) -> Result<crate::Retirement, String> {
 /// without a server. Read strictly first: Herdr's offline list intentionally
 /// treats a corrupt registry as empty, which cannot prove retirement.
 pub(crate) fn retire_offline_plugin(target: &KitTarget) -> Result<Option<&'static str>, String> {
-    use hide_herdr_client::wire::success_response::{InstalledPluginInfo, PluginSourceKind};
+    use hide_herdr_client::plugin::{InstalledPlugin, PluginSourceKind};
 
     let config = crate::labels::herdr_config_dir(target)?;
     if let Ok(anchor) = home_anchor(&target.home, &config) {
@@ -685,11 +686,11 @@ pub(crate) fn retire_offline_plugin(target: &KitTarget) -> Result<Option<&'stati
         return Ok(None);
     }
     let registry = config.join("plugins.json");
-    let entries = || -> Result<Vec<InstalledPluginInfo>, String> {
+    let entries = || -> Result<Vec<InstalledPlugin>, String> {
         let Some(value) = read_json(&registry, MAX_STATE_BYTES)? else {
             return Ok(Vec::new());
         };
-        let entries: Vec<InstalledPluginInfo> = serde_json::from_value(value)
+        let entries: Vec<InstalledPlugin> = serde_json::from_value(value)
             .map_err(|error| format!("Herdr's offline plugin registry is unreadable: {error}"))?;
         if entries.len() > MAX_ENTRIES {
             return Err("Herdr's offline plugin registry exceeds the entry bound".into());

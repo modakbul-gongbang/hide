@@ -504,6 +504,7 @@ fn deletion_gate_warns_instead_of_blocking_and_reports_pane_consequence() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn idle_and_working_tree_edits_do_not_reread_but_manual_refresh_does() {
     let repo = Repository::new();
     std::fs::write(repo.0.join("tracked"), "original").unwrap();
@@ -602,6 +603,7 @@ fn behind_upstream_is_absent_without_an_upstream_and_counts_the_fetched_side() {
 /// worktree carries none, so the Overview can keep the primary first and the
 /// rest in the order they were created.
 #[test]
+#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn linked_worktrees_carry_their_creation_time_and_the_main_worktree_none() {
     let repo = Repository::new();
     repo.linked("older");
@@ -627,6 +629,7 @@ fn linked_worktrees_carry_their_creation_time_and_the_main_worktree_none() {
 /// other project's `git status` does not run again. Before the per-project
 /// key, every project's status ran on any project's change.
 #[test]
+#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn a_commit_in_one_project_does_not_rerun_status_in_another() {
     let changing = Repository::new();
     let quiet = Repository::new();
@@ -676,6 +679,7 @@ fn a_commit_in_one_project_does_not_rerun_status_in_another() {
 /// Git's own ref writes wake the reader without an Overview refresh event.
 /// A pull's many writes settle as one catalog read for the affected project.
 #[test]
+#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn moved_remote_ref_refreshes_one_project_once_after_a_burst() {
     let changing = Repository::new();
     let quiet = Repository::new();
@@ -746,6 +750,7 @@ fn moved_remote_ref_refreshes_one_project_once_after_a_burst() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn a_watch_change_during_a_read_keeps_the_old_answer_stale() {
     let repo = Repository::new();
     let mut reader = WorktreeReader::new();

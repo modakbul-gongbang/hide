@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { createInterfaceI18n } from "./i18n/instance";
-import { bindingProblemText, commandTitle, passthroughText, sheetRowTitle } from "./shortcutLabels";
+import { commandTitle } from "./commandTitle";
+import { bindingProblemText, passthroughText, sheetRowTitle } from "./shortcutLabels";
 import { REGISTRY, sheetRows } from "./shortcuts";
 
 describe("command labels", () => {

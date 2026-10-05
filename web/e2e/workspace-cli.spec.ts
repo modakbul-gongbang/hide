@@ -71,8 +71,9 @@ test("pane CLI opens its own file and diff while another Workspace remains in fr
     const betaRow = page.locator("[data-project]", { hasText: "beta" }).locator("[data-checkout]").first();
     await betaRow.click();
     await expect(betaRow).toHaveAttribute("aria-current", "true");
-    const foregroundPane = await page.locator('[data-pane-view][data-focused="true"]').getAttribute("data-pane-view");
-    expect(foregroundPane).toBeTruthy();
+    const foregroundPaneLocator = page.locator('[data-pane-view][data-focused="true"]');
+    await expect(foregroundPaneLocator).toHaveAttribute("data-pane-view", /./);
+    const foregroundPane = await foregroundPaneLocator.getAttribute("data-pane-view");
 
     const info = await fromPane(herdr, daemon, ["workspace", "info"], 1);
     expect(info.ok).toBe(true);

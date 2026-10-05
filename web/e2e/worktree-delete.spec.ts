@@ -164,8 +164,9 @@ test("an open deletion dialog receives refreshed Git facts and retires Discard t
     await feature.locator("[data-checkout-menu]").click({ button: "right" });
     await page.getByRole("menu", { name: `${BRANCH} actions` }).locator('[data-menu-item="delete_worktree"]').click();
     const dialog = page.locator("[data-delete-worktree]");
-    const workspaceId = await project.getAttribute("data-project");
-    expect(workspaceId).toBeTruthy();
+    const workspaceIdLocator = project;
+    await expect(workspaceIdLocator).toHaveAttribute("data-project", /./);
+    const workspaceId = await workspaceIdLocator.getAttribute("data-project");
     const refresh = () => page.evaluate((workspace_id) => {
       const socket = (window as Window & { __preflightRendererSocket?: WebSocket }).__preflightRendererSocket;
       if (!socket || socket.readyState !== WebSocket.OPEN) throw new Error("Existing renderer socket is unavailable");

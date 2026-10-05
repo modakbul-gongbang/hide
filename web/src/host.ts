@@ -18,6 +18,8 @@ export type BrowserRect = { x: number; y: number; width: number; height: number 
 export type BrowserPlacement = {
   /** The display id; unique within `BrowserSync.workspace` only. */
   id: string;
+  /** The authoritative View area containing this display. */
+  area_id: string;
   url: string;
   /** The core's load stamp: a larger one than the page last loaded loads `url` again. */
   load: number;
@@ -36,7 +38,11 @@ export type BrowserSync = {
   workspace: string | null;
   displays: BrowserPlacement[];
   /** Core-owned inventory; a hidden native page absent here is closed. */
-  retained: { workspace: string; id: string }[];
+  retained: { workspace: string; id: string; area_id: string }[];
+  /** Changes on controller mount or reconnect so the host replays actual attachment facts once. */
+  attachment_epoch?: string;
+  /** Positive core area authority, including empty areas; absent grants no debugger access. Incarnation changes on revoke/regrant. */
+  authorized_scopes?: { workspace: string; area_id: string; incarnation: number }[];
 };
 
 export type BrowserCommand = "back" | "forward" | "reload" | "stop" | "focus";
@@ -54,6 +60,8 @@ export type BrowserPageState = {
 
 export type BrowserHostEvent =
   | { kind: "state"; workspace: string; id: string; load: number; state: BrowserPageState }
+  /** Actual debugger ownership, scoped to `device_id + NUL + checkout_path`. */
+  | { kind: "attached"; workspace: string; id: string; attached: boolean }
   | { kind: "gone"; workspace: string; id: string; load: number; url: string }
   /** The page opened a tab: it becomes another browser display, beside the page `id`. */
   | { kind: "open"; workspace: string; id: string; url: string }
@@ -83,6 +91,8 @@ export type HostBridge = {
   onCommand(listener: (id: string) => void): () => void;
   /** Hands the host the stored macOS pane chords (`ui_state.shortcut_bindings`) it builds the menu from. */
   reportBindings(bindings: Record<string, string>): void;
+  /** Hands the host the core's explicit interface language (`ui_state.interface_language`, null for the system's) once a snapshot confirms it; the app menu and status page are drawn in it. */
+  reportLanguage(language: string | null): void;
   /** Shows a file or folder of this computer, named in the wire spelling, in the OS file manager, selected in its parent folder; nothing is opened. */
   revealPath(path: string): void;
   /** The native folder picker, modal to the window; the chosen folder in the wire spelling, or null when the operator cancelled. */

@@ -51,8 +51,11 @@ let layersOpened = 0;
  * The element that held the keyboard when a layer opened, so closing it can
  * hand the keyboard back through `restoreFocus`, which knows that a terminal
  * is focused through its pane rather than through a stale textarea.
+ * A layer whose owner names where the keyboard goes (Overview's own return
+ * target) passes `named`; its surface still holding focus does not count as the
+ * keyboard having moved on, and the same late hand-back guard applies.
  */
-export function useReturnFocus(open: boolean) {
+export function useReturnFocus(open: boolean, named?: { target: () => HTMLElement | null; within: () => HTMLElement | null }) {
   const previous = useRef<HTMLElement | null>(null);
   const wasOpen = useRef(false);
   const openedAtClose = useRef<number | null>(null);
@@ -74,9 +77,10 @@ export function useReturnFocus(open: boolean) {
     };
   }, [open]);
   return useCallback((event: Event) => {
-    const target = previous.current;
-    if (!target) return;
+    const target = named ? named.target() : previous.current;
+    if (!target && !named) return;
     event.preventDefault();
+    if (!target) return;
     // A layer opened after this one closed holds the keyboard, or hands it back
     // itself; taking it here would undo that, whichever timer ran first.
     if (openedAtClose.current !== null && openedAtClose.current !== layersOpened) return;
@@ -84,7 +88,7 @@ export function useReturnFocus(open: boolean) {
     // moved the keyboard on purpose in the meantime (Rename's inline field)
     // keeps it, since taking it back would blur and commit that field.
     const now = document.activeElement;
-    if (now instanceof HTMLElement && now !== document.body && now.isConnected) return;
+    if (now instanceof HTMLElement && now !== document.body && now.isConnected && !named?.within()?.contains(now)) return;
     restoreFocus(target);
   }, []);
 }

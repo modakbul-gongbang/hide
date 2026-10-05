@@ -10,6 +10,9 @@
 //   pull request numbered so, and the explicit GitHub search row with its
 //   working, failed and empty answers, never run while typing (B2, B12, B16-B20);
 // - ⌘P: ⌘↵ opens the highlighted file beside the area in use (B23);
+// - Open URL in Browser: a typed address opens a browser display in the
+//   active View area in the desktop app, and stays listed unavailable in a
+//   browser tab (issue 157);
 // - Recent (PRD cmdk-recent): the checkouts last brought to the front, under
 //   Related, kept across a daemon restart and shown alone on Settings.
 
@@ -401,8 +404,9 @@ test("⌘K lists the checkouts last brought to the front under Recent, keeps the
     daemon = await startHided(herdr, "cmdk-recent");
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await enterWorkspace(page, "fixture");
-    const fixture = await page.locator("[data-project] [data-checkout]").first().getAttribute("data-checkout");
-    expect(fixture).toBeTruthy();
+    const fixtureLocator = page.locator("[data-project] [data-checkout]").first();
+    await expect(fixtureLocator).toHaveAttribute("data-checkout", /./);
+    const fixture = await fixtureLocator.getAttribute("data-checkout");
 
     // B6: a second project's checkout brought to the front goes to the top of the list.
     await registerFolder(page, daemon, `${daemon.home}/projects/alpha`);
@@ -436,6 +440,7 @@ test("⌘K lists the checkouts last brought to the front under Recent, keeps the
       stored.recent_checkouts.push({ device_id: "ghost", checkout_id: "remote:ghost:checkout:abc", project_name: "api", branch: "release", device_name: "ghost-box" });
       fs.writeFileSync(file, JSON.stringify(stored));
     });
+    await page.goto("about:blank");
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await expect(page.locator("[data-workspace-screen]")).toBeVisible({ timeout: 30_000 });
     await page.keyboard.press(chord("settings"));
@@ -472,6 +477,63 @@ test("⌘K lists the checkouts last brought to the front under Recent, keeps the
     await expect(input(page)).toHaveCount(0);
     await expect(page.locator("[data-workspace-screen]")).toBeVisible();
     await expect(page.locator(`[data-checkout="${fixture}"]`)).toBeVisible();
+  } finally {
+    daemon?.stop();
+    herdr.stop();
+  }
+});
+
+test("⌘K lists a typed URL as unavailable in a browser tab, and opens it as a browser display in the active View area in the desktop app", async ({ page }) => {
+  const herdr = await startHerdr({ agents: false });
+  let daemon: Daemon | null = null;
+  try {
+    daemon = await startHided(herdr, "cmdk-open-url");
+    const url = `${daemon.origin}/#token=${daemon.token}`;
+    await page.goto(url);
+    await enterWorkspace(page, "fixture");
+
+    // A browser tab cannot draw a page in a View area: the row is listed, dimmed, with its reason, and Enter does nothing.
+    await openSearch(page);
+    await input(page).fill("localhost:5173");
+    const row = page.locator('[data-palette-row="command:open-url"]');
+    await expect(row).toHaveAttribute("data-palette-dim", "true");
+    await expect(row).toContainText("Pages open in the hide desktop app.");
+    await expect(page.locator("[data-palette-action]")).toHaveCount(0);
+    await screenshot(page, "cmdk-open-url-unavailable");
+    await page.keyboard.press("Enter");
+    await expect(input(page)).toBeVisible();
+    await expect(page.locator("[data-browser-display]")).toHaveCount(0);
+    // Plain words are not an address.
+    await input(page).fill("fixture");
+    await expect(row).toHaveCount(0);
+    await page.keyboard.press("Escape");
+
+    // The desktop app's host bridge: pages are drawn by the host, so the row can run.
+    await page.addInitScript((platform) => {
+      window.hideHost = {
+        kind: "electron",
+        platform,
+        onCommand: () => () => undefined,
+        reportBindings: () => undefined,
+        revealPath: () => undefined,
+        pickFolder: async () => null,
+        probePaths: async () => [],
+        openPath: () => undefined,
+        browser: { sync: () => undefined, endCycle: () => undefined, capture: async () => null, command: () => undefined, onEvent: () => () => undefined },
+      };
+    }, process.platform);
+    await page.reload();
+    await enterWorkspace(page, "fixture");
+    await openSearch(page);
+    await input(page).fill("http://localhost:5173/app");
+    await expect(row).not.toHaveAttribute("data-palette-dim", "true");
+    await expect(row).toContainText("http://localhost:5173/app");
+    await screenshot(page, "cmdk-open-url");
+    await page.keyboard.press("Enter");
+    await expect(input(page)).toHaveCount(0);
+    await expect(page.locator("[data-browser-display]")).toHaveCount(1);
+    await expect(page.getByRole("textbox", { name: "Page address" })).toHaveValue("localhost:5173/app");
+    await screenshot(page, "cmdk-open-url-opened");
   } finally {
     daemon?.stop();
     herdr.stop();

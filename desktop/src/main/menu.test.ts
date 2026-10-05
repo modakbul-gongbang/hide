@@ -1,7 +1,11 @@
 import type { MenuItemConstructorOptions } from "electron";
 import { describe, expect, it } from "vitest";
+import { initializeInterfaceI18n } from "../../../web/src/i18n/instance";
 import { EDITABLE_PANE_COMMANDS, REGISTRY } from "../../../web/src/shortcuts";
 import { accelerator, BINDINGS_CAP, KEYBOARD_ONLY, MENU_LAYOUT, menuBindings, menuTemplate } from "./menu";
+
+const english = initializeInterfaceI18n("en").getFixedT(null, "translation");
+const korean = initializeInterfaceI18n("ko").getFixedT(null, "translation");
 
 describe("the app menu (B9)", () => {
   it("writes registry chords as Electron accelerators", () => {
@@ -25,7 +29,7 @@ describe("the app menu (B9)", () => {
   });
 
   it("lists the Agent and View area commands in the Pane menu, with no chord until one is set", () => {
-    const template = menuTemplate({ appName: "hide", send: () => undefined, developer: false, system: "mac" });
+    const template = menuTemplate({ appName: "hide", send: () => undefined, developer: false, system: "mac", t: english });
     const pane = template.find((menu) => menu.label === "Pane");
     const items = Array.isArray(pane?.submenu) ? pane.submenu : [];
     for (const id of ["focus_next_agent_area", "shrink_agent_area", "focus_next_view_area", "grow_view_area"]) {
@@ -36,7 +40,7 @@ describe("the app menu (B9)", () => {
 
   it("shows each item with its electron chord and sends its id when clicked", () => {
     const sent: string[] = [];
-    const template = menuTemplate({ appName: "hide", send: (id) => sent.push(id), developer: false, system: "mac" });
+    const template = menuTemplate({ appName: "hide", send: (id) => sent.push(id), developer: false, system: "mac", t: english });
     const items = template.flatMap((menu) => (Array.isArray(menu.submenu) ? menu.submenu : []));
     const newTab = items.find((item) => item.id === "new_tab");
     expect(newTab?.accelerator).toBe("Command+T");
@@ -59,7 +63,7 @@ describe("the app menu (B9)", () => {
     const resolved = menuBindings({ toggle_zoom: "command+shift+return", toggle_conversation: "command+option+c" }, "mac");
     if ("refused" in resolved) throw new Error(resolved.refused);
     expect(resolved.diagnostic).toBeNull();
-    const template = menuTemplate({ appName: "hide", send: () => undefined, developer: false, system: "mac", registry: resolved.registry });
+    const template = menuTemplate({ appName: "hide", send: () => undefined, developer: false, system: "mac", t: english, registry: resolved.registry });
     const items = template.flatMap((menu) => (Array.isArray(menu.submenu) ? menu.submenu : []));
     expect(items.find((item) => item.id === "toggle_zoom")?.accelerator).toBe("Shift+Command+Return");
     expect(items.find((item) => item.id === "split_right")?.accelerator).toBe("Command+D");
@@ -75,7 +79,7 @@ describe("the app menu (B9)", () => {
   });
 
   it("shows Windows and Linux the Ctrl+Shift and Alt+Shift chords the window answers there, and none of macOS's own items", () => {
-    const template = menuTemplate({ appName: "hide", send: () => undefined, developer: false, system: "pc" });
+    const template = menuTemplate({ appName: "hide", send: () => undefined, developer: false, system: "pc", t: english });
     const items = template.flatMap((menu) => (Array.isArray(menu.submenu) ? menu.submenu : []));
     const shortcut = (id: string) => items.find((item) => item.id === id)?.accelerator;
     expect(shortcut("new_tab")).toBe("Control+Shift+T");
@@ -91,7 +95,7 @@ describe("the app menu (B9)", () => {
     const resolved = menuBindings({ toggle_zoom: "command+shift+return" }, "pc");
     if ("refused" in resolved) throw new Error(resolved.refused);
     expect(resolved.diagnostic).toBeNull();
-    expect(menuTemplate({ appName: "hide", send: () => undefined, developer: false, system: "pc", registry: resolved.registry }).flatMap((menu) => (Array.isArray(menu.submenu) ? menu.submenu : [])).find((item) => item.id === "toggle_zoom")?.accelerator).toBe("Alt+Shift+Return");
+    expect(menuTemplate({ appName: "hide", send: () => undefined, developer: false, system: "pc", t: english, registry: resolved.registry }).flatMap((menu) => (Array.isArray(menu.submenu) ? menu.submenu : [])).find((item) => item.id === "toggle_zoom")?.accelerator).toBe("Alt+Shift+Return");
   });
 
   it("leaves plain Ctrl keys on Windows and Linux to the edit roles and text size", () => {
@@ -112,7 +116,7 @@ describe("the app menu (B9)", () => {
       close: "Control+W",
       minimize: "Control+M",
     };
-    const template = menuTemplate({ appName: "hide", send: () => undefined, developer: true, system: "pc" });
+    const template = menuTemplate({ appName: "hide", send: () => undefined, developer: true, system: "pc", t: english });
     const flat = (menu: MenuItemConstructorOptions[]): MenuItemConstructorOptions[] =>
       menu.flatMap((item) => [item, ...(Array.isArray(item.submenu) ? flat(item.submenu) : [])]);
     const plainCtrl = flat(template)
@@ -120,5 +124,17 @@ describe("the app menu (B9)", () => {
       .filter(({ keys }) => keys?.includes("Control") && !keys.includes("Shift"))
       .map(({ name }) => name);
     expect(plainCtrl.sort()).toEqual(["copy", "cut", "paste", "selectAll", "text_larger", "text_reset", "text_smaller", "undo"]);
+  });
+
+  it("draws every label, the system's role items included, in the language it is given", () => {
+    const labels = (menu: MenuItemConstructorOptions[]): string[] =>
+      menu.flatMap((item) => [...(item.label ? [item.label] : []), ...(Array.isArray(item.submenu) ? labels(item.submenu) : [])]);
+    const template = menuTemplate({ appName: "hide", send: () => undefined, developer: true, system: "mac", t: korean });
+    expect(template.map((menu) => menu.label)).toEqual(["hide", "파일", "편집", "보기", "페인", "윈도우", "도움말"]);
+    const all = labels(template);
+    expect(all).toEqual(expect.arrayContaining(["hide 정보", "hide 종료", "실행 취소", "전체 선택", "개발자 도구 열기/닫기", "전체 화면 전환", "모두 앞으로 가져오기"]));
+    for (const english of ["Undo", "Select All", "Services", "Show All", "Bring All to Front", "Toggle Full Screen"]) expect(all).not.toContain(english);
+    const pc = menuTemplate({ appName: "hide", send: () => undefined, developer: false, system: "pc", t: korean });
+    expect(pc.map((menu) => menu.label)).toEqual(["hide", "파일", "편집", "보기", "페인", "도움말"]);
   });
 });

@@ -276,6 +276,7 @@ fn an_expired_deadline_kills_the_child_and_reports_timeout() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn a_cancelled_request_kills_the_child() {
     with_mode("slow", || {
         let cancel = CancelToken::new();
@@ -438,6 +439,7 @@ mod usage {
     }
 
     #[test]
+    #[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
     fn a_cancelled_read_kills_the_child() {
         let dir = usage_dir("slow");
         let cancel = CancelToken::new();
