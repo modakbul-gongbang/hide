@@ -53,6 +53,13 @@ pub(crate) enum LaneStart {
     },
 }
 
+/// What a started job marked as sent, which a worker that never ran must undo.
+enum UnsentClaim {
+    None,
+    TabFocus(String),
+    PaneFocus(PendingPaneFocusControl),
+}
+
 /// What `submit` decided about a job.
 #[derive(Debug)]
 pub(super) enum Submitted {
@@ -120,8 +127,11 @@ impl ControlLane {
             if matches!(job, LaneJob::PaneFocus) {
                 return (self.queued[index].0, Submitted::Joined);
             }
+            // The newer focus goes behind everything already waiting, so a
+            // control accepted between the two still reaches Herdr first.
             let serial = self.take_serial();
-            self.queued[index] = (serial, job);
+            self.queued.remove(index);
+            self.queued.push_back((serial, job));
             return (serial, Submitted::Replaced);
         }
         if !self.busy {
@@ -198,10 +208,15 @@ impl Runtime {
     fn settle_submission(&mut self, submitted: Submitted, kind: &str) -> Result<(), String> {
         match submitted {
             Submitted::Start(job) => match self.start_job(job) {
-                Some(start) => live::spawn_control_lane(start).inspect_err(|_| {
-                    // The worker never ran, so nothing waits behind it.
-                    self.control_lane.finish();
-                }),
+                Some(start) => {
+                    let unsent = Self::lane_start_claim(&start);
+                    live::spawn_control_lane(start).inspect_err(|_| {
+                        // The worker never ran: nothing answers, so what the
+                        // start marked as sent is released with the lane.
+                        self.release_unsent_claim(unsent);
+                        self.control_lane.finish();
+                    })
+                }
                 None => Ok(()),
             },
             Submitted::Queued | Submitted::Replaced | Submitted::Joined => Ok(()),
@@ -215,6 +230,37 @@ impl Runtime {
                 Err(format!(
                     "Too many Herdr controls are waiting; {kind} was not sent"
                 ))
+            }
+        }
+    }
+
+    fn lane_start_claim(start: &LaneStart) -> UnsentClaim {
+        match start {
+            LaneStart::Tab {
+                action: RemoteControlAction::FocusTab { tab_id },
+                ..
+            } => UnsentClaim::TabFocus(tab_id.clone()),
+            LaneStart::Tab { .. } => UnsentClaim::None,
+            LaneStart::PaneFocus { control, .. } => UnsentClaim::PaneFocus(control.clone()),
+        }
+    }
+
+    fn release_unsent_claim(&mut self, claim: UnsentClaim) {
+        match claim {
+            UnsentClaim::None => {}
+            UnsentClaim::TabFocus(tab_id) => {
+                if self
+                    .pending_tab_focus
+                    .as_ref()
+                    .is_some_and(|pending| pending.target_id == tab_id && pending.sent)
+                {
+                    self.pending_tab_focus = None;
+                }
+            }
+            UnsentClaim::PaneFocus(control) => {
+                if self.pane_focus_in_flight.as_ref() == Some(&control) {
+                    self.pane_focus_in_flight = None;
+                }
             }
         }
     }
@@ -238,6 +284,32 @@ impl Runtime {
                     };
                     if let RemoteControlAction::FocusTab { tab_id } = &action {
                         self.mark_tab_focus_sent(tab_id);
+                    }
+                    if let RemoteControlAction::MoveTab {
+                        checkout_id,
+                        generation,
+                        ..
+                    } = &action
+                    {
+                        // The wait for Herdr starts when the move leaves, not
+                        // when it was accepted behind other controls. A move
+                        // the operator has since replaced is not sent.
+                        let current = self
+                            .pending_tab_move
+                            .get_mut(checkout_id)
+                            .filter(|pending| pending.generation == *generation);
+                        let Some(pending) = current else {
+                            crate::diagnostic!(serde_json::json!({
+                                "component": "control_lane",
+                                "kind": "tab.move.stale_not_sent",
+                                "checkout_id": checkout_id,
+                                "generation": generation,
+                            }));
+                            job = self.next_lane_job()?;
+                            continue;
+                        };
+                        pending.deadline_at_unix_ms =
+                            Some(unix_milliseconds().saturating_add(CLOSE_STAGE_TIMEOUT_MS));
                     }
                     return Some(LaneStart::Tab { context, action });
                 }
@@ -287,7 +359,11 @@ impl Runtime {
         result: Result<PaneLayoutSnapshot, ControlFailure>,
         elapsed_ms: u128,
     ) -> (bool, Option<LaneStart>) {
-        let changed = self.ingest_pane_focus_completion(control, result, elapsed_ms);
+        let unknown = result.as_ref().is_err_and(ControlFailure::is_ambiguous);
+        let mut changed = self.ingest_pane_focus_completion(control, result, elapsed_ms);
+        if unknown {
+            changed |= self.abandon_queued_tab_focus();
+        }
         (changed, self.advance_lane())
     }
 

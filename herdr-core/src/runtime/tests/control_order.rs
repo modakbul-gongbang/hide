@@ -388,3 +388,101 @@ fn a_tab_focus_waits_for_the_pane_focus_ahead_of_it() {
     );
     assert_eq!(runtime.control_lane.queued_len(), 0);
 }
+
+/// A newer focus replaces the waiting one but queues behind whatever was
+/// accepted in between, so a tab created between two clicks still reaches
+/// Herdr before the focus that came after it.
+#[test]
+fn a_replacing_focus_queues_behind_the_control_accepted_between_the_two() {
+    let herdr = fake_herdr("order-replace-position");
+    let (mut runtime, checkout_id) =
+        runtime_on(&herdr, "/private/tmp/hide-control-order-replace-position");
+
+    assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2")));
+    assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t3")));
+    runtime
+        .submit_local_control(create_action())
+        .expect("the create is accepted");
+    assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t1")));
+    assert_eq!(runtime.control_lane.queued_len(), 2);
+
+    herdr.wait_for_requests(1, Duration::from_secs(5));
+    answer(&mut runtime, focus_action("w-order:t2"), acknowledged());
+    herdr.wait_for_requests(2, Duration::from_secs(5));
+    let methods = || {
+        herdr
+            .calls()
+            .into_iter()
+            .map(|(method, _)| method)
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(methods(), ["tab.focus", "tab.create"]);
+
+    answer(&mut runtime, create_action(), acknowledged());
+    herdr.wait_for_requests(3, Duration::from_secs(5));
+    assert_eq!(focused_tabs(&herdr), ["w-order:t2", "w-order:t1"]);
+}
+
+/// The unknown-result rule is the same whichever control was lost: a pane
+/// focus whose answer never came holds back the tab focus waiting behind it.
+#[test]
+fn a_lost_pane_focus_answer_does_not_release_the_tab_focus_behind_it() {
+    let (mut runtime, checkout_id) =
+        live_tab_order_runtime("/private/tmp/hide-control-order-pane-lost");
+    let tabs = ["w-order:t1", "w-order:t2", "w-order:t3"];
+    runtime.ingest_session(Ok(tab_order_payload(
+        "/private/tmp/hide-control-order-pane-lost",
+        &tabs,
+        &tabs,
+        "w-order:t1",
+    )));
+    assert!(runtime.dispatch_json(&correlated_pane_focus_event("w-order:t2:p", "pane-1")));
+    let running = runtime.pane_focus_in_flight.clone().expect("on the wire");
+    assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t3")));
+
+    let (changed, next) = runtime.complete_lane_pane_focus(
+        running,
+        Err(live::ControlFailure::Ambiguous(
+            "pane.focus result is unknown: response timed out".into(),
+        )),
+        5,
+    );
+
+    assert!(changed);
+    assert!(next.is_none(), "nothing is sent behind an unknown effect");
+    assert!(!runtime.control_lane.is_busy());
+    assert_eq!(diagnostic_count(&runtime, "tab.focus.unknown"), 1);
+    assert!(runtime.pending_tab_focus.is_none());
+}
+
+/// A move that waited behind other controls is stale when the operator has
+/// replaced it, and is not sent; one that is current starts its five seconds
+/// when it leaves, not when it was accepted.
+#[test]
+fn a_tab_move_replaced_while_it_waited_is_not_sent() {
+    let herdr = fake_herdr("order-stale-move");
+    let (mut runtime, checkout_id) =
+        runtime_on(&herdr, "/private/tmp/hide-control-order-stale-move");
+    assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2")));
+    let stale = RemoteControlAction::MoveTab {
+        checkout_id: checkout_id.clone(),
+        tab_id: "w-order:t1".to_owned(),
+        insert_index: 2,
+        expected_order: vec![
+            "w-order:t2".into(),
+            "w-order:t3".into(),
+            "w-order:t1".into(),
+        ],
+        generation: 999,
+        connection_generation: runtime.live_generation,
+    };
+    runtime.submit_local_control(stale).expect("accepted");
+    assert_eq!(runtime.control_lane.queued_len(), 1);
+
+    herdr.wait_for_requests(1, Duration::from_secs(5));
+    let (_, started) = answer(&mut runtime, focus_action("w-order:t2"), acknowledged());
+
+    assert!(!started, "no pending move carries this generation");
+    assert!(!runtime.control_lane.is_busy());
+    assert_eq!(herdr.calls().len(), 1);
+}
