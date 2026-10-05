@@ -323,7 +323,13 @@ test("a dirty worktree with an unmerged branch and an agent is deleted once both
     }, BRANCH);
     await confirm.click();
 
-    await expect(dialog.locator('[data-delete-result="finished"]')).toBeVisible({ timeout: 60_000 });
+    // A failure names the phase the dialog stopped in and what it said, so a
+    // refused removal and one that never answered read differently.
+    const result = dialog.locator("[data-delete-result]");
+    await expect(result).toBeVisible({ timeout: 60_000 }).catch(async (error: Error) => {
+      throw new Error(`no result: phase ${await dialog.locator("[data-delete-phase]").getAttribute("data-delete-phase", { timeout: 1_000 }).catch(() => "none")}: ${(await dialog.innerText()).replace(/\s+/g, " ")}\n${error.message}`);
+    });
+    await expect(result, await result.innerText()).toHaveAttribute("data-delete-result", "finished", { timeout: 1_000 });
     await expect(feature).toHaveCount(0, { timeout: 30_000 });
     expect(await page.evaluate(() => (window as unknown as { __removingSeen: string[] }).__removingSeen.length)).toBeGreaterThan(0);
     expect(fs.existsSync(worktree)).toBe(false);
