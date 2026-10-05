@@ -4,7 +4,7 @@ import { noteAreaFrame } from "./areaFrames";
 import { areaGeometry } from "./areaLayout";
 import { createActions } from "./actions";
 import { commitCycle, reconcileHeldCycle } from "./keyboard";
-import { expectPane, observeEntries, observePane, resetRecent, tabSurface } from "./recent";
+import { configurePaneVisits, expectPane, observeEntries, observePane, resetRecent, tabSurface } from "./recent";
 import type { SnapshotRest } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
@@ -104,12 +104,21 @@ function devices(): SnapshotRest {
   return rest;
 }
 const panes = (cycle: ReturnType<typeof agentCycle>) => cycle?.items.map((row) => row.target.kind === "pane" ? row.target.paneId : "wrong-kind");
+/** The devices fixture with each reported visit echoed into its `ui_state` as the core keeps it: moved to the front, once. */
+function visited(): SnapshotRest {
+  const rest = devices();
+  configurePaneVisits((paneId) => {
+    const held = rest.ui_state?.recent_pane_ids ?? [];
+    rest.ui_state = { ...rest.ui_state, recent_pane_ids: [paneId, ...held.filter((id) => id !== paneId)] };
+  });
+  return rest;
+}
 
 describe("Agent pane cycle (issue 301)", () => {
   beforeEach(() => { resetRecent(); useUiStore.setState({ screen: { kind: "workspace" }, cycle: null }); noteAreaFrame("agent", null); noteAreaFrame("view", null); });
 
   it.each<KeyboardOwner>([{ kind: "none" }, { kind: "tool", workspace: "c" }])("opens recent agents from $kind focus without inventing a pane visit", (outside) => {
-    const rest = devices(); draw(rest);
+    const rest = visited(); draw(rest);
     for (const pane of ["remote:mini:pane:p1", "t2-pane", "other-tab-pane"]) observePane(rest, pane);
     expect(agentOrigin(rest, outside)).toBeNull();
     const cycle = agentCycle(rest, outside)!;
@@ -123,7 +132,7 @@ describe("Agent pane cycle (issue 301)", () => {
   });
 
   it("opens recent agents on Main and Overview even with no drawn Agent area", () => {
-    const rest = devices(); draw(rest);
+    const rest = visited(); draw(rest);
     observePane(rest, "other-tab-pane");
     noteAreaFrame("agent", null);
     for (const screen of [{ kind: "main" }] as const) {
@@ -135,12 +144,12 @@ describe("Agent pane cycle (issue 301)", () => {
         expect(agentCycle(rest, outside)?.index).toBe(-1);
       }
     }
-    resetRecent();
+    rest.ui_state = { ...rest.ui_state, recent_pane_ids: [] };
     expect(agentCycle(rest, { kind: "none" })).toBeNull();
   });
 
   it("never substitutes Agent panes for a focused View, including a single-tab or retired area", () => {
-    const rest = devices(); draw(rest);
+    const rest = visited(); draw(rest);
     observePane(rest, "other-tab-pane");
     const viewOwner = { kind: "view", workspace: "c", areaId: "a1" } as const;
     expect(agentCycle(rest, viewOwner)).toBeNull();
@@ -153,7 +162,7 @@ describe("Agent pane cycle (issue 301)", () => {
   });
 
   it("walks the agent panes visited on every device, project and checkout, one row per pane, most recent first", () => {
-    const rest = devices(); draw(rest);
+    const rest = visited(); draw(rest);
     for (const pane of ["remote:mini:pane:p1", "other-tab-pane", "t1-side", "t2-pane", "t1-pane"]) observePane(rest, pane);
     const cycle = agentCycle(rest, owner)!;
     expect(cycle.kind).toBe("agents");
@@ -167,7 +176,7 @@ describe("Agent pane cycle (issue 301)", () => {
   });
 
   it("from a pane with no agent, lands first on the most recent agent pane", () => {
-    const rest = devices(); draw(rest);
+    const rest = visited(); draw(rest);
     for (const pane of ["t2-pane", "other-tab-pane", "t1-side"]) observePane(rest, pane);
     const shell = { kind: "pane", workspace: "c", paneId: "t1-side" } as const;
     expect(agentOrigin(rest, shell)).toEqual({ paneId: "t1-side" });
@@ -180,7 +189,7 @@ describe("Agent pane cycle (issue 301)", () => {
   });
 
   it("commits one event naming the pane, through the device it is on, and nothing for the origin or a preview", () => {
-    const rest = devices(); draw(rest);
+    const rest = visited(); draw(rest);
     for (const pane of ["remote:mini:pane:p1", "other-tab-pane", "t1-pane"]) observePane(rest, pane);
     const sent: { kind: string; payload: Record<string, unknown> }[] = [];
     const actions = createActions((event) => { sent.push(event as never); });
@@ -195,7 +204,7 @@ describe("Agent pane cycle (issue 301)", () => {
   });
 
   it("keeps the one other row when the origin's own agent ends while held", () => {
-    const rest = devices(); draw(rest);
+    const rest = visited(); draw(rest);
     for (const pane of ["t2-pane", "t1-pane"]) observePane(rest, pane);
     const held = { ...agentCycle(rest, owner)!, index: 1 };
     expect(panes(held)).toEqual(["t1-pane", "t2-pane"]);
@@ -208,8 +217,28 @@ describe("Agent pane cycle (issue 301)", () => {
     expect(sent).toEqual([expect.objectContaining({ kind: "focus_pane", payload: expect.objectContaining({ pane_id: "t2-pane" }) })]);
   });
 
-  it("does not take a commit's passing frames for visits", () => {
+  it("reports a visit to the core once it is not first there, and never a pane no tab holds", () => {
     const rest = devices(); draw(rest);
+    const sent: string[] = [];
+    const core = (...ids: string[]) => { rest.ui_state = { ...rest.ui_state, recent_pane_ids: ids }; };
+    configurePaneVisits((paneId) => { sent.push(paneId); });
+    observePane(rest, "t2-pane");
+    core("t2-pane");
+    observePane(rest, "t2-pane");
+    expect(sent).toEqual(["t2-pane"]);
+    // Back to t2 before the core echoed t1 is still a visit; a closed pane is none.
+    observePane(rest, "t1-pane");
+    observePane(rest, "t2-pane");
+    observePane(rest, "gone-pane");
+    expect(sent).toEqual(["t2-pane", "t1-pane", "t2-pane"]);
+    // Another window's visit reached the core last, so the same pane is reported again.
+    core("other-tab-pane", "t2-pane", "t1-pane");
+    observePane(rest, "t2-pane");
+    expect(sent).toEqual(["t2-pane", "t1-pane", "t2-pane", "t2-pane"]);
+  });
+
+  it("does not take a commit's passing frames for visits", () => {
+    const rest = visited(); draw(rest);
     for (const pane of ["t2-pane", "outside-pane"]) observePane(rest, pane);
     expectPane("other-tab-pane");
     observePane(rest, "t3-pane");
@@ -219,7 +248,7 @@ describe("Agent pane cycle (issue 301)", () => {
   });
 
   it("takes no origin from a pane whose tab no Agent area draws", () => {
-    const rest = devices(); draw(rest);
+    const rest = visited(); draw(rest);
     observePane(rest, "t2-pane");
     // t3 is in the fixture but a1 shows t1: a keyboard owner left on t3's pane is stale.
     expect(agentOrigin(rest, { kind: "pane", workspace: "c", paneId: "t3-pane" })).toBeNull();
@@ -227,7 +256,7 @@ describe("Agent pane cycle (issue 301)", () => {
   });
 
   it("starts before the most recent agent pane when the keyboard is in no pane, and drops a closed pane or ended agent while held", () => {
-    const rest = devices(); draw(rest);
+    const rest = visited(); draw(rest);
     for (const pane of ["t2-pane", "outside-pane", "other-tab-pane"]) observePane(rest, pane);
     const bar = { kind: "agent", workspace: "c", areaId: "a1" } as const;
     // The core reports no focused pane, so the tab bar is in no pane.
@@ -247,7 +276,7 @@ describe("Agent pane cycle (issue 301)", () => {
   });
 
   it("counts a delegated child's canvas as the Agent area", () => {
-    const rest = devices();
+    const rest = visited();
     const checkout = rest.navigator!.workspaces![0]!.checkouts[0]!;
     // A delegated child's tab is in no area's strip; a1 draws it as a canvas over t1.
     checkout.tabs.push({ id: "child", label: "child", panes: [{ id: "child-pane" }], workspace_id: "w", checkout_id: "c", empty: false, delegated: true } as never);

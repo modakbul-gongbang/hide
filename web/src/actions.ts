@@ -173,7 +173,9 @@ export function createActions(send: DispatchFn) {
    * while its snapshot is still in flight. The folds (`collapsed_workspace_ids`,
    * `expanded_checkout_ids`, `expanded_agent_pane_ids`) are left out for the
    * same reason: the core owns them through `project_checkouts_fold`,
-   * `checkout_agents_toggle` and `agent_tree_toggle`.
+   * `checkout_agents_toggle` and `agent_tree_toggle`. The recent lists
+   * (`recent_checkouts`, `recent_pane_ids`) ride along and the core ignores
+   * them, keeping its own.
    */
   const updateUiState = (patch: Record<string, unknown>) => {
     const state = rest()?.ui_state;
@@ -1684,6 +1686,11 @@ export function createActions(send: DispatchFn) {
 
     toggleInactiveCheckouts(projectPath: string) {
       dispatch({ schema_version: 2, kind: "inactive_checkouts_toggle", payload: { project_path: projectPath } });
+    },
+
+    /** Reports the keyboard's visit to a pane; the core keeps the Agent cycle's order (`ui_state.recent_pane_ids`). */
+    paneVisit(paneId: string) {
+      dispatch({ schema_version: 2, kind: "pane_visit", payload: { pane_id: paneId } });
     },
 
     /** Folds or unfolds an agent's descendants in the Agents list; the core keeps the choice. */

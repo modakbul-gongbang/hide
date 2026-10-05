@@ -119,10 +119,13 @@ fn the_list_survives_a_restart_and_a_shared_ui_state_save() {
     bring_front(&mut runtime, "alpha");
     bring_front(&mut runtime, "beta");
 
-    assert!(runtime.dispatch_json(&event(
-        "ui_state_update",
-        serde_json::json!({"accent_hex": "#7DD3FC", "font_size": 14})
-    )));
+    let save = super::appearance::ui_state_update(
+        &runtime,
+        serde_json::json!({"accent_hex": "#7DD3FC", "recent_checkouts": []}),
+    );
+    assert!(runtime.dispatch_json(&save));
+    assert!(runtime.snapshot().status.last_error.is_none());
+    assert_eq!(runtime.snapshot().ui_state.accent_hex, "#7DD3FC");
     assert_eq!(recent(&runtime), ["c-beta", "c-alpha"]);
 
     drop(runtime);

@@ -1075,9 +1075,9 @@ Recent Agent pane or View tab cycling (⌃Tab / ⌃⇧Tab in the desktop app, �
 In a View area it walks the tabs of that exact area, in recent-use order.
 The View scope includes device, checkout and area ID, so an Agent area with the same ID or another checkout cannot widen it.
 A document, diff, View tab bar or visible native browser page names its View area.
-Everywhere outside a View area it walks the agent panes the keyboard has been in this session, one row per pane, across every device, project and checkout, in recent-use order (issue #301).
+Everywhere outside a View area it walks the agent panes the keyboard has been in, one row per pane, across every device, project and checkout, in recent-use order (issue #301); the order survives a reload, quitting the app and a daemon restart.
 A terminal pane in a tab an Agent area of the Workspace in front draws (its normal tab or a delegated child's canvas), or that area's tab bar, puts the keyboard in the Agent area; from a tab bar the pane in use is the one the core focuses in that tab.
-A pane joins the order the first time the keyboard is in it, and a commit's passing frames on the way to its pane are not visits; a pane that closes leaves the order.
+A pane joins the order the first time the keyboard is in it, and a commit's passing frames on the way to its pane are not visits; a pane that closes is no longer a row.
 A pane row is titled by the agent it runs, with the place as Recent Panels names it and `Terminal` beneath, and the agent's status mark; a pane running no agent, a View display, an Overview and a project are never rows.
 From a pane running no agent, or from the sidebar, tools, search, Settings, a dialog, Main or Overview, the first chord lands on the most recent agent pane.
 Outside the Agent area, opening the cycle neither invents a pane origin nor records the underlying pane as visited.
@@ -1101,7 +1101,7 @@ A bound Global Recent Panels chord keeps the same hold, release and cancellation
 Recent Projects (⌥Tab / ⌥⇧Tab) retains its global project order and restores each Project's last Workspace surface, never its Overview.
 Both global lists and the Agent pane cycle carry a device chip on a row outside the device in front and move the rail, sidebar and center together when committed.
 The session uses one bounded recent-surface history; the View area cycle filters it and appends normal area tabs not yet visited.
-The Agent pane cycle reads a second session-local order of pane visits, bounded by the panes that exist.
+The Agent pane cycle reads the core's order of pane visits (`ui_state.recent_pane_ids`, saved with the UI state); the page decides what a visit is and reports it with `pane_visit`, and the fifty most recent panes are kept, shell panes included, since an agent may start in one later.
 The shown tab of the recorded keyboard area is the current visit, including native browser pages; intermediate commit frames are not visits.
 
 Reopen Closed Tab is disabled when the session-local recent-close stack is empty or a restore is already running, and restoration works regardless of which surface currently owns focus.
@@ -1116,7 +1116,7 @@ Both the recent-panel and project switchers show at most nine rows around the hi
 Project rows show the last surface and checkout; panel rows show their project and checkout (collapsed to the checkout alone when both share a name) and their surface type.
 A row's device chip follows its detail line, truncated before it would crowd the detail, with the agent mark, title and checkout intact; a device absent from the registration map is named by its actual remote ID rather than presented as local.
 A panel row whose tab holds exactly one agent pane is titled by that agent's identity with its status mark; a tab with no agent or several keeps the Herdr tab label.
-History is session-local and retains only existing projects and surfaces; a deleted highlight moves to the next surviving entry without reordering the held cycle, and if none survives, the cycle cancels and keeps the current selection.
+Recent Panels and Recent Projects history is session-local and retains only existing projects and surfaces; a deleted highlight moves to the next surviving entry without reordering the held cycle, and if none survives, the cycle cancels and keeps the current selection.
 
 ## Device rail
 

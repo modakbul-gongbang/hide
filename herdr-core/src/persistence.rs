@@ -137,6 +137,10 @@ struct StoredUiState {
     /// empty. More entries than the limit (a hand edit) are cut to it.
     #[serde(default)]
     recent_checkouts: Vec<crate::model::RecentCheckout>,
+    /// Absent in a store written before the recent pane order existed, which
+    /// loads empty. More entries than the limit (a hand edit) are cut to it.
+    #[serde(default)]
+    recent_pane_ids: Vec<String>,
 }
 
 /// Settings › Issues as stored. `default_agent` is only ever read: it named
@@ -318,6 +322,11 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
                 recent.truncate(crate::model::RECENT_CHECKOUT_LIMIT);
                 recent
             },
+            recent_pane_ids: {
+                let mut recent = stored.recent_pane_ids;
+                recent.truncate(crate::model::RECENT_PANE_LIMIT);
+                recent
+            },
         },
         stored.pane_terminal_sizes,
         disposition,
@@ -384,6 +393,7 @@ pub fn save(
         agent_start: Some(state.agent_start.clone()),
         agent_sleep: state.agent_sleep.clone(),
         recent_checkouts: state.recent_checkouts.clone(),
+        recent_pane_ids: state.recent_pane_ids.clone(),
     };
     let bytes = serde_json::to_vec_pretty(&stored)
         .map_err(|_| "UI state could not be encoded".to_owned())?;

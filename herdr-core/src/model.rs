@@ -2397,10 +2397,20 @@ pub struct UiStateSnapshot {
     /// written before it existed, which loads empty.
     #[serde(default)]
     pub recent_checkouts: Vec<RecentCheckout>,
+    /// The terminal panes the keyboard has been in, newest first, at most
+    /// `RECENT_PANE_LIMIT`: the order the Agent area's Ctrl+Tab walks (issue
+    /// 301). The shell reports each visit with `pane_visit`; a remote pane is
+    /// held by its device-scoped id. Absent in a store written before it
+    /// existed, which loads empty.
+    #[serde(default)]
+    pub recent_pane_ids: Vec<String>,
 }
 
 /// The most checkouts the recent list keeps; the oldest leave first.
 pub const RECENT_CHECKOUT_LIMIT: usize = 10;
+
+/// The most panes the recent pane order keeps; the oldest leave first.
+pub const RECENT_PANE_LIMIT: usize = 50;
 
 /// One entry of the recent list: the ids that open the checkout and the
 /// facts that draw its row while its device has no catalog to read them from.
@@ -2789,6 +2799,7 @@ impl Default for UiStateSnapshot {
             agent_start: AgentStartChoice::default(),
             agent_sleep: crate::agent_sleep::AgentSleepStore::default(),
             recent_checkouts: Vec::new(),
+            recent_pane_ids: Vec::new(),
         }
     }
 }

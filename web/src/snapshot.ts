@@ -1236,6 +1236,8 @@ export type SnapshotRest = {
     agent_start?: AgentStartChoice;
     /** The checkouts last brought to the front, newest first, up to ten (PRD cmdk-recent). */
     recent_checkouts?: RecentCheckout[];
+    /** The terminal panes the keyboard has been in, newest first, up to fifty: the Agent cycle's order (issue 301). */
+    recent_pane_ids?: string[];
     [key: string]: unknown;
   };
   status?: {

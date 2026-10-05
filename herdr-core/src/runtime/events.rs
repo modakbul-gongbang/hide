@@ -1213,6 +1213,7 @@ pub(super) enum Event {
     AgentSleepSet(AgentSleepSetPayload),
     AgentSleep(PaneTargetPayload),
     PaneInputSubmitted(PaneTargetPayload),
+    PaneVisit(PaneTargetPayload),
     AgentWake(AgentWakePayload),
     AgentTreeToggle(PaneTargetPayload),
     RemoteControl(RemoteControlPayload),
@@ -1414,6 +1415,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "agent_sleep_set" => decode!(AgentSleepSetPayload, AgentSleepSet),
         "agent_sleep" => decode!(PaneTargetPayload, AgentSleep),
         "pane_input_submitted" => decode!(PaneTargetPayload, PaneInputSubmitted),
+        "pane_visit" => decode!(PaneTargetPayload, PaneVisit),
         "agent_wake" => decode!(AgentWakePayload, AgentWake),
         "agent_tree_toggle" => decode!(PaneTargetPayload, AgentTreeToggle),
         "remote_control" => decode!(RemoteControlPayload, RemoteControl),
@@ -1596,6 +1598,7 @@ impl Runtime {
                 self.record_operator_submit(&payload.pane_id);
                 false
             }
+            Event::PaneVisit(payload) => self.record_pane_visit(payload.pane_id),
             Event::AgentWake(payload) => self.request_agent_wake(payload),
             Event::RefreshStatus => self.request_status_refresh(),
             Event::PetSetVisible(payload) => self.set_pet_visible(payload.visible),
@@ -3526,6 +3529,9 @@ impl Runtime {
                     // The core records it on the front change; a shared save
                     // carries it through, or any save would empty the list.
                     recent_checkouts: current.recent_checkouts,
+                    // The shell's visits own this through `pane_visit`; a
+                    // shared save carries it through for the same reason.
+                    recent_pane_ids: current.recent_pane_ids,
                 };
                 // Visibility and popover activity wake the provider reader,
                 // but they are not durable preferences. The shell sends the

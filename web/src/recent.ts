@@ -13,8 +13,11 @@
 // of the terminal panes the keyboard has been in, on every device, project
 // and checkout, whose agent panes the Agent area's cycle walks (issue 301). The core reports what is in
 // front, not what was before, and the screens are the page's own navigation,
-// so the order is the shell's convenience: nothing here is authority, and a
-// reload rebuilds it from use.
+// so these orders are the shell's convenience: nothing here is authority, and a
+// reload rebuilds them from use. The pane order is the exception: the page
+// still decides what a visit is, since only it knows where the keyboard is,
+// but the core keeps the order (`ui_state.recent_pane_ids`) and saves it, so
+// the Agent cycle survives a reload and a restart.
 
 import { frontDeviceId, localDeviceId } from "./devices";
 import { allProjectsCount } from "./navigation";
@@ -188,8 +191,10 @@ export function availableEntries(rest: SnapshotRest | null, remembered: readonly
 
 let entries: RecentEntry[] = [];
 let projects: string[] = [];
-/** Pane ids, the one the keyboard is in first; remote ids are scoped to their device, so one id names one pane. */
-let panes: string[] = [];
+/** Where a pane visit is reported: the core, which keeps the order (see `configurePaneVisits`). */
+let reportVisit: (paneId: string) => void = () => {};
+/** The pane last reported, so a repeated focus in the same pane is not reported again before the core echoes it. */
+let reported: string | null = null;
 /** The entry a Recent Panels or Recent Projects commit asked for, until the page shows it (see `expectSurface`). */
 let expected: string | null = null;
 /** The pane an Agent pane commit asked for, until the keyboard is in it (see `expectPane`). */
@@ -231,22 +236,26 @@ export function observeEntries(rest: SnapshotRest | null, current: RecentEntry |
   entries = [visited, ...entries.filter((entry) => entry.key !== visited.key)];
 }
 
+/** Sends each pane visit to the core, which moves the pane to the front of `ui_state.recent_pane_ids`. */
+export function configurePaneVisits(report: (paneId: string) => void) {
+  reportVisit = report;
+  reported = null;
+}
+
 /**
- * Brings the pane order up to date and moves the pane the keyboard is in to
- * its front. Panes that are gone leave, and a pane joins only once the
- * keyboard has been in it, so the order is bounded by the panes that exist.
- * A commit's own frames (the checkout arriving before its pane is focused)
- * are not visits, as for `observeEntries`.
+ * Reports the pane the keyboard is in as a visit. A pane joins the order only
+ * once the keyboard has been in it, and only a pane a listed tab holds is
+ * reported. A commit's own frames (the checkout arriving before its pane is
+ * focused) are not visits, as for `observeEntries`.
  */
 export function observePane(rest: SnapshotRest | null, current: string | null) {
-  // Nothing to prune and nothing to record before the keyboard's first pane.
-  if (panes.length === 0 && current === null) return;
-  const alive = new Set(allPanes(rest).map((row) => row.pane.id));
-  panes = panes.filter((id) => alive.has(id));
   if (expectedPane && current !== expectedPane) return;
   expectedPane = null;
-  if (!current || !alive.has(current)) return;
-  panes = [current, ...panes.filter((id) => id !== current)];
+  if (!current || !allPanes(rest).some((row) => row.pane.id === current)) return;
+  // Another window's visit moves the core's head, so the same pane is reported again once it is not first.
+  if (current === reported && recentPanes(rest)[0] === current) return;
+  reported = current;
+  reportVisit(current);
 }
 
 /** Marks the pane a commit is bringing forward: pane visits are not recorded until the keyboard is in it or the operator acts. */
@@ -254,8 +263,9 @@ export function expectPane(paneId: string | null) {
   expectedPane = paneId;
 }
 
-export function recentPanes(): readonly string[] {
-  return panes;
+/** Pane ids, the one the keyboard was in last first; remote ids are scoped to their device, so one id names one pane. */
+export function recentPanes(rest: SnapshotRest | null): readonly string[] {
+  return rest?.ui_state?.recent_pane_ids ?? [];
 }
 
 /** The project in front, first in the Recent Projects order. */
@@ -289,7 +299,8 @@ export function recentProjectOrder(existing: readonly string[]): string[] {
 export function resetRecent() {
   entries = [];
   projects = [];
-  panes = [];
+  reportVisit = () => {};
+  reported = null;
   expected = null;
   expectedPane = null;
 }
