@@ -121,7 +121,7 @@ export function Sidebar({ actions }: { actions: Actions }) {
     else actions.setSidebarWidth(send);
   };
   const home = <HomeSection actions={actions} />;
-  // Every device's sidebar is its Projects | Agents: Projects lists its Needs You, its Home and its projects, Agents lists its agents by state;
+  // Every device's sidebar is its Projects | Agents: Projects lists its Needs You, its Done, its Home and its projects, Agents lists its agents by state;
   // a device that is not connected shows its name and the way to reconnect, and no stale tree (quick device-rail-badges B3).
   const list =
     body === "agents" ? <AgentList actions={actions} /> : body === "disconnected" ? <DisconnectedDevice actions={actions} /> : <ProjectList actions={actions} home={home} />;
@@ -641,8 +641,9 @@ function ProjectList({ actions, home }: { actions: Actions; home: ReactNode }) {
   const catalogText = useShellStore((s) => catalogLineOf(s.rest, t)?.text ?? null);
   const catalogLine = catalogState && catalogText ? { state: catalogState, text: catalogText } : null;
   const homeWorkspace = useShellStore((s) => contextHome(s.rest));
-  const rows = useMemo(() => projectRows(workspaces, groups, listedAgents, homeWorkspace), [workspaces, groups, listedAgents, homeWorkspace]);
-  // The device's Needs You comes first, then its Home, then the projects (PRD home-device-rail B6); Done and the rest are the Agents tab's.
+  const raisedOpen = useUiStore((s) => s.raisedOpen);
+  const rows = useMemo(() => projectRows(workspaces, groups, listedAgents, homeWorkspace, raisedOpen), [workspaces, groups, listedAgents, homeWorkspace, raisedOpen]);
+  // The device's Needs You and Done come first, then its Home, then the projects; Working and Seen are the Agents tab's.
   const raised = useMemo(() => rows.filter((row) => row.kind === "raised"), [rows]);
   const tree = useMemo(() => rows.filter((row) => row.kind !== "raised"), [rows]);
   const agentRowMenu = useAgentRowMenu(actions);
@@ -772,40 +773,60 @@ const ProjectRowView = memo(function ProjectRowView({ row, context }: { row: Pro
  * (docs/status-model.md): the Agents list's row for each agent, drawn
  * whatever its project, checkout or parent has folded. A raised row never
  * unfolds, so it always wears its descendant badge; opening it does what the
- * same row does in Agents.
+ * same row does in Agents. Past its cap the older rows wait behind a fold
+ * row, as an inactive fold's do.
  */
 function RaisedSection({ row, context }: { row: Extract<ProjectRow, { kind: "raised" }>; context: ListContext }) {
   const { t } = useInterfaceTranslation();
+  const toggleRaised = useUiStore((s) => s.toggleRaised);
   return (
     <li data-raised-group={row.group}>
       <div className="px-sm pt-sm pb-xxs text-micro font-medium text-muted-foreground" data-section={row.group} id={`raised-group-${row.group}`}>
-        {agentGroupTitle(row.group, t)} · {row.agents.length}
+        {agentGroupTitle(row.group, t)} · {row.agents.length + row.more.length}
       </div>
       <ul aria-labelledby={`raised-group-${row.group}`}>
-        {row.agents.map(({ agent, device }) => {
-          const presentation = context.presentationOf(agent);
-          return (
-            <SidebarAgentRow
-              key={`${device ?? "local"}:${agent.id}`}
-              agent={agent}
-              // The device in front is the whole list, so no row names it (PRD home-device-rail B2).
-              device={null}
-              place={context.placeOf(device, agent.pane_id)}
-              depth={0}
-              descendants={presentation.badgeDescendants}
-              childRows={presentation.badgeChildren}
-              selected={context.workspaceScreen && agent.pane_id === context.focusedPaneId}
-              onOpen={context.actions.openAgent}
-              onToggleTree={null}
-              inset={PROJECT_COLUMN}
-              foldedLineage={presentation}
-              number={context.numberOf?.(agent.pane_id, null) ?? null}
-              menu={context.agentRowMenu}
+        {row.agents.map((listed) => (
+          <RaisedAgentRow key={`${listed.device ?? "local"}:${listed.agent.id}`} listed={listed} context={context} />
+        ))}
+        {row.more.length > 0 ? (
+          <li>
+            <FoldRow
+              label={t("sidebar.raisedMore")}
+              count={row.more.length}
+              expanded={row.expanded}
+              level="project"
+              onToggle={() => toggleRaised(row.group)}
+              data-raised-more={row.group}
             />
-          );
-        })}
+          </li>
+        ) : null}
+        {row.expanded
+          ? row.more.map((listed) => <RaisedAgentRow key={`${listed.device ?? "local"}:${listed.agent.id}`} listed={listed} context={context} />)
+          : null}
       </ul>
     </li>
+  );
+}
+
+function RaisedAgentRow({ listed: { agent, device }, context }: { listed: ListedAgent; context: ListContext }) {
+  const presentation = context.presentationOf(agent);
+  return (
+    <SidebarAgentRow
+      agent={agent}
+      // The device in front is the whole list, so no row names it (PRD home-device-rail B2).
+      device={null}
+      place={context.placeOf(device, agent.pane_id)}
+      depth={0}
+      descendants={presentation.badgeDescendants}
+      childRows={presentation.badgeChildren}
+      selected={context.workspaceScreen && agent.pane_id === context.focusedPaneId}
+      onOpen={context.actions.openAgent}
+      onToggleTree={null}
+      inset={PROJECT_COLUMN}
+      foldedLineage={presentation}
+      number={context.numberOf?.(agent.pane_id, null) ?? null}
+      menu={context.agentRowMenu}
+    />
   );
 }
 

@@ -61,7 +61,8 @@ export function projectListNumbers(
   rows: readonly ProjectRow[],
   workspaces: readonly Workspace[],
 ): (paneId: string, checkoutId: string | null) => Digit | null {
-  const raised = new Set(rows.flatMap((row) => (row.kind === "raised" ? row.agents.map(({ agent }) => agent.pane_id) : [])));
+  // A raised agent folded past its section's cap is not drawn there, so its number stays on its tree row.
+  const raised = new Set(rows.flatMap((row) => (row.kind === "raised" ? [...row.agents, ...(row.expanded ? row.more : [])].map(({ agent }) => agent.pane_id) : [])));
   const owners = new Map<string, string>();
   for (const workspace of workspaces) {
     for (const checkout of workspace.checkouts) for (const tab of checkout.tabs) for (const pane of tab.panes) if (!owners.has(pane.id)) owners.set(pane.id, checkout.id);
