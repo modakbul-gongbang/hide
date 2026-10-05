@@ -10,6 +10,7 @@ import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { startHided } from "./hided-fixture";
 import { showExplorer, showTool, screenshot } from "./wire";
+import { toPage } from "../../desktop/src/main/wirePath";
 
 test.describe.configure({ timeout: 90_000 });
 
@@ -40,7 +41,7 @@ test("file and diff views open wrapped and Wrap turns it off per tab", async ({ 
     await page.locator("[data-project]", { hasText: "wrap-repo" }).locator("[data-checkout]").first().click();
 
     await showExplorer(page);
-    await page.locator(`[data-explorer-row="${file}"]`).click();
+    await page.locator(`[data-explorer-row="${toPage(file)}"]`).click();
     const fileView = page.locator('[data-editor-kind="file"]');
     const fileScroller = fileView.locator("[data-editor-codemirror] .cm-scroller");
     await expect(fileView.locator(".cm-content")).toContainText("added79");

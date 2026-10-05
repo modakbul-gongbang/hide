@@ -15,6 +15,7 @@ import { startHided, type Daemon } from "./hided-fixture";
 import { chooseColumn, countSent, screenshot } from "./wire";
 import { chord, commandLabel } from "./chords";
 import { openCurrentProjectOverview } from "./overview-entry";
+import { toPage } from "../../desktop/src/main/wirePath";
 
 test.describe.configure({ timeout: 120_000 });
 
@@ -175,7 +176,7 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     await settled();
     const agentsBeforeViews = (await agentArea.boundingBox())!;
     const resizesBeforeViews = resizes();
-    await page.locator(`[data-explorer-row="${path.join(root, "notes.md")}"]`).dblclick();
+    await page.locator(`[data-explorer-row="${toPage(path.join(root, "notes.md"))}"]`).dblclick();
     await expect(workspace).toHaveAttribute("data-file-views", "shown");
     await expect(viewsColumn.locator('[data-tab-kind="file"]')).toHaveCount(1);
     await expect.poll(async () => (await agentArea.boundingBox())!.width).toBeLessThan(agentsBeforeViews.width - 300);
@@ -196,7 +197,7 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     // Inside File Views nothing resizes a terminal: opening another file,
     // switching its tabs (B19).
     const resizesInViews = resizes();
-    await page.locator(`[data-explorer-row="${path.join(root, "gone.txt")}"]`).dblclick();
+    await page.locator(`[data-explorer-row="${toPage(path.join(root, "gone.txt"))}"]`).dblclick();
     await expect(viewsColumn.locator('[data-tab-kind="file"]')).toHaveCount(2);
     await viewsColumn.locator('[data-tab-kind="file"]').first().click();
     await page.waitForTimeout(500);
