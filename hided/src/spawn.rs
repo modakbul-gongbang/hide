@@ -91,6 +91,7 @@ impl OwnedOpener {
         }
     }
 
+    #[allow(clippy::disallowed_methods)] // a production wait, not test code
     pub fn stop(&mut self) {
         // End the tree ourselves even if the supervisor crashed before its
         // watcher ran. Ending it more than once is safe, so explicit stop
@@ -207,6 +208,7 @@ pub fn spawn_opener(
 /// the socket even after SIGKILL; the watcher then kills the still-running CLI
 /// process group. Default-app handoff does not enter this helper.
 #[cfg(unix)]
+#[allow(clippy::disallowed_methods)] // a production wait, not test code
 pub fn run_opener_helper(args: &[OsString]) -> Result<(), String> {
     if args.len() != 4 || args[0] != "--open-helper" {
         return Err("invalid opener helper arguments".into());

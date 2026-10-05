@@ -317,6 +317,7 @@ fn a_file_that_already_holds_the_draft_is_saved_whatever_revision_was_expected()
 /// Settling a save whose answer was lost reads the revision after that save
 /// has finished, even from another handle, as a new helper would.
 #[test]
+#[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
 fn a_revision_read_waits_for_a_save_in_progress_in_the_folder() {
     let f = fixture("a.txt", "old");
     let checkout = f.checkout.clone();

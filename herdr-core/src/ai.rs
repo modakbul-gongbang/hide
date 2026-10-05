@@ -381,6 +381,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
     fn an_unobserved_request_asks_no_provider_anything() {
         let mut reader = AiReader::new();
         let request = AiRequest {

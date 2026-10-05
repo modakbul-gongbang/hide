@@ -43,7 +43,7 @@ test("running Workspace ports and conversation content: keyboard, jump, scroll, 
     await expect(page.getByText("No running servers in this Workspace.")).toBeVisible({ timeout: 15_000 });
     await page.keyboard.press("Escape");
     const first = await startServer(root); servers.push(first.child);
-    // eslint-disable-next-line hide-e2e/no-action-in-poll -- #ISSUE retried interaction: the picker opens before the server is listed
+    // eslint-disable-next-line hide-e2e/no-action-in-poll -- #433 retried interaction: the picker opens before the server is listed
     await expect.poll(async () => {
       await globe.click();
       const opened = await page.getByRole("tab", { name: new RegExp(String(first.port)) }).waitFor({state:"visible",timeout:1000}).then(() => 1).catch(() => 0);
@@ -52,7 +52,7 @@ test("running Workspace ports and conversation content: keyboard, jump, scroll, 
     }, { timeout: 20_000 }).toBeGreaterThan(0);
     await expect(page.locator("[data-browser-address]")).toHaveText(`127.0.0.1:${first.port}`);
     const second = await startServer(root); servers.push(second.child);
-    // eslint-disable-next-line hide-e2e/no-action-in-poll -- #ISSUE retried interaction: the picker opens before the second server is listed
+    // eslint-disable-next-line hide-e2e/no-action-in-poll -- #433 retried interaction: the picker opens before the second server is listed
     try { await expect.poll(async () => {
       if (!await page.locator("[data-server-port]").count()) await globe.click();
       await page.locator("[data-server-port]").first().waitFor({state:"visible",timeout:1000}).catch(() => {});

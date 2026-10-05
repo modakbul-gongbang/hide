@@ -169,7 +169,7 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
       expect
         .poll(async () => {
           const seen = resizes();
-          await quietFor(page, 400, "terminal resizes have stopped");
+          await quietFor(page, 400, "no terminal resize arrives: the baseline is taken at rest");
           return resizes() === seen;
         })
         .toBe(true);

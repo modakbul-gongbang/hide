@@ -15,7 +15,7 @@ import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { countSent, enterWorkspace } from "../../web/e2e/wire";
 import { fitWindow, hostLog, isolate, launch, NEEDS_FOCUS, relaunch, screenshot, shellPage, test, type Isolated } from "./fixture";
-import { quietFor } from "../../web/e2e/wait";
+import { compositorPresents, quietFor } from "../../web/e2e/wait";
 
 test.describe.configure({ timeout: 240_000 });
 test.use({ actionTimeout: 15_000 });
@@ -668,7 +668,7 @@ test("new-tab: empty page creates no native renderer and address loads in the sa
   await expect.poll(async () => (await views()).filter((view) => view.visible).length).toBe(0);
   await screenshot(page, "new-tab-native-empty-shell");
   // Let macOS present the shell frame before capturing this background window.
-  await quietFor(page, 500, "the macOS compositor presents the shell frame before the native capture");
+  await compositorPresents(page);
   await windowShot("new-tab-native-empty");
   await address.fill(`${origin}/b.html`);
   await address.press("Enter");
@@ -797,7 +797,7 @@ test("area cycle native: page input previews one exact area, releases once and c
     // native focus alone drew nothing.
     const admitted = async () => (await viewOf(url)).visible && (await page.evaluate((id) =>
       document.querySelector("[data-keyboard-area=true] [data-view-tab-bar] [aria-selected=true]")?.getAttribute("data-display") === id, displayId));
-    // eslint-disable-next-line hide-e2e/no-action-in-poll -- #ISSUE retried interaction: native focus lands after the page is shown
+    // eslint-disable-next-line hide-e2e/no-action-in-poll -- #433 retried interaction: native focus lands after the page is shown
     await expect.poll(async () => {
       await app!.evaluate(({ app: electron, BrowserWindow }, url) => {
         const window = BrowserWindow.getAllWindows()[0]!;
@@ -942,7 +942,7 @@ test("zoom: the text-size commands zoom a focused page in Chrome's steps and a p
   // Chrome's steps, the page keeps the keyboard, and no text size moves. A
   // page holds the keyboard only in the key window, so this test's window
   // comes to the front.
-  // eslint-disable-next-line hide-e2e/no-action-in-poll -- #ISSUE retried interaction: native focus lands after the page is shown
+  // eslint-disable-next-line hide-e2e/no-action-in-poll -- #433 retried interaction: native focus lands after the page is shown
   await expect
     .poll(() =>
       app!.evaluate(({ app: electron, BrowserWindow }, url) => {

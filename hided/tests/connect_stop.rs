@@ -80,6 +80,7 @@ impl Drop for StopOnDrop<'_> {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
 fn connect_starts_the_daemon_beside_the_cli_and_stop_ends_it() {
     let dir = tempfile::tempdir().unwrap();
     let home = dir.path().join("home");

@@ -48,6 +48,7 @@ fn cli_program() -> Option<OsString> {
     }
 }
 
+#[allow(clippy::disallowed_methods)] // a production wait, not test code
 fn run_cli(program: &OsString, arguments: &[&str], reference: Option<&Path>) -> Option<Value> {
     let mut command = Command::new(program);
     command

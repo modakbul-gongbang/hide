@@ -1653,6 +1653,7 @@ fn trace(_path: &str, pane_ids: &[String], stage: &str, error: Option<&str>) {
 /// no pane at any of `paths`, so the caller's next step cannot run beside a
 /// pane that is still there. A worktree deletion and a reviewed cleanup share
 /// this one pane-closing path.
+#[allow(clippy::disallowed_methods)] // a production wait, not test code
 pub(crate) fn close_checkout_panes(
     connector: &dyn ApiConnector,
     paths: &[String],

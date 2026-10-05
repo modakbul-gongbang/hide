@@ -278,6 +278,7 @@ fn read_target(mut group: Vec<WatchWork>) -> Vec<watch::Reading> {
     readings
 }
 
+#[allow(clippy::disallowed_methods)] // a production wait, not test code
 fn watch_loop(runtime: Weak<Mutex<Runtime>>, client: Client, stop: Arc<AtomicBool>) {
     let mut next = Instant::now();
     let mut failure_logs = std::collections::HashMap::<String, Instant>::new();

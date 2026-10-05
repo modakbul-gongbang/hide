@@ -37,6 +37,7 @@ fn serial() -> MutexGuard<'static, ()> {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
 fn child_role() {
     let Ok(role) = std::env::var(ROLE) else {
         return;
@@ -219,6 +220,7 @@ fn ready_number(stdout: std::process::ChildStdout) -> u32 {
         .expect("the child role did not become ready")
 }
 
+#[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
 fn gone_within(pid: u32, bound: Duration) -> bool {
     let started = Instant::now();
     while is_alive(pid) {
@@ -744,6 +746,7 @@ fn a_tree_descends_from_its_root_and_not_the_other_way() {
 // how an owner reaches what a dead supervisor left behind.
 #[cfg(unix)]
 #[test]
+#[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
 fn killing_by_pid_reaches_the_group_of_a_leader_that_already_exited() {
     let _serial = serial();
     let (mut child, grandchild) = owned_tree();
@@ -820,6 +823,7 @@ fn a_child_past_its_deadline_is_ended_with_its_tree() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
 fn a_raised_stop_ends_the_child_before_its_deadline() {
     let _serial = serial();
     let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
@@ -839,6 +843,7 @@ fn a_raised_stop_ends_the_child_before_its_deadline() {
 
 /// Recovery is armed before the parent exits, so a hanging public call fails
 /// within a bound and only its known helper is ended.
+#[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
 fn inherited_pipe_run(
     role: &str,
     deadline: Duration,

@@ -249,6 +249,7 @@ pub(crate) fn uninstall_managed(target: &KitTarget, plugin_id: &str) -> Result<(
 /// the lock it holds rather than by its executable, which a swap renames to
 /// `.old-<pid>` and a GitHub install keeps elsewhere; the lock is under the
 /// target's home, so a test home never reaches the operator's watcher.
+#[allow(clippy::disallowed_methods)] // a production wait, not test code
 fn stop_watchers(target: &KitTarget, lock: &Path) -> Result<Vec<u32>, String> {
     if !lock.exists() || !lock_is_held(lock)? {
         return Ok(Vec::new());

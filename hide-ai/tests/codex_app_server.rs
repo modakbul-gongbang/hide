@@ -86,6 +86,7 @@ fn the_child_is_started_with_tools_disabled_and_stdio_listen() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
 fn a_cancelled_request_interrupts_the_turn_and_keeps_the_child() {
     with_mode("slow", || {
         let backend = backend();

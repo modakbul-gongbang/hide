@@ -167,7 +167,7 @@ async function chooseTheme(page: Page, theme: "light" | "dark"): Promise<void> {
  * open for good (overview.spec on CI, 2026-09-29..10-01).
  */
 async function leaveHoverCard(page: Page, gone: Locator): Promise<void> {
-  // eslint-disable-next-line hide-e2e/no-action-in-poll -- #ISSUE retried interaction: a bare move can land before the card's leave listener
+  // eslint-disable-next-line hide-e2e/no-action-in-poll -- #433 retried interaction: a bare move can land before the card's leave listener
   await expect(async () => {
     await page.mouse.move(2, 998);
     await page.mouse.move(4, 996, { steps: 4 });
@@ -583,7 +583,16 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     // The graph's own relayouts and animation frames are counted on its canvas;
     // the last glide (a chip just changed the picture) is let finish first.
     await atRest(page);
-    await quietFor(page, 800, "the last graph glide has finished before frames are counted");
+    // The graph draws frames only while it glides: thirty animation frames with no graph frame drawn is rest.
+    await canvas.evaluate(async (element) => {
+      let last = element.getAttribute("data-graph-frames");
+      for (let still = 0; still < 30; ) {
+        await new Promise((resolve) => requestAnimationFrame(resolve));
+        const now = element.getAttribute("data-graph-frames");
+        still = now === last ? still + 1 : 0;
+        last = now;
+      }
+    });
     const revision = async () => Number(await canvas.getAttribute("data-graph-revision"));
     const frames = async () => Number(await canvas.getAttribute("data-graph-frames"));
     const revisionBefore = await revision();

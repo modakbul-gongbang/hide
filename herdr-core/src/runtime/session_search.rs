@@ -526,6 +526,7 @@ mod tests {
     use crate::model::ProjectSessionsSnapshot;
     use std::fs;
     #[test]
+    #[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
     fn drop_drains_off_that_was_still_queued_with_copied_rows() {
         let temp = tempfile::tempdir().unwrap();
         let database = temp.path().join("session-search.sqlite3");
@@ -638,6 +639,7 @@ mod tests {
         worker.install(&mut shared.lock().unwrap());
         (worker, observed, release)
     }
+    #[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
     fn terminal(shared: &Arc<Mutex<Runtime>>, query: &str) -> SearchSnapshot {
         let at = Instant::now();
         loop {

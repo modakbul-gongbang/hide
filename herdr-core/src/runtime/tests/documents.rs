@@ -268,6 +268,7 @@ impl Fixture {
             .map(|document| EditorDocumentSnapshot::clone(document))
     }
 
+    #[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
     fn wait(&self, what: &str, mut ready: impl FnMut(&Runtime) -> bool) {
         let deadline = Instant::now() + Duration::from_secs(5);
         loop {
@@ -343,6 +344,7 @@ fn a_device_file_is_read_on_a_worker_and_shows_as_a_tab_when_it_arrives() {
 /// A read still running when its device is removed opens no tab when its
 /// answer lands.
 #[test]
+#[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
 fn a_device_read_that_lands_after_the_device_was_removed_opens_nothing() {
     let f = Fixture::new();
     f.device.hold();
@@ -787,6 +789,7 @@ fn withdrawing_consent_lets_a_running_save_land() {
 /// no runtime lock. An unrelated action applies while the read waits, and a
 /// reveal of that file moves the screen only when the read lands.
 #[test]
+#[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
 fn a_slow_local_read_blocks_nothing_and_a_reveal_moves_only_when_it_lands() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().canonicalize().unwrap();

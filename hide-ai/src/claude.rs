@@ -402,6 +402,7 @@ impl RunError {
 /// stdout is drained by its own thread, so a child that writes more than a
 /// pipe buffer cannot deadlock against the waiter, and its answer is in hand
 /// before the exit status is read.
+#[allow(clippy::disallowed_methods)] // a production wait, not test code
 fn run(
     binary: &Path,
     args: &[String],
@@ -494,6 +495,7 @@ fn run(
 
 /// The exit status of a child that has already closed stdout, or `None` when
 /// it had to be killed to stop waiting for it.
+#[allow(clippy::disallowed_methods)] // a production wait, not test code
 fn wait_briefly(child: &mut OwnedChild) -> Option<i32> {
     let until = Instant::now() + EXIT_GRACE;
     loop {

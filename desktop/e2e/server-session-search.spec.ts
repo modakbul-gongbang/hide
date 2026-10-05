@@ -7,7 +7,7 @@ import { startHerdr } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace } from "../../web/e2e/wire";
 import { openServerButton, openSessions, startServer, writeConversation } from "../../web/e2e/server-session-fixture";
 import { assertIsolated, isolate, launch, shellPage, test } from "./fixture";
-import { quietFor } from "../../web/e2e/wait";
+import { compositorPresents } from "../../web/e2e/wait";
 
 test.describe.configure({ timeout: 180_000 });
 test.use({ actionTimeout: 15_000 });
@@ -56,7 +56,7 @@ test("server picker and conversation search in a background native window", asyn
       if (!dir) return;
       // The DOM assertion precedes the macOS compositor presenting the frame.
       // Match the other native capture fixtures before reading the exact window.
-      await quietFor(page, 400, "the macOS compositor presents the frame before the native capture");
+      await compositorPresents(page);
       execFileSync("/usr/sbin/screencapture", ["-x", "-o", "-l", candidate.source.split(":")[1]!, path.join(dir, `${name}.png`)]);
     };
     const theme = async (value: "light" | "dark") => {
@@ -70,7 +70,7 @@ test("server picker and conversation search in a background native window", asyn
       await theme(value);
       const globe = openServerButton(page);
       await expect(globe).toHaveCount(1);
-      // eslint-disable-next-line hide-e2e/no-action-in-poll -- #ISSUE retried interaction: the picker opens before the servers are listed
+      // eslint-disable-next-line hide-e2e/no-action-in-poll -- #433 retried interaction: the picker opens before the servers are listed
       await expect.poll(async () => { await globe.click(); await page.locator("[data-server-port]").first().waitFor({state:"visible",timeout:1000}).catch(() => {}); const count = await page.locator("[data-server-port]").count(); if (count !== 2) await page.keyboard.press("Escape"); return count; }, { timeout: 20_000 }).toBe(2);
       await shot(`native-server-picker-${value}`);
       await page.getByRole("button", { name: `127.0.0.1:${servers[0]!.port}`, exact: true }).click();

@@ -15,18 +15,33 @@ export async function animationsFinished(page: Page): Promise<void> {
   });
 }
 
+async function sleep(page: Page, milliseconds: number): Promise<void> {
+  // eslint-disable-next-line playwright/no-wait-for-timeout -- the only sleep a spec may use; the three helpers below name why
+  await page.waitForTimeout(milliseconds);
+}
+
 /**
- * A window of time in which something must not happen, or a pause the machine
- * imposes and the page cannot report (the macOS compositor presenting a frame
- * before a native capture, an idle measurement interval).
- *
- * Absence has no state to wait for, so this is the one place a spec sleeps.
- * `why` names what must stay true or what is being waited out, so the call
- * reads as a claim and a reviewer can judge the length.
- * Never use it to wait for something to appear: wait for the state instead.
+ * A window in which something must NOT happen: no event is sent, no row moves, nothing is drawn.
+ * Absence has no state to wait for, so the window is time.
+ * `why` states the claim, so a reviewer can judge the length.
+ * Never use it to wait for something to appear or settle: wait for that state (a data attribute, a size, a diagnostic).
  */
 export async function quietFor(page: Page, milliseconds: number, why: string): Promise<void> {
   void why;
-  // eslint-disable-next-line playwright/no-wait-for-timeout -- the only sleep a spec may use, see above
-  await page.waitForTimeout(milliseconds);
+  await sleep(page, milliseconds);
+}
+
+/**
+ * The macOS compositor presents a frame some time after the page reports it, and a native
+ * window capture reads what was presented. The page cannot observe that, so a capture waits.
+ * Only for the native capture helpers; a DOM assertion never needs it.
+ */
+export async function compositorPresents(page: Page): Promise<void> {
+  await sleep(page, 500);
+}
+
+/** An interval a measurement spans on purpose (idle CPU and memory sampling, pacing between latency samples). */
+export async function measureFor(page: Page, milliseconds: number, why: string): Promise<void> {
+  void why;
+  await sleep(page, milliseconds);
 }

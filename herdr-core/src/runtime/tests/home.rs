@@ -186,6 +186,7 @@ fn dispatch(shared: &Arc<Mutex<Runtime>>, payload: Value) {
     );
 }
 
+#[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
 fn wait(shared: &Arc<Mutex<Runtime>>, what: &str, ready: impl Fn(&Runtime) -> bool) {
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     while !ready(&shared.lock().unwrap()) {
@@ -200,6 +201,7 @@ fn wait(shared: &Arc<Mutex<Runtime>>, what: &str, ready: impl Fn(&Runtime) -> bo
     }
 }
 
+#[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
 fn wait_for(what: &str, ready: impl Fn() -> bool) {
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     while !ready() {
@@ -503,6 +505,7 @@ fn the_first_registration_after_launch_is_linked_into_an_existing_home() {
 /// device's helper was down asks the helper once, is left alone through every
 /// later UI state write, and is linked once the helper is ready.
 #[test]
+#[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
 fn a_link_change_missed_while_the_helper_reconnects_is_sent_once_it_is_ready() {
     let machine = machine();
     let herdr = herdr("home-reconnect");

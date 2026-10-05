@@ -1,0 +1,4 @@
+# The calls tests and production code may not make. `docs/TESTING.md`, "Writing a Rust test", owns the reasons.
+disallowed-methods = [
+    { path = "std::thread::sleep", reason = "a sleep stands in for a state: wait for the event or file the next line needs, or inject the clock (docs/TESTING.md, Writing a Rust test)" },
+]

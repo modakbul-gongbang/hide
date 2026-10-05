@@ -576,6 +576,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
     fn small_response_rejects_a_peer_that_never_finishes_its_frame() {
         let root = tempfile::tempdir().unwrap();
         let socket = root.path().join("peer.sock");

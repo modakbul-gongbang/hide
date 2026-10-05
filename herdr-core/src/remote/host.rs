@@ -1522,6 +1522,7 @@ mod tests {
     /// unsent, while the requests already admitted run to their answers and
     /// the connection waits for them before it closes.
     #[test]
+    #[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
     fn a_draining_connection_refuses_new_and_waiting_requests_and_waits_for_running_ones() {
         let gate = Arc::new(Gate::new());
         for _ in 0..MAX_RUNNING {
@@ -1815,6 +1816,7 @@ mod probe {
 
     #[test]
     #[ignore = "needs an authorized SSH device and a disposable fixture"]
+    #[allow(clippy::disallowed_methods)] // #ISSUE2 the sleep stands in for a state the test can wait for
     fn remote_host_open_save_conflict_and_close_probe() {
         let alias_name = std::env::var("HERDR_TEST_SSH_ALIAS").expect("configured SSH alias");
         let fixture = std::env::var("HERDR_TEST_REMOTE_FIXTURE").expect("remote fixture folder");

@@ -839,7 +839,7 @@ test("splits, moves, resizes, focus and closes run from the tab menu, area comma
     await expect.poll(() => count("view_layout.resize")).toBe(1);
     await expect.poll(async () => Number(await divider.getAttribute("aria-valuenow"))).toBeGreaterThan(ratio + 5);
     await expect.poll(async () => Math.round((await boxOf(area(page, 0))).width - before[0]!.width)).toBeGreaterThan(140);
-    await quietFor(page, 300, "the divider settles");
+    await quietFor(page, 300, "no second resize commit follows the first");
     expect(count("view_layout.resize")).toBe(1);
 
     // The focused divider moves one step per arrow key, one event each (B9, B20).

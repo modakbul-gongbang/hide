@@ -22,7 +22,7 @@ import { linkCandidates } from "../../web/src/terminalLinks";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { countSent, enterWorkspace } from "../../web/e2e/wire";
 import { hostLog, isolate, launch, screenshot, shellPage, test, type Isolated } from "./fixture";
-import { quietFor } from "../../web/e2e/wait";
+import { measureFor, quietFor } from "../../web/e2e/wait";
 
 test.describe.configure({ timeout: 240_000 });
 test.use({ actionTimeout: 15_000 });
@@ -591,7 +591,7 @@ test("dense terminal path hover measures cold and warm native work", async () =>
     for (const phase of ["cold", "warm"]) {
       await page.mouse.move(away.x, away.y);
       await expect(page.locator('[data-terminal="' + paneId + '"] .xterm-screen')).not.toHaveClass(/xterm-cursor-pointer/);
-      await quietFor(page, 400, "deliberate idle sampling interval, outside the hover latency boundary"); // Deliberate idle sampling interval, outside the hover latency boundary.
+      await measureFor(page, 400, "deliberate idle sampling interval, outside the hover latency boundary"); // Deliberate idle sampling interval, outside the hover latency boundary.
       const idleHostLoad = hostLoad();
       await app.evaluate(() => {
         const counts = (globalThis as { linkCounts?: { paths: string[]; batchSizes: number[]; realpath: number; stat: number } }).linkCounts!;

@@ -88,7 +88,7 @@ test("Command W from the app menu closes a browser page that holds the keyboard,
     await page.locator('[data-explorer-menu] [data-menu-item="open-browser"]').click();
     await expect(page.locator("[data-browser-slot]")).toBeVisible();
     // A page holds the keyboard only in the key window, so this test's window comes to the front.
-    // eslint-disable-next-line hide-e2e/no-action-in-poll -- #ISSUE retried interaction: native focus lands after the page is shown
+    // eslint-disable-next-line hide-e2e/no-action-in-poll -- #433 retried interaction: native focus lands after the page is shown
     await expect.poll(() => app.evaluate(({ app: electron, BrowserWindow }) => {
       const window = BrowserWindow.getAllWindows()[0]!;
       const view = window.contentView.children.find((child) =>

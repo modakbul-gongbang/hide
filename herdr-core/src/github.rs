@@ -1761,6 +1761,7 @@ fn is_number(argument: &str) -> bool {
     !argument.is_empty() && argument.bytes().all(|byte| byte.is_ascii_digit())
 }
 
+#[allow(clippy::disallowed_methods)] // a production wait, not test code
 fn run_gh(
     binary: &Path,
     cwd: Option<&Path>,

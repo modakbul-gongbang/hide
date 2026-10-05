@@ -8,7 +8,7 @@ import { startHerdr } from "./herdr-fixture";
 import { startHided } from "./hided-fixture";
 import { enterWorkspace } from "./wire";
 import { openSessions } from "./server-session-fixture";
-import { quietFor } from "./wait";
+import { measureFor } from "./wait";
 
 test("2000-session search progress preserves history and terminal input", async ({ browser }) => {
   test.setTimeout(180_000);
@@ -35,7 +35,7 @@ test("2000-session search progress preserves history and terminal input", async 
   const processes=async()=> (await browserCdp.send("SystemInfo.getProcessInfo")).processInfo as {id:number;type:string;cpuTime:number}[];
   const daemonStats=()=> {const values=execFileSync("/bin/ps",["-p",String(daemon.pid),"-o","time=,rss="],{encoding:"utf8"}).trim().split(/\s+/);const parts=values[0]!.split(":").map(Number);return {cpuSeconds:parts.reduce((sum,value)=>sum*60+value,0),rssKiB:Number(values[1])};};
   const measure=async()=>({at:Date.now(),daemon:daemonStats(),browser:await processes()});
-  const echo=async(page:Page,prefix:string)=> {const values:number[]=[];for(let i=0;i<24;i++){const marker=`${prefix}${String(i).padStart(3,"0")}`;await page.evaluate((value)=>window.__hideProbe!.arm(value),marker);execFileSync(herdr.bin,["pane","send-text",herdr.panes[0],`${marker}\n`],{env:herdr.env,timeout:3000});const returned=Date.now();const sample=await page.evaluate(()=>window.__hideProbe!.waitArmed());values.push(sample.write_ms-returned);await quietFor(page,80,"pacing between latency samples");}return values;};
+  const echo=async(page:Page,prefix:string)=> {const values:number[]=[];for(let i=0;i<24;i++){const marker=`${prefix}${String(i).padStart(3,"0")}`;await page.evaluate((value)=>window.__hideProbe!.arm(value),marker);execFileSync(herdr.bin,["pane","send-text",herdr.panes[0],`${marker}\n`],{env:herdr.env,timeout:3000});const returned=Date.now();const sample=await page.evaluate(()=>window.__hideProbe!.waitArmed());values.push(sample.write_ms-returned);await measureFor(page, 80, "pacing between latency samples");}return values;};
   const directory=path.join(daemon.home,".codex/sessions/2026/10/01");
   try {
     await terminal.goto(`${daemon.origin}/?probe=1#token=${daemon.token}`);
@@ -43,9 +43,9 @@ test("2000-session search progress preserves history and terminal input", async 
     await expect.poll(()=>terminal.evaluate(()=>window.__hideProbe?.paneId())).toBe(herdr.panes[0]);
     await sessions.goto(`${daemon.origin}/#token=${daemon.token}`);
     await enterWorkspace(sessions,"fixture");
-    await quietFor(terminal, 5000, "idle measurement window");
+    await measureFor(terminal, 5000, "idle measurement window");
     const idleStart=await measure();
-    await quietFor(terminal, 5000, "idle measurement window");
+    await measureFor(terminal, 5000, "idle measurement window");
     const idleEnd=await measure();
     const idleEcho=await echo(terminal,"baseline");
     fs.mkdirSync(directory,{recursive:true});
@@ -59,7 +59,7 @@ test("2000-session search progress preserves history and terminal input", async 
     await expect.poll(()=>finalSearch?.indexed===2000 && finalSearch.indexing===false,{timeout:90_000}).toBe(true);
     const drivenEnd=await measure();
     const idleIndexedFrames = records.length;
-    await quietFor(terminal, 5000, "idle measurement window");
+    await measureFor(terminal, 5000, "idle measurement window");
     const indexedIdleEnd=await measure();
     expect(finalSearch?.failure).toBeNull();
     const progress=records.filter(row=>row.at>=drivenStart.at && row.searchBytes>0 && row.indexing && row.indexed>0);
