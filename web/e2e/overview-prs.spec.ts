@@ -20,8 +20,10 @@ import fs from "node:fs";
 import path from "node:path";
 import { labelAgent, agentsIn, startHerdr, setFixtureLifecycle, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
+import { fixtureProgram } from "./platform-fixture";
 import { countSent, screenshot } from "./wire";
 import { chord } from "./chords";
+import { animationsFinished } from "./wait";
 
 test.describe.configure({ timeout: 240_000 });
 
@@ -108,8 +110,7 @@ function fakeGh(root: string, heads: Record<string, string>): { bin: string; sta
     updatedAt: new Date(now - pr.number * 60_000).toISOString(),
   }));
   const reviews = { 23: [{ author: { login: "ana" }, state: "CHANGES_REQUESTED", body: "Split the reader." }], 24: [] };
-  const script = `#!${process.execPath}
-const fs = require("fs");
+  const script = `const fs = require("fs");
 const path = require("path");
 const state = ${JSON.stringify(state)};
 const args = process.argv.slice(2);
@@ -163,7 +164,7 @@ if (a === "issue" && b === "view") { out({ body: "이슈 본문", labels: [], au
 if (a === "api" && b === "graphql") { out({ data: { r0: { nameWithOwner: "acme/repo" } } }); process.exit(0); }
 fail("unsupported: " + args.join(" "));
 `;
-  fs.writeFileSync(path.join(bin, "gh"), script, { mode: 0o755 });
+  fixtureProgram(bin, "gh", script);
   return { bin, state };
 }
 
@@ -190,7 +191,7 @@ async function chooseTheme(page: Page, theme: "light" | "dark"): Promise<void> {
   await expect(page.locator("html")).toHaveClass(new RegExp(`\\b${theme}\\b`));
   await page.keyboard.press("Escape");
   await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
-  await page.waitForTimeout(400);
+  await animationsFinished(page);
 }
 
 async function atRest(page: Page): Promise<void> {
@@ -256,7 +257,7 @@ test("a project's PRs tab: grouped pull requests, Link issue, Assign and Clean u
       ["prd/turn", "prd/new-issue", "prd/fixing", "prd/merged"].map((branch) => [branch, git(repo, ["rev-parse", branch]).trim()]),
     );
     const gh = fakeGh(herdr.root, heads);
-    daemon = await startHided(herdr, "overview-prs", undefined, { PATH: `${gh.bin}:${herdr.fixturePath}` });
+    daemon = await startHided(herdr, "overview-prs", undefined, { PATH: `${gh.bin}${path.delimiter}${herdr.fixturePath}` });
     const last = new Map<string, Record<string, unknown>>();
     const sent = countSent(page, last);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);

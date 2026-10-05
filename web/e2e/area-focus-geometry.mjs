@@ -8,7 +8,7 @@ export async function measure(page) {
   }));
   const before = await read();
   await page.locator('[data-view-area-id=a2] textarea').focus();
-  await page.waitForTimeout(30);
+  await page.evaluate(() => new Promise(resolve => globalThis.requestAnimationFrame(() => globalThis.requestAnimationFrame(resolve))));
   const after = await read();
   return { areaFocus: { before, after } };
 }

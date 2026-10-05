@@ -3,6 +3,11 @@
 // ones a phone may send back, how the page address carries a pairing code,
 // a credential or a deep link, and the words each refusal and pane state
 // shows. Pure, so every rule is tested without a socket or a browser.
+// Text is named by catalog key and translated where it renders, so a shown
+// line follows a language change.
+
+import type { TFunction } from "i18next";
+import type { MessageKey } from "../i18n/catalogs";
 
 export type Tone = "error" | "warning" | "working" | "success" | "subtle";
 
@@ -74,7 +79,8 @@ export type ServerFrame =
   | { type: "paired"; credential: string; phone_id: string; name: string }
   | { type: "hello"; mac_name: string; phone_id: string; name: string | null; vapid_public_key: string; notifications: Notifications }
   | { type: "meta"; push_mode: PushMode; other_phones: number }
-  | { type: "agents"; groups: AgentGroup[] }
+  /** `interface_language` is the core's explicit choice as stored (en, ko, zh-CN, ja), or null while the phone follows its own language. */
+  | { type: "agents"; groups: AgentGroup[]; interface_language: string | null }
   | { type: "rows"; device_id: string; pane_id: string; state: RowsState; text?: string; lines?: number; more?: boolean }
   | {
       type: "conversation";
@@ -113,24 +119,37 @@ export function sameKey(a: AgentKey | null, b: AgentKey | null): boolean {
   return !!a && !!b && a.device_id === b.device_id && a.pane_id === b.pane_id;
 }
 
-export const GROUP_TITLE: Record<GroupId, string> = {
-  needs_you: "내 확인 대기",
-  done: "끝",
-  working: "진행 중",
-  seen: "확인함",
+/** The sentences that carry a count limit, named by `{{limit}}`. */
+type LimitKey = "mobile.input.tooLong" | "mobile.start.tooLong" | "mobile.refusal.phoneLimit";
+
+/** The other input, refusal, row and start sentences carry no value. */
+type PlainKey = Exclude<Extract<MessageKey, `mobile.input.${string}` | `mobile.refusal.${string}` | `mobile.rows.${string}` | `mobile.start.${string}`>, LimitKey>;
+
+/** A sentence the phone shows, kept as its catalog key so it follows a language change. */
+export type Notice = { key: PlainKey } | { key: LimitKey; limit: number };
+
+export function noticeText(t: TFunction<"translation">, notice: Notice): string {
+  return "limit" in notice ? t(notice.key, { limit: notice.limit }) : t(notice.key);
+}
+
+export const GROUP_TITLE: Record<GroupId, MessageKey> = {
+  needs_you: "mobile.group.needs_you",
+  done: "mobile.group.done",
+  working: "mobile.group.working",
+  seen: "mobile.group.seen",
 };
 
 export const GROUP_ORDER: readonly GroupId[] = ["needs_you", "done", "working", "seen"];
 
-/** The five quick keys (B26, B38): what hided sends Herdr, the face, and the accessible name. */
+/** The five quick keys (B26, B38): what hided sends Herdr, the keycap, and the accessible name. */
 export type QuickKey = "enter" | "escape" | "up" | "down" | "ctrl_c";
 
-export const QUICK_KEYS: readonly { key: QuickKey; label: string; name: string }[] = [
-  { key: "enter", label: "⏎", name: "Enter" },
-  { key: "escape", label: "Esc", name: "Escape" },
-  { key: "up", label: "↑", name: "위 화살표" },
-  { key: "down", label: "↓", name: "아래 화살표" },
-  { key: "ctrl_c", label: "^C", name: "Ctrl-C" },
+export const QUICK_KEYS: readonly { key: QuickKey; label: string; name: MessageKey }[] = [
+  { key: "enter", label: "⏎", name: "mobile.key.enter" },
+  { key: "escape", label: "Esc", name: "mobile.key.escape" },
+  { key: "up", label: "↑", name: "mobile.key.up" },
+  { key: "down", label: "↓", name: "mobile.key.down" },
+  { key: "ctrl_c", label: "^C", name: "mobile.key.ctrlC" },
 ];
 
 /** The longest reply hided writes in one input (hided/src/mobile/pane.rs MAX_REPLY_CHARS). */
@@ -146,26 +165,26 @@ export function replyProblem(text: string): string | null {
 }
 
 /** The line under the reply bar for a refused or failed input. */
-export function inputFailure(reason: string | null): string {
+export function inputFailure(reason: string | null): Notice {
   switch (reason) {
     case "uncertain":
-      return "보냈는지 확인하지 못했어요. 터미널을 확인하고 필요하면 내용을 바꿔 다시 보내세요.";
+      return { key: "mobile.input.uncertain" };
     case "in_flight":
-      return "같은 답장을 아직 보내는 중이에요. 잠시 뒤 다시 확인하세요.";
+      return { key: "mobile.input.inFlight" };
     case "empty":
-      return "빈 답장은 보낼 수 없어요.";
+      return { key: "mobile.input.empty" };
     case "too_long":
-      return `답장은 한 번에 ${MAX_REPLY_CHARS.toLocaleString("ko-KR")}자까지 보낼 수 있어요.`;
+      return { key: "mobile.input.tooLong", limit: MAX_REPLY_CHARS };
     case "control_characters":
-      return "답장에는 한 줄 텍스트만 보낼 수 있어요.";
+      return { key: "mobile.input.controlCharacters" };
     case "gone":
-      return "이 pane은 더 이상 열려 있지 않아요.";
+      return { key: "mobile.input.gone" };
     case "device_unreachable":
-      return "기기가 연결돼 있지 않아 보내지 못했어요.";
+      return { key: "mobile.input.deviceUnreachable" };
     case "offline":
-      return "맥의 hide에 닿지 않아 보내지 못했어요. 다시 보내세요.";
+      return { key: "mobile.input.offline" };
     default:
-      return "보내지 못했어요. 다시 보내세요.";
+      return { key: "mobile.input.failed" };
   }
 }
 
@@ -184,27 +203,30 @@ export function refusalOf(reason: string): Refusal {
   }
 }
 
-export const REFUSAL_TEXT: Record<Refusal, string> = {
-  code_expired: "코드가 만료됐어요. 맥에서 QR을 다시 여세요.",
-  phone_limit: "폰은 4대까지 연결할 수 있어요. 맥의 설정 > Mobile에서 하나를 해지하세요.",
-  revoked: "이 폰의 연결이 해지됐어요. 맥에서 QR을 다시 여세요.",
-  mobile_off: "연결 안 됨 · 맥의 hide가 꺼져 있거나 폰의 Tailscale이 꺼져 있어요. 다시 시도 중",
-  no_credential: "맥의 설정 > Mobile에서 QR을 찍으세요.",
+/** The phones hided pairs at once (hided/src/mobile/phones.rs MAX_PHONES). */
+export const MAX_PHONES = 4;
+
+export const REFUSAL_NOTICE: Record<Refusal, Notice> = {
+  code_expired: { key: "mobile.refusal.codeExpired" },
+  phone_limit: { key: "mobile.refusal.phoneLimit", limit: MAX_PHONES },
+  revoked: { key: "mobile.refusal.revoked" },
+  mobile_off: { key: "mobile.refusal.offline" },
+  no_credential: { key: "mobile.refusal.noCredential" },
 };
 
-export const UNREACHABLE_TEXT = REFUSAL_TEXT.mobile_off;
+export const UNREACHABLE_NOTICE = REFUSAL_NOTICE.mobile_off;
 
 /** The detail's line for a pane hided could not read (B28). */
-export function rowsProblem(state: RowsState): string | null {
+export function rowsProblem(state: RowsState): Notice | null {
   switch (state) {
     case "ok":
       return null;
     case "gone":
-      return "이 pane은 더 이상 열려 있지 않아요.";
+      return { key: "mobile.input.gone" };
     case "device_unreachable":
-      return "이 에이전트의 기기가 연결돼 있지 않아요.";
+      return { key: "mobile.rows.deviceUnreachable" };
     default:
-      return "이 pane을 읽지 못했어요. 다시 시도 중";
+      return { key: "mobile.rows.unavailable" };
   }
 }
 
@@ -312,18 +334,18 @@ export function credentialHash(credential: string): string {
   return `#k=${credential}`;
 }
 
-/** The Mac's name before pairing: the first label of the ts.net address. */
+/** The Mac's name before pairing: the first label of the ts.net address; empty when the address names none. */
 export function macNameOf(endpoint: string): string {
   try {
-    return new URL(endpoint).hostname.split(".")[0] || "맥";
+    return new URL(endpoint).hostname.split(".")[0] ?? "";
   } catch {
-    return "맥";
+    return "";
   }
 }
 
 /** The list header's second line (B19). */
-export function headerLine(macName: string, otherPhones: number): string {
-  return otherPhones > 0 ? `${macName} · 폰 ${otherPhones}대 더 연결됨` : macName;
+export function headerLine(t: TFunction<"translation">, macName: string, otherPhones: number): string {
+  return otherPhones > 0 ? t("mobile.otherPhones", { name: macName, count: otherPhones }) : macName;
 }
 
 /** Tags whose notifications the open app closes (D-21): agents no longer waiting or done. */

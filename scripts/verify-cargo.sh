@@ -3,6 +3,7 @@
 #
 # Usage: verify-cargo.sh test [args...] | lint | release | cli
 # CI-scoped lanes: test-scoped | check | build | clippy | metadata [cargo arguments...]
+#                  nextest [cargo nextest run arguments...] (the CI Rust lane; .config/nextest.toml)
 #                  fmt-check (cargo fmt --all --check alone)
 #
 # The PRD harness runs each verify command with execvp and no shell, so an
@@ -40,7 +41,7 @@ done
 # Scoped modes cannot move the checkout or its artifacts through cargo flags.
 # Keep the legacy modes unchanged for sealed verification commands.
 case "${1:-}" in
-    test-scoped|check|build|clippy|metadata)
+    test-scoped|check|build|clippy|metadata|nextest)
         mode=$1
         shift
         (( $# <= 128 )) || { printf 'too many cargo arguments\n' >&2; exit 2; }
@@ -52,6 +53,16 @@ case "${1:-}" in
                     ;;
             esac
         done
+        if [[ "$mode" == nextest ]]; then
+            status=0
+            cargo nextest run --locked "$@" || status=$?
+            # A lane runs nextest several times and every run writes the same
+            # JUnit path; keep each report under its own name for
+            # scripts/ci-flaky-report.py, which reads them all.
+            report=target/nextest/ci/junit.xml
+            [[ ! -f "$report" ]] || mv "$report" "target/nextest/ci/junit.$$.$RANDOM.xml"
+            exit "$status"
+        fi
         [[ "$mode" != test-scoped ]] || mode=test
         exec cargo "$mode" --locked "$@"
         ;;
@@ -75,7 +86,7 @@ case "${1:-}" in
         exec cargo build --locked -p hided --bins -p hide-host --bin hide-host-helper -p hide-agent-hooks --bin hide-agent-hooks
         ;;
     *)
-        printf 'usage: %s test [args...]|lint|fmt-check|release|cli|test-scoped|check|build|clippy|metadata [args...]\n' "$0" >&2
+        printf 'usage: %s test [args...]|lint|fmt-check|release|cli|test-scoped|check|build|clippy|metadata|nextest [args...]\n' "$0" >&2
         exit 2
         ;;
 esac

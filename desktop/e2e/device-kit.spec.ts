@@ -14,7 +14,7 @@ import {
   claudeSettings, codexHooks, deviceHome,
   proveDeviceHome, readSettings, resetDeviceHome, stageBuild, writeSshConfig, type AgentSettings,
 } from "./device-home";
-import { hostLog, isolate, relaunch, screenshot, shellPage, test } from "./fixture";
+import { endChild, hostLog, isolate, relaunch, screenshot, shellPage, test } from "./fixture";
 
 test.describe.configure({ timeout: 300_000 });
 test.skip(!process.env.HIDE_E2E_SSH_PORT, "an isolated SSH server is required");
@@ -83,15 +83,19 @@ async function startDeviceRun(name: string, aliases: string[]) {
   return { home, local, device, run, bridge, helper, cliDir, original, daemonLog, daemon };
 }
 
-function stopDeviceRun(setup: DeviceRun): void {
+async function stopDeviceRun(setup: DeviceRun): Promise<void> {
   // The daemon's records go beside the screenshots when a run keeps them.
   const evidence = process.env.HIDE_E2E_SCREENSHOT_DIR;
   if (evidence) fs.copyFileSync(setup.daemonLog, path.join(evidence, `${path.basename(setup.run.root)}-daemon.jsonl`));
   setup.run.cleanup();
-  if (setup.daemon.exitCode === null) setup.daemon.kill("SIGTERM");
-  fs.rmSync(setup.bridge, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-  setup.device.stop();
-  setup.local.stop();
+  // The daemon keeps its bridge sockets until it exits; remove the folder after that.
+  try {
+    await endChild(setup.daemon);
+  } finally {
+    setup.device.stop();
+    setup.local.stop();
+  }
+  fs.rmSync(setup.bridge, { recursive: true, force: true });
 }
 
 /** The plugin list the device's Herdr answers, as JSON text. */
@@ -211,7 +215,7 @@ test("a device gets this Mac's kit, keeps a part the operator removed out until 
     throw error;
   } finally {
     await app?.close().catch(() => undefined);
-    stopDeviceRun(setup);
+    await stopDeviceRun(setup);
   }
 });
 
@@ -258,6 +262,6 @@ test("two registrations of one device account connect at once and share its kit 
     throw error;
   } finally {
     await app?.close().catch(() => undefined);
-    stopDeviceRun(setup);
+    await stopDeviceRun(setup);
   }
 });

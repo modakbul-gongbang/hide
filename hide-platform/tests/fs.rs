@@ -567,6 +567,7 @@ fn a_lock_on_a_file_is_taken_through_the_file_that_stays_open() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn a_wait_ends_when_the_holder_lets_go_and_not_before() {
     let outer = folder();
     let first = open_dir(outer.path());
@@ -597,6 +598,7 @@ fn a_wait_that_is_not_answered_times_out_after_the_time_it_was_given() {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn a_wait_stops_when_the_caller_cancels_it() {
     let outer = folder();
     let first = open_dir(outer.path());
@@ -659,6 +661,7 @@ unsafe fn libc_open_path(path: *const std::ffi::c_char) -> i32 {
 }
 
 #[test]
+#[allow(clippy::disallowed_methods)] // a child process the test kills later: it sleeps to stay alive
 fn lock_role() {
     if std::env::var(ROLE).as_deref() != Ok("lock") {
         return;

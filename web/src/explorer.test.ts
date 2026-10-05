@@ -5,6 +5,7 @@ import {
   decorationFor,
   explorerGitLine,
   explorerRows,
+  filteredRows,
   firstChildSelection,
   gitDecorations,
   helperNeedsSettings,
@@ -126,6 +127,25 @@ describe("explorerRows", () => {
 
   it("shows nothing at all before the root's own listing arrives", () => {
     expect(explorerRows({ rootPath: ROOT, listings: {}, expandedPaths: [], changes: null })).toEqual([]);
+  });
+});
+
+describe("filteredRows", () => {
+  it("keeps each matched file under its ancestor folders, folders first, every folder open", () => {
+    const rows = filteredRows({
+      rootPath: ROOT,
+      files: [{ relative_path: "README.md" }, { relative_path: "src/nested/deep.ts" }, { relative_path: "src/a.ts" }],
+      changes: null,
+    });
+    expect(rows.map((row) => `${row.depth}:${row.name}`)).toEqual(["0:src", "1:nested", "2:deep.ts", "1:a.ts", "0:README.md"]);
+    expect(rows.map((row) => row.path)).toEqual([
+      `${ROOT}/src`,
+      `${ROOT}/src/nested`,
+      `${ROOT}/src/nested/deep.ts`,
+      `${ROOT}/src/a.ts`,
+      `${ROOT}/README.md`,
+    ]);
+    expect(rows.filter((row) => row.isDirectory).every((row) => row.expanded)).toBe(true);
   });
 });
 

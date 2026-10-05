@@ -11,6 +11,7 @@ import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { enterWorkspace, screenshot, showExplorer } from "./wire";
 import { chord } from "./chords";
+import { toPage } from "../../desktop/src/main/wirePath";
 
 test.describe.configure({ timeout: 120_000 });
 
@@ -146,7 +147,7 @@ test("an editor open during a theme switch is drawn like one opened after it", a
     // swaps in, and out, has to match an editor opened after the switch.
     const editor = (text: string) => page.locator("[data-editor-codemirror] .cm-editor", { hasText: text });
     const classes = async (text: string) => new Set((await editor(text).getAttribute("class"))?.split(/\s+/) ?? []);
-    await page.locator(`[data-explorer-row="${repo}/open.ts"]`).dblclick();
+    await page.locator(`[data-explorer-row="${toPage(repo)}/open.ts"]`).dblclick();
     await expect(editor("open = 1")).toBeVisible();
     const dark = await classes("open = 1");
 
@@ -158,7 +159,7 @@ test("an editor open during a theme switch is drawn like one opened after it", a
     await expect.poll(async () => [...(await classes("open = 1"))].filter((name) => !dark.has(name)).length).toBeGreaterThan(0);
     const switched = await classes("open = 1");
 
-    await page.locator(`[data-explorer-row="${repo}/later.ts"]`).dblclick();
+    await page.locator(`[data-explorer-row="${toPage(repo)}/later.ts"]`).dblclick();
     await expect(editor("later = 2")).toBeVisible();
     const fresh = await classes("later = 2");
 
@@ -184,8 +185,9 @@ test("the production build hided serves has no gallery", async ({ page }) => {
   let daemon: Daemon | null = null;
   try {
     daemon = await startHided(herdr, "gallery");
-    await page.goto(`${daemon.origin}/gallery#token=${daemon.token}`);
-    await page.waitForLoadState("networkidle");
+    // hided answers an empty 404 for /gallery: the 404 is the claim, and no page loads to wait for.
+    const response = await page.goto(`${daemon.origin}/gallery#token=${daemon.token}`);
+    expect(response?.status()).toBe(404);
     await expect(page.locator("[data-gallery-section]")).toHaveCount(0);
   } finally {
     daemon?.stop();

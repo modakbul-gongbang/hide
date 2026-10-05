@@ -15,7 +15,6 @@ import { Tabs, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { Kbd } from "./components/ui/kbd";
 import { Hint } from "./components/ui/tooltip";
 import { commandLabel } from "./shortcutLabels";
-import { restoreFocus } from "./terminals";
 import { projectEntryLens } from "./navigation";
 
 /** The same selected-device group that the Agents sidebar draws. */
@@ -72,13 +71,7 @@ export function OverviewModal({ actions }: { actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const open = useUiStore((s) => s.overviewOpen);
   return <Dialog baseEscape open={open} onOpenChange={(next) => { if (!next) actions.closeOverview(); }}>
-    {open ? <DialogContent initialFocus="container" aria-describedby={undefined} className="h-(--size-settings-sheet-h) w-(--size-settings-sheet-w)" data-overview-modal="true" onCloseAutoFocus={(event) => {
-      event.preventDefault();
-      const target = useUiStore.getState().overviewReturnFocus;
-      const current = document.activeElement;
-      if (current instanceof HTMLElement && current !== document.body && current.isConnected && !current.closest("[data-overview-modal]")) return;
-      if (target) restoreFocus(target);
-    }}>
+    {open ? <DialogContent initialFocus="container" aria-describedby={undefined} className="h-(--size-settings-sheet-h) w-(--size-settings-sheet-w)" data-overview-modal="true" returnFocusTo={() => useUiStore.getState().overviewReturnFocus}>
       <DialogTitle className="sr-only">{t("overview.title")}</DialogTitle>
       <OverviewPage actions={actions} />
     </DialogContent> : null}

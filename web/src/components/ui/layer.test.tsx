@@ -92,3 +92,77 @@ it("counts a layer that replaces another in one commit as opened after the other
   handBack(older);
   expect(document.activeElement).toBe(document.body);
 });
+
+/** A layer whose owner names where the keyboard goes, as Overview does with its own return target. */
+function mountNamedLayer(target: () => HTMLElement | null, onHandback: (handback: Handback) => void) {
+  const surface = document.createElement("div");
+  document.body.append(surface);
+  function Content() {
+    onHandback(useReturnFocus(true, { target, within: () => surface }));
+    return null;
+  }
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  act(() => root.render(<Content />));
+  return {
+    surface,
+    close: () => {
+      act(() => root.unmount());
+      container.remove();
+    },
+  };
+}
+
+it("hands the keyboard to the target the owner names, not to what held it on open", () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const opener = holder("opener");
+  const named = document.createElement("button");
+  document.body.append(named);
+  let handback: Handback = () => {};
+  const layer = mountNamedLayer(() => named, (next) => { handback = next; });
+  (document.activeElement as HTMLElement).blur();
+  layer.close();
+  const event = handBack(handback);
+  expect(event.defaultPrevented).toBe(true);
+  expect(document.activeElement).toBe(named);
+  opener.remove();
+  named.remove();
+});
+
+it("does not take the keyboard to a named target once a newer layer opened and closed after its own closed", () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const named = document.createElement("button");
+  document.body.append(named);
+  let older: Handback = () => {};
+  const first = mountNamedLayer(() => named, (next) => { older = next; });
+  first.close();
+  holder("terminal");
+  const closeNewer = mountLayer(() => {});
+  (document.activeElement as HTMLElement).blur();
+  closeNewer();
+  const event = handBack(older);
+  expect(event.defaultPrevented).toBe(true);
+  expect(document.activeElement).toBe(document.body);
+  named.remove();
+});
+
+it("keeps the keyboard where the operator put it outside the named layer, and takes it back from the layer's own surface", () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  const named = document.createElement("button");
+  document.body.append(named);
+  let handback: Handback = () => {};
+  const layer = mountNamedLayer(() => named, (next) => { handback = next; });
+  const inside = document.createElement("button");
+  layer.surface.append(inside);
+  inside.focus();
+  layer.close();
+  handBack(handback);
+  expect(document.activeElement).toBe(named);
+
+  const elsewhere = holder("elsewhere");
+  handBack(handback);
+  expect(document.activeElement).toBe(elsewhere);
+  named.remove();
+  elsewhere.remove();
+});

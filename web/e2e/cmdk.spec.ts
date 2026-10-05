@@ -10,6 +10,9 @@
 //   pull request numbered so, and the explicit GitHub search row with its
 //   working, failed and empty answers, never run while typing (B2, B12, B16-B20);
 // - ⌘P: ⌘↵ opens the highlighted file beside the area in use (B23);
+// - Open URL in Browser: a typed address opens a browser display in the
+//   active View area in the desktop app, and stays listed unavailable in a
+//   browser tab (issue 157);
 // - Recent (PRD cmdk-recent): the checkouts last brought to the front, under
 //   Related, kept across a daemon restart and shown alone on Settings.
 
@@ -19,6 +22,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { labelAgent, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
+import { fixtureProgram } from "./platform-fixture";
 import { countSent, enterWorkspace, registerFolder, screenshot } from "./wire";
 import { chord, field, label, SYSTEM } from "./chords";
 import { fieldChord } from "../src/shortcuts";
@@ -154,34 +158,28 @@ function fakeGh(root: string): { bin: string; log: string } {
   const hit = (kind: string, number: number, title: string, state: string, url: string) => ({ number, title, state, url, isDraft: false, repository: { name: "repo", nameWithOwner: "acme/repo" }, kind });
   const searchPrs = [hit("pr", 90, "오래된 PR", "merged", SEARCHED_PR), hit("pr", 180, "⌘K를 이동 팔레트로", "open", "https://github.com/acme/repo/pull/180")];
   const searchIssues = [hit("issue", 91, "닫힌 이슈", "closed", "https://github.com/acme/repo/issues/91")];
-  fs.writeFileSync(
-    path.join(bin, "gh"),
-    `#!/bin/sh
-echo "$*" >> '${log}'
-case "$1 $2" in
-  "auth status") exit 0 ;;
-  "repo view") echo '{"nameWithOwner":"acme/repo"}'; exit 0 ;;
-  "issue list") echo '${JSON.stringify(issues)}'; exit 0 ;;
-  "pr list")
-    case " $* " in
-      *" merged "*) echo '[]' ;;
-      *) echo '${JSON.stringify(pulls)}' ;;
-    esac
-    exit 0 ;;
-  "search prs"|"search issues")
-    # The query is the words after the double dash.
-    case " $* " in
-      *" fail "*) echo "boom" >&2; exit 1 ;;
-      *" nothing "*) echo '[]'; exit 0 ;;
-    esac
-    if [ "$2" = "prs" ]; then echo '${JSON.stringify(searchPrs)}'; else echo '${JSON.stringify(searchIssues)}'; fi
-    exit 0 ;;
-  "api graphql") echo '{"data":{"r0":{"nameWithOwner":"acme/repo"}}}'; exit 0 ;;
-esac
-echo "unsupported: $*" >&2
-exit 1
+  fixtureProgram(
+    bin,
+    "gh",
+    `const fs = require("fs");
+const args = process.argv.slice(2);
+fs.appendFileSync(${JSON.stringify(log)}, args.join(" ") + "\\n");
+const key = args.slice(0, 2).join(" ");
+const done = (text) => { console.log(text); process.exit(0); };
+if (key === "auth status") process.exit(0);
+if (key === "repo view") done('{"nameWithOwner":"acme/repo"}');
+if (key === "issue list") done(${JSON.stringify(JSON.stringify(issues))});
+if (key === "pr list") done(args.includes("merged") ? "[]" : ${JSON.stringify(JSON.stringify(pulls))});
+if (key === "search prs" || key === "search issues") {
+  // The query is the words after the double dash.
+  if (args.includes("fail")) { console.error("boom"); process.exit(1); }
+  if (args.includes("nothing")) done("[]");
+  done(key === "search prs" ? ${JSON.stringify(JSON.stringify(searchPrs))} : ${JSON.stringify(JSON.stringify(searchIssues))});
+}
+if (key === "api graphql") done('{"data":{"r0":{"nameWithOwner":"acme/repo"}}}');
+console.error("unsupported: " + args.join(" "));
+process.exit(1);
 `,
-    { mode: 0o755 },
   );
   return { bin, log };
 }
@@ -232,7 +230,7 @@ test("⌘K relates the agent in front to its issue and pull request, finds them 
     const agent = await workspaceAt(herdr, worktree, "이동 팔레트 구현");
 
     const gh = fakeGh(herdr.root);
-    daemon = await startHided(herdr, "cmdk-github", undefined, { PATH: `${gh.bin}:${herdr.fixturePath}` });
+    daemon = await startHided(herdr, "cmdk-github", undefined, { PATH: `${gh.bin}${path.delimiter}${herdr.fixturePath}` });
     const last = new Map<string, Record<string, unknown>>();
     const sent = countSent(page, last);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
@@ -401,8 +399,9 @@ test("⌘K lists the checkouts last brought to the front under Recent, keeps the
     daemon = await startHided(herdr, "cmdk-recent");
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await enterWorkspace(page, "fixture");
-    const fixture = await page.locator("[data-project] [data-checkout]").first().getAttribute("data-checkout");
-    expect(fixture).toBeTruthy();
+    const fixtureLocator = page.locator("[data-project] [data-checkout]").first();
+    await expect(fixtureLocator).toHaveAttribute("data-checkout", /./);
+    const fixture = await fixtureLocator.getAttribute("data-checkout");
 
     // B6: a second project's checkout brought to the front goes to the top of the list.
     await registerFolder(page, daemon, `${daemon.home}/projects/alpha`);
@@ -436,6 +435,7 @@ test("⌘K lists the checkouts last brought to the front under Recent, keeps the
       stored.recent_checkouts.push({ device_id: "ghost", checkout_id: "remote:ghost:checkout:abc", project_name: "api", branch: "release", device_name: "ghost-box" });
       fs.writeFileSync(file, JSON.stringify(stored));
     });
+    await page.goto("about:blank");
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await expect(page.locator("[data-workspace-screen]")).toBeVisible({ timeout: 30_000 });
     await page.keyboard.press(chord("settings"));
@@ -472,6 +472,63 @@ test("⌘K lists the checkouts last brought to the front under Recent, keeps the
     await expect(input(page)).toHaveCount(0);
     await expect(page.locator("[data-workspace-screen]")).toBeVisible();
     await expect(page.locator(`[data-checkout="${fixture}"]`)).toBeVisible();
+  } finally {
+    daemon?.stop();
+    herdr.stop();
+  }
+});
+
+test("⌘K lists a typed URL as unavailable in a browser tab, and opens it as a browser display in the active View area in the desktop app", async ({ page }) => {
+  const herdr = await startHerdr({ agents: false });
+  let daemon: Daemon | null = null;
+  try {
+    daemon = await startHided(herdr, "cmdk-open-url");
+    const url = `${daemon.origin}/#token=${daemon.token}`;
+    await page.goto(url);
+    await enterWorkspace(page, "fixture");
+
+    // A browser tab cannot draw a page in a View area: the row is listed, dimmed, with its reason, and Enter does nothing.
+    await openSearch(page);
+    await input(page).fill("localhost:5173");
+    const row = page.locator('[data-palette-row="command:open-url"]');
+    await expect(row).toHaveAttribute("data-palette-dim", "true");
+    await expect(row).toContainText("Pages open in the hide desktop app.");
+    await expect(page.locator("[data-palette-action]")).toHaveCount(0);
+    await screenshot(page, "cmdk-open-url-unavailable");
+    await page.keyboard.press("Enter");
+    await expect(input(page)).toBeVisible();
+    await expect(page.locator("[data-browser-display]")).toHaveCount(0);
+    // Plain words are not an address.
+    await input(page).fill("fixture");
+    await expect(row).toHaveCount(0);
+    await page.keyboard.press("Escape");
+
+    // The desktop app's host bridge: pages are drawn by the host, so the row can run.
+    await page.addInitScript((platform) => {
+      window.hideHost = {
+        kind: "electron",
+        platform,
+        onCommand: () => () => undefined,
+        reportBindings: () => undefined,
+        revealPath: () => undefined,
+        pickFolder: async () => null,
+        probePaths: async () => [],
+        openPath: () => undefined,
+        browser: { sync: () => undefined, endCycle: () => undefined, capture: async () => null, command: () => undefined, onEvent: () => () => undefined },
+      };
+    }, process.platform);
+    await page.reload();
+    await enterWorkspace(page, "fixture");
+    await openSearch(page);
+    await input(page).fill("http://localhost:5173/app");
+    await expect(row).not.toHaveAttribute("data-palette-dim", "true");
+    await expect(row).toContainText("http://localhost:5173/app");
+    await screenshot(page, "cmdk-open-url");
+    await page.keyboard.press("Enter");
+    await expect(input(page)).toHaveCount(0);
+    await expect(page.locator("[data-browser-display]")).toHaveCount(1);
+    await expect(page.getByRole("textbox", { name: "Page address" })).toHaveValue("localhost:5173/app");
+    await screenshot(page, "cmdk-open-url-opened");
   } finally {
     daemon?.stop();
     herdr.stop();

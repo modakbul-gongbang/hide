@@ -4,14 +4,14 @@
 // agent it opened by id, never by name (D-17).
 
 import { create } from "zustand";
-import type { AgentGroup, AgentKey, Conversation, DetailView, Notifications, PairPayload, PushMode, Refusal, RowsState, ServerFrame, StartCatalog } from "./protocol";
+import type { AgentGroup, AgentKey, Conversation, DetailView, Notice, Notifications, PairPayload, PushMode, Refusal, RowsState, ServerFrame, StartCatalog } from "./protocol";
 import { mergeConversation, sameKey } from "./protocol";
 import { NO_CHOICE, type StartChoice } from "./start";
 
 export type Screen =
   /** No code and no credential on this phone (B13). */
   | "unpaired"
-  /** The QR opened this page: "<Mac>와 연결" and 연결 (B11). */
+  /** The QR opened this page: "Connect to <Mac>" and Connect (B11). */
   | "pair"
   /** Paired, and the list or a detail is showing. */
   | "app"
@@ -45,7 +45,7 @@ export type StartSheet = {
   choice: StartChoice;
   /** The request id waiting for hided's answer. */
   pending: string | null;
-  error: string | null;
+  error: Notice | null;
 };
 
 export const CLOSED_SHEET: StartSheet = { open: false, text: "", choice: NO_CHOICE, pending: null, error: null };
@@ -60,8 +60,11 @@ type PhoneState = {
   connected: boolean;
   /** At least one attempt failed and the socket is retrying (B23). */
   unreachable: boolean;
+  /** Empty when the page address names no Mac. */
   macName: string;
   otherPhones: number;
+  /** The core's explicit language as the last `agents` frame carried it; null before the first frame and while unset. */
+  interfaceLanguage: string | null;
   pushMode: PushMode;
   notifications: Notifications;
   vapidKey: string | null;
@@ -71,8 +74,8 @@ type PhoneState = {
   /** The deep link waiting for the first list (B32). */
   pendingOpen: AgentKey | null;
   pendingInput: PendingInput | null;
-  inputError: string | null;
-  /** Shown once after pairing: 공유 › 홈 화면에 추가 (B11). */
+  inputError: Notice | null;
+  /** Shown once after pairing: Share › Add to Home Screen (B11). */
   installHint: boolean;
   /** What the start sheet lists; null until hided sends it after the sheet opens. */
   startCatalog: StartCatalog | null;
@@ -89,6 +92,7 @@ const initial: PhoneState = {
   unreachable: false,
   macName: "",
   otherPhones: 0,
+  interfaceLanguage: null,
   pushMode: "off",
   notifications: "unasked",
   vapidKey: null,
@@ -131,7 +135,7 @@ export function applyFrame(frame: ServerFrame): void {
       patch({ pushMode: frame.push_mode, otherPhones: frame.other_phones });
       return;
     case "agents":
-      patch({ groups: frame.groups });
+      patch({ groups: frame.groups, interfaceLanguage: frame.interface_language });
       return;
     case "rows": {
       const detail = state.detail;

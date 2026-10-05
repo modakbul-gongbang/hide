@@ -755,6 +755,12 @@ Dropping on a folder puts the item inside it, on a file puts it beside that file
 The same parent, the item itself, and a folder inside the item show no drop indicator and accept nothing.
 The drag never leaves a copy that a different app (such as Finder) could read as a file.
 
+The filter field is the Explorer's first row.
+Typing narrows the tree to the files hided's file index matches, the index and ranking ⌘P uses, each under its ancestor folders with every folder open, so a match inside a folder the tree never listed is found and its place stays readable; a folder is shown because a file under it matches, and the index answers at most 80 files, as ⌘P lists.
+The filtered tree opens and selects files as the tree does, but pressing a folder only selects it, and New File and Rename end the filter first.
+The filter never reads or writes the expansion the core keeps: clearing the field, Escape, or switching checkout shows the tree as it was.
+While the index is being built the tree says so, and a checkout whose files cannot be listed says why, in the words ⌘P uses.
+
 Git status decorates each row with one status mark: Modified, Added, Untracked, Renamed, and Conflict render as `M`, `A`, `U`, `R`, and `!` with a semantic color and a matching status name in tooltip and accessibility help.
 A folder with any changed descendant renders a dot mark; the mark describes derived folder state and never relabels the folder as a modified file.
 Deleted descendants still mark an existing ancestor folder but never create a file row that no longer exists.
@@ -1182,7 +1188,7 @@ The core keeps one value of each, so with several pages open the last page to re
 
 Web owner: `web/src/SearchPalette.tsx` (⌘K), `web/src/search.ts`, `web/src/relations.ts`, `web/src/searchDetail.ts`, `web/src/searchGithub.ts`, `web/src/Palette.tsx` (⌘P and the diff palette), `web/src/components/sidebar-header.tsx`; core owner for the GitHub search: `herdr-core/src/runtime/issues.rs`.
 
-⌘K goes to things; it runs no command except `에이전트 시작…`.
+⌘K goes to things; it runs no command except `에이전트 시작…` and `브라우저에서 URL 열기`.
 On the web, the Search icon at the end of the sidebar's tab strip or its top line, hinted `Search ⌘K`, opens the same palette Command+K opens, and the query row carries an `Esc` keycap.
 Its own wide layout is a list on the left and the highlighted row's detail on the right, one and a half times the width ⌘P, the shortcut sheet and the start panel share; a dialog under 800 px, too narrow for both, draws the list alone.
 
@@ -1193,6 +1199,10 @@ Only digits in the query match a number by substring on other rows; the pane id 
 The rows are `Issues`, `Pull requests`, `Agents`, `Projects`, `Checkouts` and `Devices` (while another device is registered), then `Commands` holding `에이전트 시작…` and `GitHub`; a group stands where its best result ranked and keeps its results in rank order, so grouping never moves the best match off the first row.
 Search covers every connected device; a result not on the device in front carries that device's chip after its title, and choosing it brings that device forward with it.
 An agent row is the agent's own mark, its title, and its place and state under it; an issue or pull request row carries its number, state and, for a pull request, its CI.
+
+`브라우저에서 URL 열기` is listed first while the query is a web address: one written with `http://` or `https://`, or a loopback host a dev server runs on (`localhost:5173`, `127.0.0.1:3000`), read by the same rule as the View address field (`addressUrl`); any other text is a name to search.
+Enter opens the address as a browser display in the Workspace in front, in its active View area, as New tab does.
+Pages are drawn by the desktop app, so in a browser tab, and on a screen with no Workspace in front, the row stays listed, dimmed, with the reason under its title, and Enter does nothing.
 
 ### What an empty query shows
 
@@ -1306,7 +1316,7 @@ The phones group is titled 연결된 폰 · n / 4; each row shows the phone's na
 
 ### The phone app
 
-The QR opens a page with the hide icon, "<Mac>와 연결", a line on what the phone can do, 연결, and a note that the code expires in five minutes.
+The QR opens a page with the hide icon, "<Mac>에 연결", a line on what the phone can do, 연결, and a note that the code expires in five minutes.
 연결 opens the list and a one-time hint to keep hide on the Home Screen; an expired or spent code says so, a fifth phone is told the limit and to revoke one on the Mac, and a page opened with no code or credential says to scan the QR in Settings > Mobile.
 The list's header shows hide, the Mac's name, how many other phones are connected, and a connection dot.
 Agents sit in 내 확인 대기, 끝, 진행 중 and 확인함 with their counts, each row with its status mark, provider mark, task name, project and branch, the SSH device's chip, the elapsed time and the request or news line, and the list updates live.

@@ -11,6 +11,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
+import { fixtureExecutable } from "./platform-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, enterWorkspace, screenshot, showExplorer } from "./wire";
 import { chord, held, label } from "./chords";
@@ -33,7 +34,7 @@ test("Recent Panels crosses checkouts onto a display and a tab; Recent Projects 
     // Codex in beta (the fixture's shim under that name) and a Claude alone
     // in a second fixture tab. The fixture's first tab holds two agents and
     // keeps its Herdr label and the neutral mark.
-    fs.copyFileSync(path.join(herdr.root, "bin", "claude"), path.join(herdr.root, "bin", "codex"));
+    fs.copyFileSync(path.join(herdr.root, "bin", fixtureExecutable("claude")), path.join(herdr.root, "bin", fixtureExecutable("codex")));
     const solo = herdr.run([
       "tab", "create", "--workspace", herdr.workspace, "--cwd", path.join(herdr.root, "fixture"), "--label", "solo", "--env", `PATH=${herdr.fixturePath}`, "--no-focus",
     ]) as { result: { root_pane: { pane_id: string } } };
@@ -65,8 +66,9 @@ test("Recent Panels crosses checkouts onto a display and a tab; Recent Projects 
     const editor = page.locator("[data-view-area-id] [data-editor-body] .cm-content").first();
     await expect(editor).toContainText("plan line");
     await editor.click();
-    const display = await page.locator('[data-view-tab-bar] [role="tab"][data-display][aria-selected="true"]').first().getAttribute("data-display");
-    expect(display).toBeTruthy();
+    const displayLocator = page.locator('[data-view-tab-bar] [role="tab"][data-display][aria-selected="true"]').first();
+    await expect(displayLocator).toHaveAttribute("data-display", /./);
+    const display = await displayLocator.getAttribute("data-display");
 
     // Then beta's terminal, from the sidebar.
     await page.locator('[data-sidebar-mode="projects"]').click();

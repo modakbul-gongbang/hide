@@ -53,6 +53,7 @@ pub enum Waited {
 /// passed or `cancelled` says to stop. A `within` of zero is one try. The
 /// lock is held on the descriptor, so the file is kept open for as long as
 /// the lock is.
+#[allow(clippy::disallowed_methods)] // a production wait, not test code
 pub fn lock_file(
     file: File,
     mode: Mode,

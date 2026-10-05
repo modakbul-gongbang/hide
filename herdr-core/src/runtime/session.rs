@@ -3,6 +3,11 @@ use super::*;
 /// The most tabs Hide can have created and not yet seen leave Herdr. A tab
 /// past it is placed by its pane cwd and the crossing is reported.
 const CREATED_TAB_CHECKOUT_LIMIT: usize = 64;
+/// How long a created tab's pane may keep reporting a cwd outside its
+/// checkout before the report is believed: the birth value lasted about 20
+/// seconds on a loaded runner (#400), so a longer silence is the shell's own
+/// choice, or a path that never compares equal, and it is reported once.
+const CREATED_TAB_BIRTH_WINDOW_MS: u64 = 30_000;
 
 /// The checkout a tab Hide created was created for. The creation intent named
 /// it, so it outranks the pane cwd, which Herdr reports from birth and never
@@ -12,6 +17,29 @@ pub(super) struct CreatedTabCheckout {
     /// The session has carried the tab at least once, so its absence from a
     /// later session means it closed.
     seen: bool,
+    /// A pane of the tab has reported a cwd inside the checkout, so the cwd
+    /// is no longer a birth value and is read as it is.
+    settled: bool,
+    pub(super) recorded_at_unix_ms: u64,
+}
+
+impl CreatedTabCheckout {
+    /// The window for believing a birth cwd has ended without a pane ever
+    /// reporting the checkout. Reported once, by the settle that follows.
+    fn birth_window_over(&self, now_unix_ms: u64, tab_id: &str) -> bool {
+        let over =
+            now_unix_ms.saturating_sub(self.recorded_at_unix_ms) > CREATED_TAB_BIRTH_WINDOW_MS;
+        if over {
+            crate::diagnostic!(serde_json::json!({
+                "component": "session",
+                "kind": "created_tab.cwd_unsettled",
+                "tab_id": tab_id,
+                "checkout_path": self.path,
+                "window_ms": CREATED_TAB_BIRTH_WINDOW_MS,
+            }));
+        }
+        over
+    }
 }
 
 enum SessionFocusCheck {
@@ -778,8 +806,7 @@ impl Runtime {
             None => self
                 .live
                 .as_ref()
-                .cloned()
-                .map(|context| (TabMoveCarrier::Local(context), self.live_generation))
+                .map(|_| (TabMoveCarrier::Local, self.live_generation))
                 .ok_or_else(|| "Moving a Herdr tab requires a live Herdr connection".to_owned()),
             Some(target) => self.device_tab_move_carrier(target),
         };
@@ -810,7 +837,10 @@ impl Runtime {
                 phase: "transmitting".to_owned(),
                 stage: "request".to_owned(),
                 started_at_unix_ms: now,
-                deadline_at_unix_ms: Some(now.saturating_add(CLOSE_STAGE_TIMEOUT_MS)),
+                // A move on this machine waits its turn on the control lane,
+                // so its five seconds start when it leaves (`start_job`).
+                deadline_at_unix_ms: (!matches!(carrier, TabMoveCarrier::Local))
+                    .then(|| now.saturating_add(CLOSE_STAGE_TIMEOUT_MS)),
                 message: Some("Waiting for Herdr to confirm the tab order".to_owned()),
                 retryable: false,
             },
@@ -856,7 +886,7 @@ impl Runtime {
             connection_generation,
         };
         let spawned = match carrier {
-            TabMoveCarrier::Local(context) => live::spawn_local_control(context, action),
+            TabMoveCarrier::Local => self.submit_local_control(action),
             TabMoveCarrier::Device(context) => live::spawn_remote_control(
                 context,
                 format!("tab.move:{}:{generation}", payload.checkout_id),
@@ -1705,7 +1735,14 @@ impl Runtime {
         // Herdr's session is kept as it came; the published one groups its
         // workspaces into the device's projects (`device_catalog`).
         let mut dropped_moves = Vec::new();
-        let fetched = fetched.map(|raw| {
+        if fetched.is_err() {
+            // The device's tab ids are its Herdr's own; a later connection may
+            // hand one to a tab Hide never created.
+            self.created_device_tabs
+                .retain(|(target, _), _| target != target_id);
+        }
+        let fetched = fetched.map(|mut raw| {
+            self.clamp_device_created_tabs(target_id, &mut raw);
             let mut derived = self.derive_device_session(target_id, &raw);
             self.device_raw_sessions.insert(target_id.to_owned(), raw);
             self.place_device_strips(target_id, &mut derived, &mut dropped_moves);
@@ -1833,6 +1870,7 @@ impl Runtime {
         if changed {
             self.sync_async_operations();
         }
+        changed |= self.refresh_browser_inventory_scope();
         changed
     }
     /// Reconciles the pane and checkout ids loaded from disk against the first
@@ -1900,20 +1938,42 @@ impl Runtime {
         self.ingest_session_with_focus_check(fetched, precomputed, SessionFocusCheck::Unchecked)
     }
 
-    /// Identify only an external move within the selected pane's layout.
-    /// Missing panes and tab arrivals keep their existing topology handling.
-    pub(crate) fn pane_focus_readback_target(
-        &self,
-        payload: &SessionSnapshotPayload,
-    ) -> Option<PendingPaneFocusControl> {
+    /// Ingests a session update whose focus is Herdr's own stream's, and
+    /// says whether a read of Herdr's focus has to follow.
+    ///
+    /// The stream has no ordering cursor, so a focus that differs from the
+    /// selected pane is not authority until a fresh read agrees. That read
+    /// waits on Herdr, so it never gates this update: the layout, the panes
+    /// and every other part of the update are taken now, and the differing
+    /// focus (and the zoom of the pane it names) stays Hide's until
+    /// [`Self::finish_pane_focus_readback`] hears the answer. At most one
+    /// read is outstanding.
+    pub(crate) fn ingest_session_awaiting_focus_readback(
+        &mut self,
+        fetched: Result<SessionSnapshotPayload, SessionFetchError>,
+        precomputed: Option<session_sync::PrecomputedCatalog>,
+    ) -> (bool, Option<PendingPaneFocusControl>) {
+        let changed = self.ingest_session_with_focus_check(
+            fetched,
+            precomputed,
+            SessionFocusCheck::Readback(None),
+        );
+        (changed, self.begin_pane_focus_readback())
+    }
+
+    /// An external move within the selected pane's tab, as the stored layout
+    /// shows it. Missing panes and tab arrivals keep their existing topology
+    /// handling.
+    fn pane_focus_readback_target(&self) -> Option<PendingPaneFocusControl> {
         if self.pending_pane_focus.is_some() || self.pane_focus_in_flight.is_some() {
             return None;
         }
         let selected = self.snapshot.focused.pane_id.as_deref()?;
-        let layout = payload
-            .layouts
+        let layout = self
+            .snapshot
+            .pane_layouts
             .iter()
-            .find(|layout| layout.panes.iter().any(|pane| pane.pane_id == selected))?;
+            .find(|layout| layout.pane_ids().contains(&selected))?;
         (layout.focused_pane_id != selected).then(|| PendingPaneFocusControl {
             serial: self.next_pane_focus_serial,
             target_id: layout.focused_pane_id.clone(),
@@ -1921,17 +1981,77 @@ impl Runtime {
         })
     }
 
-    pub(crate) fn ingest_session_with_focus_readback(
+    /// Takes the one readback slot for the move the stored layouts show.
+    fn begin_pane_focus_readback(&mut self) -> Option<PendingPaneFocusControl> {
+        if self.pane_focus_readback.is_some() {
+            return None;
+        }
+        let identity = self.pane_focus_readback_target()?;
+        self.pane_focus_readback = Some(identity.clone());
+        Some(identity)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pane_focus_readback_is_outstanding(&self) -> bool {
+        self.pane_focus_readback.is_some()
+    }
+
+    /// Frees the readback slot for a worker that ended without an answer.
+    pub(crate) fn abandon_pane_focus_readback(&mut self) {
+        self.pane_focus_readback = None;
+    }
+
+    /// Settles the readback for `identity` and returns whether the snapshot
+    /// changed, with the next readback when the stored layouts still show a
+    /// move this answer did not cover.
+    ///
+    /// A confirmed answer applies the layout the session already stored,
+    /// now with its focus and zoom. The identity is checked again there:
+    /// a newer selection, a pending focus request or another connection
+    /// leaves the answer without authority. An unconfirmed answer changes
+    /// nothing and is not asked again until the next session update.
+    pub(crate) fn finish_pane_focus_readback(
         &mut self,
-        fetched: Result<SessionSnapshotPayload, SessionFetchError>,
-        precomputed: Option<session_sync::PrecomputedCatalog>,
-        readback: Option<(PendingPaneFocusControl, bool)>,
-    ) -> bool {
-        self.ingest_session_with_focus_check(
-            fetched,
-            precomputed,
-            SessionFocusCheck::Readback(readback),
-        )
+        identity: PendingPaneFocusControl,
+        confirmed: bool,
+    ) -> (bool, Option<PendingPaneFocusControl>) {
+        self.pane_focus_readback = None;
+        let stored = self
+            .snapshot
+            .pane_layouts
+            .iter()
+            .find(|layout| layout.focused_pane_id == identity.target_id)
+            .cloned();
+        let mut changed = false;
+        // The move must still be the one the selected pane's layout shows:
+        // the apply below rechecks the identity only inside that layout, so
+        // an answer for another tab than the selected one has no authority.
+        if confirmed
+            && self.pane_focus_readback_target().as_ref() == Some(&identity)
+            && let Some(layout) = stored.clone()
+        {
+            changed |= self.apply_pane_layout_with_focus_check(
+                layout,
+                false,
+                SessionFocusCheck::Readback(Some((identity.clone(), true))),
+            );
+            changed |= self.settle_selection_projection();
+            changed |= self.refresh_browser_inventory_scope();
+        }
+        let next = if confirmed || stored.is_none() {
+            self.begin_pane_focus_readback()
+        } else {
+            None
+        };
+        (changed, next)
+    }
+
+    /// What follows a change of the selected pane: the worktree rows, the
+    /// visible tab and the attaches the visible tab holds.
+    fn settle_selection_projection(&mut self) -> bool {
+        let mut changed = self.refresh_worktree_projection();
+        changed |= self.align_visible_tab_with_selected_pane();
+        changed | self.track_visible_tab_attachments()
     }
 
     fn ingest_session_with_focus_check(
@@ -1946,6 +2066,8 @@ impl Runtime {
         if let Ok(payload) = fetched.as_mut() {
             self.label_overlay.apply(payload);
             self.settle_agent_sleep(payload);
+            self.settle_created_tabs(payload);
+            Self::clamp_created_tab_cwds(payload, &self.created_tab_clamps());
         } else {
             // Herdr's tab ids are its own server's; a later connection may
             // hand one to a tab Hide never created.
@@ -2429,10 +2551,9 @@ impl Runtime {
                 focus_check,
             );
         }
-        changed |= self.refresh_worktree_projection();
-        changed |= self.align_visible_tab_with_selected_pane();
-        changed |= self.track_visible_tab_attachments();
+        changed |= self.settle_selection_projection();
         changed |= self.refresh_sessions_after_catalog_change(catalog_changed);
+        changed |= self.refresh_browser_inventory_scope();
         changed | self.refresh_pet()
     }
     /// Moves the navigator to the checkout that owns a pane without emitting
@@ -2668,10 +2789,8 @@ impl Runtime {
             };
             pending.pane_control_serial = Some(serial);
             self.pending_pane_focus = Some(pending);
-            if let Some((context, control)) = self.begin_pane_focus_control()
-                && let Err(message) = live::spawn_pane_focus(context, control.clone())
-            {
-                self.ingest_pane_focus_completion(control, Err(message.into()), 0);
+            if let Err(message) = self.submit_pane_focus_turn() {
+                self.fail_unsent_pane_focus(&pane_id, message);
                 return;
             }
         } else {
@@ -2698,9 +2817,11 @@ impl Runtime {
         if self.pane_focus_in_flight.is_some() {
             return None;
         }
-        let pending = self.pending_pane_focus.as_ref()?;
-        let serial = pending.pane_control_serial?;
         let context = self.live.as_ref()?.clone();
+        let pending = self.pending_pane_focus.as_mut()?;
+        let serial = pending.pane_control_serial?;
+        pending.sent = true;
+        pending.requested_at_unix_ms = unix_milliseconds();
         let control = PendingPaneFocusControl {
             serial,
             target_id: pending.target_id.clone(),
@@ -2756,6 +2877,12 @@ impl Runtime {
         request.phase = phase.to_owned();
         request.message = message;
         request.retryable = retryable;
+    }
+    /// A pane focus the lane would not take: it is refused where the operator
+    /// asked, and Hide keeps the pane it selected.
+    fn fail_unsent_pane_focus(&mut self, pane_id: &str, message: String) {
+        self.fail_pending_pane_focus_for_target(pane_id, message.clone());
+        self.set_error("pane.focus_failed", message, true);
     }
     pub(super) fn fail_pending_pane_focus_for_target(
         &mut self,
@@ -2938,7 +3065,8 @@ impl Runtime {
                     && self.pending_pane_focus.is_none()
                     && self.pane_focus_in_flight.is_none()
             });
-            if !adopt_focus {
+            // `None` is an update held for its readback, which is not a refusal.
+            if !adopt_focus && readback.is_some() {
                 crate::diagnostic!(serde_json::json!({
                     "component": "pane_focus",
                     "kind": "pane.focus.stream_unconfirmed",
@@ -3057,8 +3185,12 @@ impl Runtime {
     /// a session that predates both.
     pub(super) fn await_tab_focus(&mut self, next: PendingViewFocus) {
         let next_target_id = next.target_id.clone();
+        // Only a request that already left can be answered late. One still
+        // waiting on the control lane is replaced there and never reaches
+        // Herdr, so nothing of it is remembered.
         if let Some(previous) = self.pending_tab_focus.replace(next)
             && previous.target_id != next_target_id
+            && previous.sent
         {
             self.superseded_tab_focus.retain(|held| {
                 held.scope_id != previous.scope_id || held.target_id != previous.target_id
@@ -4091,6 +4223,28 @@ impl Runtime {
                     ) => self.agent_can_show_created(cwd, id),
                     _ => true,
                 };
+                // A focus the operator asked for after this creation was sent
+                // names where they are now, and the creation's answer is the
+                // older request: the new tab waits in the strip rather than
+                // taking the screen back from the tab they chose.
+                let chosen_since = created_tab_id.is_some()
+                    && self
+                        .control_lane
+                        .running_serial()
+                        .is_some_and(|serial| self.last_view_intent_serial > serial);
+                if chosen_since && can_show_created {
+                    crate::diagnostic!(serde_json::json!({
+                        "component": "tab_control",
+                        "kind": "tab.create.focus_superseded",
+                        "action": action_kind,
+                        "created_tab_id": created_tab_id,
+                    }));
+                    self.push_diagnostic(
+                        "tab.create.focus_superseded",
+                        "A tab was chosen after this one was created; the created tab waits in the strip",
+                    );
+                }
+                let can_show_created = can_show_created && !chosen_since;
                 if can_show_created
                     && matches!(
                         action,
@@ -4118,7 +4272,9 @@ impl Runtime {
                     ) {
                         self.visible_tab_ids
                             .insert(checkout_id.clone(), tab_id.clone());
-                        self.await_tab_focus(PendingViewFocus::new(checkout_id, tab_id.clone()));
+                        self.await_tab_focus(
+                            PendingViewFocus::new(checkout_id, tab_id.clone()).already_sent(),
+                        );
                     }
                     self.yield_surface_to_terminal();
                     self.persist_current_ui_state();
@@ -4836,6 +4992,8 @@ impl Runtime {
             CreatedTabCheckout {
                 path: path.to_owned(),
                 seen: false,
+                settled: false,
+                recorded_at_unix_ms: unix_milliseconds(),
             },
         );
         let misplaced = self
@@ -4852,6 +5010,171 @@ impl Runtime {
                         .any(|tab| tab.id.as_deref() == Some(tab_id))
             });
         self.created_tab_republish_requested |= misplaced;
+    }
+
+    /// Notes which created tabs report a cwd inside their checkout, read off
+    /// the session as Herdr sent it: from then on the cwd is where the shell
+    /// is, not where it was born.
+    fn settle_created_tabs(&mut self, payload: &SessionSnapshotPayload) {
+        let now = unix_milliseconds();
+        for (tab_id, created) in &mut self.created_tab_checkouts {
+            if created.settled {
+                continue;
+            }
+            let mut carried = false;
+            let mut inside = false;
+            for pane in payload
+                .layouts
+                .iter()
+                .filter(|layout| &layout.tab_id == tab_id)
+                .flat_map(|layout| &layout.panes)
+            {
+                carried = true;
+                if let Some(cwd) = Self::pane_cwd(payload, &pane.pane_id) {
+                    inside |= path_is_within_checkout(&cwd, &created.path);
+                }
+            }
+            created.settled = inside || (carried && created.birth_window_over(now, tab_id));
+        }
+    }
+
+    /// The created tabs whose pane cwd is still a birth value, with the
+    /// checkout each was created for.
+    pub(crate) fn created_tab_clamps(&self) -> Vec<(String, String)> {
+        self.created_tab_checkouts
+            .iter()
+            .filter(|(_, created)| !created.settled)
+            .map(|(tab_id, created)| (tab_id.clone(), created.path.clone()))
+            .collect()
+    }
+
+    /// Reads a created tab's panes as inside the checkout the tab was created
+    /// for until their cwd has settled there. Every reader of the session sees
+    /// the intended folder: the project and checkout rows, the purpose mirror,
+    /// the pane's cwd and the ports attributed by it. A birth cwd outside the
+    /// checkout would otherwise make a project row for the parent folder and
+    /// claim the listeners of its siblings (#400).
+    pub(crate) fn clamp_created_tab_cwds(
+        payload: &mut SessionSnapshotPayload,
+        clamps: &[(String, String)],
+    ) {
+        for (tab_id, path) in clamps {
+            let pane_ids = payload
+                .layouts
+                .iter()
+                .filter(|layout| &layout.tab_id == tab_id)
+                .flat_map(|layout| layout.panes.iter().map(|pane| pane.pane_id.clone()))
+                .collect::<Vec<_>>();
+            for pane_id in pane_ids {
+                let outside = |cwd: &Option<String>| {
+                    cwd.as_deref()
+                        .is_none_or(|cwd| !path_is_within_checkout(cwd, path))
+                };
+                for pane in payload
+                    .panes
+                    .iter_mut()
+                    .filter(|pane| pane.pane_id == pane_id)
+                {
+                    if outside(&pane.cwd) {
+                        pane.cwd = Some(path.clone());
+                    }
+                }
+                for agent in payload.agents.iter_mut().filter(|agent| {
+                    agent.pane_id.as_deref().or(agent.id.as_deref()) == Some(pane_id.as_str())
+                }) {
+                    if outside(&agent.cwd) {
+                        agent.cwd = Some(path.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    /// Remembers which folder a tab created on a device was asked for, for
+    /// the same reason as `record_created_tab_checkout`: the device's helper
+    /// groups a tab by its first pane's cwd, which is a birth value.
+    pub(super) fn record_created_device_tab(&mut self, target_id: &str, tab_id: &str, path: &str) {
+        let key = (target_id.to_owned(), tab_id.to_owned());
+        if self.created_device_tabs.len() >= CREATED_TAB_CHECKOUT_LIMIT
+            && !self.created_device_tabs.contains_key(&key)
+        {
+            crate::diagnostic!(serde_json::json!({
+                "component": "session",
+                "kind": "created_tab.checkout_limit",
+                "target": target_id,
+                "tab_id": tab_id,
+                "checkout_path": path,
+                "limit": CREATED_TAB_CHECKOUT_LIMIT,
+            }));
+            return;
+        }
+        self.created_device_tabs.insert(
+            key,
+            CreatedTabCheckout {
+                path: path.to_owned(),
+                seen: false,
+                settled: false,
+                recorded_at_unix_ms: unix_milliseconds(),
+            },
+        );
+    }
+
+    /// Reads a device tab Hide created as in the folder it was created for
+    /// until a pane of it reports a cwd there, before the device's projects
+    /// are grouped, and drops the record of a tab the device no longer has.
+    fn clamp_device_created_tabs(&mut self, target_id: &str, raw: &mut RemoteSessionSnapshot) {
+        self.created_device_tabs
+            .retain(|(target, tab_id), created| {
+                if target != target_id {
+                    return true;
+                }
+                let present = raw.workspaces.iter().any(|workspace| {
+                    workspace.checkouts.iter().any(|checkout| {
+                        checkout.tabs.iter().any(|tab| {
+                            tab.id
+                                .as_deref()
+                                .and_then(|id| remote_tab_source_id(target_id, id))
+                                == Some(tab_id.as_str())
+                        })
+                    })
+                });
+                created.seen |= present;
+                present || !created.seen
+            });
+        for workspace in &mut raw.workspaces {
+            for checkout in &mut workspace.checkouts {
+                for tab in &mut checkout.tabs {
+                    let Some(native) = tab
+                        .id
+                        .as_deref()
+                        .and_then(|id| remote_tab_source_id(target_id, id))
+                    else {
+                        continue;
+                    };
+                    let Some(created) = self
+                        .created_device_tabs
+                        .get_mut(&(target_id.to_owned(), native.to_owned()))
+                    else {
+                        continue;
+                    };
+                    if !created.settled {
+                        created.settled = tab
+                            .panes
+                            .iter()
+                            .any(|pane| path_is_within_checkout(&pane.cwd, &created.path))
+                            || created.birth_window_over(unix_milliseconds(), native);
+                    }
+                    if created.settled {
+                        continue;
+                    }
+                    for pane in &mut tab.panes {
+                        if !path_is_within_checkout(&pane.cwd, &created.path) {
+                            pane.cwd = created.path.clone();
+                        }
+                    }
+                }
+            }
+        }
     }
 
     pub(crate) fn take_created_tab_republish(&mut self) -> bool {

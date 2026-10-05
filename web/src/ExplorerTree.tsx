@@ -1,17 +1,19 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { RefreshCwIcon } from "lucide-react";
+import { RefreshCwIcon, SearchIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { isHtmlFile } from "./browserViews";
 import { holdShellDrag } from "./shellDrag";
 import { EntryPointMenu } from "./components/entry-menu";
 import { Button } from "./components/ui/button";
+import { useEscapeLayer } from "./components/ui/layer";
 import { Input } from "./components/ui/input";
 import { Hint } from "./components/ui/tooltip";
 import {
   disclosureMark,
   explorerMenuItems,
   explorerRows,
+  filteredRows,
   firstChildSelection,
   explorerGitLine,
   gitBadgeColor,
@@ -106,6 +108,23 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
   const draft = useUiStore((s) => s.explorerDraft);
   const setDraft = useUiStore((s) => s.setExplorerDraft);
   const scrollRef = useRef<HTMLDivElement>(null);
+  // The filter narrows the rows to the files hided's index (the ⌘P source)
+  // matched; it is page-local and leaves the core's expansion untouched.
+  const [filter, setFilter] = useState("");
+  const needle = filter.trim();
+  const filtering = needle !== "";
+  const overlay = useUiStore((s) => s.overlay);
+  const answer = useShellStore((s) =>
+    s.fileIndex && s.fileIndex.device_id === device && s.fileIndex.root_path === rootPath && s.fileIndex.query === needle ? s.fileIndex : null,
+  );
+  // The last answer stays drawn while the next keystroke's is in flight, so
+  // the tree does not blank between letters.
+  const [settled, setSettled] = useState<typeof answer>(null);
+  const shownAnswer = answer ?? (filtering ? settled : null);
+  useEffect(() => {
+    if (!filtering) setSettled(null);
+    else if (answer) setSettled(answer);
+  }, [filtering, answer]);
   const [refreshTick, setRefreshTick] = useState(0);
   const [menu, setMenu] = useState<{ path: string; isDirectory: boolean; x: number; y: number } | null>(null);
   // Folders this pane has asked hided for and not yet heard about; a refusal
@@ -117,13 +136,14 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
 
   const gitLine = explorerGitLine(changes, t);
   const expandedKey = expandedPaths.join("\n");
-  const rows = useMemo(
-    () => (rootPath ? explorerRows({ rootPath, listings, expandedPaths, changes }) : EMPTY_ROWS),
+  const rows = useMemo(() => {
+    if (!rootPath) return EMPTY_ROWS;
+    if (filtering) return filteredRows({ rootPath, files: shownAnswer?.files ?? [], changes });
+    return explorerRows({ rootPath, listings, expandedPaths, changes });
     // `expandedPaths` arrives as a fresh array per section; the joined key is
     // the identity that matters, and the listings/changes objects are shared.
-    [rootPath, listings, expandedKey, changes],
-  );
-  const shown = useMemo(() => displayRows(rows, draft), [rows, draft]);
+  }, [rootPath, listings, expandedKey, changes, filtering, shownAnswer]);
+  const shown = useMemo(() => displayRows(rows, filtering ? null : draft), [rows, draft, filtering]);
   const watchedNow = useMemo(
     () => new Set(rootPath ? watchedFolders(rootPath, expandedPaths) : []),
     // `expandedPaths` identity changes per section; the joined key is the one
@@ -185,6 +205,21 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
     setRefreshTick((tick) => tick + 1);
   }, [hostReady]);
 
+  // One request per pause in typing, as the palette sends. The palette shares
+  // the one answer slot, so a request waits while it is open and is sent again
+  // when it closes. The first query for a checkout starts the walk and answers
+  // `indexing`; it is asked again until the list is there.
+  useEffect(() => {
+    if (!rootPath || !filtering || overlay === "file_palette") return undefined;
+    const delay = answer?.indexing ? 250 : answer ? null : 120;
+    if (delay === null) return undefined;
+    const timer = window.setTimeout(() => actions.requestFileIndex(rootPath, needle, device), delay);
+    return () => window.clearTimeout(timer);
+  }, [rootPath, needle, filtering, device, overlay, answer, actions]);
+
+  // Escape clears the filter before any layer opened earlier.
+  useEscapeLayer(filtering, () => setFilter(""));
+
   // A reveal (or an open from anywhere) sets the core's selected_path. A
   // palette pick also sets the local cursor before the core replies; a panel
   // remount must not replace that newer pick with the older snapshot path.
@@ -207,6 +242,7 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
     pending.current.clear();
     setMenu(null);
     setDraft(null);
+    setFilter("");
     pendingName.current = null;
   }, [rootPath, setSelection, setDraft]);
 
@@ -248,7 +284,10 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
     // `shown` shifts when the inline field is spliced in; the scroll follows rows.
   }, [selection, rows, virtualizer]);
 
+  // A filtered tree has every folder open; pressing one must not move the
+  // expansion the operator will come back to.
   const toggleFolder = (path: string) => {
+    if (filtering) return;
     const next = new Set(expandedPaths);
     if (next.has(path)) next.delete(path);
     else next.add(path);
@@ -256,7 +295,7 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
   };
 
   const expand = (path: string) => {
-    if (expandedPaths.includes(path)) return;
+    if (filtering || expandedPaths.includes(path)) return;
     actions.setExpandedPaths([...expandedPaths, path]);
   };
 
@@ -267,12 +306,14 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
   };
 
   const beginCreate = (parent: string, kind: "file" | "folder") => {
+    setFilter("");
     expand(parent);
     setDraft({ kind, parent, path: parent, initial: "" });
     setMenu(null);
   };
 
   const beginRename = (row: ExplorerRow) => {
+    setFilter("");
     setDraft({ kind: "rename", parent: parentPath(row.path), path: row.path, initial: row.name });
     setMenu(null);
   };
@@ -331,6 +372,16 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
   const refused = pathRefusal?.kind === "file_list" && pathRefusal.path === rootPath ? pathRefusal.reason : null;
   const rootListing = listings[rootPath];
   const rootUnavailable = unavailable?.root_path === rootPath ? unavailable : null;
+  // What stands in for the tree while a filter has no rows to draw.
+  const filterNote = !filtering
+    ? null
+    : answer?.unavailable
+      ? t("documents.filesUnavailable", { reason: answer.unavailable })
+      : answer?.indexing && rows.length === 0
+        ? t("documents.indexing")
+        : answer && rows.length === 0
+          ? t("documents.noMatchingFiles")
+          : null;
   const failure = operation?.phase === "failed" && operation.message ? operation : null;
 
   const anchorTop = (path: string): number | null => {
@@ -343,6 +394,19 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
 
   return (
     <div className="flex min-h-0 flex-1 flex-col" data-explorer={rootPath}>
+      <div className="flex shrink-0 items-center border-b border-border px-md py-xs">
+        <span className="relative flex min-w-0 flex-1 items-center">
+          <SearchIcon aria-hidden="true" className="pointer-events-none absolute left-xs size-(--size-icon-sm) text-muted-foreground" />
+          <Input
+            value={filter}
+            onChange={(event) => setFilter(event.target.value)}
+            placeholder={t("explorer.filter")}
+            aria-label={t("explorer.filterAria")}
+            className="h-(--size-control-sm) pl-xl"
+            data-explorer-filter="true"
+          />
+        </span>
+      </div>
       <div className="flex shrink-0 items-center gap-xs border-b border-border px-md py-xs text-caption text-subtle-foreground">
         <Hint label={rootPath} reveals>
         <span className="min-w-0 flex-1 truncate" data-explorer-root="true">
@@ -406,9 +470,13 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
           )}
         </div>
       ) : null}
-      {!rootListing && !refused && !rootUnavailable ? (
+      {!filtering && !rootListing && !refused && !rootUnavailable ? (
         <div className="px-md py-sm text-caption text-muted-foreground" data-explorer-state="loading">
           {t("common.loading")}
+        </div>
+      ) : filterNote ? (
+        <div className="px-md py-sm text-caption text-muted-foreground" data-explorer-state="filter">
+          {filterNote}
         </div>
       ) : (
         <div
@@ -449,7 +517,7 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
                 );
               }
               const row = entry.row;
-              const needsRefresh = row.isDirectory && row.expanded && !watchedNow.has(row.path);
+              const needsRefresh = !filtering && row.isDirectory && row.expanded && !watchedNow.has(row.path);
               return (
                 <ExplorerRowView
                   key={row.path}

@@ -98,7 +98,8 @@ test("⌘K Start an agent… starts an agent in the checkout in front with the c
     await openFromPalette(page);
     await expect(page.locator("[data-start-text]")).toHaveValue("아직 안 보낸 글");
     // An outside press closes it too, keeping the draft.
-    await page.locator("[data-main], main").first().click({ position: { x: 5, y: 5 }, force: true });
+    const main = (await page.locator("[data-main], main").first().boundingBox())!;
+    await page.mouse.click(main.x + 5, main.y + 5);
     await expect(panel).toHaveCount(0);
   } finally {
     daemon?.stop();

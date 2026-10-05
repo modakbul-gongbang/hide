@@ -1,9 +1,10 @@
 // Notifications on the phone (PRD mobile-companion D-19, D-20, D-21, B30,
-// B34): permission is asked only when the user taps 알림 켜기, the
+// B34): permission is asked only when the user taps Turn on notifications, the
 // subscription is registered over /ws and never over another path, a phone
 // that turned notifications back on in the OS subscribes again when the app
 // opens, and a revoked phone drops its local subscription.
 
+import { translate } from "../i18n/translator";
 import { staleTags, type AgentGroup } from "./protocol";
 import { patch, usePhone } from "./store";
 import { send } from "./connection";
@@ -33,6 +34,15 @@ async function registration(): Promise<ServiceWorkerRegistration | null> {
   }
 }
 
+/**
+ * Gives the service worker the two words a notification body starts with, in
+ * the language in effect; it keeps them so a closed app still notifies in it.
+ */
+export async function postWords(): Promise<void> {
+  const worker = await registration();
+  worker?.active?.postMessage({ type: "words", words: { needs_you: translate("mobile.group.needs_you"), done: translate("mobile.group.done") } });
+}
+
 async function subscribe(): Promise<boolean> {
   const key = usePhone.getState().vapidKey;
   const worker = await registration();
@@ -43,6 +53,7 @@ async function subscribe(): Promise<boolean> {
     // refused (hided drops a subscription on 404 or 410): start a fresh one.
     await (await worker.pushManager.getSubscription())?.unsubscribe();
     const subscription = await worker.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: applicationServerKey(key) });
+    void postWords();
     const json = subscription.toJSON();
     if (!json.endpoint || !json.keys?.p256dh || !json.keys.auth) return false;
     return send({ type: "push_subscription", subscription: { endpoint: json.endpoint, keys: { p256dh: json.keys.p256dh, auth: json.keys.auth } } });
@@ -51,7 +62,7 @@ async function subscribe(): Promise<boolean> {
   }
 }
 
-/** The user tapped 알림 켜기 (B30). */
+/** The user tapped Turn on notifications (B30). */
 export async function enableNotifications(): Promise<void> {
   if (!pushSupported()) return;
   const answer = await Notification.requestPermission();

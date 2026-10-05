@@ -3,6 +3,7 @@ dist/
 out/
 test-results/
 test-results-quarantine/
+e2e-report.json
 playwright-report/
 blob-report/
 playwright/.cache/

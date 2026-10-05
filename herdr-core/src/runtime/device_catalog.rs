@@ -122,6 +122,7 @@ impl Runtime {
             // its View tabs back.
             self.restore_front_when_ready();
         }
+        changed |= self.refresh_browser_inventory_scope();
         changed
     }
 
@@ -531,6 +532,8 @@ impl Runtime {
         self.device_recent_tabs.remove(target);
         self.device_facts.remove(target);
         self.device_worktrees.remove(target);
+        self.created_device_tabs
+            .retain(|(owner, _), _| owner != target);
     }
 }
 

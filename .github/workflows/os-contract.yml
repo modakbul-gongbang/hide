@@ -13,8 +13,10 @@ name: os contract
 on:
   workflow_call:
 
+# `issues: write` files a flaky test; a caller must grant it.
 permissions:
   contents: read
+  issues: write
 
 jobs:
   contract:
@@ -40,11 +42,15 @@ jobs:
         with:
           workspaces: ". -> target"
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install cargo-nextest
+        # The Rust tests run under nextest's `ci` profile (one retry).
+        timeout-minutes: 3
+        run: bash scripts/install-nextest.sh
       - name: Contract tests and the client's own tests
         # Usually a minute or two; a contract test that hangs fails here
         # rather than holding the runner until the job's timeout.
         timeout-minutes: 10
-        run: bash scripts/verify-cargo.sh test-scoped -p hide-platform -p hide-herdr-client
+        run: bash scripts/verify-cargo.sh nextest --profile ci -p hide-platform -p hide-herdr-client
       - name: Lint the platform crates
         run: bash scripts/verify-cargo.sh clippy -p hide-platform -p hide-herdr-client --all-targets -- -D warnings
       - name: Install zsh for the Herdr fetch
@@ -67,4 +73,11 @@ jobs:
         timeout-minutes: 10
         env:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
-        run: bash scripts/verify-cargo.sh test-scoped -p hide-herdr-client --test real_herdr -- --ignored --nocapture
+        run: bash scripts/verify-cargo.sh nextest --profile ci -p hide-herdr-client --test real_herdr --run-ignored only --no-capture
+      - name: Report flaky tests
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci-flaky-report.py --suite rust --junit target/nextest/ci/junit*.xml

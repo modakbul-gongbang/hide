@@ -68,6 +68,19 @@ export const mobileEnglish = {
   "mobile.start.unavailable": "hide on your Mac couldn't accept the start request. Try again.",
   "mobile.start.agentFailed": "The agent was opened but couldn't run. Check on the desktop.",
   "mobile.start.failed": "Couldn't start the agent. Try again.",
+  "mobile.mac": "Mac",
+  "mobile.connected": "Connected",
+  "mobile.disconnected": "Not connected",
+  "mobile.tab.conversation": "Conversation",
+  "mobile.tab.terminal": "Terminal",
+  "mobile.loading": "Loading…",
+  "mobile.start.target": "Target",
+  "mobile.start.kind": "Kind",
+  "mobile.start.model": "Model",
+  "mobile.start.defaultModel": "Default",
+  "mobile.start.targetDisconnected": "Not connected",
+  "mobile.start.defaultTarget": "This Mac · Home",
+  "mobile.start.submit": "Start",
 } as const;
 
 const ko = {
@@ -137,6 +150,19 @@ const ko = {
   "mobile.start.unavailable": "맥의 hide가 시작 요청을 받지 못했어요. 다시 시작하세요.",
   "mobile.start.agentFailed": "에이전트를 띄웠지만 실행하지 못했어요. 데스크톱에서 확인하세요.",
   "mobile.start.failed": "시작하지 못했어요. 다시 시작하세요.",
+  "mobile.mac": "맥",
+  "mobile.connected": "연결됨",
+  "mobile.disconnected": "연결 안 됨",
+  "mobile.tab.conversation": "대화",
+  "mobile.tab.terminal": "터미널",
+  "mobile.loading": "불러오는 중…",
+  "mobile.start.target": "대상",
+  "mobile.start.kind": "종류",
+  "mobile.start.model": "모델",
+  "mobile.start.defaultModel": "기본값",
+  "mobile.start.targetDisconnected": "연결 안 됨",
+  "mobile.start.defaultTarget": "이 맥 · 홈",
+  "mobile.start.submit": "시작",
 } satisfies Catalog<typeof mobileEnglish>;
 
 const zhCN = {
@@ -206,6 +232,19 @@ const zhCN = {
   "mobile.start.unavailable": "Mac 上的 hide 无法接收启动请求，请重试。",
   "mobile.start.agentFailed": "智能体已打开，但无法运行，请在桌面端检查。",
   "mobile.start.failed": "无法启动智能体，请重试。",
+  "mobile.mac": "Mac",
+  "mobile.connected": "已连接",
+  "mobile.disconnected": "未连接",
+  "mobile.tab.conversation": "对话",
+  "mobile.tab.terminal": "终端",
+  "mobile.loading": "正在加载…",
+  "mobile.start.target": "目标",
+  "mobile.start.kind": "类型",
+  "mobile.start.model": "模型",
+  "mobile.start.defaultModel": "默认",
+  "mobile.start.targetDisconnected": "未连接",
+  "mobile.start.defaultTarget": "此 Mac · 主文件夹",
+  "mobile.start.submit": "启动",
 } satisfies Catalog<typeof mobileEnglish>;
 
 const ja = {
@@ -275,6 +314,19 @@ const ja = {
   "mobile.start.unavailable": "Macのhideが開始要求を受け取れませんでした。もう一度お試しください。",
   "mobile.start.agentFailed": "エージェントは開きましたが実行できませんでした。デスクトップで確認してください。",
   "mobile.start.failed": "エージェントを開始できませんでした。もう一度お試しください。",
+  "mobile.mac": "Mac",
+  "mobile.connected": "接続済み",
+  "mobile.disconnected": "未接続",
+  "mobile.tab.conversation": "会話",
+  "mobile.tab.terminal": "ターミナル",
+  "mobile.loading": "読み込み中…",
+  "mobile.start.target": "対象",
+  "mobile.start.kind": "種類",
+  "mobile.start.model": "モデル",
+  "mobile.start.defaultModel": "デフォルト",
+  "mobile.start.targetDisconnected": "未接続",
+  "mobile.start.defaultTarget": "このMac · ホーム",
+  "mobile.start.submit": "開始",
 } satisfies Catalog<typeof mobileEnglish>;
 
 export const mobileCatalogs = { en: mobileEnglish, ko, "zh-CN": zhCN, ja } satisfies Catalogs<typeof mobileEnglish>;

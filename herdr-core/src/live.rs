@@ -31,7 +31,7 @@ use crate::recent_closed::{
     PanePlacement, resume_arguments,
 };
 use crate::remote::RusshRemoteClient;
-use crate::runtime::{PendingPaneFocusControl, Runtime};
+use crate::runtime::{LaneStart, PendingPaneFocusControl, Runtime};
 use crate::sidebar::{
     SessionLayoutPanePayload, SessionLayoutPayload, SessionLayoutRect, SessionSnapshotPayload,
 };
@@ -2157,42 +2157,87 @@ fn confirm_pane_focus_with_timeout(
     Ok(layout)
 }
 
-/// One worker owns the complete focus burst, including its coalesced successor.
-/// Every socket read is outside the runtime lock, and only the latest intent
-/// can be settled by the result carrying its serial and connection generation.
-pub(crate) fn spawn_pane_focus(
-    mut context: LiveContext,
-    mut control: PendingPaneFocusControl,
-) -> Result<(), String> {
+/// One worker runs the control lane: it sends a job, settles its result under
+/// the runtime lock, and takes the next job the lane hands back, until the
+/// lane is idle. Every socket read is outside the runtime lock, and a job's
+/// result can only settle the request carrying its own identity.
+pub(crate) fn spawn_control_lane(first: LaneStart) -> Result<(), String> {
     thread::Builder::new()
-        .name("herdr-core-pane-focus".to_owned())
+        .name("herdr-core-control-lane".to_owned())
         .spawn(move || {
+            let mut current = first;
             loop {
                 let started = Instant::now();
-                let result = execute_pane_focus(context.api_connector.as_ref(), &control.target_id);
+                let (context, finished) = match current {
+                    LaneStart::Tab { context, action } => {
+                        // A panic here must still settle the job: the lane
+                        // goes idle only when this worker reports back, so a
+                        // dead worker would hold every later control behind
+                        // it. The effect is unknown, so it is ambiguous.
+                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            execute_local_control(context.api_connector.as_ref(), &action)
+                        }))
+                        .unwrap_or_else(|_| Err(lane_worker_panicked(action.kind())));
+                        (context, Finished::Tab(action, result))
+                    }
+                    LaneStart::PaneFocus { context, control } => {
+                        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            execute_pane_focus(context.api_connector.as_ref(), &control.target_id)
+                        }))
+                        .unwrap_or_else(|_| Err(lane_worker_panicked("pane.focus")));
+                        (context, Finished::PaneFocus(control, result))
+                    }
+                };
                 let elapsed_ms = started.elapsed().as_millis();
                 let Some(runtime) = context.runtime.upgrade() else {
                     return;
                 };
                 let (changed, next) = match runtime.lock() {
-                    Ok(mut guard) => {
-                        guard.ingest_pane_focus_completion(control, result, elapsed_ms)
-                    }
+                    Ok(mut guard) => match finished {
+                        Finished::Tab(action, result) => {
+                            guard.complete_lane_tab(action, result, elapsed_ms)
+                        }
+                        Finished::PaneFocus(control, result) => {
+                            guard.complete_lane_pane_focus(control, result, elapsed_ms)
+                        }
+                    },
                     Err(_) => return,
                 };
                 drop(runtime);
                 if changed {
                     context.notifier.notify();
                 }
-                let Some((next_context, next_control)) = next else {
+                let Some(next) = next else {
                     return;
                 };
-                context = next_context;
-                control = next_control;
+                current = next;
             }
         })
         .map(|_| ())
-        .map_err(|error| format!("pane focus worker could not be started: {error}"))
+        .map_err(|error| format!("control lane worker could not be started: {error}"))
+}
+
+fn lane_worker_panicked(kind: &str) -> ControlFailure {
+    crate::diagnostic!(serde_json::json!({
+        "component": "control_lane",
+        "kind": "control.worker_panicked",
+        "action": kind,
+    }));
+    ControlFailure::Ambiguous(format!(
+        "{kind} result is unknown: the control worker failed"
+    ))
+}
+
+/// What a lane job produced, waiting to be settled under the runtime lock.
+enum Finished {
+    Tab(
+        RemoteControlAction,
+        Result<RemoteControlOutcome, ControlFailure>,
+    ),
+    PaneFocus(
+        PendingPaneFocusControl,
+        Result<PaneLayoutSnapshot, ControlFailure>,
+    ),
 }
 
 pub fn spawn_pane_control(context: LiveContext, action: PaneControlAction) -> Result<(), String> {
@@ -2781,41 +2826,6 @@ fn recover_local_creation(
         }
     }
     found.ok_or_else(|| "Creation is not yet confirmed".into())
-}
-
-pub fn spawn_local_control(
-    context: LiveContext,
-    action: RemoteControlAction,
-) -> Result<(), String> {
-    let worker_name = match &action {
-        RemoteControlAction::FocusTab { .. } => "herdr-core-tab-focus",
-        RemoteControlAction::CreateTab { .. } => "herdr-core-tab-create",
-        RemoteControlAction::OpenOwner { .. } => "herdr-core-owner-open",
-        RemoteControlAction::CloseTab { .. } => "herdr-core-tab-close",
-        RemoteControlAction::MoveTab { .. } => "herdr-core-tab-move",
-        RemoteControlAction::RenameTab { .. } => "herdr-core-tab-rename",
-        _ => return Err(format!("{} is not a local tab action", action.kind())),
-    };
-    thread::Builder::new()
-        .name(worker_name.to_owned())
-        .spawn(move || {
-            let started = Instant::now();
-            let result = execute_local_control(context.api_connector.as_ref(), &action);
-            let elapsed_ms = started.elapsed().as_millis();
-            let Some(runtime) = context.runtime.upgrade() else {
-                return;
-            };
-            let changed = match runtime.lock() {
-                Ok(mut guard) => guard.ingest_local_control_failure(action, result, elapsed_ms),
-                Err(_) => return,
-            };
-            drop(runtime);
-            if changed {
-                context.notifier.notify();
-            }
-        })
-        .map(|_| ())
-        .map_err(|error| format!("local tab control worker could not be started: {error}"))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -3751,6 +3761,7 @@ impl Drop for TerminalSession {
     }
 }
 
+#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn reap_local_terminal_child(child: &mut OwnedChild, pane_id: &str) {
     for _ in 0..20 {
         match child.try_wait() {
@@ -4628,8 +4639,10 @@ mod tests {
         received.recv_timeout(Duration::from_secs(1)).unwrap();
 
         writer.send(wheel(2, 25)).unwrap();
+        // No terminal frame is ever sent here, so receiving the wheel at all
+        // is the proof that it did not wait for one.
         let lines = received
-            .recv_timeout(Duration::from_millis(50))
+            .recv_timeout(Duration::from_secs(1))
             .expect("a later wheel must not wait for an unrelated terminal frame");
         assert_eq!(lines[0]["lines"], 2);
         assert_eq!(lines[0]["column"], 25);
@@ -5142,6 +5155,7 @@ mod tests {
 
     #[test]
     #[ignore = "requires an owned remote fixture and HERDR_TEST_REMOTE_CONTROL_* variables"]
+    #[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
     fn official_remote_control_fixture_probe() {
         let alias_name = std::env::var("HERDR_TEST_SSH_ALIAS")
             .expect("HERDR_TEST_SSH_ALIAS names a configured SSH host");
@@ -5305,9 +5319,13 @@ mod tests {
 
     #[test]
     fn pane_control_worker_returns_before_the_socket_receipt() {
-        let herdr = FakeHerdr::start("pane-worker", |method, _| {
+        // Herdr holds its answer until the spawn has returned, so a spawn that
+        // waited for the receipt would never return rather than return late.
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let herdr = FakeHerdr::start("pane-worker", move |method, _| {
             assert_eq!(method, "pane.split");
-            std::thread::sleep(Duration::from_millis(500));
+            held.recv_timeout(Duration::from_secs(30))
+                .expect("the test lets Herdr answer");
             json!({"type": "pane_info", "pane": {"pane_id": "w1:p2", "terminal_id": "fixture-terminal", "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}})
         });
         let context = LiveContext {
@@ -5318,7 +5336,6 @@ mod tests {
             api_connector: Arc::new(herdr.connector()),
         };
 
-        let started = Instant::now();
         spawn_pane_control(
             context,
             PaneControlAction::Split {
@@ -5328,14 +5345,11 @@ mod tests {
             },
         )
         .expect("worker starts");
-        let elapsed = started.elapsed();
 
-        assert!(
-            elapsed < Duration::from_millis(100),
-            "pane control spawn waited {elapsed:?} for the socket receipt"
-        );
+        // Returning at all is the proof: Herdr is still holding its answer.
         // The worker still delivers the request; the spawn only stopped
         // waiting for its answer.
+        release.send(()).unwrap();
         herdr.wait_for_requests(1, Duration::from_secs(5));
         assert_eq!(herdr.methods(), ["pane.split"]);
     }

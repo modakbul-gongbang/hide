@@ -4,6 +4,9 @@ export const COMMAND_CHANNEL = "hide:command";
 /** The stored macOS pane chords the menu is built from, renderer -> main. */
 export const BINDINGS_CHANNEL = "hide:bindings";
 
+/** The core's explicit interface language (a language code or null for the system's), renderer -> main. */
+export const LANGUAGE_CHANNEL = "hide:language";
+
 /** A file or folder the shell asks the OS file manager to show (a menu's `reveal_external`), renderer -> main. */
 export const REVEAL_CHANNEL = "hide:reveal";
 

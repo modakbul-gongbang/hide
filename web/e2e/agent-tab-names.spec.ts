@@ -1,6 +1,7 @@
 import { expect, test } from "@playwright/test";
-import { labelAgent, startHerdr } from "./herdr-fixture";
+import { labelAgent, paneShellTabName, startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
+import { localEndpoint } from "./platform-fixture";
 import { enterWorkspace, screenshot } from "./wire";
 
 test("focused agent titles, inline rename, clear and reconnect", async ({ page }) => {
@@ -13,7 +14,7 @@ test("focused agent titles, inline rename, clear and reconnect", async ({ page }
     await enterWorkspace(page, "fixture");
     const tab = page.locator(`[data-tab="${herdr.tab}"]`);
     await expect(tab).toBeVisible();
-    await expect(tab).toContainText(/zsh|Tab \d+/);
+    await expect(tab).toContainText(paneShellTabName(herdr.shell));
     const [first, second] = herdr.panes;
     for (const [pane, name, title] of [[first, "one", "첫 번째 작업 진행"], [second, "two", "두 번째 작업 진행"]]) {
       herdr.run(["agent", "start", name!, "--kind", "claude", "--pane", pane!]);
@@ -101,7 +102,7 @@ test("rename refusal and timeout preserve text for retry", async ({ page }) => {
         // enforce its deadline and return the same retry state.
         return;
       }
-      const upstream = net.connect(herdr.socket, () => upstream.write(buffer));
+      const upstream = net.connect(localEndpoint(herdr.socket), () => upstream.write(buffer));
       peers.add(upstream);
       upstream.on("close", () => peers.delete(upstream));
       upstream.on("error", () => client.destroy());
@@ -111,7 +112,7 @@ test("rename refusal and timeout preserve text for retry", async ({ page }) => {
     client.on("data", first);
   });
   proxy.maxConnections = 32;
-  await new Promise<void>((resolve, reject) => { proxy.once("error", reject); proxy.listen(socket, resolve); });
+  await new Promise<void>((resolve, reject) => { proxy.once("error", reject); proxy.listen(localEndpoint(socket), resolve); });
   let daemon: Daemon | null = null;
   try {
     daemon = await startHided({ ...herdr, socket }, "tab-rename-failure");

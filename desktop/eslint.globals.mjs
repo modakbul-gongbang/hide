@@ -13,6 +13,6 @@ export default [
   },
   {
     files: ["static/**/*.js"],
-    languageOptions: { globals: { document: "readonly", location: "readonly", window: "readonly" } },
+    languageOptions: { globals: { document: "readonly", location: "readonly", window: "readonly", URLSearchParams: "readonly" } },
   },
 ];

@@ -4,17 +4,52 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { copyFixtureShim } from "./shims/build";
 
 export const fixtureExecutable = (name: string): string => `${name}${process.platform === "win32" ? ".exe" : ""}`;
 
-/** A fixture compiler is an owned, bounded child, separate from test deadlines. */
-export function compileFixtureC(source: string, executable: string): void {
-  const compiler = process.platform === "win32" ? "clang.exe" : "cc";
-  try {
-    execFileSync(compiler, ["-O1", "-o", executable, source], { timeout: 20_000 });
-  } catch (error) {
-    throw new Error(`fixture C compiler ${compiler} failed (20 second process bound); the runner needs its native C toolchain: ${String(error)}`, { cause: error });
+/**
+ * Where a client reaches the local stream Herdr names by `socket`: the path
+ * itself on Unix, the pipe `\\.\pipe\<path>` on Windows (hide-platform's
+ * `ipc` makes the same mapping, so a fixture standing in front of Herdr
+ * listens and connects there).
+ */
+export const localEndpoint = (socket: string): string => (process.platform === "win32" ? `\\\\.\\pipe\\${socket}` : socket);
+
+// `launcher.c` (built once, e2e/shims/build.ts) runs the Node script next to it
+// that shares its name: `name.exe` runs `name.js`, interpreted by the program
+// its first line (`#!<path>`) names, with the arguments it was given, and
+// exits with that program's status.
+
+/**
+ * An executable `name` in `dir` that runs the Node `script`, the same way on
+ * every system: Unix runs the file through its interpreter line, and Windows,
+ * which cannot run a script by name, gets `name.exe`, one compiled launcher
+ * copied beside `name.js`. Returns the executable's path. The script reads
+ * its arguments from `process.argv.slice(2)`.
+ */
+export function fixtureProgram(dir: string, name: string, script: string): string {
+  fs.mkdirSync(dir, { recursive: true });
+  const body = `#!${process.execPath}\n${script}`;
+  if (process.platform !== "win32") {
+    const executable = path.join(dir, name);
+    fs.writeFileSync(executable, body, { mode: 0o755 });
+    return executable;
   }
+  fs.writeFileSync(path.join(dir, `${name}.js`), body);
+  const executable = path.join(dir, `${name}.exe`);
+  copyFixtureShim("launcher", executable);
+  return executable;
+}
+
+/** What the system says a running process has used: cumulative CPU seconds and resident memory. */
+export function processUsage(pid: number): { cpuSeconds: number; rssKiB: number } {
+  if (process.platform === "win32") {
+    const [cpu, bytes] = powershell(`$p = Get-Process -Id ${pid}; "$($p.TotalProcessorTime.TotalSeconds) $($p.WorkingSet64)"`).trim().split(" ");
+    return { cpuSeconds: Number(cpu), rssKiB: Number(bytes) / 1024 };
+  }
+  const [time, rss] = execFileSync("/bin/ps", ["-p", String(pid), "-o", "time=,rss="], { encoding: "utf8" }).trim().split(/\s+/);
+  return { cpuSeconds: time!.split(":").map(Number).reduce((sum, part) => sum * 60 + part, 0), rssKiB: Number(rss) };
 }
 
 /** Windows environment keys are case-insensitive, including Path/PATH. */
@@ -63,9 +98,7 @@ export function fixtureOpenCommand(root?: string, privateRoot?: string): string 
   // same native no-op without falling back to an account's GUI opener.
   if (!root) {
     fs.mkdirSync(path.dirname(command), { recursive: true });
-    const source = path.join(privateRoot!, "hide-open.c");
-    fs.writeFileSync(source, "int main(void) { return 0; }\n");
-    compileFixtureC(source, command);
+    copyFixtureShim("noop", command);
   }
   if (!fs.existsSync(command)) throw new Error(`Windows fixture opener is missing: ${command}`);
   return command;

@@ -1,15 +1,16 @@
 // The phone's start sheet (PRD home-device-rail D-24, B42-B46): what to do, where
-// (default This Mac's Home), which agent kind and model, and 시작. The kind and
+// (default This Mac's Home), which agent kind and model, and Start. The kind and
 // model start from the desktop's remembered choice. The text stays until a
 // start succeeds, so a refusal or a lost connection never costs it.
 
 import { Loader2Icon } from "lucide-react";
 import type { ReactNode } from "react";
 import { Button } from "../components/ui/button";
+import { useInterfaceTranslation } from "../i18n/translator";
 import { Sheet, SheetContent, SheetDescription, SheetTitle } from "../components/ui/sheet";
 import { closeStartSheet, editStartSheet, submitStart } from "./connection";
-import { UNREACHABLE_TEXT, type StartKind } from "./protocol";
-import { MAX_START_CHARS, START_KINDS, modelsOf, selectionOf, startProblem, targetText } from "./start";
+import { UNREACHABLE_NOTICE, noticeText, type StartKind } from "./protocol";
+import { START_KINDS, modelsOf, selectionOf, startFailure, startProblem, targetText } from "./start";
 import { usePhone } from "./store";
 
 const SELECT_CLASS =
@@ -25,6 +26,7 @@ function Field({ label, children }: { label: string; children: ReactNode }) {
 }
 
 export function StartSheet() {
+  const { t } = useInterfaceTranslation();
   const sheet = usePhone((s) => s.startSheet);
   const catalog = usePhone((s) => s.startCatalog);
   const connected = usePhone((s) => s.connected);
@@ -32,31 +34,32 @@ export function StartSheet() {
   const models = modelsOf(selection);
   const problem = startProblem(sheet.text);
   const tooLong = problem === "too_long";
+  const shown = tooLong ? startFailure("too_long") : sheet.error;
   const pending = sheet.pending !== null;
   const ready = connected && !pending && problem === null && selection.target !== null;
   return (
     <Sheet open={sheet.open} onOpenChange={(open) => !open && closeStartSheet()}>
       <SheetContent side="bottom" className="phone-safe-bottom max-h-full gap-md overflow-y-auto rounded-t-xl px-lg pt-lg pb-lg" data-phone-start-sheet="true">
-        <SheetTitle className="text-headline">에이전트 시작</SheetTitle>
-        <SheetDescription className="sr-only">할 일을 적고 대상, 종류, 모델을 골라 에이전트를 시작해요.</SheetDescription>
+        <SheetTitle className="text-headline">{t("mobile.start.title")}</SheetTitle>
+        <SheetDescription className="sr-only">{t("mobile.start.description")}</SheetDescription>
         {!connected ? (
           <p role="status" className="flex items-center gap-md rounded-lg bg-secondary px-md py-sm text-subhead text-subtle-foreground" data-phone-start-unreachable="true">
             <Loader2Icon aria-hidden="true" className="size-(--size-icon-lg) shrink-0 animate-spin" />
-            <span>{UNREACHABLE_TEXT}</span>
+            <span>{noticeText(t, UNREACHABLE_NOTICE)}</span>
           </p>
         ) : null}
         <textarea
           value={sheet.text}
           onChange={(event) => editStartSheet({ text: event.target.value })}
-          placeholder="에이전트에게 시킬 일"
-          aria-label="할 일"
+          placeholder={t("mobile.start.prompt")}
+          aria-label={t("mobile.start.task")}
           rows={4}
           autoCorrect="off"
           data-phone-start-text="true"
           aria-invalid={tooLong || undefined}
           className="min-h-(--size-touch-target) w-full resize-none rounded-lg border border-border bg-input px-md py-sm text-title text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring"
         />
-        <Field label="대상">
+        <Field label={t("mobile.start.target")}>
           <select
             value={selection.target?.id ?? ""}
             disabled={!selection.target}
@@ -67,17 +70,16 @@ export function StartSheet() {
             {selection.target ? (
               catalog?.targets.map((target) => (
                 <option key={target.id} value={target.id} disabled={!target.connected}>
-                  {targetText(target)}
-                  {target.connected ? "" : " · 연결 안 됨"}
+                  {target.connected ? targetText(target) : `${targetText(target)} · ${t("mobile.start.targetDisconnected")}`}
                 </option>
               ))
             ) : (
-              <option value="">This Mac · Home</option>
+              <option value="">{t("mobile.start.defaultTarget")}</option>
             )}
           </select>
         </Field>
         <div className="grid grid-cols-2 gap-sm">
-          <Field label="종류">
+          <Field label={t("mobile.start.kind")}>
             <select
               value={selection.kind}
               onChange={(event) => editStartSheet({ choice: { ...sheet.choice, kind: event.target.value as StartKind, model: undefined } })}
@@ -91,7 +93,7 @@ export function StartSheet() {
               ))}
             </select>
           </Field>
-          <Field label="모델">
+          <Field label={t("mobile.start.model")}>
             <select
               value={selection.model}
               disabled={models.length === 0}
@@ -99,7 +101,7 @@ export function StartSheet() {
               data-phone-start-model="true"
               className={SELECT_CLASS}
             >
-              <option value="">기본값</option>
+              <option value="">{t("mobile.start.defaultModel")}</option>
               {selection.model && !models.includes(selection.model) ? <option value={selection.model}>{selection.model}</option> : null}
               {models.map((model) => (
                 <option key={model} value={model}>
@@ -109,14 +111,14 @@ export function StartSheet() {
             </select>
           </Field>
         </div>
-        {tooLong || sheet.error ? (
+        {shown ? (
           <p role="alert" className="text-body text-destructive" data-phone-start-error="true">
-            {tooLong ? `할 일은 ${MAX_START_CHARS.toLocaleString("ko-KR")}자까지 적을 수 있어요.` : sheet.error}
+            {noticeText(t, shown)}
           </p>
         ) : null}
         <Button disabled={!ready} onClick={() => submitStart()} className="h-(--size-touch-target) w-full rounded-lg text-title font-semibold" data-phone-start-submit="true">
           {pending ? <Loader2Icon aria-hidden="true" className="size-(--size-icon-lg) animate-spin" /> : null}
-          시작
+          {t("mobile.start.submit")}
         </Button>
       </SheetContent>
     </Sheet>

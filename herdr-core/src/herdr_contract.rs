@@ -1,8 +1,9 @@
 //! Compatibility view of the canonical Herdr contract for core callers.
 //!
-//! The generated contract and wire types live in `hide-herdr-client`. Core
-//! keeps this tiny module so its public schema assertions and domain protocol
-//! checks remain in the core crate while importing one source of truth.
+//! The contract constants live in `hide-herdr-client`; the generated wire
+//! types live in `wire.rs`. Core keeps this tiny module so its public schema
+//! assertions and domain protocol checks remain in the core crate while
+//! importing one source of truth.
 
 pub const HERDR_API_SCHEMA_JSON: &str = hide_herdr_client::HERDR_API_SCHEMA_JSON;
 pub const HERDR_PROTOCOL_REVISION: u32 = hide_herdr_client::HERDR_PROTOCOL_REVISION as u32;

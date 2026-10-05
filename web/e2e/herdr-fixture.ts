@@ -28,7 +28,8 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { afterCleanup, ownUntilWorkerExit } from "./worker-owned";
-import { compileFixtureC, endWindowsProcesses, fixtureExecutable, fixtureHomeEnv, fixtureToolPath, inheritedFixtureEnv, windowsProcessTree, type WindowsProcess } from "./platform-fixture";
+import { endWindowsProcesses, fixtureExecutable, fixtureHomeEnv, fixtureToolPath, inheritedFixtureEnv, windowsProcessTree, type WindowsProcess } from "./platform-fixture";
+import { copyFixtureShim } from "./shims/build";
 
 export type HerdrFixture = {
   bin: string;
@@ -43,139 +44,19 @@ export type HerdrFixture = {
   inputLogs: [string, string];
   /** The controlled shim and system-tool PATH for the server, panes and daemon. */
   fixturePath: string;
+  /** The family of the shell Herdr starts in a pane, read from the shell its config names. */
+  shell: PaneShell;
   /** Runs a pinned-herdr CLI command against the private server and parses its JSON. */
   run: (args: string[]) => unknown;
   stop: () => void;
+  /**
+   * Runs `cleanup` once the server has stopped and its panes' processes are
+   * gone, or now when that is already so. A folder a pane's shell started in
+   * cannot be deleted before then on Windows.
+   */
+  afterStop: (cleanup: () => void) => void;
 };
 
-const SHIM_SOURCE = `#include <fcntl.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-#ifdef _WIN32
-#include <windows.h>
-#include <io.h>
-#include <sys/stat.h>
-#define read _read
-#define write _write
-#define open _open
-typedef int fixture_count_t;
-static void raw_terminal(void) {
-  HANDLE input = GetStdHandle(STD_INPUT_HANDLE);
-  DWORD mode;
-  if (!GetConsoleMode(input, &mode)) { fputs("fixture console input unavailable\\n", stderr); exit(1); }
-  mode &= ~(ENABLE_LINE_INPUT | ENABLE_ECHO_INPUT);
-  mode |= ENABLE_VIRTUAL_TERMINAL_INPUT;
-  if (!SetConsoleMode(input, mode) || !SetConsoleCP(CP_UTF8) || !SetConsoleOutputCP(CP_UTF8)) exit(1);
-}
-static fixture_count_t terminal_read(char *bytes, size_t size) {
-  static WCHAR pending = 0;
-  WCHAR input[4096];
-  for (;;) {
-    DWORD prefix = pending ? 1 : 0, count;
-    input[0] = pending;
-    if (!ReadConsoleW(GetStdHandle(STD_INPUT_HANDLE), input + prefix, 4095 - prefix, &count, NULL)) return -1;
-    if (!count) return pending ? -1 : 0;
-    count += prefix;
-    pending = input[count - 1] >= 0xd800 && input[count - 1] <= 0xdbff ? input[--count] : 0;
-    if (count) {
-      int converted = WideCharToMultiByte(CP_UTF8, WC_ERR_INVALID_CHARS, input, (int)count, bytes, (int)size, NULL, NULL);
-      return converted ? converted : -1;
-    }
-  }
-}
-static fixture_count_t terminal_write(const char *bytes, size_t size) {
-  DWORD count;
-  return WriteFile(GetStdHandle(STD_OUTPUT_HANDLE), bytes, (DWORD)size, &count, NULL) ? (fixture_count_t)count : -1;
-}
-#else
-#include <termios.h>
-#include <time.h>
-#include <unistd.h>
-typedef ssize_t fixture_count_t;
-#define terminal_read(bytes, size) read(0, bytes, size)
-#define terminal_write(bytes, size) write(1, bytes, size)
-static void raw_terminal(void) {
-  struct termios tio;
-  if (tcgetattr(0, &tio) == 0) {
-    tio.c_lflag &= ~(ICANON | ECHO | IEXTEN);
-    tio.c_cc[VMIN] = 1;
-    tio.c_cc[VTIME] = 0;
-    tcsetattr(0, TCSANOW, &tio);
-  }
-}
-#endif
-static char prompt[1 << 20];
-static int provider(int argc, char **argv) {
-  if (argc > 2 && strcmp(argv[1], "auth") == 0 && strcmp(argv[2], "status") == 0) {
-    puts("{\\"loggedIn\\":true}");
-    return 0;
-  }
-  size_t len = 0; fixture_count_t n;
-  while (len < sizeof prompt - 1 && (n = read(0, prompt + len, sizeof prompt - 1 - len)) > 0) len += (size_t)n;
-  prompt[len] = 0;
-  char *label = NULL;
-  for (char *at = prompt; (at = strstr(at, "HIDE_E2E_LABEL ")) != NULL; at++) label = at;
-  if (!label) {
-    puts("{\\"type\\":\\"result\\",\\"is_error\\":true,\\"subtype\\":\\"error_during_execution\\"}");
-    return 1;
-  }
-  char *delay = NULL;
-  for (char *at = prompt; (at = strstr(at, "HIDE_E2E_DELAY_MS ")) != NULL && at < label; at++) delay = at;
-  if (delay) {
-    long ms = atol(delay + strlen("HIDE_E2E_DELAY_MS "));
-#ifdef _WIN32
-    Sleep((DWORD)ms);
-#else
-    struct timespec wait = { ms / 1000, (ms % 1000) * 1000000L };
-    nanosleep(&wait, NULL);
-#endif
-  }
-  label += strlen("HIDE_E2E_LABEL ");
-  char *end = strchr(label, '\\n');
-  if (end) *end = 0;
-  const char *calls = getenv("HIDE_E2E_PROVIDER_LOG");
-  FILE *log = calls ? fopen(calls, "a") : NULL;
-  if (log) { fprintf(log, "%s\\n", label); fclose(log); }
-  printf("{\\"type\\":\\"result\\",\\"is_error\\":false,\\"structured_output\\":%s}\\n", label);
-  return 0;
-}
-int main(int argc, char **argv) {
-#ifdef _WIN32
-  _setmode(0, _O_BINARY);
-  _setmode(1, _O_BINARY);
-  if (strstr(argv[0], "hide-open.exe")) return 0;
-#endif
-  for (int i = 1; i < argc; i++) {
-    if (strcmp(argv[i], "--json-schema") == 0 || (i == 1 && strcmp(argv[i], "auth") == 0)) return provider(argc, argv);
-  }
-  const char *log_path = getenv("HIDE_E2E_INPUT_LOG");
-  int flags = O_WRONLY | O_CREAT | O_APPEND;
-#ifdef _WIN32
-  flags |= _O_BINARY;
-#endif
-  int log = log_path ? open(log_path, flags, 0644) : -1;
-  raw_terminal();
-#ifdef _WIN32
-  // Herdr's encoded PowerShell launch has no visible agent name.
-  // Announce from the initialized interactive process before reading input.
-  static const char ready[] = "claude fixture ready\\r\\n";
-  if (terminal_write(ready, sizeof ready - 1) != (fixture_count_t)(sizeof ready - 1)) return 1;
-  char b[16384];
-#else
-  char b[4096];
-#endif
-  fixture_count_t n;
-  while ((n = terminal_read(b, sizeof b)) > 0) {
-    if (log >= 0 && write(log, b, (size_t)n) < 0) return 1;
-    if (terminal_write(b, (size_t)n) < 0) return 1;
-  }
-#ifdef _WIN32
-  if (n < 0) return 1;
-#endif
-  return 0;
-}
-`;
 
 function pinnedHerdrVersion(): string {
   const manifest = path.resolve("..", "contracts/herdr-bundle.json");
@@ -268,6 +149,8 @@ function isolatedEnv(root: string, socket: string): NodeJS.ProcessEnv {
     XDG_CONFIG_HOME: path.join(root, "xdg-config"),
     XDG_STATE_HOME: path.join(root, "xdg-state"),
     HERDR_DISABLE_SOUND: "1",
+    // Every pane the server starts, however it is made, tells a fixture program where this run's files are.
+    HIDE_E2E_ROOT: root,
   };
 }
 
@@ -298,6 +181,82 @@ async function waitFor(predicate: () => boolean, what: string, ms = 10_000, deta
   }
   throw new Error(`timed out waiting for ${what}${detail ? `; last seen: ${detail()}` : ""}`);
 }
+
+export type PaneShell = "posix" | "cmd";
+
+/**
+ * The family of the shell `isolatedEnv` named for Herdr's panes. The shell
+ * is read from that name, never from the host OS, so a command is written
+ * for the shell the pane really runs.
+ */
+export function paneShellOf(env: NodeJS.ProcessEnv): PaneShell {
+  const shell = env.SHELL ?? "";
+  const name = shell.split(/[\\/]/).pop()!.toLowerCase();
+  if (name === "cmd.exe") return "cmd";
+  if (name === "zsh") return "posix";
+  throw new Error(`the fixture cannot write commands for the pane shell ${JSON.stringify(shell)}`);
+}
+
+/** A tab named for its pane's shell, or numbered when none has named it yet; cmd.exe titles its console with its own path. */
+export function paneShellTabName(shell: PaneShell): RegExp {
+  return shell === "cmd" ? /cmd\.exe|Tab \d+/i : /zsh|Tab \d+/;
+}
+
+/** The line that makes a pane's shell print `lines`, one at a time. */
+export function printLinesCommand(shell: PaneShell, prefix: string, count: number): string {
+  if (shell === "cmd") return `for %n in (${Array.from({ length: count }, (_, i) => i + 1).join(" ")}) do @echo ${prefix}%n`;
+  return `for n in ${Array.from({ length: count }, (_, i) => i + 1).join(" ")}; do printf '${prefix}%s\\n' "$n"; sleep 0.1; done`;
+}
+
+export type PaneProgram = {
+  /** Variables set for this program, and for the rest of the pane's session under cmd.exe. */
+  env?: Record<string, string>;
+  argv: string[];
+  stdout?: string;
+  stderr: string;
+  /** Written last, with the exit status, so its presence says the program has finished. */
+  status: string;
+};
+
+const posixQuote = (value: string): string => `'${value.replaceAll("'", "'\\''")}'`;
+
+function cmdQuote(value: string): string {
+  if (/["%\r\n]/.test(value)) throw new Error(`cmd.exe cannot carry ${JSON.stringify(value)} in a pane command`);
+  return `"${value}"`;
+}
+
+/** The text that runs `program` in a pane's shell, ready for `pane run`. */
+export function paneProgramLine(shell: PaneShell, program: PaneProgram): string {
+  const env = Object.entries(program.env ?? {});
+  if (shell === "cmd") {
+    const sets = env.map(([key, value]) => `set ${cmdQuote(`${key}=${value}`)} && `).join("");
+    const run = program.argv.map(cmdQuote).join(" ");
+    // `call echo %^errorlevel%` reads the status when it runs, not when the line is parsed.
+    return `${sets}${run} > ${cmdQuote(program.stdout ?? "nul")} 2> ${cmdQuote(program.stderr)} & >${cmdQuote(program.status)} call echo %^errorlevel%`;
+  }
+  const sets = env.map(([key, value]) => `${key}=${posixQuote(value)} `).join("");
+  return `${sets}${program.argv.map(posixQuote).join(" ")} > ${posixQuote(program.stdout ?? "/dev/null")} 2> ${posixQuote(program.stderr)}; printf '%s' "$?" > ${posixQuote(program.status)}`;
+}
+
+/**
+ * Runs `argv` in the shell of `pane`, as an agent in that tab would, and
+ * returns its exit status once the shell has written it. Output goes to
+ * `<root>/<name>.out` and `<name>.err`; `name` is unique per call.
+ */
+export async function runInPane(
+  fixture: Pick<HerdrFixture, "bin" | "env" | "root" | "shell">,
+  pane: string,
+  name: string,
+  program: { env?: Record<string, string>; argv: string[]; stdout?: boolean },
+): Promise<{ status: number; stdout: string; stderr: string }> {
+  const files = { stdout: path.join(fixture.root, `${name}.out`), stderr: path.join(fixture.root, `${name}.err`), status: path.join(fixture.root, `${name}.status`) };
+  const line = paneProgramLine(fixture.shell, { env: program.env, argv: program.argv, stdout: program.stdout ? files.stdout : undefined, stderr: files.stderr, status: files.status });
+  execFileSync(fixture.bin, ["pane", "run", pane, line], { env: fixture.env, timeout: 10_000 });
+  const read = (file: string): string => (fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "");
+  await waitFor(() => /^\d+/.test(read(files.status)), `${name} to finish in pane ${pane}`, 20_000, () => `${paneText(fixture.env, fixture.bin, pane).trimEnd().split("\n").slice(-6).join(" | ")}; stderr ${JSON.stringify(read(files.stderr))}`);
+  return { status: Number.parseInt(read(files.status), 10), stdout: read(files.stdout), stderr: read(files.stderr) };
+}
+
 
 /** What the fixture provider answers for one transcript. */
 export type FixtureLabel = {
@@ -507,6 +466,48 @@ export async function finishFixtureTurn(fixture: HerdrFixture, pane: string, els
   if (status !== "done") throw new Error(`pane ${pane} stopped as ${status}, not done: its tab is still shown`);
 }
 
+/**
+ * `herdr agent start` for `pane`, sent only while the pane's shell alone holds
+ * the terminal: its foreground process group is the shell's own and has no
+ * other member. That is the condition the pinned Herdr checks
+ * (`available_pane_shell_from_job`, docs/ARCHITECTURE.md, Starting an agent), and
+ * `pane process-info` reports it. Herdr does not wait, so the fixture does, as
+ * the product does (`agent_start::start_at_shell`): a refusal as `agent_pane_busy`
+ * typed nothing, so it goes back to waiting, within the same bound. Any other
+ * answer is the start's. Synchronous so `run` can hold a start until the pane is ready.
+ */
+function startAgentAtShell(env: NodeJS.ProcessEnv, bin: string, root: string, args: string[], ms = 10_000): unknown {
+  const pane = args[args.indexOf("--pane") + 1]!;
+  const deadline = Date.now() + ms;
+  let seen = "";
+  for (;;) {
+    const info = (herdr(env, bin, ["pane", "process-info", "--pane", pane]) as {
+      result: { process_info: { shell_pid: number | null; foreground_process_group_id: number | null; foreground_processes: { pid: number }[] } };
+    }).result.process_info;
+    const shell = info.shell_pid;
+    seen = JSON.stringify(info);
+    if (shell !== null && shell > 1 && info.foreground_process_group_id === shell && info.foreground_processes.every((process) => process.pid === shell)) {
+      try {
+        return herdr(env, bin, args);
+      } catch (error) {
+        if (!String((error as { stdout?: unknown }).stdout ?? error).includes("agent_pane_busy")) throw error;
+        seen = `${seen}; busy answer: ${String((error as { stdout?: unknown }).stdout ?? error).trim()}`;
+      }
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(`the shell of pane ${pane} never held the terminal alone before agent start; last process info ${seen}${shellChildren(root, shell)}`);
+    }
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+  }
+}
+
+/** On Windows, what the shell started, for a failure message; nothing elsewhere. */
+function shellChildren(root: string, shell: number | null): string {
+  if (process.platform !== "win32" || shell === null) return "";
+  const listed = spawnSync(path.join(root, "bin", "hide-children.exe"), [String(shell)], { encoding: "utf8", timeout: 10_000, windowsHide: true });
+  return `; children of shell ${shell}: ${listed.error ? String(listed.error) : listed.stdout.trim().replaceAll("\n", ", ") || "none"}`;
+}
+
 export async function startHerdr({ agents = true }: { agents?: boolean } = {}): Promise<HerdrFixture> {
   const bin = herdrBinary();
   const version = execFileSync(bin, ["--version"], { encoding: "utf8" }).trim().split(/\s+/)[1];
@@ -522,10 +523,12 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
   let fixturePath: string;
   try {
     env = isolatedEnv(root, socket);
-    fs.writeFileSync(path.join(root, "shim.c"), SHIM_SOURCE);
     const shim = path.join(root, "bin", fixtureExecutable("claude"));
-    compileFixtureC(path.join(root, "shim.c"), shim);
-    if (process.platform === "win32") fs.copyFileSync(shim, path.join(root, "bin", fixtureExecutable("hide-open")));
+    copyFixtureShim("claude-shim", shim);
+    if (process.platform === "win32") {
+      copyFixtureShim("noop", path.join(root, "bin", "hide-open.exe"));
+      copyFixtureShim("hide-children", path.join(root, "bin", "hide-children.exe"));
+    }
     // Keep host-installed providers out while retaining system tools.
     fixturePath = fixtureToolPath(path.join(root, "bin"));
   } catch (error) {
@@ -540,7 +543,9 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
   fs.closeSync(log);
   let spawnFailed: Error | null = null;
   server.once("error", (error) => { spawnFailed = error; });
-  const { stop } = ownUntilWorkerExit(() => {
+  let stopped = false;
+  const afterStop: (() => void)[] = [];
+  const stopServer = () => {
     // On Windows a pane's processes can outlive the server and keep the
     // root locked. Listed while the server still runs (so its pid is its
     // own), ended after it stops; a failure here keeps the root and is
@@ -578,6 +583,19 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
     }
     if (failure !== undefined) throw failure;
     fs.rmSync(root, { recursive: true, force: true });
+  };
+  const { stop } = ownUntilWorkerExit(() => {
+    let failure: unknown;
+    try { stopServer(); } catch (error) { failure = error; }
+    // Whatever the server left, nothing more will end it: a later cleanup
+    // runs now, and every queued one runs even when one fails.
+    stopped = true;
+    const failed: unknown[] = [];
+    for (const cleanup of afterStop.splice(0)) {
+      try { cleanup(); } catch (error) { failed.push(error); }
+    }
+    if (failure !== undefined) throw failed.length === 0 ? failure : afterCleanup(failure, () => { throw failed[0]; });
+    if (failed.length > 0) throw failed[0];
   });
   try {
     await waitFor(() => {
@@ -647,27 +665,7 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
         10_000,
         () => JSON.stringify({ pane: paneRead(env, bin, pane), processInfo }),
       );
-      if (agents && process.platform === "win32") {
-        // The pinned Herdr reports cmd as foreground even with a non-agent child,
-        // but agent.start requires no descendants. Observe that condition
-        // directly, with one bounded child and no retry of agent.start.
-        const shell = (processInfo as ShellProcessInfo | null)?.shell_pid;
-        if (!Number.isSafeInteger(shell) || !shell || shell <= 1) throw new Error(`fixture shell PID is unavailable in pane ${pane}`);
-        const remaining = deadline - Date.now();
-        if (remaining <= 0) throw new Error(`timed out waiting for shell children in pane ${pane}`);
-        execFileSync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", `
-          $ErrorActionPreference = 'Stop'
-          $fixtureUntil = [DateTime]::UtcNow.AddMilliseconds(${remaining})
-          do {
-            $fixtureProcesses = @(Get-CimInstance -ClassName Win32_Process -Filter 'ProcessId = ${shell} OR ParentProcessId = ${shell}' -Property ProcessId, ParentProcessId)
-            if (@($fixtureProcesses | Where-Object { $_.ProcessId -eq ${shell} }).Count -ne 1) { throw 'fixture shell exited before agent start' }
-            if (@($fixtureProcesses | Where-Object { $_.ParentProcessId -eq ${shell} }).Count -eq 0) { exit 0 }
-            Start-Sleep -Milliseconds 100
-          } while ([DateTime]::UtcNow -lt $fixtureUntil)
-          throw 'fixture shell still has child processes before agent start'
-        `], { env, encoding: "utf8", timeout: remaining, maxBuffer: 64 * 1024, windowsHide: true });
-      }
-      if (agents) herdr(env, bin, ["agent", "start", name, "--kind", "claude", "--pane", pane]);
+      if (agents) startAgentAtShell(env, bin, root, ["agent", "start", name, "--kind", "claude", "--pane", pane]);
     }
     if (agents) {
       // Distinct row labels, made by the core from each pane's transcript.
@@ -689,8 +687,9 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
       panes: [first, second],
       inputLogs,
       fixturePath,
+      shell: paneShellOf(env),
       run: (args) => {
-        const result = herdr(env, bin, args);
+        const result = args[0] === "agent" && args[1] === "start" && args.includes("--pane") ? startAgentAtShell(env, bin, root, args) : herdr(env, bin, args);
         if (args[0] === "agent" && args[1] === "start") {
           const pane = args[args.indexOf("--pane") + 1];
           const kind = args[args.indexOf("--kind") + 1];
@@ -700,6 +699,10 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
         return result;
       },
       stop,
+      afterStop: (cleanup) => {
+        if (stopped) cleanup();
+        else afterStop.push(cleanup);
+      },
     };
   } catch (error) {
     throw afterCleanup(error, stop);

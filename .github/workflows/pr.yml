@@ -12,6 +12,14 @@
 # claims plan every lane; main's full run is the net under a lane a pull
 # request left out.
 #
+# A draft pull request runs the `plan` job and `verify` only: the lanes wait
+# for the pull request to be marked ready for review, and `verify` fails with
+# "draft: lanes not run" until then. It must fail rather than be skipped: a
+# skipped required check counts as passed, and `verify` waits on the lanes, so
+# right after the pull request is marked ready the draft run's skipped `verify`
+# would be the only check on that commit and the pull request could merge before
+# the ready run's lanes start. A failed `verify` blocks it until that run ends.
+#
 # Each gate here has a local command in CONTRIBUTING.md under "CI gates".
 #
 # Runner placement is a capacity decision. This organization's plan runs five
@@ -29,11 +37,19 @@
 # beside the OS contract's Windows leg (issue #293), and `windows e2e` runs the
 # browser `@platform` tests.
 #
+# A flaky test does not fail a lane. CI retries a failed test once, Playwright
+# for the end-to-end suites and cargo-nextest for the Rust workspace; a test
+# that passes the retry is flaky, the lane passes, and
+# scripts/ci-flaky-report.py files it as an issue with a seven-day deadline
+# (docs/TESTING.md, "Flaky tests"). A test that fails twice fails the lane.
+#
 # Every job and every long step has a timeout to bound a stalled required check.
 name: verify
 
 on:
   pull_request:
+    # `ready_for_review` starts the run that plans and runs the lanes.
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
 
@@ -65,7 +81,7 @@ jobs:
       - name: Choose the lanes this change needs
         id: plan
         # The crate graph comes from `cargo metadata`, which needs no build.
-        run: python3 scripts/ci-plan.py plan --event "$GITHUB_EVENT_NAME"
+        run: python3 scripts/ci-plan.py plan --event "$GITHUB_EVENT_NAME" --draft "${{ github.event.pull_request.draft || false }}"
 
   policy:
     name: policy checks
@@ -100,6 +116,9 @@ jobs:
     if: contains(fromJSON(needs.plan.outputs.lanes), 'rust')
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    permissions:
+      contents: read
+      issues: write
     env:
       FULL: ${{ needs.plan.outputs.full }}
       PACKAGES: ${{ needs.plan.outputs.rust-packages }}
@@ -124,16 +143,29 @@ jobs:
             bash scripts/verify-cargo.sh fmt-check
             bash scripts/verify-cargo.sh clippy "${packages[@]}" --all-targets -- -D warnings
           fi
+      - name: Install cargo-nextest
+        # The pinned release build, so no compile. `.config/nextest.toml` holds
+        # the `ci` profile: one retry, and a JUnit report.
+        timeout-minutes: 3
+        run: bash scripts/install-nextest.sh
       - name: Test the planned crates
         # hide-ai drives its codex backend against a python fake app server.
+        # nextest runs no doc test; the workspace has none that runs.
         run: |
           if [ "$FULL" = true ]; then
-            bash scripts/verify-cargo.sh test
+            bash scripts/verify-cargo.sh nextest --profile ci --workspace
           else
             mapfile -t packages < <(jq -r '.[] | "-p", .' <<<"$PACKAGES")
             (( ${#packages[@]} )) || { echo 'the plan chose the rust lane but no crate' >&2; exit 1; }
-            bash scripts/verify-cargo.sh test-scoped "${packages[@]}"
+            bash scripts/verify-cargo.sh nextest --profile ci "${packages[@]}"
           fi
+      - name: Report flaky tests
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci-flaky-report.py --suite rust --junit target/nextest/ci/junit*.xml
 
   web-checks:
     name: web checks
@@ -202,6 +234,9 @@ jobs:
     if: contains(fromJSON(needs.plan.outputs.lanes), 'windows-check')
     runs-on: windows-latest
     timeout-minutes: 50
+    permissions:
+      contents: read
+      issues: write
     defaults:
       run:
         shell: bash
@@ -215,27 +250,31 @@ jobs:
         with:
           workspaces: ". -> target"
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install cargo-nextest
+        # The Rust tests below run under nextest's `ci` profile (one retry).
+        timeout-minutes: 3
+        run: bash scripts/install-nextest.sh
       - name: Compile the workspace for Windows
         run: bash scripts/verify-cargo.sh check --workspace --all-targets --keep-going --message-format short
       - name: hided's pane bootstrap, file opener, the device's workspace bridge, the CLI's daemon start and end-to-end tests
         timeout-minutes: 25
         run: |
-          bash scripts/verify-cargo.sh test-scoped -p hided --lib -- pane_auth opener open_command workspace_cli
-          bash scripts/verify-cargo.sh test-scoped -p hided --test opener_lifecycle
-          bash scripts/verify-cargo.sh test-scoped -p hide-host --lib workspace_bridge
-          bash scripts/verify-cargo.sh test-scoped -p hided --test connect_stop
-          bash scripts/verify-cargo.sh test-scoped -p hided --test handshake
+          bash scripts/verify-cargo.sh nextest --profile ci -p hided --lib pane_auth opener open_command workspace_cli
+          bash scripts/verify-cargo.sh nextest --profile ci -p hided --test opener_lifecycle
+          bash scripts/verify-cargo.sh nextest --profile ci -p hide-host --lib workspace_bridge
+          bash scripts/verify-cargo.sh nextest --profile ci -p hided --test connect_stop
+          bash scripts/verify-cargo.sh nextest --profile ci -p hided --test handshake
       - name: Install kit and its Windows command shim
         if: ${{ !cancelled() }}
         timeout-minutes: 10
-        run: bash scripts/verify-cargo.sh test-scoped -p hide-kit
+        run: bash scripts/verify-cargo.sh nextest --profile ci -p hide-kit
       - name: Agent hooks, their Windows entries run through PowerShell
         # The hook file writer, the entries Claude Code and Codex run on
         # Windows, and the helper's stdin deadline. It stands on its own, so
         # it runs whatever the step above answered.
         if: ${{ !cancelled() }}
         timeout-minutes: 15
-        run: bash scripts/verify-cargo.sh test-scoped -p hide-agent-hooks
+        run: bash scripts/verify-cargo.sh nextest --profile ci -p hide-agent-hooks
       - name: Fetch the pinned Herdr runtime
         id: herdr
         # The proof below stands on its own, so it runs whatever the step
@@ -251,7 +290,7 @@ jobs:
         timeout-minutes: 10
         env:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
-        run: bash scripts/verify-cargo.sh test-scoped -p hided --test real_herdr -- --ignored --nocapture
+        run: bash scripts/verify-cargo.sh nextest --profile ci -p hided --test real_herdr --run-ignored only --no-capture
       - name: Attribute a native listening port to its working directory
         # Cleanup must refuse an unreadable in-use check. This unchanged core
         # contract exposes the native read reason that a browser error lacks.
@@ -259,8 +298,8 @@ jobs:
         timeout-minutes: 5
         run: |
           status=0
-          bash scripts/verify-cargo.sh test-scoped -p herdr-core --lib ports::tests::a_real_listener_is_found_and_attributed_to_the_directory_it_runs_in -- --exact --nocapture || status=$?
-          bash scripts/verify-cargo.sh test-scoped -p herdr-core --lib ports::tests::cleanup_keeps_a_checkout_in_use_when_a_listener_starts_through_another_spelling -- --exact --nocapture || status=$?
+          bash scripts/verify-cargo.sh nextest --profile ci -p herdr-core --lib -E 'test(=ports::tests::a_real_listener_is_found_and_attributed_to_the_directory_it_runs_in)' --no-capture || status=$?
+          bash scripts/verify-cargo.sh nextest --profile ci -p herdr-core --lib -E 'test(=ports::tests::cleanup_keeps_a_checkout_in_use_when_a_listener_starts_through_another_spelling)' --no-capture || status=$?
           exit "$status"
       - uses: pnpm/action-setup@v6
         if: ${{ !cancelled() }}
@@ -289,6 +328,13 @@ jobs:
         if: ${{ !cancelled() && steps.web-deps.outcome == 'success' }}
         timeout-minutes: 10
         run: bash scripts/verify-web.sh desktop test
+      - name: Report flaky tests
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci-flaky-report.py --suite rust --junit target/nextest/ci/junit*.xml
 
   # The browser `@platform` tests on Windows, the same set the macOS lane
   # runs, against hided and the pinned Herdr for Windows.
@@ -297,6 +343,9 @@ jobs:
     needs: plan
     if: contains(fromJSON(needs.plan.outputs.lanes), 'windows-e2e')
     uses: ./.github/workflows/web-e2e.yml
+    permissions:
+      contents: read
+      issues: write
     with:
       lane: windows
       runner: windows-latest
@@ -313,6 +362,9 @@ jobs:
     needs: plan
     if: contains(fromJSON(needs.plan.outputs.lanes), 'web-e2e')
     uses: ./.github/workflows/web-e2e.yml
+    permissions:
+      contents: read
+      issues: write
     with:
       lane: linux
       runner: ubuntu-latest
@@ -335,6 +387,9 @@ jobs:
     needs: plan
     if: contains(fromJSON(needs.plan.outputs.lanes), 'web-e2e-platform')
     uses: ./.github/workflows/web-e2e.yml
+    permissions:
+      contents: read
+      issues: write
     with:
       lane: macos
       runner: macos-15
@@ -349,6 +404,9 @@ jobs:
     needs: plan
     if: contains(fromJSON(needs.plan.outputs.lanes), 'os-contract')
     uses: ./.github/workflows/os-contract.yml
+    permissions:
+      contents: read
+      issues: write
 
   desktop-e2e:
     name: desktop e2e
@@ -356,6 +414,9 @@ jobs:
     if: contains(fromJSON(needs.plan.outputs.lanes), 'desktop-e2e')
     runs-on: macos-15
     timeout-minutes: 30
+    permissions:
+      contents: read
+      issues: write
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -370,6 +431,10 @@ jobs:
         with:
           workspaces: ". -> target"
           save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install cargo-nextest
+        # The Rust tests below run under nextest's `ci` profile (one retry).
+        timeout-minutes: 3
+        run: bash scripts/install-nextest.sh
       - name: Build hide and hided for the desktop app
         # hide-agent-hooks and hide-host-helper too: the home-layout spec
         # stages every binary the packaged app carries.
@@ -395,7 +460,7 @@ jobs:
       - name: Remote mailbox over private SSH
         env:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
-        run: bash scripts/verify-cargo.sh test-scoped -p herdr-core --test remote_delivery -- --ignored
+        run: bash scripts/verify-cargo.sh nextest --profile ci -p herdr-core --test remote_delivery --run-ignored only
       - name: OS contract on macOS
         # The macOS leg of os-contract.yml, here because this job already
         # holds a macOS runner and the workspace build it needs.
@@ -403,8 +468,8 @@ jobs:
         env:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
         run: |
-          bash scripts/verify-cargo.sh test-scoped -p hide-platform -p hide-herdr-client
-          bash scripts/verify-cargo.sh test-scoped -p hide-herdr-client --test real_herdr -- --ignored --nocapture
+          bash scripts/verify-cargo.sh nextest --profile ci -p hide-platform -p hide-herdr-client
+          bash scripts/verify-cargo.sh nextest --profile ci -p hide-herdr-client --test real_herdr --run-ignored only --no-capture
       - name: Desktop app end-to-end
         # The desktop app against an isolated Herdr, starting its own hided
         # through the hide CLI built above. Electron downloads its runtime on
@@ -416,12 +481,18 @@ jobs:
         run: |
           mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
           bash scripts/verify-web.sh desktop e2e --grep-invert @flaky
+      - name: Report flaky tests
+        # A failed test is retried once; see web-e2e.yml.
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci-flaky-report.py --suite desktop --playwright desktop/e2e-report.json
       - name: Quarantined tests (does not block verify)
         # A test tagged @flaky carries the issue that tracks its cause. It still
         # runs here, once, so a fix shows up as a pass and a regression of the
         # product it covers still shows up in the log; it cannot turn verify red.
-        # A Rust test quarantined on macOS (`ignore = "<issue>"` under
-        # `cfg_attr(target_os = "macos")`) runs here the same way.
         # The build is the required step's. `--no-deps` matters: a project
         # dependency runs whole whatever `--grep` says, so a `@needs-focus`
         # quarantined test would otherwise bring the entire background suite
@@ -437,11 +508,15 @@ jobs:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
           HIDE_E2E_SCREENSHOT_DIR: ${{ runner.temp }}/hide-e2e
         run: |
-          status=0
-          bash scripts/verify-cargo.sh test-scoped -p hide-platform -- --ignored || status=$?
           mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
-          bash scripts/verify-web.sh desktop e2e --no-deps --grep @flaky --output=test-results-quarantine || status=$?
-          exit "$status"
+          bash scripts/verify-web.sh desktop e2e --no-deps --grep @flaky --output=test-results-quarantine
+      - name: Report flaky Rust tests
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci-flaky-report.py --suite rust --junit target/nextest/ci/junit*.xml
       - name: Keep the e2e run's logs
         if: failure() || steps.quarantine.outcome == 'failure'
         uses: actions/upload-artifact@v7

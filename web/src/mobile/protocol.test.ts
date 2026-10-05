@@ -1,7 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { MAX_MESSAGES, boxDrawingRow, headerLine, mergeConversation, messageTime, macNameOf, notificationRow, openKey, parseFragment, replyProblem, rowsProblem, staleTags, toBase64Url, type AgentGroup, type ConversationMessage, type PhoneAgent } from "./protocol";
+import { initializeInterfaceI18n } from "../i18n/instance";
+import { MAX_MESSAGES, boxDrawingRow, headerLine, mergeConversation, messageTime, macNameOf, noticeText, notificationRow, openKey, parseFragment, replyProblem, rowsProblem, staleTags, toBase64Url, type AgentGroup, type ConversationMessage, type PhoneAgent } from "./protocol";
 
 const CREDENTIAL = "a".repeat(64);
+const korean = initializeInterfaceI18n("ko").getFixedT(null, "translation");
 
 describe("parseFragment", () => {
   it("reads the QR's pairing payload, a credential and a deep link", () => {
@@ -74,7 +76,7 @@ describe("staleTags", () => {
 describe("notificationRow", () => {
   const base = { pushMode: "always" as const, notifications: "unasked" as const, permission: "default" as const, supported: true };
 
-  it("offers 알림 켜기 only while push is on and the phone has not answered", () => {
+  it("offers the notification switch only while push is on and the phone has not answered", () => {
     expect(notificationRow(base)).toBe("enable");
     expect(notificationRow({ ...base, pushMode: "off" })).toBeNull();
     expect(notificationRow({ ...base, notifications: "on", permission: "granted" })).toBeNull();
@@ -89,16 +91,17 @@ describe("notificationRow", () => {
 describe("header", () => {
   it("names the Mac from its ts.net address and counts the other phones", () => {
     expect(macNameOf("https://example-mbp.tailnet.ts.net")).toBe("example-mbp");
-    expect(headerLine("mac", 1)).toBe("mac · 폰 1대 더 연결됨");
-    expect(headerLine("mac", 0)).toBe("mac");
+    expect(headerLine(korean, "mac", 1)).toBe("mac · 폰 1대 더 연결됨");
+    expect(headerLine(korean, "mac", 0)).toBe("mac");
+    expect(macNameOf("not an address")).toBe("");
   });
 });
 
 describe("rowsProblem", () => {
   it("names a closed pane and a device that is not connected (B28)", () => {
     expect(rowsProblem("ok")).toBeNull();
-    expect(rowsProblem("gone")).toBe("이 pane은 더 이상 열려 있지 않아요.");
-    expect(rowsProblem("device_unreachable")).toBe("이 에이전트의 기기가 연결돼 있지 않아요.");
+    expect(noticeText(korean, rowsProblem("gone")!)).toBe("이 페인은 더 이상 열려 있지 않아요.");
+    expect(noticeText(korean, rowsProblem("device_unreachable")!)).toBe("이 에이전트의 기기가 연결돼 있지 않아요.");
   });
 });
 
