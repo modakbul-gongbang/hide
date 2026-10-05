@@ -179,8 +179,8 @@ Nothing outlives the command in hided or on disk, except the file `screenshot` w
 Every CDP step has an eight-second deadline, below the gateway's ten-second command deadline, which would otherwise end the whole lease, and a whole command ends with `page_unresponsive` after two minutes.
 
 Cross-origin frames are auto-attached, up to 24 per page, and each frame's document carries a tag of four random characters; a snapshot shows it as `# OOPIF <tag> origin=<origin>` with refs `@<tag>:N`, and its field values and link targets reduced to their origin.
-A frame has its own renderer, so one that answers nothing within a step (its `Page.enable`, or a read of its document) does not fail the command: the snapshot notes it as `# OOPIF unresponsive origin=<origin> - no answer in time; ...` with the origin its target attached at, reads the rest of the page, and gives it no tag, refs or `--diff` baseline.
-Such a frame costs one step each time a command first meets it, and is not read again by that command.
+A frame has its own renderer, so one that answers nothing within a step (its `Page.enable`, or a read of its document) does not fail the command: the snapshot notes it as `# OOPIF unresponsive origin=<origin> - no answer in time; ...` with its origin, reads the rest of the page, and gives it no tag, refs or `--diff` baseline.
+Such a frame costs one step when a command first meets it and is not read again by that command, so a page with many of them can run the command into its two-minute limit, which ends it with `page_unresponsive`.
 An action on such a ref goes to that frame's own session in its own coordinates, so a ref from a frame that navigated fails `ref_stale` instead of touching another element.
 Same-origin frames and open shadow roots are read and acted on through the top document.
 `changed` compares a snapshot of every frame taken before the action with one after it, read again after 0.7 and 1.2 seconds when nothing changed yet; clickable detection is capped in document order so a scroll alone never reads as a change.
@@ -188,14 +188,14 @@ Same-origin frames and open shadow roots are read and acted on through the top d
 Input and screenshots go only to a display on screen, so the operator sees what an action does.
 A display that is not its area's selected View fails them at once with `display_hidden` and names `hide view select <display> --reveal`; hided reads that from the core's view list when it opens the relay.
 That is hided's own rule, not Chromium's: a View the host hides still answers.
-A selected View of a Workspace that is not in front is not refused: the host hides it, yet Chromium reports its document visible and answers input and screenshots within the step, so no input times out there and none waits to be delivered when the Workspace returns, and the operator does not see the action drawn.
+A selected View of a Workspace that is not in front is not refused: the host hides it, yet the page still reports its document visible and Chromium answers input and screenshots within the step, so no input times out there and none waits to be delivered when the Workspace returns, and the operator does not see the action drawn.
 The page's own visibility is not the test either: a selected View in a window another app covers reads `hidden` and still takes input and screenshots.
 An input the page does not answer within the step, because a script holds it, fails `page_unresponsive` and is not undone: the event was sent and takes effect when the script yields, so the failure's `next_action` says it may already have happened and to look with `snapshot --diff` before repeating it.
 A press that held the page this way ran its handler to the end, and no release or click arrives later, since the command sends none after the failure and its session ending delivers none.
 Reading commands work on a hidden display.
 No command calls `Page.bringToFront`, moves the operator's mouse, changes the View in front or takes keyboard focus.
 A JavaScript dialog is never answered for the operator: an action that opens one reports its type and message, and while it is open the next command's `Page.enable` on the top document's session gets no answer within the step deadline and fails `dialog_open`; Electron shows the dialog as a sheet on the window, where the operator answers it.
-`dialog_open` also fails a command that received a dialog event from any frame while it ran.
+A step that gets no answer after the command received a dialog event from any frame also fails `dialog_open`.
 A dialog that a cross-origin frame opened before the command started cannot be told from a frame whose script never yields, since Chromium sends no event again to a new client, so that frame is noted as unresponsive and the rest of the page is read.
 `console` relies on Chromium replaying the messages the current document logged to a session that enables `Runtime`, and shows the newest 50; `network` reads the document's resource timing, the newest 100 rows, and has no request or response headers or bodies.
 `wait --timeout` is at most 60 seconds and `--verify` at most 10.

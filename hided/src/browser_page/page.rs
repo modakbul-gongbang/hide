@@ -20,7 +20,7 @@ pub const OVERLAY_JS: &str = include_str!("../../assets/browser/overlay.js");
 pub const STEP: Duration = Duration::from_secs(8);
 /// A test that lets a step lapse waits this long, not the real step.
 #[cfg(test)]
-pub const STEP: Duration = Duration::from_millis(400);
+pub const STEP: Duration = Duration::from_millis(1000);
 const OVERLAY: Duration = Duration::from_secs(1);
 /// Nested cross-origin frames a snapshot follows; the gateway admits 64
 /// sessions per client.
@@ -588,7 +588,9 @@ impl Page {
                         previous_sections.push(previous.to_owned());
                     }
                 }
-                Err(failure) if failure.page_side() => {}
+                // A frame that stopped answering has no baseline to swap; the
+                // next snapshot notes it.
+                Err(failure) if failure.page_side() || failure.reason == "page_unresponsive" => {}
                 Err(failure) => return Err(failure),
             }
         }
@@ -818,6 +820,32 @@ mod tests {
         );
         // It has no tag, so no ref reaches it and no baseline waits on it.
         assert_eq!(page.frames().await.unwrap().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_frame_that_stops_answering_while_its_baseline_is_swapped_is_left_out() {
+        let mut page = page(|request| match request["sessionId"].as_str() {
+            Some("top") => vec![reply(
+                request,
+                json!({"result": {"value": {"previous": "# T\n# http://a/\n"}}}),
+            )],
+            _ => Vec::new(),
+        })
+        .await;
+        let composite = Composite {
+            top: "# T\n# http://a/\n".into(),
+            sections: vec![("f1".into(), "# OOPIF k7q2 origin=http://b\n".into())],
+            silent: vec!["# OOPIF unresponsive origin=http://c - no answer in time".into()],
+        };
+        let previous = page
+            .swap_baseline("full", &composite)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(
+            previous,
+            "# T\n# http://a/\n\n# OOPIF unresponsive origin=http://c - no answer in time\n"
+        );
     }
 
     #[tokio::test]

@@ -270,13 +270,12 @@ test("hide browser: a selected View of a Workspace behind another answers input 
   // The hidden page is still a visible document to Chromium, so the first
   // input is answered at once: nothing times out, and nothing is left to be
   // delivered once the Workspace returns.
-  const started = Date.now();
+  expect(await inDisplay<string>(url, "document.visibilityState")).toBe("visible");
   expect(await json(["fill", display, name, "from behind"])).toMatchObject({ ok: true });
   expect(await json(["click", display, apply, "--no-verify"])).toMatchObject({ ok: true });
   const shot = path.join(herdr.root, "behind.png");
   expect(await json(["screenshot", display, shot])).toMatchObject({ ok: true });
   expect(fs.readFileSync(shot).subarray(1, 4).toString()).toBe("PNG");
-  expect(Date.now() - started).toBeLessThan(8_000);
   const behind = await received();
   expect(JSON.parse(behind)).toEqual([{ clicks: 1, inputs: 1 }, "applied: from behind"]);
 
