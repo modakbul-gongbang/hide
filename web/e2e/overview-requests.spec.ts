@@ -22,7 +22,7 @@ import { claudeProjects, declareParent, elsewhereTab, finishFixtureTurn, labelAg
 import { startHided, type Daemon } from "./hided-fixture";
 import { chord, field } from "./chords";
 import { countSent, screenshot } from "./wire";
-import { animationsFinished, quietFor } from "./wait";
+import { animationsFinished, quietFor, unchangedForFrames } from "./wait";
 
 test.describe.configure({ timeout: 240_000 });
 
@@ -232,8 +232,9 @@ test("the request view: what each agent was asked, what came of it, and what is 
 
     // Nothing changes, nothing is sent (B30).
     await atRest(page);
-    await quietFor(page, 500, "nothing changes, nothing is sent (B30)");
-    const quiet = [...sent.values()].reduce((sum, count) => sum + count, 0);
+    const total = () => [...sent.values()].reduce((sum, count) => sum + count, 0);
+    await unchangedForFrames(page, total);
+    const quiet = total();
     await quietFor(page, 3_000, "still nothing is sent after the longer window (B30)");
     expect([...sent.values()].reduce((sum, count) => sum + count, 0)).toBe(quiet);
 

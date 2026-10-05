@@ -43,7 +43,9 @@ Keep one representative journey per user-visible flow; when a long spec carries 
 ## Wait for state, not time
 
 - Never wait a fixed time: no `page.waitForTimeout`, `sleep`, or `setTimeout` used as a delay in a new test.
-  The e2e lint refuses `waitForTimeout`; the sleeps a spec may use are the named helpers in `web/e2e/wait.ts` (see [Writing a Playwright e2e test](#writing-a-playwright-e2e-test)), and clippy refuses `std::thread::sleep` in Rust (see [Writing a Rust test](#writing-a-rust-test)).
+  The e2e lint refuses `waitForTimeout`; the sleeps a spec may use are the named helpers in `web/e2e/wait.ts` (see [Writing a Playwright e2e test](#writing-a-playwright-e2e-test)).
+  It does not see a hand-written `new Promise((resolve) => setTimeout(resolve, ms))`, which is the same mistake and is not allowed.
+  Clippy refuses `std::thread::sleep` in Rust (see [Writing a Rust test](#writing-a-rust-test)).
   Wait for the state the next step needs: a diagnostic `kind` with its subject ID, a snapshot field, a Herdr answer, the bytes in a pane's input log.
 - Wait for the readiness the next step actually depends on.
   A healthy HTTP answer is not a subscribed socket, a delivered first snapshot, or a terminal that accepts input.
@@ -160,7 +162,8 @@ A piece that another open change is still building is marked as pending with the
    When there is nothing to wait for, `web/e2e/wait.ts` has the only sleeps a spec may use, one per reason:
    - `animationsFinished(page)` for the colour transitions before a capture; it waits for the page's finite animations, not for a time.
    - `quietFor(page, ms, why)` for a window in which something must not happen (nothing is sent, the row does not move); `why` states the claim.
-   - `compositorPresents(page)` for a native capture, because the macOS compositor presents a frame after the page reports it.
+   - `compositorPresents(page)` for a native capture, because the macOS compositor presents a frame after the page reports it; `animationsFinished` before it does not replace it.
+   - `unchangedForFrames(page, read)` for "the burst has finished" before a baseline is taken: it waits until `read()` has not changed for thirty animation frames, counted in frames and bounded, not in time.
    - `measureFor(page, ms, why)` for an interval a measurement spans on purpose.
    Waiting for something to appear or settle with one of these is the mistake the lint exists for: wait for the data attribute, the size or the frame count instead.
    If the product has no signal for the readiness the next step needs, add one to the product (a data attribute, a diagnostic) in the same pull request.
@@ -225,7 +228,7 @@ The crate's own `AGENTS.md` says where the file goes; this section says how the 
    For async code, `tokio::time::pause()` with `tokio::time::advance()` moves the clock by hand; `herdr-core` does not enable tokio's `test-util` feature today, so enabling it for a crate is part of the pull request that first needs it.
    `herdr-core/src` calls `Instant::now()` directly in many places; #434 (not merged) injects the clock into the modules that have a deadline, and new code with a deadline takes the clock from the start.
 5. **Never bound a test by a short wall-clock.**
-   `clippy.toml` refuses `std::thread::sleep`; the sleeps that remain carry an `#[allow(clippy::disallowed_methods)]` with the reason: a bounded polling helper, a production wait, or a stand-in for a state that a tracking issue lists.
+   `clippy.toml` refuses `std::thread::sleep`; the sleeps that remain carry an `#[allow(clippy::disallowed_methods)]` with the reason: a bounded polling helper, a production wait, a sleep that is the subject of the test or keeps a child process alive, or a stand-in for a state that a tracking issue lists.
    A bound such as `assert!(started.elapsed() < Duration::from_millis(1850))` passes on an idle machine and fails on a loaded runner unless the bound is itself the product's deadline (`hide-platform/tests/process.rs` checks one); a bound that is only a guess at "fast enough" says nothing about the product.
    Assert the counted result (how many requests, how many attempts, which one won) or observe the event, with a generous deadline that is only a hang guard.
    A `thread::sleep` that stands in for a state is the same mistake in the other direction: the test waits a time chosen by a person, not the state the next line needs.

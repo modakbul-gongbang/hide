@@ -581,7 +581,7 @@ fn removing_one_of_two_registrations_of_the_same_account_keeps_the_kit() {
 /// the removal runs after that call, and the call's late answer brings no
 /// kit state back, so the same id added again starts unread.
 #[test]
-#[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
+#[allow(clippy::disallowed_methods)] // a bounded poll inside the test: it sleeps between observations of a state, bounded by a deadline
 fn an_install_answer_that_arrives_after_removal_brings_nothing_back() {
     let (helper, release) =
         KitDevice::held(Ok(report(&[(ComponentId::Cli, ComponentState::Installed)])));

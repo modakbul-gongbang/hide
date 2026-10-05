@@ -184,7 +184,7 @@ test("the production build hided serves has no gallery", async ({ page }) => {
   let daemon: Daemon | null = null;
   try {
     daemon = await startHided(herdr, "gallery");
-    // hided answers an empty 404 for /gallery, so there is no page to wait for.
+    // hided answers an empty 404 for /gallery: the 404 is the claim, and no page loads to wait for.
     const response = await page.goto(`${daemon.origin}/gallery#token=${daemon.token}`);
     expect(response?.status()).toBe(404);
     await expect(page.locator("[data-gallery-section]")).toHaveCount(0);

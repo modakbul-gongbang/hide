@@ -270,7 +270,8 @@ test("An external focused creation joins a bar without replacing either shown ca
     // Pinned Herdr emits no event for a no-op focus on its current tab.
     // Exercise an observable external focus transition after creation instead.
     herdr.run(["tab", "focus", second.result.tab.tab_id]);
-    await expect.poll(async () => (await shape(page)).find((area) => area.tabs.includes(second.result.tab.tab_id))?.active).toBe("true");
+    // `herdr tab focus` returns once Herdr has applied it, and its events reach the core in order,
+    // so the first focus (already the shown tab of its bar, nothing to observe) precedes the second.
     herdr.run(["tab", "focus", external.result.tab.tab_id]);
     await expect(tab(page, external.result.tab.tab_id)).toHaveAttribute("aria-selected", "true");
     await expect(page.locator(`[data-canvas="${external.result.tab.tab_id}"]`)).toBeVisible();

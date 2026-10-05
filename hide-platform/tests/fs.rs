@@ -661,7 +661,7 @@ unsafe fn libc_open_path(path: *const std::ffi::c_char) -> i32 {
 }
 
 #[test]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
+#[allow(clippy::disallowed_methods)] // a child process the test kills later: it sleeps to stay alive
 fn lock_role() {
     if std::env::var(ROLE).as_deref() != Ok("lock") {
         return;

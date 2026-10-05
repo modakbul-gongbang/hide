@@ -15,7 +15,7 @@ import { startHided, type Daemon } from "./hided-fixture";
 import { chooseColumn, countSent, screenshot } from "./wire";
 import { chord, commandLabel } from "./chords";
 import { openCurrentProjectOverview } from "./overview-entry";
-import { quietFor } from "./wait";
+import { quietFor, unchangedForFrames } from "./wait";
 
 test.describe.configure({ timeout: 120_000 });
 
@@ -165,14 +165,7 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     // A file opened from the Explorer turns File Views on between the agents
     // and Tools; the agents resize once to the narrower width (B3, B4, B18).
     const resizes = () => sent.get("terminal_resize") ?? 0;
-    const settled = async () =>
-      expect
-        .poll(async () => {
-          const seen = resizes();
-          await quietFor(page, 400, "no terminal resize arrives: the baseline is taken at rest");
-          return resizes() === seen;
-        })
-        .toBe(true);
+    const settled = () => unchangedForFrames(page, resizes);
     await settled();
     const agentsBeforeViews = (await agentArea.boundingBox())!;
     const resizesBeforeViews = resizes();

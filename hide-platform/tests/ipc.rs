@@ -79,7 +79,7 @@ const ROLE: &str = "HIDE_PLATFORM_ROLE";
 const ENDPOINT: &str = "HIDE_PLATFORM_ENDPOINT";
 
 #[test]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
+#[allow(clippy::disallowed_methods)] // a child process the test kills later: it sleeps to stay alive
 fn child_role() {
     let Ok(role) = std::env::var(ROLE) else {
         return;

@@ -62,7 +62,7 @@ fn fake_opener(dir: &Path) -> PathBuf {
 /// passing test of anything; it is an entry point.
 #[test]
 #[ignore = "subprocess entry point; the fake helper script runs it with --ignored --exact"]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
+#[allow(clippy::disallowed_methods)] // a child process the test kills later: it sleeps to stay alive
 fn fake_program() {
     let marker = PathBuf::from(std::env::var_os(MARKER).expect("run by a fake helper script"));
     let write_pid =
@@ -174,7 +174,7 @@ fn assert_gone(process: Started) {
 /// counts it as a passing test of anything; it is an entry point.
 #[test]
 #[ignore = "subprocess entry point; the owner tests run it with --ignored --exact"]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
+#[allow(clippy::disallowed_methods)] // a child process the test kills later: it sleeps to stay alive
 fn owner_process() {
     let marker = PathBuf::from(
         std::env::var_os("HIDED_OWNED_OPENER_TEST_MARKER")

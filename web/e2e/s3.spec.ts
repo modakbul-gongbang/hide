@@ -1036,9 +1036,11 @@ test("an unsaved edit survives a socket drop and reconnect", async ({ page }) =>
     await page.evaluate(() => window.__hideProbe?.dropSocket());
     await page.context().setOffline(true);
     await expect(page.locator("[data-connection]")).toHaveText(/reconnecting/, { timeout: 15_000 });
-    // Keep the socket down past the 600 ms autosave window. A dropped save
-    // must be retried after reconnection, then reach the actual file (D-10).
-    await quietFor(page, 800, "the socket stays down past the 600 ms autosave window");
+    // Keep the socket down past the 600 ms autosave window: no save reaches the
+    // file meanwhile. A dropped save must be retried after reconnection, then
+    // reach the actual file (D-10).
+    await quietFor(page, 800, "no save reaches the file while the socket is down, past the 600 ms autosave window");
+    expect(fs.readFileSync(path.join(repo, "notes.md"), "utf8")).not.toContain("edited across a reconnect");
     await page.context().setOffline(false);
     await expect(page.locator("[data-connection]")).toHaveCount(0, { timeout: 20_000 });
     await expect(content).toContainText("edited across a reconnect");

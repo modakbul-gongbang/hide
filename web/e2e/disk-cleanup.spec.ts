@@ -359,7 +359,7 @@ test("a worktree left with only a finished agent's pane is chosen and its pane c
     await setFixtureLifecycle(herdr, pane, "idle");
     // The core hears Herdr's status change a moment after Herdr reports it, so a review opened too early still reads
     // the approval: review again until the row is free, and the poll is the wait.
-    // eslint-disable-next-line hide-e2e/no-action-in-poll -- #433 retried interaction: the sheet opens before the disk read finishes
+    // eslint-disable-next-line hide-e2e/no-action-in-poll -- #433 retried interaction: the core hears Herdr's status change late
     await expect(async () => {
       await open();
       try {

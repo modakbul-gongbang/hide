@@ -996,7 +996,7 @@ mod tests {
         fn models(&self) -> ModelCatalog {
             ModelCatalog::Offered(vec![format!("{}-model", self.id)])
         }
-        #[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
+        #[allow(clippy::disallowed_methods)] // the sleep is the subject of the test: a fake peer or backend that is slow on purpose
         fn execute(&self, _: &AiRequest, _: &CancelToken) -> Result<AiResponse, AiError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
             std::thread::sleep(self.delay);

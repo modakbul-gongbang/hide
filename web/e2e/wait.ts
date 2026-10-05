@@ -15,6 +15,22 @@ export async function animationsFinished(page: Page): Promise<void> {
   });
 }
 
+/**
+ * Wait until `read()` returns the same value for `frames` animation frames in a row: a state that has stopped moving.
+ * Counted in frames, not time, and bounded: it throws after `limit` frames instead of running to the test timeout.
+ * Use it for "the burst has finished" before a baseline is taken; a window in which something must not happen is `quietFor`.
+ */
+export async function unchangedForFrames(page: Page, read: () => unknown, frames = 30, limit = 1_200): Promise<void> {
+  let last = JSON.stringify(await read());
+  for (let waited = 0, still = 0; still < frames; waited += 1) {
+    if (waited >= limit) throw new Error(`the value kept changing for ${limit} animation frames: ${last}`);
+    await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => resolve())));
+    const now = JSON.stringify(await read());
+    still = now === last ? still + 1 : 0;
+    last = now;
+  }
+}
+
 async function sleep(page: Page, milliseconds: number): Promise<void> {
   // eslint-disable-next-line playwright/no-wait-for-timeout -- the only sleep a spec may use; the three helpers below name why
   await page.waitForTimeout(milliseconds);
