@@ -451,37 +451,53 @@ fn one_connect_is_one_accepted_connection() {
 /// What the listener's end writes just before it is dropped still arrives
 /// whole, however slowly the client reads: the pane bootstrap answers that
 /// way, and a Windows pipe closed with unread bytes throws them away.
+///
+/// The client leaves the last bytes unread until the listener's end is gone.
+/// They are fewer than either system buffers (a Windows pipe here is asked
+/// for 512), so the write can finish without them being read.
 #[test]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn an_answer_written_just_before_the_end_is_dropped_arrives_whole() {
     const ANSWER: usize = 256 * 1024;
+    const UNREAD: usize = 256;
     let (_folder, path) = endpoint();
     let listener = LocalListener::bind(&path).unwrap();
+    let (dropped, gone) = mpsc::channel();
     let answering = thread::spawn(move || {
         let mut stream = listener.accept().unwrap();
         stream.write_all(&vec![7_u8; ANSWER]).unwrap();
+        drop(stream);
+        dropped.send(()).unwrap();
     });
     let mut client = LocalStream::connect(&path).unwrap();
-    thread::sleep(Duration::from_millis(300));
-    let mut answer = Vec::new();
+    let mut answer = vec![0_u8; ANSWER - UNREAD];
+    client.read_exact(&mut answer).unwrap();
+    gone.recv_timeout(Duration::from_secs(10))
+        .expect("the listener's end never finished writing");
     client.read_to_end(&mut answer).unwrap();
     assert_eq!(answer.len(), ANSWER);
     answering.join().unwrap();
 }
 
+/// The answer is the same when the close lands before the accept blocks, so
+/// a slow thread can make this pass without blocking but never fail.
 #[test]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
+#[allow(clippy::disallowed_methods)] // time for the other thread to block in the call it frees: no portable state says a thread is inside a system call
 fn close_from_another_thread_frees_a_blocked_accept() {
     let (_folder, path) = endpoint();
     let listener = LocalListener::bind(&path).unwrap();
     let closer = listener.closer();
     let (done, finished) = mpsc::channel();
+    let (accepting, about_to_accept) = mpsc::channel();
     thread::spawn(move || {
+        accepting.send(()).unwrap();
         let first = listener.accept().map(drop).map_err(|error| error.kind());
         let later = listener.accept().map(drop).map_err(|error| error.kind());
         let _ = done.send((first, later));
     });
-    // The accept is waiting well before this wakes it.
+    about_to_accept
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the accepting thread never started");
+    // Only the last step, from the signal into the accept, is left to time.
     thread::sleep(Duration::from_millis(300));
     let started = Instant::now();
     closer.close();
@@ -494,14 +510,17 @@ fn close_from_another_thread_frees_a_blocked_accept() {
     assert_eq!(later, Err(std::io::ErrorKind::ConnectionAborted));
 }
 
+/// The peer stays open and silent until the read has answered, so only the
+/// timeout can end the read.
 #[test]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn a_read_timeout_fires_after_the_time_and_not_much_later() {
     let (_folder, path) = endpoint();
     let listener = LocalListener::bind(&path).unwrap();
+    let (release, released) = mpsc::channel::<()>();
     let silent = thread::spawn(move || {
         let stream = listener.accept().unwrap();
-        thread::sleep(Duration::from_millis(1500));
+        // Bounded only so a read that never times out ends in a failure.
+        let _ = released.recv_timeout(Duration::from_secs(10));
         drop(stream);
     });
     let mut client = LocalStream::connect(&path).unwrap();
@@ -517,18 +536,22 @@ fn a_read_timeout_fires_after_the_time_and_not_much_later() {
         "returned early: {waited:?}"
     );
     assert!(waited < Duration::from_secs(2), "returned late: {waited:?}");
+    drop(release);
     drop(client);
     silent.join().unwrap();
 }
 
+/// The peer writes only once the client's read has timed out.
 #[test]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn a_timeout_does_not_lose_bytes_that_arrive_later() {
     let (_folder, path) = endpoint();
     let listener = LocalListener::bind(&path).unwrap();
+    let (timed_out, heard) = mpsc::channel();
     let server = thread::spawn(move || {
         let mut stream = listener.accept().unwrap();
-        thread::sleep(Duration::from_millis(500));
+        heard
+            .recv_timeout(Duration::from_secs(10))
+            .expect("the client's read never timed out");
         stream.write_all(b"late\n").unwrap();
     });
     let mut client = LocalStream::connect(&path).unwrap();
@@ -539,13 +562,15 @@ fn a_timeout_does_not_lose_bytes_that_arrive_later() {
         client.read(&mut [0_u8; 1]).unwrap_err().kind(),
         std::io::ErrorKind::TimedOut
     );
+    timed_out.send(()).unwrap();
     client.set_read_timeout(None).unwrap();
     assert_eq!(read_line(&mut client), "late\n");
     server.join().unwrap();
 }
 
+/// The peer's end is closed once its thread has joined: a Unix stream closes
+/// its descriptor on drop.
 #[test]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn a_timeout_can_be_set_after_the_peer_has_closed_and_its_bytes_still_read() {
     let (_folder, path) = endpoint();
     let listener = LocalListener::bind(&path).unwrap();
@@ -555,7 +580,6 @@ fn a_timeout_can_be_set_after_the_peer_has_closed_and_its_bytes_still_read() {
     });
     let mut client = LocalStream::connect(&path).unwrap();
     server.join().unwrap();
-    thread::sleep(Duration::from_millis(200));
     // macOS refuses `SO_RCVTIMEO` on a socket whose peer has gone.
     client
         .set_read_timeout(Some(Duration::from_secs(1)))
@@ -579,26 +603,35 @@ fn a_zero_timeout_is_refused() {
     );
 }
 
+/// The peer stays open and silent, so only the shutdown can end the read. The
+/// answer is the same when the shutdown lands before the read blocks, so a
+/// slow thread can make this pass without blocking but never fail.
 #[test]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
+#[allow(clippy::disallowed_methods)] // time for the other thread to block in the call it frees: no portable state says a thread is inside a system call
 fn shutdown_from_another_thread_frees_a_blocked_read() {
     let (_folder, path) = endpoint();
     let listener = LocalListener::bind(&path).unwrap();
+    let (release, released) = mpsc::channel::<()>();
     let held = thread::spawn(move || {
         let stream = listener.accept().unwrap();
-        thread::sleep(Duration::from_secs(10));
+        let _ = released.recv_timeout(Duration::from_secs(10));
         drop(stream);
     });
     let mut client = LocalStream::connect(&path).unwrap();
     let handle = client.shutdown_handle();
     let (done, finished) = mpsc::channel();
+    let (reading, about_to_read) = mpsc::channel();
     let reader = thread::spawn(move || {
         let mut byte = [0_u8; 1];
+        reading.send(()).unwrap();
         let result = client.read(&mut byte);
         let after = client.write(b"x");
         let _ = done.send((result.map_err(|error| error.kind()), after.is_err()));
     });
-    // The reader is blocked well before this wakes it.
+    about_to_read
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the reading thread never started");
+    // Only the last step, from the signal into the read, is left to time.
     thread::sleep(Duration::from_millis(300));
     let started = Instant::now();
     handle.shutdown();
@@ -609,17 +642,20 @@ fn shutdown_from_another_thread_frees_a_blocked_read() {
     assert_eq!(read, Ok(0));
     assert!(write_failed, "a write after shutdown must fail");
     reader.join().unwrap();
-    drop(held);
+    drop(release);
+    held.join().unwrap();
 }
 
+/// As above, with a read timeout far longer than the test.
 #[test]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
+#[allow(clippy::disallowed_methods)] // time for the other thread to block in the call it frees: no portable state says a thread is inside a system call
 fn shutdown_frees_a_read_that_has_a_timeout_too() {
     let (_folder, path) = endpoint();
     let listener = LocalListener::bind(&path).unwrap();
-    let _held = thread::spawn(move || {
+    let (release, released) = mpsc::channel::<()>();
+    let held = thread::spawn(move || {
         let stream = listener.accept().unwrap();
-        thread::sleep(Duration::from_secs(10));
+        let _ = released.recv_timeout(Duration::from_secs(10));
         drop(stream);
     });
     let mut client = LocalStream::connect(&path).unwrap();
@@ -628,28 +664,79 @@ fn shutdown_frees_a_read_that_has_a_timeout_too() {
         .unwrap();
     let handle = client.shutdown_handle();
     let (done, finished) = mpsc::channel();
+    let (reading, about_to_read) = mpsc::channel();
     thread::spawn(move || {
+        reading.send(()).unwrap();
         let _ = done.send(client.read(&mut [0_u8; 1]).map_err(|error| error.kind()));
     });
+    about_to_read
+        .recv_timeout(Duration::from_secs(10))
+        .expect("the reading thread never started");
+    // Only the last step, from the signal into the read, is left to time.
     thread::sleep(Duration::from_millis(300));
     handle.shutdown();
     assert_eq!(
         finished.recv_timeout(Duration::from_secs(5)).unwrap(),
         Ok(0)
     );
+    drop(release);
+    held.join().unwrap();
+}
+
+/// The three tests above leave the last step into the blocking call to the
+/// scheduler; a close or shutdown that lands before the call must give the
+/// same answer, or a slow runner would fail them.
+#[test]
+fn a_close_before_the_accept_gives_the_answer_a_blocked_accept_gets() {
+    let (_folder, path) = endpoint();
+    let listener = LocalListener::bind(&path).unwrap();
+    let closer = listener.closer();
+    closer.close();
+    closer.close();
+    let first = listener.accept().map(drop).map_err(|error| error.kind());
+    let later = listener.accept().map(drop).map_err(|error| error.kind());
+    assert_eq!(first, Err(std::io::ErrorKind::ConnectionAborted));
+    assert_eq!(later, Err(std::io::ErrorKind::ConnectionAborted));
 }
 
 #[test]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
+fn a_shutdown_before_the_read_gives_the_answer_a_blocked_read_gets() {
+    for timeout in [None, Some(Duration::from_secs(30))] {
+        let (_folder, path) = endpoint();
+        let listener = LocalListener::bind(&path).unwrap();
+        let (release, released) = mpsc::channel::<()>();
+        let held = thread::spawn(move || {
+            let stream = listener.accept().unwrap();
+            let _ = released.recv_timeout(Duration::from_secs(10));
+            drop(stream);
+        });
+        let mut client = LocalStream::connect(&path).unwrap();
+        client.set_read_timeout(timeout).unwrap();
+        client.shutdown_handle().shutdown();
+        let read = client.read(&mut [0_u8; 1]).map_err(|error| error.kind());
+        assert_eq!(read, Ok(0), "timeout {timeout:?}");
+        assert!(
+            client.write(b"x").is_err(),
+            "a write after shutdown must fail"
+        );
+        drop(release);
+        held.join().unwrap();
+    }
+}
+
+#[test]
 fn the_accepted_stream_names_the_connecting_process() {
     let (_folder, path) = endpoint();
     let listener = LocalListener::bind(&path).unwrap();
     // This process owns the listener; the peer is a different one.
     let (served, accepted) = mpsc::channel();
+    let (release, released) = mpsc::channel::<()>();
     let server = thread::spawn(move || {
         let stream = listener.accept().unwrap();
         let _ = served.send(stream.peer_pid());
-        thread::sleep(Duration::from_millis(500));
+        // The connection stays open until the test has compared the pid.
+        let _ = released.recv_timeout(Duration::from_secs(10));
+        drop(stream);
     });
     let peer = spawn_role("connect", &path);
     let pid = accepted
@@ -657,6 +744,7 @@ fn the_accepted_stream_names_the_connecting_process() {
         .unwrap()
         .expect("this system reports the peer's pid");
     assert_eq!(pid, peer.child.id());
+    drop(release);
     server.join().unwrap();
 }
 
