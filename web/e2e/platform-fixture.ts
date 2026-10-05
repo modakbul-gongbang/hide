@@ -67,8 +67,9 @@ const LAUNCHER_SOURCE = `#include <windows.h>
 int main(void) {
   char script[MAX_PATH];
   DWORD length = GetModuleFileNameA(NULL, script, sizeof script);
+  if (length == 0 || length >= sizeof script) return 70;
   char *dot = strrchr(script, '.');
-  if (length == 0 || length >= sizeof script || !dot) return 70;
+  if (!dot) return 70;
   strcpy(dot, ".js");
   FILE *file = fopen(script, "rb");
   if (!file) { fprintf(stderr, "launcher: no script %s\\n", script); return 70; }
@@ -91,7 +92,10 @@ int main(void) {
   sprintf(command, "\\"%s\\" \\"%s\\"%s", interpreter, script, arguments);
   STARTUPINFOA startup = { sizeof startup };
   PROCESS_INFORMATION process;
-  if (!CreateProcessA(NULL, command, NULL, NULL, TRUE, 0, NULL, NULL, &startup, &process)) return 71;
+  if (!CreateProcessA(NULL, command, NULL, NULL, TRUE, 0, NULL, NULL, &startup, &process)) {
+    fprintf(stderr, "launcher: cannot start %s (error %lu)\\n", interpreter, GetLastError());
+    return 71;
+  }
   WaitForSingleObject(process.hProcess, INFINITE);
   DWORD status = 1;
   GetExitCodeProcess(process.hProcess, &status);

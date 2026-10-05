@@ -94,7 +94,7 @@ process.exit(2);
   }
 
   remove(): void {
-    fs.rmSync(this.dir, { recursive: true, force: true });
+    fs.rmSync(this.dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
   }
 }
 
