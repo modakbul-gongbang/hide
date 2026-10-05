@@ -883,41 +883,17 @@ fn publish_replica(
     let Some(runtime) = context.runtime.upgrade() else {
         return false;
     };
-    let (
-        registrations,
-        worktrees,
-        unconfirmed_created_purposes,
-        focus_readback_target,
-        created_tab_clamps,
-    ) = match runtime.lock() {
-        Ok(guard) => (
-            guard.snapshot().ui_state.workspace_registrations.clone(),
-            guard.worktree_catalog(),
-            guard.unconfirmed_created_purpose_values(),
-            guard.pane_focus_readback_target(&payload),
-            guard.created_tab_clamps(),
-        ),
-        Err(_) => return false,
-    };
+    let (registrations, worktrees, unconfirmed_created_purposes, created_tab_clamps) =
+        match runtime.lock() {
+            Ok(guard) => (
+                guard.snapshot().ui_state.workspace_registrations.clone(),
+                guard.worktree_catalog(),
+                guard.unconfirmed_created_purpose_values(),
+                guard.created_tab_clamps(),
+            ),
+            Err(_) => return false,
+        };
     drop(runtime);
-
-    // The unsequenced stream can still contain a layout from an older focus
-    // after the pane worker has confirmed the final click. Read before adopting
-    // a differing external focus, outside the mutex and without another effect.
-    let focus_readback = focus_readback_target.map(|identity| {
-        let result = live::confirm_pane_focus(context.api_connector.as_ref(), &identity.target_id);
-        if let Err(error) = &result {
-            crate::diagnostic!(json!({
-                "component": "pane_focus",
-                "kind": "pane.focus.stream_readback_failed",
-                "pane_id": identity.target_id,
-                "serial": identity.serial,
-                "connection_generation": identity.live_generation,
-                "message": error.message(),
-            }));
-        }
-        (identity, result.is_ok())
-    });
 
     // The catalog is built here, outside the lock, from the cwd the runtime
     // will read for a created tab, not the one it was born with.
@@ -979,12 +955,17 @@ fn publish_replica(
     let Some(runtime) = context.runtime.upgrade() else {
         return false;
     };
-    let changed = match runtime.lock() {
+    // The unsequenced stream can still contain a layout from an older focus.
+    // A focus that differs from Hide's is read back from Herdr, but the
+    // update itself is not held for that answer: it is ingested now with
+    // the differing focus left alone, and the read runs on its own worker
+    // outside the lock.
+    let (changed, readback) = match runtime.lock() {
         Ok(mut guard) => {
             if let Some(overlay) = overlay {
                 guard.set_label_overlay(overlay);
             }
-            guard.ingest_session_with_focus_readback(Ok(payload), Some(precomputed), focus_readback)
+            guard.ingest_session_awaiting_focus_readback(Ok(payload), Some(precomputed))
         }
         Err(_) => return false,
     };
@@ -992,7 +973,79 @@ fn publish_replica(
     if changed {
         context.notifier.notify();
     }
+    if let Some(identity) = readback
+        && let Err(message) = spawn_focus_readback(context, identity.clone())
+    {
+        crate::diagnostic!(json!({
+            "component": "pane_focus",
+            "kind": "pane.focus.stream_readback_not_started",
+            "pane_id": identity.target_id,
+            "message": message,
+        }));
+        if let Some(runtime) = context.runtime.upgrade()
+            && let Ok(mut guard) = runtime.lock()
+        {
+            guard.abandon_pane_focus_readback();
+        }
+    }
     true
+}
+
+/// The worker that reads Herdr's focus for a stream move, outside the runtime
+/// lock. It owns the runtime's one readback slot from its start to its last
+/// answer, and the guard frees the slot on any other way out.
+fn spawn_focus_readback(
+    context: &SessionSyncContext,
+    first: crate::runtime::PendingPaneFocusControl,
+) -> Result<(), String> {
+    let connector = Arc::clone(&context.api_connector);
+    let runtime = context.runtime.clone();
+    let notifier = context.notifier.clone();
+    thread::Builder::new()
+        .name("herdr-core-focus-readback".to_owned())
+        .spawn(move || {
+            struct Slot(Weak<Mutex<Runtime>>, bool);
+            impl Drop for Slot {
+                fn drop(&mut self) {
+                    if self.1
+                        && let Some(runtime) = self.0.upgrade()
+                        && let Ok(mut guard) = runtime.lock()
+                    {
+                        guard.abandon_pane_focus_readback();
+                    }
+                }
+            }
+            let mut slot = Slot(runtime.clone(), true);
+            let mut next = Some(first);
+            while let Some(identity) = next.take() {
+                let result = live::confirm_pane_focus(connector.as_ref(), &identity.target_id);
+                if let Err(error) = &result {
+                    crate::diagnostic!(json!({
+                        "component": "pane_focus",
+                        "kind": "pane.focus.stream_readback_failed",
+                        "pane_id": identity.target_id,
+                        "serial": identity.serial,
+                        "connection_generation": identity.live_generation,
+                        "message": error.message(),
+                    }));
+                }
+                let Some(runtime) = runtime.upgrade() else {
+                    return;
+                };
+                let (changed, following) = match runtime.lock() {
+                    Ok(mut guard) => guard.finish_pane_focus_readback(identity, result.is_ok()),
+                    Err(_) => return,
+                };
+                drop(runtime);
+                if changed {
+                    notifier.notify();
+                }
+                slot.1 = following.is_some();
+                next = following;
+            }
+        })
+        .map(|_| ())
+        .map_err(|error| format!("focus readback worker could not be started: {error}"))
 }
 
 /// The label worker for this coordinator's Herdr server, built on the
@@ -1815,7 +1868,9 @@ mod focus_readback_order_tests {
     }
 
     fn view(runtime: &Arc<Mutex<Runtime>>) -> (Vec<String>, Option<String>, Option<String>) {
-        let guard = runtime.lock().expect("runtime lock is free during a readback");
+        let guard = runtime
+            .lock()
+            .expect("runtime lock is free during a readback");
         let snapshot = guard.snapshot();
         (
             snapshot
@@ -1849,7 +1904,11 @@ mod focus_readback_order_tests {
 
         // Herdr has not answered. The close is what the screen needs now.
         let (panes, focused, zoomed) = view(&runtime);
-        assert_eq!(panes, ["w1:p1", "w1:p2"], "the close is ingested before Herdr answers the readback");
+        assert_eq!(
+            panes,
+            ["w1:p1", "w1:p2"],
+            "the close is ingested before Herdr answers the readback"
+        );
         assert_eq!(focused.as_deref(), Some("w1:p1"), "focus is not guessed");
         assert_eq!(zoomed, None);
 
@@ -1865,5 +1924,33 @@ mod focus_readback_order_tests {
             thread::yield_now();
         }
         assert!(publish.join().expect("publish does not panic"));
+    }
+
+    #[test]
+    fn an_unconfirmed_readback_keeps_hides_focus_and_frees_the_slot_for_the_next_update() {
+        let first = SessionReplica::from_snapshot(&snapshot(&["p1", "p2"], "p1", false))
+            .expect("first snapshot");
+        let runtime = runtime_with(&first);
+        let mut moved =
+            SessionReplica::from_snapshot(&snapshot(&["p1", "p2"], "p2", false)).expect("moved");
+        // Herdr's own answer still names p1: the stream's p2 was stale.
+        let (herdr, asked, release) = holding_herdr("p1");
+        let context = context_for(&runtime, &herdr);
+
+        assert!(publish_replica(
+            &context, &mut moved, &mut None, &mut None, &mut None
+        ));
+        asked
+            .recv_timeout(Duration::from_secs(5))
+            .expect("the readback is asked");
+        release.send(()).expect("the readback is answered");
+        // Both reads are answered once the worker has settled the slot.
+        herdr.wait_for_requests(2, Duration::from_secs(30));
+        let deadline = Instant::now() + Duration::from_secs(30);
+        while runtime.lock().unwrap().pane_focus_readback_is_outstanding() {
+            assert!(Instant::now() < deadline, "the slot is freed");
+            thread::yield_now();
+        }
+        assert_eq!(view(&runtime).1.as_deref(), Some("w1:p1"));
     }
 }
