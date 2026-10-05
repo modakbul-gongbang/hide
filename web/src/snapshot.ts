@@ -223,7 +223,15 @@ export type Task = {
   closed_at_unix_ms?: number | null;
   /** The open tasks this one waits on, possibly of another project (`TaskRefSnapshot`). */
   blocked_by?: TaskRef[];
+  /** GitHub's sub-issues of this task with its own progress count; absent when it has none (`TaskSubIssuesSnapshot`). */
+  sub_issues?: TaskSubIssues | null;
 };
+
+/** GitHub's `completed` of `total` sub-issues, and the sub-issues themselves. */
+export type TaskSubIssues = { total: number; completed: number; items: TaskSubIssue[] };
+
+/** One sub-issue, by the key a pull request's closing reference names it with. */
+export type TaskSubIssue = { key: string; id: string | null; title: string; open: boolean };
 
 /** Another task, by its key and the id this task's source shows for it. */
 export type TaskRef = { key: string; id: string | null };
@@ -1249,7 +1257,9 @@ export type SnapshotRest = {
   /** The front Workspace's layout and tools (S6 D-10); absent when no Workspace is in front. */
   workspace_view?: import("./workspace").WorkspaceView;
   /** All retained Browser Views, including those outside the front Workspace. */
-  browser_views?: { device_id: string; path: string; view_id: string }[];
+  browser_views?: { device_id: string; path: string; view_id: string; area_id: string }[];
+  /** Positive connected Workspace area authority from the core, including empty areas; incarnation changes on revoke/regrant. */
+  browser_scopes?: { device_id: string; path: string; area_id: string; incarnation: number }[];
 };
 
 /**

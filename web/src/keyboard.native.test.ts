@@ -65,7 +65,7 @@ function draw(count = 2) {
   noteAreaFrame("view", { workspace, layout, geometry: areaGeometry(layout.root, { x: 0, y: 0, width: 1000, height: 800 }, sizes), sizes } as never);
   useShellStore.setState({ rest });
   noteKeyboardOwner({ kind: "view", workspace: "c", areaId: "a1" });
-  syncBrowserFront(workspace, rest.workspace_view!.layout, displays.map((display) => ({ ...workspace, view_id: display.id })));
+  syncBrowserFront(workspace, rest.workspace_view!.layout, displays.map((display) => ({ ...workspace, view_id: display.id, area_id: "a1" })));
   unregister = registerBrowserSlot("d1", { isConnected: true, getBoundingClientRect: () => ({ left: 0, top: 30, width: 1000, height: 770 }) } as HTMLElement);
 }
 

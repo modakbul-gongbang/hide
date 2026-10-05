@@ -60,8 +60,8 @@ The cause was found by timestamping each stage against the first request, not by
 A second cost was the page's own rendering: headless Chromium composites in software, so every frame of xterm's WebGL canvas is read back synchronously on the page's main thread.
 A local trace of the held window showed long tasks of 250 to 500 ms, most of them in `GLES2::ReadPixels`, which delayed both the clicks and the snapshot frames the test observes.
 On the failing macOS run, the stage timings and the hided log showed the first diagnostic taking 2.5 seconds to reach the page and the forty clicks another 2.3 seconds, so the held request hit its deadline before the test could release it.
-The spec now launches Chromium with `--disable-webgl`, so the shell uses xterm's DOM renderer, its existing fallback, and the held window stays near 0.2 seconds.
-A spec that holds a product deadline and does not test the terminal renderer should do the same.
+`web/playwright.config.ts` now launches every web e2e Chromium with `--disable-webgl`, so the shell uses xterm's DOM renderer, its existing fallback, and the held window stays near 0.2 seconds; [Writing a Playwright e2e test](#writing-a-playwright-e2e-test) step 6 says how a spec that tests WebGL opts back in.
+Terminal pixels in a web e2e screenshot come from the DOM renderer, so a claim about how the terminal looks comes from the desktop app.
 
 ## The test decides the order
 
@@ -173,10 +173,12 @@ A piece that another open change is still building is marked as pending with the
    Most quarantined tests are long journeys that join several contracts (`agent-tab-groups.spec.ts`, `s7.spec.ts`, `sidebar-menus.spec.ts`), and quarantine is per test, so one shaky step takes every contract in it out of the required lane; split a test so the part that shakes can be fixed alone.
    Splitting costs a stack start per spec, so say in the pull request what the split bought.
    A numeric limit on lines and `expect` calls per test is being added as a lint; this step names the numbers when it lands, and until then the reviewer checks the shape.
-6. **Turn off the renderer a spec does not test.**
+6. **Leave the renderer off; turn WebGL on only in a spec that tests it.**
    Headless Chromium composites in software, so each frame of xterm's WebGL canvas is read back synchronously on the page's main thread, 250 to 500 ms at a time.
-   A spec that holds a product deadline and does not test the terminal renderer launches Chromium with `test.use({ launchOptions: { args: ["--disable-webgl"] } })`, so the shell uses xterm's DOM renderer, its existing fallback; `web/e2e/pane-focus-ordering.spec.ts` is the reference, and [Wait for state, not time](#wait-for-state-not-time) has the measurement.
-   Pending #429 (not merged): it sets this once in `web/playwright.config.ts` for every web e2e and removes the per-spec setting; a spec that tests the renderer keeps WebGL on and says why.
+   `web/playwright.config.ts` launches every web e2e Chromium with `--disable-webgl`, so the shell uses xterm's DOM renderer, its existing fallback, and a spec needs no setting of its own; [Wait for state, not time](#wait-for-state-not-time) has the measurement.
+   A spec file that tests the WebGL renderer sets `test.use({ launchOptions })` at file top level, which replaces the config's `launchOptions` rather than adding to it, and says why; no web spec does today.
+   Assert terminal content through the probe, never through DOM text, because the DOM renderer puts terminal text in the page.
+   The desktop suite is not covered: Electron has its own GPU path.
    Do not raise a timeout to cover the stall.
 7. **Restart through `daemon.restart()`, and leave the old page first.**
    `daemon.restart()` in `web/e2e/hided-fixture.ts` stops `hided` and starts it again on the same state folder and port, as a real restart does, and takes an optional callback to edit the state folder before the start; `web/e2e/sidebar-pr-start.spec.ts` restarts three times in one test.
@@ -213,7 +215,9 @@ The crate's own `AGENTS.md` says where the file goes; this section says how the 
 4. **Inject the clock; do not wait for it.**
    Code with a deadline, a backoff or an expiry takes the current time as an argument, and the test passes a time it chose: `usage.rs`'s `can_attempt(now)` is tested at `now + 89 s` and `now + 90 s` without sleeping.
    For async code, `tokio::time::pause()` with `tokio::time::advance()` moves the clock by hand; `herdr-core` does not enable tokio's `test-util` feature today, so enabling it for a crate is part of the pull request that first needs it.
-   `herdr-core/src` calls `Instant::now()` directly in many places; a change in progress (no pull request yet) injects the clock into the modules that have a deadline, and new code with a deadline takes the clock from the start.
+   `herdr-core/src` still calls `Instant::now()` directly in many places, and no module has had its clock injected yet.
+   Where a test could not inject one, it orders the events itself instead of waiting a time: the router tests hold the provider on a gate and wait for the `ai.request.joined` log event (`hide-ai/src/router.rs`), the usage test's worker reports when it began and waits to be released (`herdr-core/src/usage.rs`), and the pane-control test makes `FakeHerdr` hold its answer until the spawn has returned (`herdr-core/src/live.rs`).
+   New code with a deadline takes the clock from the start.
 5. **Never bound a test by a short wall-clock.**
    A bound such as `assert!(started.elapsed() < Duration::from_millis(1850))` passes on an idle machine and fails on a loaded runner unless the bound is itself the product's deadline (`hide-platform/tests/process.rs` checks one); a bound that is only a guess at "fast enough" says nothing about the product.
    Assert the counted result (how many requests, how many attempts, which one won) or observe the event, with a generous deadline that is only a hang guard.

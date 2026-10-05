@@ -22,6 +22,13 @@ use hide_platform::process::{
 };
 
 const ROLE: &str = "HIDE_PLATFORM_PROC_ROLE";
+
+/// The deadline of a test that asks what a launch produced or left behind, not
+/// how fast it ran. It is the start wait `ready_number` gives the same child
+/// and only ends a child that never answers. A test that is about a deadline
+/// (`inherited_output_cannot_extend_capture_deadline`, the uncooperative
+/// launch) states its own short one.
+const HANG_LIMIT: Duration = Duration::from_secs(30);
 // Test-only handoff: arm recovery before the short-lived parent exits.
 const PIPE_OWNER: &str = "HIDE_PLATFORM_PROC_PIPE_OWNER";
 
@@ -68,7 +75,7 @@ fn child_role() {
         "guarded_owner" => {
             let mut child = OwnedChild::spawn_guarded(
                 role_command("tree_own_group"),
-                Instant::now() + Duration::from_millis(1850),
+                Instant::now() + HANG_LIMIT,
             )
             .unwrap();
             let helper = ready_number(child.take_stdout().unwrap());
@@ -262,8 +269,7 @@ impl Drop for FixtureProcess {
 #[test]
 fn guarded_capture_keeps_stdin_payload_and_both_output_streams() {
     let _serial = serial();
-    let started = Instant::now();
-    let deadline = started + Duration::from_millis(1850);
+    let deadline = Instant::now() + HANG_LIMIT;
     let mut command = role_command("echo");
     command.stdin(Stdio::piped()).stderr(Stdio::piped());
     let mut child = OwnedChild::spawn_guarded(command, deadline).unwrap();
@@ -281,14 +287,13 @@ fn guarded_capture_keeps_stdin_payload_and_both_output_streams() {
             .any(|part| part == b"PAYLOAD-MARKER")
     );
     assert_eq!(output.stderr, b"ERROR-MARKER");
-    assert!(started.elapsed() < Duration::from_millis(1850));
     assert!(child.try_wait().unwrap().is_some(), "success confirms exit");
 }
 
 #[test]
 fn only_a_guarded_launch_returns_startup_proof() {
     let _serial = serial();
-    let deadline = Instant::now() + Duration::from_millis(1850);
+    let deadline = Instant::now() + HANG_LIMIT;
     let mut guarded = OwnedChild::spawn_guarded(role_command("proof"), deadline).unwrap();
     let output = guarded.capture_until(deadline, 64 * 1024).unwrap();
     assert!(output.status.success());
@@ -297,7 +302,7 @@ fn only_a_guarded_launch_returns_startup_proof() {
             .unwrap()
             .contains("GUARDED true")
     );
-    let deadline = Instant::now() + Duration::from_millis(1850);
+    let deadline = Instant::now() + HANG_LIMIT;
     let mut standalone = OwnedChild::spawn(&mut role_command("proof")).unwrap();
     let output = standalone.capture_until(deadline, 64 * 1024).unwrap();
     assert!(output.status.success());
@@ -312,7 +317,7 @@ fn only_a_guarded_launch_returns_startup_proof() {
 fn capture_reports_the_callers_byte_limit_without_losing_cleanup() {
     let _serial = serial();
     for limit in [64 * 1024, MAX_CAPTURE_BYTES] {
-        let deadline = Instant::now() + Duration::from_millis(1850);
+        let deadline = Instant::now() + HANG_LIMIT;
         let mut child = OwnedChild::spawn_guarded(role_command("overflow"), deadline).unwrap();
         let error = child.capture_until(deadline, limit).unwrap_err();
         assert!(
@@ -432,7 +437,7 @@ fn repeated_guarded_work_releases_children_and_capture_resources() {
     let _serial = serial();
     let baseline = measure_tree(std::process::id()).unwrap().descendants;
     for _ in 0..10 {
-        let deadline = Instant::now() + Duration::from_millis(1850);
+        let deadline = Instant::now() + HANG_LIMIT;
         let mut command = role_command("echo");
         command.stdin(Stdio::null());
         let mut child = OwnedChild::spawn_guarded(command, deadline).unwrap();

@@ -83,8 +83,9 @@ pub struct ProjectIssuesSnapshot {
     pub repository: Option<String>,
     pub issues: Vec<IssueSnapshot>,
     pub overflow: bool,
-    /// Why the issues' dependencies could not be read on the last pass, when
-    /// they could not; each issue then keeps the blockers read before it.
+    /// Why the issues' dependencies and sub-issues could not be read on the
+    /// last pass, when they could not; each issue then keeps the blockers and
+    /// sub-issues read before it.
     /// Reader provenance, not a wire field.
     #[serde(skip)]
     pub dependencies_failure: Option<String>,
@@ -103,6 +104,26 @@ pub struct IssueSnapshot {
     /// The open issues GitHub records as blocking this one (its "blocked by"
     /// dependencies), in GitHub's order; a closed blocker no longer blocks.
     pub blocked_by: Vec<IssueReference>,
+    /// GitHub's sub-issues of this issue; empty `total` for an issue with none.
+    pub sub_issues: SubIssuesSnapshot,
+}
+
+/// An issue's sub-issues as GitHub counts them (`Issue.subIssuesSummary`) and
+/// lists them (`Issue.subIssues`). `total` and `completed` are GitHub's own
+/// counts; `listed` is capped at GitHub's limit of 100 sub-issues per issue,
+/// so it is never shorter than `total`.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+pub struct SubIssuesSnapshot {
+    pub total: u32,
+    pub completed: u32,
+    pub listed: Vec<SubIssueSnapshot>,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct SubIssueSnapshot {
+    pub reference: IssueReference,
+    pub title: String,
+    pub open: bool,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -184,6 +205,7 @@ pub fn parse_issues(output: &str) -> Result<Vec<IssueSnapshot>, String> {
                     .as_deref()
                     .and_then(crate::github::parse_rfc3339_ms),
                 blocked_by: Vec::new(),
+                sub_issues: SubIssuesSnapshot::default(),
             })
         })
         .collect()

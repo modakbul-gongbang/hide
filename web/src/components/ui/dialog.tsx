@@ -25,7 +25,8 @@ function DialogOverlay({ className, ...props }: ComponentProps<typeof DialogPrim
 
 /**
  * The modal surface. Closing hands the keyboard back to whatever held it when
- * the dialog opened, a terminal included. `initialFocus="container"` focuses
+ * the dialog opened, a terminal included, or to `returnFocusTo` when its owner
+ * names the place. `initialFocus="container"` focuses
  * the surface itself, so an irreversible choice has no default (design 6).
  */
 function DialogContent({
@@ -35,11 +36,12 @@ function DialogContent({
   initialFocus = "first",
   onOpenAutoFocus,
   onCloseAutoFocus,
+  returnFocusTo,
   ...props
-}: ComponentProps<typeof DialogPrimitive.Content> & { showCloseButton?: boolean; initialFocus?: "first" | "container" }) {
+}: ComponentProps<typeof DialogPrimitive.Content> & { showCloseButton?: boolean; initialFocus?: "first" | "container"; returnFocusTo?: () => HTMLElement | null }) {
   const { t } = useInterfaceTranslation();
   const surface = useRef<HTMLDivElement>(null);
-  const returnFocus = useReturnFocus(true);
+  const returnFocus = useReturnFocus(true, returnFocusTo ? { target: returnFocusTo, within: () => surface.current } : undefined);
   return (
     <DialogPrimitive.Portal>
       <DialogOverlay />

@@ -113,6 +113,27 @@ sudo chmod 4755 hide-linux-x64/chrome-sandbox
 - A package carries the device helper for its own system only, as the macOS app does: a Linux package installs it on a Linux x64 device, while no device runs the Windows one yet (Windows devices are not supported), so from Windows a device's files and Git stay unavailable.
 - Nothing updates itself, and uninstalling is deleting the folder; `~/.hide` (`%USERPROFILE%\.hide` on Windows) and the profile stay until you delete them.
 
+### What each system supports
+
+Supported means the package is built from the release, the feature is written for that system, and CI exercises it there.
+Unverified means the feature is written to work there, but no check on that system has proved it.
+
+| | macOS (Apple Silicon, 14 or later) | Windows x64 | Linux x64 |
+| --- | --- | --- | --- |
+| Package | signed app bundle | unsigned folder | unsigned folder |
+| Daemon, Herdr, install kit, agent hooks | supported | supported (CI runs them against the pinned Herdr) | supported (the web shell's whole e2e suite runs against the pinned Herdr) |
+| Desktop app window and menu | supported (desktop e2e) | unverified (no desktop e2e runs on Windows) | unverified (no desktop e2e runs on Linux) |
+| Keyboard shortcuts | supported | supported by registry tests; the table is in [UI_BEHAVIOR.md](UI_BEHAVIOR.md#keyboard-shortcuts-per-system) | same as Windows |
+| Device helper (a remote machine's files and Git) | supported | not supported | supported |
+
+Unverified on Windows and Linux (the macOS assumptions below are left as they are, and no check on those systems has proved them):
+
+- Paths outside the `$HOME` boundary, and drive letters and UNC paths on Windows.
+- Opening a path in the system's file manager (Reveal), and opening a file or link in the default app.
+- Move to Trash through the system's trash.
+- Terminal programs that expect macOS text-editing keys; Windows and Linux send `Ctrl+U`, `Home` and `End` as typed.
+- Whether Alt+Shift also switches the input language on a Windows or Linux layout; hide's chord still runs.
+
 ### Make the command available in a new shell
 
 Hide never changes PATH or the Windows registry.

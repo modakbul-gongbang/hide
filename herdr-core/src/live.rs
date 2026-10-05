@@ -4628,8 +4628,10 @@ mod tests {
         received.recv_timeout(Duration::from_secs(1)).unwrap();
 
         writer.send(wheel(2, 25)).unwrap();
+        // No terminal frame is ever sent here, so receiving the wheel at all
+        // is the proof that it did not wait for one.
         let lines = received
-            .recv_timeout(Duration::from_millis(50))
+            .recv_timeout(Duration::from_secs(1))
             .expect("a later wheel must not wait for an unrelated terminal frame");
         assert_eq!(lines[0]["lines"], 2);
         assert_eq!(lines[0]["column"], 25);
@@ -5305,9 +5307,13 @@ mod tests {
 
     #[test]
     fn pane_control_worker_returns_before_the_socket_receipt() {
-        let herdr = FakeHerdr::start("pane-worker", |method, _| {
+        // Herdr holds its answer until the spawn has returned, so a spawn that
+        // waited for the receipt would never return rather than return late.
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let herdr = FakeHerdr::start("pane-worker", move |method, _| {
             assert_eq!(method, "pane.split");
-            std::thread::sleep(Duration::from_millis(500));
+            held.recv_timeout(Duration::from_secs(30))
+                .expect("the test lets Herdr answer");
             json!({"type": "pane_info", "pane": {"pane_id": "w1:p2", "terminal_id": "fixture-terminal", "workspace_id": "w1", "tab_id": "w1:t1", "focused": false, "agent_status": "idle", "revision": 1}})
         });
         let context = LiveContext {
@@ -5318,7 +5324,6 @@ mod tests {
             api_connector: Arc::new(herdr.connector()),
         };
 
-        let started = Instant::now();
         spawn_pane_control(
             context,
             PaneControlAction::Split {
@@ -5328,14 +5333,11 @@ mod tests {
             },
         )
         .expect("worker starts");
-        let elapsed = started.elapsed();
 
-        assert!(
-            elapsed < Duration::from_millis(100),
-            "pane control spawn waited {elapsed:?} for the socket receipt"
-        );
+        // Returning at all is the proof: Herdr is still holding its answer.
         // The worker still delivers the request; the spawn only stopped
         // waiting for its answer.
+        release.send(()).unwrap();
         herdr.wait_for_requests(1, Duration::from_secs(5));
         assert_eq!(herdr.methods(), ["pane.split"]);
     }

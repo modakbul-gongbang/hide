@@ -25,6 +25,7 @@ import { hostChord, isCycleCommand, keySystemOf, matchHost, releaseModifier, sys
 import { BROWSER_CAPTURE_CHANNEL, BROWSER_COMMAND_CHANNEL, BROWSER_CYCLE_END_CHANNEL, BROWSER_EVENT_CHANNEL, BROWSER_SYNC_CHANNEL } from "../channel";
 import { appScheme, browserPartition, isPopup, loadable, MAX_LIVE_VIEWS, MAX_POPUPS, nextZoomFactor, overCap, parseCommand, parseSync, parseTarget, popupBounds, remoteRequest, toBounds, viewKey, type PageZoom } from "./browserSync";
 import type { HostLog } from "./log";
+import type { CdpPage, CdpRetirement, CdpScope } from "./browserCdp";
 import { accelerator } from "./menu";
 
 /** Page state reports coalesce to one per view in this window, so a title ticking every frame costs one event. */
@@ -38,6 +39,9 @@ const PAGE_ZOOM_COMMANDS: Readonly<Partial<Record<CommandId, PageZoom>>> = { tex
 const ZOOM_IN_ALIAS = accelerator({ code: "Equal", meta: true, shift: true });
 /** Pinch zoom on a page, as visual zoom levels; Electron turns it off by default. */
 const PINCH_ZOOM_LIMITS = [1, 3] as const;
+/** One first-refusal witness per native generation and guard category. */
+const FILE_REFUSAL_EVENTS = { request: "browser.request_refused", navigation: "browser.navigation_refused", popup: "browser.window_open_refused" } as const;
+type FileRefusal = keyof typeof FILE_REFUSAL_EVENTS;
 
 type Page = {
   key: string;
@@ -52,6 +56,20 @@ type Page = {
   report: NodeJS.Timeout | null;
   route: ResolvedPage | null;
   partition: string;
+  /** Native file reads are forbidden before the first load of a web/blank
+   * generation. Only a separately created manual-file partition permits them. */
+  readonly fileRestricted: boolean;
+  /** CDP can install future scripts. Its filesystem-write/download ban
+   * survives disconnect until this native generation ends. */
+  cdpRestricted: boolean;
+  /** Download refusals remain enforced after disconnect, with one diagnostic
+   * for this native generation even when installed scripts loop. */
+  cdpDownloadRefused: boolean;
+  /** A generation that has held a native file frame never enters CDP. */
+  cdpFileFrame: boolean;
+  /** Three finite guard categories bound diagnostic state and output even
+   * when a renderer repeatedly attempts file requests or opens windows. */
+  readonly fileRefusals: Set<FileRefusal>;
 };
 
 export type ResolvedPage = { url: string; source_url: string; load: number };
@@ -61,6 +79,16 @@ type Popup = { window: BrowserWindow; owner: Page };
 
 export class BrowserViews {
   private readonly pages = new Map<string, Page>();
+  /** Area membership comes from the core's retained inventory, including hidden workspaces. */
+  private cdpAreas = new Map<string, string>();
+  private cdpChanged: ((retirement?: CdpRetirement) => void) | null = null;
+  private cdpObserved: { key: string; area: string; contents: number; url: string; title: string }[] = [];
+  private readonly cdpLeases = new Map<number, CdpPage>();
+  private attachmentEpoch: string | null = null;
+  /** Positive core authority is independent of whether an area has pages. */
+  private cdpScopes = new Map<string, number>();
+  private cdpScopesRevision = 0;
+  private cdpObservedRevision = -1;
   /** Popup windows by their contents' id. */
   private readonly popups = new Map<number, Popup>();
   private readonly configuredSessions = new Set<string>();
@@ -74,6 +102,64 @@ export class BrowserViews {
   private cycleSequence = 0;
 
   setRegistry(registry: readonly Command[]): void { this.registry = registry; }
+
+  cdpIncarnation(scope: CdpScope): number | null { return this.cdpScopes.get(JSON.stringify([scope.workspace, scope.area_id])) ?? null; }
+
+  /** Only display pages enter CDP. The shell and popup windows are absent. */
+  cdpPages(): CdpPage[] {
+    const result: CdpPage[] = [];
+    for (const page of this.pages.values()) {
+      const area_id = this.cdpAreas.get(page.key);
+      const contents = page.view.webContents;
+      if (area_id && page.fileRestricted && !contents.isDestroyed() && !isFileAddress(page.state.url)
+        && !isFileAddress(page.route?.source_url ?? "") && !isFileAddress(contents.getURL())
+        && !page.cdpFileFrame) {
+        result.push({ workspace: page.workspace, area_id, id: page.id, contents });
+      }
+    }
+    return result;
+  }
+
+  observeCdp(listener: (retirement?: CdpRetirement) => void): () => void {
+    if (this.cdpChanged) throw new Error("Browser inventory already has a CDP owner");
+    this.cdpChanged = listener;
+    return () => { if (this.cdpChanged === listener) this.cdpChanged = null; };
+  }
+
+  /** Rect/visibility sync is frequent. Compare at most MAX_LIVE_VIEWS rows
+   * and notify CDP only for membership, generation, area or metadata changes. */
+  private publishCdp(retirement?: CdpRetirement): void {
+    if (!this.cdpChanged) return;
+    const next = this.cdpPages().map((page) => ({ key: viewKey(page.workspace, page.id), area: page.area_id, contents: page.contents.id, url: page.contents.getURL(), title: page.contents.getTitle() }));
+    const changed = next.length !== this.cdpObserved.length || next.some((row, index) => {
+      const previous = this.cdpObserved[index];
+      return !previous || row.key !== previous.key || row.area !== previous.area || row.contents !== previous.contents || row.url !== previous.url || row.title !== previous.title;
+    });
+    // An ineligible document/frame invalidates the bound generation before
+    // another protocol request can use it. Area moves are handled by scope.
+    const excluded = this.cdpObserved.filter((previous) => !next.some((row) => row.key === previous.key)
+      && [...this.pages.values()].some((page) => page.key === previous.key && page.view.webContents.id === previous.contents));
+    if (changed || retirement || this.cdpObservedRevision !== this.cdpScopesRevision) {
+      this.cdpObserved = next;
+      this.cdpObservedRevision = this.cdpScopesRevision;
+      for (const row of excluded) this.cdpChanged({ contentsId: row.contents, reason: "replaced" });
+      this.cdpChanged(retirement);
+    }
+  }
+
+  /** A debugger lease is an actual host fact, independent of page load state. */
+  cdpAttached(page: CdpPage, attached: boolean): void {
+    const owner = this.ownerOf(page.contents.id);
+    if (attached && owner) owner.cdpRestricted = true;
+    if (attached) this.cdpLeases.set(page.contents.id, page);
+    else this.cdpLeases.delete(page.contents.id);
+    this.sendCdpAttached(page, attached);
+  }
+
+  private sendCdpAttached(page: { workspace: string; id: string }, attached: boolean): void {
+    const contents = this.window?.webContents;
+    if (contents && !contents.isDestroyed()) contents.send(BROWSER_EVENT_CHANNEL, { kind: "attached", workspace: page.workspace, id: page.id, attached });
+  }
 
   private cancelCycle(): void {
     const held = this.cycleInput;
@@ -100,7 +186,10 @@ export class BrowserViews {
       if (!this.trusted(event)) return this.log.event("browser.ipc_refused", { channel: "sync" });
       const sync = parseSync(value);
       if (!sync) return this.log.event("browser.sync_invalid", {});
-      this.sync(sync.workspace, sync.displays, sync.retained);
+      // UI owns this optional wire field. Its parser forwards it after the
+      // shared contract lands; older shells have no replay epoch.
+      const authority = sync as typeof sync & { attachment_epoch?: string; authorized_scopes?: { workspace: string; area_id: string; incarnation?: number }[] };
+      this.sync(sync.workspace, sync.displays, sync.retained, authority.attachment_epoch, authority.authorized_scopes);
     });
     ipcMain.handle(BROWSER_CAPTURE_CHANNEL, async (event, value: unknown) => {
       if (!this.trusted(event)) return null;
@@ -216,9 +305,21 @@ export class BrowserViews {
     return true;
   }
 
-  private sync(workspace: string | null, displays: BrowserPlacement[], retained: { workspace: string; id: string }[]): void {
+  private sync(workspace: string | null, displays: BrowserPlacement[], retained: { workspace: string; id: string; area_id?: string }[], attachmentEpoch?: string, authorizedScopes?: { workspace: string; area_id: string; incarnation?: number }[]): void {
     const window = this.window;
     if (!window) return;
+    // The shared parser bounds this list. Missing authority grants nothing;
+    // retained display rows can never restore a revoked checkout/area.
+    const rows = authorizedScopes && authorizedScopes.length <= 1536 ? authorizedScopes : [];
+    const scopes = new Map(rows.flatMap((scope) => Number.isSafeInteger(scope.incarnation) && scope.incarnation! >= 0
+      ? [[JSON.stringify([scope.workspace, scope.area_id]), scope.incarnation!] as const] : []));
+    if (scopes.size !== this.cdpScopes.size || [...scopes].some(([scope, incarnation]) => this.cdpScopes.get(scope) !== incarnation)) {
+      this.cdpScopes = scopes;
+      this.cdpScopesRevision++;
+    }
+    // A missing area from an older shell grants no capability. parseSync's
+    // current contract requires it and matches placement to retained rows.
+    this.cdpAreas = new Map(retained.flatMap((row) => row.area_id ? [[viewKey(row.workspace, row.id), row.area_id] as const] : []));
     const listed = new Set(retained.map((row) => viewKey(row.workspace, row.id)));
     for (const page of [...this.pages.values()]) {
       if (!listed.has(page.key)) this.destroy(page, "closed");
@@ -235,7 +336,7 @@ export class BrowserViews {
       }
       if (!page) page = this.create(window, workspace ?? "", display);
       else if (page.partition !== browserPartition(page.workspace, display.url)) {
-        this.destroy(page, "closed");
+        this.destroy(page, "replaced");
         page = this.create(window, workspace ?? "", display);
       } else if (display.load > page.applied) {
         page.applied = display.load;
@@ -248,6 +349,11 @@ export class BrowserViews {
     for (const key of overCap([...this.pages.values()], MAX_LIVE_VIEWS)) {
       const page = this.pages.get(key);
       if (page) this.destroy(page, "evicted");
+    }
+    this.publishCdp();
+    if (attachmentEpoch && /^[A-Za-z0-9-]{1,64}$/.test(attachmentEpoch) && attachmentEpoch !== this.attachmentEpoch) {
+      this.attachmentEpoch = attachmentEpoch;
+      for (const page of this.pages.values()) this.sendCdpAttached(page, this.cdpLeases.has(page.view.webContents.id));
     }
   }
 
@@ -268,6 +374,11 @@ export class BrowserViews {
       report: null,
       route: null,
       partition,
+      fileRestricted: !partition.startsWith("persist:hide-browser-file-"),
+      cdpRestricted: false,
+      cdpDownloadRefused: false,
+      cdpFileFrame: false,
+      fileRefusals: new Set(),
     };
     view.setVisible(false);
     window.contentView.addChildView(view);
@@ -294,9 +405,23 @@ export class BrowserViews {
       else this.log.event("browser.app_link_refused", { reason: "no_page" });
     });
     pageSession.setPermissionCheckHandler((_contents, permission) => PAGE_PERMISSIONS.has(permission));
-    pageSession.on("will-download", (_event, item) => this.log.event("browser.download", { mime: item.getMimeType() }));
+    pageSession.on("will-download", (event, item, contents) => {
+      const page = this.ownerOf(contents.id);
+      if (page?.cdpRestricted) {
+        event.preventDefault();
+        if (!page.cdpDownloadRefused) {
+          page.cdpDownloadRefused = true;
+          this.log.event("browser.download_refused", { reason: "cdp_filesystem_boundary", display_id: page.id });
+        }
+      } else this.log.event("browser.download", { mime: item.getMimeType() });
+    });
     pageSession.webRequest.onBeforeRequest({ urls: ["<all_urls>"] }, (details, callback) => {
       const page = this.ownerOf(details.webContentsId);
+      if (page?.fileRestricted && isFileAddress(details.url)) {
+        this.fileRefused(page, "request", details.resourceType);
+        callback({ cancel: true });
+        return;
+      }
       const outcome = !page
         ? partition === "persist:hide-browser-web" ? remoteRequest({ source_url: details.url, url: details.url }, details.url) : { cancel: true }
         : !page.route ? { cancel: true }
@@ -305,6 +430,15 @@ export class BrowserViews {
       callback(outcome);
     });
     return pageSession;
+  }
+
+  private fileRefused(page: Page, category: FileRefusal, resourceType?: Electron.OnBeforeRequestListenerDetails["resourceType"]): void {
+    if (page.fileRefusals.has(category)) return;
+    page.fileRefusals.add(category);
+    this.log.event(FILE_REFUSAL_EVENTS[category], {
+      reason: "cdp_file_boundary", display_id: page.id,
+      ...(resourceType ? { resource_type: resourceType } : {}),
+    });
   }
 
   private load(page: Page, url: string): void {
@@ -316,9 +450,13 @@ export class BrowserViews {
     const stamp = page.applied;
     this.update(page, { url, loading: true, failure: null });
     void this.resolve(page.workspace, page.id, stamp).then((route) => {
-      if (this.pages.get(page.key) !== page || page.applied !== stamp || route.load !== stamp || route.source_url !== url) return;
-      page.route = route;
+      // The core can canonicalize a checked file address while the loading
+      // report is in flight. The load stamp binds this answer to its intent;
+      // spelling changes within that generation must not strand the load.
+      if (this.pages.get(page.key) !== page || page.applied !== stamp || route.load !== stamp) return;
       if (!loadable(route.url)) throw new Error("Resolved page address cannot be loaded");
+      if (browserPartition(page.workspace, route.source_url) !== page.partition) throw new Error("Resolved page requires a different browser partition");
+      page.route = route;
       return page.view.webContents.loadURL(route.url).catch((error: unknown) => {
         // did-fail-load reports it; a load a newer one replaced is not a failure.
         const code = (error as { errno?: number }).errno;
@@ -373,11 +511,21 @@ export class BrowserViews {
 
   /** Where the contents of `page`, or of a popup it owns, may go and what may open from them. */
   private guard(page: Page, contents: WebContents): void {
+    contents.on("did-frame-navigate", (_event, url) => {
+      if (!isFileAddress(url) || page.cdpFileFrame) return;
+      page.cdpFileFrame = true;
+      this.publishCdp({ contentsId: page.view.webContents.id, reason: "replaced" });
+    });
     contents.setWindowOpenHandler(({ url, disposition, features, referrer }) => this.openWindow(page, contents, url, isPopup(disposition, features), referrer.url));
     const forget = () => this.declined.delete(contents.id);
     contents.on("did-navigate", forget);
     contents.once("destroyed", forget);
     const navigation = (event: { preventDefault(): void }, url: string) => {
+      if (page.fileRestricted && isFileAddress(url)) {
+        event.preventDefault();
+        this.fileRefused(page, "navigation");
+        return;
+      }
       if (page.route && isFileAddress(page.route.source_url) && remoteRequest(page.route, url).cancel) {
         event.preventDefault();
         this.log.event("browser.navigation_refused", { reason: "remote_file_boundary" });
@@ -389,6 +537,9 @@ export class BrowserViews {
       else this.log.event("browser.navigation_refused", { protocol: protocolOf(url) });
     };
     contents.on("will-navigate", navigation);
+    contents.on("will-frame-navigate", (event) => {
+      if (page.fileRestricted && isFileAddress(event.url)) navigation(event, event.url);
+    });
     contents.on("will-redirect", navigation);
   }
 
@@ -400,6 +551,10 @@ export class BrowserViews {
    * features) is another browser display, which the core opens.
    */
   private openWindow(page: Page, contents: WebContents, url: string, popup: boolean, referrer: string): WindowOpenHandlerResponse {
+    if (page.fileRestricted && isFileAddress(url)) {
+      this.fileRefused(page, "popup");
+      return { action: "deny" };
+    }
     if (page.route && isFileAddress(page.route.source_url) && remoteRequest(page.route, url).cancel) {
       this.log.event("browser.window_open_refused", { reason: "remote_file_boundary" });
       return { action: "deny" };
@@ -585,6 +740,7 @@ export class BrowserViews {
       page.report = null;
       if (this.pages.get(page.key) !== page) return;
       this.emit({ kind: "state", workspace: page.workspace, id: page.id, load: page.applied, state: page.state });
+      this.publishCdp();
     }, REPORT_COALESCE_MS);
   }
 
@@ -628,10 +784,11 @@ export class BrowserViews {
     for (const page of this.pages.values()) this.show(page, false);
   }
 
-  private destroy(page: Page, reason: "closed" | "evicted" | "window_closed"): void {
+  private destroy(page: Page, reason: CdpRetirement["reason"]): void {
     if (reason === "evicted") this.emit({ kind: "gone", workspace: page.workspace, id: page.id, load: page.applied, url: page.state.url });
     if (this.cycleInput?.page === page) this.cancelCycle();
     this.pages.delete(page.key);
+    this.publishCdp({ contentsId: page.view.webContents.id, reason });
     this.release(page.workspace, page.id, page.applied);
     if (page.report) clearTimeout(page.report);
     const window = this.window;

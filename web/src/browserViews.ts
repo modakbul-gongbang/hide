@@ -18,19 +18,20 @@
 import { create } from "zustand";
 import { browserBridge, type BrowserBridge, type BrowserHostEvent, type BrowserPageState, type BrowserPlacement, type BrowserRect, type BrowserSync } from "./host";
 import { SHELL_DRAG_ATTRIBUTES, shellDragging } from "./shellDrag";
-import type { ViewLayoutSnapshot } from "./snapshot";
+import type { SnapshotRest, ViewLayoutSnapshot } from "./snapshot";
+import { useShellStore } from "./store";
 import { areasOf, workspaceKey, type ViewWorkspace } from "./viewLayout";
 
 // --- pure rules ---------------------------------------------------------------
 
 /** A browser display as the host needs it. */
-export type BrowserDisplayRow = { id: string; url: string; load: number };
+export type BrowserDisplayRow = { id: string; area_id: string; url: string; load: number };
 
 /** Every browser display of a layout, in tree order. */
 export function browserDisplays(layout: ViewLayoutSnapshot | null | undefined): BrowserDisplayRow[] {
   if (!layout) return [];
   return areasOf(layout.root).flatMap((area) =>
-    area.displays.flatMap((display) => (display.kind === "browser" && display.url ? [{ id: display.id, url: display.url, load: display.load ?? 0 }] : [])),
+    area.displays.flatMap((display) => (display.kind === "browser" && display.url ? [{ id: display.id, area_id: area.id, url: display.url, load: display.load ?? 0 }] : [])),
   );
 }
 
@@ -90,7 +91,7 @@ export function isHtmlFile(path: string): boolean {
 export function placements(rows: BrowserDisplayRow[], rects: ReadonlyMap<string, BrowserRect>, hidden: ReadonlySet<string>): BrowserPlacement[] {
   return rows.map((row) => {
     const rect = rects.get(row.id) ?? null;
-    return { id: row.id, url: row.url, load: row.load, rect, visible: rect !== null && !hidden.has(row.id) };
+    return { ...row, rect, visible: rect !== null && !hidden.has(row.id) };
   });
 }
 
@@ -99,11 +100,13 @@ export function placements(rows: BrowserDisplayRow[], rects: ReadonlyMap<string,
 type BrowserStore = {
   /** What each page says, by host key (`hostKey`). */
   pages: Record<string, BrowserPageState>;
+  /** Actual debugger attachment, bounded by retained browser inventory; absent means detached. */
+  attached: Record<string, true>;
   /** The still drawn in place of a covered page, by display id of the front Workspace; null draws nothing. */
   stills: Record<string, string | null>;
 };
 
-export const useBrowserStore = create<BrowserStore>(() => ({ pages: {}, stills: {} }));
+export const useBrowserStore = create<BrowserStore>(() => ({ pages: {}, attached: {}, stills: {} }));
 
 export function hostKey(workspace: string, id: string): string {
   return `${workspace}\u0001${id}`;
@@ -177,7 +180,9 @@ type Front = { workspace: string; rows: BrowserDisplayRow[] };
 
 class BrowserSyncLoop {
   private front: Front | null = null;
-  private retained: { workspace: string; id: string }[] = [];
+  private retained: BrowserSync["retained"] = [];
+  private authorizedScopes: NonNullable<BrowserSync["authorized_scopes"]> = [];
+  private retainedKeys = new Set<string>();
   private readonly slots = new Map<string, HTMLElement>();
   /** Displays hidden behind their still until what covers them is gone. */
   private readonly frozen = new Set<string>();
@@ -201,8 +206,47 @@ class BrowserSyncLoop {
   private lastSent = "";
   private watching = false;
   private focus: { workspace: string; id: string } | null = null;
+  private attachmentEpoch: string | undefined;
+  private attachmentConnectionWatch: (() => void) | null = null;
 
   constructor(private readonly bridge: BrowserBridge) {}
+
+  mountAttachments(): () => void {
+    this.attachmentConnectionWatch?.();
+    this.attachmentEpoch = crypto.randomUUID();
+    const unsubscribe = useShellStore.subscribe((current, previous) => {
+      if (current.connection === previous.connection) return;
+      if (current.connection === "live") {
+        this.attachmentEpoch = crypto.randomUUID();
+        this.schedule();
+      } else {
+        clearBrowserAttachments();
+      }
+    });
+    this.attachmentConnectionWatch = unsubscribe;
+    this.schedule();
+    return () => {
+      if (this.attachmentConnectionWatch !== unsubscribe) return;
+      unsubscribe();
+      this.attachmentConnectionWatch = null;
+      this.attachmentEpoch = undefined;
+      clearBrowserAttachments();
+    };
+  }
+
+  noteAttachment(event: Extract<BrowserHostEvent, { kind: "attached" | "gone" }>): void {
+    if (event.kind === "attached" && typeof event.attached !== "boolean") return;
+    const key = hostKey(event.workspace, event.id);
+    const attached = event.kind === "attached" && event.attached;
+    if (attached && (useShellStore.getState().connection !== "live" || !this.retainedKeys.has(key))) return;
+    useBrowserStore.setState((current) => {
+      if (Boolean(current.attached[key]) === attached) return current;
+      const next = { ...current.attached };
+      if (attached) next[key] = true;
+      else delete next[key];
+      return { attached: next };
+    });
+  }
 
   requestFocus(workspace: string, id: string): void {
     this.focus = { workspace, id };
@@ -214,7 +258,18 @@ class BrowserSyncLoop {
     return this.visible;
   }
 
-  setFront(front: Front | null, retained: { workspace: string; id: string }[]): void {
+  setFront(front: Front | null, retained: BrowserSync["retained"], authorizedScopes: NonNullable<BrowserSync["authorized_scopes"]>): void {
+    const frontIds = new Set(front?.rows.map((row) => row.id));
+    this.retainedKeys = new Set(retained
+      .filter((row) => row.workspace !== front?.workspace || frontIds.has(row.id))
+      .map((row) => hostKey(row.workspace, row.id)));
+    useBrowserStore.setState((current) => {
+      const gone = Object.keys(current.attached).filter((key) => !this.retainedKeys.has(key));
+      if (gone.length === 0) return current;
+      const attached = { ...current.attached };
+      for (const key of gone) delete attached[key];
+      return { attached };
+    });
     if (front?.workspace !== this.front?.workspace) {
       this.epoch += 1;
       this.frozen.clear();
@@ -237,6 +292,7 @@ class BrowserSyncLoop {
     }
     this.front = front;
     this.retained = retained;
+    this.authorizedScopes = authorizedScopes;
     this.schedule();
   }
 
@@ -300,7 +356,13 @@ class BrowserSyncLoop {
     }
     this.shown = shown;
     this.forget((id) => !shown.has(id));
-    const sync: BrowserSync = front ? { workspace: front.workspace, displays: placements(front.rows, rects, hidden), retained: this.retained } : { workspace: null, displays: [], retained: this.retained };
+    const sync: BrowserSync = {
+      workspace: front?.workspace ?? null,
+      displays: front ? placements(front.rows, rects, hidden) : [],
+      retained: this.retained,
+      authorized_scopes: this.authorizedScopes,
+      ...(this.attachmentEpoch === undefined ? {} : { attachment_epoch: this.attachmentEpoch }),
+    };
     this.visible = sync.displays.flatMap((row) => (row.visible && row.rect ? [row.rect] : []));
     const text = JSON.stringify(sync);
     if (text !== this.lastSent) {
@@ -426,10 +488,16 @@ function syncLoop(): BrowserSyncLoop | null {
   return loop;
 }
 
-/** The front Workspace's browser displays, whenever the snapshot changes them. */
-export function syncBrowserFront(workspace: ViewWorkspace | null, layout: ViewLayoutSnapshot | null | undefined, inventory: { device_id: string; path: string; view_id: string }[]): void {
+/** The core's browser displays and positive area authority, whenever the snapshot changes them. */
+export function syncBrowserFront(workspace: ViewWorkspace | null, layout: ViewLayoutSnapshot | null | undefined, inventory: { device_id: string; path: string; view_id: string; area_id: string }[], scopes: NonNullable<SnapshotRest["browser_scopes"]> = []): void {
   syncLoop()?.setFront(workspace ? { workspace: workspaceKey(workspace), rows: browserDisplays(layout) } : null,
-    inventory.map((row) => ({ workspace: workspaceKey(row), id: row.view_id })));
+    inventory.map((row) => ({ workspace: workspaceKey(row), id: row.view_id, area_id: row.area_id })),
+    scopes.map((row) => ({ workspace: workspaceKey(row), area_id: row.area_id, incarnation: row.incarnation })));
+}
+
+/** One controller mount and connection observer; its owner releases both on unmount. */
+export function mountBrowserAttachments(): () => void {
+  return syncLoop()?.mountAttachments() ?? (() => undefined);
 }
 
 /** The rects of the pages the host shows now, in the shell's points; none in a plain browser tab. */
@@ -456,4 +524,14 @@ export function focusBrowserDisplay(workspace: string, id: string): void {
 export function notePageState(event: Extract<BrowserHostEvent, { kind: "state" }>): void {
   useBrowserStore.setState((current) => ({ pages: { ...current.pages, [hostKey(event.workspace, event.id)]: event.state } }));
   loop?.schedule();
+}
+
+/** Attachment facts share BrowserHost's existing event subscription. */
+export function noteBrowserAttachment(event: Extract<BrowserHostEvent, { kind: "attached" | "gone" }>): void {
+  loop?.noteAttachment(event);
+}
+
+/** A host or app connection ended; no attachment fact survives it. */
+export function clearBrowserAttachments(): void {
+  useBrowserStore.setState((current) => Object.keys(current.attached).length === 0 ? current : { attached: {} });
 }

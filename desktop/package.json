@@ -18,6 +18,7 @@
     "@eslint/js": "^9.24.0",
     "@playwright/test": "^1.51.0",
     "@types/node": "^22.14.0",
+    "@types/ws": "^8.18.2",
     "electron": "^44.4.5",
     "esbuild": "^0.25.12",
     "eslint": "^9.24.0",
@@ -29,5 +30,8 @@
   "productName": "hide",
   "engines": {
     "node": ">=22.12.0"
+  },
+  "dependencies": {
+    "ws": "^8.22.0"
   }
 }

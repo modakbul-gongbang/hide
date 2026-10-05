@@ -4,9 +4,16 @@
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <meta name="description" content="hide is a multi-agent IDE. Keep coding agents, checkouts, questions and reviews in one clear view.">
-    <meta name="theme-color" content="#F4F4F6">
+    <meta name="theme-color" content="#101112" media="(prefers-color-scheme: dark)">
+    <meta name="theme-color" content="#F4F4F6" media="(prefers-color-scheme: light)">
+    <meta property="og:type" content="website">
+    <meta property="og:title" content="hide - Many agents. One clear view.">
+    <meta property="og:description" content="hide is a multi-agent IDE. Keep coding agents, checkouts, questions and reviews in one clear view.">
+    <meta property="og:image" content="https://withhide.dev/assets/hide-overview.webp">
+    <meta name="twitter:card" content="summary_large_image">
     <title>hide · Many agents. One clear view.</title>
     <link rel="icon" type="image/png" href="./assets/hide-mark.png">
+    <link rel="preload" as="image" href="./assets/hide-overview.webp" type="image/webp">
     <link rel="stylesheet" href="./styles.css">
     <script type="module" src="./downloads.js"></script>
   </head>
@@ -14,56 +21,72 @@
     <a class="skip-link" href="#main">Skip to content</a>
     <header class="site-header wrap">
       <a class="wordmark" href="#main" aria-label="hide home">
-        <img src="./assets/hide-mark.png" width="36" height="36" alt="">
+        <img src="./assets/hide-mark.png" width="32" height="32" alt="">
         <span>hide</span>
       </a>
       <nav aria-label="Main navigation">
-        <a href="#workflow">How it works</a>
-        <a href="https://github.com/modakbul-gongbang/hide">GitHub</a>
-        <a href="#download">Get hide <span aria-hidden="true">↗</span></a>
+        <a class="nav-extra" href="#inside">Inside hide</a>
+        <a class="nav-extra" href="#performance">Performance</a>
+        <a class="nav-extra" href="https://github.com/modakbul-gongbang/hide">GitHub</a>
+        <a class="nav-cta" href="#download">Get hide</a>
       </nav>
     </header>
 
     <main id="main">
       <section class="hero wrap" aria-labelledby="intro-title">
-        <div class="hero-copy">
-          <p class="eyebrow">A multi-agent IDE</p>
-          <h1 id="intro-title">Many agents.<br> One clear view.</h1>
-          <p class="lead">Keep several coding efforts in view, with each task in context and attention on the questions and results that need you.</p>
-          <div class="actions">
-            <a class="button primary" href="#download">Get hide <span aria-hidden="true">↗</span></a>
-            <a class="text-link" href="#workflow">See the workflow <span aria-hidden="true">↓</span></a>
-          </div>
-          <p class="quiet hero-note">For Claude Code and Codex. Built on Herdr.</p>
+        <p class="eyebrow">A multi-agent IDE for Claude Code and Codex</p>
+        <h1 id="intro-title">Many agents.<br> One clear view.</h1>
+        <p class="lead">Keep several coding efforts in view, with each task in context and your attention on the questions and results that need you.</p>
+        <div class="actions">
+          <a class="button primary" href="#download">Get hide <span aria-hidden="true">↗</span></a>
+          <a class="button secondary" href="https://github.com/modakbul-gongbang/hide">View on GitHub <span aria-hidden="true">↗</span></a>
         </div>
-        <figure class="brand-art">
-          <img src="./assets/hide-mark.png" width="1536" height="1536" alt="hide's owl mark: two eyes connected in one lime shape on a blue-gray square">
-        </figure>
+        <p class="quiet hero-note">macOS, Windows and Linux. Built on Herdr. MIT licensed.</p>
       </section>
+
+      <figure class="shot wrap">
+        <img class="shot-img" src="./assets/hide-overview.webp" width="2400" height="1398" alt="The hide window on a project overview. A sidebar groups agents by whether they are working or seen, and a graph connects the main checkout's agents to the worktrees they delegate to.">
+      </figure>
 
       <section class="section wrap" id="workflow" aria-labelledby="workflow-title">
         <div class="section-heading">
-          <p class="eyebrow">The workflow</p>
+          <p class="eyebrow">How it works</p>
           <h2 id="workflow-title">Follow the work.<br> Return with its context.</h2>
-          <p>Start a task in its checkout, see how its agents relate, then open the work that needs a decision.</p>
         </div>
-        <figure class="workflow-diagram">
-          <figcaption>Workflow diagram</figcaption>
-          <ol>
-            <li><span class="step">01</span><h3>Start in a checkout</h3><p>Choose Claude Code or Codex and give it a first instruction. Start from an issue to create a worktree for that task.</p></li>
-            <li><span class="step">02</span><h3>See the relationships</h3><p>The project overview connects agents to their checkouts and shows delegation between them. Questions and unread results bring attention to the work.</p></li>
-            <li><span class="step">03</span><h3>Open, answer, review</h3><p>Open an agent's terminal, answer its question, and inspect files, diffs or a page in the same Workspace.</p></li>
-          </ol>
-        </figure>
+        <ol class="steps">
+          <li><span class="step">01</span><h3>Start in a checkout</h3><p>Choose Claude Code or Codex and give it a first instruction. Start from an issue to create a worktree for that task.</p></li>
+          <li><span class="step">02</span><h3>See the relationships</h3><p>The project overview connects agents to their checkouts and shows delegation between them. Questions and unread results bring attention to the work.</p></li>
+          <li><span class="step">03</span><h3>Open, answer, review</h3><p>Open an agent's terminal, answer its question, and inspect files, diffs or a page in the same Workspace.</p></li>
+        </ol>
       </section>
 
-      <section class="section wrap features" aria-labelledby="features-title">
+      <section class="section wrap" id="inside" aria-labelledby="features-title">
         <div class="section-heading">
           <p class="eyebrow">Inside hide</p>
           <h2 id="features-title">The task and its tools,<br> kept together.</h2>
         </div>
+
+        <div class="row">
+          <div class="crop crop-sidebar">
+            <img src="./assets/hide-overview.webp" width="2400" height="1398" loading="lazy" alt="The agent sidebar, with a Working group of agents that each show their checkout, branches and pull request numbers.">
+          </div>
+          <div class="row-copy">
+            <h3>Attention with a place to act</h3>
+            <p>Agent groups distinguish work that needs you, finished turns, work in progress and work you've seen. Open a row to return to that agent.</p>
+          </div>
+        </div>
+
+        <div class="row row-graph">
+          <div class="row-copy">
+            <h3>See how the work connects</h3>
+            <p>The project overview draws each agent next to its checkout and the agents it delegated to, so you can follow a task without opening every terminal.</p>
+          </div>
+          <div class="crop crop-graph">
+            <img src="./assets/hide-overview.webp" width="2400" height="1398" loading="lazy" alt="A graph linking the main checkout's agents to feature worktrees, each worktree showing its pull request and the agent working in it.">
+          </div>
+        </div>
+
         <dl class="feature-list">
-          <div><dt>Attention with a place to act</dt><dd>Agent groups distinguish work that needs you, finished turns, work in progress and work you've seen. Open a row to return to that agent.</dd></div>
           <div><dt>Terminals and review side by side</dt><dd>Work in live Herdr terminal panes. Open files, diffs and browser pages in a side panel, and pin or split your Views for review.</dd></div>
           <div><dt>Issues through to pull requests</dt><dd>Track issues by stage and see the checkout, agents and pull request connected to each task. Review remains your decision.</dd></div>
           <div><dt>Find the conversation again</dt><dd>Browse a local project's Claude Code and Codex session history, with metadata and conversation search across its checkouts.</dd></div>
@@ -71,18 +94,18 @@
         <a class="text-link" href="https://github.com/modakbul-gongbang/hide/blob/main/docs/UI_BEHAVIOR.md">Read the behavior guide <span aria-hidden="true">↗</span></a>
       </section>
 
-      <section class="section wrap features" id="performance" aria-labelledby="performance-title">
+      <section class="section wrap" id="performance" aria-labelledby="performance-title">
         <div class="section-heading">
           <p class="eyebrow">Measured performance</p>
           <h2 id="performance-title">The numbers,<br> with their conditions.</h2>
           <p>A private native candidate on an M4 Pro Mac, measured October 4, 2026. Read the method and limits alongside the results.</p>
         </div>
-        <dl class="feature-list">
-          <div><dt>16.3 ms p95 for idle input processing</dt><dd>First renderer keydown to a complete nine-character echo in the terminal buffer, across 50 samples.</dd></div>
-          <div><dt>99.5 ms p95 for scroll processing</dt><dd>Wheel event to changed terminal text and the next animation frame after synthetic output, across 50 samples.</dd></div>
-          <div><dt>549.0 MiB idle, 622.0 MiB under load</dt><dd>p95 RSS summed across the desktop, daemon and private Herdr process trees, from 20 samples in each condition. The load drove three terminal panes.</dd></div>
-          <div><dt>Measured boundaries</dt><dd>An unpackaged desktop host with a release daemon. Input timings do not measure physical pixel presentation, and no matched Orca comparison completed.</dd></div>
+        <dl class="stats">
+          <div><dt>p95, idle input processing</dt><dd class="num">16.3 ms</dd><dd>First renderer keydown to a complete nine-character echo in the terminal buffer, across 50 samples.</dd></div>
+          <div><dt>p95, scroll processing</dt><dd class="num">99.5 ms</dd><dd>Wheel event to changed terminal text and the next animation frame after synthetic output, across 50 samples.</dd></div>
+          <div><dt>p95 memory, idle / under load</dt><dd class="num">549.0 / 622.0 MiB</dd><dd>RSS summed across the desktop, daemon and private Herdr process trees, from 20 samples in each condition. The load drove three terminal panes.</dd></div>
         </dl>
+        <p class="quiet stats-note">An unpackaged desktop host with a release daemon. Input timings do not measure physical pixel presentation, and no matched Orca comparison completed.</p>
         <a class="text-link" href="https://github.com/modakbul-gongbang/hide/blob/main/docs/PERFORMANCE_RESULTS.md">Full results, method &amp; limitations <span aria-hidden="true">↗</span></a>
       </section>
 

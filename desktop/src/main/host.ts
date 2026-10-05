@@ -16,6 +16,7 @@ import { app, BrowserWindow, dialog, ipcMain, screen, session, shell, type IpcMa
 import type { CommandId } from "../../../web/src/shortcuts";
 import { BINDINGS_CHANNEL, COMMAND_CHANNEL, LANGUAGE_CHANNEL, OPEN_PATH_CHANNEL, PICK_FOLDER_CHANNEL, PROBE_PATHS_CHANNEL, REVEAL_CHANNEL } from "../channel";
 import { BrowserViews, type ResolvedPage } from "./browser";
+import { BrowserCdpGateway, CdpActionUncertain, parseBrowserControlResult, type CdpAction, type CdpActionResult, type CdpScope } from "./browserCdp";
 import {
   HAS_LOGIN_SHELL,
   loginPathCommand,
@@ -111,6 +112,15 @@ export class DesktopHost {
   private quitting = false;
   /** The pages of browser displays; made once the app is ready, since a session needs it. */
   private browsers: BrowserViews | null = null;
+  private browserCdp: BrowserCdpGateway | null = null;
+  private browserControlAddress: { endpoint: string; token: string } | null = null;
+  private browserControlRegistration: { daemon: Attached; credential: string } | null = null;
+  private browserControlEpoch = 0;
+  private browserControlAttempted = -1;
+  /** One registration transaction at a time, with one attempt per attach transition. */
+  private browserControlFlight: Promise<void> | null = null;
+  private browserControlShutdown: Promise<void> | null = null;
+  private browserControlClosed = false;
 
   constructor(
     private readonly env: DesktopEnv,
@@ -139,6 +149,7 @@ export class DesktopHost {
       (window, focus) => (focus || this.showInactive ? this.present(window, focus) : window.showInactive()),
       () => this.language.t,
     );
+    this.startBrowserControl(this.browsers);
     this.listenReveal();
     this.listenPickFolder();
     this.listenLocalPaths();
@@ -158,9 +169,18 @@ export class DesktopHost {
   }
 
   quit(): void {
+    if (this.quitting) return;
     this.quitting = true;
     this.stopWatch();
     this.runner.stop();
+    // Revoke sockets and debugger leases immediately; hold quit only for
+    // the bounded authenticated unregister, never for the operator daemon.
+    const close = this.browserCdp?.close() ?? Promise.resolve();
+    this.browserControlShutdown = Promise.all([close, this.browserControlFlight]).then(async () => {
+      const registration = this.browserControlRegistration;
+      this.browserControlRegistration = null;
+      if (registration) await this.unregisterBrowserControl(registration);
+    });
     this.log.event("host.quit", { state: this.state.kind });
   }
 
@@ -513,6 +533,7 @@ export class DesktopHost {
         this.log.event("daemon.lost", { port: current.port, pid: current.pid });
         // The shell keeps its own disconnected state on screen; nothing is reloaded here.
         this.state = { ...current, kind: "lost" };
+        this.browserControlChanged();
         this.startLostPoll();
         return;
       }
@@ -533,6 +554,7 @@ export class DesktopHost {
         if (status.url === lost.url) {
           // The same daemon answered again; the shell reconnects on its own.
           this.state = { ...lost, kind: "attached" };
+          this.browserControlChanged();
           this.startHealthWatch();
         } else {
           this.attach(status);
@@ -549,7 +571,114 @@ export class DesktopHost {
 
   private setState(next: HostState): void {
     this.state = next;
+    this.browserControlChanged();
     this.render();
+  }
+
+  // --- scoped browser automation ---------------------------------------------
+
+  private startBrowserControl(browsers: BrowserViews): void {
+    const chromeVersion = process.versions.chrome;
+    if (!chromeVersion) { this.log.event("browser.control_start_failed", { reason: "chromium_version" }); return; }
+    const gateway = new BrowserCdpGateway({
+      pages: () => browsers.cdpPages(), changed: (listener) => browsers.observeCdp(listener),
+      incarnation: (scope) => browsers.cdpIncarnation(scope),
+      attached: (page, attached) => browsers.cdpAttached(page, attached),
+      action: (scope, action, signal) => this.browserControlAction(scope, action, signal),
+      chromeVersion,
+      log: (event, fields) => this.log.event(event, fields),
+    });
+    this.browserCdp = gateway;
+    void gateway.start().then((address) => {
+      if (this.quitting) { void gateway.close(); return; }
+      this.browserControlAddress = address;
+      this.syncBrowserControl();
+    }).catch(() => this.log.event("browser.control_start_failed", { reason: "listen" }));
+    // index.ts calls quit first. This listener lets its cleanup settle before
+    // Electron exits, and then the second before-quit proceeds normally.
+    app.on("before-quit", (event) => {
+      if (this.browserControlClosed) return;
+      event.preventDefault();
+      this.quit();
+      void this.browserControlShutdown?.finally(() => { this.browserControlClosed = true; app.quit(); });
+    });
+  }
+
+  private browserControlChanged(): void {
+    this.browserControlEpoch++;
+    this.browserCdp?.setAvailable(false);
+    this.syncBrowserControl();
+  }
+
+  private syncBrowserControl(): void {
+    const address = this.browserControlAddress;
+    if (!address || this.quitting || this.browserControlFlight || this.browserControlAttempted === this.browserControlEpoch) return;
+    const epoch = this.browserControlEpoch;
+    this.browserControlAttempted = epoch;
+    const current = this.state;
+    const registration = this.browserControlRegistration;
+    this.browserControlRegistration = null;
+    this.browserControlFlight = (async () => {
+      if (registration) await this.unregisterBrowserControl(registration);
+      if (this.quitting || epoch !== this.browserControlEpoch || current.kind !== "attached") return;
+      const credential = new URLSearchParams(new URL(current.url).hash.slice(1)).get("token");
+      if (!credential) { this.log.event("browser.control_register_failed", { reason: "credential" }); return; }
+      try {
+        const response = await fetch(`${current.origin}/browser-control`, {
+          method: "POST", headers: { Authorization: `Bearer ${credential}`, "Content-Type": "application/json" },
+          body: JSON.stringify({ owner_pid: process.pid, ...address }), signal: AbortSignal.timeout(3_000),
+        });
+        await response.arrayBuffer();
+        if (!response.ok) { this.log.event("browser.control_register_failed", { status: response.status }); return; }
+        this.browserControlRegistration = { daemon: current, credential };
+        if (!this.quitting && epoch === this.browserControlEpoch) this.browserCdp?.setAvailable(true);
+        this.log.event("browser.control_registered", { owner_pid: process.pid });
+      } catch { this.log.event("browser.control_register_failed", { reason: "transport" }); }
+    })().finally(() => {
+      this.browserControlFlight = null;
+      if (epoch !== this.browserControlEpoch) this.syncBrowserControl();
+    });
+  }
+
+  private async unregisterBrowserControl(registration: { daemon: Attached; credential: string }): Promise<void> {
+    const address = this.browserControlAddress;
+    if (!address) return;
+    try {
+      const response = await fetch(`${registration.daemon.origin}/browser-control`, {
+        method: "DELETE", headers: { Authorization: `Bearer ${registration.credential}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ owner_pid: process.pid, ...address }), signal: AbortSignal.timeout(3_000),
+      });
+      await response.arrayBuffer();
+      if (!response.ok) this.log.event("browser.control_unregister_failed", { status: response.status });
+    } catch { this.log.event("browser.control_unregister_failed", { reason: "transport" }); }
+  }
+
+  private async browserControlAction(scope: CdpScope, action: CdpAction, signal: AbortSignal): Promise<CdpActionResult> {
+    const current = this.state;
+    const registration = this.browserControlRegistration;
+    if (current.kind !== "attached" || !registration || registration.daemon.url !== current.url || this.quitting) throw new Error("Desktop browser is disconnected");
+    const at = scope.workspace.indexOf("\u0000");
+    let response: Response;
+    try { response = await fetch(`${current.origin}/browser-control/action`, {
+      method: "POST", headers: { Authorization: `Bearer ${registration.credential}`, "Content-Type": "application/json" },
+      body: JSON.stringify({ device_id: scope.workspace.slice(0, at), checkout_path: scope.workspace.slice(at + 1), area_id: scope.area_id, ...action, owner_pid: process.pid }),
+      signal: AbortSignal.any([signal, AbortSignal.timeout(10_000)]),
+    }); } catch {
+      this.log.event("browser.control_action_failed", { action: action.action, reason: "transport", request_id: action.request_id });
+      throw new CdpActionUncertain();
+    }
+    let value: unknown;
+    try { value = await response.json(); } catch {
+      this.log.event("browser.control_action_failed", { action: action.action, reason: "response", request_id: action.request_id });
+      throw new CdpActionUncertain();
+    }
+    const result = parseBrowserControlResult(value);
+    if (!response.ok || !result) {
+      this.log.event("browser.control_action_failed", { action: action.action, status: response.status, request_id: action.request_id });
+      if (response.status >= 500 || response.ok && !result) throw new CdpActionUncertain();
+      throw new Error("Workspace browser action failed");
+    }
+    return result;
   }
 
   private render(): void {
