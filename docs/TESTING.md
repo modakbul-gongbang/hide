@@ -133,6 +133,12 @@ The Windows fixture boundaries also preserve these requirements:
   `localEndpoint` in `web/e2e/platform-fixture.ts` spells it for both a listener and a client.
 - A key the core derives from a path is computed from the wire spelling the core uses (`/` between names, `hide-platform`'s `path`), never from the native spelling.
   `web/e2e/s2.spec.ts` hashes the checkout folder to find its owner workspace; hashed in the Windows spelling, the key named a different workspace than the one the core chose, and the new tab the test expected appeared elsewhere.
+- A path a spec puts in a selector or compares with what the page shows is the wire spelling too: `toPage` (`desktop/src/main/wirePath.ts`) turns the native path the spec built into it.
+  `[data-explorer-row="C:\...\notes.md"]` never matches the page's `C:/.../notes.md`, and the wait runs to the test timeout.
+- A pane's shell is the one `isolatedEnv` configured, so a command for it comes from the fixture, never from POSIX text in a spec: `runInPane` runs a program there and returns its exit status, `printLinesCommand` makes it print lines, and `paneShellTabName` names the tab it titles.
+  The family is read from the configured shell (`paneShellOf`), not from `process.platform`; a shell the fixture cannot write for fails with its name.
+  cmd.exe has no `$?`, so the status comes from `call echo %^errorlevel%`, which reads it when it runs, and the status file is written last so its content says the program has finished.
+- The Windows console delivers Enter as a bare CR, where a Unix tty turns it into LF and echoes CRLF; the fixture shim ends the echoed line itself, so the next typed line is not drawn over the last one.
 - A program just copied or just exited can still be locked on Windows, so deleting it can fail with `EBUSY`.
   Confirm the process that ran it has exited before removing it; a deletion retry is not that confirmation.
 - A folder a pane's shell started in is locked until Herdr's server and its panes' processes are gone.

@@ -15,12 +15,38 @@ import { startHided, type Daemon } from "./hided-fixture";
 import { chooseColumn, countSent, screenshot } from "./wire";
 import { chord, commandLabel } from "./chords";
 import { openCurrentProjectOverview } from "./overview-entry";
+import { toPage } from "../../desktop/src/main/wirePath";
 import { quietFor, unchangedForFrames } from "./wait";
 
 test.describe.configure({ timeout: 120_000 });
 
 async function open(page: Page, daemon: Daemon): Promise<void> {
   await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+}
+
+/**
+ * Waits until `workspace-views.json` holds the one front View whose path
+ * matches. A restart kills the daemon outright on Windows, so what was just
+ * put in front has to be saved before it goes: the file that is about to go
+ * away is put in front so its state shows after the restart.
+ */
+async function savedFront(daemon: Daemon, pattern: RegExp): Promise<void> {
+  const savedFronts = (): string[] => {
+    const fronts: string[] = [];
+    const walk = (node: unknown): void => {
+      if (!node || typeof node !== "object") return;
+      if (Array.isArray(node)) return node.forEach(walk);
+      const area = node as { active?: unknown; displays?: { id: string; path: string }[] };
+      if (typeof area.active === "string" && Array.isArray(area.displays)) {
+        const shown = area.displays.find((display) => display.id === area.active);
+        if (shown) fronts.push(shown.path);
+      }
+      Object.values(node).forEach(walk);
+    };
+    walk(JSON.parse(fs.readFileSync(path.join(daemon.stateDir, "workspace-views.json"), "utf8")));
+    return fronts;
+  };
+  await expect.poll(savedFronts).toEqual([expect.stringMatching(pattern)]);
 }
 
 test("Main, Overview and a Workspace with its columns, tools and delegated child", async ({ page }) => {
@@ -168,7 +194,7 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     await settled();
     const agentsBeforeViews = (await agentArea.boundingBox())!;
     const resizesBeforeViews = resizes();
-    await page.locator(`[data-explorer-row="${path.join(root, "notes.md")}"]`).dblclick();
+    await page.locator(`[data-explorer-row="${toPage(path.join(root, "notes.md"))}"]`).dblclick();
     await expect(workspace).toHaveAttribute("data-file-views", "shown");
     await expect(viewsColumn.locator('[data-tab-kind="file"]')).toHaveCount(1);
     await expect.poll(async () => (await agentArea.boundingBox())!.width).toBeLessThan(agentsBeforeViews.width - 300);
@@ -189,7 +215,7 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     // Inside File Views nothing resizes a terminal: opening another file,
     // switching its tabs (B19).
     const resizesInViews = resizes();
-    await page.locator(`[data-explorer-row="${path.join(root, "gone.txt")}"]`).dblclick();
+    await page.locator(`[data-explorer-row="${toPage(path.join(root, "gone.txt"))}"]`).dblclick();
     await expect(viewsColumn.locator('[data-tab-kind="file"]')).toHaveCount(2);
     await viewsColumn.locator('[data-tab-kind="file"]').first().click();
     await quietFor(page, 500, "opening a file view sends nothing more");
@@ -392,8 +418,8 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     await chooseColumn(page, "tools");
     await expect(workspace).toHaveAttribute("data-tools", "off");
     const viewsWidth = (await viewsColumn.boundingBox())!.width;
-    // The file that goes away is the one in front, so its state shows after the restart.
     await viewsColumn.locator('[data-tab-kind="file"]', { hasText: "gone.txt" }).click();
+    await savedFront(daemon, /\/gone\.txt$/);
     fs.rmSync(path.join(herdr.root, "fixture", "gone.txt"));
     daemon = await daemon.restart();
     // Reopening the app is a fresh page, not a reconnect of this one.
