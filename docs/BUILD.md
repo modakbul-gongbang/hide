@@ -30,6 +30,8 @@ Hide's own merged-worktree cleanup had grown a step that forked `bash` to comput
 `[profile.dev] incremental = false` in the workspace manifest is deliberate, not a leftover.
 An agent worktree is built a few times and discarded, which never repays an incremental cache; what it does instead is grow one per worktree, and those had reached 1.5 GB.
 Debug output is what makes a stale worktree expensive, because nothing strips it: a debug `hided` measures around 115 MB against 24 MB for the release binary.
+The workspace's own crates build with `debug = "line-tables-only"` (one `[profile.dev.package.<crate>]` entry per member): a panic's backtrace keeps its files and lines, and the rest of their debug info, which is most of what their build writes and links, is left out.
+Dependencies keep the default, so changing it would not invalidate the dependency builds CI restores from its cache.
 
 ## The toolchain is never copied
 
