@@ -8,7 +8,7 @@ import os from "node:os";
 import path from "node:path";
 import { linkFixtureTranscripts, type HerdrFixture } from "./herdr-fixture";
 import { ownUntilWorkerExit } from "./worker-owned";
-import { fixtureExecutable, fixtureHomeEnv, fixtureOpenCommand, inheritedFixtureEnv } from "./platform-fixture";
+import { endWindowsProcesses, fixtureExecutable, fixtureHomeEnv, fixtureOpenCommand, inheritedFixtureEnv, windowsProcessTree, type WindowsProcess } from "./platform-fixture";
 
 /**
  * `restart` stops the daemon and starts it again on the same state directory
@@ -101,9 +101,25 @@ async function launch(herdr: HerdrFixture, label: string, dir: string, home: str
     }
     fs.rmSync(dir, { recursive: true, force: true });
   };
-  const { stop, disown } = ownUntilWorkerExit(() => {
+  // A killed daemon on Windows keeps the folders it holds open (the checkouts
+  // it watches) until it is gone, and Herdr's stop deletes the fixture root
+  // next. So its tree is listed while it runs, then ended, and this returns
+  // once none of it is left.
+  const end = () => {
+    if (process.platform !== "win32" || !child.pid || child.exitCode !== null || child.signalCode !== null) {
+      child.kill();
+      return;
+    }
+    let tree: WindowsProcess[] = [];
+    let failure: unknown;
+    try { tree = windowsProcessTree(child.pid); } catch (error) { failure = error; }
     child.kill();
+    endWindowsProcesses(tree);
+    if (failure !== undefined) throw failure;
+  };
+  const { stop, disown } = ownUntilWorkerExit(() => {
     herdr.afterStop(removeDir);
+    end();
   });
   for (let i = 0; i < 50; i += 1) {
     if (spawnFailed) {
@@ -118,7 +134,7 @@ async function launch(herdr: HerdrFixture, label: string, dir: string, home: str
         if ((await fetch(`${origin}/health`)).ok) {
           const hostId = fs.readFileSync(path.join(dir, "hide", "host-id"), "utf8").trim();
           const restart = async (beforeStart?: (stateDir: string) => void | Promise<void>) => {
-            child.kill();
+            end();
             await exited;
             await beforeStart?.(path.join(dir, "hide"));
             // The next daemon takes over the directory and its removal.

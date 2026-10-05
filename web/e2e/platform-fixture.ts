@@ -139,20 +139,20 @@ export function windowsProcessTree(pid: number): WindowsProcess[] {
 }
 
 /**
- * Ends `owned` and every process started from an executable under `root`
- * (the fixture's shims, which hided also runs), and returns once none is
- * left, so the caller can delete `root`. Throws naming the survivors after
- * five seconds.
+ * Ends `owned` and, given `root`, every process started from an executable
+ * under it (the fixture's shims, which hided also runs), and returns once
+ * none is left, so the caller can delete `root`. Throws naming the survivors
+ * after five seconds.
  */
-export function endWindowsProcesses(owned: WindowsProcess[], root: string): void {
+export function endWindowsProcesses(owned: WindowsProcess[], root?: string): void {
   powershell(`
     $owned = @($env:FIXTURE_OWNED | ConvertFrom-Json | ForEach-Object { $_ })
-    $prefix = $env:FIXTURE_ROOT.TrimEnd('\\') + '\\'
+    $prefix = if ($env:FIXTURE_ROOT) { $env:FIXTURE_ROOT.TrimEnd('\\') + '\\' } else { $null }
     $live = {
       $all = @(Get-CimInstance Win32_Process -Property ProcessId,CreationDate,ExecutablePath)
       @($all | Where-Object {
         $process = $_
-        ($process.ExecutablePath -and $process.ExecutablePath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) -or
+        ($prefix -and $process.ExecutablePath -and $process.ExecutablePath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) -or
           @($owned | Where-Object { $_.id -eq $process.ProcessId -and $_.created -eq $process.CreationDate.ToFileTimeUtc().ToString() }).Count -gt 0
       })
     }
@@ -164,5 +164,5 @@ export function endWindowsProcesses(owned: WindowsProcess[], root: string): void
       Start-Sleep -Milliseconds 100
     } while ([DateTime]::UtcNow -lt $until)
     throw "fixture processes still running after 5 s: $(($remaining | ForEach-Object { "$($_.ProcessId) $($_.ExecutablePath)" }) -join ', ')"
-  `, { FIXTURE_OWNED: JSON.stringify(owned), FIXTURE_ROOT: root });
+  `, { FIXTURE_OWNED: JSON.stringify(owned), FIXTURE_ROOT: root ?? "" });
 }
