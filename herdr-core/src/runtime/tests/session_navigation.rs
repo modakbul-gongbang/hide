@@ -1719,6 +1719,55 @@ fn pane_focus_readback_cannot_outlive_a_new_selection_or_connection() {
     }
 }
 
+/// Two tabs: `t1` holds three panes side by side, `t2` one.
+fn two_tab_focus_payload(t1_focused: &str) -> SessionSnapshotPayload {
+    let pane_rect = |pane_id: &str, x: u32, width: u32| serde_json::json!({"pane_id": pane_id, "rect": {"x": x, "y": 0, "width": width, "height": 24}});
+    crate::sidebar::owned_label_fixture(serde_json::json!({
+        "agents": [],
+        "tabs": [
+            {"workspace_id": "w1", "tab_id": "t1", "label": ""},
+            {"workspace_id": "w1", "tab_id": "t2", "label": ""}
+        ],
+        "layouts": [{
+            "workspace_id": "w1", "tab_id": "t1", "zoomed": false,
+            "area": {"x": 0, "y": 0, "width": 90, "height": 24},
+            "focused_pane_id": t1_focused,
+            "panes": [pane_rect("w1:p1", 0, 30), pane_rect("w1:p2", 30, 30), pane_rect("w1:p3", 60, 30)],
+            "splits": [
+                {"direction": "right", "ratio": 0.333_333_34,
+                 "rect": {"x": 0, "y": 0, "width": 90, "height": 24}},
+                {"direction": "right", "ratio": 0.5,
+                 "rect": {"x": 30, "y": 0, "width": 60, "height": 24}}
+            ]
+        }, {
+            "workspace_id": "w1", "tab_id": "t2", "zoomed": false,
+            "area": {"x": 0, "y": 0, "width": 90, "height": 24},
+            "focused_pane_id": "w1:p4",
+            "panes": [pane_rect("w1:p4", 0, 90)],
+            "splits": []
+        }]
+    }))
+    .expect("session payload")
+}
+
+#[test]
+fn a_pane_focus_readback_for_another_tab_cannot_pull_focus_back() {
+    let mut runtime = live_runtime();
+    runtime.ingest_session(Ok(two_tab_focus_payload("w1:p1")));
+    // Herdr's stream moves tab t1's focus while Hide has p1 selected.
+    let (_, identity) =
+        runtime.ingest_session_awaiting_focus_readback(Ok(two_tab_focus_payload("w1:p2")), None);
+    let identity = identity.unwrap();
+    // The operator selects the pane of the other tab during the read.
+    runtime.dispatch_json(&operator_focus_event("w1:p4"));
+    finish_running_pane_focus(&mut runtime, Ok(()));
+    assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p4"));
+
+    runtime.finish_pane_focus_readback(identity, true);
+    assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p4"));
+    assert_eq!(diagnostic_count(&runtime, "pane.focus.followed"), 0);
+}
+
 #[test]
 fn pane_focus_completion_during_session_read_does_not_authorize_an_unchecked_stream_move() {
     let mut runtime = live_runtime();

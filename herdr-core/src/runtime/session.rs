@@ -2021,7 +2021,13 @@ impl Runtime {
             .find(|layout| layout.focused_pane_id == identity.target_id)
             .cloned();
         let mut changed = false;
-        if confirmed && let Some(layout) = stored.clone() {
+        // The move must still be the one the selected pane's layout shows:
+        // the apply below rechecks the identity only inside that layout, so
+        // an answer for another tab than the selected one has no authority.
+        if confirmed
+            && self.pane_focus_readback_target().as_ref() == Some(&identity)
+            && let Some(layout) = stored.clone()
+        {
             changed |= self.apply_pane_layout_with_focus_check(
                 layout,
                 false,
@@ -3051,7 +3057,8 @@ impl Runtime {
                     && self.pending_pane_focus.is_none()
                     && self.pane_focus_in_flight.is_none()
             });
-            if !adopt_focus {
+            // `None` is an update held for its readback, which is not a refusal.
+            if !adopt_focus && readback.is_some() {
                 crate::diagnostic!(serde_json::json!({
                     "component": "pane_focus",
                     "kind": "pane.focus.stream_unconfirmed",
