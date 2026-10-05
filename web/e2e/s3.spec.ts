@@ -232,6 +232,31 @@ test("the Explorer lists a checkout, expands a folder and opens a preview tab", 
   }
 });
 
+test("the Explorer filter keeps matches under their folders and Escape restores the tree", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { repo } = fixture;
+  try {
+    // Collapse src, so its file is a match inside a folder the tree never listed open.
+    await page.locator(`[data-explorer-row="${repo}/src"]`).click();
+    await expect(page.locator(`[data-explorer-row="${repo}/src/main.ts"]`)).toHaveCount(0);
+
+    const filter = page.locator("[data-explorer-filter]");
+    await filter.fill("main");
+    await expect(page.locator(`[data-explorer-row="${repo}/src/main.ts"]`)).toBeVisible({ timeout: 20_000 });
+    await expect(page.locator(`[data-explorer-row="${repo}/src"]`)).toBeVisible();
+    await expect(page.locator(`[data-explorer-row="${repo}/README.md"]`)).toHaveCount(0);
+    await screenshot(page, "explorer-filter");
+
+    // Escape brings back the tree as it was: src collapsed, the rest listed.
+    await filter.press("Escape");
+    await expect(filter).toHaveValue("");
+    await expect(page.locator(`[data-explorer-row="${repo}/README.md"]`)).toBeVisible();
+    await expect(page.locator(`[data-explorer-row="${repo}/src/main.ts"]`)).toHaveCount(0);
+  } finally {
+    close(fixture);
+  }
+});
+
 // @platform: A save and a change on disk, on the platform's filesystem.
 test("editing a document marks it dirty, saves it, and a disk change asks how to resolve", { tag: "@platform" }, async ({ page }) => {
   const fixture = await openCheckout(page);
