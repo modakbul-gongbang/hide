@@ -581,9 +581,9 @@ const RUN_POLL: std::time::Duration = std::time::Duration::from_millis(20);
 
 /// Runs `command` as an [`OwnedChild`] with no input and capped outputs.
 /// The original deadline and stop apply through pipe draining, including after
-/// normal exit. Cleanup precedes that drain on every exit; reaping gets at most
-/// one existing poll interval and uncertainty retains ownership in the error.
-#[allow(clippy::disallowed_methods)] // a production wait, not test code
+/// normal exit. Cleanup precedes that drain on every exit; the tree's end is
+/// confirmed by the leader's observed exit (`confirm_end`), and uncertainty
+/// retains ownership in the error.
 pub fn run_to_end(
     command: &mut Command,
     deadline: std::time::Duration,
@@ -604,25 +604,9 @@ pub fn run_to_end(
     let mut child = OwnedChild::spawn(command).map_err(RunFailure::Start)?;
     child.bounded_drop = true;
     let outcome = capture_run(&mut child, end, stop);
-    let cleanup = child.kill_tree().and_then(|_| {
-        let reap_end = Instant::now() + RUN_POLL;
-        loop {
-            match child.try_wait()? {
-                Some(_) => return Ok(()),
-                None if Instant::now() >= reap_end => {
-                    return Err(io::Error::new(
-                        io::ErrorKind::TimedOut,
-                        "child exit was not confirmed within the cleanup bound",
-                    ));
-                }
-                None => std::thread::sleep(
-                    reap_end
-                        .saturating_duration_since(Instant::now())
-                        .min(RUN_POLL),
-                ),
-            }
-        }
-    });
+    let cleanup = child
+        .kill_tree()
+        .and_then(|_| confirm_end(&mut child, stop));
     match cleanup {
         Ok(()) => outcome,
         Err(cleanup) => Err(RunFailure::Wait(io::Error::other(RunCleanupFailure {
@@ -630,6 +614,31 @@ pub fn run_to_end(
             cleanup,
             child,
         }))),
+    }
+}
+
+/// Waits until the ended child's exit is observed. The kill is sent, and its
+/// effect is that state, not a moment: Windows ends a job's processes after
+/// `TerminateJobObject` returns, so a busy machine can take longer than any
+/// fixed bound. Only the caller's stop gives up first, one poll interval after
+/// it is seen, because a kernel call has no universal cancellation guarantee
+/// and a quitting owner does not wait on a reap.
+#[allow(clippy::disallowed_methods)] // a production wait, not test code
+fn confirm_end(child: &mut OwnedChild, stop: &std::sync::atomic::AtomicBool) -> io::Result<()> {
+    use std::sync::atomic::Ordering;
+    let mut stopping = false;
+    loop {
+        if child.try_wait()?.is_some() {
+            return Ok(());
+        }
+        if stopping {
+            return Err(io::Error::new(
+                io::ErrorKind::Interrupted,
+                "child exit was not confirmed before the caller stopped",
+            ));
+        }
+        stopping = stop.load(Ordering::Relaxed);
+        std::thread::sleep(RUN_POLL);
     }
 }
 
@@ -2121,5 +2130,59 @@ mod owner_watch_tests {
             // the next watch in this process (the second round).
             drop(owner_end);
         }
+    }
+}
+
+#[cfg(test)]
+mod run_cleanup_tests {
+    use super::*;
+    use std::sync::atomic::AtomicBool;
+
+    const ROLE: &str = "HIDE_PLATFORM_CLEANUP_TEST_LIFETIME_MS";
+
+    /// The child of the tests below: it ends on its own after the lifetime
+    /// it is given, which is longer than one poll interval.
+    #[test]
+    #[allow(clippy::disallowed_methods)] // the child sleeps to stay alive
+    fn child_role() {
+        if let Ok(lifetime) = std::env::var(ROLE) {
+            std::thread::sleep(Duration::from_millis(lifetime.parse().unwrap()));
+        }
+    }
+
+    fn child(lifetime_ms: u64) -> OwnedChild {
+        OwnedChild::spawn(
+            Command::new(std::env::current_exe().unwrap())
+                .args([
+                    "--exact",
+                    "process::run_cleanup_tests::child_role",
+                    "--test-threads=1",
+                ])
+                .env(ROLE, lifetime_ms.to_string())
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null()),
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn an_exit_that_comes_after_one_poll_interval_is_still_confirmed() {
+        let mut child = child(300);
+        confirm_end(&mut child, &AtomicBool::new(false)).unwrap();
+        assert!(child.try_wait().unwrap().is_some());
+    }
+
+    #[test]
+    fn a_raised_stop_leaves_an_exit_that_has_not_come_to_the_caller() {
+        let mut child = child(30_000);
+        let error = confirm_end(&mut child, &AtomicBool::new(true)).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::Interrupted, "{error}");
+        assert!(
+            child.try_wait().unwrap().is_none(),
+            "the child is retained, not reaped"
+        );
+        child.kill_tree().unwrap();
+        child.wait().unwrap();
     }
 }
