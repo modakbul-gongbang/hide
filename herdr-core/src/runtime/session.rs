@@ -1981,12 +1981,15 @@ impl Runtime {
         })
     }
 
-    /// Takes the one readback slot for the move the stored layouts show.
+    /// Takes the one readback slot for the move the stored layouts show. A
+    /// move that finds the slot taken is remembered for the answer to settle.
     fn begin_pane_focus_readback(&mut self) -> Option<PendingPaneFocusControl> {
+        let identity = self.pane_focus_readback_target()?;
         if self.pane_focus_readback.is_some() {
+            self.pane_focus_readback_again = true;
             return None;
         }
-        let identity = self.pane_focus_readback_target()?;
+        self.pane_focus_readback_again = false;
         self.pane_focus_readback = Some(identity.clone());
         Some(identity)
     }
@@ -1999,6 +2002,7 @@ impl Runtime {
     /// Frees the readback slot for a worker that ended without an answer.
     pub(crate) fn abandon_pane_focus_readback(&mut self) {
         self.pane_focus_readback = None;
+        self.pane_focus_readback_again = false;
     }
 
     /// Settles the readback for `identity` and returns whether the snapshot
@@ -2009,13 +2013,15 @@ impl Runtime {
     /// now with its focus and zoom. The identity is checked again there:
     /// a newer selection, a pending focus request or another connection
     /// leaves the answer without authority. An unconfirmed answer changes
-    /// nothing and is not asked again until the next session update.
+    /// nothing and is not asked again until the next session update; an
+    /// update that arrived while the read was out is that next update.
     pub(crate) fn finish_pane_focus_readback(
         &mut self,
         identity: PendingPaneFocusControl,
         confirmed: bool,
     ) -> (bool, Option<PendingPaneFocusControl>) {
         self.pane_focus_readback = None;
+        let again = std::mem::take(&mut self.pane_focus_readback_again);
         let stored = self
             .snapshot
             .pane_layouts
@@ -2038,7 +2044,7 @@ impl Runtime {
             changed |= self.settle_selection_projection();
             changed |= self.refresh_browser_inventory_scope();
         }
-        let next = if confirmed || stored.is_none() {
+        let next = if confirmed || stored.is_none() || again {
             self.begin_pane_focus_readback()
         } else {
             None

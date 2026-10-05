@@ -1277,6 +1277,10 @@ pub struct Runtime {
     /// the session itself is already ingested, so a slow Herdr delays only
     /// the focus, never the topology that arrived with it.
     pane_focus_readback: Option<PendingPaneFocusControl>,
+    /// A session update called for a readback while the one slot was taken.
+    /// The outstanding answer may have been read before that update, so an
+    /// unconfirmed answer is asked again rather than losing the move.
+    pane_focus_readback_again: bool,
     next_pane_focus_serial: u64,
     /// The one ordered lane the local tab and pane focus controls travel on.
     control_lane: ControlLane,
@@ -1779,6 +1783,7 @@ impl Runtime {
             pending_pane_focus: None,
             pane_focus_in_flight: None,
             pane_focus_readback: None,
+            pane_focus_readback_again: false,
             control_lane: ControlLane::default(),
             last_view_intent_serial: 0,
             next_pane_focus_serial: 0,
