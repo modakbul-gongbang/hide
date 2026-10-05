@@ -532,6 +532,88 @@ fn a_detached_child_leaves_its_parents_output_to_end_with_the_parent() {
     );
 }
 
+/// What a supervisor hands a program besides its standard streams: a
+/// debugging pipe, a readiness pipe. This test lends one to the detacher the
+/// way a supervisor lends it to `hide connect`.
+fn lend(command: &mut Command, writer: &std::io::PipeWriter) {
+    #[cfg(unix)]
+    {
+        use std::os::fd::AsRawFd;
+        use std::os::unix::process::CommandExt;
+        let descriptor = writer.as_raw_fd();
+        // SAFETY: only `fcntl` runs after fork, and it is async-signal-safe.
+        unsafe {
+            command.pre_exec(move || {
+                if libc::fcntl(descriptor, libc::F_SETFD, 0) < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::io::AsRawHandle;
+        use windows_sys::Win32::Foundation::{HANDLE_FLAG_INHERIT, SetHandleInformation};
+        // The child inherits every inheritable handle; this one is offered to it alone.
+        let _ = command;
+        // SAFETY: the handle is the open write end this test owns.
+        let marked = unsafe {
+            SetHandleInformation(
+                writer.as_raw_handle(),
+                HANDLE_FLAG_INHERIT,
+                HANDLE_FLAG_INHERIT,
+            )
+        };
+        assert!(
+            marked != 0,
+            "the write end could not be offered to the child"
+        );
+    }
+}
+
+/// A detached child holds none of the descriptors or handles its parent was
+/// given beyond the standard ones. A daemon started by a program a supervisor
+/// launched with a pipe of its own would otherwise keep that pipe open for as
+/// long as the daemon lives, and a supervisor that waits for the pipe to close
+/// (a test runner closing an app, a terminal waiting for its job) waits for
+/// the daemon, which is meant to outlive the program that started it.
+#[test]
+fn a_detached_child_holds_none_of_its_parents_extra_descriptors() {
+    let _serial = serial();
+    let (mut reader, writer) = std::io::pipe().unwrap();
+    let mut command = role_command("detacher");
+    lend(&mut command, &writer);
+    let mut parent = command.spawn().unwrap();
+    drop(writer);
+    let stdout = parent.stdout.take().unwrap();
+    let (named, heard_name) = mpsc::channel();
+    thread::spawn(move || {
+        for line in BufReader::new(stdout).lines().map_while(Result::ok) {
+            if let Some((_, number)) = line.split_once("READY ") {
+                let _ = named.send(number.trim().parse::<u32>().unwrap());
+            }
+        }
+    });
+    let (ended, heard_end) = mpsc::channel();
+    thread::spawn(move || {
+        // End of input, or a broken pipe on Windows, is the answer: nothing holds the write end.
+        let mut byte = [0u8; 1];
+        while matches!(reader.read(&mut byte), Ok(read) if read > 0) {}
+        let _ = ended.send(());
+    });
+    let daemon = heard_name
+        .recv_timeout(Duration::from_secs(30))
+        .expect("the detacher named its child");
+    assert!(parent.wait().unwrap().success(), "the detacher ended");
+    let closed = heard_end.recv_timeout(Duration::from_secs(15));
+    let _ = kill_tree(daemon);
+    assert!(
+        closed.is_ok(),
+        "the pipe lent to the detacher stayed open after it exited: its detached child holds it"
+    );
+}
+
 /// An owned `tree` child and the pid of its grandchild.
 fn owned_tree() -> (OwnedChild, u32) {
     owned_role("tree")
