@@ -188,10 +188,10 @@ A piece that another open change is still building is marked as pending with the
    See [Operating-system differences belong to one fixture helper](#operating-system-differences-belong-to-one-fixture-helper); native home variables, executable names, the tool path, the compiler and the no-op opener live in `web/e2e/platform-fixture.ts`, not in a `process.platform` branch in a spec.
    The endpoint helper (`focusGate` spells the Windows pipe itself in `web/e2e/pane-focus-ordering.spec.ts`) is not there yet; add it to `platform-fixture.ts` when a second spec needs it.
 9. **A retry is a label, not a fix.**
-   Pending #419 (not merged): CI will run Playwright with `retries: 1` so that a test that fails and then passes is reported as `flaky` instead of failing the run; two failures still fail the lane.
-   That is a classification for the issue that tracks the test, with a seven-day expiry to fix or delete it.
+   CI runs Playwright with `retries: 1` (`web/playwright.config.ts`, `desktop/playwright.config.ts`), so a test that fails and then passes is reported as `flaky` instead of failing the run; two failures still fail the lane.
+   That is a classification for the issue `scripts/ci-flaky-report.py` files for the test, with a seven-day expiry to fix or delete it.
    It is never a reason to loosen a wait.
-   The rule is in [Flaky tests](#flaky-tests); until #419 merges, retries are off and `@flaky` is the policy there.
+   The rule is in [Flaky tests](#flaky-tests); locally nothing retries.
 
 ## Writing a Rust test
 
@@ -227,9 +227,9 @@ The crate's own `AGENTS.md` says where the file goes; this section says how the 
    Use a private folder per test and never a fixed name in `/tmp`.
    Why: a leaked process or file is inherited by the next test and by the next run.
 8. **Retries are a classification.**
-   Pending #419: CI will run the Rust suite with `cargo-nextest --retries 1`, so a test that fails once and then passes is reported as flaky and recorded in an issue with an expiry; two failures fail the lane.
-   `nextest` does not run doc tests, so those stay on `cargo test`.
-   This is part of #419 and is not merged; until then the Rust suite has no retry and an OS-contract test is quarantined with `ignore` as described in [Flaky tests](#flaky-tests).
+   CI runs the Linux Rust lane with `scripts/verify-cargo.sh nextest --profile ci` (`retries = 1` in `.config/nextest.toml`), so a test that fails once and then passes is reported as flaky and recorded in an issue with an expiry; two failures fail the lane.
+   `nextest` does not run doc tests; the workspace has none that runs today, and a runnable one needs its own `cargo test --doc` step.
+   The Windows and macOS lanes still run `cargo test`, which has no retry; an OS-contract test there is quarantined with `ignore` as described in [Flaky tests](#flaky-tests).
    The rule against raising a deadline to pass is unchanged.
 
 ## Which lanes a pull request runs
