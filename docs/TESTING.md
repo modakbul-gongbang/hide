@@ -93,8 +93,9 @@ When the behavior depends on the order of two events, the test fixes that order;
   The fixture uses `/bin/zsh` with its private `.zshrc` on Unix and the native `ComSpec` cmd shell with a controlled `PROMPT` on Windows.
   A missing native shell fails fixture setup before starting the server.
   Before each initial agent start, the fixture waits for the prompt and the shell to hold the foreground within the existing ten-second setup bound.
-  On Windows, the pinned Herdr can report the shell as foreground while a non-agent child remains, so the fixture also waits, for that shell to have no children before any `agent start` it sends (setup's and every `fixture.run`'s), counted by the compiled `hide-children.exe` (a PowerShell start under load outlasted the bound); a missing shell or failed count fails setup.
-  The fixture sends each `agent.start` once and retains the original input and PTY-log assertions.
+  Every `agent start` the fixture sends (setup's and every `fixture.run`'s) goes through `startAgentAtShell`, which sends it only while `pane process-info` says the shell alone holds the terminal, the condition the pinned Herdr checks (`docs/ARCHITECTURE.md`, Starting an agent), as the product's `agent_start::start_at_shell` does.
+  A refusal as `agent_pane_busy` typed nothing, so the fixture goes back to waiting within the same ten-second bound; any other answer is the start's.
+  A pane's shell that never gets there fails with the last process info and, on Windows, the children the shell still has, listed by the compiled `hide-children.exe` (a child count of zero is not the condition: a shell can keep a resident child).
 - Use `fixtureHomeEnv` from `web/e2e/platform-fixture.ts` to move `HOME`, provider config homes and, on Windows, `USERPROFILE`, `APPDATA` and `LOCALAPPDATA` together into the private fixture.
   The fixtures run a compiled `claude` shim instead, which proves the pipeline and not an agent or physical IME.
   On Windows the interactive shim writes its readiness line after console setup; provider/auth replies return before that line, and input logs record only received input.

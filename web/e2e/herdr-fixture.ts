@@ -54,10 +54,10 @@ export type HerdrFixture = {
   afterStop: (cleanup: () => void) => void;
 };
 
-// Prints how many processes have `argv[1]` as their parent (exit 2 when that
-// process is not running). One native call answers what a PowerShell CIM query
-// answered, without a PowerShell start that a loaded runner can stretch past
-// the setup deadline.
+// Lists the processes that have `argv[1]` as their parent, one `pid name` line
+// each (exit 2 when that process is not running). A failure message names
+// what a shell was still running without a PowerShell start, which a loaded
+// runner can stretch past a setup deadline.
 const CHILDREN_SOURCE = `#include <windows.h>
 #include <tlhelp32.h>
 #include <stdio.h>
@@ -70,15 +70,13 @@ int main(int argc, char **argv) {
   if (snapshot == INVALID_HANDLE_VALUE) return 1;
   PROCESSENTRY32 entry;
   entry.dwSize = sizeof entry;
-  int running = 0, children = 0;
+  int running = 0;
   for (BOOL more = Process32First(snapshot, &entry); more; more = Process32Next(snapshot, &entry)) {
     if (entry.th32ProcessID == parent) running = 1;
-    if (entry.th32ParentProcessID == parent) children++;
+    if (entry.th32ParentProcessID == parent) printf("%lu %s\\n", (unsigned long)entry.th32ProcessID, entry.szExeFile);
   }
   CloseHandle(snapshot);
-  if (!running) return 2;
-  printf("%d\\n", children);
-  return 0;
+  return running ? 0 : 2;
 }
 `;
 
@@ -542,26 +540,45 @@ export async function finishFixtureTurn(fixture: HerdrFixture, pane: string, els
 }
 
 /**
- * Windows only. The pinned Herdr reports cmd as the foreground process even
- * while a non-agent child runs, but `agent.start` refuses a shell with any
- * descendant (`agent_pane_busy`). Observe that condition directly, with one
- * bounded native count per look and no retry of `agent.start`. Synchronous so
- * the fixture's `run` can hold an `agent start` until the pane is ready.
+ * `herdr agent start` for `pane`, sent only while the pane's shell alone holds
+ * the terminal: its foreground process group is the shell's own and has no
+ * other member. That is the condition the pinned Herdr checks
+ * (`available_pane_shell_from_job`, docs/ARCHITECTURE.md, Starting an agent), and
+ * `pane process-info` reports it. Herdr does not wait, so the fixture does, as
+ * the product does (`agent_start::start_at_shell`): a refusal as `agent_pane_busy`
+ * typed nothing, so it goes back to waiting, within the same bound. Any other
+ * answer is the start's. Synchronous so `run` can hold a start until the pane is ready.
  */
-function waitForQuietShell(env: NodeJS.ProcessEnv, bin: string, root: string, pane: string, ms = 10_000): void {
-  const shell = (herdr(env, bin, ["pane", "process-info", "--pane", pane]) as { result: { process_info: { shell_pid: number | null } } }).result.process_info.shell_pid;
-  if (!Number.isSafeInteger(shell) || !shell || shell <= 1) throw new Error(`fixture shell PID is unavailable in pane ${pane}`);
+function startAgentAtShell(env: NodeJS.ProcessEnv, bin: string, root: string, args: string[], ms = 10_000): unknown {
+  const pane = args[args.indexOf("--pane") + 1]!;
   const deadline = Date.now() + ms;
+  let seen = "";
   for (;;) {
-    const counted = spawnSync(path.join(root, "bin", "hide-children.exe"), [String(shell)], { encoding: "utf8", timeout: 10_000, windowsHide: true });
-    if (counted.error) throw counted.error;
-    if (counted.status === 2) throw new Error(`the shell of pane ${pane} exited before agent start`);
-    if (counted.status !== 0) throw new Error(`hide-children exited ${counted.status}: ${counted.stderr.trim()}`);
-    const children = counted.stdout.trim();
-    if (children === "0") return;
-    if (Date.now() >= deadline) throw new Error(`timed out waiting for the shell of pane ${pane} to have no child processes before agent start; ${children} children`);
+    const info = (herdr(env, bin, ["pane", "process-info", "--pane", pane]) as {
+      result: { process_info: { shell_pid: number | null; foreground_process_group_id: number | null; foreground_processes: { pid: number }[] } };
+    }).result.process_info;
+    const shell = info.shell_pid;
+    seen = JSON.stringify(info);
+    if (shell !== null && shell > 1 && info.foreground_process_group_id === shell && info.foreground_processes.every((process) => process.pid === shell)) {
+      try {
+        return herdr(env, bin, args);
+      } catch (error) {
+        if (!String((error as { stdout?: unknown }).stdout ?? error).includes("agent_pane_busy")) throw error;
+        seen = `${seen}; busy answer: ${String((error as { stdout?: unknown }).stdout ?? error).trim()}`;
+      }
+    }
+    if (Date.now() >= deadline) {
+      throw new Error(`the shell of pane ${pane} never held the terminal alone before agent start; last process info ${seen}${shellChildren(root, shell)}`);
+    }
     Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
   }
+}
+
+/** On Windows, what the shell started, for a failure message; nothing elsewhere. */
+function shellChildren(root: string, shell: number | null): string {
+  if (process.platform !== "win32" || shell === null) return "";
+  const listed = spawnSync(path.join(root, "bin", "hide-children.exe"), [String(shell)], { encoding: "utf8", timeout: 10_000, windowsHide: true });
+  return `; children of shell ${shell}: ${listed.error ? String(listed.error) : listed.stdout.trim().replaceAll("\n", ", ") || "none"}`;
 }
 
 export async function startHerdr({ agents = true }: { agents?: boolean } = {}): Promise<HerdrFixture> {
@@ -721,8 +738,7 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
         10_000,
         () => JSON.stringify({ pane: paneRead(env, bin, pane), processInfo }),
       );
-      if (agents && process.platform === "win32") waitForQuietShell(env, bin, root, pane);
-      if (agents) herdr(env, bin, ["agent", "start", name, "--kind", "claude", "--pane", pane]);
+      if (agents) startAgentAtShell(env, bin, root, ["agent", "start", name, "--kind", "claude", "--pane", pane]);
     }
     if (agents) {
       // Distinct row labels, made by the core from each pane's transcript.
@@ -745,8 +761,7 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
       inputLogs,
       fixturePath,
       run: (args) => {
-        if (process.platform === "win32" && args[0] === "agent" && args[1] === "start" && args.includes("--pane")) waitForQuietShell(env, bin, root, args[args.indexOf("--pane") + 1]!);
-        const result = herdr(env, bin, args);
+        const result = args[0] === "agent" && args[1] === "start" && args.includes("--pane") ? startAgentAtShell(env, bin, root, args) : herdr(env, bin, args);
         if (args[0] === "agent" && args[1] === "start") {
           const pane = args[args.indexOf("--pane") + 1];
           const kind = args[args.indexOf("--kind") + 1];
