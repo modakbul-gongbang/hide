@@ -90,6 +90,7 @@ fn clone_event(url: &str, parent: &Path, name: &str) -> Vec<u8> {
 }
 
 /// Waits for the clone slot to leave `cloning` and `cancelling`.
+#[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
 fn settled(shared: &Arc<Mutex<Runtime>>) -> crate::model::RepositoryCloneSnapshot {
     let deadline = Instant::now() + Duration::from_secs(60);
     loop {

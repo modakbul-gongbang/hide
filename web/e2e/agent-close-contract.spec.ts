@@ -86,7 +86,7 @@ test("closing a primary checkout's last tab in the UI leaves a replacement tab i
     const replacement = snapshot().tabs.find((tab) => tab.workspace_id === workspaceId)!;
     const replacementTab = page.locator(`[data-agent-tab-bar] [data-tab="${replacement.tab_id}"]`);
     await expect(replacementTab).toBeVisible();
-    expect(await replacementTab.locator("xpath=ancestor::*[@data-agent-area-id]").getAttribute("data-agent-area-id")).toBe(area);
+    await expect(replacementTab.locator("xpath=ancestor::*[@data-agent-area-id]")).toHaveAttribute("data-agent-area-id", area);
     expect(snapshot().workspaces.some((workspace) => workspace.workspace_id === sibling.result.workspace.workspace_id)).toBe(true);
     await screenshot(page, "agent-primary-replacement-tab");
   } finally { daemon?.stop(); herdr.stop(); }

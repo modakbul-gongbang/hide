@@ -723,6 +723,7 @@ fn bounded(path: String, text: Result<(String, bool), String>) -> Diff {
 
 /// Waits for `child` without holding its lock between checks, so the
 /// watchdog can take it to stop the child meanwhile.
+#[allow(clippy::disallowed_methods)] // a production wait, not test code
 fn wait_unlocked(
     child: &std::sync::Mutex<OwnedChild>,
 ) -> std::io::Result<std::process::ExitStatus> {

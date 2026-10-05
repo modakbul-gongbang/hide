@@ -542,6 +542,7 @@ fn daemon_socket_present(path: &Path) -> Result<bool, String> {
     Ok(true)
 }
 
+#[allow(clippy::disallowed_methods)] // a production wait, not test code
 fn stop_daemon(home: &Path) -> Result<(), String> {
     let path = home.join("api.sock");
     if !daemon_socket_present(&path)? {

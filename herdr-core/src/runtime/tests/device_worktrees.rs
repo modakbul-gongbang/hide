@@ -151,6 +151,7 @@ fn dispatch(shared: &Arc<Mutex<Runtime>>, kind: &str, payload: serde_json::Value
         .dispatch_json(&serde_json::to_vec(&event).unwrap());
 }
 
+#[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
 fn wait(shared: &Arc<Mutex<Runtime>>, what: &str, ready: impl Fn(&Runtime) -> bool) {
     let deadline = std::time::Instant::now() + Duration::from_secs(10);
     while !ready(&shared.lock().unwrap()) {

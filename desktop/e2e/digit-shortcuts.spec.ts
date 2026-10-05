@@ -17,6 +17,7 @@ import { labelAgent, setFixtureLifecycle, startHerdr, type HerdrFixture } from "
 import "../../web/src/host";
 import { countSent, enterWorkspace } from "../../web/e2e/wire";
 import { hostLog, isolate, launchShell, test, type Isolated } from "./fixture";
+import { animationsFinished, quietFor } from "../../web/e2e/wait";
 
 let herdr: HerdrFixture;
 let run: Isolated;
@@ -45,7 +46,7 @@ test.afterEach(async () => {
 /** After the one expected event, a quiet moment in which no second one arrives. */
 async function exactlyOnce(sent: Map<string, number>, kind: string, expected: number, page: Page): Promise<void> {
   await expect.poll(() => sent.get(kind) ?? 0).toBe(expected);
-  await page.waitForTimeout(600);
+  await quietFor(page, 600, "no second event follows the one counted");
   expect(sent.get(kind) ?? 0).toBe(expected);
 }
 
@@ -61,7 +62,7 @@ async function boxes(locators: Locator[]): Promise<(string | null)[]> {
 
 /** A quiet moment in which no keycap appears. */
 async function noKeycap(page: Page): Promise<void> {
-  await page.waitForTimeout(400);
+  await quietFor(page, 400, "no keycap appears");
   await expect(page.locator("[data-keycap]")).toHaveCount(0);
 }
 
@@ -117,7 +118,7 @@ test("⌘n selects a tab, ⌥n an agent, and holding ⌘ or ⌥ shows the number
     await expect(canvas).toHaveAttribute("data-canvas", tabs[1]!);
     await exactlyOnce(sent, "focus_tab", focused + 1, page);
     await page.keyboard.press("Meta+Digit3");
-    await page.waitForTimeout(400);
+    await quietFor(page, 400, "the shortcut with no target sends nothing");
     expect(sent.get("focus_tab") ?? 0).toBe(focused + 1);
     await page.keyboard.press("Meta+Digit1");
     await expect(canvas).toHaveAttribute("data-canvas", tabs[0]!);
@@ -218,7 +219,7 @@ test("⌘n selects a tab, ⌥n an agent, and holding ⌘ or ⌥ shows the number
     await exactlyOnce(sent, "focus_pane", opened + 1, page);
     await expect(page.locator(`[data-agent-list] [data-pane="${secondPane}"] [aria-current="true"]`)).toHaveCount(1);
     await page.keyboard.press("Alt+Digit3");
-    await page.waitForTimeout(400);
+    await quietFor(page, 400, "the shortcut with no target sends nothing");
     expect(sent.get("focus_pane") ?? 0).toBe(opened + 1);
 
     // docs/status-model.md: a Needs You agent is raised above the Projects
@@ -259,7 +260,7 @@ test("⌘n selects a tab, ⌥n an agent, and holding ⌘ or ⌥ shows the number
       await expect(page.locator("html")).toHaveClass(/\blight\b/);
       await page.keyboard.press("Escape");
       await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
-      await page.waitForTimeout(400);
+      await animationsFinished(page);
       await page.keyboard.down("Meta");
       await expect(tabCaps).toHaveCount(2);
       await capture(page, "digit-hints-tabs-light", source);

@@ -3751,6 +3751,7 @@ impl Drop for TerminalSession {
     }
 }
 
+#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn reap_local_terminal_child(child: &mut OwnedChild, pane_id: &str) {
     for _ in 0..20 {
         match child.try_wait() {
@@ -5144,6 +5145,7 @@ mod tests {
 
     #[test]
     #[ignore = "requires an owned remote fixture and HERDR_TEST_REMOTE_CONTROL_* variables"]
+    #[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
     fn official_remote_control_fixture_probe() {
         let alias_name = std::env::var("HERDR_TEST_SSH_ALIAS")
             .expect("HERDR_TEST_SSH_ALIAS names a configured SSH host");
