@@ -42,6 +42,14 @@ impl Fixture {
     }
 }
 
+/// The agents Hide writes a hook for on this system: the others' documentation
+/// names no Windows shell, so there an install is refused.
+fn installable() -> impl Iterator<Item = GuidanceAgent> {
+    GuidanceAgent::ALL
+        .into_iter()
+        .filter(|agent| agent.supported_here().is_ok())
+}
+
 /// The command string of every hook anywhere in `value`.
 fn commands(value: &Value) -> Vec<String> {
     let mut found = Vec::new();
@@ -65,6 +73,7 @@ fn collect(value: &Value, found: &mut Vec<String>) {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn gemini_writes_the_documented_settings_shape_with_milliseconds() {
     let fixture = Fixture::new(GuidanceAgent::Gemini);
@@ -82,6 +91,7 @@ fn gemini_writes_the_documented_settings_shape_with_milliseconds() {
     assert!(command.starts_with("if [ -x '"), "guarded: {command}");
 }
 
+#[cfg(unix)]
 #[test]
 fn qwen_writes_the_documented_settings_shape_with_seconds() {
     let fixture = Fixture::new(GuidanceAgent::Qwen);
@@ -97,6 +107,7 @@ fn qwen_writes_the_documented_settings_shape_with_seconds() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn droid_writes_events_at_the_top_of_its_own_hooks_file() {
     let fixture = Fixture::new(GuidanceAgent::Droid);
@@ -110,6 +121,7 @@ fn droid_writes_events_at_the_top_of_its_own_hooks_file() {
     assert_eq!(hook["timeout"], 8);
 }
 
+#[cfg(unix)]
 #[test]
 fn droid_never_hides_hooks_kept_in_settings_json_behind_a_new_hooks_file() {
     let fixture = Fixture::new(GuidanceAgent::Droid);
@@ -166,6 +178,7 @@ fn copilot_writes_its_own_file_with_both_shell_keys_and_seconds() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn kiro_writes_its_own_v1_file_with_an_action() {
     let fixture = Fixture::new(GuidanceAgent::Kiro);
@@ -186,6 +199,7 @@ fn kiro_writes_its_own_v1_file_with_an_action() {
     );
 }
 
+#[cfg(unix)]
 #[test]
 fn cursor_augment_and_junie_write_the_shapes_their_documentation_gives() {
     let fixture = Fixture::new(GuidanceAgent::Cursor);
@@ -286,7 +300,7 @@ fn another_tools_entries_survive_install_and_remove_in_every_shared_file() {
 
 #[test]
 fn a_second_install_changes_nothing_and_a_removal_leaves_no_trace_of_an_own_file() {
-    for agent in GuidanceAgent::ALL {
+    for agent in installable() {
         let fixture = Fixture::new(agent);
         assert!(
             install(agent, fixture.home(), &fixture.helper)
@@ -320,7 +334,7 @@ fn a_second_install_changes_nothing_and_a_removal_leaves_no_trace_of_an_own_file
 
 #[test]
 fn a_file_that_does_not_parse_is_never_written() {
-    for agent in GuidanceAgent::ALL {
+    for agent in installable() {
         let fixture = Fixture::new(agent);
         fixture.write(agent, "{ not json");
         let before = fs::read(agent.config_path(fixture.home())).unwrap();
@@ -343,7 +357,7 @@ fn a_file_that_does_not_parse_is_never_written() {
 
 #[test]
 fn an_agent_that_is_not_set_up_has_nothing_to_attach_to() {
-    for agent in GuidanceAgent::ALL {
+    for agent in installable() {
         let home = tempfile::tempdir().unwrap();
         assert!(matches!(
             status(agent, home.path()),
@@ -352,6 +366,7 @@ fn an_agent_that_is_not_set_up_has_nothing_to_attach_to() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn an_older_marker_reads_outdated_and_a_gone_helper_reads_failed() {
     let fixture = Fixture::new(GuidanceAgent::Qwen);
@@ -375,6 +390,7 @@ fn an_older_marker_reads_outdated_and_a_gone_helper_reads_failed() {
     ));
 }
 
+#[cfg(unix)]
 #[test]
 fn the_installed_helper_is_read_back_from_the_entry() {
     let fixture = Fixture::new(GuidanceAgent::Kiro);
@@ -430,6 +446,7 @@ fn the_same_session_start_twice_prints_the_same_bytes() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn another_tools_hook_in_the_same_group_survives_a_reinstall_and_a_removal() {
     for (agent, shared) in [
@@ -498,6 +515,7 @@ fn another_tools_hook_in_the_same_group_survives_a_reinstall_and_a_removal() {
     }
 }
 
+#[cfg(unix)]
 #[test]
 fn removing_hide_from_droids_own_hooks_file_deletes_the_file_it_would_leave_empty() {
     let fixture = Fixture::new(GuidanceAgent::Droid);
