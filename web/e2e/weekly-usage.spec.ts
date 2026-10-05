@@ -11,6 +11,7 @@ import os from "node:os";
 import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
+import { fixtureProgram, fixtureToolPath } from "./platform-fixture";
 import { screenshot } from "./wire";
 
 test.describe.configure({ timeout: 120_000 });
@@ -68,9 +69,16 @@ function usageShim() {
     `Current week (Fable): 6% used · resets ${reset}`,
   ].join("\n");
   fs.writeFileSync(frame, JSON.stringify({ type: "result", subtype: "success", is_error: false, result }));
-  fs.writeFileSync(path.join(bin, "claude"), `#!/bin/sh\nwhile [ ! -e '${gate}' ]; do /bin/sleep 0.1; done\n/bin/cat '${frame}'\n`, { mode: 0o755 });
+  fixtureProgram(
+    bin,
+    "claude",
+    `const fs = require("fs");
+while (!fs.existsSync(${JSON.stringify(gate)})) Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+process.stdout.write(fs.readFileSync(${JSON.stringify(frame)}));
+`,
+  );
   return {
-    path: `${bin}:/usr/bin:/bin`,
+    path: fixtureToolPath(bin),
     release: () => fs.writeFileSync(gate, ""),
     cleanup: () => fs.rmSync(root, { recursive: true, force: true }),
   };

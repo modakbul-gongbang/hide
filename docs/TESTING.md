@@ -133,6 +133,9 @@ The Windows fixture boundaries also preserve these requirements:
 
 - An endpoint is a named pipe on Windows: a fixture that would use the socket path `P` on Unix uses `\\.\pipe\P`, because listening on a Unix socket path there fails with `EACCES`.
   `localEndpoint` in `web/e2e/platform-fixture.ts` spells it for both a listener and a client.
+- A new fake `gh`, `tailscale` or provider is a Node script made by `fixtureProgram` in `web/e2e/platform-fixture.ts`, never a `#!/bin/sh` file: Windows cannot run a script by name, and its shell is not the Unix one.
+  One compiled launcher (`name.exe`, compiled once per worker) runs the `name.js` beside it with the interpreter its first line names, so there is one native program and one script per fake.
+  A `PATH` that holds the fake is joined with `path.delimiter`, because `:` splits a drive letter on Windows.
 - A key the core derives from a path is computed from the wire spelling the core uses (`/` between names, `hide-platform`'s `path`), never from the native spelling.
   `web/e2e/s2.spec.ts` hashes the checkout folder to find its owner workspace; hashed in the Windows spelling, the key named a different workspace than the one the core chose, and the new tab the test expected appeared elsewhere.
 - A path a spec puts in a selector or compares with what the page shows is the wire spelling too: `toPage` (`desktop/src/main/wirePath.ts`) turns the native path the spec built into it.

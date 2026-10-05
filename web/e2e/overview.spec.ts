@@ -26,6 +26,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { agentsIn, continueFixtureTranscript, declareParent, labelAgent, sessionOf, startHerdr, setFixtureLifecycle, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
+import { fixtureProgram } from "./platform-fixture";
 import { countSent, screenshot } from "./wire";
 import { chord, field } from "./chords";
 import { animationsFinished, quietFor, unchangedForFrames } from "./wait";
@@ -129,29 +130,34 @@ function fakeGh(dir: string): string {
     },
   });
   const failedOnce = path.join(bin, "issue-4-failed");
-  fs.writeFileSync(
-    path.join(bin, "gh"),
-    `#!/bin/sh
-case "$*" in
-  *"--state merged"*) printf '%s\\n' '[]'; exit 0 ;;
-esac
-case "$1 $2" in
-  "auth status") exit 0 ;;
-  "pr list") sleep 1; printf '%s\\n' '${pulls}' ;;
-  "repo view") printf '%s\\n' '{"nameWithOwner":"acme/repo"}' ;;
-  "issue list") printf '%s\\n' '${issues}' ;;
-  "issue view")
-    case "$3" in
-      2) printf '%s\\n' '${detail}' ;;
-      4)
-        if [ -e '${failedOnce}' ]; then printf '%s\\n' '${plain("리뷰할 본문")}'; else : > '${failedOnce}'; echo "HTTP 502" >&2; exit 1; fi ;;
-      *) printf '%s\\n' '${plain("그래프 뷰의 본문")}' ;;
-    esac ;;
-  "api graphql") printf '%s\\n' '${dependencies}' ;;
-  *) echo "unsupported: $*" >&2; exit 1 ;;
-esac
+  fixtureProgram(
+    bin,
+    "gh",
+    `const fs = require("fs");
+const args = process.argv.slice(2);
+const key = args.slice(0, 2).join(" ");
+const done = (text) => { console.log(text); process.exit(0); };
+if (args.join(" ").includes("--state merged")) done("[]");
+if (key === "auth status") process.exit(0);
+if (key === "pr list") { Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 1000); done(${JSON.stringify(pulls)}); }
+if (key === "repo view") done('{"nameWithOwner":"acme/repo"}');
+if (key === "issue list") done(${JSON.stringify(issues)});
+if (key === "issue view") {
+  const number = args[2];
+  if (number === "2") done(${JSON.stringify(detail)});
+  if (number === "4") {
+    const failedOnce = ${JSON.stringify(failedOnce)};
+    if (fs.existsSync(failedOnce)) done(${JSON.stringify(plain("리뷰할 본문"))});
+    fs.writeFileSync(failedOnce, "");
+    console.error("HTTP 502");
+    process.exit(1);
+  }
+  done(${JSON.stringify(plain("그래프 뷰의 본문"))});
+}
+if (key === "api graphql") done(${JSON.stringify(dependencies)});
+console.error("unsupported: " + args.join(" "));
+process.exit(1);
 `,
-    { mode: 0o755 },
   );
   return bin;
 }
@@ -289,7 +295,7 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     fs.mkdirSync(quiet);
     await workspaceAt(herdr, quiet, null);
 
-    daemon = await startHided(herdr, "overview", undefined, { PATH: `${fakeGh(herdr.root)}:${herdr.fixturePath}` });
+    daemon = await startHided(herdr, "overview", undefined, { PATH: `${fakeGh(herdr.root)}${path.delimiter}${herdr.fixturePath}` });
     const last = new Map<string, Record<string, unknown>>();
     const sent = countSent(page, last);
     await open(page, daemon);
