@@ -1134,8 +1134,10 @@ fn replacing_a_link_points_the_same_name_at_the_new_target_with_nothing_left_bes
     assert_eq!(names(outer.path()), ["current", "version-1", "version-2"]);
 }
 
-#[test]
-fn a_link_that_is_replaced_never_leads_nowhere_while_a_reader_follows_it() {
+/// Swaps `current` between two versions 40 times while a reader loops on
+/// `read`, which answers the version it found; a read can be refused while
+/// the swap lands on Windows, and what it must never be is "not found".
+fn replace_while_reading(read: impl Fn(&Path) -> std::io::Result<String> + Sync) {
     let outer = folder();
     for version in ["version-1", "version-2"] {
         fs::create_dir(outer.path().join(version)).unwrap();
@@ -1149,11 +1151,9 @@ fn a_link_that_is_replaced_never_leads_nowhere_while_a_reader_follows_it() {
         scope.spawn(|| {
             let mut seen = 0;
             while !done.load(Ordering::Relaxed) || seen < 20 {
-                // A read can be refused while the swap lands on Windows;
-                // what it must never be is "not found".
-                match fs::read_to_string(current.join("hide")) {
+                match read(&current) {
                     Ok(text) => {
-                        assert!(text == "version-1" || text == "version-2");
+                        assert!(text == "version-1" || text == "version-2", "{text:?}");
                         seen += 1;
                     }
                     Err(error) => assert_ne!(error.kind(), ErrorKind::NotFound, "{error}"),
@@ -1170,6 +1170,27 @@ fn a_link_that_is_replaced_never_leads_nowhere_while_a_reader_follows_it() {
         }
         done.store(true, Ordering::Relaxed);
     });
+}
+
+#[test]
+fn a_link_that_is_replaced_is_never_missing_while_a_reader_looks_at_it() {
+    // A junction reads back as the absolute path it leads to.
+    replace_while_reading(|current| {
+        fs::read_link(current).map(|to| {
+            to.file_name()
+                .unwrap_or_default()
+                .to_string_lossy()
+                .into_owned()
+        })
+    });
+}
+
+/// Linux does not keep this one: a path walk that follows the link while it
+/// is renamed over can find nothing and answer "not found".
+#[cfg(not(target_os = "linux"))]
+#[test]
+fn a_link_that_is_replaced_never_leads_nowhere_while_a_reader_follows_it() {
+    replace_while_reading(|current| fs::read_to_string(current.join("hide")));
 }
 
 #[test]
