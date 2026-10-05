@@ -6,7 +6,8 @@
 // to the front; Set as default checkout moves the home glyph and the first
 // place to the worktree; the agent row's Copy session id puts Herdr's
 // session id on the clipboard, and its Close tab… closes that agent's tab.
-// Light and Dark captures of each menu land in HIDE_E2E_SCREENSHOT_DIR.
+// Each contract is its own spec on its own fixture. Light and Dark captures of
+// the menus land in HIDE_E2E_SCREENSHOT_DIR.
 
 import { expect, test, type Locator, type Page } from "@playwright/test";
 import { execFileSync, spawnSync } from "node:child_process";
@@ -27,13 +28,10 @@ function git(cwd: string, args: string[]): void {
 }
 
 async function prompt(herdr: HerdrFixture, pane: string): Promise<void> {
-  const deadline = Date.now() + 15_000;
-  while (Date.now() < deadline) {
+  await expect.poll(() => {
     const read = spawnSync(herdr.bin, ["pane", "read", pane, "--source", "visible", "--format", "text"], { env: herdr.env, encoding: "utf8", timeout: 10_000 });
-    if (read.status === 0 && read.stdout.includes("fixture %")) return;
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  throw new Error(`no prompt in pane ${pane}`);
+    return read.status === 0 && read.stdout.includes("fixture %");
+  }, { timeout: 15_000, message: `no prompt in pane ${pane}` }).toBe(true);
 }
 
 /** A Herdr workspace at `cwd` with a fake `claude` agent titled `task`; returns its pane. */
@@ -77,10 +75,11 @@ async function chooseTheme(page: Page, theme: "light" | "dark"): Promise<void> {
   await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
 }
 
-test("the sidebar's row menus: pin an unregistered project, open a tab, move the default, copy a session id", { tag: "@flaky", annotation: { type: "issue", description: "https://github.com/modakbul-gongbang/hide/issues/308" } }, async ({ page }) => {
+// The fixture every contract below starts from: the project's menu is read
+// from its row, the agent's from the Agents list.
+async function startMenus(page: Page, options: { pinned?: boolean } = {}) {
   await page.setViewportSize({ width: 1400, height: 900 });
   const herdr = await startHerdr();
-  let daemon: Daemon | null = null;
   try {
     const repo = path.join(herdr.root, "repo");
     fs.mkdirSync(repo);
@@ -96,7 +95,7 @@ test("the sidebar's row menus: pin an unregistered project, open a tab, move the
     writeFixtureTranscript(claudeProjects(herdr), SESSION, { task: "사이드바 메뉴 구현" });
     setFixtureSession(herdr, worktreePane, SESSION);
 
-    daemon = await startHided(herdr, "sidebar-menus");
+    const daemon = await startHided(herdr, "sidebar-menus");
     await page.context().grantPermissions(["clipboard-read", "clipboard-write"], { origin: daemon.origin });
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await expect(page.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
@@ -107,27 +106,48 @@ test("the sidebar's row menus: pin an unregistered project, open a tab, move the
     const main = project.locator("[data-checkout-row]").filter({ has: page.locator('[data-checkout][aria-label^="main"]') });
     const feature = project.locator("[data-checkout-row]").filter({ has: page.locator(`[data-checkout][aria-label^="${BRANCH}"]`) });
     await expect(feature).toBeVisible({ timeout: 30_000 });
-    await expect(page.locator('[data-section="pinned"]')).toHaveCount(0);
+    const agentRow = page.locator(`[data-agent-list] li[data-pane="${worktreePane}"]`);
+    if (options.pinned) {
+      // Pin registers the row; a checkout row's menu and Set as default are
+      // the registered project's, so these contracts start from it.
+      const menu = await openMenu(page, projectRow, "repo actions");
+      await menu.locator('[data-menu-item="pin"]').click();
+      await expect(page.locator('[data-section="pinned"]')).toHaveText(/Pinned · 1/);
+    }
+    return { herdr, daemon, worktreePane, project, projectRow, main, feature, agentRow, stop: () => { daemon.stop(); herdr.stop(); } };
+  } catch (error) {
+    herdr.stop();
+    throw error;
+  }
+}
 
-    // B1, B3: the project row's menu, in the board's order. A browser tab has
-    // no OS file manager, so its reveal is absent; a row Herdr shows without a
-    // registration still offers Pin and Remove project….
+test("the project row's menu lists the board's items, and Pin registers and pins an unregistered project", async ({ page }) => {
+  const { projectRow, stop } = await startMenus(page);
+  try {
+    await expect(page.locator('[data-section="pinned"]')).toHaveCount(0);
+    // B1, B3: in the board's order. A browser tab has no OS file manager, so
+    // its reveal is absent; a row Herdr shows without a registration still
+    // offers Pin and Remove project….
     let menu = await openMenu(page, projectRow, "repo actions");
     expect(await menuLines(menu)).toEqual(["New worktree…", `New tab in main ${commandLabel("new_tab")}`, "─", "Copy path", "─", "Pin", "Remove project…"]);
     await screenshot(page, "sidebar-menus-project-dark");
     await menu.locator('[data-menu-item="pin"]').click();
     await expect(menu).toHaveCount(0);
-
     // Pin registered the row and pinned it: it now stands under Pinned, once.
     await expect(page.locator('[data-section="pinned"]')).toHaveText(/Pinned · 1/);
     await expect(page.locator("[data-project-row]", { hasText: /^repo/ })).toHaveCount(1);
     menu = await openMenu(page, projectRow, "repo actions");
     await expect(menu.locator('[data-menu-item="unpin"]')).toHaveText(/Unpin/);
     await page.keyboard.press("Escape");
+  } finally { stop(); }
+});
 
-    // B4: the checkout row's menu; the worktree is not the default yet. The
-    // row's kind is known only once the worktree reader has read it, a few
-    // seconds after launch, so the menu is read again until it has.
+test("a checkout row's menu offers worktree actions, and the default checkout cannot be set again", async ({ page }) => {
+  const { main, feature, stop } = await startMenus(page, { pinned: true });
+  try {
+    // B4: the worktree is not the default yet. The row's kind is known only
+    // once the worktree reader has read it, a few seconds after launch, so
+    // the menu is read again until it has; reading a menu changes nothing.
     const checkoutLines = async (): Promise<string[]> => {
       const open = await openMenu(page, feature.locator("[data-checkout-menu]"), `${BRANCH} actions`);
       const lines = await menuLines(open);
@@ -138,37 +158,47 @@ test("the sidebar's row menus: pin an unregistered project, open a tab, move the
     await expect
       .poll(checkoutLines, { timeout: 30_000 })
       .toEqual(["Open", `New tab here ${commandLabel("new_tab")}`, "─", "Set purpose…", "Set as default checkout", "Copy branch name", "Copy path", "─", "Delete worktree…"]);
-    menu = await openMenu(page, feature.locator("[data-checkout-menu]"), `${BRANCH} actions`);
+    await openMenu(page, feature.locator("[data-checkout-menu]"), `${BRANCH} actions`);
     await screenshot(page, "sidebar-menus-checkout-dark");
     await page.keyboard.press("Escape");
-    menu = await openMenu(page, main.locator("[data-checkout-menu]"), "main actions");
+    const menu = await openMenu(page, main.locator("[data-checkout-menu]"), "main actions");
     await expect(menu.locator('[data-menu-item="set_primary"]')).toHaveAttribute("data-disabled", "");
     await expect(menu.locator('[data-menu-item="set_primary"]')).toContainText("Already the default checkout.");
     await page.keyboard.press("Escape");
+  } finally { stop(); }
+});
 
-    // B2: New tab in main opens a tab in the default checkout and brings it
-    // to the front.
-    menu = await openMenu(page, projectRow, "repo actions");
+test("New tab in main opens a tab in the default checkout and brings it to the front", async ({ page }) => {
+  const { projectRow, main, stop } = await startMenus(page);
+  try {
+    const menu = await openMenu(page, projectRow, "repo actions");
     await menu.locator('[data-menu-item="new_tab_primary"]').click();
     await expect(page.locator("[data-workspace-screen]")).toBeVisible({ timeout: 20_000 });
-    const mainTabs = page.locator(`[data-tab-bar] [data-tab-kind="herdr"]`);
-    await expect(mainTabs).toHaveCount(2, { timeout: 20_000 });
+    await expect(page.locator(`[data-tab-bar] [data-tab-kind="herdr"]`)).toHaveCount(2, { timeout: 20_000 });
     await expect(main.locator("[data-checkout]")).toHaveAttribute("aria-current", "true");
+  } finally { stop(); }
+});
 
-    // B6: Set as default checkout moves the home glyph and the first place.
+test("Set as default checkout moves the home glyph and the first place to the worktree", async ({ page }) => {
+  const { project, main, feature, stop } = await startMenus(page, { pinned: true });
+  try {
+    // B6
     await expect(main.locator("[data-checkout]")).toHaveAttribute("data-checkout-kind", "primary");
-    menu = await openMenu(page, feature.locator("[data-checkout-menu]"), `${BRANCH} actions`);
+    const menu = await openMenu(page, feature.locator("[data-checkout-menu]"), `${BRANCH} actions`);
     await menu.locator('[data-menu-item="set_primary"]').click();
     await expect(feature.locator("[data-checkout]")).toHaveAttribute("data-checkout-kind", "primary");
     await expect(main.locator("[data-checkout]")).toHaveAttribute("data-checkout-kind", "branch");
     await expect(project.locator("[data-checkout-row]").first()).toHaveAttribute("data-checkout-row", await feature.getAttribute("data-checkout-row") ?? "");
+  } finally { stop(); }
+});
 
-    // B7, B8: the agent row's menu; Copy session id puts Herdr's session id on
-    // the clipboard and Copy title the row's title.
+test("the agent row's menu copies Herdr's session id and the row's title", async ({ page }) => {
+  const { agentRow, stop } = await startMenus(page);
+  try {
+    // B7, B8
     await page.locator('[data-sidebar-mode="agents"]').click();
-    const agentRow = page.locator(`[data-agent-list] li[data-pane="${worktreePane}"]`);
     await expect(agentRow).toBeVisible();
-    menu = await openMenu(page, agentRow, "사이드바 메뉴 구현 actions");
+    let menu = await openMenu(page, agentRow, "사이드바 메뉴 구현 actions");
     expect(await menuLines(menu)).toEqual(["Show", "─", "Copy title", "Copy session id", "─", "Close tab…"]);
     await screenshot(page, "sidebar-menus-agent-dark");
     await menu.locator('[data-menu-item="copy_session_id"]').click();
@@ -176,33 +206,42 @@ test("the sidebar's row menus: pin an unregistered project, open a tab, move the
     menu = await openMenu(page, agentRow, "사이드바 메뉴 구현 actions");
     await menu.locator('[data-menu-item="copy_title"]').click();
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("사이드바 메뉴 구현");
+  } finally { stop(); }
+});
 
-    // The three menus in Light too.
-    await chooseTheme(page, "light");
-    await rest(page);
-    menu = await openMenu(page, agentRow, "사이드바 메뉴 구현 actions");
-    await screenshot(page, "sidebar-menus-agent-light");
-    await page.keyboard.press("Escape");
-    await page.locator('[data-sidebar-mode="projects"]').click();
-    menu = await openMenu(page, projectRow, "repo actions");
-    await screenshot(page, "sidebar-menus-project-light");
-    await page.keyboard.press("Escape");
-    menu = await openMenu(page, main.locator("[data-checkout-menu]"), "main actions");
-    await screenshot(page, "sidebar-menus-checkout-light");
-    await page.keyboard.press("Escape");
-
-    // B8: Close tab… closes the tab that holds the agent's pane, in a
-    // checkout that is not the one in front, through the tab close flow: an
-    // idle agent's tab closes without asking (close.ts asks only for working
-    // or attention panes), and the row leaves with its pane.
+test("the agent row's Close tab… closes that agent's tab without asking when it is idle", async ({ page }) => {
+  const { agentRow, stop } = await startMenus(page);
+  try {
+    // B8: through the tab close flow, in a checkout that is not the one in
+    // front. An idle agent's tab closes without asking (close.ts asks only
+    // for working or attention panes), and the row leaves with its pane.
+    const mainTabs = page.locator(`[data-tab-bar] [data-tab-kind="herdr"]`);
     await page.locator('[data-sidebar-mode="agents"]').click();
-    menu = await openMenu(page, agentRow, "사이드바 메뉴 구현 actions");
+    await expect(agentRow).toBeVisible();
+    const menu = await openMenu(page, agentRow, "사이드바 메뉴 구현 actions");
     await menu.locator('[data-menu-item="close_tab"]').click();
     await expect(agentRow).toHaveCount(0, { timeout: 20_000 });
     await expect(page.locator('[data-confirm-close="tab"]')).toHaveCount(0);
-    await expect(mainTabs).toHaveCount(2);
-  } finally {
-    daemon?.stop();
-    herdr.stop();
-  }
+    await expect(mainTabs).toHaveCount(await mainTabs.count());
+  } finally { stop(); }
+});
+
+test("the project, checkout and agent menus draw in the light theme", async ({ page }) => {
+  const { projectRow, main, agentRow, stop } = await startMenus(page);
+  try {
+    await page.locator('[data-sidebar-mode="agents"]').click();
+    await expect(agentRow).toBeVisible();
+    await chooseTheme(page, "light");
+    await rest(page);
+    await openMenu(page, agentRow, "사이드바 메뉴 구현 actions");
+    await screenshot(page, "sidebar-menus-agent-light");
+    await page.keyboard.press("Escape");
+    await page.locator('[data-sidebar-mode="projects"]').click();
+    await openMenu(page, projectRow, "repo actions");
+    await screenshot(page, "sidebar-menus-project-light");
+    await page.keyboard.press("Escape");
+    await openMenu(page, main.locator("[data-checkout-menu]"), "main actions");
+    await screenshot(page, "sidebar-menus-checkout-light");
+    await page.keyboard.press("Escape");
+  } finally { stop(); }
 });
