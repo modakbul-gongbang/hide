@@ -46,6 +46,9 @@ OS_CRATES = {
     "hide-kit",
     "hide-platform",
 }
+# `web-e2e-platform` also runs the remote mailbox lane over private SSH, which
+# builds the CLI from these crates; a rule that plans it for fewer of them
+# leaves that lane out too.
 OS_LANES = ("os-contract", "windows-check", "windows-e2e", "web-e2e-platform", "desktop-e2e")
 
 # Web files the desktop host imports or drives through native input: the host
