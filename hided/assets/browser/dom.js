@@ -375,7 +375,6 @@
       found.el.scrollIntoView({ block: 'center', inline: 'nearest' });
       return { dy: window.scrollY - before.y, dx: window.scrollX - before.x };
     }
-    case 'scrollY': return { y: window.scrollY, height: window.innerHeight };
     case 'waitText': return { found: deepText(document).includes(String(args.text)) };
     case 'waitSelector': {
       const found = bySelector(args.selector);

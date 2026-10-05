@@ -507,13 +507,14 @@ fn relay_reason(reason: &str) -> &str {
 const COMMAND_DEADLINE: Duration = Duration::from_secs(120);
 
 /// Page text reaches the caller's terminal: control characters (except
-/// newlines and tabs) and the bidirectional and invisible format characters
-/// would let a page rewrite or hide what is printed, so each becomes U+FFFD.
+/// newlines and tabs) and the bidirectional controls would let a page
+/// rewrite or reorder what is printed, so each becomes U+FFFD. Joiners stay,
+/// since emoji and several scripts need them.
 fn printable(text: &str) -> String {
     text.chars()
         .map(|c| {
-            let format = matches!(c, '\u{200b}'..='\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}' | '\u{feff}');
-            if (c.is_control() && c != '\n' && c != '\t') || format {
+            let bidi = matches!(c, '\u{061c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}');
+            if (c.is_control() && c != '\n' && c != '\t') || bidi {
                 '\u{fffd}'
             } else {
                 c
@@ -558,7 +559,7 @@ pub fn run(env: &Env, command: Command) -> Result<(), String> {
                 answer["detail"] = json!(detail);
             }
             println!("{}", printable(&answer.to_string()));
-            Err(reason)
+            Err(printable(&reason))
         }
     }
 }
@@ -623,7 +624,10 @@ mod tests {
             printable("@1 button \"Go\u{1b}]52;c;x\u{7}\"\n\u{202e}gnp.exe\tok\u{9b}2J"),
             "@1 button \"Go\u{fffd}]52;c;x\u{fffd}\"\n\u{fffd}gnp.exe\tok\u{fffd}2J"
         );
-        assert_eq!(printable("한글 값 -> /x"), "한글 값 -> /x");
+        assert_eq!(
+            printable("한글 값 -> /x 👩\u{200d}💻"),
+            "한글 값 -> /x 👩\u{200d}💻"
+        );
     }
 
     #[test]

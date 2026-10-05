@@ -826,7 +826,8 @@ async fn wait_for(page: &mut Page, wait: Wait, timeout: Duration) -> Result<Outp
         // The gateway admits 600 commands a minute; one poll costs one per
         // frame read.
         let interval = WAIT_POLL * polled as u32;
-        if Instant::now() + interval > deadline {
+        let now = Instant::now();
+        if now >= deadline {
             let what = match &wait {
                 Wait::Text(text) => format!("text {} not found", json!(text)),
                 Wait::Selector {
@@ -843,7 +844,8 @@ async fn wait_for(page: &mut Page, wait: Wait, timeout: Duration) -> Result<Outp
                 Some(format!("{what} after {} ms", timeout.as_millis())),
             ));
         }
-        sleep(interval).await;
+        // The last poll lands on the deadline rather than giving up early.
+        sleep(interval.min(deadline - now)).await;
     }
 }
 

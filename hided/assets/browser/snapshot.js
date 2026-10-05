@@ -369,8 +369,6 @@
       ? 'iframe (cross-origin opaque)'
       : overlay ? 'overlay (covers page; interact or dismiss first)'
       : clickable ? (role ? role + ' (clickable)' : 'clickable') : (role || tag);
-    // A label or address is one line: newlines in page text would otherwise
-    // forge snapshot lines of their own.
     if (label) line += ' "' + label.replace(/\s+/g, ' ').trim().replace(/"/g, '\\"') + '"';
     else if (clickable) {
       // Icon-only clickables: developer-facing id/class names are the best
@@ -407,7 +405,9 @@
         line += ' -> ' + shownHref.replace(/\s+/g, ' ').trim().substring(0, 80);
       }
     }
-    return line + '\n' + children;
+    // One element is one line, whatever its id, role or text holds: a line
+    // break would let page text forge lines of its own.
+    return line.replace(/[\r\n\u2028\u2029]+/g, ' ') + '\n' + children;
   }
   // Cap the URL line: data:/blob: URLs can be tens of KB and would drown the
   // snapshot (and every diff computed from it) in address noise. A short hash

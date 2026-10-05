@@ -658,7 +658,7 @@ The same desktop authentication registers and releases its process-bound private
 `hide browser` page commands reach a display through the same `/ws`: the CLI's scoped request `browser_relay` names a display, hided runs `browser_connect`'s checkout and display checks, connects to the desktop gateway itself, and answers with the display id and whether it is its area's selected View, so the capability URL never reaches the CLI (`hided/src/browser_relay.rs`).
 After the CLI claims its credential, the socket carries CDP text frames both ways until either side closes; the gateway's close code and reason reach the CLI unchanged.
 The relay runs in the connection's own task, outside `Mutex<Runtime>`, and changes no core state or snapshot wire.
-At most four relays run at once (`browser_relay_limit` past that), because each holds one of the gateway's eight clients and half stay free for the operator's own.
+At most four relays run at once (`browser_relay_limit` past that), because each holds one of hided's eight client connections and half stay free for the shell and other clients.
 A message is at most 4 MiB and a binary frame is refused, both closing with 4009; a relay closes with 4008 after 60 seconds without a CDP text frame in either direction (pings do not count) or after five minutes whatever it carries, and a peer that does not take a frame within five seconds ends it.
 A close other than a normal one is logged as a `browser_relay` record with the display and the code.
 A device pane reaches the same `/ws` through its reverse Workspace forward, so its commands take the same path and refusals as a local pane's.
