@@ -1033,6 +1033,7 @@ async fn place_file(
     owner: u32,
     what: &str,
 ) -> Result<String, EstablishError> {
+    let started = std::time::Instant::now();
     let final_path = format!("{version_dir}/{}", package.relative);
     let (folder, name) = final_path
         .rsplit_once('/')
@@ -1056,30 +1057,54 @@ async fn place_file(
         .await
         .map_err(|error| sftp_failure(&format!("The {what} could not be uploaded"), error))?
         .handle;
+    let mut max_write_ms = 0u64;
     let written = async {
         for (index, chunk) in package.bytes.chunks(32 * 1024).enumerate() {
+            let asked = std::time::Instant::now();
             raw.write(&handle, (index * 32 * 1024) as u64, chunk.to_vec())
                 .await
                 .map_err(|error| sftp_failure(&format!("The {what} upload failed"), error))?;
+            max_write_ms = max_write_ms.max(asked.elapsed().as_millis() as u64);
         }
         Ok::<(), EstablishError>(())
     }
     .await;
     let closed = raw.close(handle).await;
+    let written_ms = started.elapsed().as_millis() as u64;
+    let mut read_cost = ReadCost::default();
     let verified = match (written, closed) {
-        (Ok(()), Ok(_)) => match remote_digest(raw, &staging, package.bytes.len(), what).await {
-            Ok(uploaded) if uploaded == package.digest => Ok(()),
-            Ok(_) => Err(EstablishError::Install(format!(
-                "The uploaded {what} did not match the package; it was not used"
-            ))),
-            Err(error) => Err(error),
-        },
+        (Ok(()), Ok(_)) => {
+            match remote_digest_timed(raw, &staging, package.bytes.len(), what, &mut read_cost)
+                .await
+            {
+                Ok(uploaded) if uploaded == package.digest => Ok(()),
+                Ok(_) => Err(EstablishError::Install(format!(
+                    "The uploaded {what} did not match the package; it was not used"
+                ))),
+                Err(error) => Err(error),
+            }
+        }
         (Err(error), _) => Err(error),
         (Ok(()), Err(error)) => Err(sftp_failure(
             &format!("The {what} upload did not finish"),
             error,
         )),
     };
+    // Structured and free of paths: how long each part took, so a device that
+    // cannot finish inside INSTALL_TIMEOUT shows which stage ate the time.
+    crate::diagnostic!(serde_json::json!({
+        "component": "remote_host",
+        "kind": "host.upload.verified",
+        "what": what,
+        "bytes": package.bytes.len(),
+        "written_ms": written_ms,
+        "max_write_ms": max_write_ms,
+        "verified_ms": started.elapsed().as_millis() as u64,
+        "reads": read_cost.reads,
+        "max_read_ms": read_cost.max_read_ms,
+        "hash_ms": read_cost.hash_ms,
+        "ok": verified.is_ok(),
+    }));
     if let Err(error) = verified {
         let _ = raw.remove(&staging).await;
         return Err(error);
@@ -1342,11 +1367,29 @@ fn validate_private(attrs: &FileAttributes, owner: u32, path: &str) -> Result<()
     Ok(())
 }
 
+/// What reading a file back over SFTP cost, for the upload's diagnostics.
+#[derive(Default)]
+struct ReadCost {
+    reads: u64,
+    max_read_ms: u64,
+    hash_ms: u64,
+}
+
 async fn remote_digest(
     raw: &RawSftpSession,
     path: &str,
     length: usize,
     what: &str,
+) -> Result<String, EstablishError> {
+    remote_digest_timed(raw, path, length, what, &mut ReadCost::default()).await
+}
+
+async fn remote_digest_timed(
+    raw: &RawSftpSession,
+    path: &str,
+    length: usize,
+    what: &str,
+    cost: &mut ReadCost,
 ) -> Result<String, EstablishError> {
     let handle = raw
         .open(path, OpenFlags::READ, FileAttributes::empty())
@@ -1357,6 +1400,7 @@ async fn remote_digest(
     let mut offset = 0usize;
     let result = async {
         while offset < length {
+            let asked = std::time::Instant::now();
             let data = raw
                 .read(
                     &handle,
@@ -1368,11 +1412,15 @@ async fn remote_digest(
                     sftp_failure(&format!("The {what} could not be read back"), error)
                 })?
                 .data;
+            cost.reads += 1;
+            cost.max_read_ms = cost.max_read_ms.max(asked.elapsed().as_millis() as u64);
             if data.is_empty() {
                 break;
             }
             offset += data.len();
+            let hashed = std::time::Instant::now();
             hasher.update(&data);
+            cost.hash_ms += hashed.elapsed().as_millis() as u64;
         }
         Ok::<(), EstablishError>(())
     }
