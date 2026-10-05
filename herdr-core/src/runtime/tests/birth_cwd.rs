@@ -5,6 +5,35 @@
 
 use super::*;
 
+/// The birth window's clock, moved by the test instead of waited for: the
+/// runtime reads "now" from it, so the 30 s window is crossed in one call.
+pub(super) struct SteeredClock {
+    origin: std::time::Instant,
+    elapsed_ms: Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl SteeredClock {
+    pub(super) fn install(runtime: &mut Runtime) -> Self {
+        let clock = Self {
+            origin: std::time::Instant::now(),
+            elapsed_ms: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        };
+        let (origin, elapsed_ms) = (clock.origin, Arc::clone(&clock.elapsed_ms));
+        runtime.birth_clock = Arc::new(move || {
+            origin
+                + std::time::Duration::from_millis(
+                    elapsed_ms.load(std::sync::atomic::Ordering::Relaxed),
+                )
+        });
+        clock
+    }
+
+    pub(super) fn advance_ms(&self, milliseconds: u64) {
+        self.elapsed_ms
+            .fetch_add(milliseconds, std::sync::atomic::Ordering::Relaxed);
+    }
+}
+
 fn git(directory: &Path, args: &[&str]) {
     let status = std::process::Command::new("git")
         .args([
@@ -278,6 +307,7 @@ fn a_settled_created_tab_reads_its_cwd_as_reported() {
 #[test]
 fn a_created_tab_whose_pane_never_reports_its_checkout_is_believed_after_the_window() {
     let (mut runtime, _checkout_id, directory) = strip_checkout("birth-window");
+    let clock = SteeredClock::install(&mut runtime);
     let checkout_path = directory.to_string_lossy().into_owned();
     let parent = directory.parent().unwrap().to_string_lossy().into_owned();
     acknowledge_created_tab(&mut runtime, &checkout_path, "w-order:t2");
@@ -297,12 +327,140 @@ fn a_created_tab_whose_pane_never_reports_its_checkout_is_believed_after_the_win
     runtime.ingest_session(Ok(two_tab_payload(&checkout_path, &parent)));
     assert_eq!(cwd_of_t2(&runtime).as_deref(), Some(checkout_path.as_str()));
 
-    // The clock is the record's own stamp, which the test moves back.
-    runtime
-        .created_tab_checkouts
-        .get_mut("w-order:t2")
-        .expect("the record")
-        .recorded_at_unix_ms = 0;
+    // Just inside the window the birth value is still read as the checkout.
+    clock.advance_ms(30_000);
+    runtime.ingest_session(Ok(two_tab_payload(&checkout_path, &parent)));
+    assert_eq!(cwd_of_t2(&runtime).as_deref(), Some(checkout_path.as_str()));
+
+    clock.advance_ms(1);
     runtime.ingest_session(Ok(two_tab_payload(&checkout_path, &parent)));
     assert_eq!(cwd_of_t2(&runtime).as_deref(), Some(parent.as_str()));
+}
+
+fn pane_cwd_of(runtime: &Runtime, pane_id: &str) -> Option<String> {
+    runtime
+        .snapshot()
+        .navigator
+        .workspaces
+        .iter()
+        .flat_map(|workspace| workspace.checkouts.iter())
+        .flat_map(|checkout| checkout.tabs.iter())
+        .flat_map(|tab| tab.panes.iter())
+        .find(|pane| pane.id == pane_id)
+        .map(|pane| pane.cwd.clone())
+}
+
+/// A linked worktree inside the checkout's own folder, listed by Git as a
+/// checkout of its own.
+fn list_nested_worktree(runtime: &mut Runtime, checkout_path: &str) -> String {
+    use crate::model::{ProjectWorktreesSnapshot, WorktreeCatalogSnapshot, WorktreeSnapshot};
+
+    let nested = format!("{checkout_path}/.worktrees/topic");
+    std::fs::create_dir_all(&nested).expect("nested worktree folder");
+    runtime.ingest_worktrees(
+        WorktreeCatalogSnapshot {
+            projects: vec![ProjectWorktreesSnapshot {
+                root_path: checkout_path.to_owned(),
+                worktrees: vec![
+                    WorktreeSnapshot {
+                        path: checkout_path.to_owned(),
+                        branch: Some("main".to_owned()),
+                        is_main: true,
+                        ..WorktreeSnapshot::default()
+                    },
+                    WorktreeSnapshot {
+                        path: nested.clone(),
+                        branch: Some("topic".to_owned()),
+                        ..WorktreeSnapshot::default()
+                    },
+                ],
+                ..ProjectWorktreesSnapshot::default()
+            }],
+        },
+        0,
+    );
+    nested
+}
+
+/// A folder inside a linked worktree that sits under the checkout's own
+/// folder is another checkout's, so it is not where the created tab's shell
+/// has entered its start folder: the birth value goes on being read as the
+/// checkout until a pane reports the checkout itself.
+#[test]
+fn a_birth_cwd_inside_a_nested_linked_worktree_is_not_inside_the_outer_checkout() {
+    let (mut runtime, _checkout_id, directory) = strip_checkout("birth-nested");
+    let checkout_path = directory.to_string_lossy().into_owned();
+    let nested = list_nested_worktree(&mut runtime, &checkout_path);
+    assert!(
+        runtime
+            .snapshot()
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .any(|checkout| checkout.path == nested),
+        "the nested worktree is a checkout of its own"
+    );
+    acknowledge_created_tab(&mut runtime, &checkout_path, "w-order:t2");
+
+    runtime.ingest_session(Ok(two_tab_payload(&checkout_path, &nested)));
+    assert_eq!(
+        pane_cwd_of(&runtime, "w-order:t2:p").as_deref(),
+        Some(checkout_path.as_str()),
+        "the nested worktree's folder is a birth value for a tab created for the outer checkout"
+    );
+
+    // The shell entered the start folder; from then on its cwd is its own, a
+    // later `cd` into the nested worktree included.
+    runtime.ingest_session(Ok(two_tab_payload(&checkout_path, &checkout_path)));
+    runtime.ingest_session(Ok(two_tab_payload(&checkout_path, &nested)));
+    assert_eq!(
+        pane_cwd_of(&runtime, "w-order:t2:p").as_deref(),
+        Some(nested.as_str())
+    );
+}
+
+/// Herdr answers a pane's cwd resolved and without a trailing separator, even
+/// when the folder was asked for through a link and a trailing `/` (pinned
+/// 0.9.1, `workspace.create` and `tab.create`). The comparison reads both
+/// sides as the folder they name, so any of those spellings settles the tab.
+#[cfg(unix)]
+#[test]
+fn a_created_tab_settles_whichever_way_the_reported_cwd_is_spelled() {
+    let (mut runtime, _checkout_id, directory) = strip_checkout("birth-spelling");
+    let checkout_path = directory.to_string_lossy().into_owned();
+    let parent = directory.parent().unwrap().to_string_lossy().into_owned();
+    let alias = directory.parent().unwrap().join(format!(
+        "{}-alias",
+        directory.file_name().unwrap().to_string_lossy()
+    ));
+    std::os::unix::fs::symlink(&directory, &alias).expect("a link to the checkout");
+    let alias = alias.to_string_lossy().into_owned();
+
+    for reported in [
+        format!("{checkout_path}/"),
+        format!("{alias}/notes-folder"),
+        alias.clone(),
+    ] {
+        acknowledge_created_tab(&mut runtime, &checkout_path, "w-order:t2");
+        runtime.ingest_session(Ok(two_tab_payload(&checkout_path, &parent)));
+        runtime.ingest_session(Ok(two_tab_payload(&checkout_path, &reported)));
+        runtime.ingest_session(Ok(two_tab_payload(&checkout_path, &parent)));
+        assert_eq!(
+            pane_cwd_of(&runtime, "w-order:t2:p").as_deref(),
+            Some(parent.as_str()),
+            "{reported} did not settle the tab"
+        );
+        // The tab leaves with the session that no longer carries it.
+        runtime.ingest_session(Ok(two_tab_payload_without_second_tab(&checkout_path)));
+    }
+}
+
+fn two_tab_payload_without_second_tab(checkout_path: &str) -> SessionSnapshotPayload {
+    tab_order_payload(
+        checkout_path,
+        &["w-order:t1"],
+        &["w-order:t1"],
+        "w-order:t1",
+    )
 }

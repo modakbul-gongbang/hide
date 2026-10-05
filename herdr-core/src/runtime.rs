@@ -1191,6 +1191,10 @@ pub struct Runtime {
     /// An acknowledgment arrived for a tab the session had already placed
     /// under another checkout, so the local coordinator republishes once.
     created_tab_republish_requested: bool,
+    /// The clock the birth window is measured on: monotonic, so a wall-clock
+    /// step cannot end it early, and replaceable so a test moves it rather
+    /// than waiting (`session.rs`, `BirthClock`).
+    birth_clock: session::BirthClock,
     next_async_operation_id: u64,
     /// Panes that were scrolled before any view reported their size. One
     /// diagnostic answers for the whole wait; a wheel burst against a pane
@@ -1747,6 +1751,7 @@ impl Runtime {
             created_tab_checkouts: BTreeMap::new(),
             created_device_tabs: BTreeMap::new(),
             created_tab_republish_requested: false,
+            birth_clock: Arc::new(Instant::now),
             next_async_operation_id: 0,
             #[cfg(test)]
             suppress_terminal_session_workers: false,

@@ -902,11 +902,11 @@ fn publish_replica(
     // has not arrived costs a publish nothing.
     let created_tab_clamps = created_tab_clamps
         .into_iter()
-        .filter(|(tab_id, _)| {
+        .filter(|clamp| {
             payload
                 .layouts
                 .iter()
-                .any(|layout| &layout.tab_id == tab_id)
+                .any(|layout| layout.tab_id == clamp.tab_id)
         })
         .collect::<Vec<_>>();
     let clamped;
