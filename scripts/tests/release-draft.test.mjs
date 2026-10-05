@@ -50,6 +50,8 @@ async function fixture(t, options = {}) {
     }
     if (route === "/releases" && req.method === "POST") {
       const payload = JSON.parse(bytes);
+      // GitHub answers a target commit for an existing tag under immutable releases this way.
+      if ("target_commitish" in payload) return answer(403, { message: "Resource not accessible by integration" });
       state.release = { ...payload, id: 7 };
       return answer(201, state.release);
     }
