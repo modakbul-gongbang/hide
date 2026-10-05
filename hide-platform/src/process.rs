@@ -613,7 +613,7 @@ pub fn run_to_end(
     let outcome = capture_run(&mut child, end, stop);
     let cleanup = child
         .kill_tree()
-        .and_then(|_| confirm_end(&mut child, stop, END_UNCONFIRMED_AFTER));
+        .and_then(|_| confirm_end(&mut child, END_UNCONFIRMED_AFTER));
     match cleanup {
         Ok(()) => outcome,
         Err(cleanup) => Err(RunFailure::Wait(io::Error::other(RunCleanupFailure {
@@ -628,27 +628,15 @@ pub fn run_to_end(
 /// effect is that state, not a moment: Windows ends a job's processes after
 /// `TerminateJobObject` returns, so a busy machine can take longer than one
 /// poll interval. The wait is on the exit itself where the system has one
-/// (`sys::wait_exit`). Two states give up: the caller's stop, one poll
-/// interval after it is seen, because a quitting owner does not wait on a
-/// reap; and `give_up` passing, which means the kernel did not end the child.
-/// Either way the caller keeps the child in `RunCleanupFailure`.
-fn confirm_end(
-    child: &mut OwnedChild,
-    stop: &std::sync::atomic::AtomicBool,
-    give_up: std::time::Duration,
-) -> io::Result<()> {
-    use std::sync::atomic::Ordering;
+/// (`sys::wait_exit`), so a stopped run waits the same way: a process the
+/// kill reached is seen ending at once. It gives up only when `give_up`
+/// passes, which means the kernel did not end the child, and the caller then
+/// keeps the child in `RunCleanupFailure`.
+fn confirm_end(child: &mut OwnedChild, give_up: std::time::Duration) -> io::Result<()> {
     let started = Instant::now();
-    let mut stopping = false;
     loop {
         if child.try_wait()?.is_some() {
             return Ok(());
-        }
-        if stopping {
-            return Err(io::Error::new(
-                io::ErrorKind::Interrupted,
-                "child exit was not confirmed before the caller stopped",
-            ));
         }
         let waited = started.elapsed();
         if waited >= give_up {
@@ -662,7 +650,6 @@ fn confirm_end(
                 "the killed child did not end; the system is still holding it",
             ));
         }
-        stopping = stop.load(Ordering::Relaxed);
         sys::wait_exit(&child.child, RUN_POLL.min(give_up - waited))?;
     }
 }
@@ -2181,7 +2168,6 @@ mod owner_watch_tests {
 #[cfg(test)]
 mod run_cleanup_tests {
     use super::*;
-    use std::sync::atomic::AtomicBool;
 
     const ROLE: &str = "HIDE_PLATFORM_CLEANUP_TEST_LIFETIME_MS";
 
@@ -2214,33 +2200,14 @@ mod run_cleanup_tests {
     #[test]
     fn an_exit_that_comes_after_one_poll_interval_is_still_confirmed() {
         let mut child = child(300);
-        confirm_end(&mut child, &AtomicBool::new(false), END_UNCONFIRMED_AFTER).unwrap();
+        confirm_end(&mut child, END_UNCONFIRMED_AFTER).unwrap();
         assert!(child.try_wait().unwrap().is_some());
-    }
-
-    #[test]
-    fn a_raised_stop_leaves_an_exit_that_has_not_come_to_the_caller() {
-        let mut child = child(30_000);
-        let error =
-            confirm_end(&mut child, &AtomicBool::new(true), END_UNCONFIRMED_AFTER).unwrap_err();
-        assert_eq!(error.kind(), io::ErrorKind::Interrupted, "{error}");
-        assert!(
-            child.try_wait().unwrap().is_none(),
-            "the child is retained, not reaped"
-        );
-        child.kill_tree().unwrap();
-        child.wait().unwrap();
     }
 
     #[test]
     fn a_child_still_running_when_the_end_is_given_up_is_left_to_the_caller() {
         let mut child = child(30_000);
-        let error = confirm_end(
-            &mut child,
-            &AtomicBool::new(false),
-            Duration::from_millis(100),
-        )
-        .unwrap_err();
+        let error = confirm_end(&mut child, Duration::from_millis(100)).unwrap_err();
         assert_eq!(error.kind(), io::ErrorKind::TimedOut, "{error}");
         assert!(
             child.try_wait().unwrap().is_none(),
