@@ -170,7 +170,8 @@ A piece that another open change is still building is marked as pending with the
    The timers of `hided` and the core are not the page's; those are injected in Rust (see [Writing a Rust test](#writing-a-rust-test)).
 5. **Keep the size of a test bounded.**
    One representative journey per user-visible flow, and one small spec per independent contract.
-   Most quarantined tests are long journeys that join several contracts (`agent-tab-groups.spec.ts`, `s7.spec.ts`, `sidebar-menus.spec.ts`), and quarantine is per test, so one shaky step takes every contract in it out of the required lane; split a test so the part that shakes can be fixed alone.
+   A long journey that joins several contracts is quarantined whole, because quarantine is per test, so one shaky step takes every contract in it out of the required lane; split a test so the part that shakes can be fixed alone.
+   The reference splits are `agent-close-contract.spec.ts` (one Herdr contract, two UI contracts), the drag contracts in `agent-tab-groups.spec.ts`, the row menus in `sidebar-menus.spec.ts` and the view caps in `s7.spec.ts`: each spec starts from one shared `start...` helper, puts itself into the shape it needs as setup, and asserts one contract.
    Splitting costs a stack start per spec, so say in the pull request what the split bought.
    A numeric limit on lines and `expect` calls per test is being added as a lint; this step names the numbers when it lands, and until then the reviewer checks the shape.
 6. **Turn off the renderer a spec does not test.**
