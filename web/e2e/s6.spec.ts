@@ -92,7 +92,7 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     await expect(page.locator(`[data-pane-view="${parent}"]`)).toHaveAttribute("data-focused", "true");
     // A new Workspace shows Agent Views alone: File Views and Tools are off
     // and Tools holds the Explorer (B2). The toolbar spans the body and ends
-    // with Overview, Open server, File Views and Tools as icons only (#349 D-07).
+    // with Overview, Open server (its server count, once known), File Views and Tools as icons only (#349 D-07).
     await expect(workspace).toHaveAttribute("data-file-views", "off");
     await expect(workspace).toHaveAttribute("data-tools", "off");
     await expect(page.locator('[data-column="views"], [data-column="tools"]')).toHaveCount(0);
@@ -100,7 +100,7 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     await expect(toggles).toHaveCount(4);
     expect(await toggles.evaluateAll((buttons) => buttons.map((button) => [button.getAttribute("aria-label"), button.textContent?.trim() ?? ""]))).toEqual([
       ["Overview", ""],
-      ["Open server", ""],
+      [expect.stringMatching(/^Open server(, \d+ running)?$/), ""],
       ["File Views", ""],
       ["Tools", ""],
     ]);
