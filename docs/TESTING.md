@@ -176,7 +176,7 @@ A piece that another open change is still building is marked as pending with the
 6. **Turn off the renderer a spec does not test.**
    Headless Chromium composites in software, so each frame of xterm's WebGL canvas is read back synchronously on the page's main thread, 250 to 500 ms at a time.
    A spec that holds a product deadline and does not test the terminal renderer launches Chromium with `test.use({ launchOptions: { args: ["--disable-webgl"] } })`, so the shell uses xterm's DOM renderer, its existing fallback; `web/e2e/pane-focus-ordering.spec.ts` is the reference, and [Wait for state, not time](#wait-for-state-not-time) has the measurement.
-   Pending: a change in progress (no pull request yet) moves this into the fixture for every spec that does not test the renderer; a spec that does keeps WebGL on and says why.
+   Pending #429 (not merged): it sets this once in `web/playwright.config.ts` for every web e2e and removes the per-spec setting; a spec that tests the renderer keeps WebGL on and says why.
    Do not raise a timeout to cover the stall.
 7. **Restart through `daemon.restart()`, and leave the old page first.**
    `daemon.restart()` in `web/e2e/hided-fixture.ts` stops `hided` and starts it again on the same state folder and port, as a real restart does, and takes an optional callback to edit the state folder before the start; `web/e2e/sidebar-pr-start.spec.ts` restarts three times in one test.
