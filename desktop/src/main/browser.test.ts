@@ -1,11 +1,13 @@
 import { EventEmitter } from "node:events";
 import { beforeEach, describe, expect, it, vi } from "vitest";
+import { initializeInterfaceI18n } from "../../../web/src/i18n/instance";
 import { REGISTRY, type Command } from "../../../web/src/shortcuts";
 import { BROWSER_CYCLE_END_CHANNEL, BROWSER_EVENT_CHANNEL } from "../channel";
 import { BrowserViews, type ResolvedPage } from "./browser";
 import { browserPartition } from "./browserSync";
 import type { HostLog } from "./log";
 
+const english = initializeInterfaceI18n("en").getFixedT(null, "translation");
 const ipc = vi.hoisted(() => new Map<string, (event: unknown, value?: unknown) => void>());
 vi.mock("electron", () => ({
   ipcMain: { on: (channel: string, listener: (event: unknown, value?: unknown) => void) => ipc.set(channel, listener), handle: vi.fn() },
@@ -19,7 +21,7 @@ describe("native browser load generations", () => {
     try {
       let answer!: (route: ResolvedPage) => void;
       const resolve = vi.fn(() => new Promise<ResolvedPage>((done) => { answer = done; }));
-      const subject = new BrowserViews({ event: vi.fn() } as unknown as HostLog, () => true, resolve, vi.fn(), vi.fn());
+      const subject = new BrowserViews({ event: vi.fn() } as unknown as HostLog, () => true, resolve, vi.fn(), vi.fn(), () => english);
       const workspace = "local\u0000/checkout";
       const requested = "file:///var/checkout/manual.html";
       const canonical = "file:///private/var/checkout/manual.html";
@@ -55,7 +57,7 @@ function candidate() {
   const send = vi.fn();
   const shellFocus = vi.fn();
   let windowFocused = true;
-  const subject = new BrowserViews({ event: vi.fn() } as unknown as HostLog, () => true, vi.fn(), vi.fn(), vi.fn(), (() => undefined) as never);
+  const subject = new BrowserViews({ event: vi.fn() } as unknown as HostLog, () => true, vi.fn(), vi.fn(), vi.fn(), () => english);
   const shellContents = Object.assign(new EventEmitter(), { isDestroyed: () => false, send, focus: shellFocus });
   const window = Object.assign(new EventEmitter(), { isFocused: () => windowFocused, webContents: shellContents });
   subject.attach(window as never);

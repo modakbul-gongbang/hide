@@ -14,7 +14,7 @@ import { fixtureExecutable, fixtureHomeEnv, fixtureOpenCommand, fixtureToolPath,
 import { SHOW_INACTIVE_SWITCH } from "../src/main/launchSwitches";
 
 export const DESKTOP_DIR = path.resolve(__dirname, "..");
-const REPO = path.resolve(DESKTOP_DIR, "..");
+export const REPO = path.resolve(DESKTOP_DIR, "..");
 export const HIDE_CLI = path.join(REPO, "target", "debug", fixtureExecutable("hide"));
 const isolations = new Map<string, { cleanup: () => void; candidates: Set<ChildProcess>; launching: number }>();
 const MAX_ISOLATIONS = 16;
