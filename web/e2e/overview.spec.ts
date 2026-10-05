@@ -104,13 +104,26 @@ function fakeGh(dir: string): string {
   });
   const plain = (body: string) => JSON.stringify({ body, labels: [], author: { login: "example-user" }, assignees: [], createdAt: "2026-09-19T00:00:00Z", comments: [] });
   // Issue 3 waits on issue 2, the relation GitHub's blockedBy records (task-agents-views B8).
+  // Issue 2 has two sub-issues, GitHub's `completed` of `total` 1 of 2: #4, open and
+  // closed by pull request 11, and #9, already closed.
+  const none = { subIssuesSummary: { total: 0, completed: 0 }, subIssues: { nodes: [] } };
   const dependencies = JSON.stringify({
     data: {
       r0: {
         nameWithOwner: "acme/repo",
-        i2: { number: 2, blockedBy: { nodes: [] } },
-        i3: { number: 3, blockedBy: { nodes: [{ number: 2, state: "OPEN", repository: { nameWithOwner: "acme/repo" } }] } },
-        i4: { number: 4, blockedBy: { nodes: [] } },
+        i2: {
+          number: 2,
+          blockedBy: { nodes: [] },
+          subIssuesSummary: { total: 2, completed: 1 },
+          subIssues: {
+            nodes: [
+              { number: 4, title: "리뷰 중인 이슈", state: "OPEN", repository: { nameWithOwner: "acme/repo" } },
+              { number: 9, title: "끝난 조각", state: "CLOSED", repository: { nameWithOwner: "acme/repo" } },
+            ],
+          },
+        },
+        i3: { number: 3, blockedBy: { nodes: [{ number: 2, state: "OPEN", repository: { nameWithOwner: "acme/repo" } }] }, ...none },
+        i4: { number: 4, blockedBy: { nodes: [] }, ...none },
       },
     },
   });
@@ -662,6 +675,10 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await expect(issueCard(4).locator("[data-lens-pr-chip]")).toHaveAttribute("data-lens-pr-chip", "11");
     await expect(issueCard(4)).toContainText("Review required");
     await expect(issueCard(3).locator("[data-card-chips]")).toHaveCount(0);
+    // GitHub's sub-issue progress on the card, and none on an issue without sub-issues.
+    await expect(issueCard(2).locator("[data-sub-issues]")).toHaveAttribute("data-sub-issues", "1/2");
+    await expect(issueCard(2).locator("[data-sub-issues]")).toHaveText("Sub-issues 1/2");
+    await expect(issueCard(3).locator("[data-sub-issues]")).toHaveCount(0);
 
     // The panel (B11-B15): head, the in-progress actions, the properties the
     // read brought, what was done for it, the Markdown body and the latest
@@ -678,6 +695,12 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await expect(panel.locator('[data-issue-property="assignees"]')).toHaveText("example-user");
     await expect(panel.locator('[data-issue-property="created"]')).toHaveCount(0);
     await expect(panel.locator("[data-issue-work-checkout]")).toContainText("2-task-source");
+    // The sub-issues: each one's state, and the pull request that closes it as a chip.
+    await expect(panel.locator("[data-issue-sub-issues]")).toHaveAttribute("data-issue-sub-issues", "1/2");
+    await expect(panel.locator('[data-sub-issue="github:acme/repo#4"]')).toHaveAttribute("data-sub-issue-state", "open");
+    await expect(panel.locator('[data-sub-issue="github:acme/repo#4"] [data-sub-issue-pr]')).toHaveAttribute("data-sub-issue-pr", "11");
+    await expect(panel.locator('[data-sub-issue="github:acme/repo#9"]')).toHaveAttribute("data-sub-issue-state", "closed");
+    await expect(panel.locator('[data-sub-issue="github:acme/repo#9"] [data-sub-issue-pr]')).toHaveCount(0);
     await expect(panel.locator("[data-issue-body=ready] [data-markdown-text]")).toContainText("출처를 어댑터로 나눈다.");
     await expect(panel.locator("[data-issue-comments]")).toHaveAttribute("data-issue-comments", "4");
     await expect(panel.locator("[data-issue-comment]")).toHaveCount(3);

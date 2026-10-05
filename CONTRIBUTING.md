@@ -39,6 +39,8 @@ bash scripts/verify-cargo.sh test-scoped -p hide-platform -p hide-herdr-client #
 ```
 
 Then open the pull request against `main` and answer the template.
+Write the issue it finishes on the `Closes #N` line and nothing else there; a big issue split across several pull requests gets one sub-issue per piece, and each pull request closes its own.
+`Related:` names only the PRD path and the pull requests this one follows or depends on, because Hide and GitHub relate a pull request to an issue only through a closing keyword.
 `main` accepts pull-request merges, and the `verify` check has to pass; this repository currently uses merge commits, and there is no way around branch protection, including for maintainers.
 
 ## CI gates

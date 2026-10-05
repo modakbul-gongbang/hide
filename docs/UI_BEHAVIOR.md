@@ -603,6 +603,7 @@ A line at zero is not drawn, and done work with no issue is not shown.
 
 A card's head is the source glyph, the id and at most two labels (GitHub, once the issue has been read), then the title in at most two lines.
 A backlog card stops there, with a lock and the ids of the open issues it waits on in warning when it is blocked; starting it is never refused, only warned.
+An issue that has GitHub sub-issues carries one quiet line under its title, `하위 3/5` (`Sub-issues 3/5`, `子议题 3/5`, `サブ課題 3/5`), GitHub's own `completed` of `total` and never a count Hide made from the cards it holds; an issue with none, and every Local issue, has no such line.
 An in-progress card adds the checkout chip (the branch, `↑N`, `N files`) and the PR chip, and at most two agent rows, the ones that need the operator first, and `+N` for the rest; a review card adds the CI mark and the review GitHub asks for in one word.
 Only a card whose agent asks or has finished is outlined in warning, its question line in warning, and it rises to the top of its column; a done card is dimmed, and no other card has colour.
 Hover or focus fills the id line's reserved slot without changing the card's height: `▷ 시작` and `S` on a backlog issue, the Workspace icon and `O` in progress, the PR icon in review, a Local issue's edit icon, and `⋯` with 시작, Workspace, GitHub, 편집 and a Local issue's close or reopen; each button's popover says what it does.
@@ -613,6 +614,8 @@ When the source cannot be read the board keeps the last issues it read, each car
 
 The issue panel opens to the right of the board, which stays in the width left to it; its head is the source glyph, the id, the source's name, Open or Closed and ×, then the title, then an action line: `▷ 시작` and `S` on a backlog issue, Workspace and `O` in progress, the pull request in review, beside it GitHub (a GitHub issue) or edit (a Local one), and `⋯` at its end.
 Its properties are the stage, the labels, the author and date and the assignees for a GitHub issue, the day a Local issue was made, when it last changed, and what blocks it; a property with no value has no row.
+`하위 3/5` heads the sub-issue list, one row per sub-issue (at most GitHub's limit of 100 per issue): its state, id, title, and the chip of the pull request whose body closes it (merged, open, draft or closed by its colour, the CI mark once read); the chip opens that pull request's row on the PRs view and ⌘-click opens it on GitHub, and a sub-issue nothing closes yet has no chip.
+A mention that does not close an issue (a `Related:` line, a `#N` in a body) is shown nowhere, on the card or in the panel; only a closing keyword relates a pull request to an issue, and a sub-issue's own card is as before.
 `이 이슈로 한 일` is the checkout line with its Workspace button, every agent working there with a delegated one indented, and the pull request with its title and the review asked for or its CI; with none of them the section is not drawn.
 The body is drawn as Markdown, and under it a GitHub issue shows `댓글 N`, the latest three comments and `쓰기는 GitHub에서`; a Local issue has no comments.
 Opening the panel reads the issue's body, labels, author, assignees and comments once, on a worker off the core's lock; while it reads, the body and those properties are skeletons and the rest stands on the snapshot, and an issue opened again shows what was read before while it reads again.
@@ -641,7 +644,7 @@ A blocked card is dimmed with its lock line, a done card is dimmed, and a card w
 Issues with no relation in scope gather below the graph under `관계 없는 태스크`.
 A blocker outside the scope, or one the source says is closed, is no arrow; an open one outside the scope is still named on the lock line.
 On the Overview each card carries its project beside its id and an arrow crosses projects.
-When the source answers the issues but not their dependencies, the last blockers read stay and the cards carry the same warning mark as a failed read.
+When the source answers the issues but not their dependencies, the last blockers and sub-issues read stay and the cards carry the same warning mark as a failed read.
 
 ### PRs
 

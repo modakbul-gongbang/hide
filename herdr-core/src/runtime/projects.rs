@@ -1109,7 +1109,7 @@ impl Runtime {
                         previous.status.last_success_at_unix_ms;
                 }
             }
-            // Dependencies that could not be read this pass keep the ones
+            // Dependencies and sub-issues that could not be read this pass keep the ones
             // read before, the same way a failed lookup keeps its answer.
             if project.issues.dependencies_failure.is_some()
                 && let Some(previous) = self.github.project(&project.root_path)
@@ -1122,6 +1122,7 @@ impl Runtime {
                         .find(|known| known.reference == issue.reference)
                     {
                         issue.blocked_by = known.blocked_by.clone();
+                        issue.sub_issues = known.sub_issues.clone();
                     }
                 }
             }
