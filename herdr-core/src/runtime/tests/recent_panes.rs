@@ -106,10 +106,14 @@ fn the_order_survives_a_restart_and_a_shared_ui_state_save() {
     visit(&mut runtime, "alpha");
     visit(&mut runtime, "beta");
 
-    assert!(runtime.dispatch_json(&event(
-        "ui_state_update",
-        serde_json::json!({"accent_hex": "#7DD3FC", "font_size": 14, "recent_pane_ids": []})
-    )));
+    // The web's shared save echoes the whole state, this list included.
+    let save = super::appearance::ui_state_update(
+        &runtime,
+        serde_json::json!({"accent_hex": "#7DD3FC", "recent_pane_ids": []}),
+    );
+    assert!(runtime.dispatch_json(&save));
+    assert!(runtime.snapshot().status.last_error.is_none());
+    assert_eq!(runtime.snapshot().ui_state.accent_hex, "#7DD3FC");
     assert_eq!(recent(&runtime), ["beta", "alpha"]);
 
     drop(runtime);

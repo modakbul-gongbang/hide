@@ -136,7 +136,7 @@ fn a_ui_state_update_carries_the_theme_through() {
 }
 
 /// The web's `ui_state_update`: the whole current state with `patch` over it.
-fn ui_state_update(runtime: &Runtime, patch: serde_json::Value) -> Vec<u8> {
+pub(super) fn ui_state_update(runtime: &Runtime, patch: serde_json::Value) -> Vec<u8> {
     let mut payload = serde_json::to_value(&runtime.snapshot().ui_state).expect("ui state");
     for (key, value) in patch.as_object().expect("patch object") {
         payload[key] = value.clone();

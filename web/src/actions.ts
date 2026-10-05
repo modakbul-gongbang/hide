@@ -173,7 +173,9 @@ export function createActions(send: DispatchFn) {
    * while its snapshot is still in flight. The folds (`collapsed_workspace_ids`,
    * `expanded_checkout_ids`, `expanded_agent_pane_ids`) are left out for the
    * same reason: the core owns them through `project_checkouts_fold`,
-   * `checkout_agents_toggle` and `agent_tree_toggle`.
+   * `checkout_agents_toggle` and `agent_tree_toggle`. The recent lists
+   * (`recent_checkouts`, `recent_pane_ids`) ride along and the core ignores
+   * them, keeping its own.
    */
   const updateUiState = (patch: Record<string, unknown>) => {
     const state = rest()?.ui_state;
