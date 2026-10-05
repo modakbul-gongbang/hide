@@ -1179,7 +1179,7 @@ The core keeps one value of each, so with several pages open the last page to re
 
 Web owner: `web/src/SearchPalette.tsx` (⌘K), `web/src/search.ts`, `web/src/relations.ts`, `web/src/searchDetail.ts`, `web/src/searchGithub.ts`, `web/src/Palette.tsx` (⌘P and the diff palette), `web/src/components/sidebar-header.tsx`; core owner for the GitHub search: `herdr-core/src/runtime/issues.rs`.
 
-⌘K goes to things; it runs no command except `에이전트 시작…`.
+⌘K goes to things; it runs no command except `에이전트 시작…` and `브라우저에서 URL 열기`.
 On the web, the Search icon at the end of the sidebar's tab strip or its top line, hinted `Search ⌘K`, opens the same palette Command+K opens, and the query row carries an `Esc` keycap.
 Its own wide layout is a list on the left and the highlighted row's detail on the right, one and a half times the width ⌘P, the shortcut sheet and the start panel share; a dialog under 800 px, too narrow for both, draws the list alone.
 
@@ -1190,6 +1190,10 @@ Only digits in the query match a number by substring on other rows; the pane id 
 The rows are `Issues`, `Pull requests`, `Agents`, `Projects`, `Checkouts` and `Devices` (while another device is registered), then `Commands` holding `에이전트 시작…` and `GitHub`; a group stands where its best result ranked and keeps its results in rank order, so grouping never moves the best match off the first row.
 Search covers every connected device; a result not on the device in front carries that device's chip after its title, and choosing it brings that device forward with it.
 An agent row is the agent's own mark, its title, and its place and state under it; an issue or pull request row carries its number, state and, for a pull request, its CI.
+
+`브라우저에서 URL 열기` is listed first while the query is a web address: one written with `http://` or `https://`, or a loopback host a dev server runs on (`localhost:5173`, `127.0.0.1:3000`), read by the same rule as the View address field (`addressUrl`); any other text is a name to search.
+Enter opens the address as a browser display in the Workspace in front, in its active View area, as New tab does.
+Pages are drawn by the desktop app, so in a browser tab, and on a screen with no Workspace in front, the row stays listed, dimmed, with the reason under its title, and Enter does nothing.
 
 ### What an empty query shows
 
