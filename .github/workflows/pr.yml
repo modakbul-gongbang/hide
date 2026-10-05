@@ -98,14 +98,16 @@ jobs:
       - name: Choose the lanes this change needs
         id: plan
         env:
-          # A merge queue group names the main commit it starts from.
+          # A merge queue group names the commit it starts from: main, or the
+          # group queued ahead of it.
           BASE: ${{ github.event.merge_group.base_sha || 'HEAD^1' }}
           GH_TOKEN: ${{ github.token }}
         # The crate graph comes from `cargo metadata`, which needs no build. A
         # push compares from the last main commit whose push run passed, not
         # from `before`: GitHub replaces a pending run, and the replaced run's
-        # merges are this run's to check. Its base and a group's can be
-        # several merges back, past the checkout's depth, so they are fetched;
+        # merges are this run's to check. Its base can be several merges
+        # back and a group's is a queue commit, both past the checkout's
+        # depth, so they are fetched;
         # one that cannot be leaves the comparison unavailable, and the plan
         # runs every lane. The queue lookup's answer is written only when the
         # API answers, and a missing one also plans every lane.
