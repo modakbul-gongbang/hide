@@ -153,13 +153,6 @@ jobs:
           bash scripts/install-nextest.sh
           bash scripts/verify-cargo.sh nextest --profile ci -p hide-platform -p hide-herdr-client
           bash scripts/verify-cargo.sh nextest --profile ci -p hide-herdr-client --test real_herdr --run-ignored only --no-capture
-      - name: OS contract tests quarantined on macOS (does not block)
-        # A Rust test ignored for an issue runs here and cannot turn the
-        # nightly red; the pull request lanes run it the same way.
-        if: runner.os == 'macOS'
-        continue-on-error: true
-        timeout-minutes: 10
-        run: bash scripts/verify-cargo.sh nextest --profile ci -p hide-platform --run-ignored only --no-tests pass
       - name: Whole desktop suite
         timeout-minutes: 20
         env:
