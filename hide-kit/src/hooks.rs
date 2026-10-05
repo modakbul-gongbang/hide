@@ -84,3 +84,13 @@ pub(crate) fn remove(target: &KitTarget, runtime: AgentRuntime) -> RemoveOutcome
         },
     }
 }
+
+/// An agent switched off: Hide's entries come out, and only Hide's. The
+/// part then reads Off, and no pass puts it back until the operator switches
+/// the agent on.
+pub(crate) fn turn_off(target: &KitTarget, runtime: AgentRuntime) -> Result<(), String> {
+    match remove(target, runtime) {
+        RemoveOutcome::Removed | RemoveOutcome::Absent => Ok(()),
+        RemoveOutcome::Kept { reason } | RemoveOutcome::Failed { reason } => Err(reason),
+    }
+}

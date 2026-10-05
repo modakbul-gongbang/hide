@@ -74,6 +74,7 @@ impl HostChannel for KitDevice {
             let removed = hide_host::protocol::KitRemoved {
                 kit: hide_kit::RemoveReport {
                     components: vec![(ComponentId::Cli, hide_kit::RemoveOutcome::Removed)],
+                    agents: Vec::new(),
                 },
                 helper_root: hide_kit::RemoveOutcome::Removed,
             };
@@ -106,6 +107,7 @@ fn report(states: &[(ComponentId, ComponentState)]) -> KitReport {
                 codex_daemon: None,
             })
             .collect(),
+        agents: Vec::new(),
         labels_retirement: Default::default(),
         legacy_retirement: Default::default(),
     }

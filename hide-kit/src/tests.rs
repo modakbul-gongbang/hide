@@ -11,6 +11,8 @@ use serde_json::{Value, json};
 
 use super::*;
 
+mod agent_cases;
+
 type IndexReadHook = Box<dyn FnOnce(&Path)>;
 std::thread_local! {
     static SUPERVISOR_INDEX_READ_HOOK: std::cell::RefCell<Option<IndexReadHook>> =
@@ -291,10 +293,24 @@ fn a_first_apply_installs_every_part_and_keeps_other_tools_entries() {
         &std::fs::read_to_string(fixture.home().join(".hide/kit/installed.json")).unwrap(),
     )
     .unwrap();
-    let installed = vec!["claude_code_hook", "cli", "coordination_retirement"];
+    // Skill stubs depend on which agents the machine running the test has, so
+    // only the parts and the Claude Code stub (its folder is in the fixture)
+    // are pinned.
+    let installed: Vec<&str> = record["installed"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|code| code.as_str().unwrap())
+        .filter(|code| *code == "skill:claude" || !code.starts_with("skill:"))
+        .collect();
     assert_eq!(
-        record["installed"],
-        serde_json::json!(installed),
+        installed,
+        [
+            "claude_code_hook",
+            "cli",
+            "coordination_retirement",
+            "skill:claude"
+        ],
         "{record}"
     );
     // The standalone plugin is looked for on every platform, so its
