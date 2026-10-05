@@ -2,51 +2,11 @@
 // contract is hide-platform::host; Herdr accepts a filesystem socket path
 // on every OS and maps that path to a named pipe on Windows.
 import fs from "node:fs";
-import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
+import { copyFixtureShim } from "./shims/build";
 
 export const fixtureExecutable = (name: string): string => `${name}${process.platform === "win32" ? ".exe" : ""}`;
-
-const compiledByWorker = new Map<string, string>();
-let compileDir: string | undefined;
-
-/**
- * Writes the executable `source` compiles to at `executable`. A worker
- * compiles each distinct source once, into a directory it removes at exit,
- * and copies the result: every test starts its own Herdr, and compiling the
- * same shim for each one is what exceeded the compiler's process bound on a
- * loaded Windows runner. The compiler is an owned, bounded child, separate
- * from test deadlines.
- */
-export function compileFixtureC(source: string, executable: string): void {
-  let built = compiledByWorker.get(source);
-  if (built === undefined) {
-    if (compileDir === undefined) {
-      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hide-e2e-cc-"));
-      process.once("exit", () => fs.rmSync(dir, { recursive: true, force: true }));
-      compileDir = dir;
-    }
-    const base = path.join(compileDir, String(compiledByWorker.size));
-    const compiler = process.platform === "win32" ? "clang.exe" : "cc";
-    fs.writeFileSync(`${base}.c`, source);
-    built = `${base}${fixtureExecutable("")}`;
-    try {
-      execFileSync(compiler, ["-O1", "-o", built, `${base}.c`], { timeout: 20_000 });
-    } catch (error) {
-      throw new Error(`fixture C compiler ${compiler} failed (20 second process bound); the runner needs its native C toolchain: ${String(error)}`, { cause: error });
-    }
-    compiledByWorker.set(source, built);
-  }
-  fs.copyFileSync(built, executable);
-}
-
-/** Ends the worker's compiled helpers now; a unit test that replaces the temp folder calls it between tests. */
-export function forgetCompiledFixtures(): void {
-  if (compileDir !== undefined) fs.rmSync(compileDir, { recursive: true, force: true });
-  compileDir = undefined;
-  compiledByWorker.clear();
-}
 
 /**
  * Where a client reaches the local stream Herdr names by `socket`: the path
@@ -56,52 +16,10 @@ export function forgetCompiledFixtures(): void {
  */
 export const localEndpoint = (socket: string): string => (process.platform === "win32" ? `\\\\.\\pipe\\${socket}` : socket);
 
-// Runs the Node script next to it that shares its name: `name.exe` runs
-// `name.js`, interpreted by the program its first line (`#!<path>`) names, with
-// the arguments it was given, and exits with that program's status.
-const LAUNCHER_SOURCE = `#include <windows.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <string.h>
-
-int main(void) {
-  char script[MAX_PATH];
-  DWORD length = GetModuleFileNameA(NULL, script, sizeof script);
-  if (length == 0 || length >= sizeof script) return 70;
-  char *dot = strrchr(script, '.');
-  if (!dot) return 70;
-  strcpy(dot, ".js");
-  FILE *file = fopen(script, "rb");
-  if (!file) { fprintf(stderr, "launcher: no script %s\\n", script); return 70; }
-  char line[MAX_PATH + 3];
-  char *got = fgets(line, sizeof line, file);
-  fclose(file);
-  if (!got || strncmp(line, "#!", 2) != 0) { fprintf(stderr, "launcher: %s has no interpreter line\\n", script); return 70; }
-  char *interpreter = line + 2;
-  interpreter[strcspn(interpreter, "\\r\\n")] = 0;
-  const char *arguments = GetCommandLineA();
-  if (*arguments == '"') {
-    arguments++;
-    while (*arguments && *arguments != '"') arguments++;
-    if (*arguments) arguments++;
-  } else {
-    while (*arguments && *arguments != ' ' && *arguments != '\\t') arguments++;
-  }
-  char *command = malloc(strlen(interpreter) + strlen(script) + strlen(arguments) + 8);
-  if (!command) return 70;
-  sprintf(command, "\\"%s\\" \\"%s\\"%s", interpreter, script, arguments);
-  STARTUPINFOA startup = { sizeof startup };
-  PROCESS_INFORMATION process;
-  if (!CreateProcessA(NULL, command, NULL, NULL, TRUE, 0, NULL, NULL, &startup, &process)) {
-    fprintf(stderr, "launcher: cannot start %s (error %lu)\\n", interpreter, GetLastError());
-    return 71;
-  }
-  WaitForSingleObject(process.hProcess, INFINITE);
-  DWORD status = 1;
-  GetExitCodeProcess(process.hProcess, &status);
-  return (int)status;
-}
-`;
+// `launcher.c` (built once, e2e/shims/build.ts) runs the Node script next to it
+// that shares its name: `name.exe` runs `name.js`, interpreted by the program
+// its first line (`#!<path>`) names, with the arguments it was given, and
+// exits with that program's status.
 
 /**
  * An executable `name` in `dir` that runs the Node `script`, the same way on
@@ -120,7 +38,7 @@ export function fixtureProgram(dir: string, name: string, script: string): strin
   }
   fs.writeFileSync(path.join(dir, `${name}.js`), body);
   const executable = path.join(dir, `${name}.exe`);
-  compileFixtureC(LAUNCHER_SOURCE, executable);
+  copyFixtureShim("launcher", executable);
   return executable;
 }
 
@@ -180,7 +98,7 @@ export function fixtureOpenCommand(root?: string, privateRoot?: string): string 
   // same native no-op without falling back to an account's GUI opener.
   if (!root) {
     fs.mkdirSync(path.dirname(command), { recursive: true });
-    compileFixtureC("int main(void) { return 0; }\n", command);
+    copyFixtureShim("noop", command);
   }
   if (!fs.existsSync(command)) throw new Error(`Windows fixture opener is missing: ${command}`);
   return command;

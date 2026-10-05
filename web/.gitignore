@@ -1,6 +1,7 @@
 node_modules/
 dist/
 test-results/
+.e2e-shims/
 test-results-quarantine/
 e2e-report.json
 playwright-report/

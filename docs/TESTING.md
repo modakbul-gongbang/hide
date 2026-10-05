@@ -110,8 +110,9 @@ When the behavior depends on the order of two events, the test fixes that order;
 - Use `fixtureHomeEnv` from `web/e2e/platform-fixture.ts` to move `HOME`, provider config homes and, on Windows, `USERPROFILE`, `APPDATA` and `LOCALAPPDATA` together into the private fixture.
   The fixtures run a compiled `claude` shim instead, which proves the pipeline and not an agent or physical IME.
   On Windows the interactive shim writes its readiness line after console setup; provider/auth replies return before that line, and input logs record only received input.
-  The native compiler is `cc` on Unix and `clang.exe` on Windows; its owned child has a 20-second bound and a compiler failure fails setup.
-  A worker compiles each distinct source once and copies the result into every test's private root, because compiling the same shim per test is what exceeded that bound; `compileFixtureC` takes the source text.
+  The native compiler is `cc` on Unix and `clang.exe` on Windows, and no test runs it: Playwright's `globalSetup` (`web/e2e/global-setup.ts`, used by the web and desktop configs) builds every program in `web/e2e/shims/*.c` that this system runs once into `web/.e2e-shims`, each named with a hash of its source, and a test only copies the finished program (`copyFixtureShim`).
+  A compiler failure fails the run at that entry point with the compiler's name and output, a program that was not built fails the test that asked for it, and nothing in a test compiles, times a compiler or cleans one up; a per-test compile is what exceeded a 20-second bound on a cold Windows runner and left the killed compiler's children behind.
+  The spawn provider is built once too; its run-specific values (Herdr binary, completion file, command) are read from `provider.config` in `$HIDE_E2E_ROOT`, which every fixture pane is given.
   The private Herdr server, panes and `hided` use `fixturePath`: the shim directory followed by system-tool directories, including `/usr/sbin` for `lsof` on Unix and native Windows and Git directories on Windows.
   `fixtureExecutable` supplies native `.exe` names and `fixtureToolPath` uses the native path delimiter while refusing missing or non-absolute Windows system-root or program-files values.
   Catalog discovery probes every provider, so appending the host's `PATH` also reaches its installed CLIs even when the test selects Claude.
@@ -127,14 +128,14 @@ When the behavior depends on the order of two events, the test fixes that order;
 
 `hide-platform` owns what differs between systems in the product; the e2e fixtures need the same for their own resources: the endpoint they listen on, how they spell a path the core compares, the programs they copy and run, and how they clean up.
 That belongs in one shared fixture helper under `web/e2e/`, which the specs and both fixtures call, not in a `process.platform` branch per spec.
-`web/e2e/platform-fixture.ts` owns native home variables, executable names, the controlled tool path, compiler and no-op opener used by both fixtures.
+`web/e2e/platform-fixture.ts` owns native home variables, executable names, the controlled tool path and the copy of the built no-op opener used by both fixtures.
 Put new operating-system differences in that shared boundary rather than repeating them in a spec.
 The Windows fixture boundaries also preserve these requirements:
 
 - An endpoint is a named pipe on Windows: a fixture that would use the socket path `P` on Unix uses `\\.\pipe\P`, because listening on a Unix socket path there fails with `EACCES`.
   `localEndpoint` in `web/e2e/platform-fixture.ts` spells it for both a listener and a client.
 - A new fake `gh`, `tailscale` or provider is a Node script made by `fixtureProgram` in `web/e2e/platform-fixture.ts`, never a `#!/bin/sh` file: Windows cannot run a script by name, and its shell is not the Unix one.
-  One compiled launcher (`name.exe`, compiled once per worker) runs the `name.js` beside it with the interpreter its first line names, so there is one native program and one script per fake.
+  One compiled launcher (`name.exe`, `web/e2e/shims/launcher.c`, built once like the other programs) runs the `name.js` beside it with the interpreter its first line names, so there is one native program and one script per fake.
   A `PATH` that holds the fake is joined with `path.delimiter`, because `:` splits a drive letter on Windows.
 - A key the core derives from a path is computed from the wire spelling the core uses (`/` between names, `hide-platform`'s `path`), never from the native spelling.
   `web/e2e/s2.spec.ts` hashes the checkout folder to find its owner workspace; hashed in the Windows spelling, the key named a different workspace than the one the core chose, and the new tab the test expected appeared elsewhere.
@@ -216,7 +217,7 @@ A piece that another open change is still building is marked as pending with the
    `hide-e2e/reopen-after-restart-through-blank` fails a `goto` of `#token=` after `restart()` in the same function; a helper defined elsewhere and called after the restart is not seen, so keep the step in the helper.
    A test whose subject is a surviving page reconnecting to the restarted daemon (`web/e2e/s3.spec.ts`, the two draft recovery tests) must not reload it, and says so in a line allow.
 8. **Put a system difference in one fixture helper.**
-   See [Operating-system differences belong to one fixture helper](#operating-system-differences-belong-to-one-fixture-helper); native home variables, executable names, the tool path, the compiler and the no-op opener live in `web/e2e/platform-fixture.ts`, not in a `process.platform` branch in a spec.
+   See [Operating-system differences belong to one fixture helper](#operating-system-differences-belong-to-one-fixture-helper); native home variables, executable names, the tool path and the no-op opener live in `web/e2e/platform-fixture.ts`, not in a `process.platform` branch in a spec.
    The endpoint helper (`herdrGate` spells the Windows pipe itself in `web/e2e/herdr-gate.ts`) is not there yet; add it to `platform-fixture.ts` when a second spec needs it.
 9. **A retry is a label, not a fix.**
    CI runs Playwright with `retries: 1` (`web/playwright.config.ts`, `desktop/playwright.config.ts`), so a test that fails and then passes is reported as `flaky` instead of failing the run; two failures still fail the lane.
