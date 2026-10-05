@@ -257,9 +257,10 @@ The crate's own `AGENTS.md` says where the file goes; this section says how the 
    Use a private folder per test and never a fixed name in `/tmp`.
    Why: a leaked process or file is inherited by the next test and by the next run.
 8. **Retries are a classification.**
-   CI runs the Linux Rust lane with `scripts/verify-cargo.sh nextest --profile ci` (`retries = 1` in `.config/nextest.toml`), so a test that fails once and then passes is reported as flaky and recorded in an issue with an expiry; two failures fail the lane.
+   CI runs every Rust lane (Linux, macOS, Windows, the OS contract and nightly) with `scripts/verify-cargo.sh nextest --profile ci` (`retries = 1` in `.config/nextest.toml`), so a test that fails once and then passes is reported as flaky and recorded in an issue with an expiry; two failures fail the lane.
    `nextest` does not run doc tests; the workspace has none that runs today, and a runnable one needs its own `cargo test --doc` step.
-   The Windows and macOS lanes still run `cargo test`, which has no retry; an OS-contract test there is quarantined with `ignore` as described in [Flaky tests](#flaky-tests).
+   `scripts/install-nextest.sh` installs the pinned release on a runner; a lane that runs nextest several times keeps one JUnit report per run, and `scripts/ci-flaky-report.py` reads them all.
+   A flaky OS-contract test is fixed or deleted by its issue's deadline like any other; it is not ignored.
    The rule against raising a deadline to pass is unchanged.
 
 ## Which lanes a pull request runs
@@ -305,10 +306,11 @@ CI retries a failed test once, for classification and for the report, and for no
   The deadline is not a timer that moves the test somewhere quieter, and a later flake on an issue past its deadline says so in its comment.
 - A green lane is not proof that a flaky test passed on that commit: its first attempt failed.
   Read the `Report flaky tests` step and the `quarantine` issues before claiming a flow verified.
-- The report step cannot fail a lane: the run already passed, so a GitHub error costs one missed issue that the next flaky run files.
+- The report step cannot fail a lane: the run already passed.
+  If it cannot file (a GitHub error, a read-only token), it leaves the unfiled tests in a warning annotation and in the job summary under "Flaky tests that were not filed", and the next flaky run files them; a filed run lists its issues in the same summary.
 - `cargo nextest` runs no doc test.
   The workspace has none that runs (its three doc blocks are `ignore`, `text` and `sh`); a runnable doc test needs its own `cargo test --doc` step.
-- Windows and macOS Rust lanes still use `cargo test`, whose retry does not exist; their flaky Rust tests surface as a failed lane.
+- `verify-cargo.sh test` and `test-scoped` stay `cargo test` for local runs and the sealed harness; they never retry.
 
 What the retry does not do:
 
@@ -324,8 +326,8 @@ Until the last `@flaky` tag is gone, a tag removes a test from the required lane
 - A web or desktop e2e test tagged `@flaky` with an `issue` annotation is skipped by the required web shards and the required desktop step (`--grep-invert @flaky`, nightly's suites included), and web shard 1 and the desktop job each still run every tagged test in a step that cannot turn `verify` red, so a fix shows up as a pass.
   Pull-request tagged web tests run only in shard 1 of the Linux lane, never in the macOS or Windows `@platform` jobs.
   The goal is no tag; a new one needs an open issue holding a recorded failure and a deadline, and removing the tag is part of the fix.
-- A Rust OS contract test that fails intermittently on one system is ignored there alone with `#[cfg_attr(target_os = "<system>", ignore = "<issue URL>")]`, so the other systems keep it in their required lanes.
-  Today only macOS `hide-platform` tests are run back: the desktop job's quarantine step runs them with `--ignored` where they cannot turn `verify` red (the plan includes `desktop-e2e` for every `hide-platform` change), and so does nightly's macOS step.
+- Rust has no quarantine: a flaky Rust test is retried, filed and fixed or deleted, and the policy is zero `ignore`.
+  An `ignore` that names an external binary, such as `real_herdr` and `remote_delivery`, is an opt-in run with its own step and says what it needs; it is not a quarantine.
 
 ## Reviewing a pull request that adds or changes a test
 

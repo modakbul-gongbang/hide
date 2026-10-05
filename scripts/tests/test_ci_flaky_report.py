@@ -105,6 +105,32 @@ class Filing(unittest.TestCase):
         r.report(tests, "Linux", ENV, self.call(), TODAY)
         self.assertEqual(len([c for c in self.calls if c[0][0].endswith("/issues")]), r.MAX_PER_RUN)
 
+    def test_a_failed_filing_leaves_the_tests_in_the_job_summary(self):
+        import os, tempfile
+        folder = tempfile.TemporaryDirectory()
+        self.addCleanup(folder.cleanup)
+        report = Path(folder.name) / "junit.xml"
+        report.write_text('<testsuites><testsuite name="p"><testcase name="wobbles" classname="p"><flakyFailure message="m">boom</flakyFailure></testcase></testsuite></testsuites>')
+        summary = Path(folder.name) / "summary.md"
+        saved = dict(os.environ)
+        os.environ.update({"GITHUB_STEP_SUMMARY": str(summary), "PATH": "/nonexistent"})
+        self.addCleanup(lambda: (os.environ.clear(), os.environ.update(saved)))
+        os.environ.update(ENV)
+        self.assertEqual(r.main(["--suite", "rust", "--junit", str(report), "--system", "Linux"]), 1)
+        self.assertIn("p wobbles", summary.read_text())
+        self.assertIn("not filed", summary.read_text())
+
+    def test_several_junit_reports_are_read_together(self):
+        import tempfile
+        folder = Path(tempfile.mkdtemp())
+        for n in (1, 2):
+            (folder / f"junit.{n}.xml").write_text(f'<testsuites><testsuite name="p"><testcase name="t{n}" classname="p"><flakyFailure message="m">x</flakyFailure></testcase></testsuite></testsuites>')
+        seen = []
+        saved, r.report = r.report, lambda tests, system, env, **kw: seen.extend(t["name"] for t in tests)
+        self.addCleanup(setattr, r, "report", saved)
+        self.assertEqual(r.main(["--suite", "rust", "--junit", str(folder / "junit.1.xml"), str(folder / "junit.2.xml")]), 0)
+        self.assertEqual(seen, ["p t1", "p t2"])
+
     def test_a_missing_report_is_not_an_error(self):
         self.assertEqual(r.main(["--suite", "web", "--playwright", "/nonexistent/report.json"]), 0)
 
