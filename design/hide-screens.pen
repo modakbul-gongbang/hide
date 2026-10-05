@@ -224999,7 +224999,7 @@
           "type": "text",
           "id": "screen-onboarding-spec",
           "name": "web/src/AgentOnboarding.tsx ",
-          "content": "web/src/AgentOnboarding.tsx over Dialog (agent adapters PRD, first-run choice): shown once while the core says the choice is pending. One square tile per adapter in four columns, each with its logo on a --logo-plate square (the bundled marks of web/src/assets/agents, each with its source in manifest.json) or, where no mark may be bundled, a monogram; never a drawn or approximated logo. An agent set up on the machine is on by default and shows its state as a word and a check mark as well as the primary border; an agent that is not set up is dimmed, reads Not installed and has no switch. Later closes without installing anything, Apply installs the agents left on here and on connected devices.",
+          "content": "web/src/AgentOnboarding.tsx over Dialog (agent adapters PRD, first-run choice): shown while the core says the choice is pending, and only Apply ends it. One square tile per adapter in four columns, each with its logo on a --logo-plate square (the bundled marks of web/src/assets/agents, each with its source in manifest.json) or, where no mark may be bundled, a monogram; never a drawn or approximated logo. An agent set up on the machine is on by default and shows its state as a word and a check mark as well as the primary border; an agent that is not set up is dimmed, reads Not installed and has no switch. Apply is the only button: Escape, a click outside and a close button do nothing, so a stray key cannot finish a choice that leaves Claude Code and Codex off; Apply installs the agents left on here and on every device that waits for the choice.",
           "fill": "$--muted-foreground",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-caption",
@@ -226564,23 +226564,6 @@
                   "id": "onb-surface-l-ftr",
                   "name": "Footer",
                   "children": [
-                    {
-                      "id": "onb-later-l",
-                      "type": "ref",
-                      "ref": "hideui:btn-m",
-                      "name": "Later",
-                      "fill": "#00000000",
-                      "descendants": {
-                        "hideui:btn-ic": {
-                          "fill": "$--primary-foreground",
-                          "enabled": false
-                        },
-                        "hideui:btn-lb": {
-                          "fill": "$--subtle-foreground",
-                          "content": "Later"
-                        }
-                      }
-                    },
                     {
                       "id": "onb-apply-l",
                       "type": "ref",
@@ -228190,23 +228173,6 @@
                   "id": "onb-surface-d-ftr",
                   "name": "Footer",
                   "children": [
-                    {
-                      "id": "onb-later-d",
-                      "type": "ref",
-                      "ref": "hideui:btn-m",
-                      "name": "Later",
-                      "fill": "#00000000",
-                      "descendants": {
-                        "hideui:btn-ic": {
-                          "fill": "$--primary-foreground",
-                          "enabled": false
-                        },
-                        "hideui:btn-lb": {
-                          "fill": "$--subtle-foreground",
-                          "content": "Later"
-                        }
-                      }
-                    },
                     {
                       "id": "onb-apply-d",
                       "type": "ref",

@@ -57,21 +57,25 @@ test("a Mac with no kit record is asked once, the set-up agents are on, and Appl
   }
 });
 
-test("Escape is Later for good: nothing is installed and the dialog does not return", async ({ page }) => {
+test("Apply is the only way out: Escape and a click outside do nothing, and the question outlasts a reload", async ({ page }) => {
   const { daemon, home } = await start(false);
   try {
     await open(page, daemon);
     await expect(modal(page)).toBeVisible({ timeout: 60_000 });
-    // A click outside is not an answer.
+    await expect(page.locator("[data-onboarding-later]")).toHaveCount(0);
     await page.mouse.click(5, 5);
     await expect(modal(page)).toBeVisible();
     await page.keyboard.press("Escape");
-    await expect(modal(page)).toHaveCount(0);
+    await expect(modal(page)).toBeVisible();
+    // Nothing is installed, and the kit record still waits: a new window asks again.
     await page.reload();
-    await expect(page.locator("[data-open-settings], [data-sidebar-title-name]").first()).toBeVisible();
-    await expect(modal(page)).toHaveCount(0);
+    await expect(modal(page)).toBeVisible({ timeout: 60_000 });
     expect(read(path.join(home, ".claude", "settings.json"))).not.toContain("hide-subagents@");
     expect(fs.existsSync(path.join(home, ".gemini", "settings.json"))).toBe(false);
+
+    await page.locator("[data-onboarding-apply]").click();
+    await expect(modal(page)).toHaveCount(0);
+    await expect.poll(() => read(path.join(home, ".claude", "settings.json")), { timeout: 60_000 }).toContain("hide-subagents@");
   } finally {
     daemon.stop();
   }

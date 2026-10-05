@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { monogram } from "./agentLogos";
-import { appliedAgents, initialSelection, tileSwitchable } from "./agentOnboardingRules";
+import { appliedAgents, selection, tileSwitchable } from "./agentOnboardingRules";
 import type { KitAgent } from "./snapshot";
 
 const agent = (id: string, availability: KitAgent["availability"]): KitAgent => ({
@@ -17,13 +17,15 @@ describe("the first-run agent choice", () => {
   const agents = [agent("claude-code", "available"), agent("cursor", "not_installed"), agent("codex", "available"), agent("amp", "unsupported_system")];
 
   it("starts with the agents that are set up on, and never switches on one that is not", () => {
-    expect([...initialSelection(agents)]).toEqual(["claude-code", "codex"]);
+    expect([...selection(agents, new Set())]).toEqual(["claude-code", "codex"]);
+    // The operator's flip turns one off; a flip of a tile with no switch changes nothing.
+    expect([...selection(agents, new Set(["codex", "cursor"]))]).toEqual(["claude-code"]);
     expect(agents.map(tileSwitchable)).toEqual([true, false, true, false]);
   });
 
   it("sends the agents still on in the adapters' order, and nothing for a tile with no switch", () => {
-    expect(appliedAgents(agents, new Set(["codex", "claude-code", "cursor"]))).toEqual(["claude-code", "codex"]);
-    expect(appliedAgents(agents, new Set())).toEqual([]);
+    expect(appliedAgents(agents, new Set())).toEqual(["claude-code", "codex"]);
+    expect(appliedAgents(agents, new Set(["claude-code", "codex", "cursor"]))).toEqual([]);
   });
 
   it("makes a monogram from a name without drawing anything", () => {

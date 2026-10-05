@@ -5131,10 +5131,10 @@ function buildOnboarding(tokens) {
         frame(id('grid'), 'Grid', {layout: 'vertical', gap: GAP}, rows),
         text(id('devices'), 'Connected devices get the same choice, each by what is installed there.', {size: '$--text-caption', fill: '$--muted-foreground', width: INNER}),
       ],
-      actions: [screenButton(id('later'), 'Later', {variant: 'ghost'}), screenButton(id('apply'), 'Apply')],
+      actions: [screenButton(id('apply'), 'Apply')],
     })];
   }
-  return screenSheet('screen-onboarding', 'Screen / Onboarding', 'web/src/AgentOnboarding.tsx over Dialog (agent adapters PRD, first-run choice): shown once while the core says the choice is pending. One square tile per adapter in four columns, each with its logo on a --logo-plate square (the bundled marks of web/src/assets/agents, each with its source in manifest.json) or, where no mark may be bundled, a monogram; never a drawn or approximated logo. An agent set up on the machine is on by default and shows its state as a word and a check mark as well as the primary border; an agent that is not set up is dimmed, reads Not installed and has no switch. Later closes without installing anything, Apply installs the agents left on here and on connected devices.', build, build);
+  return screenSheet('screen-onboarding', 'Screen / Onboarding', 'web/src/AgentOnboarding.tsx over Dialog (agent adapters PRD, first-run choice): shown while the core says the choice is pending, and only Apply ends it. One square tile per adapter in four columns, each with its logo on a --logo-plate square (the bundled marks of web/src/assets/agents, each with its source in manifest.json) or, where no mark may be bundled, a monogram; never a drawn or approximated logo. An agent set up on the machine is on by default and shows its state as a word and a check mark as well as the primary border; an agent that is not set up is dimmed, reads Not installed and has no switch. Apply is the only button: Escape, a click outside and a close button do nothing, so a stray key cannot finish a choice that leaves Claude Code and Codex off; Apply installs the agents left on here and on every device that waits for the choice.', build, build);
 }
 
 export function screenSheets(tokens, root) {

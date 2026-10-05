@@ -2029,9 +2029,9 @@ pub struct MemoryRevisionSnapshot {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum AgentOnboarding {
-    /// This Mac's kit ran for the first time and waits for the operator.
+    /// This Mac's kit record waits for the operator's answer.
     Pending,
-    /// Applied, put off with Later, or never needed.
+    /// Applied, or never needed.
     Done,
 }
 
@@ -2398,14 +2398,16 @@ pub struct UiStateSnapshot {
     /// invalid stored selection through unrelated saves without publishing it.
     #[serde(default, serialize_with = "serialize_interface_language")]
     pub interface_language: Option<serde_json::Value>,
-    /// The first-run agent choice (issue 517): `None` until this Mac's kit
-    /// has answered once, `Pending` while the operator has not chosen, `Done`
-    /// after Apply or Later. A machine that already had the kit is `Done`
-    /// without ever asking.
+    /// The first-run agent choice (issue 517), a reading of this Mac's kit
+    /// record (the one place that knows whether it was asked and answered):
+    /// `None` until the kit has answered once, `Pending` while the record
+    /// waits for the operator, `Done` after Apply. A machine that already had
+    /// the kit is `Done` without ever asking.
     #[serde(default)]
     pub agent_onboarding: Option<AgentOnboarding>,
-    /// The agents the operator left on in the first-run choice, which a
-    /// device connected later receives once on its first kit pass.
+    /// The agents the operator left on in the first-run choice (or, for a Mac
+    /// that was never asked, the ones it had on), which a device whose record
+    /// waits receives once per run.
     #[serde(default)]
     pub agent_onboarding_agents: Vec<String>,
     /// The Projects and Agents sidebar's width in CSS pixels, dragged on its

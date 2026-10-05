@@ -122,9 +122,12 @@ The Settings screen learns of it because the coordinator re-reads the diagnosis 
 
 ## Other agents: skill and guidance hook
 
-On a machine where the kit has never run (no `~/.hide/kit/installed.json`), the default-on agents are recorded off in the same pass, so nothing is written to any agent until the operator answers the first-run agent choice; an explicit choice in that pass wins, and an existing install is never held.
-The core asks once (`ui_state.agent_onboarding`), applies the answer to this Mac and to every Ready device, and a device that connects later gets the saved choice once.
-
+On a machine where the kit has never run (no `~/.hide/kit/installed.json`), the default-on agents (Claude Code and Codex) are recorded off in the same pass and the record is marked `awaiting_choice`, so nothing is written to any agent until the operator answers the first-run agent choice.
+The hold also covers Codex's per-pane daemon setting (`CodexPerPane`), which follows the Codex switch: a Mac that has not answered, or has Codex off, is not written to, and its row reads Off.
+The hold records both default-on agents off explicitly, whether or not they are installed (operator decision D7): an agent installed later appears in Settings, Agents off and is never turned on by a pass, and the operator switches it on there.
+An explicit agent choice in the same pass wins over the hold, and any explicit choice (a scope that names an agent, which the first-run answer always does, naming the unchosen default agents off) clears the mark; an existing install, a record without the field, is never held.
+The mark lives in the same record as the choices, so it outlasts a quit between the hold and the answer, and `held_for_onboarding` in the report reads it on every pass.
+The core follows it (`ui_state.agent_onboarding`), applies the answer to this Mac and to every device whose own record waits, and sends the saved choice once per run to a device that reports waiting later; one that still waits afterwards is logged, not asked again on every report.
 
 Claude Code and Codex are the agents the kit has always had a hook for.
 Every other agent Hide knows is one row of `hide-kit/src/agents.rs` (`ADAPTERS`), and one switch per agent per machine turns its pieces on and off, in Settings, Agents and in each device's row.

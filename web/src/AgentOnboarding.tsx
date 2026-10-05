@@ -2,7 +2,7 @@ import { CheckIcon } from "lucide-react";
 import { useState } from "react";
 import type { Actions } from "./actions";
 import { agentLogo, monogram } from "./agentLogos";
-import { appliedAgents, initialSelection, tileSwitchable } from "./agentOnboardingRules";
+import { appliedAgents, selection, tileSwitchable } from "./agentOnboardingRules";
 import { Button } from "./components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./components/ui/dialog";
 import { useInterfaceTranslation } from "./i18n/client";
@@ -10,9 +10,10 @@ import type { KitAgent } from "./snapshot";
 import { useShellStore } from "./store";
 
 /**
- * The first-run agent choice: shown once, while the core says it is pending
- * and this Mac's kit has listed the agents. Closing it any way but Apply is
- * Later, which installs nothing.
+ * The first-run agent choice: shown while the core says it is pending and
+ * this Mac's kit has listed the agents. It has one way out, Apply: Escape, a
+ * click outside and the window's other routes do nothing, so a stray key
+ * cannot finish a choice that leaves Claude Code and Codex off.
  */
 export function AgentOnboardingGate({ actions }: { actions: Actions }) {
   const pending = useShellStore((s) => s.rest?.ui_state?.agent_onboarding === "pending");
@@ -22,19 +23,22 @@ export function AgentOnboardingGate({ actions }: { actions: Actions }) {
 
 function AgentOnboarding({ actions, agents }: { actions: Actions; agents: KitAgent[] }) {
   const { t } = useInterfaceTranslation();
-  const [selection, setSelection] = useState(() => initialSelection(agents));
+  // Only the operator's flips are state; what is on is read from the live availability each render.
+  const [flipped, setFlipped] = useState<ReadonlySet<string>>(new Set());
+  const on = selection(agents, flipped);
   const toggle = (id: string) =>
-    setSelection((current) => {
+    setFlipped((current) => {
       const next = new Set(current);
       if (!next.delete(id)) next.add(id);
       return next;
     });
   return (
-    <Dialog open onOpenChange={(next) => { if (!next) actions.laterAgentOnboarding(); }}>
+    // Nothing closes it from here: Apply is the only way out, and the core ends the question.
+    <Dialog open onOpenChange={() => {}}>
       <DialogContent
         data-agent-onboarding="true"
         className="w-(--size-onboarding-dialog-w)"
-        // A stray click outside must not end a choice that is asked once; Later and Escape do.
+        onEscapeKeyDown={(event) => event.preventDefault()}
         onPointerDownOutside={(event) => event.preventDefault()}
         onInteractOutside={(event) => event.preventDefault()}
       >
@@ -45,16 +49,13 @@ function AgentOnboarding({ actions, agents }: { actions: Actions; agents: KitAge
         <DialogBody>
           <div role="group" aria-label={t("onboarding.grid")} className="grid grid-cols-[repeat(auto-fill,minmax(var(--size-onboarding-tile),1fr))] gap-sm">
             {agents.map((agent) => (
-              <AgentTile key={agent.id} agent={agent} on={selection.has(agent.id)} onToggle={() => toggle(agent.id)} />
+              <AgentTile key={agent.id} agent={agent} on={on.has(agent.id)} onToggle={() => toggle(agent.id)} />
             ))}
           </div>
           <p className="mt-md text-caption text-muted-foreground">{t("onboarding.devices")}</p>
         </DialogBody>
         <DialogFooter>
-          <Button variant="ghost" onClick={() => actions.laterAgentOnboarding()} data-onboarding-later="true">
-            {t("onboarding.later")}
-          </Button>
-          <Button onClick={() => actions.applyAgentOnboarding(appliedAgents(agents, selection))} data-onboarding-apply="true">
+          <Button onClick={() => actions.applyAgentOnboarding(appliedAgents(agents, flipped))} data-onboarding-apply="true">
             {t("onboarding.apply")}
           </Button>
         </DialogFooter>

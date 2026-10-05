@@ -69,10 +69,13 @@ it("shows every agent as a tile, the set-up ones on and the others dimmed with n
   await unmount();
 });
 
-it("is Later when closed with Escape or Later, and is not shown once decided", async () => {
+it("has Apply as its only way out: Escape and a second button do nothing (the outside click is the e2e's), and it is not shown once decided", async () => {
   const shown = await mount(state(true, AGENTS));
-  await act(async () => { (document.querySelector("[data-onboarding-later]") as HTMLElement).click(); });
-  expect(shown.events).toEqual([{ schema_version: 2, kind: "agent_onboarding_later", payload: {} }]);
+  expect(document.querySelector("[data-onboarding-later]")).toBeNull();
+  expect(document.querySelectorAll("[data-agent-onboarding] button:not([role=switch])").length).toBe(1);
+  await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
+  expect(document.querySelector("[data-agent-onboarding]")).not.toBeNull();
+  expect(shown.events).toEqual([]);
   await shown.unmount();
 
   const decided = await mount(state(false, AGENTS));
@@ -82,4 +85,19 @@ it("is Later when closed with Escape or Later, and is not shown once decided", a
   const empty = await mount(state(true, []));
   expect(document.querySelector("[data-agent-onboarding]")).toBeNull();
   await empty.unmount();
+});
+
+it("draws what Apply sends: an agent that becomes available while it is open shows on, and the operator's flips survive the refresh", async () => {
+  const { events, unmount } = await mount(state(true, AGENTS));
+  const tile = (id: string, on: string) => document.querySelector(`[data-onboarding-tile="${id}:${on}"]`);
+  await act(async () => { (tile("codex", "on") as HTMLElement).click(); });
+  // A later poll finds Cursor set up on the machine.
+  await act(async () => {
+    useShellStore.setState(state(true, AGENTS.map((entry) => (entry.id === "cursor" ? { ...entry, availability: "available" as const } : entry))) as never);
+  });
+  expect(tile("cursor", "on")).not.toBeNull();
+  expect(tile("codex", "off")).not.toBeNull();
+  await act(async () => { (document.querySelector("[data-onboarding-apply]") as HTMLElement).click(); });
+  expect(events).toEqual([{ schema_version: 2, kind: "agent_onboarding_apply", payload: { agents: ["claude-code", "cursor"] } }]);
+  await unmount();
 });

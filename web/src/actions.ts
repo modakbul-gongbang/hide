@@ -979,14 +979,9 @@ export function createActions(send: DispatchFn) {
       });
     },
 
-    /** The first-run choice's Apply: the agents left on are switched on here and on connected devices. */
+    /** The first-run choice's Apply: the agents left on are switched on here and on every device that waits for the choice. */
     applyAgentOnboarding(agents: string[]) {
       dispatch({ schema_version: 2, kind: "agent_onboarding_apply", payload: { agents } });
-    },
-
-    /** Closing the first-run choice without applying: nothing is installed. */
-    laterAgentOnboarding() {
-      dispatch({ schema_version: 2, kind: "agent_onboarding_later", payload: {} });
     },
 
     /** An agent's switch on its machine's row (agent adapters): its skill and hook go in or come out. */

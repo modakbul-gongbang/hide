@@ -1303,13 +1303,16 @@ An agent set up on the machine keeps its switch whatever the system, as long as 
 The agents Hide knows that are not set up on the machine are one muted line, with no switch and no row each, so a machine with two agents shows two rows and not twenty.
 Settings > Devices shows the same agents on a machine's kit rows, each with its switch.
 
-The first-run agent choice is a dialog over the shell, PRD agent-adapters-onboarding, shown once when this Mac's kit has never run.
+The first-run agent choice is a dialog over the shell, PRD agent-adapters-onboarding, shown when this Mac's kit has never run and stays until it is answered.
 It lists all twenty agents Hide knows as tiles in a grid, each with the agent's own mark (or a two-letter monogram where no official mark is bundled, `docs/BRAND.md`) and its state: the agents set up here are on and show a check, an agent not installed is dimmed and has no switch, and a tile is a switch (`role="switch"`) pressed with Space or Enter.
 Claude Code and Codex are on when they are set up; every other set-up agent is on too, since the operator chose the full set, and `Apply` installs what is left on.
-`Later`, Escape and a click outside all mean Later: nothing is installed and the dialog does not return, and the operator turns agents on in Settings, Agents.
+`Apply` is the only button and the only way out: Escape, a click outside and a close button do nothing, so a stray key cannot finish a choice that leaves Claude Code and Codex off with no hooks; with every tile off, Apply installs nothing and ends the question.
+The question belongs to the kit record (`awaiting_choice` in `~/.hide/kit/installed.json`), not to the window: closing the app, reloading the page or a failed save leaves it asked, and the next launch asks again until Apply has saved.
+The tiles are drawn from the live availability plus the operator's own flips, so an agent that becomes set up while the dialog is open appears on, and Apply sends exactly what is shown.
 A Mac whose kit has already run (an existing install) never sees it, and nothing is held back from it.
 Until the choice is made the kit puts nothing for Claude Code or Codex on a fresh Mac either, so the hooks wait for Apply or for Settings, Agents.
-A device that connects afterwards gets the saved choice once, by what is installed there; with nothing chosen (Later) it installs nothing for agents.
+A device whose own record waits gets the saved choice once per run, by what is installed there, as soon as it reports (also after it was not connected when Apply was pressed); with nothing chosen it is told that, so its record stops waiting, and nothing is installed for agents.
+A device that still waits after it was sent the choice is logged once (`first_run_choice.unanswered`) and not sent it again until it reconnects.
 An agent installed later appears in these rows off and is never turned on by a pass.
 Its Background AI group ends with `에이전트 요약`, a switch on by default and kept on this Mac across launches (PRD overview-request-view D-11, B21): off, no agent label is asked for, the one being made is dropped, and every surface names each agent by its session's own title or its provider with no AI line or written question; on again, the kept labels return at once and each pane's current turn is asked for.
 

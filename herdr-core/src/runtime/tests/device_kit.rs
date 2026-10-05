@@ -600,12 +600,24 @@ fn a_device_that_was_not_ready_at_apply_still_receives_the_choice() {
         "agent_onboarding_apply",
         serde_json::json!({ "agents": ["codex"] }),
     );
-    assert!(shared.lock().unwrap().device_kit_pending.contains_key(DEVICE));
+    assert!(
+        shared
+            .lock()
+            .unwrap()
+            .device_kit_pending
+            .contains_key(DEVICE)
+    );
 
     // The queued work is dropped (consent withdrawn, host gone); the device's
     // record still waits, so its next report brings the choice back.
     shared.lock().unwrap().forget_device_kit_work(DEVICE);
-    assert!(!shared.lock().unwrap().device_kit_pending.contains_key(DEVICE));
+    assert!(
+        !shared
+            .lock()
+            .unwrap()
+            .device_kit_pending
+            .contains_key(DEVICE)
+    );
     shared
         .lock()
         .unwrap()
