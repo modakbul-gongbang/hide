@@ -19,7 +19,7 @@
 
 import { agentCycle, agentOrigin, areaCycle, focusedCycleScope, focusedSurface, scopedSurfaces } from "./areaCycle";
 import type { Actions } from "./actions";
-import { cancelBrowserFocus, focusBrowserDisplay } from "./browserViews";
+import { focusBrowserDisplay, owedBrowserFocus, withdrawOwedBrowserFocus } from "./browserViews";
 import { advanceHint, clearHint, holdModifiers, idleHint, modifiersOf, NO_MODIFIERS, revealedFamily, type HintState } from "./hints";
 import { browserBridge, hostBridge, hostKind, keySystem } from "./host";
 import { agentListOrder, numberedAgents, numberedTabs } from "./numbering";
@@ -188,8 +188,22 @@ export function installKeyboard(actions: Actions): () => void {
   };
   // The page a lost window cancelled a hold on. It takes the keyboard back
   // when the shell itself gets the window back, the last thing the window's
-  // return does, so nothing the return restores can overwrite it.
-  let owedPage: { workspace: string; id: string } | null = null;
+  // return does, so nothing the return restores can overwrite it. `asked`
+  // says the request is with the sync loop, which keeps it until the page is shown.
+  let owed: { workspace: string; id: string; asked: boolean } | null = null;
+  // The hold the shell's own blur ended, kept so the host's cancel can name
+  // the window as the cause even when it arrives after the blur.
+  let blurred: { cycleId: number; workspace: string; id: string } | null = null;
+  let windowAway = false;
+  const forgetOwed = () => {
+    if (!owed) return;
+    withdrawOwedBrowserFocus(owed.workspace, owed.id);
+    owed = null;
+  };
+  const owe = (page: { workspace: string; id: string }) => {
+    owed = { workspace: page.workspace, id: page.id, asked: !windowAway };
+    if (owed.asked) owedBrowserFocus(page.workspace, page.id);
+  };
 
   const run = (id: CommandId, event: KeyboardEvent | null) => {
     if (isNumberedCommand(id)) {
@@ -371,6 +385,11 @@ export function installKeyboard(actions: Actions): () => void {
   });
 
   const onKeyDown = (event: KeyboardEvent) => {
+    handleKeyDown(event);
+    // A key the operator pressed in the shell settles what the window's loss owed.
+    if (owed) forgetOwed();
+  };
+  const handleKeyDown = (event: KeyboardEvent) => {
     if (MODIFIER_KEYS.has(event.key)) {
       if (!layerOpen(ui())) setHint(holdModifiers(hint, modifiersOf(event), performance.now()));
     } else if (hint.deadline !== null || hint.revealed) {
@@ -459,22 +478,21 @@ export function installKeyboard(actions: Actions): () => void {
   // Losing the window mid-cycle (⌥-Tab switching apps) cancels it; nothing
   // is committed for a chord the operator did not finish here.
   const onBlur = () => {
-    if (nativeCycle) owedPage = { workspace: nativeCycle.workspace, id: nativeCycle.id };
+    windowAway = true;
+    if (nativeCycle) blurred = { ...nativeCycle };
     endNativeCycle();
     if (ui().cycle) ui().setCycle(null);
     endHold();
   };
 
   // The window coming back pays what its loss left owed, as Escape would
-  // have; a key or click in the shell first means the operator already chose.
+  // have. The request is the sync loop's from here, so it waits for a page
+  // the overlay still covers.
   const onFocus = () => {
-    const owed = owedPage;
-    owedPage = null;
-    if (owed) focusBrowserDisplay(owed.workspace, owed.id);
-  };
-  const forgetOwed = () => {
-    owedPage = null;
-    cancelBrowserFocus();
+    windowAway = false;
+    if (!owed || owed.asked) return;
+    owed.asked = true;
+    owedBrowserFocus(owed.workspace, owed.id);
   };
 
   // A menu item names a command id; one this registry does not know is a
@@ -482,20 +500,24 @@ export function installKeyboard(actions: Actions): () => void {
   const bridge = hostBridge();
   const unsubscribeBrowser = browserBridge()?.onEvent((input) => {
     if (input.kind === "cycle-cancel") {
-      if (nativeCycle?.cycleId === input.cycleId) onBlur();
-      // A page that failed or closed, not the window, ended the hold: nothing is owed.
-      if (!input.windowLost) owedPage = null;
+      const names = (hold: { cycleId: number; workspace: string; id: string } | null) =>
+        hold?.cycleId === input.cycleId && hold.workspace === input.workspace && hold.id === input.id;
+      if (names(nativeCycle)) onBlur();
+      // Only a lost window leaves the page owed the keyboard; a page that failed or closed owes nothing.
+      if (input.windowLost && names(blurred)) owe(blurred!);
       return;
     }
-    // Another page taking the keyboard settles the debt: it is not the page the hold began on.
     if (input.kind === "focus") {
-      if (owedPage && owedPage.id !== input.id) owedPage = null;
+      const same = owed?.workspace === input.workspace && owed.id === input.id;
+      // Another page took the keyboard, or this one has it from the request: nothing is owed.
+      if (owed && (!same || owed.asked)) forgetOwed();
       return;
     }
     if (input.kind !== "cycle-input") return;
     const firstStart = !nativeCycle && !ui().cycle && input.type === "keyDown";
     nativeCycle = { cycleId: input.cycleId, workspace: input.workspace, id: input.id };
-    owedPage = null;
+    blurred = null;
+    forgetOwed();
     const cycle = ui().cycle;
     const scope = focusedCycleScope(useShellStore.getState().rest);
     const frame = drawnViews();
@@ -561,11 +583,11 @@ export function installKeyboard(actions: Actions): () => void {
   window.addEventListener("blur", onBlur);
   window.addEventListener("focus", onFocus);
   window.addEventListener("pointerdown", forgetOwed, true);
-  window.addEventListener("keydown", forgetOwed, true);
   document.addEventListener("visibilitychange", onVisibility);
   return () => {
     onBlur();
     endNativeCycle();
+    forgetOwed();
     removeKeyboardOwner();
     unsubscribeBrowser?.();
     unsubscribeOwner();
@@ -579,7 +601,6 @@ export function installKeyboard(actions: Actions): () => void {
     window.removeEventListener("blur", onBlur);
     window.removeEventListener("focus", onFocus);
     window.removeEventListener("pointerdown", forgetOwed, true);
-    window.removeEventListener("keydown", forgetOwed, true);
     document.removeEventListener("visibilitychange", onVisibility);
   };
 }

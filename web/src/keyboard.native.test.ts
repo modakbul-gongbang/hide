@@ -2,7 +2,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { createActions } from "./actions";
 import { noteAreaFrame } from "./areaFrames";
 import { areaGeometry } from "./areaLayout";
-import { registerBrowserSlot, syncBrowserFront } from "./browserViews";
+import { focusBrowserDisplay, registerBrowserSlot, syncBrowserFront } from "./browserViews";
 import type { BrowserHostEvent, HostBridge } from "./host";
 import { installKeyboard, reconcileHeldCycle } from "./keyboard";
 import { resetRecent } from "./recent";
@@ -177,57 +177,115 @@ describe("native cycle responder return", () => {
     expect(pageCommands).toEqual([["local\u0000/fixture", "d1", "focus"]]);
   });
 
+  const WORKSPACE = "local\u0000/fixture";
+  const cancel = (windowLost: boolean, id = "d1") => { for (const listener of browserListeners) listener({ kind: "cycle-cancel", workspace: WORKSPACE, id, cycleId: 1, windowLost }); };
+  const away = (windowLost = true) => { window.dispatchEvent(new Event("blur")); cancel(windowLost); };
+  const back = () => { window.dispatchEvent(new Event("focus")); flushFrames(); };
+  const slot = { isConnected: true, getBoundingClientRect: () => ({ left: 0, top: 30, width: 1000, height: 770 }) } as HTMLElement;
+
   it("a lost window cancels the hold and the window's return gives the origin the keyboard once", () => {
     input();
-    window.dispatchEvent(new Event("blur"));
+    away();
     flushFrames();
     expect(useUiStore.getState().cycle).toBeNull();
     expect(events).toEqual([]);
     expect(ended).toEqual([1]);
     expect(pageCommands).toEqual([]);
-    window.dispatchEvent(new Event("focus"));
-    flushFrames();
-    expect(pageCommands).toEqual([["local\u0000/fixture", "d1", "focus"]]);
-    window.dispatchEvent(new Event("focus"));
-    flushFrames();
+    back();
+    expect(pageCommands).toEqual([[WORKSPACE, "d1", "focus"]]);
+    back();
     expect(pageCommands).toHaveLength(1);
   });
 
-  it("the window's return owes nothing when no hold was cancelled", () => {
-    window.dispatchEvent(new Event("focus"));
-    flushFrames();
+  it("the host's cancel names the window whichever side of the shell's blur it arrives on", () => {
+    input();
+    cancel(true);
+    window.dispatchEvent(new Event("blur"));
+    back();
+    expect(pageCommands).toEqual([[WORKSPACE, "d1", "focus"]]);
+    pageCommands.length = 0;
+    input();
+    window.dispatchEvent(new Event("blur"));
+    back();
     expect(pageCommands).toEqual([]);
+    cancel(true);
+    flushFrames();
+    expect(pageCommands).toEqual([[WORKSPACE, "d1", "focus"]]);
+  });
+
+  it("the window's return owes nothing when no hold was cancelled, or only the shell's focus moved", () => {
+    back();
+    expect(pageCommands).toEqual([]);
+    input();
+    window.dispatchEvent(new Event("blur"));
+    back();
+    expect(pageCommands).toEqual([]);
+  });
+
+  it("Escape during a native cycle still returns the keyboard to its origin", () => {
+    input();
+    window.dispatchEvent(new PlatformKeyboardEvent("keydown", { key: "Escape", code: "Escape" }));
+    flushFrames();
+    expect(useUiStore.getState().cycle).toBeNull();
+    expect(pageCommands).toEqual([[WORKSPACE, "d1", "focus"]]);
   });
 
   it.each(["pointerdown", "keydown"])("a %s in the shell before the window returns ends the debt", (choice) => {
     input();
-    window.dispatchEvent(new Event("blur"));
-    window.dispatchEvent(new Event(choice));
-    window.dispatchEvent(new Event("focus"));
-    flushFrames();
+    away();
+    window.dispatchEvent(choice === "keydown" ? new PlatformKeyboardEvent("keydown", { key: "a", code: "KeyA" }) : new Event(choice));
+    back();
     expect(pageCommands).toEqual([]);
   });
 
-  it("a pointerdown after the window's return but before the request is delivered withdraws it", () => {
+  it("an operator click after the window's return withdraws a request not yet delivered, and only that one", () => {
+    const other = registerBrowserSlot("d2", slot);
     input();
-    window.dispatchEvent(new Event("blur"));
+    away();
     window.dispatchEvent(new Event("focus"));
+    focusBrowserDisplay(WORKSPACE, "d2");
     window.dispatchEvent(new Event("pointerdown"));
     flushFrames();
+    expect(pageCommands).toEqual([[WORKSPACE, "d2", "focus"]]);
+    other();
+  });
+
+  it("a page's failure, or another page taking the keyboard, leaves nothing owed", () => {
+    input();
+    away(false);
+    back();
+    expect(pageCommands).toEqual([]);
+    input();
+    away();
+    for (const listener of browserListeners) listener({ kind: "focus", workspace: WORKSPACE, id: "d2" });
+    back();
+    expect(pageCommands).toEqual([]);
+    input();
+    away();
+    for (const listener of browserListeners) listener({ kind: "focus", workspace: "local\u0000/other", id: "d1" });
+    back();
     expect(pageCommands).toEqual([]);
   });
 
-  it("a hold a page's failure ended, or another page's focus, leaves nothing owed", () => {
-    const cancel = (windowLost: boolean) => { for (const listener of browserListeners) listener({ kind: "cycle-cancel", workspace: "local\u0000/fixture", id: "d1", cycleId: 1, windowLost }); };
+  it("the keyboard stays owed while the overlay still covers the page when the window returns", () => {
     input();
-    cancel(false);
-    window.dispatchEvent(new Event("focus"));
-    flushFrames();
+    away();
+    unregister?.();
+    back();
     expect(pageCommands).toEqual([]);
+    unregister = registerBrowserSlot("d1", slot);
+    flushFrames();
+    expect(pageCommands).toEqual([[WORKSPACE, "d1", "focus"]]);
+  });
+
+  it("a page closed while the window was away is not given the keyboard", () => {
     input();
-    window.dispatchEvent(new Event("blur"));
-    for (const listener of browserListeners) listener({ kind: "focus", workspace: "local\u0000/fixture", id: "d2" });
-    window.dispatchEvent(new Event("focus"));
+    away();
+    const rest = useShellStore.getState().rest!;
+    const layout = { ...rest.workspace_view!.layout!, root: { area: { id: "a1", active: "d2", displays: [{ id: "d2", kind: "browser", label: "Page 2", url: "https://page2.test/", state: "open", tab_id: null }] } } } as never;
+    syncBrowserFront({ device_id: "local", path: "/fixture" }, layout, [{ device_id: "local", path: "/fixture", view_id: "d2", area_id: "a1" }]);
+    back();
+    unregister = registerBrowserSlot("d1", slot);
     flushFrames();
     expect(pageCommands).toEqual([]);
   });

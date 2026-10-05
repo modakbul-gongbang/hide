@@ -180,7 +180,11 @@ export class BrowserViews {
   ) {
     ipcMain.on(BROWSER_CYCLE_END_CHANNEL, (event, cycleId: unknown) => {
       if (!this.trusted(event)) return this.log.event("browser.ipc_refused", { channel: "cycle_end" });
-      if (this.cycleInput?.cycleId === cycleId) this.cycleInput = null;
+      if (this.cycleInput?.cycleId !== cycleId) return;
+      // The shell can end its hold on its own blur ahead of this window's blur
+      // event; a hold ended while the window is not key was ended by losing it.
+      if (this.window && !this.window.isFocused()) this.cancelCycle(true);
+      else this.cycleInput = null;
     });
     ipcMain.on(BROWSER_SYNC_CHANNEL, (event, value: unknown) => {
       if (!this.trusted(event)) return this.log.event("browser.ipc_refused", { channel: "sync" });

@@ -206,6 +206,8 @@ class BrowserSyncLoop {
   private lastSent = "";
   private watching = false;
   private focus: { workspace: string; id: string } | null = null;
+  /** A focus request kept across flushes until its page is shown, for the keyboard a lost window owes it. */
+  private owed: { workspace: string; id: string } | null = null;
   private attachmentEpoch: string | undefined;
   private attachmentConnectionWatch: (() => void) | null = null;
 
@@ -253,9 +255,20 @@ class BrowserSyncLoop {
     this.schedule();
   }
 
-  /** Withdraws a request that no flush has delivered yet. */
-  cancelFocus(): void {
-    this.focus = null;
+  /**
+   * A focus request that waits for its page: the overlay or a frozen still
+   * can cover it when the window returns, and a flush that finds it covered
+   * keeps the request. A flush that finds the page gone from the front
+   * Workspace drops it.
+   */
+  requestOwedFocus(workspace: string, id: string): void {
+    this.owed = { workspace, id };
+    this.schedule();
+  }
+
+  /** Withdraws the owed request of this page, and no other focus request. */
+  withdrawOwedFocus(workspace: string, id: string): void {
+    if (this.owed?.workspace === workspace && this.owed.id === id) this.owed = null;
   }
 
   /** The rects of the pages the last sync showed, in the shell's points. */
@@ -378,6 +391,14 @@ class BrowserSyncLoop {
     this.focus = null;
     if (focus?.workspace === sync.workspace && sync.displays.some(row => row.id === focus.id && row.visible && row.rect)) {
       this.bridge.command(focus.workspace, focus.id, "focus");
+    }
+    const owed = this.owed;
+    if (owed) {
+      if (sync.workspace !== owed.workspace || !front?.rows.some((row) => row.id === owed.id)) this.owed = null;
+      else if (sync.displays.some((row) => row.id === owed.id && row.visible && row.rect)) {
+        this.owed = null;
+        this.bridge.command(owed.workspace, owed.id, "focus");
+      }
     }
     // A layer that stays open can still move (a popover following its
     // anchor, a dragged tab); follow it while one is drawn over a page.
@@ -521,13 +542,18 @@ export function registerBrowserSlot(id: string, element: HTMLElement): () => voi
 }
 
 /** One focus intent, delivered after the host has the current visible slots. */
-/** Withdraws the focus request no flush has delivered yet. */
-export function cancelBrowserFocus(): void {
-  syncLoop()?.cancelFocus();
-}
-
 export function focusBrowserDisplay(workspace: string, id: string): void {
   syncLoop()?.requestFocus(workspace, id);
+}
+
+/** A focus intent that waits until its page is shown (`requestOwedFocus`). */
+export function owedBrowserFocus(workspace: string, id: string): void {
+  syncLoop()?.requestOwedFocus(workspace, id);
+}
+
+/** Withdraws that page's waiting focus intent, and no other. */
+export function withdrawOwedBrowserFocus(workspace: string, id: string): void {
+  syncLoop()?.withdrawOwedFocus(workspace, id);
 }
 
 /** Records what a page says and places it again, since a failed page gives its place to a notice. */

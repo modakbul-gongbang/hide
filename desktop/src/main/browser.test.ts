@@ -161,6 +161,16 @@ describe("native held cycle delivery", () => {
     origin.crash();
     expect(forwarded().at(-1)).toMatchObject({ kind: "cycle-cancel", windowLost: false });
   });
+  it("a hold the shell ends while the window is not key was ended by losing it", () => {
+    for (const focused of [true, false]) {
+      const { page, forwarded, windowFocus } = candidate();
+      const origin = page("origin");
+      origin.input();
+      windowFocus(focused);
+      ipc.get(BROWSER_CYCLE_END_CHANNEL)!({}, forwarded()[0]!.cycleId);
+      expect(forwarded().filter((event) => event.kind === "cycle-cancel")).toEqual(focused ? [] : [expect.objectContaining({ id: "origin", windowLost: true })]);
+    }
+  });
   it("release and Escape from another page reach the frozen origin once", () => {
     for (const key of ["Control", "Escape"]) {
       const { page, forwarded } = candidate();
