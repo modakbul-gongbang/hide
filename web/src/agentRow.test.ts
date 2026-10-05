@@ -23,19 +23,22 @@ function row(pane: string, patch: Partial<AgentRow> = {}): AgentRow {
 }
 
 describe("the second line (sidebar-agent-status D-05, B7, B8)", () => {
-  it("keeps a request on screen in the warning colour until it is resolved, read or not", () => {
-    const asking = row("q", { demand: "question", activity: "stopped", detail: "PR 병합 전 검증을 다시 돌려도 될까요?", unread: false });
+  it("keeps a request on screen in the warning colour until it is resolved, dimmed like its mark once read", () => {
+    const asking = row("q", { demand: "question", activity: "stopped", detail: "PR 병합 전 검증을 다시 돌려도 될까요?", group: "seen", unread: false });
     const line = rowLine(asking)!;
     expect(line.mode).toBe("request");
     expect(lineShownAtRest(line, false)).toBe(true);
-    expect(lineTone(line, "question")).toBe("text-warning");
-    expect(lineTone(rowLine(row("e", { demand: "error", detail: "빌드 실패" }))!, "error")).toBe("text-destructive");
+    expect(lineTone(line, asking)).toBe("text-warning opacity-(--opacity-read-status)");
+    const unread: AgentRow = { ...asking, group: "needs_you", emphasized: true, unread: true };
+    expect(lineTone(line, unread)).toBe("text-warning");
+    const failed = row("e", { demand: "error", detail: "빌드 실패", group: "needs_you", emphasized: true });
+    expect(lineTone(rowLine(failed)!, failed)).toBe("text-destructive");
   });
 
   it("shows a changed row's sentence bright until the operator reads it, then only on selection", () => {
     const changed = row("w", { detail: "main 브랜치에 커밋하고 서버 시작", unread: true });
     expect(rowLine(changed)).toEqual({ text: "main 브랜치에 커밋하고 서버 시작", mode: "news" });
-    expect(lineTone(rowLine(changed)!, "none")).toBe("text-foreground");
+    expect(lineTone(rowLine(changed)!, changed)).toBe("text-foreground");
     const read = rowLine({ ...changed, unread: false })!;
     expect(read.mode).toBe("quiet");
     expect(lineShownAtRest(read, false)).toBe(false);

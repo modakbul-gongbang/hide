@@ -50,15 +50,22 @@ export function chipTitle(chip: AgentChip): string {
 }
 
 /**
- * The colour class of a chip's status mark, as the native row picks it (`AgentStatusPresentation`).
+ * The colour class of a demand's mark and request, or null for no demand.
  * A demand keeps its hue once the operator has read it, at reduced emphasis
  * (docs/status-model.md, One meaning across surfaces), so an unread `?` stands
  * out from one already looked at; a blocked approval stays emphasized.
  */
+export function demandTone(demand: string, emphasized: boolean): string | null {
+  const read = emphasized ? "" : " opacity-(--opacity-read-status)";
+  if (demand === "error") return `text-destructive${read}`;
+  if (demand === "question" || demand === "approval") return `text-warning${read}`;
+  return null;
+}
+
+/** The colour class of a chip's status mark, as the native row picks it (`AgentStatusPresentation`). */
 export function chipTone(chip: Pick<AgentChip, "demand" | "activity" | "emphasized">): string {
-  const read = chip.emphasized ? "" : " opacity-(--opacity-read-status)";
-  if (chip.demand === "error") return `text-destructive${read}`;
-  if (chip.demand === "question" || chip.demand === "approval") return `text-warning${read}`;
+  const demand = demandTone(chip.demand, chip.emphasized);
+  if (demand) return demand;
   if (chip.activity === "working") return "text-agent-working";
   if (chip.activity === "stopped" && chip.emphasized) return "text-success";
   return "text-subtle-foreground";

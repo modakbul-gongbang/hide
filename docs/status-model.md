@@ -224,7 +224,7 @@ Every surface draws the mark in one box of one size: `●` and `○` as a filled
 | Owning server unavailable | `⊘` | Gray | Disconnected; current agent activity is unavailable |
 | Hide ended the agent and holds its conversation | `☾` (moon) | Gray | `Sleeping · resumes when opened`, `Waking…`, or `Sleeping · couldn’t resume`; stays in Seen |
 
-Read questions, approvals, and errors retain their symbol and hue with reduced emphasis: a demand on a row the core does not emphasize (read, or a delegated child's) draws its mark at `--opacity-read-status`, so an unread `?` stands apart from one already looked at (`chipTone` in `web/src/lineage.ts`).
+Read questions, approvals, and errors retain their symbol and hue with reduced emphasis: a demand on a row the core does not emphasize (read, or a delegated child's) draws its mark and its request line at `--opacity-read-status`, so an unread `?` stands apart from one already looked at (`demandTone` in `web/src/lineage.ts`).
 A blocked approval stays in Needs You and keeps full emphasis until it is answered.
 Reading is acknowledgment, not evidence that a demand was resolved.
 A read, non-blocked demand belongs to Seen unless the core places its running activity in Working; the status mark still describes the demand.
@@ -481,7 +481,7 @@ Beside `detail` the row carries `message`: the sentence whole up to the 80-chara
 It is what the agent last said, and the Overview's node shows it only when the operator rests on the node's line (PRD overview-lenses-tiles-agents D-50, B22); the second line stays the one sentence the table above chooses.
 
 The core publishes the sentence; when a view shows it is that view's presentation.
-The web sidebar row keeps a request line in the warning color until the request resolves, shows the sentence of an unread row as a bright line that goes once the row is read, reveals the full sentence up to two lines on the selected or hovered row with the rest in a tooltip, and otherwise draws one line (`web/src/agentRow.ts`, owned by `agentRow.test.ts`; docs/UI_BEHAVIOR.md).
+The web sidebar row keeps a request line in the warning color until the request resolves, at the mark's reduced emphasis once read, shows the sentence of an unread row as a bright line that goes once the row is read, reveals the full sentence up to two lines on the selected or hovered row with the rest in a tooltip, and otherwise draws one line (`web/src/agentRow.ts`, owned by `agentRow.test.ts`; docs/UI_BEHAVIOR.md).
 The pane header is one line: `title · sentence`, or `title · word` for a row with no sentence, with the sentence dropped first and the word second when the header is narrow, and a shell operation string (`forking…`, `reopening…`) taking the sentence's slot while it runs.
 The accessibility label of a row and of a header always carries the status word, in the order title, agent kind, status word, sentence, so a row whose word left the screen is still read out with it.
 
