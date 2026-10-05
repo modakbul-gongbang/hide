@@ -442,16 +442,25 @@ mod usage {
         for planted in ["HERDR_ENV", "CLAUDECODE", "FAKE_MODE"] {
             assert!(!keys.iter().any(|key| key == planted), "{planted} {keys:?}");
         }
-        let has = |name: &str| keys.iter().any(|key| key.eq_ignore_ascii_case(name));
+        let has = |name: &str| {
+            keys.iter().any(|key| {
+                if cfg!(windows) {
+                    key.eq_ignore_ascii_case(name)
+                } else {
+                    key == name
+                }
+            })
+        };
         // What the CLI cannot start or find its login without, spelled out
-        // here rather than read back from the list under test.
+        // here rather than read back from the list under test. `PATHEXT` is
+        // proven by hide-platform's contract test instead: the batch launcher
+        // here supplies its own through cmd.exe.
         let needed: &[&str] = if cfg!(windows) {
             &[
                 "SystemRoot",
                 "USERPROFILE",
                 "TEMP",
                 "TMP",
-                "PATHEXT",
                 "APPDATA",
                 "LOCALAPPDATA",
                 "PATH",

@@ -80,10 +80,11 @@ process.stdout.write(fs.readFileSync(${JSON.stringify(frame)}));
   return {
     path: fixtureToolPath(bin),
     release: () => fs.writeFileSync(gate, ""),
-    cleanup: () => fs.rmSync(root, { recursive: true, force: true }),
+    cleanup: () => fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }),
   };
 }
 
+// @platform: The usage child gets a restricted environment that differs per OS (USERPROFILE and SystemRoot on Windows), and a Node-based `claude` only starts with it.
 test("weekly usage: a loading, an available and an unavailable row, and the hints the page sends", { tag: "@platform" }, async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   const herdr = await startHerdr();
