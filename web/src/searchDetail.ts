@@ -147,6 +147,6 @@ export function detailOf(rest: SnapshotRest | null, entry: SearchEntry, now: num
     case "device":
       return { ...base, kind: t("search.kind.device"), title: entry.title, facts: present([[t("search.fact.type"), entry.subtitle]]), action: t("search.goToDevice") };
     case "command":
-      return { ...base, kind: t("search.kind.command"), title: entry.title, facts: [], action: t("search.openStartPanel") };
+      return { ...base, kind: t("search.kind.command"), title: entry.title, facts: [], action: entry.dimmed ? "" : entry.command === "open_url" ? t("search.openUrl") : t("search.openStartPanel") };
   }
 }
