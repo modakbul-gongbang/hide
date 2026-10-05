@@ -124,15 +124,25 @@ impl ControlLane {
             .iter()
             .position(|(_, queued)| coalesces_with(queued))
         {
-            if matches!(job, LaneJob::PaneFocus) {
+            let joined = matches!(job, LaneJob::PaneFocus);
+            if joined && index + 1 == self.queued.len() {
                 return (self.queued[index].0, Submitted::Joined);
             }
             // The newer focus goes behind everything already waiting, so a
-            // control accepted between the two still reaches Herdr first.
+            // control accepted between the two still reaches Herdr first. A
+            // pane-focus turn that joins keeps the newest target, so it moves
+            // back the same way when something was accepted after it.
             let serial = self.take_serial();
             self.queued.remove(index);
             self.queued.push_back((serial, job));
-            return (serial, Submitted::Replaced);
+            return (
+                serial,
+                if joined {
+                    Submitted::Joined
+                } else {
+                    Submitted::Replaced
+                },
+            );
         }
         if !self.busy {
             let serial = self.take_serial();
@@ -166,6 +176,14 @@ impl ControlLane {
                 None
             }
         }
+    }
+
+    /// Removes every waiting pane-focus turn and says how many there were.
+    pub(super) fn drop_queued_pane_focus(&mut self) -> usize {
+        let before = self.queued.len();
+        self.queued
+            .retain(|(_, job)| !matches!(job, LaneJob::PaneFocus));
+        before - self.queued.len()
     }
 
     /// Removes every waiting tab focus and says how many there were.
@@ -294,10 +312,13 @@ impl Runtime {
                         // The wait for Herdr starts when the move leaves, not
                         // when it was accepted behind other controls. A move
                         // the operator has since replaced is not sent.
-                        let current = self
-                            .pending_tab_move
-                            .get_mut(checkout_id)
-                            .filter(|pending| pending.generation == *generation);
+                        let current =
+                            self.pending_tab_move
+                                .get_mut(checkout_id)
+                                .filter(|pending| {
+                                    pending.generation == *generation
+                                        && pending.phase == "transmitting"
+                                });
                         let Some(pending) = current else {
                             crate::diagnostic!(serde_json::json!({
                                 "component": "control_lane",
@@ -348,6 +369,7 @@ impl Runtime {
         let mut changed = self.ingest_local_control_failure(action, result, elapsed_ms);
         if unknown_focus {
             changed |= self.abandon_queued_tab_focus();
+            changed |= self.abandon_queued_pane_focus();
         }
         (changed, self.advance_lane())
     }
@@ -385,6 +407,29 @@ impl Runtime {
             "tab.focus.unknown",
             "Herdr's answer to an earlier tab focus was lost, so the newer one was not sent; Hide keeps the tab it shows",
         );
+        true
+    }
+
+    /// Ends the wait on a pane focus that was accepted but is not going to
+    /// be sent, because an earlier tab focus's outcome is unknown.
+    fn abandon_queued_pane_focus(&mut self) -> bool {
+        if self.control_lane.drop_queued_pane_focus() == 0 {
+            return false;
+        }
+        if let Some(pending) = self.pending_pane_focus.take_if(|pending| !pending.sent) {
+            let message = format!(
+                "Herdr's answer to an earlier tab focus was lost, so the focus for {} was not sent. Select the pane again to retry.",
+                pending.target_id
+            );
+            self.finish_pane_focus_request(
+                pending.request_id.as_deref(),
+                &pending.target_id,
+                "failed",
+                Some(message.clone()),
+                true,
+            );
+            self.set_error("pane.focus_unknown", message, true);
+        }
         true
     }
 

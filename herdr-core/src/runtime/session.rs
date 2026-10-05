@@ -809,7 +809,10 @@ impl Runtime {
                 phase: "transmitting".to_owned(),
                 stage: "request".to_owned(),
                 started_at_unix_ms: now,
-                deadline_at_unix_ms: Some(now.saturating_add(CLOSE_STAGE_TIMEOUT_MS)),
+                // A move on this machine waits its turn on the control lane,
+                // so its five seconds start when it leaves (`start_job`).
+                deadline_at_unix_ms: (!matches!(carrier, TabMoveCarrier::Local))
+                    .then(|| now.saturating_add(CLOSE_STAGE_TIMEOUT_MS)),
                 message: Some("Waiting for Herdr to confirm the tab order".to_owned()),
                 retryable: false,
             },

@@ -156,8 +156,8 @@ A queued request has not left, so a newer one replaces it and nothing of it is r
 One socket operation runs at a time and the rest wait in arrival order, at most 16 (`CONTROL_LANE_LIMIT`; a request past it is refused where it was asked and logged as `control.lane_full`), so a tab focus, a creation and a pane focus sent moments apart reach Herdr in the order they were asked, where a thread per request let them land in either order.
 Only a focus coalesces: a queued tab focus is replaced by the newer one, and a pane focus keeps one turn on the lane whose target is the latest intent, so rapid clicks cannot leave older requests running after the last click has been confirmed.
 Creation, move and rename are distinct intents and are never replaced.
-A replacing tab focus takes its place at the back of the queue, so a control accepted between the two still leaves first.
-A tab move's five-second wait starts when it leaves the lane, not when it was accepted, and a move whose pending record the operator has since replaced is not sent (`tab.move.stale_not_sent`).
+A replacing tab focus, and a pane click that joins the waiting turn, take their place at the back of the queue, so a control accepted between the two still leaves first.
+A tab move on this machine carries no deadline while it waits: its five-second wait starts when it leaves the lane, and a move whose pending record was replaced or is no longer transmitting is not sent (`tab.move.stale_not_sent`).
 A device's controls keep their own connection and generation and are not on this lane.
 The running control carries a serial, pane id and connection generation; only its matching latest intent can be settled by its result, and a reconnected host runs the latest intent through its new connection.
 After `pane.focus` responds, the worker reads `pane.layout` and the owning `workspace.get` outside the runtime lock and requires both the target pane and its active tab to agree before confirming the request.

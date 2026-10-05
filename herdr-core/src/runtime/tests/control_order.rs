@@ -486,3 +486,142 @@ fn a_tab_move_replaced_while_it_waited_is_not_sent() {
     assert!(!runtime.control_lane.is_busy());
     assert_eq!(herdr.calls().len(), 1);
 }
+
+fn queued_move(runtime: &mut Runtime, checkout_id: &str, phase: &str) {
+    runtime.pending_tab_move.insert(
+        checkout_id.to_owned(),
+        PendingTabMove {
+            desired: vec!["herdr:w-order:t2".to_owned(), "herdr:w-order:t1".to_owned()],
+            workspace_id: "w-order".to_owned(),
+            herdr_order: vec!["w-order:t2".to_owned(), "w-order:t1".to_owned()],
+            target_id: "w-order:t1".to_owned(),
+            generation: 7,
+            connection_generation: runtime.live_generation,
+            phase: phase.to_owned(),
+            stage: "request".to_owned(),
+            started_at_unix_ms: 0,
+            deadline_at_unix_ms: None,
+            message: None,
+            retryable: false,
+        },
+    );
+    runtime
+        .submit_local_control(RemoteControlAction::MoveTab {
+            checkout_id: checkout_id.to_owned(),
+            tab_id: "w-order:t1".to_owned(),
+            insert_index: 2,
+            expected_order: vec!["w-order:t2".to_owned(), "w-order:t1".to_owned()],
+            generation: 7,
+            connection_generation: runtime.live_generation,
+        })
+        .expect("the move is accepted");
+}
+
+/// A move waiting behind another control has no clock running: its five
+/// seconds are the wait for Herdr, and Herdr has not been asked yet.
+#[test]
+fn a_queued_tab_moves_wait_for_herdr_starts_when_it_leaves() {
+    let herdr = fake_herdr("order-move-deadline");
+    let (mut runtime, checkout_id) =
+        runtime_on(&herdr, "/private/tmp/hide-control-order-move-deadline");
+    assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2")));
+    queued_move(&mut runtime, &checkout_id, "transmitting");
+    assert_eq!(
+        runtime.pending_tab_move[&checkout_id].deadline_at_unix_ms,
+        None
+    );
+
+    herdr.wait_for_requests(1, Duration::from_secs(5));
+    let (_, next) = runtime.complete_lane_tab(focus_action("w-order:t2"), acknowledged(), 4);
+
+    assert!(
+        matches!(
+            next,
+            Some(LaneStart::Tab {
+                action: RemoteControlAction::MoveTab { .. },
+                ..
+            })
+        ),
+        "the move leaves once the focus is answered"
+    );
+    assert!(
+        runtime.pending_tab_move[&checkout_id]
+            .deadline_at_unix_ms
+            .is_some(),
+        "its deadline is armed as it leaves"
+    );
+}
+
+/// A move whose own wait was already declared unknown is not sent late.
+#[test]
+fn a_tab_move_that_is_no_longer_transmitting_is_not_sent() {
+    let herdr = fake_herdr("order-move-unknown");
+    let (mut runtime, checkout_id) =
+        runtime_on(&herdr, "/private/tmp/hide-control-order-move-unknown");
+    assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2")));
+    queued_move(&mut runtime, &checkout_id, "unknown");
+
+    herdr.wait_for_requests(1, Duration::from_secs(5));
+    let (_, next) = runtime.complete_lane_tab(focus_action("w-order:t2"), acknowledged(), 4);
+
+    assert!(next.is_none());
+    assert!(!runtime.control_lane.is_busy());
+}
+
+/// A pane click that joins a waiting turn goes behind what was accepted after
+/// that turn, so Herdr ends on what the operator did last.
+#[test]
+fn a_joining_pane_focus_queues_behind_the_control_accepted_after_the_turn() {
+    let herdr = fake_herdr("order-pane-join");
+    let (mut runtime, checkout_id) =
+        runtime_on(&herdr, "/private/tmp/hide-control-order-pane-join");
+    assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2")));
+    assert!(runtime.dispatch_json(&correlated_pane_focus_event("w-order:t3:p", "pane-1")));
+    runtime
+        .submit_local_control(create_action())
+        .expect("the create is accepted");
+    assert!(runtime.dispatch_json(&correlated_pane_focus_event("w-order:t1:p", "pane-2")));
+
+    assert_eq!(
+        runtime.control_lane.queued_len(),
+        2,
+        "one turn for both clicks, and the create"
+    );
+    herdr.wait_for_requests(1, Duration::from_secs(5));
+    let (_, next) = runtime.complete_lane_tab(focus_action("w-order:t2"), acknowledged(), 4);
+    assert!(
+        matches!(
+            next,
+            Some(LaneStart::Tab {
+                action: RemoteControlAction::CreateTab { .. },
+                ..
+            })
+        ),
+        "the create, accepted before the second click, leaves first"
+    );
+}
+
+/// The unknown-result rule holds in both directions: a tab focus whose answer
+/// never came holds back the pane focus waiting behind it.
+#[test]
+fn a_lost_tab_focus_answer_does_not_release_the_pane_focus_behind_it() {
+    let herdr = fake_herdr("order-tab-lost-pane");
+    let (mut runtime, checkout_id) =
+        runtime_on(&herdr, "/private/tmp/hide-control-order-tab-lost-pane");
+    assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2")));
+    assert!(runtime.dispatch_json(&correlated_pane_focus_event("w-order:t3:p", "pane-1")));
+    herdr.wait_for_requests(1, Duration::from_secs(5));
+
+    let (changed, next) = runtime.complete_lane_tab(
+        focus_action("w-order:t2"),
+        Err(live::ControlFailure::Ambiguous(
+            "tab.focus result is unknown: response timed out".into(),
+        )),
+        4,
+    );
+
+    assert!(changed);
+    assert!(next.is_none(), "nothing is sent behind an unknown effect");
+    assert!(!runtime.control_lane.is_busy());
+    assert!(runtime.pending_pane_focus.is_none());
+}
