@@ -22,7 +22,7 @@ import os from "node:os";
 import path from "node:path";
 import { elsewhereTab, finishFixtureTurn, labelAgent, labelMarker, setFixtureLifecycle, setFixtureSession, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { fixtureExecutable, fixtureProgram } from "./platform-fixture";
+import { endWindowsProcesses, fixtureExecutable, fixtureProgram } from "./platform-fixture";
 import { screenshot } from "./wire";
 import { chord } from "./chords";
 
@@ -94,7 +94,9 @@ process.exit(2);
   }
 
   remove(): void {
-    fs.rmSync(this.dir, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    // Windows keeps a running fake's executable locked; end what runs from this folder first.
+    if (process.platform === "win32") endWindowsProcesses([], this.dir);
+    fs.rmSync(this.dir, { recursive: true, force: true });
   }
 }
 
