@@ -499,7 +499,7 @@ function RowView({ row, faded, peers, parent, line, onHover, handlers }: { row: 
         agent={agent}
         place={place}
         fallback={said?.text ?? agent.identity_label}
-        tone={said ? lineTone(said, agent.demand) : "text-muted-foreground"}
+        tone={said ? lineTone(said, agent) : "text-muted-foreground"}
         onOpen={open}
         context={{ checkout: place, tab: row.tab?.label ?? null, peers, parent, line }}
       >
@@ -532,7 +532,7 @@ function RowView({ row, faded, peers, parent, line, onHover, handlers }: { row: 
         </span>
       </span>
       {asking ? (
-        <span className={cn("pointer-events-none relative block truncate pr-sm text-caption", said ? lineTone(said, agent.demand) : "text-warning")} style={{ paddingLeft: `calc(var(--spacing-sm) + ${row.depth} * var(--size-lineage-indent) + var(--size-agent-mark))` }} data-graph-row-line={agent.pane_id}>
+        <span className={cn("pointer-events-none relative block truncate pr-sm text-caption", said ? lineTone(said, agent) : "text-warning")} style={{ paddingLeft: `calc(var(--spacing-sm) + ${row.depth} * var(--size-lineage-indent) + var(--size-agent-mark))` }} data-graph-row-line={agent.pane_id}>
           {row.line}
         </span>
       ) : null}
