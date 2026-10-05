@@ -2018,6 +2018,16 @@ pub struct MemoryRevisionSnapshot {
 /// The web shell's color theme (Settings > Appearance). `System` follows the
 /// operator's OS appearance live; Dark is the default so an update never
 /// brightens the screen on its own (web-design-system-reset D-14).
+/// Where the first-run agent choice stands (`ui_state.agent_onboarding`).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentOnboarding {
+    /// This Mac's kit ran for the first time and waits for the operator.
+    Pending,
+    /// Applied, put off with Later, or never needed.
+    Done,
+}
+
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ThemePreference {
@@ -2378,6 +2388,16 @@ pub struct UiStateSnapshot {
     /// invalid stored selection through unrelated saves without publishing it.
     #[serde(default, serialize_with = "serialize_interface_language")]
     pub interface_language: Option<serde_json::Value>,
+    /// The first-run agent choice (issue 517): `None` until this Mac's kit
+    /// has answered once, `Pending` while the operator has not chosen, `Done`
+    /// after Apply or Later. A machine that already had the kit is `Done`
+    /// without ever asking.
+    #[serde(default)]
+    pub agent_onboarding: Option<AgentOnboarding>,
+    /// The agents the operator left on in the first-run choice, which a
+    /// device connected later receives once on its first kit pass.
+    #[serde(default)]
+    pub agent_onboarding_agents: Vec<String>,
     /// The Projects and Agents sidebar's width in CSS pixels, dragged on its
     /// right edge and kept within `SIDEBAR_WIDTH_MIN..=SIDEBAR_WIDTH_MAX`
     /// (PRD sidebar-typography D-08, D-09). A store written before the drag
@@ -2852,6 +2872,8 @@ impl Default for UiStateSnapshot {
             accent_hex: default_accent_hex(),
             theme: ThemePreference::Dark,
             interface_language: None,
+            agent_onboarding: None,
+            agent_onboarding_agents: Vec::new(),
             sidebar_width: default_sidebar_width(),
             font_size: default_font_size(),
             pane_text_scales: BTreeMap::new(),
@@ -4648,6 +4670,15 @@ mod wire_enum_tests {
         }
         assert_wire(&contract, "kit_component_state", &kit_states);
         checked.insert("kit_component_state");
+
+        let onboarding = [AgentOnboarding::Pending, AgentOnboarding::Done];
+        for variant in onboarding {
+            match variant {
+                AgentOnboarding::Pending | AgentOnboarding::Done => {}
+            }
+        }
+        assert_wire(&contract, "agent_onboarding", &onboarding);
+        checked.insert("agent_onboarding");
 
         let kit_availability = [
             hide_kit::Availability::Available,

@@ -230,9 +230,97 @@ impl Runtime {
                 "failures": legacy.failures,
             }));
         }
+        let mut changed = self.decide_agent_onboarding(device_id, report);
         let mut snapshot = KitSnapshot::from_report(report);
         snapshot.busy = self.kit_install_queued(device_id);
-        self.set_kit_state(device_id, snapshot)
+        changed |= self.set_kit_state(device_id, snapshot);
+        changed
+    }
+
+    /// What a machine's first kit pass means for the first-run agent choice.
+    /// This Mac's first answer decides it: a machine whose kit held the
+    /// agents back asks, one that already had the kit never does. A device
+    /// that connects after the choice was made gets the same agents once,
+    /// on its own first pass, by its own detection; with no choice made
+    /// nothing is installed there.
+    fn decide_agent_onboarding(&mut self, device_id: &str, report: &KitReport) -> bool {
+        use crate::model::AgentOnboarding;
+        if device_id == LOCAL_DEVICE_ID {
+            if self.snapshot.ui_state.agent_onboarding.is_some() {
+                return false;
+            }
+            self.snapshot.ui_state.agent_onboarding = Some(if report.held_for_onboarding {
+                AgentOnboarding::Pending
+            } else {
+                AgentOnboarding::Done
+            });
+            self.persist_ui_state();
+            return true;
+        }
+        let agents = self.snapshot.ui_state.agent_onboarding_agents.clone();
+        if report.held_for_onboarding
+            && self.snapshot.ui_state.agent_onboarding == Some(AgentOnboarding::Done)
+            && !agents.is_empty()
+        {
+            self.queue_device_kit(
+                device_id,
+                KitJob::Apply(Scope::agents(agents.iter().map(String::as_str), [])),
+            );
+        }
+        false
+    }
+
+    /// The operator applied the first-run choice: the agents left on are
+    /// switched on here and on every connected device, each by its own
+    /// detection, and the choice is kept for devices that connect later.
+    pub(super) fn apply_agent_onboarding(&mut self, agents: Vec<String>) -> bool {
+        if let Some(unknown) = agents
+            .iter()
+            .find(|agent| hide_kit::agents::adapter(agent).is_none())
+        {
+            self.set_error(
+                "kit.unknown_agent",
+                format!("{unknown} is not an agent Hide knows"),
+                false,
+            );
+            return true;
+        }
+        let mut agents = agents;
+        agents.sort();
+        agents.dedup();
+        self.finish_agent_onboarding(agents)
+    }
+
+    /// Ends the first-run choice with `agents` on; only a pending choice can
+    /// end, so a second Apply or a stale client changes nothing
+    /// (engineering rule 11).
+    pub(super) fn finish_agent_onboarding(&mut self, agents: Vec<String>) -> bool {
+        use crate::model::AgentOnboarding;
+        if self.snapshot.ui_state.agent_onboarding != Some(AgentOnboarding::Pending) {
+            return false;
+        }
+        self.snapshot.ui_state.agent_onboarding = Some(AgentOnboarding::Done);
+        self.snapshot.ui_state.agent_onboarding_agents = agents.clone();
+        self.persist_ui_state();
+        if !agents.is_empty() {
+            self.queue_kit_scope(
+                LOCAL_DEVICE_ID,
+                Scope::agents(agents.iter().map(String::as_str), []),
+            );
+            let ready = self
+                .device_hosts
+                .iter()
+                .filter(|(_, host)| matches!(host.phase, HostPhase::Ready { .. }))
+                .map(|(device_id, _)| device_id.clone())
+                .collect::<Vec<_>>();
+            for device_id in ready {
+                self.queue_device_kit(
+                    &device_id,
+                    KitJob::Apply(Scope::agents(agents.iter().map(String::as_str), [])),
+                );
+            }
+        }
+        true
     }
 
     fn kit_install_queued(&self, device_id: &str) -> bool {

@@ -1,4 +1,5 @@
 {
+  "agent_onboarding": ["pending", "done"],
   "changed_file_status": ["modified", "added", "deleted", "untracked", "renamed", "conflict"],
   "checkout_purpose_origin": ["token", "branch_description", "agent_title", "pull_request_title"],
   "document_kind": ["text", "markdown", "image", "pdf", "binary"],

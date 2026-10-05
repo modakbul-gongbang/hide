@@ -389,6 +389,169 @@ fn an_agent_switch_on_a_device_sends_the_agent_and_repeats_nothing() {
     );
 }
 
+fn held_report() -> KitReport {
+    let mut report = report(&[(ComponentId::Cli, ComponentState::Installed)]);
+    report.held_for_onboarding = true;
+    report
+}
+
+fn onboarding(shared: &Mutex<Runtime>) -> Option<crate::model::AgentOnboarding> {
+    shared.lock().unwrap().snapshot.ui_state.agent_onboarding
+}
+
+/// First-run agent choice: this Mac's first kit pass decides whether to ask,
+/// Apply switches the chosen agents on here and on every connected device,
+/// a second Apply is the same intent already met, and a device that connects
+/// later gets the choice once on its own first pass.
+#[test]
+fn the_first_run_choice_is_asked_once_applied_everywhere_and_remembered_for_later_devices() {
+    use crate::model::AgentOnboarding::{Done, Pending};
+    let helper = KitDevice::answering(Ok(report(&[(ComponentId::Cli, ComponentState::Installed)])));
+    let shared = with_consent(Some(Arc::clone(&helper)));
+    assert_eq!(onboarding(&shared), None);
+
+    shared
+        .lock()
+        .unwrap()
+        .ingest_kit_report(crate::workspace::LOCAL_DEVICE_ID, &held_report());
+    assert_eq!(onboarding(&shared), Some(Pending));
+
+    dispatch(
+        &shared,
+        "agent_onboarding_apply",
+        serde_json::json!({ "agents": ["codex", "claude-code", "codex"] }),
+    );
+    settle(&shared);
+    assert_eq!(onboarding(&shared), Some(Done));
+    assert_eq!(
+        shared
+            .lock()
+            .unwrap()
+            .snapshot
+            .ui_state
+            .agent_onboarding_agents,
+        ["claude-code", "codex"]
+    );
+    let device_calls: Vec<KitAction> = helper.calls().into_iter().map(|call| call.0).collect();
+    assert_eq!(
+        device_calls,
+        vec![KitAction::Reinstall {
+            components: Vec::new(),
+            turn_off: Vec::new(),
+            agents_on: vec!["claude-code".to_owned(), "codex".to_owned()],
+            agents_off: Vec::new(),
+        }]
+    );
+    let local = shared.lock().unwrap().local_kit_pending.clone().unwrap();
+    assert_eq!(
+        local.agent_on.iter().collect::<Vec<_>>(),
+        ["claude-code", "codex"]
+    );
+
+    // The same press again, or a stale client, changes nothing.
+    dispatch(
+        &shared,
+        "agent_onboarding_apply",
+        serde_json::json!({ "agents": ["gemini-cli"] }),
+    );
+    dispatch(&shared, "agent_onboarding_later", serde_json::json!({}));
+    settle(&shared);
+    assert_eq!(helper.calls().len(), 1);
+    assert_eq!(
+        shared
+            .lock()
+            .unwrap()
+            .snapshot
+            .ui_state
+            .agent_onboarding_agents,
+        ["claude-code", "codex"]
+    );
+
+    // A device whose own first pass held its agents gets the choice once.
+    shared
+        .lock()
+        .unwrap()
+        .ingest_kit_report(DEVICE, &held_report());
+    settle(&shared);
+    assert_eq!(helper.calls().len(), 2);
+}
+
+#[test]
+fn a_machine_that_already_had_the_kit_never_asks_and_later_ends_the_choice_installing_nothing() {
+    use crate::model::AgentOnboarding::Done;
+    let shared = with_consent(None);
+    shared.lock().unwrap().ingest_kit_report(
+        crate::workspace::LOCAL_DEVICE_ID,
+        &report(&[(ComponentId::Cli, ComponentState::Installed)]),
+    );
+    assert_eq!(onboarding(&shared), Some(Done));
+    // A later pass does not change a decided choice.
+    shared
+        .lock()
+        .unwrap()
+        .ingest_kit_report(crate::workspace::LOCAL_DEVICE_ID, &held_report());
+    assert_eq!(onboarding(&shared), Some(Done));
+
+    let shared = with_consent(None);
+    shared
+        .lock()
+        .unwrap()
+        .ingest_kit_report(crate::workspace::LOCAL_DEVICE_ID, &held_report());
+    dispatch(&shared, "agent_onboarding_later", serde_json::json!({}));
+    assert_eq!(onboarding(&shared), Some(Done));
+    assert!(shared.lock().unwrap().local_kit_pending.is_none());
+    assert!(
+        shared
+            .lock()
+            .unwrap()
+            .snapshot
+            .ui_state
+            .agent_onboarding_agents
+            .is_empty()
+    );
+    // With nothing chosen a device that connects later installs nothing.
+    shared
+        .lock()
+        .unwrap()
+        .ingest_kit_report(DEVICE, &held_report());
+    assert!(
+        !shared
+            .lock()
+            .unwrap()
+            .device_kit_pending
+            .contains_key(DEVICE)
+    );
+}
+
+#[test]
+fn applying_an_agent_hide_does_not_know_is_refused() {
+    let shared = with_consent(None);
+    shared
+        .lock()
+        .unwrap()
+        .ingest_kit_report(crate::workspace::LOCAL_DEVICE_ID, &held_report());
+    dispatch(
+        &shared,
+        "agent_onboarding_apply",
+        serde_json::json!({ "agents": ["not-an-agent"] }),
+    );
+    assert_eq!(
+        onboarding(&shared),
+        Some(crate::model::AgentOnboarding::Pending)
+    );
+    assert_eq!(
+        shared
+            .lock()
+            .unwrap()
+            .snapshot()
+            .status
+            .last_error
+            .as_ref()
+            .map(|error| error.kind.as_str()),
+        Some("kit.unknown_agent")
+    );
+}
+
 /// B21: a device registered without consent installs nothing, its row says
 /// what would install the kit, and Reinstall is refused rather than queued.
 #[test]
