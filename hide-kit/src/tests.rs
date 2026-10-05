@@ -1015,6 +1015,32 @@ fn the_first_pass_turns_the_codex_daemon_off_once_and_then_converges() {
 }
 
 #[test]
+fn a_fresh_machine_leaves_codexs_config_alone_until_codex_is_chosen() {
+    let mut fixture = Fixture::fresh();
+    fake_codex(&mut fixture, "true");
+
+    let report = apply(&fixture.target, &Scope::automatic());
+
+    assert!(report.held_for_onboarding);
+    assert_eq!(
+        state(&report, ComponentId::CodexPerPane),
+        ComponentState::Off,
+        "{report:?}"
+    );
+    assert_eq!(fixture.daemon_setting(), "true");
+    assert!(fixture.codex_writes().is_empty());
+
+    // The operator's choice to have Codex on is what lets the setting be written.
+    let report = apply(&fixture.target, &Scope::agents(["codex"], []));
+    assert_eq!(
+        state(&report, ComponentId::CodexPerPane),
+        ComponentState::Installed,
+        "{report:?}"
+    );
+    assert_eq!(fixture.daemon_setting(), "false");
+}
+
+#[test]
 fn a_codex_already_running_per_pane_is_not_written_to() {
     let mut fixture = Fixture::new();
     fake_codex(&mut fixture, "false");

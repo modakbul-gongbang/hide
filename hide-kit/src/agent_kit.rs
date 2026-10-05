@@ -78,8 +78,20 @@ pub(crate) struct PartGate {
     pub(crate) turning_on: bool,
 }
 
-/// The gate of a hook part, `None` for a part no agent switch governs.
+/// The gate of a part an agent switch governs, `None` for any other part.
+/// The hook parts follow their agent's switch in every way; Codex's
+/// per-pane setting follows only whether Codex is on, so a Mac that has not
+/// answered the first-run choice, or has Codex off, is not written to, while
+/// the part's own switch keeps its own choices.
 pub(crate) fn part_gate(record: &Record, scope: &Scope, part: ComponentId) -> Option<PartGate> {
+    if part == ComponentId::CodexPerPane {
+        let codex = crate::agents::adapter("codex")?;
+        return Some(PartGate {
+            enabled: enabled(record, scope, codex),
+            turning_off: false,
+            turning_on: false,
+        });
+    }
     let adapter = adapter_of_part(part)?;
     Some(PartGate {
         enabled: enabled(record, scope, adapter),
@@ -88,10 +100,10 @@ pub(crate) fn part_gate(record: &Record, scope: &Scope, part: ComponentId) -> Op
     })
 }
 
-/// Whether a hook part that is gone is the operator's switch rather than a
-/// removal by hand: only when the agent is off.
+/// Whether a part that is gone is the operator's switch rather than a
+/// removal by hand: only when the agent that governs it is off.
 pub(crate) fn part_is_off(record: &Record, part: ComponentId) -> bool {
-    adapter_of_part(part).is_some_and(|adapter| !enabled(record, &Scope::default(), adapter))
+    part_gate(record, &Scope::default(), part).is_some_and(|gate| !gate.enabled)
 }
 
 // --- A guidance hook -----------------------------------------------------------
