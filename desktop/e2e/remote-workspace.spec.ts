@@ -19,7 +19,7 @@ import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace } from "../../web/e2e/wire";
 import { claudeSettings, deviceHome, proveDeviceHome, readSettings, resetDeviceHome, writeSshConfig } from "./device-home";
-import { HIDE_CLI, hostLog, isolate, launch, test, type Isolated } from "./fixture";
+import { endChild, HIDE_CLI, hostLog, isolate, launch, test, type Isolated } from "./fixture";
 
 const HOOK_CLI = path.join(path.dirname(HIDE_CLI), "hide-agent-hooks");
 
@@ -829,10 +829,8 @@ test("remote pane CLI reaches its own Workspace over SSH and leaves the local Wo
     await new Promise<void>((resolve) => egressServer?.close(() => resolve()) ?? resolve());
     await new Promise<void>((resolve) => twinServer?.close(() => resolve()) ?? resolve());
     run.cleanup();
-    fs.rmSync(bridge, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
-    if (daemon.exitCode === null) daemon.kill("SIGTERM");
-    remote.stop();
-    second?.stop();
-    local.stop();
+    // The daemon keeps its bridge sockets until it exits; remove the folder after that.
+    await endChild(daemon).finally(() => { remote.stop(); second?.stop(); local.stop(); });
+    fs.rmSync(bridge, { recursive: true, force: true });
   }
 });

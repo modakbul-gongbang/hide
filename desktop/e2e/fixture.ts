@@ -10,7 +10,7 @@ import os from "node:os";
 import path from "node:path";
 import { linkFixtureTranscripts, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { ownUntilWorkerExit } from "../../web/e2e/worker-owned";
-import { fixtureExecutable, fixtureHomeEnv, fixtureOpenCommand, fixtureToolPath, inheritedFixtureEnv } from "../../web/e2e/platform-fixture";
+import { endWindowsProcesses, fixtureExecutable, fixtureHomeEnv, fixtureOpenCommand, fixtureToolPath, inheritedFixtureEnv } from "../../web/e2e/platform-fixture";
 import { SHOW_INACTIVE_SWITCH } from "../src/main/launchSwitches";
 
 export const DESKTOP_DIR = path.resolve(__dirname, "..");
@@ -87,8 +87,9 @@ export function isolate(herdr: Pick<HerdrFixture, "socket" | "bin"> & Partial<Pi
       if (stopped.error || stopped.status !== 0) errors.push(new Error(`private hided stop failed for ${state}: ${stopped.error?.message ?? (stopped.stderr || stopped.stdout || stopped.status)}`));
     }
     if (errors.length) throw new AggregateError(errors, `fixture cleanup incomplete; preserve ${root} and resolve the reported stop/unload failure`);
-    // No process can recreate files now; only transient filesystem removal is retried.
-    fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 100 });
+    // Windows keeps a running executable and a process's folder locked: end what still runs from the root first.
+    if (process.platform === "win32") endWindowsProcesses([], root);
+    fs.rmSync(root, { recursive: true, force: true });
     cleaned = true;
     isolations.delete(home);
     owned.disown();
@@ -99,6 +100,26 @@ export function isolate(herdr: Pick<HerdrFixture, "socket" | "bin"> & Partial<Pi
   owner.cleanup = cleanup;
   isolations.set(home, owner);
   return { root, env, hide, daemonPid, cleanup };
+}
+
+/**
+ * Ends a child this fixture started and returns once it has exited, so a
+ * folder it held can be removed. A child that does not exit within `ms` is a
+ * failure that names it, not a wait that grows.
+ */
+export async function endChild(child: ChildProcess, ms = 10_000): Promise<void> {
+  if (child.exitCode !== null || child.signalCode !== null) return;
+  const exited = new Promise<void>((resolve) => child.once("exit", () => resolve()));
+  child.kill("SIGTERM");
+  let timer: NodeJS.Timeout | undefined;
+  const late = new Promise<never>((_, reject) => {
+    timer = setTimeout(() => reject(new Error(`child ${child.pid} did not exit within ${ms} ms after SIGTERM`)), ms);
+  });
+  try {
+    await Promise.race([exited, late]);
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 export function assertIsolated(env: Record<string, string>): void {
