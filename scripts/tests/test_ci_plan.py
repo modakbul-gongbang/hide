@@ -115,6 +115,21 @@ class Selection(unittest.TestCase):
         self.assertTrue(result["full"])
         self.assertIn("comparison unavailable", result["reasons"]["rust"][0])
 
+    def test_a_draft_plans_no_lane_and_ready_for_review_runs_them(self):
+        result = ci.plan("pull_request", "0" * 40, "HEAD", ROOT, draft=True)
+        self.assertEqual(result["lanes"], [])
+        self.assertEqual(result["rust_packages"], [])
+        self.assertIn("draft", ci.summary(result))
+        workflow = (ROOT / ".github/workflows/pr.yml").read_text()
+        # Without the `ready_for_review` run nothing replaces the draft's `verify`.
+        self.assertRegex(workflow, r"types: \[[^\]]*\bready_for_review\b[^\]]*\]")
+        self.assertIn('--draft "${{ github.event.pull_request.draft || false }}"', workflow)
+        # `verify` runs on a draft and fails there: a skipped one would count as
+        # passed for the minutes before the ready run's `verify` starts.
+        verify = workflow[workflow.index("\n  verify:\n"):]
+        self.assertIn("    if: always()\n", verify)
+        self.assertNotIn("draft", verify.split("steps:")[0])
+
     def test_a_missing_crate_graph_runs_everything(self):
         with tempfile.TemporaryDirectory() as directory:
             result = ci.plan("pull_request", "HEAD^1", "HEAD", Path(directory))
@@ -164,6 +179,15 @@ class Aggregate(unittest.TestCase):
     def test_an_unplanned_lane_that_ran_fails(self):
         with self.assertRaises(ValueError):
             ci.aggregate(needs_for(plan("docs/BUILD.md"), rust="success"))
+
+    def test_a_draft_fails_verify_even_when_every_lane_was_skipped(self):
+        needs = {lane: {"result": "skipped"} for lane in ci.LANES}
+        needs["plan"] = {"result": "success", "outputs": {"lanes": "[]", "draft": "true"}}
+        with self.assertRaisesRegex(ValueError, "draft: lanes not run, mark ready for review"):
+            ci.aggregate(needs)
+        needs["plan"]["outputs"] = {"lanes": json.dumps(["policy"]), "draft": "false"}
+        needs["policy"] = {"result": "success"}
+        ci.aggregate(needs)
 
     def test_a_missing_or_unknown_lane_or_a_failed_plan_fails(self):
         needs = needs_for(plan("docs/BUILD.md"))
