@@ -25,6 +25,8 @@ for (const logo of manifest.logos) {
   if (!logo.modification?.trim()) problems.push(`${logo.id}: no modification note`);
   if (!/^\d{4}-\d{2}-\d{2}$/.test(logo.retrieved ?? '')) problems.push(`${logo.id}: no retrieved date`);
   if (!fs.existsSync(path.join(dir, logo.file))) problems.push(`${logo.id}: ${logo.file} is missing`);
+  // web/src/agentLogos.ts maps a bundled logo to its agent by file name.
+  if (logo.file !== `${logo.id}.svg`) problems.push(`${logo.id}: ${logo.file} must be named ${logo.id}.svg, the name agentLogos.ts reads the agent from`);
 }
 for (const entry of manifest.existing) {
   claim(entry.id, 'existing');
