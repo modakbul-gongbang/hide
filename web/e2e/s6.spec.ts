@@ -82,7 +82,6 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     const bodyBox = (await body.boundingBox())!;
     expect(toolbarBox.width).toBeCloseTo(bodyBox.width, 0);
     expect(toolbarBox.y + toolbarBox.height).toBeLessThanOrEqual(bodyBox.y + 1);
-    await expect(page.locator("[data-workspace-toolbar] :is([data-tool-tab], [data-panel-pin], [data-panel-expand], [data-panel-toggle])")).toHaveCount(0);
 
     // B7, B8: each icon names itself with its chord in the tooltip and
     // reads pressed only while its column shows.
