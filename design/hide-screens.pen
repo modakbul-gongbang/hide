@@ -225535,18 +225535,14 @@
                                   "name": "Logo plate",
                                   "children": [
                                     {
-                                      "type": "frame",
-                                      "id": "onb-copilot-cli-logo-l",
-                                      "name": "Logo",
-                                      "children": [],
-                                      "width": 32,
-                                      "height": 32,
-                                      "fill": {
-                                        "type": "image",
-                                        "enabled": true,
-                                        "url": "../web/src/assets/agents/copilot-cli.svg",
-                                        "mode": "fit"
-                                      }
+                                      "type": "text",
+                                      "id": "onb-copilot-cli-mono-l",
+                                      "name": "CC",
+                                      "content": "CC",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "600"
                                     }
                                   ],
                                   "width": 40,
@@ -225603,18 +225599,14 @@
                                   "name": "Logo plate",
                                   "children": [
                                     {
-                                      "type": "frame",
-                                      "id": "onb-amp-logo-l",
-                                      "name": "Logo",
-                                      "children": [],
-                                      "width": 32,
-                                      "height": 32,
-                                      "fill": {
-                                        "type": "image",
-                                        "enabled": true,
-                                        "url": "../web/src/assets/agents/amp.svg",
-                                        "mode": "fit"
-                                      }
+                                      "type": "text",
+                                      "id": "onb-amp-mono-l",
+                                      "name": "AM",
+                                      "content": "AM",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "600"
                                     }
                                   ],
                                   "width": 40,
@@ -226290,18 +226282,14 @@
                                   "name": "Logo plate",
                                   "children": [
                                     {
-                                      "type": "frame",
-                                      "id": "onb-pi-logo-l",
-                                      "name": "Logo",
-                                      "children": [],
-                                      "width": 32,
-                                      "height": 32,
-                                      "fill": {
-                                        "type": "image",
-                                        "enabled": true,
-                                        "url": "../web/src/assets/agents/pi.svg",
-                                        "mode": "fit"
-                                      }
+                                      "type": "text",
+                                      "id": "onb-pi-mono-l",
+                                      "name": "PI",
+                                      "content": "PI",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "600"
                                     }
                                   ],
                                   "width": 40,
@@ -227173,18 +227161,14 @@
                                   "name": "Logo plate",
                                   "children": [
                                     {
-                                      "type": "frame",
-                                      "id": "onb-copilot-cli-logo-d",
-                                      "name": "Logo",
-                                      "children": [],
-                                      "width": 32,
-                                      "height": 32,
-                                      "fill": {
-                                        "type": "image",
-                                        "enabled": true,
-                                        "url": "../web/src/assets/agents/copilot-cli.svg",
-                                        "mode": "fit"
-                                      }
+                                      "type": "text",
+                                      "id": "onb-copilot-cli-mono-d",
+                                      "name": "CC",
+                                      "content": "CC",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "600"
                                     }
                                   ],
                                   "width": 40,
@@ -227241,18 +227225,14 @@
                                   "name": "Logo plate",
                                   "children": [
                                     {
-                                      "type": "frame",
-                                      "id": "onb-amp-logo-d",
-                                      "name": "Logo",
-                                      "children": [],
-                                      "width": 32,
-                                      "height": 32,
-                                      "fill": {
-                                        "type": "image",
-                                        "enabled": true,
-                                        "url": "../web/src/assets/agents/amp.svg",
-                                        "mode": "fit"
-                                      }
+                                      "type": "text",
+                                      "id": "onb-amp-mono-d",
+                                      "name": "AM",
+                                      "content": "AM",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "600"
                                     }
                                   ],
                                   "width": 40,
@@ -227928,18 +227908,14 @@
                                   "name": "Logo plate",
                                   "children": [
                                     {
-                                      "type": "frame",
-                                      "id": "onb-pi-logo-d",
-                                      "name": "Logo",
-                                      "children": [],
-                                      "width": 32,
-                                      "height": 32,
-                                      "fill": {
-                                        "type": "image",
-                                        "enabled": true,
-                                        "url": "../web/src/assets/agents/pi.svg",
-                                        "mode": "fit"
-                                      }
+                                      "type": "text",
+                                      "id": "onb-pi-mono-d",
+                                      "name": "PI",
+                                      "content": "PI",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "600"
                                     }
                                   ],
                                   "width": 40,

@@ -5080,8 +5080,8 @@ function buildOnboarding(tokens) {
   const dimmed = num(tokens, '--opacity-dimmed');
   const MARKS = {
     'claude-code': 'agent-claude.png', codex: 'agent-codex.png', opencode: 'agents/opencode.svg', cursor: 'agents/cursor.svg',
-    'copilot-cli': 'agents/copilot-cli.svg', amp: 'agents/amp.svg', 'qwen-code': 'agents/qwen-code.svg', goose: 'agents/goose.svg',
-    cline: 'agents/cline.svg', 'kilo-code': 'agents/kilo-code.svg', pi: 'agents/pi.svg', 'mistral-vibe': 'agents/mistral-vibe.svg',
+    'qwen-code': 'agents/qwen-code.svg', goose: 'agents/goose.svg',
+    cline: 'agents/cline.svg', 'kilo-code': 'agents/kilo-code.svg', 'mistral-vibe': 'agents/mistral-vibe.svg',
   };
   // [id, label, state]: on, off, or none (not set up on this machine).
   const AGENTS = [
