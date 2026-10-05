@@ -207,6 +207,7 @@ impl Default for IndexService {
 mod tests {
     use super::*;
 
+    #[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
     fn answer_after_walk(service: &IndexService, walk: Result<Walked, String>) -> IndexAnswer {
         assert!(matches!(
             service.query("device", "/root", "", move || walk),

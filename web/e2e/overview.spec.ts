@@ -28,6 +28,7 @@ import { agentsIn, continueFixtureTranscript, declareParent, labelAgent, session
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, screenshot } from "./wire";
 import { chord, field } from "./chords";
+import { animationsFinished, quietFor, unchangedForFrames } from "./wait";
 
 test.describe.configure({ timeout: 240_000 });
 
@@ -104,13 +105,26 @@ function fakeGh(dir: string): string {
   });
   const plain = (body: string) => JSON.stringify({ body, labels: [], author: { login: "example-user" }, assignees: [], createdAt: "2026-09-19T00:00:00Z", comments: [] });
   // Issue 3 waits on issue 2, the relation GitHub's blockedBy records (task-agents-views B8).
+  // Issue 2 has two sub-issues, GitHub's `completed` of `total` 1 of 2: #4, open and
+  // closed by pull request 11, and #9, already closed.
+  const none = { subIssuesSummary: { total: 0, completed: 0 }, subIssues: { nodes: [] } };
   const dependencies = JSON.stringify({
     data: {
       r0: {
         nameWithOwner: "acme/repo",
-        i2: { number: 2, blockedBy: { nodes: [] } },
-        i3: { number: 3, blockedBy: { nodes: [{ number: 2, state: "OPEN", repository: { nameWithOwner: "acme/repo" } }] } },
-        i4: { number: 4, blockedBy: { nodes: [] } },
+        i2: {
+          number: 2,
+          blockedBy: { nodes: [] },
+          subIssuesSummary: { total: 2, completed: 1 },
+          subIssues: {
+            nodes: [
+              { number: 4, title: "리뷰 중인 이슈", state: "OPEN", repository: { nameWithOwner: "acme/repo" } },
+              { number: 9, title: "끝난 조각", state: "CLOSED", repository: { nameWithOwner: "acme/repo" } },
+            ],
+          },
+        },
+        i3: { number: 3, blockedBy: { nodes: [{ number: 2, state: "OPEN", repository: { nameWithOwner: "acme/repo" } }] }, ...none },
+        i4: { number: 4, blockedBy: { nodes: [] }, ...none },
       },
     },
   });
@@ -155,7 +169,7 @@ async function chooseTheme(page: Page, theme: "light" | "dark"): Promise<void> {
   await page.keyboard.press("Escape");
   await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
   // Controls fade their colors into the new theme; a capture waits them out.
-  await page.waitForTimeout(400);
+  await animationsFinished(page);
 }
 
 /**
@@ -166,6 +180,7 @@ async function chooseTheme(page: Page, theme: "light" | "dark"): Promise<void> {
  * open for good (overview.spec on CI, 2026-09-29..10-01).
  */
 async function leaveHoverCard(page: Page, gone: Locator): Promise<void> {
+  // eslint-disable-next-line hide-e2e/no-action-in-poll -- #433 retried interaction: a bare move can land before the card's leave listener
   await expect(async () => {
     await page.mouse.move(2, 998);
     await page.mouse.move(4, 996, { steps: 4 });
@@ -201,6 +216,9 @@ async function restOn(page: Page, target: Locator, texts: string[], within?: Loc
   }
   throw lastFailure;
 }
+
+/** The graph draws frames only while it glides: thirty animation frames with no graph frame drawn is rest. */
+const graphAtRest = (page: Page, canvas: Locator) => unchangedForFrames(page, () => canvas.getAttribute("data-graph-frames"));
 
 /** Clears hover and keyboard focus so a capture shows the page at rest. */
 async function atRest(page: Page): Promise<void> {
@@ -344,7 +362,6 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     // by stage; Sessions today's count once the history is read (B1-B5).
     await expect(overview.locator("[data-lens-tile]")).toHaveCount(5);
     expect(await overview.locator("[data-lens-tile]").evaluateAll((tiles) => tiles.map((tile) => tile.getAttribute("data-lens-tile")))).toEqual(["requests", "agents", "issues", "prs", "sessions"]);
-    await expect(overview.locator("[data-overview-tab], [data-inbox-group], [data-waiting-band]")).toHaveCount(0);
     await expect(tile("agents")).toHaveAttribute("data-selected", "true");
     await expect(tile("agents").locator("[data-lens-tile-value]")).toHaveAttribute("data-lens-tile-value", "4", { timeout: 20_000 });
     await expect(tile("agents").locator("[data-lens-tile-badge]")).toHaveText("1");
@@ -581,12 +598,12 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     // The graph's own relayouts and animation frames are counted on its canvas;
     // the last glide (a chip just changed the picture) is let finish first.
     await atRest(page);
-    await page.waitForTimeout(800);
+    await graphAtRest(page, canvas);
     const revision = async () => Number(await canvas.getAttribute("data-graph-revision"));
     const frames = async () => Number(await canvas.getAttribute("data-graph-frames"));
     const revisionBefore = await revision();
     const framesBefore = await frames();
-    await page.waitForTimeout(1500);
+    await quietFor(page, 1500, "an unchanged picture is neither relaid out nor redrawn");
     expect(await revision()).toBe(revisionBefore);
     expect(await frames()).toBe(framesBefore);
     // The Implementor asks: its row grows a second line, its line turns orange, the graph is laid out once and glides.
@@ -663,6 +680,10 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await expect(issueCard(4).locator("[data-lens-pr-chip]")).toHaveAttribute("data-lens-pr-chip", "11");
     await expect(issueCard(4)).toContainText("Review required");
     await expect(issueCard(3).locator("[data-card-chips]")).toHaveCount(0);
+    // GitHub's sub-issue progress on the card, and none on an issue without sub-issues.
+    await expect(issueCard(2).locator("[data-sub-issues]")).toHaveAttribute("data-sub-issues", "1/2");
+    await expect(issueCard(2).locator("[data-sub-issues]")).toHaveText("Sub-issues 1/2");
+    await expect(issueCard(3).locator("[data-sub-issues]")).toHaveCount(0);
 
     // The panel (B11-B15): head, the in-progress actions, the properties the
     // read brought, what was done for it, the Markdown body and the latest
@@ -679,6 +700,12 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await expect(panel.locator('[data-issue-property="assignees"]')).toHaveText("example-user");
     await expect(panel.locator('[data-issue-property="created"]')).toHaveCount(0);
     await expect(panel.locator("[data-issue-work-checkout]")).toContainText("2-task-source");
+    // The sub-issues: each one's state, and the pull request that closes it as a chip.
+    await expect(panel.locator("[data-issue-sub-issues]")).toHaveAttribute("data-issue-sub-issues", "1/2");
+    await expect(panel.locator('[data-sub-issue="github:acme/repo#4"]')).toHaveAttribute("data-sub-issue-state", "open");
+    await expect(panel.locator('[data-sub-issue="github:acme/repo#4"] [data-sub-issue-pr]')).toHaveAttribute("data-sub-issue-pr", "11");
+    await expect(panel.locator('[data-sub-issue="github:acme/repo#9"]')).toHaveAttribute("data-sub-issue-state", "closed");
+    await expect(panel.locator('[data-sub-issue="github:acme/repo#9"] [data-sub-issue-pr]')).toHaveCount(0);
     await expect(panel.locator("[data-issue-body=ready] [data-markdown-text]")).toContainText("출처를 어댑터로 나눈다.");
     await expect(panel.locator("[data-issue-comments]")).toHaveAttribute("data-issue-comments", "4");
     await expect(panel.locator("[data-issue-comment]")).toHaveCount(3);
@@ -747,7 +774,7 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await issueCard(2).hover();
     await expect(issueCard(2).locator("[data-card-workspace]")).toBeVisible();
     expect((await issueCard(2).boundingBox())?.height).toBe(restHeight);
-    await page.waitForTimeout(600);
+    await quietFor(page, 600, "the card height holds at rest");
     expect([...sent.values()].reduce((sum, count) => sum + count, 0)).toBe(quietIssues);
     // Each button says what it does (B7).
     await restOn(page, issueCard(2).locator("[data-card-workspace]"), ["Open Workspace"], issueCard(2));

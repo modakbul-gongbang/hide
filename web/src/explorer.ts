@@ -205,6 +205,61 @@ export function explorerRows({
   return rows;
 }
 
+/**
+ * The rows a filter leaves: each file hided's index matched, under its
+ * ancestor folders, every folder open. Folders come before files, each in
+ * name order, as a listing orders them; the core's expansion is not read, so
+ * clearing the filter shows the tree as it was.
+ */
+export function filteredRows({
+  rootPath,
+  files,
+  changes,
+}: {
+  rootPath: string;
+  files: { relative_path: string }[];
+  changes: ChangesSnapshot | null;
+}): ExplorerRow[] {
+  type Node = { name: string; path: string; children: Map<string, Node> | null };
+  const top: Node = { name: "", path: rootPath, children: new Map() };
+  for (const file of files) {
+    const parts = file.relative_path.split("/");
+    let node = top;
+    parts.forEach((part, index) => {
+      let next = node.children?.get(part);
+      if (!next) {
+        next = { name: part, path: `${node.path}/${part}`, children: index === parts.length - 1 ? null : new Map() };
+        node.children?.set(part, next);
+      }
+      node = next;
+    });
+  }
+  const decorations = gitDecorations(changes, rootPath);
+  const rows: ExplorerRow[] = [];
+  const walk = (node: Node, depth: number) => {
+    const children = [...(node.children?.values() ?? [])].sort(
+      (a, b) => Number(b.children !== null) - Number(a.children !== null) || a.name.localeCompare(b.name, undefined, { numeric: true }),
+    );
+    for (const child of children) {
+      const isDirectory = child.children !== null;
+      rows.push({
+        path: child.path,
+        name: child.name,
+        depth,
+        isDirectory,
+        inode: null,
+        expanded: isDirectory,
+        listing: null,
+        decoration: decorationFor(decorations, child.path, rootPath, isDirectory),
+        icon: fileIcon(child.name),
+      });
+      if (isDirectory) walk(child, depth + 1);
+    }
+  };
+  walk(top, 0);
+  return rows;
+}
+
 /** The cell's tooltip. */
 export function rowTitle(row: ExplorerRow, rootPath: string, t: TFunction<"translation">): string {
   const presented = relativeTo(row.path, rootPath);

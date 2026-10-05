@@ -934,6 +934,7 @@ mod sys {
         }
     }
 
+    #[allow(clippy::disallowed_methods)] // a production wait: Windows named pipes have no readiness wait, so the read backs off between availability checks until its deadline
     pub(super) fn read(
         shared: &Shared,
         timeout: Option<Duration>,
@@ -985,6 +986,7 @@ mod sys {
         })
     }
 
+    #[allow(clippy::disallowed_methods)] // a production wait: shutdown retries the pipe cancel until the blocked reader has left, one millisecond apart
     pub(super) fn shutdown(shared: &Shared) {
         let stop = &shared.stop;
         stop.cancelled.store(true, Ordering::SeqCst);

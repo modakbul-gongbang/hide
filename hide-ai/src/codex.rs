@@ -499,6 +499,7 @@ impl Drop for CodexAppServerBackend {
 /// Watches the last-activity clock and ends the app-server once it has been
 /// idle past [`IDLE_TIMEOUT`], releasing it during the quiet the 2026-09-17
 /// incident held it through.
+#[allow(clippy::disallowed_methods)] // a production wait, not test code
 fn spawn_idle_reaper(
     session: Arc<Mutex<Option<Session>>>,
     sink: Arc<dyn AiLogSink>,
@@ -822,6 +823,7 @@ impl Session {
         let _ = self.child.wait();
     }
 
+    #[allow(clippy::disallowed_methods)] // a production wait, not test code
     fn wait_for_exit(&mut self, grace: Duration) -> bool {
         let deadline = Instant::now() + grace;
         loop {

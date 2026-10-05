@@ -1184,6 +1184,9 @@ pub struct Runtime {
     /// id Herdr acknowledged; it decides the tab's checkout instead of the
     /// pane cwd (`session.rs`, `CreatedTabCheckout`).
     created_tab_checkouts: BTreeMap<String, session::CreatedTabCheckout>,
+    /// The same record for tabs created on a device, by target and the tab id
+    /// that device's Herdr gave it.
+    created_device_tabs: BTreeMap<(String, String), session::CreatedTabCheckout>,
     /// An acknowledgment arrived for a tab the session had already placed
     /// under another checkout, so the local coordinator republishes once.
     created_tab_republish_requested: bool,
@@ -1728,6 +1731,7 @@ impl Runtime {
             live_generation: 0,
             status_refresh_requested: false,
             created_tab_checkouts: BTreeMap::new(),
+            created_device_tabs: BTreeMap::new(),
             created_tab_republish_requested: false,
             next_async_operation_id: 0,
             #[cfg(test)]

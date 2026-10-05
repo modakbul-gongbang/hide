@@ -45,6 +45,9 @@ The Windows/Linux package lanes check the real archive's headless daemon/kit beh
 The call must return the parent's code and both markers within the original five-second deadline, with the helper gone; test recovery is armed with that helper's identity before its parent exits.
 This regression checks process and pipe ownership, not a native app window or Unix crash containment.
 
+CI retries a failed e2e or Rust test once, so a green lane can hide a test whose first attempt failed.
+The `Report flaky tests` step and the open `quarantine` issues say which; read them before claiming a flow verified, and treat a flaky test as unproven ([TESTING.md](TESTING.md#flaky-tests) owns the policy).
+
 A scenario someone would check by hand becomes a spec when it can; [TESTING.md](TESTING.md) says how to write it.
 Playwright drives the renderer over its own connection rather than through OS input, so a spec needs no keyboard focus and cannot type into another app.
 Manual QA covers what a spec cannot reach yet, and the pull request's Evidence says the check was manual.
@@ -87,7 +90,6 @@ Read [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md#2-identify-the-build-and-pr
 A capture shows an old frame unless the candidate was launched with `--disable-backgrounding-occluded-windows`, because Chromium stops painting an occluded window.
 Before trusting open-computer-use's target, check that `ocu list-apps` shows the candidate's name once and that no other process answers it.
 Its element actions have not yet been exercised against hide's renderer, so observe the effect after every action and record whether it landed.
-The Peekaboo procedure this repository used to name is retired; Peekaboo is no longer part of the QA toolchain.
 
 The window list prints owner PID, window id, owner name, and title for every on-screen window:
 

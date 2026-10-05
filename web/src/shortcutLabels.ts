@@ -8,7 +8,6 @@ import {
   displayCommand,
   fieldChord,
   hostRegistry,
-  isNumberedCommand,
   numberedCommand,
   type BindingProblem,
   type Chord,
@@ -18,17 +17,9 @@ import {
   type SheetRow,
   type StoredShortcutSets,
 } from "./shortcuts";
+import { commandTitle } from "./commandTitle";
 import { useShellStore } from "./store";
 import type { TFunction } from "i18next";
-
-/** A command's title in the operator's language; the registry's `title` stays the English the desktop menu reads. */
-export function commandTitle(id: CommandId, t: TFunction<"translation">): string {
-  if (isNumberedCommand(id)) {
-    const { family, number } = numberedCommand(id)!;
-    return t(family === "tabs" ? "commands.select_tab" : "commands.select_agent", { number });
-  }
-  return t(`commands.${id}`);
-}
 
 /** A sheet row's title: a folded numbered family reads with its range ("1-9"). */
 export function sheetRowTitle(row: SheetRow, t: TFunction<"translation">): string {

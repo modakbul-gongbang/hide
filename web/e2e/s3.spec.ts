@@ -14,6 +14,7 @@ import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, enterWorkspace, screenshot, showExplorer } from "./wire";
 import { chord } from "./chords";
+import { quietFor } from "./wait";
 
 const SOURCE = "export const answer = 41;\n";
 
@@ -227,6 +228,31 @@ test("the Explorer lists a checkout, expands a folder and opens a preview tab", 
     await expect.poll(() => sent.get("view_layout.close")).toBe(1);
     await expect(page.locator('[data-tab-kind="file"]')).toHaveCount(0);
     await expect(page.locator("[data-canvas]")).toBeVisible();
+  } finally {
+    close(fixture);
+  }
+});
+
+test("the Explorer filter keeps matches under their folders and Escape restores the tree", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { repo } = fixture;
+  try {
+    // Collapse src, so its file is a match inside a folder the tree never listed open.
+    await page.locator(`[data-explorer-row="${repo}/src"]`).click();
+    await expect(page.locator(`[data-explorer-row="${repo}/src/main.ts"]`)).toHaveCount(0);
+
+    const filter = page.locator("[data-explorer-filter]");
+    await filter.fill("main");
+    await expect(page.locator(`[data-explorer-row="${repo}/src/main.ts"]`)).toBeVisible({ timeout: 20_000 });
+    await expect(page.locator(`[data-explorer-row="${repo}/src"]`)).toBeVisible();
+    await expect(page.locator(`[data-explorer-row="${repo}/README.md"]`)).toHaveCount(0);
+    await screenshot(page, "explorer-filter");
+
+    // Escape brings back the tree as it was: src collapsed, the rest listed.
+    await filter.press("Escape");
+    await expect(filter).toHaveValue("");
+    await expect(page.locator(`[data-explorer-row="${repo}/README.md"]`)).toBeVisible();
+    await expect(page.locator(`[data-explorer-row="${repo}/src/main.ts"]`)).toHaveCount(0);
   } finally {
     close(fixture);
   }
@@ -554,21 +580,6 @@ test("a conflicted background tab is not closed away with its draft", async ({ p
   }
 });
 
-test("the close chord closes the file tab that is showing", async ({ page }) => {
-  const fixture = await openCheckout(page);
-  const { sent } = fixture;
-  try {
-    await page.locator('[data-editor-body] .cm-content').click();
-    await page.keyboard.press(chord("close_tab"));
-    await expect.poll(() => sent.get("view_layout.close")).toBe(1);
-    await expect(page.locator('[data-tab-kind="file"]')).toHaveCount(0);
-    // The terminal tab the file tab was covering is still there.
-    await expect(page.locator('[data-tab-kind="herdr"]').first()).toBeVisible();
-  } finally {
-    close(fixture);
-  }
-});
-
 test("images, PDFs and videos render from hided file bytes", async ({ page }) => {
   const fixture = await openCheckout(page);
   const { repo, sent } = fixture;
@@ -759,7 +770,7 @@ test("the Explorer creates, renames, moves and trashes entries", { tag: "@platfo
     // The closing menu hands focus back a tick later; the field it opened
     // keeps the keyboard and nothing is sent until the operator commits.
     await expect(rename).toBeFocused();
-    await page.waitForTimeout(250);
+    await quietFor(page, 250, "nothing is sent until the operator commits the rename");
     await expect(rename).toBeFocused();
     expect(sent.get("path_rename") ?? 0).toBe(0);
     await rename.fill("renamed.ts");
@@ -1035,9 +1046,11 @@ test("an unsaved edit survives a socket drop and reconnect", async ({ page }) =>
     await page.evaluate(() => window.__hideProbe?.dropSocket());
     await page.context().setOffline(true);
     await expect(page.locator("[data-connection]")).toHaveText(/reconnecting/, { timeout: 15_000 });
-    // Keep the socket down past the 600 ms autosave window. A dropped save
-    // must be retried after reconnection, then reach the actual file (D-10).
-    await page.waitForTimeout(800);
+    // Keep the socket down past the 600 ms autosave window: no save reaches the
+    // file meanwhile. A dropped save must be retried after reconnection, then
+    // reach the actual file (D-10).
+    await quietFor(page, 800, "no save reaches the file while the socket is down, past the 600 ms autosave window");
+    expect(fs.readFileSync(path.join(repo, "notes.md"), "utf8")).not.toContain("edited across a reconnect");
     await page.context().setOffline(false);
     await expect(page.locator("[data-connection]")).toHaveCount(0, { timeout: 20_000 });
     await expect(content).toContainText("edited across a reconnect");
@@ -1242,6 +1255,8 @@ test("a draft whose tab a daemon restart lost is kept for recovery and opens whe
     const restarted = await fixture.daemon.restart((state) => fs.rmSync(path.join(state, "workspace-views.json"), { force: true }));
     fixture.daemon = restarted;
     expect(restarted.hostId).toBe(hostBefore);
+    // The page under test survives the restart and reconnects: it must not be reloaded.
+    // eslint-disable-next-line hide-e2e/reopen-after-restart-through-blank -- the reconnect of the same page is the subject
     await page.goto(`${restarted.origin}/?probe=1#token=${restarted.token}`);
     const line = page.locator("[data-draft-recovery]");
     await expect(line).toBeVisible({ timeout: 20_000 });
@@ -1285,6 +1300,8 @@ test("a View tab a daemon restart restores takes its unsaved draft back (S6 B19)
     await expect.poll(async () => (await storedDrafts(page)).find((row) => row.path === file)?.contents, { timeout: 5_000 }).toBe("export const answer = 78;\n");
 
     fixture.daemon = await fixture.daemon.restart();
+    // The page under test survives the restart and reconnects: it must not be reloaded.
+    // eslint-disable-next-line hide-e2e/reopen-after-restart-through-blank -- the reconnect of the same page is the subject
     await page.goto(`${fixture.daemon.origin}/?probe=1#token=${fixture.daemon.token}`);
     // The Workspace brings the tab back and the draft returns into it,
     // unsaved; nothing reached the disk and nothing asks for recovery.

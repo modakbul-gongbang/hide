@@ -186,7 +186,7 @@ def classify(path, status, crates, root):
                 # start; its unit suite runs on Windows in `windows check`.
                 lanes.add("windows-check")
             return lanes, f"desktop host: {path}", set()
-    # Workflows, scripts, contracts and the Herdr pin, plugins, fixtures,
+    # Workflows, scripts, contracts and the Herdr pin, fixtures,
     # lockfiles, toolchain and package configuration, and any path no rule
     # above claims.
     return None, f"shared or unclassified: {path}", set()

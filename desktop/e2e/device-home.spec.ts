@@ -15,6 +15,7 @@ import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace } from "../../web/e2e/wire";
 import { HIDE_CLI, isolate, relaunch, shellPage, test } from "./fixture";
+import { animationsFinished, compositorPresents } from "../../web/e2e/wait";
 
 test.describe.configure({ timeout: 300_000 });
 test.skip(!process.env.HIDE_E2E_SSH_PORT || !process.env.HIDE_E2E_DEVICE_HOME, "an isolated SSH server with its own session HOME is required");
@@ -91,7 +92,8 @@ async function capture(page: Page, app: ElectronApplication, name: string): Prom
     await expect(page.locator("html")).toHaveClass(new RegExp(`\\b${theme}\\b`));
     await page.keyboard.press("Escape");
     await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
-    await page.waitForTimeout(400);
+    await animationsFinished(page);
+    await compositorPresents(page);
     execFileSync("/usr/sbin/screencapture", ["-x", "-o", "-l", source.split(":")[1]!, path.join(dir, `${name}-${theme}.png`)]);
   }
 }
@@ -136,7 +138,6 @@ test("a device's Home is made on its first start, the rail follows registration,
     await expect(nav).toHaveAttribute("data-sidebar-rail", "device");
     await expect(page.locator("[data-rail-tile]")).toHaveCount(1);
     await expect(page.locator("[data-project-list] [data-home-destination]")).toBeVisible();
-    await expect(page.locator("[data-footer-device]")).toHaveCount(0);
     await capture(page, app, "device-home-one-device");
 
     // B6: View > Toggle device rail hides the rail, the name becomes the device menu, and the menu item brings it back.

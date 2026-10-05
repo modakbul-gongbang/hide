@@ -1,5 +1,7 @@
 //! Typed transport for Herdr's newline-delimited JSON socket API.
 
+pub mod plugin;
+
 use std::fmt;
 use std::io::{BufRead, BufReader, Read, Write};
 use std::path::Path;
@@ -18,30 +20,6 @@ include!(concat!(env!("OUT_DIR"), "/herdr_contract.rs"));
 /// Herdr API protocol revision this client speaks. A mismatch is a hard,
 /// explicit failure instead of a partially working sidebar.
 pub const HERDR_PROTOCOL_REVISION: u64 = HERDR_PROTOCOL_REVISION_SCHEMA as u64;
-
-#[allow(
-    dead_code,
-    clippy::derivable_impls,
-    clippy::enum_variant_names,
-    clippy::large_enum_variant
-)]
-pub mod wire {
-    pub mod request {
-        include!(concat!(env!("OUT_DIR"), "/herdr_request.rs"));
-    }
-    pub mod success_response {
-        include!(concat!(env!("OUT_DIR"), "/herdr_success_response.rs"));
-    }
-    pub mod event {
-        include!(concat!(env!("OUT_DIR"), "/herdr_event.rs"));
-    }
-    pub mod subscription_event {
-        include!(concat!(env!("OUT_DIR"), "/herdr_subscription_event.rs"));
-    }
-    pub mod error_response {
-        include!(concat!(env!("OUT_DIR"), "/herdr_error_response.rs"));
-    }
-}
 
 const API_TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -319,46 +297,25 @@ pub fn request_with_correlation_id(
     response_result(response, request_id)
 }
 
+/// Open an event subscription. `params` is the `events.subscribe` parameter
+/// object, which the caller builds from the contract (`herdr-core`'s `wire`).
 pub fn subscribe(
     socket_path: &Path,
-    subscriptions: &[&str],
+    params: Value,
     timeout: Duration,
 ) -> Result<Subscription, ApiError> {
-    subscribe_with_connector(
-        &LocalSocketConnector::new(socket_path),
-        subscriptions,
-        timeout,
-    )
+    subscribe_with_connector(&LocalSocketConnector::new(socket_path), params, timeout)
 }
 
 pub fn subscribe_with_connector(
     connector: &dyn ApiConnector,
-    subscriptions: &[&str],
-    timeout: Duration,
-) -> Result<Subscription, ApiError> {
-    subscribe_with_connector_for_panes(connector, subscriptions, &[], timeout)
-}
-
-/// Open an event subscription whose filters may include the pane-scoped
-/// `pane.agent_status_changed` kind.  The Herdr contract requires a
-/// `pane_id` for that filter, so callers pass the pane ids discovered from
-/// their bootstrap snapshot.  The other subscription kinds remain
-/// unparameterized.
-pub fn subscribe_with_connector_for_panes(
-    connector: &dyn ApiConnector,
-    subscriptions: &[&str],
-    pane_ids: &[String],
+    params: Value,
     timeout: Duration,
 ) -> Result<Subscription, ApiError> {
     let mut stream = connector.connect()?;
     stream.set_write_timeout(Some(timeout))?;
     let request_id = "herdr-core:events.subscribe";
-    write_request(
-        stream.as_mut(),
-        request_id,
-        "events.subscribe",
-        subscription_params_for_panes(subscriptions, pane_ids).map_err(ApiError::Malformed)?,
-    )?;
+    write_request(stream.as_mut(), request_id, "events.subscribe", params)?;
 
     let response = decode_response(&stream.read_line_with_timeout(timeout)?)?;
     let result = response_result(response, request_id)?;
@@ -380,59 +337,6 @@ pub fn subscribe_with_connector_for_panes(
         reader,
         shutdown,
     })
-}
-
-/// Encode a contract-checked `events.subscribe` parameter object.
-pub fn subscription_params(subscriptions: &[&str]) -> Result<Value, String> {
-    encode_subscription_params(subscriptions, &[], false)
-}
-
-/// Encode a contract-checked `events.subscribe` parameter object, expanding
-/// pane-scoped status filters once per known pane.
-pub fn subscription_params_for_panes(
-    subscriptions: &[&str],
-    pane_ids: &[String],
-) -> Result<Value, String> {
-    encode_subscription_params(subscriptions, pane_ids, true)
-}
-
-fn encode_subscription_params(
-    subscriptions: &[&str],
-    pane_ids: &[String],
-    skip_empty_status_filter: bool,
-) -> Result<Value, String> {
-    let mut encoded = Vec::new();
-    for kind in subscriptions {
-        if *kind == "pane.agent_status_changed" {
-            if pane_ids.is_empty() {
-                if skip_empty_status_filter {
-                    continue;
-                }
-                return Err(
-                    "invalid event subscription: pane.agent_status_changed requires pane ids"
-                        .to_owned(),
-                );
-            }
-            for pane_id in pane_ids {
-                encoded.push(
-                    serde_json::from_value::<wire::request::Subscription>(json!({
-                        "type": kind,
-                        "pane_id": pane_id,
-                    }))
-                    .map_err(|error| format!("invalid event subscription: {error}"))?,
-                );
-            }
-        } else {
-            encoded.push(
-                serde_json::from_value::<wire::request::Subscription>(json!({"type": kind}))
-                    .map_err(|error| format!("invalid event subscription: {error}"))?,
-            );
-        }
-    }
-    serde_json::to_value(wire::request::EventsSubscribeParams {
-        subscriptions: encoded,
-    })
-    .map_err(|error| format!("subscription parameters could not be encoded: {error}"))
 }
 
 fn write_request(
@@ -576,6 +480,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::disallowed_methods)] // the sleep is the subject of the test: a fake peer or backend that is slow on purpose
     fn small_response_rejects_a_peer_that_never_finishes_its_frame() {
         let root = tempfile::tempdir().unwrap();
         let socket = root.path().join("peer.sock");
@@ -697,8 +602,12 @@ mod tests {
             .expect("write replay");
         });
 
-        let subscription =
-            subscribe(&socket_path, &["pane.focused"], Duration::from_secs(1)).expect("subscribe");
+        let subscription = subscribe(
+            &socket_path,
+            json!({"subscriptions": [{"type": "pane.focused"}]}),
+            Duration::from_secs(1),
+        )
+        .expect("subscribe");
         assert_eq!(subscription.ack.kind, "subscription_started");
         let (mut reader, shutdown) = subscription.into_parts();
         let mut replay = String::new();
@@ -708,25 +617,5 @@ mod tests {
         drop(shutdown);
 
         server.join().expect("fake server joins");
-    }
-
-    #[test]
-    fn parameterized_status_subscriptions_are_expanded_for_known_panes() {
-        let params = subscription_params_for_panes(
-            &["pane.focused", "pane.agent_status_changed"],
-            &["w1:p1".to_owned(), "w1:p2".to_owned()],
-        )
-        .expect("contract-valid subscription filters");
-        assert_eq!(
-            params,
-            json!({
-                "subscriptions": [
-                    {"type": "pane.focused"},
-                    {"type": "pane.agent_status_changed", "pane_id": "w1:p1"},
-                    {"type": "pane.agent_status_changed", "pane_id": "w1:p2"}
-                ]
-            })
-        );
-        assert!(subscription_params(&["pane.agent_status_changed"]).is_err());
     }
 }

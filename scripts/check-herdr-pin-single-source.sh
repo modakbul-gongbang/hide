@@ -36,6 +36,10 @@ derived_sources=(
   scripts/web-shell-measure/isolated-env.sh
 )
 
+# The version matches as a whole token: `0.9.1` is not restated by `0.9.143`
+# (another tool's version) or `10.9.1`, but is by `v0.9.1`, `0.9.1.` and `0.9.1-rc1`.
+version_pattern="(^|[^0-9.])$(print -rn -- "$version" | sed 's/[][\.*^$+?(){}|/]/\\&/g')(\$|[^0-9.]|\.(\$|[^0-9]))"
+
 failed=0
 for relative in $derived_sources; do
   # Not `path`: in zsh that name is tied to $PATH and assigning it wipes the
@@ -46,7 +50,7 @@ for relative in $derived_sources; do
     failed=1
     continue
   }
-  if grep -Fq -- "$version" "$source_path"; then
+  if grep -Eq -- "$version_pattern" "$source_path"; then
     print -u2 -- "error: $relative restates the pinned version $version; read it from the manifest"
     failed=1
   fi

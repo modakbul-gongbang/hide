@@ -1350,6 +1350,7 @@ struct RusshApiConnection {
 
 // Bound both contention and protocol waits: a coordinator joins its process reader
 // on shutdown, so an unresponsive host must not keep that owner alive forever.
+#[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
 fn lock_api_session<T>(
     state: &Mutex<T>,
     timeout: Duration,
@@ -4778,7 +4779,7 @@ mod tests {
 
         let subscription = hide_herdr_client::subscribe_with_connector(
             &connector,
-            &["pane.updated"],
+            crate::wire::subscription_params(&["pane.updated"]).expect("subscription params"),
             SSH_OPERATION_TIMEOUT,
         )
         .expect("official remote event subscription starts");

@@ -2,18 +2,16 @@
 //! API (PRD D-13): `pane.read` for the recent rows, `pane.send_input` for a
 //! reply or one key. Neither goes through the core's attach set or
 //! `Event::Key`, so the desktop's visible tab, focus, terminal size and
-//! attachments stay where they are. Parameters and the answer are the
-//! generated types of the pinned Herdr schema.
+//! attachments stay where they are. Parameters and the answer come from
+//! `herdr_core::wire`, which holds the generated types of the pinned Herdr
+//! schema.
 
 use std::sync::Arc;
 use std::time::Duration;
 
+use herdr_core::wire;
 use hide_herdr_client::ApiConnector;
 use hide_herdr_client::ApiError;
-use hide_herdr_client::wire::request::{
-    PaneReadParams, PaneSendInputParams, ReadFormat, ReadSource,
-};
-use hide_herdr_client::wire::success_response::ResponseResult;
 
 const TIMEOUT: Duration = Duration::from_secs(5);
 
@@ -63,29 +61,13 @@ pub fn read(
     pane_id: &str,
     lines: u32,
 ) -> Result<Rows, PaneError> {
-    let params = serde_json::to_value(PaneReadParams {
-        pane_id: pane_id.to_owned(),
-        source: ReadSource::Recent,
-        lines: Some(lines.min(MAX_LINES)),
-        format: ReadFormat::Ansi,
-        strip_ansi: false,
-    })
-    .map_err(|error| PaneError::Unavailable(error.to_string()))?;
+    let params =
+        wire::pane_rows_params(pane_id, lines.min(MAX_LINES)).map_err(PaneError::Unavailable)?;
     let value =
         hide_herdr_client::request_with_connector(connector.as_ref(), "pane.read", params, TIMEOUT)
             .map_err(classify)?;
-    match serde_json::from_value::<ResponseResult>(value) {
-        Ok(ResponseResult::PaneRead { read }) => Ok(Rows {
-            text: read.text,
-            truncated: read.truncated,
-        }),
-        Ok(_) => Err(PaneError::Unavailable(
-            "pane.read returned no read section".to_owned(),
-        )),
-        Err(error) => Err(PaneError::Unavailable(format!(
-            "pane.read response is malformed: {error}"
-        ))),
-    }
+    let (text, truncated) = wire::pane_rows(value).map_err(PaneError::Unavailable)?;
+    Ok(Rows { text, truncated })
 }
 
 /// The keys a phone may send, as Herdr key-combo strings.
@@ -126,19 +108,10 @@ pub fn send(
     input: Input<'_>,
 ) -> Result<(), PaneError> {
     let params = match input {
-        Input::Reply(text) => PaneSendInputParams {
-            pane_id: pane_id.to_owned(),
-            text: Some(text.to_owned()),
-            keys: vec!["enter".to_owned()],
-        },
-        Input::Key(key) => PaneSendInputParams {
-            pane_id: pane_id.to_owned(),
-            text: None,
-            keys: vec![key.to_owned()],
-        },
-    };
-    let params =
-        serde_json::to_value(params).map_err(|error| PaneError::Unavailable(error.to_string()))?;
+        Input::Reply(text) => wire::pane_reply_params(pane_id, text),
+        Input::Key(key) => wire::pane_key_params(pane_id, key),
+    }
+    .map_err(PaneError::Unavailable)?;
     hide_herdr_client::request_with_connector(
         connector.as_ref(),
         "pane.send_input",

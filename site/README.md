@@ -57,14 +57,15 @@ Performance copy quotes only the dated candidate measurements in [PERFORMANCE_RE
 Refresh that report and both the site and repository README together when changing a performance figure; internal buffer/frame endpoints must not be described as physical display latency.
 The recorded comparison attempt did not complete a matching Orca workload, so the site makes no relative performance claim.
 The site has its own small CSS scale and brand palette; it does not consume or replace the product's generated UI tokens.
-The explanatory workflow is explicitly labelled as a diagram.
-It is not a screenshot, a product mockup, a recorded demo, or evidence of a running application.
+`assets/hide-overview.webp` is a real capture of the app's project overview, cropped to the app window with other projects' rows blurred and resized to 2400 pixels wide; the feature rows show crops of that same file.
+Its text is the capturing machine's own project data and Korean-language interface; it is a candidate screenshot, not a recorded demo.
+The page is dark by default and follows `prefers-color-scheme` for a light variant that keeps the brand palette.
 
 ## Remaining publication work
 
 Source preparation does not complete issue #338's publication acceptance criteria.
-An actual candidate product screenshot and recorded demo are pending the related product fixes and independent capture review.
-No product screenshot, private workstation capture, video or placeholder demo link is included here.
+The overview screenshot still needs independent privacy review, and a recorded demo is pending the related product fixes and capture review.
+No video or placeholder demo link is included here.
 DNS ownership, hosting, HTTPS and live `withhide.dev` behavior have not been verified or changed by this source work.
 A complete public stable release must exist before real archive downloads can be verified end to end.
 Before publication, refresh feature and platform copy against current main, independently review the site and any media, test the live release links and checksums, and authorize deployment separately.

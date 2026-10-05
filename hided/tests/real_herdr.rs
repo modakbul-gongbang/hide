@@ -61,6 +61,7 @@ struct PrivateHerdr {
 }
 
 impl PrivateHerdr {
+    #[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
     fn start(bin: PathBuf, root: &Path) -> Self {
         let version = String::from_utf8(
             Command::new(&bin)
@@ -145,6 +146,7 @@ impl Drop for PrivateHerdr {
 /// Runs the control session the core runs for `pane` once more, by hand,
 /// and says what it answered: only a failure calls it, so the exact command,
 /// exit and output are in the report.
+#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn control_attempt(herdr: &PrivateHerdr, pane: &str) -> String {
     let arguments = [
         "terminal", "session", "control", pane, "--cols", "100", "--rows", "30",

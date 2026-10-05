@@ -8,6 +8,7 @@ import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, enterWorkspace, screenshot } from "./wire";
 import { chord, MOD_KEYS } from "./chords";
+import { quietFor } from "./wait";
 
 test.describe.configure({ timeout: 120_000 });
 
@@ -30,11 +31,11 @@ test("no keycap on a ⌘ or ⌥ hold, no tab on ⌘2, and the sheet says so", as
 
     // B3: a hold reveals nothing here, on either modifier.
     for (const key of MOD_KEYS) await page.keyboard.down(key);
-    await page.waitForTimeout(500);
+    await quietFor(page, 500, "a hold reveals nothing");
     await expect(page.locator("[data-keycap]")).toHaveCount(0);
     for (const key of [...MOD_KEYS].reverse()) await page.keyboard.up(key);
     await page.keyboard.down("Alt");
-    await page.waitForTimeout(500);
+    await quietFor(page, 500, "a hold of Alt alone reveals nothing");
     await expect(page.locator("[data-keycap]")).toHaveCount(0);
     await screenshot(page, "digit-hints-browser-alt-hold");
     await page.keyboard.up("Alt");
@@ -43,7 +44,7 @@ test("no keycap on a ⌘ or ⌥ hold, no tab on ⌘2, and the sheet says so", as
     const focused = sent.get("focus_tab") ?? 0;
     await page.keyboard.press(chord("select_tab_2", "electron"));
     await page.keyboard.press("Alt+Digit2");
-    await page.waitForTimeout(600);
+    await quietFor(page, 600, "a chord with a modifier left down reveals nothing");
     expect(sent.get("focus_tab") ?? 0).toBe(focused);
     expect(sent.get("focus_pane") ?? 0).toBe(0);
     await expect(canvas).toHaveAttribute("data-canvas", herdr.tab);

@@ -105,6 +105,29 @@ describe("the Issues board", () => {
     expect(board.cards.some((card) => card.checkout?.id === "main")).toBe(false);
   });
 
+  it("shows GitHub's sub-issue progress as counted and gives each sub-issue only the pull request whose body closes it", () => {
+    const parent: Task = {
+      ...task(300),
+      sub_issues: {
+        total: 3,
+        completed: 1,
+        items: [
+          { key: key(301), id: "#301", title: "Piece one", open: false },
+          { key: key(302), id: "#302", title: "Piece two", open: true },
+          { key: key(303), id: "#303", title: "Piece three", open: true },
+        ],
+      },
+    };
+    const closing = (number: number, issue: number): PullRequest => ({ ...pr("open"), number, closing_issues: [{ repository: "acme/project", number: issue }] });
+    const project = { ...workspace([], { tasks: [parent, task(310)] }), pull_requests: [{ ...closing(41, 301), badge: "merged" as const }, closing(42, 302)] };
+    const [card, plain] = buildTasks(one(project), "project", NOW).cards;
+    expect(card?.subIssues?.completed).toBe(1);
+    expect(card?.subIssues?.total).toBe(3);
+    expect(card?.subIssues?.items.map((item) => item.pr?.number ?? null)).toEqual([41, 42, null]);
+    expect(card?.subIssues?.items.map((item) => item.pr?.tone ?? null)).toEqual(["merged", "open", null]);
+    expect(plain?.subIssues).toBeNull();
+  });
+
   it("orders the backlog by when each issue last changed, most recent first", () => {
     const at = (value: Task, updated: number): Task => ({ ...value, updated_at_unix_ms: updated });
     const board = buildTasks(one(workspace([], { tasks: [at(task(1), 10), at(task(2), 30), task(3), at(task(4), 20)] })), "project", NOW);

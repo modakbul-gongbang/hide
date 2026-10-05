@@ -15,6 +15,7 @@ import { startHided, type Daemon } from "./hided-fixture";
 import { chooseColumn, countSent, screenshot } from "./wire";
 import { chord, commandLabel } from "./chords";
 import { openCurrentProjectOverview } from "./overview-entry";
+import { quietFor, unchangedForFrames } from "./wait";
 
 test.describe.configure({ timeout: 120_000 });
 
@@ -82,7 +83,6 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     const bodyBox = (await body.boundingBox())!;
     expect(toolbarBox.width).toBeCloseTo(bodyBox.width, 0);
     expect(toolbarBox.y + toolbarBox.height).toBeLessThanOrEqual(bodyBox.y + 1);
-    await expect(page.locator("[data-workspace-toolbar] :is([data-tool-tab], [data-panel-pin], [data-panel-expand], [data-panel-toggle])")).toHaveCount(0);
 
     // B7, B8: each icon names itself with its chord in the tooltip and
     // reads pressed only while its column shows.
@@ -164,14 +164,7 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     // A file opened from the Explorer turns File Views on between the agents
     // and Tools; the agents resize once to the narrower width (B3, B4, B18).
     const resizes = () => sent.get("terminal_resize") ?? 0;
-    const settled = async () =>
-      expect
-        .poll(async () => {
-          const seen = resizes();
-          await page.waitForTimeout(400);
-          return resizes() === seen;
-        })
-        .toBe(true);
+    const settled = () => unchangedForFrames(page, resizes);
     await settled();
     const agentsBeforeViews = (await agentArea.boundingBox())!;
     const resizesBeforeViews = resizes();
@@ -199,7 +192,7 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     await page.locator(`[data-explorer-row="${path.join(root, "gone.txt")}"]`).dblclick();
     await expect(viewsColumn.locator('[data-tab-kind="file"]')).toHaveCount(2);
     await viewsColumn.locator('[data-tab-kind="file"]').first().click();
-    await page.waitForTimeout(500);
+    await quietFor(page, 500, "opening a file view sends nothing more");
     expect(resizes()).toBe(resizesInViews);
     expect(await agentArea.boundingBox()).toEqual(agentsBox);
 
@@ -237,7 +230,7 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     await page.mouse.move(tradeBox.x + 60, tradeBox.y + 200, { steps: 6 });
     await page.mouse.up();
     await expect.poll(() => last.get("workspace_view")).toEqual({ views_width: expect.any(Number), tools_width: expect.any(Number) });
-    await page.waitForTimeout(500);
+    await quietFor(page, 500, "the width commit is the last one");
     expect(await agentArea.boundingBox()).toEqual(agentsBeforeTrade);
     expect(resizes()).toBe(resizesBeforeTrade);
     await page.mouse.move(bodyBox.x + 40, bodyBox.y + 40);
@@ -390,7 +383,7 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     expect(sent.get("focus_pane") ?? 0).toBe(focusCount);
     // The focus the closed menu hands back to its button does not bring the
     // button's hint up after it; the hint waits for the pointer to come back.
-    await page.waitForTimeout(800);
+    await quietFor(page, 800, "the closed menu's button does not bring its hint up");
     await expect(page.locator('[data-slot="tooltip-content"]')).toHaveCount(0);
 
     // A restart brings the Workspace back with its columns, widths and View

@@ -1,6 +1,7 @@
-import { EllipsisIcon, ExternalLinkIcon, GitBranchIcon, GitPullRequestIcon, HouseIcon, PencilIcon, PlayIcon, SquareTerminalIcon, XIcon } from "lucide-react";
+import { CircleCheckIcon, CircleDotIcon, EllipsisIcon, ExternalLinkIcon, GitBranchIcon, GitPullRequestIcon, HouseIcon, PencilIcon, PlayIcon, SquareTerminalIcon, XIcon } from "lucide-react";
 import { useEffect, useRef, useState, type KeyboardEvent, type ReactNode } from "react";
 import type { Actions } from "./actions";
+import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Kbd } from "./components/ui/kbd";
@@ -10,10 +11,10 @@ import { useCachedDetail, useDetailSlot } from "./issueDetails";
 import { cn } from "./lib/utils";
 import { MarkdownText } from "./MarkdownText";
 import { PullRequestChip } from "./OverviewLenses";
-import { STAGES, issueDate, type TaskCard } from "./projectBoard";
+import { STAGES, issueDate, type CardSubIssue, type TaskCard } from "./projectBoard";
 import type { IssueDetail } from "./snapshot";
 import { useShellStore } from "./store";
-import { CardAgentRow, EDIT_HINT, IssueLabelView, IssueMenu, ReviewMarks, START_HINT, TaskGlyph, neighbourCard, type BoardHandlers } from "./TaskBoards";
+import { CardAgentRow, EDIT_HINT, IssueLabelView, IssueMenu, PR_TONE, ReviewMarks, START_HINT, TaskGlyph, neighbourCard, type BoardHandlers } from "./TaskBoards";
 import { useEscapeLayer } from "./components/ui/layer";
 import { holdsCommandKey } from "./host";
 import { fieldLabel } from "./shortcutLabels";
@@ -143,6 +144,7 @@ export function IssuePanel({
         </>
       )}
       <Properties card={card} read={read} stage={stage} />
+      <SubIssues card={card} handlers={handlers} />
       <WorkDone card={card} handlers={handlers} focusedPaneId={focusedPaneId} actions={actions} />
       {editing ? null : <Body card={card} read={read} onEdit={() => setEditing(true)} onRetry={readIssue} />}
       {github && !editing && read.detail ? <Comments detail={read.detail} /> : null}
@@ -280,6 +282,57 @@ function Properties({ card, read, stage }: { card: TaskCard; read: Read; stage: 
         </Row>
       ) : null}
     </dl>
+  );
+}
+
+/**
+ * The sub-issues (GitHub's own `completed` of `total` in the heading), each
+ * with its state and the pull request whose body closes it. A mention that
+ * does not close a sub-issue shows nothing. With none the section is not drawn.
+ */
+function SubIssues({ card, handlers }: { card: TaskCard; handlers: BoardHandlers }) {
+  const { t } = useInterfaceTranslation();
+  const { subIssues, owner } = card;
+  if (!subIssues) return null;
+  return (
+    <section className="flex flex-col gap-xs" aria-label={t("issue.subIssues")} data-issue-sub-issues={`${subIssues.completed}/${subIssues.total}`}>
+      <h3 className="text-caption font-medium text-muted-foreground">{t("board.subIssues", { completed: subIssues.completed, total: subIssues.total })}</h3>
+      <ul className="flex flex-col gap-xxs" role="list">
+        {subIssues.items.map((item) => (
+          <SubIssueRow key={item.key} item={item} owner={owner} handlers={handlers} />
+        ))}
+      </ul>
+    </section>
+  );
+}
+
+function SubIssueRow({ item, owner, handlers }: { item: CardSubIssue; owner: TaskCard["owner"]; handlers: BoardHandlers }) {
+  const { t } = useInterfaceTranslation();
+  const Glyph = item.open ? CircleDotIcon : CircleCheckIcon;
+  return (
+    <li className="flex min-w-0 items-center gap-xs text-body" data-sub-issue={item.key} data-sub-issue-state={item.open ? "open" : "closed"}>
+      <Glyph aria-label={t(item.open ? "issue.state.open" : "issue.state.closed")} className={cn("size-(--size-icon-sm) shrink-0", item.open ? "text-success" : "text-muted-foreground")} />
+      <span className="shrink-0 font-mono text-caption text-muted-foreground">{item.id}</span>
+      <span className="min-w-0 flex-1 truncate text-foreground">{item.title}</span>
+      {item.pr ? (
+        <button
+          type="button"
+          className="shrink-0 rounded-xs outline-none focus-visible:ring-1 focus-visible:ring-ring"
+          aria-label={`PR #${item.pr.number}`}
+          data-sub-issue-pr={item.pr.number}
+          data-pr-tone={item.pr.tone}
+          onClick={(event) => {
+            if (holdsCommandKey(event)) handlers.openGitHub(item.pr!.url, owner.device_id);
+            else handlers.openPullRequestRow(owner, item.pr!.number);
+          }}
+        >
+          <Badge variant="outline" className={PR_TONE[item.pr.tone]}>
+            <GitPullRequestIcon aria-hidden="true" />#{item.pr.number}
+            <ReviewMarks pr={item.pr} review={false} />
+          </Badge>
+        </button>
+      ) : null}
+    </li>
   );
 }
 

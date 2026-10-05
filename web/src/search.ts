@@ -4,6 +4,7 @@
 // functions, so the palette's behavior is testable without a browser; ⌘P's
 // ranking happens in hided, beside the walk.
 
+import { addressUrl } from "./browserViews";
 import { checkoutPlaces } from "./navigation";
 import { deviceConnected, frontDeviceId, localDeviceId } from "./devices";
 import type { TFunction } from "i18next";
@@ -75,8 +76,8 @@ export type SearchEntry = {
   /** The row of a relation list: how deep it nests and what it is to the thing in front. */
   depth?: number;
   tag?: "here" | "parent";
-  /** The one command ⌘K keeps. */
-  command?: "start_agent";
+  /** The commands ⌘K keeps. */
+  command?: "start_agent" | "open_url";
   /** A GitHub search result: its row is opened on GitHub, never in Hide. */
   external?: boolean;
   /** A Recent row of a device that is not connected: drawn dimmed, found by arrows, and ↵ does nothing (PRD cmdk-recent D-11). */
@@ -114,6 +115,29 @@ function startAgentEntry(t: TFunction<"translation">): SearchEntry {
     kind: "command",
     group: COMMANDS_GROUP,
     command: "start_agent",
+  };
+}
+
+/**
+ * `Open URL in Browser`, offered while the query reads as a web address: one
+ * written with http(s), or a loopback host a dev server runs on
+ * (`localhost:5173`). The address is the one the View's address field would
+ * load, so any other text stays a name to search. `unavailable` is why it
+ * cannot run now; the row then stays listed, dimmed, with that reason.
+ */
+export function openUrlEntry(query: string, unavailable: string | null, t: TFunction<"translation">): SearchEntry | null {
+  const text = query.trim();
+  const url = addressUrl(text);
+  if (!url || !(/^https?:\/\//i.test(text) || url.startsWith("http://"))) return null;
+  return {
+    id: "command:open-url",
+    title: t("search.openUrl"),
+    subtitle: unavailable ?? url,
+    kind: "command",
+    group: COMMANDS_GROUP,
+    command: "open_url",
+    url,
+    dimmed: unavailable !== null,
   };
 }
 

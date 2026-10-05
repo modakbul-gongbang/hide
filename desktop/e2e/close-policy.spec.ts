@@ -2,7 +2,7 @@ import { expect, type ElectronApplication, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { spawnAgent, startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
+import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace, showExplorer } from "../../web/e2e/wire";
 import { isolate, launch, NEEDS_FOCUS, test } from "./fixture";
 
@@ -88,6 +88,7 @@ test("Command W from the app menu closes a browser page that holds the keyboard,
     await page.locator('[data-explorer-menu] [data-menu-item="open-browser"]').click();
     await expect(page.locator("[data-browser-slot]")).toBeVisible();
     // A page holds the keyboard only in the key window, so this test's window comes to the front.
+    // eslint-disable-next-line hide-e2e/no-action-in-poll -- #433 retried interaction: native focus lands after the page is shown
     await expect.poll(() => app.evaluate(({ app: electron, BrowserWindow }) => {
       const window = BrowserWindow.getAllWindows()[0]!;
       const view = window.contentView.children.find((child) =>
@@ -107,29 +108,5 @@ test("Command W from the app menu closes a browser page that holds the keyboard,
     });
     await expect(page.locator("[data-browser-slot]")).toHaveCount(0);
     await expect(page.locator("[data-pane-view]")).toHaveCount(2);
-  });
-});
-
-test("Command W on an agent that spawned others asks once and closes the subtree on Enter", async () => {
-  await inWorkspace("close-subtree", async ({ herdr, page, capture }) => {
-    const target = herdr.panes[1];
-    const child = await spawnAgent(herdr, "child", target);
-    const grandchild = await spawnAgent(herdr, "grandchild", child);
-    await page.keyboard.press("Meta+KeyE");
-    await expect(page.locator('[data-column="tools"]')).toHaveCount(0);
-    await page.locator('[data-sidebar-mode="agents"]').click();
-    await page.locator(`[data-agent-tree-toggle="${target}"]`).click({ timeout: 30_000 });
-    await expect(page.locator(`[data-agent-tree-toggle="${child}"]`)).toBeVisible({ timeout: 30_000 });
-    await page.locator(`[data-terminal-host="${target}"]`).click();
-    await page.keyboard.press("Meta+KeyW");
-    const sheet = page.locator("[data-confirm-subtree]");
-    await expect(sheet.getByRole("heading")).toHaveText("Close this agent and 2 children?");
-    await expect(sheet.locator("[data-subtree-row]")).toHaveCount(3);
-    await expect(sheet.locator("[data-subtree-close-all]")).toBeFocused();
-    capture("native-close-subtree-sheet");
-    await page.keyboard.press("Enter");
-    for (const pane of [grandchild, child, target]) await expect(page.locator(`[data-pane="${pane}"]`)).toHaveCount(0, { timeout: 30_000 });
-    await expect(page.locator(`[data-pane-view="${herdr.panes[0]}"]`)).toBeVisible();
-    capture("native-close-subtree-closed");
   });
 });

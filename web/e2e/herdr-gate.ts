@@ -2,6 +2,7 @@ import fs from "node:fs";
 import net from "node:net";
 import path from "node:path";
 import type { HerdrFixture } from "./herdr-fixture";
+import { localEndpoint } from "./platform-fixture";
 
 export type GateParams = Record<string, unknown>;
 
@@ -18,8 +19,6 @@ export type GateParams = Record<string, unknown>;
  */
 export async function herdrGate(herdr: HerdrFixture) {
   const socket = path.join(herdr.root, "gate.sock");
-  // Herdr maps a filesystem path to the Windows named-pipe namespace.
-  const endpoint = (address: string) => process.platform === "win32" ? `\\\\.\\pipe\\${address}` : address;
   const clientSocket = socket.replace(/\.sock$/, "-client.sock");
   const peers = new Set<net.Socket>();
   const calls: { method: string; params: GateParams }[] = [];
@@ -47,7 +46,7 @@ export async function herdrGate(herdr: HerdrFixture) {
       active.set(method, running);
       maximums.set(method, Math.max(maximums.get(method) ?? 0, running));
       const forward = (received?: () => void, failed?: (error: Error) => void) => {
-        const upstream = net.connect(endpoint(herdr.socket), () => upstream.write(buffer));
+        const upstream = net.connect(localEndpoint(herdr.socket), () => upstream.write(buffer));
         peers.add(upstream);
         upstream.on("close", () => peers.delete(upstream));
         upstream.on("error", (error) => { client.destroy(); failed?.(error); });
@@ -72,7 +71,7 @@ export async function herdrGate(herdr: HerdrFixture) {
   const markers: string[] = [];
   const listen = (listener: net.Server, address: string) => new Promise<void>((resolve, reject) => {
     listener.once("error", reject);
-    listener.listen(endpoint(address), resolve);
+    listener.listen(localEndpoint(address), resolve);
   });
   const stop = async () => {
     for (const peer of peers) peer.destroy();
@@ -85,7 +84,7 @@ export async function herdrGate(herdr: HerdrFixture) {
       // HERDR_SOCKET_PATH takes precedence over a client-only override.
       // Forward the CLI's derived endpoint as bytes, without JSON gating.
       const clientServer = net.createServer((client) => {
-        const upstream = net.connect(endpoint(herdr.socket.replace(/\.sock$/, "-client.sock")));
+        const upstream = net.connect(localEndpoint(herdr.socket.replace(/\.sock$/, "-client.sock")));
         for (const peer of [client, upstream]) {
           peers.add(peer);
           peer.on("close", () => { peers.delete(peer); client.destroy(); upstream.destroy(); });

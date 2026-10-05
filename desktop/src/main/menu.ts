@@ -10,6 +10,8 @@
 // keys the window answers.
 
 import type { MenuItemConstructorOptions } from "electron";
+import type { TFunction } from "i18next";
+import { commandTitle } from "../../../web/src/commandTitle";
 import { AREA_COMMANDS, effectiveRegistry, isCycleCommand, isNumberedCommand, REGISTRY, systemRegistry, type Chord, type Command, type CommandId, type EffectiveRegistry, type KeySystem } from "../../../web/src/shortcuts";
 
 const KEY_NAMES: Record<string, string> = {
@@ -84,9 +86,9 @@ export const KEYBOARD_ONLY: readonly CommandId[] = [
   ...REGISTRY.map((command) => command.id).filter(isNumberedCommand),
 ];
 
-function commandItem(command: Command, send: (id: CommandId) => void): MenuItemConstructorOptions {
+function commandItem(command: Command, send: (id: CommandId) => void, t: TFunction<"translation">): MenuItemConstructorOptions {
   // A command with no chord (the sidebar switch until the operator binds one) is a plain item.
-  return { id: command.id, label: command.title, accelerator: command.electron && !isCycleCommand(command.id) ? accelerator(command.electron) : undefined, click: () => send(command.id) };
+  return { id: command.id, label: commandTitle(command.id, t), accelerator: command.electron && !isCycleCommand(command.id) ? accelerator(command.electron) : undefined, click: () => send(command.id) };
 }
 
 // A reported set is the editable commands the operator rebound; anything past
@@ -115,12 +117,12 @@ export function menuBindings(reported: unknown, system: KeySystem): EffectiveReg
   return effectiveRegistry(stored, "electron", system);
 }
 
-function items(layout: readonly (CommandId | null)[], send: (id: CommandId) => void, registry: readonly Command[]): MenuItemConstructorOptions[] {
+function items(layout: readonly (CommandId | null)[], send: (id: CommandId) => void, registry: readonly Command[], t: TFunction<"translation">): MenuItemConstructorOptions[] {
   return layout.map((id) => {
     if (id === null) return { type: "separator" };
     const command = registry.find((row) => row.id === id);
     if (!command) throw new Error(`menu names an unknown command ${id}`);
-    return commandItem(command, send);
+    return commandItem(command, send, t);
   });
 }
 
@@ -129,14 +131,23 @@ export function menuTemplate(options: {
   send: (id: CommandId) => void;
   developer: boolean;
   system: KeySystem;
+  /** The language the menu is drawn in; a role item carries its label too, since the system's own follows the OS, not the operator's choice. */
+  t: TFunction<"translation">;
   registry?: readonly Command[];
 }): MenuItemConstructorOptions[] {
-  const { appName, send, developer, system } = options;
+  const { appName, send, developer, system, t } = options;
   const registry = options.registry ?? systemRegistry(system);
   const mac = system === "mac";
   // Services and hiding the app are macOS's own; Windows and Linux have neither.
   const macOnly: MenuItemConstructorOptions[] = mac
-    ? [{ role: "services" }, { type: "separator" }, { role: "hide" }, { role: "hideOthers" }, { role: "unhide" }, { type: "separator" }]
+    ? [
+        { role: "services", label: t("native.menu.services") },
+        { type: "separator" },
+        { role: "hide", label: t("native.menu.hide", { appName }) },
+        { role: "hideOthers", label: t("native.menu.hideOthers") },
+        { role: "unhide", label: t("native.menu.showAll") },
+        { type: "separator" },
+      ]
     : [];
   // Electron gives quit, reload and the Window menu's close and minimize
   // plain Ctrl keys on Windows and Linux, which belong to the shell there
@@ -148,41 +159,60 @@ export function menuTemplate(options: {
     {
       label: appName,
       submenu: [
-        { role: "about" },
+        { role: "about", label: t("native.menu.about", { appName }) },
         { type: "separator" },
-        ...items(MENU_LAYOUT.app, send, registry),
+        ...items(MENU_LAYOUT.app, send, registry, t),
         { type: "separator" },
         ...macOnly,
-        { role: "quit", ...pcKeys("Control+Shift+Q") },
+        { role: "quit", label: t("native.menu.quit", { appName }), ...pcKeys("Control+Shift+Q") },
       ],
     },
-    { label: "File", submenu: items(MENU_LAYOUT.File, send, registry) },
+    { label: t("native.menu.file"), submenu: items(MENU_LAYOUT.File, send, registry, t) },
     {
-      label: "Edit",
+      label: t("native.menu.edit"),
       submenu: [
-        { role: "undo" },
-        { role: "redo" },
+        { role: "undo", label: t("native.menu.undo") },
+        { role: "redo", label: t("native.menu.redo") },
         { type: "separator" },
-        { role: "cut" },
-        { role: "copy" },
-        { role: "paste" },
-        { role: "pasteAndMatchStyle" },
-        { role: "selectAll" },
+        { role: "cut", label: t("native.menu.cut") },
+        { role: "copy", label: t("native.menu.copy") },
+        { role: "paste", label: t("native.menu.paste") },
+        { role: "pasteAndMatchStyle", label: t("native.menu.pasteMatchStyle") },
+        { role: "selectAll", label: t("native.menu.selectAll") },
         { type: "separator" },
-        ...items(MENU_LAYOUT.Edit, send, registry),
+        ...items(MENU_LAYOUT.Edit, send, registry, t),
       ],
     },
     {
-      label: "View",
+      label: t("native.menu.view"),
       submenu: [
-        ...items(MENU_LAYOUT.View, send, registry),
-        ...(developer ? ([{ type: "separator" }, { role: "reload", ...pcKeys("Control+Shift+R") }, { role: "toggleDevTools" }] as MenuItemConstructorOptions[]) : []),
+        ...items(MENU_LAYOUT.View, send, registry, t),
+        ...(developer
+          ? ([
+              { type: "separator" },
+              { role: "reload", label: t("native.menu.reload"), ...pcKeys("Control+Shift+R") },
+              { role: "toggleDevTools", label: t("native.menu.developerTools") },
+            ] as MenuItemConstructorOptions[])
+          : []),
         { type: "separator" },
-        { role: "togglefullscreen" },
+        { role: "togglefullscreen", label: t("native.menu.fullScreen") },
       ],
     },
-    { label: "Pane", submenu: items(MENU_LAYOUT.Pane, send, registry) },
-    ...(mac ? ([{ role: "windowMenu" }] as MenuItemConstructorOptions[]) : []),
-    { role: "help", submenu: items(MENU_LAYOUT.Help, send, registry) },
+    { label: t("native.menu.pane"), submenu: items(MENU_LAYOUT.Pane, send, registry, t) },
+    ...(mac
+      ? ([
+          {
+            role: "windowMenu",
+            label: t("native.menu.window"),
+            submenu: [
+              { role: "minimize", label: t("native.menu.minimize") },
+              { role: "zoom", label: t("native.menu.zoom") },
+              { type: "separator" },
+              { role: "front", label: t("native.menu.front") },
+            ],
+          },
+        ] as MenuItemConstructorOptions[])
+      : []),
+    { role: "help", label: t("native.menu.help"), submenu: items(MENU_LAYOUT.Help, send, registry, t) },
   ];
 }
