@@ -578,7 +578,7 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
   server.once("error", (error) => { spawnFailed = error; });
   let stopped = false;
   const afterStop: (() => void)[] = [];
-  const { stop } = ownUntilWorkerExit(() => {
+  const stopServer = () => {
     // On Windows a pane's processes can outlive the server and keep the
     // root locked. Listed while the server still runs (so its pid is its
     // own), ended after it stops; a failure here keeps the root and is
@@ -616,8 +616,19 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
     }
     if (failure !== undefined) throw failure;
     fs.rmSync(root, { recursive: true, force: true });
+  };
+  const { stop } = ownUntilWorkerExit(() => {
+    let failure: unknown;
+    try { stopServer(); } catch (error) { failure = error; }
+    // Whatever the server left, nothing more will end it: a later cleanup
+    // runs now, and every queued one runs even when one fails.
     stopped = true;
-    for (const cleanup of afterStop.splice(0)) cleanup();
+    const failed: unknown[] = [];
+    for (const cleanup of afterStop.splice(0)) {
+      try { cleanup(); } catch (error) { failed.push(error); }
+    }
+    if (failure !== undefined) throw failed.length === 0 ? failure : afterCleanup(failure, () => { throw failed[0]; });
+    if (failed.length > 0) throw failed[0];
   });
   try {
     await waitFor(() => {
@@ -698,7 +709,8 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
         let children = "";
         await waitFor(
           () => {
-            const counted = spawnSync(path.join(root, "bin", "hide-children.exe"), [String(shell)], { encoding: "utf8", timeout: 10_000, windowsHide: true });
+            const counted = spawnSync(path.join(root, "bin", "hide-children.exe"), [String(shell)], { encoding: "utf8", timeout: Math.min(remaining, 10_000), windowsHide: true });
+            if (counted.error) throw counted.error;
             if (counted.status === 2) throw new Error("fixture shell exited before agent start");
             if (counted.status !== 0) throw new Error(`hide-children exited ${counted.status}: ${counted.stderr.trim()}`);
             children = counted.stdout.trim();

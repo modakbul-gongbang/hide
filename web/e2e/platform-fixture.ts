@@ -41,6 +41,13 @@ export function compileFixtureC(source: string, executable: string): void {
   fs.copyFileSync(built, executable);
 }
 
+/** Ends the worker's compiled helpers now; a unit test that replaces the temp folder calls it between tests. */
+export function forgetCompiledFixtures(): void {
+  if (compileDir !== undefined) fs.rmSync(compileDir, { recursive: true, force: true });
+  compileDir = undefined;
+  compiledByWorker.clear();
+}
+
 /**
  * Where a client reaches the local stream Herdr names by `socket`: the path
  * itself on Unix, the pipe `\\.\pipe\<path>` on Windows (hide-platform's
@@ -55,7 +62,7 @@ export function processUsage(pid: number): { cpuSeconds: number; rssKiB: number 
     const [cpu, bytes] = powershell(`$p = Get-Process -Id ${pid}; "$($p.TotalProcessorTime.TotalSeconds) $($p.WorkingSet64)"`).trim().split(" ");
     return { cpuSeconds: Number(cpu), rssKiB: Number(bytes) / 1024 };
   }
-  const [time, rss] = execFileSync("ps", ["-p", String(pid), "-o", "time=,rss="], { encoding: "utf8" }).trim().split(/\s+/);
+  const [time, rss] = execFileSync("/bin/ps", ["-p", String(pid), "-o", "time=,rss="], { encoding: "utf8" }).trim().split(/\s+/);
   return { cpuSeconds: time!.split(":").map(Number).reduce((sum, part) => sum * 60 + part, 0), rssKiB: Number(rss) };
 }
 

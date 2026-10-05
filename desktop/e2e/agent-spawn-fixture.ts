@@ -30,15 +30,13 @@ export function installSpawnProvider(herdr: HerdrFixture, root: string): SpawnPr
     script: path.join(root, process.platform === "win32" ? "command.ps1" : "command.sh"),
     completed: path.join(root, "command-completed"),
   };
-  const source = path.join(root, "agent.c");
   const runner = process.platform === "win32"
     ? [powershellBinary(path.join(herdr.root, "bin")), "-NoLogo", "-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-File", provider.script]
     : ["/bin/sh", provider.script];
-  fs.writeFileSync(source, `${PROVIDER_SOURCE}\nstatic const char *herdr_binary = ${JSON.stringify(herdr.bin)};
+  compileFixtureC(`${PROVIDER_SOURCE}\nstatic const char *herdr_binary = ${JSON.stringify(herdr.bin)};
 static const char *completion_file = ${JSON.stringify(provider.completed)};
 static char *command[] = { ${runner.map((argument) => JSON.stringify(argument)).join(", ")}, NULL };
-${PROVIDER_MAIN}`);
-  compileFixtureC(source, path.join(herdr.root, "bin", fixtureExecutable("claude")));
+${PROVIDER_MAIN}`, path.join(herdr.root, "bin", fixtureExecutable("claude")));
   return provider;
 }
 

@@ -6,6 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { isolate, launch, type Isolated } from "./fixture";
+import { forgetCompiledFixtures } from "../../web/e2e/platform-fixture";
 
 type Guard = (fixtures: Record<string, never>, use: () => Promise<void>, info: { tags: string[] }) => Promise<void>;
 const boundary = vi.hoisted(() => ({ launch: vi.fn(), guard: null as Guard | null }));
@@ -22,14 +23,13 @@ vi.mock("node:child_process", async (original) => ({
       || Object.keys(options).some((key) => key !== "timeout")) {
       throw new Error(`unexpected fixture compiler: ${command}`);
     }
+    // A worker compiles into its own folder under the temp directory, and
+    // `fixtureOpenCommand` copies the result into the private root.
     const [, , output, source] = args;
-    const privateRoot = path.dirname(source);
-    if (!root || !path.isAbsolute(privateRoot) || path.dirname(privateRoot) !== fs.realpathSync.native(root)
-      || !path.basename(privateRoot).startsWith("hide-desktop-")
-      || source !== path.join(privateRoot, "hide-open.c")
-      || output !== path.join(privateRoot, "bin", "hide-open.exe")
-      || fs.realpathSync.native(source) !== source
-      || fs.realpathSync.native(path.dirname(output)) !== path.join(privateRoot, "bin")
+    const cache = path.dirname(source);
+    if (!root || !path.isAbsolute(cache) || path.dirname(fs.realpathSync.native(cache)) !== fs.realpathSync.native(root)
+      || !path.basename(cache).startsWith("hide-e2e-cc-")
+      || path.extname(source) !== ".c" || path.extname(output) !== ".exe" || path.dirname(output) !== cache
       || fs.readFileSync(source, "utf8") !== "int main(void) { return 0; }\n") {
       throw new Error(`unexpected fixture compiler files: ${command}`);
     }
@@ -60,6 +60,7 @@ afterEach(() => {
   // so the same recovery entrypoint can clean every test's retained home.
   for (const child of children) reportExit(child);
   for (const run of runs) run.cleanup();
+  forgetCompiledFixtures();
   vi.restoreAllMocks();
   fs.rmSync(root, { recursive: true, force: true });
 });
