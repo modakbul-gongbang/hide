@@ -786,3 +786,60 @@ fn a_zoom_and_resize_in_other_tabs_start_while_an_unanswered_pane_focus_holds_th
     assert!(runtime.control_lane.is_busy());
     assert_eq!(runtime.control_lane.queued_len(), 0);
 }
+
+/// Herdr's session update that shows a pane operation's effect can reach the
+/// runtime before the answer to the request does: the two travel on different
+/// threads, and on a slow runner the update wins (s2's zoom and resize on
+/// Windows). The answer then has to settle the operation from the topology it
+/// already holds, because Herdr sends nothing more once the layout stops
+/// moving, and an unsettled operation turns away every later zoom, resize and
+/// close in its tab until the deadline.
+#[test]
+fn a_pane_operation_whose_topology_arrived_before_its_answer_settles_on_the_answer() {
+    let herdr = FakeHerdr::start("order-early-topology", |method, _| match method {
+        "pane.zoom" => serde_json::json!({"type": "ok"}),
+        other => panic!("unexpected {other}"),
+    });
+    let checkout_path = "/private/tmp/hide-control-order-early-topology";
+    let (mut runtime, _checkout_id) = runtime_on(&herdr, checkout_path);
+    let tabs = ["w-order:t1", "w-order:t2", "w-order:t3"];
+    let zoom = r#"{"schema_version":2,"kind":"toggle_zoom","payload":{"pane_id":"w-order:t2:p"}}"#;
+
+    runtime.dispatch_json(zoom.as_bytes());
+    assert_eq!(runtime.pane_operations.len(), 1);
+    herdr.wait_for_requests(1, Duration::from_secs(5));
+
+    // Herdr's update with the zoomed layout arrives while the request is
+    // still unanswered.
+    let mut payload = tab_order_payload(checkout_path, &tabs, &tabs, "w-order:t1");
+    payload
+        .layouts
+        .iter_mut()
+        .find(|layout| layout.tab_id == "w-order:t2")
+        .expect("the zoomed tab has a layout")
+        .zoomed = true;
+    runtime.ingest_session(Ok(payload));
+
+    assert!(runtime.ingest_pane_control_result(
+        PaneControlAction::ToggleZoom {
+            pane_id: "w-order:t2:p".to_owned(),
+        },
+        Ok(PaneControlOutcome::Acknowledged {
+            created_pane_id: None,
+        }),
+        4,
+    ));
+    assert!(
+        runtime.pane_operations.is_empty(),
+        "the answer settled the zoom from the topology already received"
+    );
+    assert_eq!(
+        diagnostic_messages(&runtime, "pane.operation.topology_confirmed"),
+        ["Confirmed pane.zoom for w-order:t2:p from fresh topology"]
+    );
+
+    // The next zoom in the tab is sent, not turned away as already running.
+    runtime.dispatch_json(zoom.as_bytes());
+    herdr.wait_for_requests(2, Duration::from_secs(5));
+    assert_eq!(runtime.pane_operations.len(), 1);
+}

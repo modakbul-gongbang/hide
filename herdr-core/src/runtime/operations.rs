@@ -898,6 +898,7 @@ impl Runtime {
                         operation.kind, operation.target_id
                     ),
                 );
+                self.settle_pane_operation_from_known_topology(id);
             }
             Ok(PaneControlOutcome::Projected { .. }) => self.fail_pane_operation(
                 id,
@@ -913,56 +914,82 @@ impl Runtime {
     }
 
     pub(super) fn observe_pane_operations(&mut self, payload: &SessionSnapshotPayload) -> bool {
-        let mut completed = Vec::new();
-        let mut changed = false;
-        for (id, operation) in &self.pane_operations {
-            if !matches!(operation.phase.as_str(), "awaiting_topology" | "unknown") {
-                continue;
-            }
-            let Some(layout) = payload
-                .layouts
-                .iter()
-                .find(|layout| layout.tab_id == operation.scope_id)
-            else {
-                continue;
-            };
-            if !layout
-                .panes
-                .iter()
-                .any(|pane| pane.pane_id == operation.target_id)
-            {
-                continue;
-            }
-            let split_ready = operation.kind == "pane.split"
-                && operation
-                    .created_pane_id
-                    .as_deref()
-                    .is_some_and(|created| layout.panes.iter().any(|pane| pane.pane_id == created));
-            let current = Self::session_layout_signature(layout);
-            let topology_changed = match operation.kind.as_str() {
-                // A split is confirmed by the exact pane Herdr said it
-                // created. A changed focus or ratio alone is not proof that
-                // this split landed.
-                "pane.split" => split_ready,
-                // Zoom has no geometry contract of its own. The zoom bit is
-                // the authoritative confirmation, while a focus change is a
-                // separate event and must not settle it.
-                "pane.zoom" => current.zoomed != operation.baseline_signature.zoomed,
-                // Resize must be proven by fresh raw rectangles. A no-op
-                // acknowledgement or a focus-only event cannot settle a
-                // resize, and a model projection has no rectangles to invent.
-                "pane.resize" => {
-                    operation.baseline_signature.pane_rects.is_some()
-                        && operation.baseline_signature.pane_rects != current.pane_rects
-                        || operation.baseline_signature.split_rects.is_some()
-                            && operation.baseline_signature.split_rects != current.split_rects
-                }
-                _ => current != operation.baseline_signature,
-            };
-            if topology_changed {
-                completed.push((id.clone(), current));
-            }
+        let completed = self
+            .pane_operations
+            .iter()
+            .filter(|(_, operation)| {
+                matches!(operation.phase.as_str(), "awaiting_topology" | "unknown")
+            })
+            .filter_map(|(id, operation)| {
+                let layout = payload
+                    .layouts
+                    .iter()
+                    .find(|layout| layout.tab_id == operation.scope_id)?;
+                let current = Self::session_layout_signature(layout);
+                Self::pane_operation_confirmed_by(operation, &current)
+                    .then(|| (id.clone(), current))
+            })
+            .collect::<Vec<_>>();
+        self.settle_pane_operations(completed)
+    }
+
+    /// Whether `current`, a tab's layout as Herdr last reported it, shows the
+    /// effect of `operation`.
+    fn pane_operation_confirmed_by(
+        operation: &PendingPaneOperation,
+        current: &PaneTopologySignature,
+    ) -> bool {
+        if !current.pane_ids.contains(&operation.target_id) {
+            return false;
         }
+        match operation.kind.as_str() {
+            // A split is confirmed by the exact pane Herdr said it created. A
+            // changed focus or ratio alone is not proof that this split landed.
+            "pane.split" => operation
+                .created_pane_id
+                .as_ref()
+                .is_some_and(|created| current.pane_ids.contains(created)),
+            // Zoom has no geometry contract of its own. The zoom bit is the
+            // authoritative confirmation, while a focus change is a separate
+            // event and must not settle it.
+            "pane.zoom" => current.zoomed != operation.baseline_signature.zoomed,
+            // Resize must be proven by fresh raw rectangles. A no-op
+            // acknowledgement or a focus-only event cannot settle a resize,
+            // and a model projection has no rectangles to invent.
+            "pane.resize" => {
+                operation.baseline_signature.pane_rects.is_some()
+                    && operation.baseline_signature.pane_rects != current.pane_rects
+                    || operation.baseline_signature.split_rects.is_some()
+                        && operation.baseline_signature.split_rects != current.split_rects
+            }
+            _ => *current != operation.baseline_signature,
+        }
+    }
+
+    /// Settles the operation `id` from the layout Herdr last reported for its
+    /// tab. A session update that shows an operation's effect can arrive while
+    /// the request is still unanswered, when only the update's own pass could
+    /// have confirmed it; Herdr sends nothing more once the layout stops
+    /// moving, so the answer has to look at what was already received.
+    fn settle_pane_operation_from_known_topology(&mut self, id: &str) -> bool {
+        let Some(operation) = self.pane_operations.get(id) else {
+            return false;
+        };
+        let Some(current) = self
+            .confirmed_pane_layout_signatures
+            .get(&operation.scope_id)
+        else {
+            return false;
+        };
+        if !Self::pane_operation_confirmed_by(operation, current) {
+            return false;
+        }
+        let completed = vec![(id.to_owned(), current.clone())];
+        self.settle_pane_operations(completed)
+    }
+
+    fn settle_pane_operations(&mut self, completed: Vec<(String, PaneTopologySignature)>) -> bool {
+        let mut changed = false;
         let mut restart = Vec::new();
         for (id, current_signature) in completed {
             let Some(operation) = self.pane_operations.get_mut(&id) else {
