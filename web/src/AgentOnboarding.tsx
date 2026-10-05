@@ -31,7 +31,13 @@ function AgentOnboarding({ actions, agents }: { actions: Actions; agents: KitAge
     });
   return (
     <Dialog open onOpenChange={(next) => { if (!next) actions.laterAgentOnboarding(); }}>
-      <DialogContent data-agent-onboarding="true" className="w-(--size-onboarding-dialog-w)">
+      <DialogContent
+        data-agent-onboarding="true"
+        className="w-(--size-onboarding-dialog-w)"
+        // A stray click outside must not end a choice that is asked once; Later and Escape do.
+        onPointerDownOutside={(event) => event.preventDefault()}
+        onInteractOutside={(event) => event.preventDefault()}
+      >
         <DialogHeader>
           <DialogTitle className="text-headline">{t("onboarding.title")}</DialogTitle>
           <DialogDescription>{t("onboarding.description")}</DialogDescription>
@@ -67,9 +73,11 @@ function AgentTile({ agent, on, onToggle }: { agent: KitAgent; on: boolean; onTo
   const { t } = useInterfaceTranslation();
   const switchable = tileSwitchable(agent);
   const logo = agentLogo(agent.id);
+  // The mark and the name dim; the caption that says why stays at full strength to remain legible.
+  const dim = switchable ? "" : "opacity-(--opacity-dimmed)";
   const body = (
     <>
-      <span className="flex size-(--size-agent-logo) items-center justify-center overflow-hidden rounded-md bg-(--logo-plate)" aria-hidden="true">
+      <span className={`flex size-(--size-agent-logo) items-center justify-center overflow-hidden rounded-md bg-(--logo-plate) ${dim}`} aria-hidden="true">
         {logo ? (
           <img src={logo} alt="" className="size-full object-contain p-xxs" data-agent-logo={agent.id} />
         ) : (
@@ -78,7 +86,7 @@ function AgentTile({ agent, on, onToggle }: { agent: KitAgent; on: boolean; onTo
           </span>
         )}
       </span>
-      <span className="max-w-full truncate text-body font-semibold">{agent.label}</span>
+      <span className={`max-w-full truncate text-body font-semibold ${dim}`}>{agent.label}</span>
       <span className="text-caption text-muted-foreground">
         {switchable ? (on ? t("onboarding.tileOn") : t("onboarding.tileOff")) : t("onboarding.notInstalled")}
       </span>
@@ -87,7 +95,7 @@ function AgentTile({ agent, on, onToggle }: { agent: KitAgent; on: boolean; onTo
   const base = "relative flex aspect-square flex-col items-center justify-center gap-xs rounded-md border p-sm text-center";
   if (!switchable) {
     return (
-      <div className={`${base} border-border opacity-(--opacity-dimmed)`} data-onboarding-tile={`${agent.id}:unavailable`}>
+      <div className={`${base} border-border`} data-onboarding-tile={`${agent.id}:unavailable`}>
         {body}
       </div>
     );

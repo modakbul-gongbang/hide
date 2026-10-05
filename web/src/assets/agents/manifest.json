@@ -18,22 +18,6 @@
       "retrieved": "2026-10-06"
     },
     {
-      "id": "copilot-cli",
-      "file": "copilot-cli.svg",
-      "source_url": "https://raw.githubusercontent.com/primer/octicons/main/icons/copilot-24.svg",
-      "license": "MIT (primer/octicons, GitHub Inc.); GitHub logo guidelines apply; an octicon, not a granted brand logo",
-      "modification": "as published",
-      "retrieved": "2026-10-06"
-    },
-    {
-      "id": "amp",
-      "file": "amp.svg",
-      "source_url": "https://ampcode.com/app-icon.svg",
-      "license": "published by the vendor in its press kit https://ampcode.com/press-kit; no licence text",
-      "modification": "as published",
-      "retrieved": "2026-10-06"
-    },
-    {
       "id": "qwen-code",
       "file": "qwen-code.svg",
       "source_url": "https://raw.githubusercontent.com/QwenLM/qwen-code/main/packages/desktop/bootstrap/qwen-code-logo.svg",
@@ -63,14 +47,6 @@
       "source_url": "https://raw.githubusercontent.com/Kilo-Org/kilocode/main/packages/kilo-console/public/kilo-logo.svg",
       "license": "MIT (repository license)",
       "modification": "as published",
-      "retrieved": "2026-10-06"
-    },
-    {
-      "id": "pi",
-      "file": "pi.svg",
-      "source_url": "https://pi.dev/favicon.svg",
-      "license": "MIT, stated for the logo on the vendor's press kit https://pi.dev/press-kit",
-      "modification": "the file's prefers-color-scheme block was removed so the mark keeps its dark fill on the logo plate; the shapes are unchanged",
       "retrieved": "2026-10-06"
     },
     {
@@ -126,6 +102,18 @@
     {
       "id": "kimi-code",
       "reason": "the vendor's branding guide states all rights reserved and grants no use"
+    },
+    {
+      "id": "pi",
+      "reason": "the vendor's site states MIT only in its page footer and gives no grant for the logo (https://pi.dev/press-kit); an unclear grant is a monogram"
+    },
+    {
+      "id": "amp",
+      "reason": "the press kit offers the mark for press coverage and states no licence for a third-party tool listing it (https://ampcode.com/press-kit); an unclear grant is a monogram"
+    },
+    {
+      "id": "copilot-cli",
+      "reason": "the only published file is a GitHub Octicon, whose README says to follow the GitHub logo guidelines for GitHub logos; it is not a granted brand logo, so a monogram"
     }
   ]
 }

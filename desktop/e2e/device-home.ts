@@ -92,7 +92,8 @@ export function seedAgentFiles(home: string): { claude: AgentSettings; codex: Ag
  * An empty kit record, so this HOME reads as a machine the kit has run on. A
  * machine with no record is held for the first-run agent choice and gets no
  * hook until the operator answers it; these specs prove what the kit installs
- * once it may, and the first-run choice has its own spec.
+ * once it may. The first-run dialog itself is covered by a component test, the
+ * core's decision tests and the hide-kit hold tests, not by an e2e spec.
  */
 function seedKitRecord(home: string): void {
   const dir = path.join(home, ".hide", "kit");

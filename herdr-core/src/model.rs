@@ -2025,9 +2025,6 @@ pub struct MemoryRevisionSnapshot {
     pub created_at_unix_ms: u64,
 }
 
-/// The web shell's color theme (Settings > Appearance). `System` follows the
-/// operator's OS appearance live; Dark is the default so an update never
-/// brightens the screen on its own (web-design-system-reset D-14).
 /// Where the first-run agent choice stands (`ui_state.agent_onboarding`).
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -2038,6 +2035,9 @@ pub enum AgentOnboarding {
     Done,
 }
 
+/// The web shell's color theme (Settings > Appearance). `System` follows the
+/// operator's OS appearance live; Dark is the default so an update never
+/// brightens the screen on its own (web-design-system-reset D-14).
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ThemePreference {
