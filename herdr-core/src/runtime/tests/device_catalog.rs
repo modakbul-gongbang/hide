@@ -264,7 +264,6 @@ fn a_directory_the_helper_has_not_confirmed_is_shown_as_its_workspace_and_says_w
 /// still unconfirmed is the same record once the helper's facts group it into
 /// its repository, so a rename of the project's id costs the list nothing.
 #[test]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn a_device_checkout_recorded_before_grouping_is_the_same_record_after_it() {
     let t = tree();
     let mut runtime = runtime();
@@ -331,15 +330,9 @@ fn a_device_checkout_recorded_before_grouping_is_the_same_record_after_it() {
         );
     }
     device.release();
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while shared.lock().unwrap().snapshot.status.remote[0]
-        .catalog
-        .state
-        != "ready"
-    {
-        assert!(Instant::now() < deadline, "the helper's facts never landed");
-        thread::sleep(Duration::from_millis(5));
-    }
+    wait(&shared, "the helper's facts", |runtime| {
+        runtime.snapshot.status.remote[0].catalog.state == "ready"
+    });
     let mut runtime = shared.lock().unwrap();
     runtime.sync_workspace_view();
     let held = &runtime.snapshot.ui_state.recent_checkouts;
@@ -354,7 +347,6 @@ fn a_device_checkout_recorded_before_grouping_is_the_same_record_after_it() {
 /// The published session follows the helper: unconfirmed while it is asked
 /// on a worker, grouped when it answers.
 #[test]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn a_device_session_is_grouped_when_its_helper_answers() {
     let t = tree();
     let mut runtime = runtime();
@@ -401,15 +393,9 @@ fn a_device_session_is_grouped_when_its_helper_answers() {
         assert_eq!(status.session.as_ref().unwrap().workspaces.len(), 2);
     }
     device.release();
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while shared.lock().unwrap().snapshot.status.remote[0]
-        .catalog
-        .state
-        != "ready"
-    {
-        assert!(Instant::now() < deadline, "the helper's facts never landed");
-        thread::sleep(Duration::from_millis(5));
-    }
+    wait(&shared, "the helper's facts", |runtime| {
+        runtime.snapshot.status.remote[0].catalog.state == "ready"
+    });
     let mut runtime = shared.lock().unwrap();
     let grouped = runtime.snapshot.status.remote[0].session.clone().unwrap();
     assert_eq!(grouped.workspaces.len(), 1);
@@ -804,7 +790,6 @@ fn device_strip(runtime: &Runtime, checkout_id: &str) -> Vec<String> {
 /// when the device reports the new order. A device that is not connected
 /// takes no move.
 #[test]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn a_device_tab_moves_on_its_own_herdr_and_a_file_tab_keeps_the_slot_it_was_dropped_in() {
     let t = tree();
     let mut runtime = runtime();
@@ -887,15 +872,7 @@ fn a_device_tab_moves_on_its_own_herdr_and_a_file_tab_keeps_the_slot_it_was_drop
         [file.clone(), t1.clone(), t2.clone()],
         "the strip waits for the device's Herdr"
     );
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while requests.lock().unwrap().is_empty() {
-        assert!(
-            Instant::now() < deadline,
-            "the device's Herdr was not asked"
-        );
-        std::thread::sleep(Duration::from_millis(5));
-    }
-    let request = requests.lock().unwrap()[0].clone();
+    let request = next_request(&requests, 0);
     assert_eq!(request["method"], "tab.move");
     assert_eq!(
         request["params"]["tab_id"], "t2",

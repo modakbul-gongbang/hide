@@ -846,7 +846,6 @@ fn an_observed_wheel_that_cannot_reach_herdr_is_logged_not_held() {
 /// that Herdr knows it by; a device that is not connected answers the reason
 /// in the find bar instead of searching this machine.
 #[test]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn a_device_pane_is_searched_on_its_own_herdr() {
     let herdr = FakeHerdr::start("device-find", |method, params| {
         assert_eq!(method, "pane.read");
@@ -903,19 +902,13 @@ fn a_device_pane_is_searched_on_its_own_herdr() {
         runtime.snapshot.status.remote[0].state = "connected".to_owned();
         runtime.dispatch_json(&find);
     }
-    let deadline = Instant::now() + Duration::from_secs(5);
-    loop {
-        let runtime = shared.lock().unwrap();
-        if runtime.snapshot.find.total == 1 {
-            assert_eq!(runtime.snapshot.find.index, 1);
-            assert_eq!(runtime.snapshot.find.pane_id.as_deref(), Some(pane));
-            assert!(runtime.snapshot.find.unavailable_reason.is_none());
-            break;
-        }
-        drop(runtime);
-        assert!(Instant::now() < deadline, "the device search never landed");
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    wait(&shared, "the device search", |runtime| {
+        runtime.snapshot.find.total == 1
+    });
+    let runtime = shared.lock().unwrap();
+    assert_eq!(runtime.snapshot.find.index, 1);
+    assert_eq!(runtime.snapshot.find.pane_id.as_deref(), Some(pane));
+    assert!(runtime.snapshot.find.unavailable_reason.is_none());
 }
 
 #[test]
@@ -1243,7 +1236,6 @@ fn close_projection_a_failure_on_a_living_pane_still_reports_ended() {
 /// names the request that asked. Claude Code's transcript toggles on the key
 /// that opens it, so a second ⌘F inside it only starts a new search.
 #[test]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn find_opens_the_agents_own_search_only_where_herdr_holds_no_history() {
     let history = Arc::new(Mutex::new(0_u64));
     let screen = Arc::new(Mutex::new(String::from("❯ \n  ? for shortcuts\n")));
@@ -1285,15 +1277,16 @@ fn find_opens_the_agents_own_search_only_where_herdr_holds_no_history() {
             }))
             .unwrap(),
         );
-        let deadline = Instant::now() + Duration::from_secs(5);
-        loop {
-            let opened = shared.lock().unwrap().snapshot.find.opened.clone();
-            if let Some(opened) = opened.filter(|opened| opened.request_id == request_id) {
-                return opened.route;
-            }
-            assert!(Instant::now() < deadline, "{request_id} was never answered");
-            std::thread::sleep(Duration::from_millis(5));
-        }
+        let answered = |runtime: &Runtime| {
+            runtime
+                .snapshot
+                .find
+                .opened
+                .clone()
+                .filter(|opened| opened.request_id == request_id)
+        };
+        wait(&shared, request_id, |runtime| answered(runtime).is_some());
+        answered(&shared.lock().unwrap()).unwrap().route
     };
     let sent_keys = || {
         herdr

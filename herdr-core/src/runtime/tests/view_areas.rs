@@ -525,7 +525,6 @@ fn at_the_display_cap_a_reopen_a_created_file_or_a_reveal_is_refused() {
 /// admitted at 63 views, is refused with the reason as it lands rather than
 /// making a 65th view; nothing is opened and the file stays reopenable.
 #[test]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn a_reopen_that_lands_after_the_views_filled_is_refused_and_stays_reopenable() {
     use crate::view_layout::{DisplayKind, MAX_VIEW_DISPLAYS};
     let (runtime, checkout_id, directory) = views_runtime("view-cap-landing");
@@ -534,13 +533,6 @@ fn a_reopen_that_lands_after_the_views_filled_is_refused_and_stays_reopenable() 
         Arc::downgrade(&shared),
         crate::handle::ChangeNotifier::noop(),
     );
-    let wait = |what: &str, ready: &dyn Fn(&Runtime) -> bool| {
-        let deadline = Instant::now() + std::time::Duration::from_secs(5);
-        while !ready(&shared.lock().unwrap()) {
-            assert!(Instant::now() < deadline, "timed out waiting for {what}");
-            thread::sleep(std::time::Duration::from_millis(5));
-        }
-    };
     open(
         &mut shared.lock().unwrap(),
         &checkout_id,
@@ -548,7 +540,7 @@ fn a_reopen_that_lands_after_the_views_filled_is_refused_and_stays_reopenable() 
         false,
         false,
     );
-    wait("the file to be read", &|runtime| {
+    wait(&shared, "the file to be read", |runtime| {
         !runtime.editor_documents.is_empty()
     });
     {
@@ -578,7 +570,7 @@ fn a_reopen_that_lands_after_the_views_filled_is_refused_and_stays_reopenable() 
         );
         layout.insert("a1", last, 2).unwrap();
     }
-    wait("the reopen to land", &|runtime| {
+    wait(&shared, "the reopen to land", |runtime| {
         !runtime.snapshot.recent_closed.restoring
     });
     let mut runtime = shared.lock().unwrap();
@@ -1093,7 +1085,6 @@ fn a_close_that_reaches_the_last_view_of_unsaved_text_without_a_save_is_refused(
 /// it first; a refused save keeps the display and the draft, and a save that
 /// lands closes both.
 #[test]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn closing_the_last_display_of_a_dirty_document_saves_it_first() {
     let (runtime, checkout_id, directory) = views_runtime("view-close-last");
     let path = directory.join("notes.md");
@@ -1102,13 +1093,6 @@ fn closing_the_last_display_of_a_dirty_document_saves_it_first() {
         Arc::downgrade(&shared),
         crate::handle::ChangeNotifier::noop(),
     );
-    let wait = |what: &str, ready: &dyn Fn(&Runtime) -> bool| {
-        let deadline = Instant::now() + std::time::Duration::from_secs(5);
-        while !ready(&shared.lock().unwrap()) {
-            assert!(Instant::now() < deadline, "timed out waiting for {what}");
-            thread::sleep(std::time::Duration::from_millis(5));
-        }
-    };
     open(
         &mut shared.lock().unwrap(),
         &checkout_id,
@@ -1116,7 +1100,7 @@ fn closing_the_last_display_of_a_dirty_document_saves_it_first() {
         false,
         false,
     );
-    wait("the file to be read", &|runtime| {
+    wait(&shared, "the file to be read", |runtime| {
         !runtime.editor_documents.is_empty()
     });
     let tab_id = tab_of(&shared.lock().unwrap(), "notes.md");
@@ -1134,7 +1118,7 @@ fn closing_the_last_display_of_a_dirty_document_saves_it_first() {
     };
 
     close(&mut shared.lock().unwrap());
-    wait("the save to be refused", &|runtime| {
+    wait(&shared, "the save to be refused", |runtime| {
         runtime.editor_documents[&tab_id].conflict.is_some()
     });
     {
@@ -1154,7 +1138,7 @@ fn closing_the_last_display_of_a_dirty_document_saves_it_first() {
         ));
         close(&mut runtime);
     }
-    wait("the document to close", &|runtime| {
+    wait(&shared, "the document to close", |runtime| {
         runtime.snapshot.editor.tabs.is_empty()
     });
     assert_eq!(std::fs::read_to_string(&path).unwrap(), "draft\n");
@@ -1204,7 +1188,6 @@ fn a_draft_in_one_display_keeps_every_display_of_its_document_open() {
 /// B5, contract 4.2: a save keeps every display of its document open while
 /// it runs and after it lands, though no draft came before it.
 #[test]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn a_save_without_a_draft_keeps_every_display_of_its_document_open() {
     let (runtime, checkout_id, directory) = views_runtime("view-save-pins");
     let path = directory.join("notes.md");
@@ -1213,13 +1196,6 @@ fn a_save_without_a_draft_keeps_every_display_of_its_document_open() {
         Arc::downgrade(&shared),
         crate::handle::ChangeNotifier::noop(),
     );
-    let wait = |what: &str, ready: &dyn Fn(&Runtime) -> bool| {
-        let deadline = Instant::now() + std::time::Duration::from_secs(5);
-        while !ready(&shared.lock().unwrap()) {
-            assert!(Instant::now() < deadline, "timed out waiting for {what}");
-            thread::sleep(std::time::Duration::from_millis(5));
-        }
-    };
     open(
         &mut shared.lock().unwrap(),
         &checkout_id,
@@ -1227,7 +1203,7 @@ fn a_save_without_a_draft_keeps_every_display_of_its_document_open() {
         true,
         false,
     );
-    wait("the file to be read", &|runtime| {
+    wait(&shared, "the file to be read", |runtime| {
         !runtime.editor_documents.is_empty()
     });
     let tab_id = {
@@ -1250,7 +1226,7 @@ fn a_save_without_a_draft_keeps_every_display_of_its_document_open() {
         );
         tab_id
     };
-    wait("the save to land", &|runtime| {
+    wait(&shared, "the save to land", |runtime| {
         runtime
             .snapshot
             .editor
