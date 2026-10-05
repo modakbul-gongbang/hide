@@ -541,6 +541,29 @@ export async function finishFixtureTurn(fixture: HerdrFixture, pane: string, els
   if (status !== "done") throw new Error(`pane ${pane} stopped as ${status}, not done: its tab is still shown`);
 }
 
+/**
+ * Windows only. The pinned Herdr reports cmd as the foreground process even
+ * while a non-agent child runs, but `agent.start` refuses a shell with any
+ * descendant (`agent_pane_busy`). Observe that condition directly, with one
+ * bounded native count per look and no retry of `agent.start`. Synchronous so
+ * the fixture's `run` can hold an `agent start` until the pane is ready.
+ */
+function waitForQuietShell(env: NodeJS.ProcessEnv, bin: string, root: string, pane: string, ms = 10_000): void {
+  const shell = (herdr(env, bin, ["pane", "process-info", "--pane", pane]) as { result: { process_info: { shell_pid: number | null } } }).result.process_info.shell_pid;
+  if (!Number.isSafeInteger(shell) || !shell || shell <= 1) throw new Error(`fixture shell PID is unavailable in pane ${pane}`);
+  const deadline = Date.now() + ms;
+  for (;;) {
+    const counted = spawnSync(path.join(root, "bin", "hide-children.exe"), [String(shell)], { encoding: "utf8", timeout: 10_000, windowsHide: true });
+    if (counted.error) throw counted.error;
+    if (counted.status === 2) throw new Error(`the shell of pane ${pane} exited before agent start`);
+    if (counted.status !== 0) throw new Error(`hide-children exited ${counted.status}: ${counted.stderr.trim()}`);
+    const children = counted.stdout.trim();
+    if (children === "0") return;
+    if (Date.now() >= deadline) throw new Error(`timed out waiting for the shell of pane ${pane} to have no child processes before agent start; ${children} children`);
+    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 100);
+  }
+}
+
 export async function startHerdr({ agents = true }: { agents?: boolean } = {}): Promise<HerdrFixture> {
   const bin = herdrBinary();
   const version = execFileSync(bin, ["--version"], { encoding: "utf8" }).trim().split(/\s+/)[1];
@@ -698,29 +721,7 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
         10_000,
         () => JSON.stringify({ pane: paneRead(env, bin, pane), processInfo }),
       );
-      if (agents && process.platform === "win32") {
-        // The pinned Herdr reports cmd as foreground even with a non-agent child,
-        // but agent.start requires no descendants. Observe that condition
-        // directly, with one bounded child and no retry of agent.start.
-        const shell = (processInfo as ShellProcessInfo | null)?.shell_pid;
-        if (!Number.isSafeInteger(shell) || !shell || shell <= 1) throw new Error(`fixture shell PID is unavailable in pane ${pane}`);
-        const remaining = deadline - Date.now();
-        if (remaining <= 0) throw new Error(`timed out waiting for shell children in pane ${pane}`);
-        let children = "";
-        await waitFor(
-          () => {
-            const counted = spawnSync(path.join(root, "bin", "hide-children.exe"), [String(shell)], { encoding: "utf8", timeout: Math.min(remaining, 10_000), windowsHide: true });
-            if (counted.error) throw counted.error;
-            if (counted.status === 2) throw new Error("fixture shell exited before agent start");
-            if (counted.status !== 0) throw new Error(`hide-children exited ${counted.status}: ${counted.stderr.trim()}`);
-            children = counted.stdout.trim();
-            return children === "0";
-          },
-          `the shell in pane ${pane} to have no child processes before agent start`,
-          remaining,
-          () => `${children} children`,
-        );
-      }
+      if (agents && process.platform === "win32") waitForQuietShell(env, bin, root, pane);
       if (agents) herdr(env, bin, ["agent", "start", name, "--kind", "claude", "--pane", pane]);
     }
     if (agents) {
@@ -744,6 +745,7 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
       inputLogs,
       fixturePath,
       run: (args) => {
+        if (process.platform === "win32" && args[0] === "agent" && args[1] === "start" && args.includes("--pane")) waitForQuietShell(env, bin, root, args[args.indexOf("--pane") + 1]!);
         const result = herdr(env, bin, args);
         if (args[0] === "agent" && args[1] === "start") {
           const pane = args[args.indexOf("--pane") + 1];
