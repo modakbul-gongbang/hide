@@ -270,8 +270,38 @@ fn owner_fixture() {
     drop(child);
 }
 
+/// The helper the owner fixture names in `ready.json`, once the file holds
+/// a whole identity; it is written by another process, so it is polled.
+#[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
+fn announced_helper(home: &Path, owner: &mut OwnedChild, deadline: Instant) -> FixtureProcess {
+    loop {
+        if let Ok(bytes) = fs::read(home.join("ready.json"))
+            && let Ok(identity) = serde_json::from_slice::<Value>(&bytes)
+        {
+            return FixtureProcess {
+                pid: identity["pid"].as_u64().unwrap().try_into().unwrap(),
+                birth: identity["birth"].as_u64().unwrap(),
+            };
+        }
+        if Instant::now() >= deadline {
+            let output = owner.capture_until(deadline, OUTPUT_LIMIT);
+            panic!("owner fixture did not start the helper: {output:?}");
+        }
+        thread::sleep(Duration::from_millis(10));
+    }
+}
+
+/// Whether `helper` ended by `deadline`. It is not this test's child, so
+/// nothing reports its end but its identity going away.
+#[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
+fn ended_by(helper: &FixtureProcess, deadline: Instant) -> bool {
+    while helper.live() && Instant::now() < deadline {
+        thread::sleep(Duration::from_millis(10));
+    }
+    !helper.live()
+}
+
 #[test]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn helper_exits_when_owner_dies_with_stdin_still_open() {
     let home = tempfile::tempdir().unwrap();
     let started = Instant::now();
@@ -288,28 +318,14 @@ fn helper_exits_when_owner_dies_with_stdin_still_open() {
         .env(OWNER_HOME, home.path());
     let mut owner = OwnedChild::spawn_guarded(command, deadline).unwrap();
     let held_stdin = owner.take_stdin().unwrap();
-    let helper = loop {
-        if let Ok(bytes) = fs::read(home.path().join("ready.json"))
-            && let Ok(identity) = serde_json::from_slice::<Value>(&bytes)
-        {
-            break FixtureProcess {
-                pid: identity["pid"].as_u64().unwrap().try_into().unwrap(),
-                birth: identity["birth"].as_u64().unwrap(),
-            };
-        }
-        if Instant::now() >= deadline {
-            let output = owner.capture_until(deadline, OUTPUT_LIMIT);
-            panic!("owner fixture did not start the helper: {output:?}");
-        }
-        thread::sleep(Duration::from_millis(10));
-    };
+    let helper = announced_helper(home.path(), &mut owner, deadline);
     assert!(helper.live(), "fixture must name a live helper");
     // Kill only the owner, not its tree: OwnerWatch must perform the cleanup.
     terminate(owner.id()).unwrap();
-    while helper.live() && Instant::now() < deadline {
-        thread::sleep(Duration::from_millis(10));
-    }
-    assert!(!helper.live(), "helper survived its owner with stdin open");
+    assert!(
+        ended_by(&helper, deadline),
+        "helper survived its owner with stdin open"
+    );
     drop(held_stdin);
     let output = owner.capture_until(deadline, OUTPUT_LIMIT).unwrap();
     assert!(!output.status.success());

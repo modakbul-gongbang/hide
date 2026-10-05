@@ -398,7 +398,6 @@ mod tests {
 
     #[cfg(unix)]
     #[test]
-    #[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
     fn polling_stays_on_the_opened_directory_after_its_path_is_replaced() {
         use std::os::unix::fs::symlink;
         let sandbox = tempfile::tempdir().unwrap();
@@ -406,6 +405,12 @@ mod tests {
         let outside = sandbox.path().join("outside");
         std::fs::create_dir(&root).unwrap();
         std::fs::create_dir(&outside).unwrap();
+        // A write inside lands on a later modification time than the one
+        // the watch starts from, whatever the file system's clock step.
+        File::open(&root)
+            .unwrap()
+            .set_modified(std::time::UNIX_EPOCH + Duration::from_secs(1_000_000))
+            .unwrap();
         let mut watched = HashMap::new();
         assert!(
             reconcile(
@@ -417,8 +422,12 @@ mod tests {
         std::fs::rename(&root, sandbox.path().join("moved")).unwrap();
         symlink(&outside, &root).unwrap();
         std::fs::write(outside.join("other.txt"), "outside").unwrap();
-        assert!(poll(&mut watched, Instant::now()).is_empty());
-        std::thread::sleep(Duration::from_millis(20));
+        let replaced = Instant::now();
+        assert!(poll(&mut watched, replaced).is_empty());
+        assert!(
+            poll(&mut watched, replaced + COALESCE).is_empty(),
+            "a change behind the replaced path is not the watched folder's"
+        );
         std::fs::write(sandbox.path().join("moved/inside.txt"), "inside").unwrap();
         let now = Instant::now();
         assert!(poll(&mut watched, now).is_empty());

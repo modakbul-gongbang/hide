@@ -317,7 +317,7 @@ fn a_file_that_already_holds_the_draft_is_saved_whatever_revision_was_expected()
 /// Settling a save whose answer was lost reads the revision after that save
 /// has finished, even from another handle, as a new helper would.
 #[test]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
+#[allow(clippy::disallowed_methods)] // time for the other thread to block in the lock the save holds: nothing reports a thread waiting on a folder lock
 fn a_revision_read_waits_for_a_save_in_progress_in_the_folder() {
     let f = fixture("a.txt", "old");
     let checkout = f.checkout.clone();
@@ -332,10 +332,18 @@ fn a_revision_read_waits_for_a_save_in_progress_in_the_folder() {
                 return;
             }
             let checkout = checkout.clone();
+            let (asking, asked) = std::sync::mpsc::channel();
             reader = Some(std::thread::spawn(move || {
                 let root = Root::open(&checkout).unwrap();
+                asking.send(()).unwrap();
                 hide_host::save::current_revision(root.dir(), Path::new("a.txt")).unwrap()
             }));
+            // The window covers only the last step into the lock, not the
+            // thread's start or the folder's opening. Whichever way the
+            // reader and the save meet, it reads what the save left.
+            asked
+                .recv_timeout(std::time::Duration::from_secs(10))
+                .unwrap();
             std::thread::sleep(std::time::Duration::from_millis(200));
         },
     )
