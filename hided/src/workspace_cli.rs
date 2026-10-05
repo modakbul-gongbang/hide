@@ -241,10 +241,11 @@ pub fn request_delivery(
 /// handshake and claim as every Workspace request, after which the socket
 /// carries CDP frames to the caller's display. A refusal keeps the daemon's
 /// reason and next action.
+/// The relay socket, and whether the display is its area's selected View.
 pub(crate) async fn browser_relay(
     path: &Path,
     display_id: &str,
-) -> Result<WorkspaceSocket, (String, Option<String>)> {
+) -> Result<(WorkspaceSocket, bool), (String, Option<String>)> {
     let reference = read_reference(path).map_err(|reason| (reason, None))?;
     let request_id = fresh_request_id().map_err(|reason| (reason, None))?;
     let payload = json!({"type":"browser_relay","request_id":request_id,"display_id":display_id});
@@ -266,7 +267,7 @@ pub(crate) async fn browser_relay(
         .await
         .map_err(|_| ("credential_expired".to_owned(), None))?
         .map_err(|reason| (reason, None))?;
-    Ok(socket)
+    Ok((socket, answer["result"]["selected"] == true))
 }
 
 pub fn request_action(path: &Path, action: Action, request_id: &str) -> Result<Value, String> {

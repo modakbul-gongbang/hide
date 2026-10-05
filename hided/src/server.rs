@@ -1032,8 +1032,13 @@ async fn scoped_client_loop(
                                         let (reason, next_action) = cap.changed_refusal();
                                         return Err((reason.to_owned(), next_action));
                                     }
-                                    browser_control.connect(&result, Some(&display_id))
-                                        .map_err(|(reason, next_action)| (reason.to_owned(), next_action))?
+                                    let mut capability = browser_control.connect(&result, Some(&display_id))
+                                        .map_err(|(reason, next_action)| (reason.to_owned(), next_action))?;
+                                    // Only an area's selected View is ever on screen; the
+                                    // CLI refuses input to any other before sending it.
+                                    capability["selected"] = json!(result.views.iter().flatten()
+                                        .any(|view| view.view_id == display_id && view.selected));
+                                    capability
                                 }
                                 ScopedRequest::Delivery(command, hint) => {
                                     core.prepare_delivery(&cap.context.device_id, &cap.pane_id, &cap.context, hint, command)
@@ -1124,7 +1129,9 @@ async fn scoped_client_loop(
                                     Some(url) => match crate::browser_relay::connect(url).await {
                                         Ok(gateway) => {
                                             relay = Some(gateway);
-                                            Ok(Ok(json!({"display_id": display_id})))
+                                            Ok(Ok(
+                                                json!({"display_id": display_id, "selected": result["selected"]}),
+                                            ))
                                         }
                                         Err((reason, next_action)) => {
                                             Ok(Err((reason.to_owned(), next_action)))

@@ -562,14 +562,14 @@ async fn execute(env: &Env, command: Command) -> Result<Output, Failure> {
     })?;
     let _reference_owner =
         ephemeral.then(|| crate::workspace_cli::OneShotReference(reference.clone()));
-    let socket = crate::workspace_cli::browser_relay(&reference, &display)
+    let (socket, selected) = crate::workspace_cli::browser_relay(&reference, &display)
         .await
         .map_err(|(reason, next_action)| Failure {
             reason,
             detail: None,
             next_action,
         })?;
-    let mut page = page::Page::attach(cdp::Cdp::new(socket), &display).await?;
+    let mut page = page::Page::attach(cdp::Cdp::new(socket), &display, selected).await?;
     let outcome = actions::run(&mut page, command).await;
     page.close().await;
     outcome

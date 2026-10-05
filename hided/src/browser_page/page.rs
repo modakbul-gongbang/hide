@@ -39,6 +39,8 @@ pub struct Page {
     pub cdp: Cdp,
     pub display: String,
     pub top: String,
+    /// Whether the display is its area's selected View, the only one shown.
+    selected: bool,
     frames: Option<Vec<Frame>>,
     /// Sessions attach events have named, in attach order, not yet tagged.
     pending: Vec<(String, String, String)>,
@@ -70,11 +72,12 @@ pub fn call(asset: &str, op: &str, args: &Value) -> String {
 }
 
 impl Page {
-    pub async fn attach(cdp: Cdp, display: &str) -> Result<Self, Failure> {
+    pub async fn attach(cdp: Cdp, display: &str, selected: bool) -> Result<Self, Failure> {
         let mut page = Self {
             cdp,
             display: display.to_owned(),
             top: String::new(),
+            selected,
             frames: None,
             pending: Vec::new(),
         };
@@ -189,14 +192,15 @@ impl Page {
         self.dom(&top, "probe", json!({})).await
     }
 
-    /// Input and pixels need a display on screen: a hidden page never
-    /// answers input, and would take it later, unseen.
+    /// Input and pixels need a display on screen: a View behind another
+    /// tab never answers input, and would take it later, unseen. The page's
+    /// own visibility cannot tell: a selected View in a window covered by
+    /// another app reads hidden and still takes input.
     pub async fn require_visible(&mut self) -> Result<Value, Failure> {
-        let probe = self.probe().await?;
-        if probe["visibility"] == "hidden" {
+        if !self.selected {
             return Err(Failure::new("display_hidden", None));
         }
-        Ok(probe)
+        self.probe().await
     }
 
     /// Draws on the operator's view of the page. It never fails a command.

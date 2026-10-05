@@ -185,10 +185,9 @@ test("hide browser: a dialog is reported, never answered, and holds the display 
   expect(await snapshot(display)).toContain('button "Alert"');
 });
 
-test("hide browser: a busy, file or missing display and a stale ref are refused with what to do next", async () => {
+test("hide browser: a busy, hidden, file or missing display and a stale ref are refused with what to do next", async () => {
   await start();
   const display = await openDisplay(`${origin}/agent`);
-  expect(await snapshot(display)).toContain('button "Apply"');
   // Another debugger on the display: the gateway admits one client.
   const connected = JSON.parse((await browserCli(["connect", "--display", display])).out.trim()) as { result: { browser_ws_url: string } };
   const holder = new WebSocket(connected.result.browser_ws_url);
@@ -207,14 +206,18 @@ test("hide browser: a busy, file or missing display and a stale ref are refused 
   } finally { holder.terminate(); }
   await expect.poll(async () => (await browserCli(["snapshot", display])).status, { timeout: 15_000 }).toBe(0);
 
-  // A display that is not in front fails display_hidden; that leg is proven
-  // natively, because Playwright's focus emulation keeps every page it
-  // attaches to visible.
+  expect(await json(["click", display, "@999"])).toMatchObject({ ok: false, reason: "ref_stale" });
+  // A View behind another tab of its area reads, but never takes input unseen.
+  const apply = ref(await snapshot(display), /button "Apply"/);
+  await openDisplay(`${origin}/front`);
+  const hidden = await json(["click", display, apply]);
+  expect(hidden).toMatchObject({ ok: false, reason: "display_hidden" });
+  expect(hidden.next_action).toContain(`hide view select ${display} --reveal`);
+  expect((await json(["screenshot", display, path.join(herdr.root, "hidden.png")])).reason).toBe("display_hidden");
+  expect(await snapshot(display)).toContain('button "Apply"');
   const file = path.join(herdr.root, "fixture", "agent-file.html");
   fs.writeFileSync(file, "<title>Local file</title><h1>Local file</h1>");
   const fileDisplay = await openDisplay(pathToFileURL(file).href);
   expect(await json(["snapshot", fileDisplay])).toMatchObject({ ok: false, reason: "display_unsupported" });
   expect(await json(["snapshot", "browser-missing"])).toMatchObject({ ok: false, reason: "display_missing" });
-  const ref_ = await json(["click", display, "@999"]);
-  expect(ref_).toMatchObject({ ok: false, reason: "ref_stale" });
 });

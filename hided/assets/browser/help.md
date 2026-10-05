@@ -78,7 +78,7 @@ The usual loop:
 The display stays on the operator's screen while you work, and an arrow cursor in hide's accent color shows each action: it glides to the target, a click ripples, a drag leaves a line, filled fields flash, pressed keys are named, scrolls show an arrow.
 It fades two seconds after the last action, lets clicks through, and never appears in a snapshot.
 No command moves the operator's mouse, changes which View is in front, or takes keyboard focus.
-Input and screenshots need the display in front: a hidden display fails `display_hidden`.
+Input and screenshots need the display shown: one behind another tab of its area, or in a Workspace that is not in front, fails `display_hidden`; reading commands still work there.
 
 ## When something fails
 
