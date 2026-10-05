@@ -14,7 +14,7 @@ import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { claudeProjects, labelAgent, setFixtureSession, writeFixtureTranscript, startHerdr, type HerdrFixture } from "./herdr-fixture";
-import { startHided, type Daemon } from "./hided-fixture";
+import { startHided } from "./hided-fixture";
 import { rest, screenshot } from "./wire";
 import { chord, commandLabel } from "./chords";
 
