@@ -169,7 +169,6 @@ fn only_a_folder_that_exists_can_be_watched() {
 }
 
 #[test]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn a_filtered_watch_reports_only_what_it_keeps_and_a_burst_it_drops_is_not_an_overflow() {
     let dir = tempfile::tempdir().unwrap();
     let (mut watcher, changes) = Watcher::keeping(|relative| relative.starts_with("refs")).unwrap();
@@ -181,13 +180,25 @@ fn a_filtered_watch_reports_only_what_it_keeps_and_a_burst_it_drops_is_not_an_ov
     drain(&changes);
     // More paths than the queue holds, paced so the system's own queue keeps
     // up: an overflow there is the system's and no filter can prevent it.
+    // After every hundred dropped writes a kept one is written and waited
+    // for, and the system reports in order, so the hundred before it have
+    // been read by then.
+    let outside =
+        |change: &Change| !matches!(change, Change::Path { path, .. } if path.starts_with(&refs));
+    let mut dropped = Vec::new();
     for index in 0..CAPACITY + 500 {
         fs::write(objects.join(format!("o{index}")), b"x").unwrap();
         if index % 100 == 99 {
-            std::thread::sleep(Duration::from_millis(20));
+            let pace = refs.join(format!("pace{index}"));
+            fs::write(&pace, b"").unwrap();
+            dropped.extend(
+                expect_path(&changes, &pace, "a kept path")
+                    .into_iter()
+                    .filter(outside),
+            );
         }
     }
-    let dropped = drain(&changes);
+    dropped.extend(drain(&changes).into_iter().filter(outside));
     assert!(
         dropped.is_empty(),
         "{} changes outside the filter, first {:?}",
