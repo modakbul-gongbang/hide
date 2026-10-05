@@ -458,11 +458,9 @@ pub(crate) fn apply(
             Observed::Missing => restore || (!recorded && record_readable),
             _ => false,
         };
-        if install_now {
-            if let Err(reason) = install_guidance(target, agent) {
-                failures.hook.insert(adapter.id, reason);
-                continue;
-            }
+        if install_now && let Err(reason) = install_guidance(target, agent) {
+            failures.hook.insert(adapter.id, reason);
+            continue;
         }
         let after = if install_now {
             observe_guidance(target, adapter, agent)
