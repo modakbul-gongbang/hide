@@ -113,7 +113,7 @@ test("the sidebar's row menus: pin an unregistered project, open a tab, move the
     // no OS file manager, so its reveal is absent; a row Herdr shows without a
     // registration still offers Pin and Remove project….
     let menu = await openMenu(page, projectRow, "repo actions");
-    expect(await menuLines(menu)).toEqual(["Open Overview", "New worktree…", `New tab in main ${commandLabel("new_tab")}`, "─", "Copy path", "─", "Pin", "Remove project…"]);
+    expect(await menuLines(menu)).toEqual(["New worktree…", `New tab in main ${commandLabel("new_tab")}`, "─", "Copy path", "─", "Pin", "Remove project…"]);
     await screenshot(page, "sidebar-menus-project-dark");
     await menu.locator('[data-menu-item="pin"]').click();
     await expect(menu).toHaveCount(0);
