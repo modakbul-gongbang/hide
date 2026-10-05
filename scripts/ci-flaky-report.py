@@ -74,7 +74,9 @@ def nextest_flaky(root):
             found.append({
                 "file": None,
                 "name": f"{case.get('classname')} {case.get('name')}",
-                "error": (flake.text or "").strip() or flake.get("message") or "",
+                # A hang ended by the profile's slow-timeout has no text or
+                # message, only its type ("test timeout").
+                "error": (flake.text or "").strip() or flake.get("message") or flake.get("type") or "",
             })
     return found
 

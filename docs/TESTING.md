@@ -266,6 +266,8 @@ The crate's own `AGENTS.md` says where the file goes; this section says how the 
    CI runs every Rust lane (Linux, macOS, Windows, the OS contract and nightly) with `scripts/verify-cargo.sh nextest --profile ci` (`retries = 1` in `.config/nextest.toml`), so a test that fails once and then passes is reported as flaky and recorded in an issue with an expiry; two failures fail the lane.
    `nextest` does not run doc tests; the workspace has none that runs today, and a runnable one needs its own `cargo test --doc` step.
    `scripts/install-nextest.sh` installs the pinned release on a runner; a lane that runs nextest several times keeps one JUnit report per run, and `scripts/ci-flaky-report.py` reads them all.
+   The `ci` profile also ends a test still running at 120 s (`slow-timeout`; 240 s for the remote mailbox binary), so a hang fails with the test's name, is retried and is filed like any other flaky failure, instead of holding the lane until a step or job limit cancels it with no test named.
+   That limit is a hang guard set well above the slowest test each lane measures, and the comment beside it in `.config/nextest.toml` says how it was measured; a test that needs more is the finding, not the limit.
    A flaky OS-contract test is fixed or deleted by its issue's deadline like any other; it is not ignored.
    The rule against raising a deadline to pass is unchanged.
 
