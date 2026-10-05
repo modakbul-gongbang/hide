@@ -65,6 +65,11 @@ pub struct OwnerWatch {
     channel: std::os::unix::net::UnixStream,
     #[cfg(unix)]
     cancelled: std::sync::Arc<std::sync::atomic::AtomicBool>,
+    /// The reader polls this channel's peer beside the owner channel, so
+    /// closing the watch wakes it by data and end of stream, which poll
+    /// reports on every system, not by a shutdown or a receive timeout.
+    #[cfg(unix)]
+    wake: Option<std::os::unix::net::UnixStream>,
     #[cfg(unix)]
     reader: Option<std::thread::JoinHandle<()>>,
     #[cfg(windows)]
@@ -98,19 +103,23 @@ impl OwnerWatch {
     fn close_inner(&mut self) -> io::Result<()> {
         #[cfg(unix)]
         {
+            use std::io::Write;
             use std::sync::atomic::Ordering;
             let Some(reader) = self.reader.take() else {
                 return Ok(());
             };
             self.cancelled.store(true, Ordering::SeqCst);
-            let shutdown = self.channel.shutdown(std::net::Shutdown::Both);
-            // The watch's bounded read timeout also wakes it if shutdown
-            // fails. Join and return the admission slot on every path.
+            // One byte wakes the reader's poll; closing the end after it is
+            // the second signal, so the wake does not depend on the write.
+            // Join and return the admission slot on every path.
+            let woken = self.wake.take().map(|mut wake| wake.write_all(&[1]));
             let joined = reader
                 .join()
                 .map_err(|_| io::Error::other("owner watch panicked"));
             sys::watch_closed();
-            shutdown?;
+            if let Some(woken) = woken {
+                woken?;
+            }
             joined?;
         }
         #[cfg(windows)]
@@ -993,42 +1002,91 @@ mod sys {
                 return Err(source);
             }
         };
-        // A failed socket shutdown must not make normal watch teardown wait
-        // forever. This timeout is cancellation polling, not a launch delay.
-        if let Err(source) = stream.set_read_timeout(Some(Duration::from_millis(25))) {
-            watch_closed();
-            return Err(source);
-        }
-        let stopping = cancelled.clone();
-        let reader = match std::thread::Builder::new().name("owned-child-watch".into()).spawn(move || {
-            let mut byte = [0u8; 1];
-            loop {
-                let result = stream.read(&mut byte);
-                if stopping.load(Ordering::SeqCst) { return; }
-                if matches!(&result, Err(source) if matches!(source.kind(),
-                    io::ErrorKind::Interrupted | io::ErrorKind::WouldBlock | io::ErrorKind::TimedOut)) {
-                    continue;
-                }
-                // EOF or a channel failure cannot leave a live unguarded child.
-                if let Err(source) = super::kill_tree(std::process::id()) {
-                    eprintln!("process.owner_lost_cleanup_failed error={source}");
-                }
-                // SAFETY: this process's owner is gone; a failed kill must
-                // still stop this cooperative child rather than continue.
-                unsafe { libc::_exit(125) };
+        let (woken, wake) = match UnixStream::pair() {
+            Ok(pair) => pair,
+            Err(source) => {
+                watch_closed();
+                return Err(source);
             }
-        }) {
+        };
+        let stopping = cancelled.clone();
+        let reader = match std::thread::Builder::new()
+            .name("owned-child-watch".into())
+            .spawn(move || {
+                let mut byte = [0u8; 1];
+                loop {
+                    let mut polls = [
+                        libc::pollfd {
+                            fd: stream.as_raw_fd(),
+                            events: libc::POLLIN,
+                            revents: 0,
+                        },
+                        libc::pollfd {
+                            fd: woken.as_raw_fd(),
+                            events: libc::POLLIN,
+                            revents: 0,
+                        },
+                    ];
+                    #[cfg(test)]
+                    POLLING.fetch_add(1, Ordering::SeqCst);
+                    // SAFETY: `polls` is a live local array of two entries and
+                    // both descriptors stay open for the whole call.
+                    let ready = unsafe { libc::poll(polls.as_mut_ptr(), 2, -1) };
+                    // A watch that is closing wins over an owner that is going
+                    // away at the same moment.
+                    if stopping.load(Ordering::SeqCst) || polls[1].revents != 0 {
+                        return;
+                    }
+                    if ready < 0 && io::Error::last_os_error().kind() == io::ErrorKind::Interrupted
+                    {
+                        continue;
+                    }
+                    if ready > 0 {
+                        // Readable data is not the owner's end: only end of
+                        // stream or a channel failure is.
+                        match stream.read(&mut byte) {
+                            Ok(count) if count > 0 => continue,
+                            Err(source)
+                                if matches!(
+                                    source.kind(),
+                                    io::ErrorKind::Interrupted | io::ErrorKind::WouldBlock
+                                ) =>
+                            {
+                                continue;
+                            }
+                            _ => {}
+                        }
+                    }
+                    // EOF or a channel failure cannot leave a live unguarded child.
+                    if let Err(source) = super::kill_tree(std::process::id()) {
+                        eprintln!("process.owner_lost_cleanup_failed error={source}");
+                    }
+                    // SAFETY: this process's owner is gone; a failed kill must
+                    // still stop this cooperative child rather than continue.
+                    unsafe { libc::_exit(125) };
+                }
+            }) {
             Ok(reader) => reader,
-            Err(source) => { watch_closed(); return Err(source); }
+            Err(source) => {
+                watch_closed();
+                return Err(source);
+            }
         };
         let mut watch = OwnerWatch {
             channel,
             cancelled,
+            wake: Some(wake),
             reader: Some(reader),
         };
         watch.channel.write_all(b"R")?;
         Ok(watch)
     }
+
+    /// Counts the reader's entries into its poll, so a test knows the reader
+    /// is waiting before it closes the watch.
+    #[cfg(test)]
+    pub(super) static POLLING: std::sync::atomic::AtomicUsize =
+        std::sync::atomic::AtomicUsize::new(0);
 
     pub(super) use std::os::fd::AsRawFd as PipeHandle;
 
@@ -2009,6 +2067,56 @@ mod sys {
                     _ => true,
                 })
                 .collect()
+        }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod owner_watch_tests {
+    use std::io::Read;
+    use std::os::fd::IntoRawFd;
+    use std::os::unix::net::UnixStream;
+    use std::sync::atomic::Ordering;
+    use std::sync::mpsc;
+    use std::time::Duration;
+
+    use super::sys;
+
+    /// Limit for a wait on something that should already have happened; it
+    /// only ends a hang and is not what the test measures.
+    const HANG_LIMIT: Duration = Duration::from_secs(30);
+
+    /// Closing a watch ends its reader by the wake, whatever the owner's end
+    /// is doing: the owner stays connected and silent, so neither an end of
+    /// stream nor a timeout can be what ends the reader (#446).
+    #[test]
+    fn closing_the_watch_wakes_a_reader_that_is_waiting_on_a_silent_owner() {
+        for round in 0..2 {
+            let (child_end, mut owner_end) = UnixStream::pair().unwrap();
+            let before = sys::POLLING.load(Ordering::SeqCst);
+            let watch = sys::watch_owner(child_end.into_raw_fd().to_string().into())
+                .unwrap_or_else(|error| panic!("round {round}: {error}"));
+            // The watch acknowledges itself on the owner's end.
+            let mut ack = [0_u8; 1];
+            owner_end.read_exact(&mut ack).unwrap();
+            assert_eq!(&ack, b"R");
+            // The order is the test's: the reader is in its poll before the
+            // watch closes.
+            let hang = std::time::Instant::now() + HANG_LIMIT;
+            while sys::POLLING.load(Ordering::SeqCst) == before {
+                assert!(std::time::Instant::now() < hang, "the reader never polled");
+                std::thread::yield_now();
+            }
+            let (closed, hear) = mpsc::channel();
+            std::thread::spawn(move || {
+                closed.send(watch.close()).unwrap();
+            });
+            hear.recv_timeout(HANG_LIMIT)
+                .expect("closing the watch never returned")
+                .expect("the watch closes cleanly");
+            // The owner end lived through the close, and the slot is free for
+            // the next watch in this process (the second round).
+            drop(owner_end);
         }
     }
 }
