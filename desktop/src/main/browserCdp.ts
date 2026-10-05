@@ -685,6 +685,9 @@ export class BrowserCdpGateway {
     if (method === "Page.bringToFront") { await this.perform(client, { action: "select", display_id: session.lease.page.id, request_id: requestId }, deadline); return {}; }
     const domain = method.split(".")[0] ?? "";
     if (!PAGE_DOMAINS.has(domain) || DENIED_PAGE_METHODS.has(method)) throw new ProtocolError("Command is outside the scoped page boundary");
+    // A drag that carries files drops them on the page as an upload does.
+    if (method === "Input.dispatchDragEvent" && object(params.data) && params.data.files !== undefined
+      && !(Array.isArray(params.data.files) && params.data.files.length === 0)) throw new ProtocolError("Dragging files is not available through CDP");
     if (method === "Page.navigate") {
       if (!cdpAddress(text(params, "url"))) throw new ProtocolError("Native files and non-HTTP(S) navigation are not supported through CDP");
     }
