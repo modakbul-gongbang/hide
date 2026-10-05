@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { startHerdr, declareParent, printLinesCommand } from "./herdr-fixture";
+import { herdrGate } from "./herdr-gate";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, enterWorkspace, screenshot, showTool } from "./wire";
 import { chord } from "./chords";
@@ -300,14 +301,18 @@ test("New tab and Reopen use the requested area and Rename works in either bar",
   } finally { daemon?.stop(); herdr.stop(); }
 });
 
-// Quarantined: runs in CI without blocking `verify` until #287 is fixed.
-test("Delegated canvas returns to its normal tab and its tab menu keeps the Agent commands", { tag: "@flaky", annotation: { type: "issue", description: "https://github.com/modakbul-gongbang/hide/issues/287" } }, async ({ page }) => {
+// The chip's focus is held at the Herdr socket, so the click on the normal tab
+// lands while the chip's focus is still unanswered: the order is the test's,
+// not the runner's speed.
+test("Delegated canvas returns to its normal tab while the chip's focus is still waiting for Herdr", async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 1080 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
+  let gate: Awaited<ReturnType<typeof herdrGate>> | undefined;
   try {
     const [parent, child] = herdr.panes;
-    daemon = await startHided(herdr, "agent-delegated-return");
+    gate = await herdrGate(herdr);
+    daemon = await startHided({ ...herdr, socket: gate.socket }, "agent-delegated-return");
     const sent = countSent(page);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await enterWorkspace(page, "fixture");
@@ -317,13 +322,48 @@ test("Delegated canvas returns to its normal tab and its tab menu keeps the Agen
     // The chip shows once the lineage is known; the delegated canvas exists
     // once the core has moved the child out of its parent's tab.
     await expect(page.locator(`[data-pane-view="${child}"]`)).toHaveCount(0);
+    const held = gate.arm("pane.focus");
     await chip.click();
-    await expect(page.locator(`[data-pane-view="${child}"]`)).toHaveAttribute("data-focused", "true");
+    await held;
+    expect(gate.params("pane.focus").map((params) => params.pane_id)).toEqual([child]);
+    // The core already shows the child while Herdr has not answered, so the normal tab is not the selected one.
+    const quick = { intervals: [25] };
+    await expect(tab(page, herdr.tab)).toHaveAttribute("aria-selected", "false", quick);
     const before = sent.get("agent_layout.focus") ?? 0;
     await tab(page, herdr.tab).click();
+    await expect(tab(page, herdr.tab)).toHaveAttribute("aria-selected", "true", quick);
+    expect(sent.get("agent_layout.focus")).toBe(before + 1);
+    await gate.release();
+    // The tab focus waits behind the pane focus and leaves once it is answered: seeing it
+    // reach Herdr proves the late answer has been handled before the final state is read.
+    await expect.poll(() => gate.params("tab.focus").map((params) => params.tab_id)).toContain(herdr.tab);
+    expect(gate.maximum("pane.focus")).toBe(1);
     await expect(page.locator(`[data-pane-view="${parent}"]`)).toHaveAttribute("data-focused", "true");
     await expect(tab(page, herdr.tab)).toHaveAttribute("aria-selected", "true");
-    expect(sent.get("agent_layout.focus")).toBe(before + 1);
+    await expect(page.locator(`[data-pane-view="${child}"]`)).toHaveCount(0);
+  } finally { daemon?.stop(); await gate?.stop(); herdr.stop(); }
+});
+
+test("A delegated canvas's normal tab keeps the Agent commands in its menu", async ({ page }) => {
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  const herdr = await startHerdr();
+  let daemon: Daemon | null = null;
+  try {
+    const [parent, child] = herdr.panes;
+    daemon = await startHided(herdr, "agent-delegated-menu");
+    await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+    await enterWorkspace(page, "fixture");
+    declareParent(herdr, child, parent);
+    const chip = page.locator(`[data-child-chip="${child}"]`).first();
+    await expect(chip).toBeVisible({ timeout: 20_000 });
+    await chip.click();
+    // The child pane view is focused before the core has switched the drawn
+    // canvas to the delegated tab; until then the normal tab is the selected one
+    // and a click on it is a no-op. Wait for the delegated canvas to be drawn.
+    await expect(tab(page, herdr.tab)).toHaveAttribute("aria-selected", "false");
+    await expect(page.locator(`[data-pane-view="${child}"]`)).toHaveAttribute("data-focused", "true");
+    await tab(page, herdr.tab).click();
+    await expect(page.locator(`[data-pane-view="${parent}"]`)).toHaveAttribute("data-focused", "true");
     await tab(page, herdr.tab).click({ button: "right" });
     await expect(page.locator('[role="menu"] [data-menu-item="split_right"]')).toBeVisible();
     await page.keyboard.press("Escape");

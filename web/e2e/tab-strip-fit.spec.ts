@@ -60,74 +60,94 @@ async function strip(page: Page, column: "agent" | "view" = "agent"): Promise<St
   });
 }
 
-test("Agent tabs shrink in stages, the selected one keeping its title longest, and marks come only when nothing else fits", { tag: "@flaky", annotation: { type: "issue", description: "https://github.com/modakbul-gongbang/hide/issues/416" } }, async ({ page }) => {
+const settle = (page: Page) => page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
+
+/** An Agent strip of `count` tabs: Herdr makes them, the page draws them. */
+async function startStrip(page: Page, count: number) {
   await page.setViewportSize({ width: 1920, height: 1080 });
   const herdr = await startHerdr({ agents: false });
   let daemon: Daemon | null = null;
-  const create = () => herdr.run(["tab", "create", "--workspace", herdr.workspace, "--cwd", path.join(herdr.root, "fixture"), "--no-focus"]);
+  const stop = () => { daemon?.stop(); herdr.stop(); };
   try {
-    create();
-    create();
+    for (let made = 1; made < Math.min(count, 3); made += 1) herdr.run(["tab", "create", "--workspace", herdr.workspace, "--cwd", path.join(herdr.root, "fixture"), "--no-focus"]);
     daemon = await startHided(herdr, "tab-strip-fit");
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await enterWorkspace(page, "fixture");
     const tabs = page.locator("[data-agent-tab-bar] [role=tab]");
-    await expect(tabs).toHaveCount(3);
+    await expect(tabs).toHaveCount(Math.min(count, 3));
+    // The first screen is drawn before the rest are made, so a tab Herdr makes later is one the page had to take in.
+    for (let made = 3; made < count; made += 1) herdr.run(["tab", "create", "--workspace", herdr.workspace, "--cwd", path.join(herdr.root, "fixture"), "--no-focus"]);
+    await expect(tabs).toHaveCount(count);
+    return { tabs, stop };
+  } catch (error) {
+    stop();
+    throw error;
+  }
+}
 
-    // Room to spare: every tab takes the preferred width, whatever its title.
+/** Sets the window width, waits for the frames that draw it, and checks the strip against the curve. */
+async function check(page: Page, width: number) {
+  await page.setViewportSize({ width, height: 900 });
+  await settle(page);
+  const drawn = await strip(page);
+  const want = expected(drawn.room, drawn.tabs.length);
+  const selected = drawn.tabs.find((tab) => tab.selected)!;
+  const unselected = drawn.tabs.filter((tab) => !tab.selected);
+  expect(selected.width, `selected at room ${drawn.room}`).toBeCloseTo(want.selected[0], 0);
+  expect(selected.title).toBe(want.selected[1] !== "marks");
+  expect(selected.close).toBe(true);
+  for (const tab of unselected) {
+    expect(tab.width, `unselected at room ${drawn.room}`).toBeCloseTo(want.others[0], 0);
+    expect(tab.title).toBe(want.others[1] !== "marks");
+    // An unselected titled tab keeps its close control's place; a smaller one gives it up.
+    expect(tab.close).toBe(want.others[1] === "titled");
+  }
+  const total = want.selected[0] + unselected.length * want.others[0];
+  expect(drawn.scrolls).toBe(total > drawn.room + 0.01);
+  expect(drawn.selectedInView).toBe(true);
+  const stage = drawn.scrolls ? "scroll"
+    : want.others[1] === "titled" ? "titled"
+    : want.selected[1] === "titled" ? `others-${want.others[1]}`
+    : `selected-${want.selected[1]}`;
+  return { room: drawn.room, stage, widths: drawn.tabs.map((tab) => Math.round(tab.width * 10) / 10) };
+}
+
+test("Agent tabs take the preferred width, whatever their titles, while the strip has room", async ({ page }) => {
+  const { stop } = await startStrip(page, 3);
+  try {
     const rest = await strip(page);
     expect(rest.tabs.map((tab) => Math.round(tab.width))).toEqual([PREFERRED, PREFERRED, PREFERRED]);
     expect(rest.tabs.every((tab) => tab.title)).toBe(true);
     await screenshot(page, "tab-strip-fit-preferred");
+  } finally { stop(); }
+});
 
-    for (let count = 3; count < 16; count += 1) create();
-    await expect(tabs).toHaveCount(16);
-
-    const settle = () => page.evaluate(() => new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done))));
-    const check = async (width: number) => {
-      await page.setViewportSize({ width, height: 900 });
-      await settle();
-      const drawn = await strip(page);
-      const want = expected(drawn.room, drawn.tabs.length);
-      const selected = drawn.tabs.find((tab) => tab.selected)!;
-      const unselected = drawn.tabs.filter((tab) => !tab.selected);
-      expect(selected.width, `selected at room ${drawn.room}`).toBeCloseTo(want.selected[0], 0);
-      expect(selected.title).toBe(want.selected[1] !== "marks");
-      expect(selected.close).toBe(true);
-      for (const tab of unselected) {
-        expect(tab.width, `unselected at room ${drawn.room}`).toBeCloseTo(want.others[0], 0);
-        expect(tab.title).toBe(want.others[1] !== "marks");
-        // An unselected titled tab keeps its close control's place; a smaller one gives it up.
-        expect(tab.close).toBe(want.others[1] === "titled");
-      }
-      const total = want.selected[0] + unselected.length * want.others[0];
-      expect(drawn.scrolls).toBe(total > drawn.room + 0.01);
-      expect(drawn.selectedInView).toBe(true);
-      const stage = drawn.scrolls ? "scroll"
-        : want.others[1] === "titled" ? "titled"
-        : want.selected[1] === "titled" ? `others-${want.others[1]}`
-        : `selected-${want.selected[1]}`;
-      return { room: drawn.room, stage, widths: drawn.tabs.map((tab) => Math.round(tab.width * 10) / 10) };
-    };
-
+test("Agent tabs shrink in stages, the selected one keeping its title longest, and marks come only when nothing else fits", async ({ page }) => {
+  const { stop } = await startStrip(page, 16);
+  try {
     // Narrowing and then widening through the same widths draws the same strip both ways.
     const widths: number[] = [];
     for (let width = 2800; width >= 700; width -= 10) widths.push(width);
     const narrowing = new Map<number, Awaited<ReturnType<typeof check>>>();
     const seen = new Set<string>();
     for (const width of widths) {
-      const drawn = await check(width);
+      const drawn = await check(page, width);
       narrowing.set(width, drawn);
       if (!seen.has(drawn.stage)) await screenshot(page, `tab-strip-fit-${drawn.stage}`);
       seen.add(drawn.stage);
     }
     expect([...seen].sort()).toEqual(["others-compact", "others-marks", "scroll", "selected-compact", "selected-marks", "titled"]);
-    for (const width of [...widths].reverse()) expect(await check(width)).toEqual(narrowing.get(width));
+    for (const width of [...widths].reverse()) expect(await check(page, width)).toEqual(narrowing.get(width));
+  } finally { stop(); }
+});
 
+test("Selecting an Agent tab moves the title width to it, and the selected tab stays in sight once the strip scrolls", async ({ page }) => {
+  const { tabs, stop } = await startStrip(page, 16);
+  try {
     // Selecting another tab moves the title width to it in the same frame.
-    const stage2 = widths.find((width) => narrowing.get(width)!.stage === "others-compact")!;
-    await check(stage2);
+    expect((await check(page, 1500)).stage).toBe("others-compact");
     const before = await strip(page);
+    expect(before.tabs.filter((tab) => !tab.selected).every((tab) => tab.width < TITLE_MIN)).toBe(true);
     const target = before.tabs.findIndex((tab) => !tab.selected);
     await tabs.nth(target).click();
     await expect(tabs.nth(target)).toHaveAttribute("aria-selected", "true");
@@ -137,18 +157,17 @@ test("Agent tabs shrink in stages, the selected one keeping its title longest, a
 
     // Once even marks overflow, the selected tab stays in sight: after it is
     // chosen at the strip's far end, and after the strip narrows further.
-    const scrolling = widths.find((width) => narrowing.get(width)!.stage === "scroll")!;
-    await check(scrolling);
+    expect((await check(page, 800)).stage).toBe("scroll");
     await tabs.last().click();
     await expect(tabs.last()).toHaveAttribute("aria-selected", "true");
-    await settle();
+    await settle(page);
     expect((await strip(page)).selectedInView).toBe(true);
-    await page.setViewportSize({ width: widths.at(-1)!, height: 900 });
-    await settle();
+    await page.setViewportSize({ width: 700, height: 900 });
+    await settle(page);
     const narrowest = await strip(page);
     expect(narrowest.scrolls).toBe(true);
     expect(narrowest.selectedInView).toBe(true);
-  } finally { daemon?.stop(); herdr.stop(); }
+  } finally { stop(); }
 });
 
 test("File View tabs use the same shrinking strip and transfer the longest title on selection", async ({ page }) => {
