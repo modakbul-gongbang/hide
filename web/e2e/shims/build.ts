@@ -17,34 +17,40 @@ export type FixtureShim = "claude-shim" | "spawn-provider" | "noop" | "launcher"
 /** The programs this system builds: the launcher and process lister only exist for Windows. */
 const BUILT: FixtureShim[] = windows ? ["claude-shim", "spawn-provider", "noop", "launcher", "hide-children"] : ["claude-shim", "spawn-provider", "noop"];
 
-// Both e2e packages run with their own folder as the working directory, and
-// `web` and `desktop` are siblings.
-const sourceDir = path.resolve("..", "web", "e2e", "shims");
-const outputDir = path.resolve("..", "web", ".e2e-shims");
+// The programs a run built, by name, handed to the tests through the environment:
+// Playwright starts its workers after `globalSetup`, so they inherit it.
+const PROGRAMS = "HIDE_E2E_SHIMS";
 
-const sourceOf = (name: FixtureShim): string => path.join(sourceDir, `${name}.c`);
+const hashed = (source: string, name: FixtureShim): string =>
+  `${name}-${createHash("sha256").update(fs.readFileSync(source)).digest("hex").slice(0, 12)}${ext}`;
 
-function programOf(name: FixtureShim): string {
-  const hash = createHash("sha256").update(fs.readFileSync(sourceOf(name))).digest("hex").slice(0, 12);
-  return path.join(outputDir, `${name}-${hash}${ext}`);
-}
-
-/** Compiles every program whose current source has no finished build, and removes older builds of it. */
-export function buildFixtureShims(): void {
+/**
+ * Compiles every program whose current source has no finished build, removes
+ * older builds of it, and records the finished programs for the tests.
+ * `packageDir` is the folder of the Playwright config that is running (`web`
+ * or `desktop`, siblings): the sources and the build folder are found from
+ * it, not from the working directory.
+ */
+export function buildFixtureShims(packageDir: string): void {
+  const sourceDir = path.resolve(packageDir, "..", "web", "e2e", "shims");
+  const outputDir = path.resolve(packageDir, "..", "web", ".e2e-shims");
   fs.mkdirSync(outputDir, { recursive: true });
   const compiler = windows ? "clang.exe" : "cc";
+  const built: Record<string, string> = {};
   for (const name of BUILT) {
-    const program = programOf(name);
+    const source = path.join(sourceDir, `${name}.c`);
+    const program = path.join(outputDir, hashed(source, name));
+    built[name] = program;
     if (fs.existsSync(program)) continue;
     const partial = `${program.slice(0, program.length - ext.length)}.${process.pid}.partial${ext}`;
     try {
-      execFileSync(compiler, ["-O1", "-o", partial, sourceOf(name)], { encoding: "utf8", stdio: "pipe" });
+      execFileSync(compiler, ["-O1", "-o", partial, source], { encoding: "utf8", stdio: "pipe" });
     } catch (error) {
       const failed = error as { stdout?: string; stderr?: string };
       fs.rmSync(partial, { force: true });
       // A compiler that cannot start has no output; its error is the reason.
       const output = `${failed.stdout ?? ""}${failed.stderr ?? ""}` || String(error);
-      throw new Error(`fixture C compiler ${compiler} failed on ${sourceOf(name)}:\n${output}`, { cause: error });
+      throw new Error(`fixture C compiler ${compiler} failed on ${source}:\n${output}`, { cause: error });
     }
     // Another build of the same source may have finished first; keep its program.
     if (fs.existsSync(program)) {
@@ -58,13 +64,15 @@ export function buildFixtureShims(): void {
       if (finished.test(old) && path.join(outputDir, old) !== program) fs.rmSync(path.join(outputDir, old), { force: true });
     }
   }
+  process.env[PROGRAMS] = JSON.stringify(built);
 }
 
 /** Copies the finished `name` to `executable`; a program that was not built is a failure that says how to build it. */
 export function copyFixtureShim(name: FixtureShim, executable: string): void {
-  const program = programOf(name);
-  if (!fs.existsSync(program)) {
-    throw new Error(`fixture program ${name} is not built (${program}); Playwright's globalSetup builds it, so run the e2e through \`playwright test\` (scripts/verify-web.sh web e2e)`);
+  const programs = JSON.parse(process.env[PROGRAMS] ?? "{}") as Record<string, string>;
+  const program = programs[name];
+  if (!program || !fs.existsSync(program)) {
+    throw new Error(`fixture program ${name} is not built (${program ?? `no ${PROGRAMS} in the environment`}); Playwright's globalSetup builds it, so run the e2e through \`playwright test\` (scripts/verify-web.sh web e2e)`);
   }
   fs.copyFileSync(program, executable);
 }
