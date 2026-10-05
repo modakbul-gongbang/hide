@@ -195,6 +195,16 @@ impl ControlLane {
     }
 }
 
+/// The focus control whose answer was lost, named in what its loss discards.
+struct LostAnswer {
+    kind: &'static str,
+    target_id: String,
+    /// The shell's correlation id, when the request carried one.
+    request_id: Option<String>,
+    /// The pane-control serial, for a pane focus.
+    serial: Option<u64>,
+}
+
 impl Runtime {
     /// The one way a local Herdr tab control leaves Hide. It is sent now when
     /// the lane is idle and otherwise waits its turn.
@@ -369,10 +379,26 @@ impl Runtime {
         // the way an unknown pane focus ends its burst.
         let unknown_focus = matches!(action, RemoteControlAction::FocusTab { .. })
             && result.as_ref().is_err_and(ControlFailure::is_ambiguous);
+        // Read before the answer settles the request that carried it.
+        let cause = unknown_focus
+            .then(|| match &action {
+                RemoteControlAction::FocusTab { tab_id } => Some(LostAnswer {
+                    kind: "tab.focus",
+                    target_id: tab_id.clone(),
+                    request_id: self
+                        .pending_tab_focus
+                        .as_ref()
+                        .filter(|pending| pending.target_id == *tab_id && pending.sent)
+                        .and_then(|pending| pending.request_id.clone()),
+                    serial: None,
+                }),
+                _ => None,
+            })
+            .flatten();
         let mut changed = self.ingest_local_control_failure(action, result, elapsed_ms);
-        if unknown_focus {
-            changed |= self.abandon_queued_tab_focus();
-            changed |= self.abandon_queued_pane_focus();
+        if let Some(cause) = cause {
+            changed |= self.abandon_queued_tab_focus(&cause);
+            changed |= self.abandon_queued_pane_focus(&cause);
         }
         (changed, self.advance_lane())
     }
@@ -385,17 +411,63 @@ impl Runtime {
         elapsed_ms: u128,
     ) -> (bool, Option<LaneStart>) {
         let unknown = result.as_ref().is_err_and(ControlFailure::is_ambiguous);
+        // Read before the answer settles the request that carried it.
+        let cause = LostAnswer {
+            kind: "pane.focus",
+            target_id: control.target_id.clone(),
+            request_id: self
+                .pending_pane_focus
+                .as_ref()
+                .filter(|pending| pending.pane_control_serial == Some(control.serial))
+                .and_then(|pending| pending.request_id.clone()),
+            serial: Some(control.serial),
+        };
         let mut changed = self.ingest_pane_focus_completion(control, result, elapsed_ms);
         if unknown {
-            self.control_lane.drop_queued_pane_focus();
-            changed |= self.abandon_queued_tab_focus();
+            let dropped = self.control_lane.drop_queued_pane_focus();
+            if dropped > 0 {
+                self.record_dropped_focus(
+                    "pane.focus.dropped",
+                    dropped,
+                    &cause,
+                    format!(
+                        "Herdr's answer to the pane focus for {} was lost, so {dropped} queued pane focus {} not sent",
+                        cause.target_id,
+                        if dropped == 1 { "was" } else { "were" },
+                    ),
+                );
+                changed = true;
+            }
+            changed |= self.abandon_queued_tab_focus(&cause);
         }
         (changed, self.advance_lane())
     }
 
+    /// Says how many waiting focus controls a lost answer discarded and which
+    /// request's answer it was: the diagnostic line carries the ids, the
+    /// shown list carries the sentence.
+    fn record_dropped_focus(
+        &mut self,
+        kind: &'static str,
+        dropped: usize,
+        cause: &LostAnswer,
+        message: String,
+    ) {
+        crate::diagnostic!(serde_json::json!({
+            "component": "control_lane",
+            "kind": kind,
+            "dropped": dropped,
+            "cause": cause.kind,
+            "cause_target_id": cause.target_id,
+            "cause_request_id": cause.request_id,
+            "cause_serial": cause.serial,
+        }));
+        self.push_diagnostic(kind, message);
+    }
+
     /// Ends the wait on a tab focus that was accepted but is not going to be
     /// sent, because an older one's outcome is unknown.
-    fn abandon_queued_tab_focus(&mut self) -> bool {
+    fn abandon_queued_tab_focus(&mut self, cause: &LostAnswer) -> bool {
         let dropped = self.control_lane.drop_queued_tab_focus();
         if dropped == 0 {
             return false;
@@ -407,19 +479,38 @@ impl Runtime {
         if unsent {
             self.pending_tab_focus = None;
         }
-        self.push_diagnostic(
+        self.record_dropped_focus(
             "tab.focus.unknown",
-            "Herdr's answer to an earlier focus was lost, so the newer tab focus was not sent; Hide keeps the tab it shows",
+            dropped,
+            cause,
+            format!(
+                "Herdr's answer to the {} focus for {} was lost, so {dropped} newer tab focus {} not sent; Hide keeps the tab it shows",
+                cause.kind,
+                cause.target_id,
+                if dropped == 1 { "was" } else { "were" },
+            ),
         );
         true
     }
 
     /// Ends the wait on a pane focus that was accepted but is not going to
     /// be sent, because an earlier tab focus's outcome is unknown.
-    fn abandon_queued_pane_focus(&mut self) -> bool {
-        if self.control_lane.drop_queued_pane_focus() == 0 {
+    fn abandon_queued_pane_focus(&mut self, cause: &LostAnswer) -> bool {
+        let dropped = self.control_lane.drop_queued_pane_focus();
+        if dropped == 0 {
             return false;
         }
+        self.record_dropped_focus(
+            "pane.focus.dropped",
+            dropped,
+            cause,
+            format!(
+                "Herdr's answer to the {} focus for {} was lost, so {dropped} queued pane focus {} not sent",
+                cause.kind,
+                cause.target_id,
+                if dropped == 1 { "was" } else { "were" },
+            ),
+        );
         if let Some(pending) = self.pending_pane_focus.take_if(|pending| !pending.sent) {
             let message = format!(
                 "Herdr's answer to an earlier tab focus was lost, so the focus for {} was not sent. Select the pane again to retry.",

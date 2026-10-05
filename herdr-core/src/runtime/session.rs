@@ -1938,20 +1938,42 @@ impl Runtime {
         self.ingest_session_with_focus_check(fetched, precomputed, SessionFocusCheck::Unchecked)
     }
 
-    /// Identify only an external move within the selected pane's layout.
-    /// Missing panes and tab arrivals keep their existing topology handling.
-    pub(crate) fn pane_focus_readback_target(
-        &self,
-        payload: &SessionSnapshotPayload,
-    ) -> Option<PendingPaneFocusControl> {
+    /// Ingests a session update whose focus is Herdr's own stream's, and
+    /// says whether a read of Herdr's focus has to follow.
+    ///
+    /// The stream has no ordering cursor, so a focus that differs from the
+    /// selected pane is not authority until a fresh read agrees. That read
+    /// waits on Herdr, so it never gates this update: the layout, the panes
+    /// and every other part of the update are taken now, and the differing
+    /// focus (and the zoom of the pane it names) stays Hide's until
+    /// [`Self::finish_pane_focus_readback`] hears the answer. At most one
+    /// read is outstanding.
+    pub(crate) fn ingest_session_awaiting_focus_readback(
+        &mut self,
+        fetched: Result<SessionSnapshotPayload, SessionFetchError>,
+        precomputed: Option<session_sync::PrecomputedCatalog>,
+    ) -> (bool, Option<PendingPaneFocusControl>) {
+        let changed = self.ingest_session_with_focus_check(
+            fetched,
+            precomputed,
+            SessionFocusCheck::Readback(None),
+        );
+        (changed, self.begin_pane_focus_readback())
+    }
+
+    /// An external move within the selected pane's tab, as the stored layout
+    /// shows it. Missing panes and tab arrivals keep their existing topology
+    /// handling.
+    fn pane_focus_readback_target(&self) -> Option<PendingPaneFocusControl> {
         if self.pending_pane_focus.is_some() || self.pane_focus_in_flight.is_some() {
             return None;
         }
         let selected = self.snapshot.focused.pane_id.as_deref()?;
-        let layout = payload
-            .layouts
+        let layout = self
+            .snapshot
+            .pane_layouts
             .iter()
-            .find(|layout| layout.panes.iter().any(|pane| pane.pane_id == selected))?;
+            .find(|layout| layout.pane_ids().contains(&selected))?;
         (layout.focused_pane_id != selected).then(|| PendingPaneFocusControl {
             serial: self.next_pane_focus_serial,
             target_id: layout.focused_pane_id.clone(),
@@ -1959,17 +1981,77 @@ impl Runtime {
         })
     }
 
-    pub(crate) fn ingest_session_with_focus_readback(
+    /// Takes the one readback slot for the move the stored layouts show.
+    fn begin_pane_focus_readback(&mut self) -> Option<PendingPaneFocusControl> {
+        if self.pane_focus_readback.is_some() {
+            return None;
+        }
+        let identity = self.pane_focus_readback_target()?;
+        self.pane_focus_readback = Some(identity.clone());
+        Some(identity)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pane_focus_readback_is_outstanding(&self) -> bool {
+        self.pane_focus_readback.is_some()
+    }
+
+    /// Frees the readback slot for a worker that ended without an answer.
+    pub(crate) fn abandon_pane_focus_readback(&mut self) {
+        self.pane_focus_readback = None;
+    }
+
+    /// Settles the readback for `identity` and returns whether the snapshot
+    /// changed, with the next readback when the stored layouts still show a
+    /// move this answer did not cover.
+    ///
+    /// A confirmed answer applies the layout the session already stored,
+    /// now with its focus and zoom. The identity is checked again there:
+    /// a newer selection, a pending focus request or another connection
+    /// leaves the answer without authority. An unconfirmed answer changes
+    /// nothing and is not asked again until the next session update.
+    pub(crate) fn finish_pane_focus_readback(
         &mut self,
-        fetched: Result<SessionSnapshotPayload, SessionFetchError>,
-        precomputed: Option<session_sync::PrecomputedCatalog>,
-        readback: Option<(PendingPaneFocusControl, bool)>,
-    ) -> bool {
-        self.ingest_session_with_focus_check(
-            fetched,
-            precomputed,
-            SessionFocusCheck::Readback(readback),
-        )
+        identity: PendingPaneFocusControl,
+        confirmed: bool,
+    ) -> (bool, Option<PendingPaneFocusControl>) {
+        self.pane_focus_readback = None;
+        let stored = self
+            .snapshot
+            .pane_layouts
+            .iter()
+            .find(|layout| layout.focused_pane_id == identity.target_id)
+            .cloned();
+        let mut changed = false;
+        // The move must still be the one the selected pane's layout shows:
+        // the apply below rechecks the identity only inside that layout, so
+        // an answer for another tab than the selected one has no authority.
+        if confirmed
+            && self.pane_focus_readback_target().as_ref() == Some(&identity)
+            && let Some(layout) = stored.clone()
+        {
+            changed |= self.apply_pane_layout_with_focus_check(
+                layout,
+                false,
+                SessionFocusCheck::Readback(Some((identity.clone(), true))),
+            );
+            changed |= self.settle_selection_projection();
+            changed |= self.refresh_browser_inventory_scope();
+        }
+        let next = if confirmed || stored.is_none() {
+            self.begin_pane_focus_readback()
+        } else {
+            None
+        };
+        (changed, next)
+    }
+
+    /// What follows a change of the selected pane: the worktree rows, the
+    /// visible tab and the attaches the visible tab holds.
+    fn settle_selection_projection(&mut self) -> bool {
+        let mut changed = self.refresh_worktree_projection();
+        changed |= self.align_visible_tab_with_selected_pane();
+        changed | self.track_visible_tab_attachments()
     }
 
     fn ingest_session_with_focus_check(
@@ -2469,9 +2551,7 @@ impl Runtime {
                 focus_check,
             );
         }
-        changed |= self.refresh_worktree_projection();
-        changed |= self.align_visible_tab_with_selected_pane();
-        changed |= self.track_visible_tab_attachments();
+        changed |= self.settle_selection_projection();
         changed |= self.refresh_sessions_after_catalog_change(catalog_changed);
         changed |= self.refresh_browser_inventory_scope();
         changed | self.refresh_pet()
@@ -2985,7 +3065,8 @@ impl Runtime {
                     && self.pending_pane_focus.is_none()
                     && self.pane_focus_in_flight.is_none()
             });
-            if !adopt_focus {
+            // `None` is an update held for its readback, which is not a refusal.
+            if !adopt_focus && readback.is_some() {
                 crate::diagnostic!(serde_json::json!({
                     "component": "pane_focus",
                     "kind": "pane.focus.stream_unconfirmed",
