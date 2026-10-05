@@ -1708,7 +1708,14 @@ impl Runtime {
         // Herdr's session is kept as it came; the published one groups its
         // workspaces into the device's projects (`device_catalog`).
         let mut dropped_moves = Vec::new();
-        let fetched = fetched.map(|raw| {
+        if fetched.is_err() {
+            // The device's tab ids are its Herdr's own; a later connection may
+            // hand one to a tab Hide never created.
+            self.created_device_tabs
+                .retain(|(target, _), _| target != target_id);
+        }
+        let fetched = fetched.map(|mut raw| {
+            self.clamp_device_created_tabs(target_id, &mut raw);
             let mut derived = self.derive_device_session(target_id, &raw);
             self.device_raw_sessions.insert(target_id.to_owned(), raw);
             self.place_device_strips(target_id, &mut derived, &mut dropped_moves);
@@ -4924,6 +4931,91 @@ impl Runtime {
                 }) {
                     if outside(&agent.cwd) {
                         agent.cwd = Some(path.clone());
+                    }
+                }
+            }
+        }
+    }
+
+    /// Remembers which folder a tab created on a device was asked for, for
+    /// the same reason as `record_created_tab_checkout`: the device's helper
+    /// groups a tab by its first pane's cwd, which is a birth value.
+    pub(super) fn record_created_device_tab(&mut self, target_id: &str, tab_id: &str, path: &str) {
+        let key = (target_id.to_owned(), tab_id.to_owned());
+        if self.created_device_tabs.len() >= CREATED_TAB_CHECKOUT_LIMIT
+            && !self.created_device_tabs.contains_key(&key)
+        {
+            crate::diagnostic!(serde_json::json!({
+                "component": "session",
+                "kind": "created_tab.checkout_limit",
+                "target": target_id,
+                "tab_id": tab_id,
+                "checkout_path": path,
+                "limit": CREATED_TAB_CHECKOUT_LIMIT,
+            }));
+            return;
+        }
+        self.created_device_tabs.insert(
+            key,
+            CreatedTabCheckout {
+                path: path.to_owned(),
+                seen: false,
+                settled: false,
+            },
+        );
+    }
+
+    /// Reads a device tab Hide created as in the folder it was created for
+    /// until a pane of it reports a cwd there, before the device's projects
+    /// are grouped, and drops the record of a tab the device no longer has.
+    fn clamp_device_created_tabs(&mut self, target_id: &str, raw: &mut RemoteSessionSnapshot) {
+        self.created_device_tabs
+            .retain(|(target, tab_id), created| {
+                if target != target_id {
+                    return true;
+                }
+                let present = raw.workspaces.iter().any(|workspace| {
+                    workspace.checkouts.iter().any(|checkout| {
+                        checkout.tabs.iter().any(|tab| {
+                            tab.id
+                                .as_deref()
+                                .and_then(|id| remote_tab_source_id(target_id, id))
+                                == Some(tab_id.as_str())
+                        })
+                    })
+                });
+                created.seen |= present;
+                present || !created.seen
+            });
+        for workspace in &mut raw.workspaces {
+            for checkout in &mut workspace.checkouts {
+                for tab in &mut checkout.tabs {
+                    let Some(native) = tab
+                        .id
+                        .as_deref()
+                        .and_then(|id| remote_tab_source_id(target_id, id))
+                    else {
+                        continue;
+                    };
+                    let Some(created) = self
+                        .created_device_tabs
+                        .get_mut(&(target_id.to_owned(), native.to_owned()))
+                    else {
+                        continue;
+                    };
+                    if !created.settled {
+                        created.settled = tab
+                            .panes
+                            .iter()
+                            .any(|pane| path_is_within_checkout(&pane.cwd, &created.path));
+                    }
+                    if created.settled {
+                        continue;
+                    }
+                    for pane in &mut tab.panes {
+                        if !path_is_within_checkout(&pane.cwd, &created.path) {
+                            pane.cwd = created.path.clone();
+                        }
                     }
                 }
             }

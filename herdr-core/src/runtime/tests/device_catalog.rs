@@ -1812,3 +1812,72 @@ fn folds_saved_under_old_device_checkout_ids_carry_over() {
     expected.sort();
     assert_eq!(runtime.snapshot.ui_state.expanded_checkout_ids, expected);
 }
+
+/// A tab Hide created on a device is grouped by the folder it was created
+/// for while its pane still reports the cwd it was born with: the device's
+/// helper groups a tab by its first pane's cwd, so a birth cwd in another
+/// project put a new tab under that project until the shell settled.
+#[test]
+fn a_device_tab_hide_created_stays_in_its_folder_while_its_pane_reports_the_birth_cwd() {
+    let t = tree();
+    let mut runtime = runtime();
+    runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
+        target_id: TARGET.to_owned(),
+        state: "not_connected".to_owned(),
+        message: None,
+        herdr_version: None,
+        session: None,
+        files: RemoteFileListSnapshot::idle(),
+        catalog: Default::default(),
+    });
+    runtime
+        .device_facts
+        .insert(TARGET.to_owned(), answered(&[&t.main, &t.other]));
+    let acknowledge = |runtime: &mut Runtime| {
+        runtime.ingest_remote_control_result(
+            TARGET,
+            "create",
+            RemoteControlAction::CreateTab {
+                workspace_id: "w1".to_owned(),
+                cwd: t.main.clone(),
+                label: "new".to_owned(),
+                area_id: None,
+                admission_id: None,
+            },
+            Ok(RemoteControlOutcome::Acknowledged {
+                created_tab_id: Some("t2".to_owned()),
+                created_pane_id: Some("t2p".to_owned()),
+            }),
+            3,
+        );
+    };
+    let tabs_in_main = |runtime: &Runtime| -> Vec<String> {
+        let session = runtime.snapshot.status.remote[0]
+            .session
+            .as_ref()
+            .expect("the device's session");
+        layout(session)
+            .into_iter()
+            .filter(|(project, _)| project == &t.main)
+            .flat_map(|(_, checkouts)| checkouts)
+            .flat_map(|(_, tabs)| tabs)
+            .collect()
+    };
+    let raw = |cwd: &str| {
+        session(vec![herdr_workspace(
+            TARGET,
+            "w1",
+            &t.main,
+            &[("t1", &t.main), ("t2", cwd)],
+        )])
+    };
+
+    acknowledge(&mut runtime);
+    runtime.ingest_remote_session(TARGET, Ok(raw(&t.other)));
+    assert_eq!(tabs_in_main(&runtime), ["t1", "t2"]);
+
+    // Once the pane reports the folder, its cwd is read as it is.
+    runtime.ingest_remote_session(TARGET, Ok(raw(&t.main)));
+    runtime.ingest_remote_session(TARGET, Ok(raw(&t.other)));
+    assert_eq!(tabs_in_main(&runtime), ["t1"]);
+}
