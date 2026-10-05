@@ -204,6 +204,19 @@ async function restOn(page: Page, target: Locator, texts: string[], within?: Loc
   throw lastFailure;
 }
 
+/** The graph draws frames only while it glides: thirty animation frames with no graph frame drawn is rest. */
+async function graphAtRest(canvas: Locator): Promise<void> {
+  await canvas.evaluate(async (element) => {
+    let last = element.getAttribute("data-graph-frames");
+    for (let still = 0; still < 30; ) {
+      await new Promise((resolve) => requestAnimationFrame(resolve));
+      const now = element.getAttribute("data-graph-frames");
+      still = now === last ? still + 1 : 0;
+      last = now;
+    }
+  });
+}
+
 /** Clears hover and keyboard focus so a capture shows the page at rest. */
 async function atRest(page: Page): Promise<void> {
   await page.mouse.move(2, 998);
@@ -583,16 +596,7 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     // The graph's own relayouts and animation frames are counted on its canvas;
     // the last glide (a chip just changed the picture) is let finish first.
     await atRest(page);
-    // The graph draws frames only while it glides: thirty animation frames with no graph frame drawn is rest.
-    await canvas.evaluate(async (element) => {
-      let last = element.getAttribute("data-graph-frames");
-      for (let still = 0; still < 30; ) {
-        await new Promise((resolve) => requestAnimationFrame(resolve));
-        const now = element.getAttribute("data-graph-frames");
-        still = now === last ? still + 1 : 0;
-        last = now;
-      }
-    });
+    await graphAtRest(canvas);
     const revision = async () => Number(await canvas.getAttribute("data-graph-revision"));
     const frames = async () => Number(await canvas.getAttribute("data-graph-frames"));
     const revisionBefore = await revision();

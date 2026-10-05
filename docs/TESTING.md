@@ -193,6 +193,7 @@ A piece that another open change is still building is marked as pending with the
    Go through `about:blank` before opening the new origin and token, as `openSettings` in `web/e2e/interface-language.spec.ts` does, and keep that step in one helper per spec.
    Why: the old page and the new token reconnect at the same time and either can win.
    `hide-e2e/reopen-after-restart-through-blank` fails a `goto` of `#token=` after `restart()` in the same function; a helper defined elsewhere and called after the restart is not seen, so keep the step in the helper.
+   A test whose subject is a surviving page reconnecting to the restarted daemon (`web/e2e/s3.spec.ts`, the two draft recovery tests) must not reload it, and says so in a line allow.
 8. **Put a system difference in one fixture helper.**
    See [Operating-system differences belong to one fixture helper](#operating-system-differences-belong-to-one-fixture-helper); native home variables, executable names, the tool path, the compiler and the no-op opener live in `web/e2e/platform-fixture.ts`, not in a `process.platform` branch in a spec.
    The endpoint helper (`focusGate` spells the Windows pipe itself in `web/e2e/pane-focus-ordering.spec.ts`) is not there yet; add it to `platform-fixture.ts` when a second spec needs it.

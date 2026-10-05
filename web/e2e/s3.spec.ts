@@ -1243,7 +1243,8 @@ test("a draft whose tab a daemon restart lost is kept for recovery and opens whe
     const restarted = await fixture.daemon.restart((state) => fs.rmSync(path.join(state, "workspace-views.json"), { force: true }));
     fixture.daemon = restarted;
     expect(restarted.hostId).toBe(hostBefore);
-    await page.goto("about:blank");
+    // The page under test survives the restart and reconnects: it must not be reloaded.
+    // eslint-disable-next-line hide-e2e/reopen-after-restart-through-blank -- the reconnect of the same page is the subject
     await page.goto(`${restarted.origin}/?probe=1#token=${restarted.token}`);
     const line = page.locator("[data-draft-recovery]");
     await expect(line).toBeVisible({ timeout: 20_000 });
@@ -1287,7 +1288,8 @@ test("a View tab a daemon restart restores takes its unsaved draft back (S6 B19)
     await expect.poll(async () => (await storedDrafts(page)).find((row) => row.path === file)?.contents, { timeout: 5_000 }).toBe("export const answer = 78;\n");
 
     fixture.daemon = await fixture.daemon.restart();
-    await page.goto("about:blank");
+    // The page under test survives the restart and reconnects: it must not be reloaded.
+    // eslint-disable-next-line hide-e2e/reopen-after-restart-through-blank -- the reconnect of the same page is the subject
     await page.goto(`${fixture.daemon.origin}/?probe=1#token=${fixture.daemon.token}`);
     // The Workspace brings the tab back and the draft returns into it,
     // unsaved; nothing reached the disk and nothing asks for recovery.
