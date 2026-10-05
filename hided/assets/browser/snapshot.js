@@ -32,8 +32,8 @@
 ((FILTER, CLICKABLE, REDACT_FIELDS) => {
   const INTERACTIVE_ONLY = FILTER === 'interactive';
   // Behavior-based clickable detection ('auto' | 'on' | 'off'). Many SPAs and
-  // micro-UIs build their controls from bare divs with click handlers — no
-  // roles, no semantic tags — which makes an accessibility snapshot blind.
+  // micro-UIs build their controls from bare divs with click handlers - no
+  // roles, no semantic tags - which makes an accessibility snapshot blind.
   // 'auto' turns detection on when the page is nearly dead (almost no
   // standard interactive elements) OR when behaviorally-clickable candidates
   // are dense relative to standard controls (div-heavy content behind a
@@ -75,7 +75,7 @@
       }
     }
     // A clickable wrapper is redundant only when a standard control inside it
-    // covers roughly the same area — a product card with a small wishlist
+    // covers roughly the same area - a product card with a small wishlist
     // button is still its own control and must keep its ref.
     const inner = el.querySelector(STANDARD_SEL);
     if (inner) {
@@ -96,7 +96,7 @@
       // Ratio gate, viewport-scoped: probe visible-in-viewport container-ish
       // elements for non-redundant clickable candidates and compare against
       // the standard controls currently in the viewport. Offscreen content
-      // does not vote — scrolling re-evaluates the gate for what is now
+      // does not vote - scrolling re-evaluates the gate for what is now
       // visible. Bounded so mega-DOM pages pay a fixed cost.
       let inViewStandard = 0;
       for (const el of document.querySelectorAll(STANDARD_SEL)) {
@@ -144,7 +144,7 @@
   }
   // Occlusion probe: if one element sits on top of most of the page's
   // standard controls (sync covers, cookie walls, modals, loading scrims),
-  // it is the thing the agent must deal with first — surface it prominently
+  // it is the thing the agent must deal with first - surface it prominently
   // even on pages where clickable detection stays off.
   let OCCLUDER = null;
   (() => {
@@ -372,7 +372,7 @@
     if (label) line += ' "' + label.replace(/"/g, '\\"') + '"';
     else if (clickable) {
       // Icon-only clickables: developer-facing id/class names are the best
-      // available handle ("#close-email", ".star.clicked" — state included).
+      // available handle ("#close-email", ".star.clicked" - state included).
       if (el.id) line += ' #' + el.id;
       else if (typeof el.className === 'string' && el.className.trim()) {
         line += ' ' + el.className.trim().split(/\s+/).slice(0, 2).map(c => '.' + c).join('');

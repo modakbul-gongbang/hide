@@ -718,9 +718,9 @@ async fn changed(
                 let top = page.top.clone();
                 let streak = page.dom(&top, "streak", json!({"changed": false})).await?;
                 let streak = streak["streak"].as_u64().unwrap_or(1);
-                let mut message = "# changed: no visible change within ~2s — the action was dispatched, but the page may still be updating or the result may be in another display or a dialog; confirm with hide browser wait or snapshot --diff BEFORE repeating the action".to_owned();
+                let mut message = "# changed: no visible change within ~2s - the action was dispatched, but the page may still be updating or the result may be in another display or a dialog; confirm with hide browser wait or snapshot --diff BEFORE repeating the action".to_owned();
                 if streak >= STALL_STREAK {
-                    message.push_str(&format!("\n# stalled: {streak} actions in a row changed nothing — you are likely stuck (a dead control, an overlay taking the click, or a loop). Do not repeat it; try another element, dismiss the overlay, wait for the state you expect, or hand off to the operator."));
+                    message.push_str(&format!("\n# stalled: {streak} actions in a row changed nothing - you are likely stuck (a dead control, an overlay taking the click, or a loop). Do not repeat it; try another element, dismiss the overlay, wait for the state you expect, or hand off to the operator."));
                 }
                 return Ok(message);
             }

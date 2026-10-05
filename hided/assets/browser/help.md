@@ -32,13 +32,15 @@ Put `--` before a value that starts with `--`.
     # Sign in
     # http://127.0.0.1:3000/login
 
-    @1 textbox "Email" [text] = "a@b.c"
+    @1 textbox "Email" [email]
     @2 textbox "Password" [password]
-    @3 checkbox "Remember me" [checkbox checked]
-    @4 button "Sign in" (disabled)
-    @5 link "Forgot?" -> /reset
+    @3 textbox "Remember me" [checkbox checked]
+    @4 combobox "Plan" = "Monthly"
+    @5 button "Sign in" (disabled)
+    @6 link "Forgot?" -> /reset
 
 Each line carries the element's current state: checked, disabled, a select's chosen value, a link's target.
+A field with no label of its own shows its value, or its placeholder while empty.
 Password, card number, CVC, one-time code and similar values are never shown; you see the placeholder or label instead.
 `overlay (covers page; interact or dismiss first)` means a modal or cookie wall covers the page: act on it before anything under it.
 `(clickable)` marks a control with no role that still takes clicks.
@@ -64,7 +66,7 @@ The usual loop:
 
     hide browser snapshot browser-3 --interactive
     hide browser fill browser-3 @1 "a@b.c"
-    hide browser click browser-3 @4
+    hide browser click browser-3 @5
     hide browser wait browser-3 --text "Welcome"
     hide browser snapshot browser-3 --diff
 

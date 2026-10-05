@@ -127,7 +127,7 @@
         const literal = collect(literalRe);
         const literalOnly = [...literal.matchedIdx].filter(i => !matchedIdx.has(i)).length;
         if (literalOnly > 0) {
-          literalNote = `; NOTE: read as literal text this pattern also matches ${literalOnly} line${literalOnly === 1 ? '' : 's'} NOT shown here — escape regex metacharacters if you meant the literal string`;
+          literalNote = `; NOTE: read as literal text this pattern also matches ${literalOnly} line${literalOnly === 1 ? '' : 's'} NOT shown here - escape regex metacharacters if you meant the literal string`;
         }
       }
     }
@@ -163,7 +163,7 @@
     if (changed.length > 40) {
       return lines.slice(0, 3).join('\n')
         + '\n' + changed.slice(0, 12).join('\n')
-        + `\n# changed: large update (${changed.length} changed lines — navigation or dynamic page); showing first 12, use snapshot for the rest`;
+        + `\n# changed: large update (${changed.length} changed lines - navigation or dynamic page); showing first 12, use snapshot for the rest`;
     }
     if (diff.length > 4000) return diff.slice(0, 4000) + '\n# changed: output truncated; take a full snapshot if needed';
     return diff;
