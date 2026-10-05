@@ -35,6 +35,8 @@ pub enum CommandKind {
     BrowserConnect {
         display_id: Option<String>,
     },
+    /// `hide browser <verb> <display> ...`: read or act on a page.
+    BrowserPage(crate::browser_page::Command),
     WorkspaceBootstrap,
     WorkspaceInfo,
     ViewList,
@@ -47,7 +49,7 @@ pub enum CommandKind {
     },
 }
 
-const BROWSER_USAGE: &str = "usage: hide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>] | connect [--display <id>]";
+const BROWSER_USAGE: &str = "usage: hide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>] | connect [--display <id>] | help | <command> <display> ... (see hide browser help)";
 
 pub fn parse_args(args: &[String]) -> Result<CommandKind, String> {
     let mut iter = args.iter().skip(1);
@@ -216,6 +218,9 @@ fn parse_view<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<CommandK
 
 fn parse_browser<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<CommandKind, String> {
     let verb = iter.next().map(String::as_str);
+    if let Some(verb) = verb.filter(|verb| crate::browser_page::VERBS.contains(verb)) {
+        return crate::browser_page::parse(verb, iter).map(CommandKind::BrowserPage);
+    }
     if verb == Some("connect") {
         let display_id = match (iter.next().map(String::as_str), iter.next(), iter.next()) {
             (None, None, None) => None,
@@ -260,8 +265,13 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
         println!("{}", crate::delivery_cli::USAGE);
         println!("{}", crate::agent_cli::USAGE);
         println!(
-            "hide workspace info\nhide file open <path> [--beside] [--reveal] [--request-id <id>]\nhide diff open <path> [--beside] [--reveal] [--request-id <id>]\nhide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>]\nhide browser connect [--display <id>]\nhide view list\nhide view status <view-id>\nhide view select <view-id> [--reveal] [--request-id <id>]\nhide view close <view-id> [--request-id <id>]\nhide view split <view-id> --area <area-id> --edge left|right|up|down [--request-id <id>]\nhide view move <view-id> --area <area-id> --index <n> [--request-id <id>]\nEach Workspace command requires a live Hide renderer and a caller Hide can bind to a checkout, an attested Herdr pane or a shell inside a registered checkout; it never starts Hide."
+            "hide workspace info\nhide file open <path> [--beside] [--reveal] [--request-id <id>]\nhide diff open <path> [--beside] [--reveal] [--request-id <id>]\nhide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>]\nhide browser connect [--display <id>]\nhide browser snapshot|click|fill|type|press|hover|drag|scroll|wait|screenshot|eval|console|network <display> ...\nhide browser help\nhide view list\nhide view status <view-id>\nhide view select <view-id> [--reveal] [--request-id <id>]\nhide view close <view-id> [--request-id <id>]\nhide view split <view-id> --area <area-id> --edge left|right|up|down [--request-id <id>]\nhide view move <view-id> --area <area-id> --index <n> [--request-id <id>]\nEach Workspace command requires a live Hide renderer and a caller Hide can bind to a checkout, an attested Herdr pane or a shell inside a registered checkout; it never starts Hide."
         );
+        return Ok(());
+    }
+    // The agent guide needs no daemon and no environment.
+    if kind == CommandKind::BrowserPage(crate::browser_page::Command::Help) {
+        print!("{}", crate::browser_page::HELP);
         return Ok(());
     }
     let env = match env::load() {
@@ -276,6 +286,7 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
                     | CommandKind::ViewStatus { .. }
                     | CommandKind::BrowserOpen { .. }
                     | CommandKind::BrowserConnect { .. }
+                    | CommandKind::BrowserPage(_)
                     | CommandKind::WorkspaceAction { .. }
             ) =>
         {
@@ -319,6 +330,7 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
             println!("{answer}");
             Ok(())
         }
+        CommandKind::BrowserPage(command) => crate::browser_page::run(&env, command),
         CommandKind::WorkspaceBootstrap => {
             let reference = crate::workspace_cli::bootstrap(&env, false)?;
             println!("{}", serde_json::json!({"ok":true,"reference":reference}));
@@ -411,7 +423,7 @@ fn workspace_action_value(
 
 /// What the caller can do about a refused credential bootstrap. The daemon
 /// answers the bootstrap with a reason only, so the CLI names the next step.
-fn bootstrap_next_action(reason: &str) -> &'static str {
+pub(crate) fn bootstrap_next_action(reason: &str) -> &'static str {
     match reason {
         "checkout_not_registered" => crate::pane_auth::CHECKOUT_NEXT_ACTION,
         "caller_unavailable" => "Retry from a live shell inside a registered project checkout",

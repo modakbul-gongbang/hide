@@ -885,6 +885,9 @@ async fn scoped_client_loop(
         Query(herdr_core::workspace_control::Query),
         Action(herdr_core::workspace_control::Action),
         BrowserConnect(Option<String>),
+        /// `hide browser` page commands: the same checks as a display
+        /// connection, then this socket carries the CDP frames.
+        BrowserRelay(String),
         Delivery(herdr_core::delivery::Command, Option<String>),
     }
     let previous = state.clients.fetch_add(1, Ordering::SeqCst);
@@ -894,6 +897,11 @@ async fn scoped_client_loop(
         return;
     }
     let incoming = tokio::time::timeout(Duration::from_secs(10), socket.recv()).await;
+    // Set only for an admitted `browser_relay`: its slot, its display and the
+    // gateway socket it pumps once the answer and the claim are through.
+    let mut relay = None;
+    let mut relay_for: Option<String> = None;
+    let mut relay_slot = None;
     let response = match incoming {
         Ok(Some(Ok(Message::Text(text)))) if text.len() <= 128 * 1024 => {
             match serde_json::from_str::<Value>(&text) {
@@ -916,6 +924,12 @@ async fn scoped_client_loop(
                                 }
                                 _ => None,
                             },
+                            _ => None,
+                        },
+                        Some("browser_relay") => match value.get("display_id") {
+                            Some(Value::String(id)) if !id.is_empty() && id.len() <= 256 => {
+                                Some(ScopedRequest::BrowserRelay(id.clone()))
+                            }
                             _ => None,
                         },
                         Some("workspace_action") => {
@@ -963,6 +977,14 @@ async fn scoped_client_loop(
                         let Some(command) = command else {
                             unreachable!("validated above")
                         };
+                        let relay_display = match &command {
+                            ScopedRequest::BrowserRelay(id) => Some(id.clone()),
+                            _ => None,
+                        };
+                        relay_for.clone_from(&relay_display);
+                        relay_slot = relay_display
+                            .as_ref()
+                            .map(|_| state.browser_control.acquire_relay());
                         let core = Arc::clone(&state.core);
                         let registry = Arc::clone(&state.pane_capabilities);
                         let renderers = Arc::clone(&state.renderers);
@@ -971,7 +993,10 @@ async fn scoped_client_loop(
                         let herdr_socket = state.herdr_socket.clone();
                         let query_token = token.clone();
                         let command_request_id = request_id.clone();
-                        let outcome = tokio::task::spawn_blocking(move || {
+                        let outcome = if let Some(Err((reason, next_action))) = &relay_slot {
+                            Ok(Err(((*reason).to_owned(), *next_action)))
+                        } else {
+                            tokio::task::spawn_blocking(move || {
                             let cap = registry
                                 .validate(&query_token, herdr_socket.as_deref(), &core)
                                 .map_err(|reason| (reason.to_owned(), crate::pane_auth::refusal_next_action(reason)))?;
@@ -994,6 +1019,20 @@ async fn scoped_client_loop(
                                         return Err((reason.to_owned(), next_action));
                                     }
                                     browser_control.connect(&result, display_id.as_deref())
+                                        .map_err(|(reason, next_action)| (reason.to_owned(), next_action))?
+                                }
+                                ScopedRequest::BrowserRelay(display_id) => {
+                                    if desktop_renderers.load(Ordering::SeqCst) == 0 {
+                                        return Err(("browser_unsupported".to_owned(), "Open the Hide desktop app and retry"));
+                                    }
+                                    let result = core.workspace_query(&cap.context.device_id, &cap.pane_id,
+                                        herdr_core::workspace_control::Query::ViewList)
+                                        .map_err(|refusal| (refusal.reason.to_owned(), refusal.next_action))?;
+                                    if result.context != cap.context {
+                                        let (reason, next_action) = cap.changed_refusal();
+                                        return Err((reason.to_owned(), next_action));
+                                    }
+                                    browser_control.connect(&result, Some(&display_id))
                                         .map_err(|(reason, next_action)| (reason.to_owned(), next_action))?
                                 }
                                 ScopedRequest::Delivery(command, hint) => {
@@ -1074,7 +1113,31 @@ async fn scoped_client_loop(
                             };
                             Ok::<_, (String, &str)>(result)
                         })
-                        .await;
+                        .await
+                        };
+                        // The relay's gateway side opens before the answer,
+                        // so a refused upgrade is a reason, not a dropped
+                        // socket; its URL stays in this process.
+                        let outcome = match (outcome, &relay_display) {
+                            (Ok(Ok(result)), Some(display_id)) => {
+                                match result["browser_ws_url"].as_str() {
+                                    Some(url) => match crate::browser_relay::connect(url).await {
+                                        Ok(gateway) => {
+                                            relay = Some(gateway);
+                                            Ok(Ok(json!({"display_id": display_id})))
+                                        }
+                                        Err((reason, next_action)) => {
+                                            Ok(Err((reason.to_owned(), next_action)))
+                                        }
+                                    },
+                                    None => Ok(Err((
+                                        "browser_control_unavailable".to_owned(),
+                                        "Reconnect the Hide desktop app and retry",
+                                    ))),
+                                }
+                            }
+                            (outcome, _) => outcome,
+                        };
                         match outcome {
                             Ok(Ok(result)) => {
                                 json!({"type":"workspace_result","request_id":request_id,"ok":true,"result":result})
@@ -1103,14 +1166,25 @@ async fn scoped_client_loop(
         .is_ok()
     {
         let claim = tokio::time::timeout(Duration::from_secs(2), socket.recv()).await;
+        let mut claimed = false;
         if matches!(claim, Ok(Some(Ok(Message::Text(text)))) if text == r#"{"type":"workspace_claim"}"#)
         {
             let answer = match state.pane_capabilities.claim(&token) {
-                Ok(()) => json!({"type":"workspace_claimed"}),
+                Ok(()) => {
+                    claimed = true;
+                    json!({"type":"workspace_claimed"})
+                }
                 Err(reason) => json!({"type":"workspace_claim_refused","reason":reason}),
             };
             let _ = socket.send(Message::Text(answer.to_string().into())).await;
         }
+        // A relay starts only for a caller that completed the claim, and
+        // holds its slot until the pump ends.
+        if let (Some(gateway), true) = (relay.take(), claimed) {
+            crate::browser_relay::pump(&mut socket, gateway, relay_for.as_deref().unwrap_or(""))
+                .await;
+        }
+        drop(relay_slot);
     }
     let _ = socket.send(Message::Close(None)).await;
     if one_shot {
