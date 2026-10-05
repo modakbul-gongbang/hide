@@ -29,12 +29,12 @@
 # before its lanes started. A run therefore uses two macOS jobs: the Electron
 # end-to-end and the web end-to-end's `@platform` tests, the ones that touch
 # what differs by operating system (Trash, process ownership, file watching and
-# saving, worktree paths, terminal input, ⌘ chords and Korean input), which
-# also runs the remote mailbox lane over private SSH.
+# saving, worktree paths, terminal input, ⌘ chords and Korean input).
 # Everything else runs on Linux: the Rust suite, the unit suites, the invariant
-# checks and the whole web end-to-end, dealt out to six shards by
-# `web-e2e.yml`. `nightly.yml` runs the whole web end-to-end on macOS, so the
-# move costs no macOS coverage, only its delay. On Windows, `windows check`
+# checks, the whole web end-to-end, dealt out to six shards by `web-e2e.yml`,
+# and the remote mailbox lane over private SSH (`remote-mailbox`).
+# `nightly.yml` runs the whole web end-to-end on macOS, so the move of the
+# web end-to-end costs no macOS coverage, only its delay. On Windows, `windows check`
 # compiles the workspace and runs the daemon's and the app's suites there,
 # beside the OS contract's Windows leg (issue #293), and `windows e2e` runs the
 # browser `@platform` tests.
@@ -431,11 +431,71 @@ jobs:
       herdr-platform: macos-aarch64
       shards: 1
       grep: "@platform"
-      # The remote mailbox lane needs a macOS runner, a Rust build and the
-      # pinned Herdr, which this job already has. It ran in `desktop-e2e`, the
-      # longest job of a run (13.8 minutes against this job's 9, 2026-10-05),
-      # where its 2 minutes set the time `verify` took.
-      remote-mailbox: true
+
+  # The remote mailbox crate-boundary lane (herdr-core/tests/remote_delivery.rs,
+  # docs/TESTING.md): the candidate CLI binaries, two private pinned Herdr
+  # servers and a loopback SSH server. It has its own job because it was the
+  # tail of `web e2e (macOS)` (6.8 minutes of `@platform` tests, then 3.2 of
+  # this lane after a 4.4-minute build of every CLI binary, 14.4 minutes in
+  # all, the longest job of a run on 2026-10-05) and it runs on Linux: it
+  # checks the SSH return route, helper attestation and the durable mailbox,
+  # none of which the operating system changes. What differs by system under
+  # it (process lookup, files, the local stream) is `os-contract`'s and
+  # `windows check`'s to prove. It is planned with `web-e2e-platform`.
+  remote-mailbox:
+    name: remote mailbox
+    needs: plan
+    if: contains(fromJSON(needs.plan.outputs.lanes), 'remote-mailbox')
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - uses: actions/checkout@v7
+        timeout-minutes: 5
+      - uses: Swatinem/rust-cache@v2
+        timeout-minutes: 5
+        with:
+          workspaces: ". -> target"
+          # Its own key: this build adds 48 dependencies the hided build does
+          # not, and a cache saves only under a new key.
+          shared-key: web-e2e-mailbox
+          save-if: ${{ github.ref == 'refs/heads/main' }}
+      - name: Install zsh
+        # The fixture starts every pane's shell from SHELL=/bin/zsh, and the
+        # Herdr fetch script is zsh; the image has neither. The mirror can
+        # stall (web-e2e.yml), so the fetch retries and gives up on a silent
+        # connection.
+        timeout-minutes: 5
+        run: |
+          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' \
+            | sudo tee /etc/apt/apt.conf.d/99-ci-timeouts >/dev/null
+          sudo apt-get install -y --no-install-recommends zsh
+      - name: Install cargo-nextest
+        timeout-minutes: 3
+        run: bash scripts/install-nextest.sh
+      - name: Build the CLI binaries
+        # hided, hide, the agent hooks and the host helper: the lane stages and
+        # starts all four.
+        timeout-minutes: 20
+        run: bash scripts/verify-cargo.sh cli
+      - name: Fetch the pinned Herdr runtime
+        id: herdr
+        timeout-minutes: 5
+        run: echo "bin=$(zsh scripts/fetch-herdr-runtime.sh --platform linux-x86_64)" >> "$GITHUB_OUTPUT"
+      - name: Remote mailbox over private SSH
+        timeout-minutes: 10
+        env:
+          HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
+        run: bash scripts/verify-cargo.sh nextest --profile ci -p herdr-core --test remote_delivery --run-ignored only
+      - name: Report flaky tests
+        if: ${{ !cancelled() }}
+        continue-on-error: true
+        timeout-minutes: 5
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 scripts/ci-flaky-report.py --suite rust --junit target/nextest/ci/junit*.xml
 
   # The OS contract's Linux and Windows legs (see os-contract.yml). Its macOS
   # leg runs in `desktop-e2e` below, on the runner that job already holds.
@@ -546,7 +606,7 @@ jobs:
 
   verify:
     name: verify
-    needs: [plan, policy, rust, web-checks, desktop-checks, os-contract, windows-check, windows-e2e, web-e2e, web-e2e-platform, desktop-e2e]
+    needs: [plan, policy, rust, web-checks, desktop-checks, os-contract, windows-check, windows-e2e, web-e2e, web-e2e-platform, remote-mailbox, desktop-e2e]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5

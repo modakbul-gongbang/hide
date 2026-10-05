@@ -35,7 +35,8 @@ Pick the cheapest layer that can observe the result.
 An e2e spec is for a flow that crosses a boundary, not for a rule a unit or core test can state.
 The external crate-boundary lane in `herdr-core/tests/remote_delivery.rs` runs candidate CLI binaries, two private pinned Herdr servers and a loopback SSH server.
 It verifies real helper attestation and reverse-forward mailbox intake, the two-second disconnected hook boundary, and reconnect without duplicate delivery.
-Its explicit ignore marks the external prerequisites; the macOS `@platform` web e2e job (`web-e2e.yml` with `remote-mailbox`) builds those binaries and runs this lane with `--run-ignored only` after its suite.
+Its explicit ignore marks the external prerequisites; the `remote mailbox` job in `pr.yml` (a Linux runner, planned with the macOS `@platform` lane) builds those binaries, fetches the pinned Herdr and runs this lane with `--run-ignored only`.
+It runs on Linux because nothing in it changes with the operating system: SSH, the helper's attestation and the mailbox are the same code, and what differs by system beneath them is the `os-contract` lane's and `windows check`'s to prove.
 The fixture owns every process tree and SSH channel job, bounds retained jobs and reads, and keeps account configuration and run evidence in a private ignored run directory.
 Each spec starts its own Herdr, hided and browser, so a rule restated end to end costs runner minutes on every pull request and fails for reasons that have nothing to do with the rule.
 Keep one representative journey per user-visible flow; when a long spec carries an independent contract, split that contract into a small spec that still runs against the real pinned Herdr and hided rather than adding steps to the journey.
@@ -275,6 +276,7 @@ The crate's own `AGENTS.md` says where the file goes; this section says how the 
 ## Which lanes a pull request runs
 
 `pr.yml`'s `plan` job reads the paths a pull request changes against the base it merges into and plans the lanes they need; `scripts/ci-plan.py` is the one place the rules live, and `scripts/tests/test_ci_plan.py` checks them against real paths.
+`remote-mailbox` (the remote mailbox lane, its own Linux job) is planned exactly when the macOS `@platform` lane is, so the lane keeps the reach it had when it ran inside that job.
 Every lane is a job whose `if:` asks the plan, and `verify` passes only when every planned lane succeeded and every other lane was skipped.
 A planned lane that was skipped, failed or cancelled fails `verify`, so a wrong `if:` shows up as a red check rather than a lane quietly left out.
 
@@ -284,11 +286,11 @@ A planned lane that was skipped, failed or cancelled fails `verify`, so a wrong 
 | `design/` | `policy`; `design-contract.yml` checks the library |
 | A file a lane outside its folder reads (`READERS` in the script): the root `AGENTS.md`, `web/src` and `hided/src`, which herdr-core's tests read; `desktop/src/main/wirePath.ts`, which web e2e specs import; `design/tokens.json`, which web tests read | also that lane, and `rust` over `herdr-core` for the first three |
 | `web/src`, `web/public`, `web/index.html`, `web/mobile.html` | `web-checks` and the Linux `web-e2e` |
-| Web code the desktop host imports or drives through native input (the host bridge, the shortcut registry, keys and keyboard, store, snapshot and socket, terminals, focus and area cycling, `App.tsx`, `main.tsx`; `SHARED_WEB` in the script) | also `desktop-checks`, `desktop-e2e`, and the `@platform` lanes on macOS and Windows |
-| A `web/e2e` spec | `web-checks` and `web-e2e`; a spec tagged `@platform` also runs the macOS and Windows `@platform` lanes |
+| Web code the desktop host imports or drives through native input (the host bridge, the shortcut registry, keys and keyboard, store, snapshot and socket, terminals, focus and area cycling, `App.tsx`, `main.tsx`; `SHARED_WEB` in the script) | also `desktop-checks`, `desktop-e2e`, the `@platform` lanes on macOS and Windows, and `remote-mailbox` |
+| A `web/e2e` spec | `web-checks` and `web-e2e`; a spec tagged `@platform` also runs the macOS and Windows `@platform` lanes and `remote-mailbox` |
 | `desktop/src`, `desktop/static`, a `desktop/e2e` spec | `desktop-checks` and `desktop-e2e`; `desktop/src/main` also runs `windows-check`, where the main process's unit suite runs on Windows |
 | A Rust crate | `rust` over the crate and every crate that depends on it (from `cargo metadata`), `windows-check`, which compiles every crate for Windows, and the Linux `web-e2e`, since every crate reaches `hided` |
-| `herdr-core`, `hided`, `hide-platform`, `hide-herdr-client`, `hide-host`, `hide-kit`, `hide-agent-hooks` | also `os-contract`, `windows-e2e`, the macOS `@platform` lane and `desktop-e2e` |
+| `herdr-core`, `hided`, `hide-platform`, `hide-herdr-client`, `hide-host`, `hide-kit`, `hide-agent-hooks` | also `os-contract`, `windows-e2e`, the macOS `@platform` lane, `remote-mailbox` and `desktop-e2e` |
 | The paths `POLICY_ONLY` names, which no lane reads: `agents/`, `site/`, `tools/`, `spikes/`, `.gitignore` files, the PR template and `dependabot.yml`, the workflows no `pr.yml` job calls (`nightly`, `package`, `release`, `herdr-update`, `design-contract`), `scripts/tests/`, the policy `check-*` scripts and the design, release and measurement scripts, and Markdown below a folder no rule claims | `policy` alone |
 | The paths `NAMED_LANES` names, whose readers are a known set: a `web/e2e` file that is not a spec (the `desktop` suites import it, and `desktop/e2e` unit tests run in `windows-check`), a `desktop/e2e` file that is not a spec, the Playwright, eslint and vitest configurations, `web/scripts`, `desktop/scripts` | the lanes that read it, listed in the script and its test; never `rust` or `os-contract` |
 | `.github/` (`pr.yml`, `web-e2e.yml`, `os-contract.yml`), `scripts/` the lanes call (`verify-*.sh`, `ci-flaky-report.py`, `ci-plan.py`, ...), `contracts/` (the Herdr pin and schemas), any `package.json`, lockfile, the workspace `Cargo.toml`, a type change, and any path no row above names | every lane |

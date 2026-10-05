@@ -31,6 +31,7 @@ LANES = (
     "windows-e2e",
     "web-e2e",
     "web-e2e-platform",
+    "remote-mailbox",
     "desktop-e2e",
 )
 
@@ -46,9 +47,6 @@ OS_CRATES = {
     "hide-kit",
     "hide-platform",
 }
-# `web-e2e-platform` also runs the remote mailbox lane over private SSH, which
-# builds the CLI from these crates; a rule that plans it for fewer of them
-# leaves that lane out too.
 OS_LANES = ("os-contract", "windows-check", "windows-e2e", "web-e2e-platform", "desktop-e2e")
 
 # Web files the desktop host imports or drives through native input: the host
@@ -295,6 +293,10 @@ def select(entries, crates, root=ROOT, full_reason=None):
         for lane in LANES:
             reasons[lane] = list(full)
         packages = {crate["name"] for crate in crates.values()}
+    # The remote mailbox lane has its own job but the reach `web-e2e-platform`
+    # had when it ran there: every change that plans the platform lane plans it.
+    if reasons["web-e2e-platform"] and not reasons["remote-mailbox"]:
+        reasons["remote-mailbox"].append("the remote mailbox lane follows the macOS @platform lane")
     # The OS contract's macOS leg runs inside `desktop e2e`.
     if reasons["os-contract"] and not reasons["desktop-e2e"]:
         reasons["desktop-e2e"].append("the OS contract's macOS leg")
