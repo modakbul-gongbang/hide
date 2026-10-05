@@ -33,7 +33,7 @@ fn set_up(fixture: &Fixture, folder: &str) {
 /// open for writing (ETXTBSY), so this waits until it can be.
 fn version_program(path: &Path, body: &str) {
     executable(path, body);
-    for _ in 0..100 {
+    for _ in 0..20_000 {
         let started = std::process::Command::new(path)
             .arg("--executable-probe")
             .stdin(std::process::Stdio::null())
@@ -41,9 +41,7 @@ fn version_program(path: &Path, body: &str) {
             .stderr(std::process::Stdio::null())
             .status();
         match started {
-            Err(error) if error.raw_os_error() == Some(26) => {
-                std::thread::sleep(std::time::Duration::from_millis(20));
-            }
+            Err(error) if error.raw_os_error() == Some(26) => std::thread::yield_now(),
             _ => return,
         }
     }

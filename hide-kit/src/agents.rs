@@ -520,17 +520,18 @@ const UNREAD_VERSION_RETRY: std::time::Duration = std::time::Duration::from_secs
 
 type VersionKey = (PathBuf, Option<std::time::SystemTime>, u64);
 
+/// What was answered for a program's version, and when it was asked.
+type VersionAnswers = std::collections::HashMap<VersionKey, (Option<String>, std::time::Instant)>;
+
 /// `binary --version`, asked at most once per version of the file: Settings
 /// re-reads the kit every few seconds, and a subprocess per read would put a
 /// slow or hanging program on the kit worker for as long as Settings is open.
 /// The probe itself is bounded (`hide_agent_hooks::program_version`).
 pub(crate) fn program_version(binary: &Path) -> Option<String> {
-    use std::collections::HashMap;
     use std::sync::{LazyLock, Mutex};
     use std::time::Instant;
 
-    static ANSWERS: LazyLock<Mutex<HashMap<VersionKey, (Option<String>, Instant)>>> =
-        LazyLock::new(|| Mutex::new(HashMap::new()));
+    static ANSWERS: LazyLock<Mutex<VersionAnswers>> = LazyLock::new(Mutex::default);
     let key = std::fs::metadata(binary)
         .map(|meta| (binary.to_path_buf(), meta.modified().ok(), meta.len()))
         .ok();

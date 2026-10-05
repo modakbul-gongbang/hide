@@ -19,9 +19,9 @@ use hide_agent_hooks::guidance::GuidanceAgent;
 use hide_agent_hooks::{HookStatus, InstallFailure};
 
 use crate::agents::{
-    ADAPTERS, AgentAdapter, AgentReport, Availability, Detection, HookSupport, PieceReport,
-    SkillDir, SkillObserved, adapter_of_part, availability, install_skill, observe_skill,
-    program_version, remove_skill, skill_location,
+    ADAPTERS, AgentAdapter, AgentReport, Detection, HookSupport, PieceReport, SkillDir,
+    SkillObserved, adapter_of_part, availability, install_skill, observe_skill, program_version,
+    remove_skill, skill_location,
 };
 use crate::record::Record;
 use crate::{ComponentId, ComponentState, KitTarget, Observed, RemoveOutcome, Scope};
