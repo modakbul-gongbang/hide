@@ -1029,6 +1029,10 @@ fn a_fresh_machine_leaves_codexs_config_alone_until_codex_is_chosen() {
     );
     assert_eq!(fixture.daemon_setting(), "true");
     assert!(fixture.codex_writes().is_empty());
+    // The Codex launch reads the daemon from this row: it is switched off
+    // here, never installed by Hide, and still says the daemon is there.
+    let part = report.component(ComponentId::CodexPerPane).unwrap();
+    assert_eq!(part.codex_daemon, Some(true), "{part:?}");
 
     // The operator's choice to have Codex on is what lets the setting be written.
     let report = apply(&fixture.target, &Scope::agents(["codex"], []));

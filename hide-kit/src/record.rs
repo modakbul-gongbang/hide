@@ -32,6 +32,13 @@ pub(crate) struct Record {
     /// A build that does not know the field ignores it.
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     agents: BTreeMap<String, bool>,
+    /// The machine's first-run agent choice has not been answered: the hold
+    /// wrote the record and no explicit agent choice has come since. Held
+    /// here, with the choices it governs, so one file says both whether the
+    /// operator was asked and what they answered. A record without the field
+    /// is one that predates the choice, so it was never held.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    awaiting_choice: bool,
     /// There was no record file when this one was loaded: the machine has
     /// never had the kit applied. Never written.
     #[serde(skip)]
@@ -64,6 +71,21 @@ impl Record {
     /// Whether the machine has never had the kit applied.
     pub(crate) fn is_fresh(&self) -> bool {
         self.fresh
+    }
+
+    /// Whether the machine still waits for the operator's first agent choice.
+    pub(crate) fn awaiting_choice(&self) -> bool {
+        self.awaiting_choice
+    }
+
+    /// Marks the first-run choice as asked and unanswered; true when it changed.
+    pub(crate) fn await_choice(&mut self) -> bool {
+        !std::mem::replace(&mut self.awaiting_choice, true)
+    }
+
+    /// Marks it answered; true when it changed.
+    pub(crate) fn answer_choice(&mut self) -> bool {
+        std::mem::replace(&mut self.awaiting_choice, false)
     }
 
     pub(crate) fn agent_choice(&self, id: &str) -> Option<bool> {
@@ -158,6 +180,7 @@ pub(crate) fn save(home: &Path, record: &Record) -> Result<(), String> {
         cli_destination: record.cli_destination.clone(),
         retired: record.retired.clone(),
         agents: record.agents.clone(),
+        awaiting_choice: record.awaiting_choice,
         fresh: false,
     };
     let mut bytes = serde_json::to_vec_pretty(&record).map_err(|error| error.to_string())?;

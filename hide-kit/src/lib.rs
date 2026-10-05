@@ -129,8 +129,13 @@ pub enum ComponentState {
     /// The machine has nothing for this part to attach to, such as an agent
     /// runtime that is not set up there.
     Absent,
-    /// The operator turned the part off, or undid it outside Hide; no pass
-    /// puts it back and nothing asks them to (D-24, B36).
+    /// The operator turned the part off, or undid it outside Hide, or the
+    /// agent whose switch governs it is off, whether or not Hide ever
+    /// installed it; no pass puts it back and nothing asks them to (D-24,
+    /// B36). Every reader treats it as a choice, never as damage: the machine
+    /// row offers no Reinstall, a device's hook reads "switched off", and
+    /// the Codex launch reads the daemon setting as there (`herdr-core`'s
+    /// `codex_launch`).
     Off,
 }
 
@@ -168,8 +173,10 @@ pub struct KitReport {
     /// #517); empty in a report from a build that predates them.
     #[serde(default)]
     pub agents: Vec<AgentReport>,
-    /// This pass was the first on the machine and left the agents that are
-    /// on by default off until the operator chooses (first-run onboarding).
+    /// The machine's record says the operator has not answered the first-run
+    /// agent choice: its first pass left the agents that are on by default off
+    /// until they do, and an explicit agent choice clears it. It reads the
+    /// record, so it stays true across launches until answered.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub held_for_onboarding: bool,
     /// What an apply took out of the retired labels plugin; empty when there
@@ -300,6 +307,19 @@ impl Scope {
             ..Self::default()
         }
         .settled()
+    }
+
+    /// The answer to the first-run agent choice with `on` switched on: every
+    /// agent that is on by default and not chosen is named off, so an answer
+    /// with nothing chosen is still an explicit one, which is what clears the
+    /// machine's wait for it.
+    pub fn first_run<'a>(on: impl IntoIterator<Item = &'a str>) -> Self {
+        let on: Vec<&str> = on.into_iter().collect();
+        let off = agents::ADAPTERS
+            .iter()
+            .filter(|adapter| adapter.default_on && !on.contains(&adapter.id))
+            .map(|adapter| adapter.id);
+        Self::agents(on.iter().copied(), off)
     }
 
     /// An agent named both ways in one request is switched off, the safer
@@ -517,10 +537,10 @@ pub fn status(target: &KitTarget) -> KitReport {
     let mut record = record::load(&target.home);
     // A machine the kit never ran on reads as `apply` will leave it until the
     // operator chooses; nothing is written for that.
-    let held = record
-        .as_mut()
-        .map(agent_kit::hold_for_onboarding)
-        .unwrap_or(false);
+    if let Ok(record) = record.as_mut() {
+        agent_kit::hold_for_onboarding(record);
+    }
+    let held = record.as_ref().is_ok_and(record::Record::awaiting_choice);
     let recorded = |id| record.as_ref().is_ok_and(|record| record.contains(id));
     let switched_off = |id| {
         record
@@ -575,9 +595,9 @@ pub fn apply(target: &KitTarget, scope: &Scope) -> KitReport {
     };
     let labels_retirement = labels::retire(target);
     let mut changed = false;
-    let held_for_onboarding =
-        record_failure.is_none() && agent_kit::hold_for_onboarding(&mut record);
-    changed |= held_for_onboarding;
+    if record_failure.is_none() {
+        changed |= agent_kit::hold_for_onboarding(&mut record);
+    }
     if retirement_failure.is_none() && !record.has_retired(HCOORD_PLUGIN_ID) {
         record.mark_retired(HCOORD_PLUGIN_ID);
         changed = true;
@@ -674,6 +694,11 @@ pub fn apply(target: &KitTarget, scope: &Scope) -> KitReport {
         &agent_kit::part_views(&components),
     );
     changed |= agents_changed;
+    // What the record says after this pass: a machine that was held and not
+    // answered still waits, and a save that fails below leaves the file as it
+    // was, so the next pass holds again rather than reading a lost hold as an
+    // answer.
+    let held_for_onboarding = record_failure.is_none() && record.awaiting_choice();
     if changed
         && record_failure.is_none()
         && let Err(reason) = record::save(&target.home, &record)

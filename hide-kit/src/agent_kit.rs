@@ -54,9 +54,11 @@ pub(crate) fn enabled(record: &Record, scope: &Scope, adapter: &AgentAdapter) ->
 
 /// A machine the kit has never been applied to waits for the operator's first
 /// choice before any agent gets anything: the agents that are on by default
-/// are recorded off, and an operator's switch on in the same pass still wins.
-/// A machine with a record keeps what it had, so an upgrade changes nothing.
-/// True when this pass held them.
+/// are recorded off, the record is marked as awaiting the choice, and an
+/// operator's switch on in the same pass still wins. A machine with a record
+/// keeps what it had, so an upgrade changes nothing. The mark lives in the
+/// record, so it outlasts a quit between the hold and the answer.
+/// True when this pass changed the record.
 pub(crate) fn hold_for_onboarding(record: &mut Record) -> bool {
     if !record.is_fresh() {
         return false;
@@ -64,7 +66,14 @@ pub(crate) fn hold_for_onboarding(record: &mut Record) -> bool {
     for adapter in ADAPTERS.iter().filter(|adapter| adapter.default_on) {
         record.set_agent_choice(adapter.id, false);
     }
-    true
+    record.await_choice()
+}
+
+/// A scope that names an agent is the operator's explicit choice, which
+/// answers the first-run question (the choices themselves are recorded by
+/// [`apply`]).
+fn answers_choice(scope: &Scope) -> bool {
+    !scope.agent_on.is_empty() || !scope.agent_off.is_empty()
 }
 
 /// What the agent switch says about the kit part that is its hook.
@@ -531,6 +540,9 @@ pub(crate) fn apply(
     // What the operator chose now is the record's, whatever else this pass
     // can or cannot do for the agent. A switch for an agent that is not set
     // up here has nothing to switch.
+    if record_readable && answers_choice(scope) {
+        changed |= record.answer_choice();
+    }
     for adapter in ADAPTERS {
         let detected = detection.detected(adapter);
         if record_readable {
