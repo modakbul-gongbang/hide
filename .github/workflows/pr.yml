@@ -490,16 +490,17 @@ jobs:
           # not, and a cache saves only under a new key.
           shared-key: web-e2e-mailbox
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Install zsh
+      - name: Install zsh and the SFTP server
         # The fixture starts every pane's shell from SHELL=/bin/zsh, and the
-        # Herdr fetch script is zsh; the image has neither. The mirror can
-        # stall (web-e2e.yml), so the fetch retries and gives up on a silent
+        # Herdr fetch script is zsh; the image has neither. The helper install
+        # needs the SFTP server the fixture's sshd serves. The mirror can
+        # stall (web-e2e.yml), so apt retries and gives up on a silent
         # connection.
         timeout-minutes: 5
         run: |
           printf 'Acquire::Retries "3";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' \
             | sudo tee /etc/apt/apt.conf.d/99-ci-timeouts >/dev/null
-          sudo apt-get install -y --no-install-recommends zsh
+          sudo apt-get install -y --no-install-recommends zsh openssh-sftp-server
       - name: Install cargo-nextest
         timeout-minutes: 3
         run: bash scripts/install-nextest.sh
@@ -511,7 +512,11 @@ jobs:
       - name: Fetch the pinned Herdr runtime
         id: herdr
         timeout-minutes: 5
-        run: echo "bin=$(zsh scripts/fetch-herdr-runtime.sh --platform linux-x86_64)" >> "$GITHUB_OUTPUT"
+        # Assigned first, so a failed fetch fails this step rather than
+        # handing the next one an empty path.
+        run: |
+          bin=$(zsh scripts/fetch-herdr-runtime.sh --platform linux-x86_64)
+          echo "bin=$bin" >> "$GITHUB_OUTPUT"
       - name: Remote mailbox over private SSH
         timeout-minutes: 10
         env:
