@@ -342,15 +342,10 @@ fn a_device_file_is_read_on_a_worker_and_shows_as_a_tab_when_it_arrives() {
 }
 
 /// A read still running when its device is removed opens no tab when its
-/// answer lands.
-///
-/// The open's workers hold weak references to the runtime until they have
-/// handed their answers over, so the weak count falling back to what it was
-/// before the open is the read's answer having landed.
+/// answer lands, and the log says the answer was dropped.
 #[test]
 fn a_device_read_that_lands_after_the_device_was_removed_opens_nothing() {
     let f = Fixture::new();
-    let idle = Arc::weak_count(&f.shared);
     f.device.hold();
     f.open("a.txt");
     {
@@ -359,8 +354,8 @@ fn a_device_read_that_lands_after_the_device_was_removed_opens_nothing() {
         assert!(runtime.snapshot.editor.opening.is_empty());
     }
     f.device.release();
-    wait_for("the open's workers to hand their answers over", || {
-        Arc::weak_count(&f.shared) == idle
+    f.wait("the late answer to be dropped", |runtime| {
+        diagnostic_count(runtime, "file.open_dropped") == 1
     });
     let runtime = f.shared.lock().unwrap();
     assert!(runtime.snapshot.editor.tabs.is_empty());

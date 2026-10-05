@@ -399,9 +399,11 @@ impl Runtime {
             .collect();
     }
 
-    /// A device read came back. An answer for a request that was replaced is
-    /// dropped. The tab is shown where it was asked for; it takes the screen
-    /// only while that checkout is still the one in front (B34).
+    /// A device read came back. An answer for a request that was replaced,
+    /// or forgotten with its device, is dropped, and the log says so under
+    /// the generation `file.open_requested` named. The tab is shown where it
+    /// was asked for; it takes the screen only while that checkout is still
+    /// the one in front (B34).
     pub(super) fn ingest_document_open(
         &mut self,
         tab_id: &str,
@@ -409,6 +411,12 @@ impl Runtime {
         result: OpenResult,
     ) -> bool {
         if self.document_opens.get(tab_id).map(|open| open.generation) != Some(generation) {
+            self.push_diagnostic(
+                "file.open_dropped",
+                format!(
+                    "The read for open request {generation} came back after the request was dropped"
+                ),
+            );
             return false;
         }
         let request = self
