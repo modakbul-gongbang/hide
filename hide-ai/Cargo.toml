@@ -10,7 +10,7 @@ name = "hide_ai"
 
 [dependencies]
 hide-platform = { path = "../hide-platform" }
-jsonschema = { version = "=0.55.1", default-features = false }
+jsonschema = { version = "=0.58.1", default-features = false }
 serde = { version = "=1.0.229", features = ["derive"] }
 serde_json = "=1.0.151"
 
