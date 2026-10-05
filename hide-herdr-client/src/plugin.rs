@@ -48,21 +48,22 @@ mod tests {
     #[test]
     fn entry_matches_the_pinned_schema() {
         let entry = pinned("InstalledPluginInfo");
-        let required: Vec<&str> = entry["required"]
+        let mut required: Vec<&str> = entry["required"]
             .as_array()
             .expect("required fields")
             .iter()
             .filter_map(Value::as_str)
             .collect();
+        required.sort_unstable();
         assert_eq!(
             required,
             [
-                "plugin_id",
-                "name",
-                "version",
+                "enabled",
                 "manifest_path",
+                "name",
+                "plugin_id",
                 "plugin_root",
-                "enabled"
+                "version"
             ]
         );
         assert_eq!(

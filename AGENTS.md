@@ -91,7 +91,7 @@ The CLI is a wrapper over the same local socket API: use CLI wrappers for shell 
 - The pin lives only in `contracts/herdr-bundle.json`, and the contract is what that exact binary answers, never a copy from a Herdr checkout; `check-herdr-pin-single-source.sh` fails when anything restates it.
   Move it with `scripts/bump-herdr.sh <release-tag>`.
 - The generated wire types live in a private module of `herdr-core/src/wire.rs` (built by `herdr-core/build.rs`), so only that file can name them and an import anywhere else fails to compile.
-  Another crate reaches Herdr's typed answers through the plain-value `pub` functions of `herdr_core::wire`, or, where it cannot depend on the core (`hide-kit`), through the typed helpers of `hide-herdr-client`, which is transport only; never through a generated type.
+  Another crate reaches Herdr's typed answers through the plain-value `pub` functions of `herdr_core::wire`, or, where it cannot depend on the core (`hide-kit`), through the typed helpers of `hide-herdr-client` (transport plus the plugin registry entry); never through a generated type.
   Do not write wire deserialization in `session_sync/{projection,replica}.rs`.
   `docs/ARCHITECTURE.md` lists the schema gaps the boundary still handwrites and the tests that demand migration when the schema closes them.
 

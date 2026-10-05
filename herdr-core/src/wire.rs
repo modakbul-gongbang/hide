@@ -40,9 +40,6 @@ mod generated {
     pub mod event {
         include!(concat!(env!("OUT_DIR"), "/herdr_event.rs"));
     }
-    pub mod subscription_event {
-        include!(concat!(env!("OUT_DIR"), "/herdr_subscription_event.rs"));
-    }
     pub mod error_response {
         include!(concat!(env!("OUT_DIR"), "/herdr_error_response.rs"));
     }
@@ -2213,6 +2210,22 @@ mod tests {
             format!(
                 "The running Herdr uses protocol {received}, but Hide requires protocol {HERDR_PROTOCOL_REVISION}. When your current work is safe, stop the Herdr session and reopen Hide. Hide will start its compatible bundled Herdr. No workspace or agent was created."
             )
+        );
+    }
+
+    #[test]
+    fn phone_pane_requests_keep_their_shape() {
+        assert_eq!(
+            pane_rows_params("w1:p1", 40).unwrap(),
+            json!({"pane_id": "w1:p1", "source": "recent", "lines": 40, "format": "ansi", "strip_ansi": false})
+        );
+        assert_eq!(
+            pane_reply_params("w1:p1", "ok").unwrap(),
+            json!({"pane_id": "w1:p1", "text": "ok", "keys": ["enter"]})
+        );
+        assert_eq!(
+            pane_key_params("w1:p1", "esc").unwrap(),
+            json!({"pane_id": "w1:p1", "keys": ["esc"]})
         );
     }
 

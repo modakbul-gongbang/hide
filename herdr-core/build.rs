@@ -18,13 +18,7 @@ fn main() {
         .unwrap_or_else(|error| panic!("canonical Herdr API schema is invalid JSON: {error}"));
 
     let output_dir = PathBuf::from(env::var_os("OUT_DIR").expect("OUT_DIR is set by Cargo"));
-    for name in [
-        "request",
-        "success_response",
-        "event",
-        "subscription_event",
-        "error_response",
-    ] {
+    for name in ["request", "success_response", "event", "error_response"] {
         let mut document = schema["schemas"][name].clone();
         rewrite_refs(&mut document, &format!("#/schemas/{name}/$defs/"));
         let root = serde_json::from_value(document).expect("invalid Herdr sub-schema");
