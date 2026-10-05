@@ -96,6 +96,17 @@ fn answer(
     (changed, started)
 }
 
+fn diagnostic_messages(runtime: &Runtime, kind: &str) -> Vec<String> {
+    runtime
+        .snapshot()
+        .status
+        .diagnostics
+        .iter()
+        .filter(|diagnostic| diagnostic.kind == kind)
+        .map(|diagnostic| diagnostic.message.clone())
+        .collect()
+}
+
 fn focused_tabs(herdr: &FakeHerdr) -> Vec<String> {
     herdr
         .calls()
@@ -181,6 +192,14 @@ fn a_lost_tab_focus_answer_does_not_release_the_focus_waiting_behind_it() {
     assert!(!started, "nothing is sent behind an unknown effect");
     assert!(!runtime.control_lane.is_busy());
     assert_eq!(diagnostic_count(&runtime, "tab.focus.unknown"), 1);
+    let [message] = &diagnostic_messages(&runtime, "tab.focus.unknown")[..] else {
+        panic!("one record");
+    };
+    assert!(
+        message.contains("tab.focus focus for w-order:t2")
+            && message.contains("1 newer tab focus was not sent"),
+        "the record names the lost answer and counts what it dropped: {message}"
+    );
     assert_eq!(
         checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
         Some("w-order:t1")
@@ -452,7 +471,53 @@ fn a_lost_pane_focus_answer_does_not_release_the_tab_focus_behind_it() {
     assert!(next.is_none(), "nothing is sent behind an unknown effect");
     assert!(!runtime.control_lane.is_busy());
     assert_eq!(diagnostic_count(&runtime, "tab.focus.unknown"), 1);
+    let message = &diagnostic_messages(&runtime, "tab.focus.unknown")[0];
+    assert!(
+        message.contains("pane.focus focus for w-order:t2:p")
+            && message.contains("1 newer tab focus was not sent"),
+        "{message}"
+    );
     assert!(runtime.pending_tab_focus.is_none());
+}
+
+/// A pane focus accepted behind a pane focus whose answer was lost is
+/// discarded, and the record says so: the unknown result alone never named it.
+#[test]
+fn a_lost_pane_focus_answer_records_the_queued_pane_focus_it_drops() {
+    let (mut runtime, _checkout_id) =
+        live_tab_order_runtime("/private/tmp/hide-control-order-pane-lost-pane");
+    let tabs = ["w-order:t1", "w-order:t2", "w-order:t3"];
+    runtime.ingest_session(Ok(tab_order_payload(
+        "/private/tmp/hide-control-order-pane-lost-pane",
+        &tabs,
+        &tabs,
+        "w-order:t1",
+    )));
+    assert!(runtime.dispatch_json(&correlated_pane_focus_event("w-order:t2:p", "pane-1")));
+    let running = runtime.pane_focus_in_flight.clone().expect("on the wire");
+    assert!(runtime.dispatch_json(&correlated_pane_focus_event("w-order:t3:p", "pane-2")));
+    assert_eq!(runtime.control_lane.queued_len(), 1);
+
+    let (changed, next) = runtime.complete_lane_pane_focus(
+        running,
+        Err(live::ControlFailure::Ambiguous(
+            "pane.focus result is unknown: response timed out".into(),
+        )),
+        5,
+    );
+
+    assert!(changed);
+    assert!(next.is_none());
+    assert_eq!(runtime.control_lane.queued_len(), 0);
+    assert_eq!(diagnostic_count(&runtime, "pane.focus.unknown"), 1);
+    let [message] = &diagnostic_messages(&runtime, "pane.focus.dropped")[..] else {
+        panic!("the dropped pane focus is recorded once");
+    };
+    assert!(
+        message.contains("pane focus for w-order:t2:p")
+            && message.contains("1 queued pane focus was not sent"),
+        "{message}"
+    );
 }
 
 /// A move that waited behind other controls is stale when the operator has
@@ -624,6 +689,14 @@ fn a_lost_tab_focus_answer_does_not_release_the_pane_focus_behind_it() {
     assert!(next.is_none(), "nothing is sent behind an unknown effect");
     assert!(!runtime.control_lane.is_busy());
     assert!(runtime.pending_pane_focus.is_none());
+    let [message] = &diagnostic_messages(&runtime, "pane.focus.dropped")[..] else {
+        panic!("the dropped pane focus is recorded once");
+    };
+    assert!(
+        message.contains("tab.focus focus for w-order:t2")
+            && message.contains("1 queued pane focus was not sent"),
+        "{message}"
+    );
 }
 
 /// A move accepted on one Herdr connection is not replayed on the next one:
