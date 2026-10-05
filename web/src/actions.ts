@@ -1822,7 +1822,7 @@ export function createActions(send: DispatchFn) {
       const agent = paneId ? contextAgents(rest(), rest()?.navigator?.agents ?? []).find((row) => row.pane_id === paneId) : undefined;
       if (paneId && agent?.own_find) {
         const requestId = remoteRequestId();
-        ui().setAgentFindRequest(requestId);
+        ui().setAgentFindRequest({ id: requestId, owner: keyboardOwner() });
         dispatch({ schema_version: 2, kind: "pane_find_open", payload: { pane_id: paneId, request_id: requestId } });
         return;
       }

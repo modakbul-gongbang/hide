@@ -11,6 +11,7 @@ import { Hint } from "./components/ui/tooltip";
 import { Input } from "./components/ui/input";
 import { useShellStore } from "./store";
 import { focusTerminal } from "./terminals";
+import { keyboardOwner } from "./viewFocus";
 import { useUiStore, type Cycle } from "./ui";
 import { markTone } from "./agentRow";
 import { DeviceChip } from "./components/device-chip";
@@ -375,11 +376,14 @@ export function FindBar({ actions }: { actions: Actions }) {
     if (open) inputRef.current?.focus();
   }, [open]);
   // The core's answer to ⌘F on an agent with its own find, acted on once:
-  // the agent's search takes the typing, or this bar opens.
+  // the agent's search takes the typing, or this bar opens. It acts only
+  // where ⌘F was pressed: a keyboard the operator moved while the core
+  // answered (into a document, onto another pane) stays where it went.
   const opened = find?.opened;
   useEffect(() => {
-    if (!pending || !opened || opened.request_id !== pending) return;
+    if (!pending || !opened || opened.request_id !== pending.id) return;
     useUiStore.getState().setAgentFindRequest(null);
+    if (JSON.stringify(keyboardOwner()) !== JSON.stringify(pending.owner)) return;
     if (opened.route === "bar") useUiStore.getState().openOverlay("find");
     else if (find?.pane_id) focusTerminal(find.pane_id);
   }, [pending, opened, find?.pane_id]);
