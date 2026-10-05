@@ -31,18 +31,25 @@ const PAGE = `<!doctype html><meta charset="utf-8"><title>Agent fixture</title>
 <script>console.log('agent fixture ready'); console.warn('agent fixture warning');</script>`;
 const CHILD = `<!doctype html><meta charset="utf-8"><title>Child</title>
 <input placeholder="Child name"><button onclick="document.querySelector('output').textContent='child: '+document.querySelector('input').value">Send</button>
-<output></output>`;
+<output></output><button onclick="confirm('From the frame')">Frame confirm</button>`;
 
 function quote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }
-/** Runs `hide browser ...` in the isolated pane and returns its exit status and output. */
-async function browserCli(args: string[]): Promise<{ status: number; out: string }> {
+/** Runs `hide ...` in the isolated pane and returns its exit status and output. */
+async function hideCli(args: string[]): Promise<{ status: number; out: string }> {
   const stem = path.join(herdr.root, `browser-agent-${++sequence}`);
   const output = `${stem}.out`, status = `${stem}.status`;
-  const command = `HIDE_STATE_DIR=${quote(run.env.HIDE_STATE_DIR!)} ${[HIDE_CLI, "browser", ...args].map(quote).join(" ")} > ${quote(output)}; printf '%s' "$?" > ${quote(status)}\n`;
+  const command = `HIDE_STATE_DIR=${quote(run.env.HIDE_STATE_DIR!)} ${[HIDE_CLI, ...args].map(quote).join(" ")} > ${quote(output)}; printf '%s' "$?" > ${quote(status)}\n`;
   const sent = spawnSync(herdr.bin, ["pane", "send-text", herdr.panes[0]!, command], { env: herdr.env, encoding: "utf8", timeout: 10_000 });
   expect(sent.status).toBe(0);
   await expect.poll(() => fs.existsSync(status), { timeout: 60_000 }).toBe(true);
   return { status: Number(fs.readFileSync(status, "utf8")), out: fs.readFileSync(output, "utf8") };
+}
+const browserCli = (args: string[]) => hideCli(["browser", ...args]);
+/** Which View each area shows, from `hide view list`. */
+async function shownViews(): Promise<unknown> {
+  const answer = JSON.parse((await hideCli(["view", "list"])).out.trim().split("\n").at(-1)!) as { result: { views: { view_id: string; selected: boolean; active_area: boolean }[] } };
+  expect(answer.result.views.length).toBeGreaterThan(0);
+  return answer.result.views.map(({ view_id, selected, active_area }) => ({ view_id, selected, active_area }));
 }
 async function json(args: string[]): Promise<Record<string, unknown>> {
   const { status, out } = await browserCli(args);
@@ -93,7 +100,7 @@ test.beforeAll(async () => {
   herdr = await startHerdr({ agents: false });
   server = createServer((request, response) => {
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
-    response.end(request.url === "/child" ? CHILD : PAGE.replace("</h1>", `</h1><iframe id="child" src="${child}" width="420" height="120"></iframe>`));
+    response.end(request.url?.startsWith("/child") ? CHILD : PAGE.replace("</h1>", `</h1><iframe id="child" src="${child}" width="420" height="120"></iframe>`));
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
   origin = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -114,6 +121,7 @@ test.afterEach(async () => {
 test("hide browser: an agent reads and drives a page and its cross-site frame while the operator sees each action", async () => {
   await start();
   const display = await openDisplay(`${origin}/agent`);
+  const views = await shownViews();
   const first = await snapshot(display);
   expect(first).toMatch(/^# Agent fixture\n# http:\/\/127\.0\.0\.1:\d+\/agent\n\n/);
   const name = ref(first, /textbox "Name"/);
@@ -150,6 +158,11 @@ test("hide browser: an agent reads and drives a page and its cross-site frame wh
   const grep = await snapshot(display, "--grep", "Apply");
   expect(grep).toContain('button "Apply"');
   expect(grep).not.toContain('textbox "Name"');
+  // A ref from a frame that navigated names nothing in its new document.
+  const tag = send.slice(1).split(":")[0]!;
+  await json(["eval", display, "document.getElementById('child').src += '?2'"]);
+  await expect.poll(async () => /# OOPIF ([a-z2-9]{4})/.exec(await snapshot(display))?.[1], { timeout: 10_000 }).not.toBe(tag);
+  expect(await json(["click", display, send])).toMatchObject({ ok: false, reason: "ref_stale" });
 
   const console_ = await browserCli(["console", display]);
   expect(console_.out).toContain("[log] agent fixture ready");
@@ -161,8 +174,10 @@ test("hide browser: an agent reads and drives a page and its cross-site frame wh
   const captured = await json(["screenshot", display, shot]);
   expect(fs.readFileSync(shot).subarray(1, 4).toString()).toBe("PNG");
   expect((captured.image as { width: number }).width).toBeGreaterThan(0);
-  // The display stays and nothing holds its debugger once a command ends.
+  // The display stays, still the View in front, and nothing holds its
+  // debugger once a command ends.
   expect(await inDisplay<string>(`${origin}/agent`, "document.title")).toBe("Agent fixture");
+  expect(await shownViews()).toEqual(views);
 });
 
 test("hide browser: a dialog is reported, never answered, and holds the display until the operator answers it", async () => {
@@ -180,8 +195,14 @@ test("hide browser: a dialog is reported, never answered, and holds the display 
   expect(shown.map((dialog) => dialog.message())).toEqual(["Hello from the fixture"]);
   const held = await json(["snapshot", display]);
   expect(held).toMatchObject({ ok: false, reason: "dialog_open", display });
-  expect(held.next_action).toContain("operator must answer it");
+  expect(held.next_action).toContain("operator must answer the dialog");
   await shown[0]!.accept();
+  const confirm = ref(await snapshot(display), /button "Frame confirm"/);
+  // A cross-origin frame's dialog holds the page the same way.
+  expect(await json(["click", display, confirm])).toMatchObject({ ok: true, dialog: { type: "confirm", message: "From the frame" } });
+  expect(await json(["snapshot", display])).toMatchObject({ ok: false, reason: "dialog_open" });
+  await expect.poll(() => shown.length).toBe(2);
+  await shown[1]!.dismiss();
   expect(await snapshot(display)).toContain('button "Alert"');
 });
 

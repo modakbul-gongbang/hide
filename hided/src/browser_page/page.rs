@@ -288,13 +288,17 @@ impl Page {
                 continue;
             }
             // A frame that navigated or closed while attaching is no longer
-            // part of the page.
-            let tag = match self.dom(&session, "tag", json!({})).await {
+            // part of the page. Its dialog check comes first: a frame a
+            // dialog holds answers no script either.
+            let tag = match self.enable(&session).await {
+                Ok(()) => self.dom(&session, "tag", json!({})).await,
+                Err(failure) => Err(failure),
+            };
+            let tag = match tag {
                 Ok(tag) => tag,
                 Err(failure) if failure.page_side() => continue,
                 Err(failure) => return Err(failure),
             };
-            self.enable(&session).await?;
             parents.push(session.clone());
             frames.push(Frame {
                 session,
