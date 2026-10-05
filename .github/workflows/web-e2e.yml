@@ -40,11 +40,6 @@ on:
         type: string
         required: false
         default: ""
-      quarantine:
-        description: Run the `@flaky` tests once, in shard 1, in a step that cannot fail the lane.
-        type: boolean
-        required: false
-        default: false
 
 # `issues: write` is for filing a flaky test; a caller must grant it.
 permissions:
@@ -241,7 +236,7 @@ jobs:
           SHARD: ${{ matrix.shard }}/${{ inputs.shards }}
         run: |
           mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
-          args=(--shard="$SHARD" --grep-invert @flaky)
+          args=(--shard="$SHARD")
           if [ -n "$GREP" ]; then args+=(--grep "$GREP"); fi
           bash scripts/verify-web.sh web e2e "${args[@]}"
       - name: Report flaky tests
@@ -254,24 +249,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/ci-flaky-report.py --suite web --playwright web/e2e-report.json
-      - name: Quarantined end-to-end (does not block verify)
-        # A test tagged @flaky carries the issue that tracks its cause. It still
-        # runs here, once, so a fix shows up as a pass and a regression of the
-        # product it covers still shows up in the log; it cannot turn verify red.
-        timeout-minutes: 10
-        id: quarantine
-        # Only after the setup it needs succeeded, and into its own output
-        # directory: Playwright empties its output directory when a run starts,
-        # which would delete the required step's failure snapshots.
-        if: ${{ inputs.quarantine && matrix.shard == 1 && !cancelled() && steps.herdr.outcome == 'success' }}
-        continue-on-error: true
-        env:
-          HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
-          HIDE_E2E_SCREENSHOT_DIR: ${{ runner.temp }}/hide-e2e
-          HIDE_E2E_TRACE: "1"
-        run: |
-          mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
-          bash scripts/verify-web.sh web e2e --grep @flaky --output=test-results-quarantine
       - name: Keep the e2e run's logs
         # The daemon, Herdr server and PTY input logs behind a failed flow
         # (with the screenshots the specs take, under the same directory),
@@ -279,12 +256,11 @@ jobs:
         # option set that is the error-context page snapshot. The wire trace
         # is on the step's stdout. A screen assertion alone cannot say which
         # side moved.
-        if: failure() || steps.quarantine.outcome == 'failure'
+        if: failure()
         uses: actions/upload-artifact@v7
         with:
           name: hide-web-e2e-logs-${{ inputs.lane }}-${{ matrix.shard }}
           path: |
             ${{ runner.temp }}/hide-e2e
             web/test-results
-            web/test-results-quarantine
           if-no-files-found: ignore

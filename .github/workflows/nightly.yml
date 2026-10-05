@@ -1,8 +1,7 @@
 # Full web and desktop suites and package checks on all three OSes nightly.
 # A test fails this run only when it fails its retry too (CI retries a failed
 # test once); a test that passes the retry is flaky, and
-# scripts/ci-flaky-report.py files it as an issue, as in pr.yml. A test tagged
-# `@flaky` is left out of these suites and runs in pr.yml's quarantine step.
+# scripts/ci-flaky-report.py files it as an issue, as in pr.yml.
 # Runner windows and Linux Xvfb exercise automation, not physical IME/device QA.
 # PRs retain the Linux shards and macOS `@platform` lane (see pr.yml).
 # A main-branch nightly failure opens one issue or comments on the existing
@@ -169,9 +168,9 @@ jobs:
         run: |
           mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
           if [ "$RUNNER_OS" = Linux ]; then
-            xvfb-run -a bash scripts/verify-web.sh desktop e2e --grep-invert @flaky
+            xvfb-run -a bash scripts/verify-web.sh desktop e2e
           else
-            bash scripts/verify-web.sh desktop e2e --grep-invert @flaky
+            bash scripts/verify-web.sh desktop e2e
           fi
       - name: Report flaky tests
         if: ${{ !cancelled() }}

@@ -380,7 +380,6 @@ jobs:
       # replaced. The organization runs 20 jobs at once, so fewer jobs per run
       # also queue less.
       shards: 6
-      quarantine: true
 
   web-e2e-platform:
     name: web e2e (macOS)
@@ -480,7 +479,7 @@ jobs:
           HIDE_E2E_SCREENSHOT_DIR: ${{ runner.temp }}/hide-e2e
         run: |
           mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
-          bash scripts/verify-web.sh desktop e2e --grep-invert @flaky
+          bash scripts/verify-web.sh desktop e2e
       - name: Report flaky tests
         # A failed test is retried once; see web-e2e.yml.
         if: ${{ !cancelled() }}
@@ -489,27 +488,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/ci-flaky-report.py --suite desktop --playwright desktop/e2e-report.json
-      - name: Quarantined tests (does not block verify)
-        # A test tagged @flaky carries the issue that tracks its cause. It still
-        # runs here, once, so a fix shows up as a pass and a regression of the
-        # product it covers still shows up in the log; it cannot turn verify red.
-        # The build is the required step's. `--no-deps` matters: a project
-        # dependency runs whole whatever `--grep` says, so a `@needs-focus`
-        # quarantined test would otherwise bring the entire background suite
-        # with it.
-        timeout-minutes: 10
-        id: quarantine
-        # Into its own output directory: Playwright empties its output directory
-        # when a run starts, which would delete the required step's failure
-        # snapshots.
-        if: ${{ !cancelled() && steps.electron.outcome == 'success' && steps.herdr.outcome == 'success' }}
-        continue-on-error: true
-        env:
-          HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
-          HIDE_E2E_SCREENSHOT_DIR: ${{ runner.temp }}/hide-e2e
-        run: |
-          mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
-          bash scripts/verify-web.sh desktop e2e --no-deps --grep @flaky --output=test-results-quarantine
       - name: Report flaky Rust tests
         if: ${{ !cancelled() }}
         continue-on-error: true
@@ -518,14 +496,13 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/ci-flaky-report.py --suite rust --junit target/nextest/ci/junit*.xml
       - name: Keep the e2e run's logs
-        if: failure() || steps.quarantine.outcome == 'failure'
+        if: failure()
         uses: actions/upload-artifact@v7
         with:
           name: hide-desktop-e2e-logs
           path: |
             ${{ runner.temp }}/hide-e2e
             desktop/test-results
-            desktop/test-results-quarantine
           if-no-files-found: ignore
 
   verify:
