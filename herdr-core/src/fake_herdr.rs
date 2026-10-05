@@ -170,6 +170,7 @@ impl FakeHerdr {
 
     /// Blocks until at least `count` requests have been answered, for a
     /// caller that fired its request from another thread and returned.
+    #[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
     pub(crate) fn wait_for_requests(&self, count: usize, timeout: Duration) {
         let deadline = Instant::now() + timeout;
         while self.requests.lock().unwrap().len() < count {

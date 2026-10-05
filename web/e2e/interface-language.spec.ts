@@ -55,7 +55,7 @@ test("one confirmed choice follows every window, persists, and resets to each sy
       await expect(left.locator("[data-settings]")).toContainText(path.join(daemon.stateDir, "core-state.json"));
       await expect(left.locator('[data-sidebar-mode="projects"] span').first()).toHaveText(projects!);
       await expect(left.locator('[data-sidebar-mode="agents"] span').first()).toHaveText(agents!);
-      expect(await left.locator(".sidebar-command-keycap").allTextContents()).toEqual(keycaps);
+      await expect(left.locator(".sidebar-command-keycap")).toHaveText(keycaps);
       await left.locator('[data-settings-tab="shortcuts"]').click();
       await expect(left.locator('[data-shortcut-record="overview"]')).toHaveAttribute("aria-label", change!);
       await expect(left.locator('[data-shortcut-clear="overview"]')).toHaveText(clear!);

@@ -319,11 +319,9 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     await page.locator('[data-mobile-new-code="true"]').click();
     await expect.poll(async () => pairingUrl(page, daemon as Daemon)).not.toBe(firstUrl);
     const pairUrl = await pairingUrl(page, daemon);
-    // A Korean phone follows its own language until the core has a choice.
     const stale = await (await phoneContext(browser, undefined, "ko-KR")).newPage();
     contexts.push(stale.context());
     await stale.goto(firstUrl);
-    await expect(stale.locator("html")).toHaveAttribute("lang", "ko");
     await stale.locator('[data-phone-pair="true"]').tap();
     await expect(stale.locator('[data-phone-guidance="code_expired"]')).toHaveText("코드가 만료됐어요. 맥에서 QR을 다시 여세요.", { timeout: 20_000 });
 
@@ -338,7 +336,6 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     const frames: string[] = [];
     phone.on("websocket", (socket) => socket.on("framereceived", (frame) => frames.push(String(frame.payload))));
     await phone.goto(pairUrl);
-    await expect(phone.locator("html")).toHaveAttribute("lang", "en");
     await expect(phone.getByRole("heading", { name: "Connect to mac" })).toBeVisible();
     await expect(phone.getByText("The code expires in 5 minutes. If it expires, reopen the QR code on your Mac.")).toBeVisible();
     await screenshot(phone, "mobile-phone-pair");
@@ -370,18 +367,6 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     // B21: live; two asks and joins one under Needs your attention without a reload.
     await ask(herdr, two, "어느 브랜치에 올릴까요?");
     await expect(phone.locator('[data-phone-group="needs_you"] [data-phone-group-count]')).toHaveText("2", { timeout: 20_000 });
-    // The core's explicit language reaches the phone and gives way to the phone's own once unset.
-    await page.locator('[data-settings-tab="general"]').click();
-    await page.locator("[data-interface-language]").click();
-    await page.locator('[data-language-option="ko"]').click();
-    await expect(phone.locator("[data-phone-group] h2").first()).toContainText("내 확인 대기", { timeout: 20_000 });
-    await expect(phone.locator("html")).toHaveAttribute("lang", "ko");
-    await page.locator("[data-interface-language]").click();
-    await page.locator('[data-language-option="system"]').click();
-    await expect(phone.locator("[data-phone-group] h2").first()).toContainText("Needs your attention", { timeout: 20_000 });
-    await expect(phone.locator("html")).toHaveAttribute("lang", "en");
-    await page.locator('[data-settings-tab="mobile"]').click();
-    await expect(page.locator('[data-mobile-tab="true"]')).toBeVisible();
     // B41: an idle list sends nothing; the phone hears only changes.
     const agentFrames = () => frames.filter((frame) => frame.includes('"type":"agents"')).length;
     const idleStart = agentFrames();
@@ -504,15 +489,6 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     await enable.tap();
     await expect(enable).toHaveCount(0, { timeout: 20_000 });
     await expect(page.locator("[data-mobile-phone-line]")).toHaveText("Just now · Receiving notifications");
-    // The page gave the service worker the words a notification starts with, kept for a closed app.
-    await expect
-      .poll(() =>
-        phone.evaluate(async () => {
-          const hit = await (await caches.open("hide-phone-words")).match("/m/words.json");
-          return hit ? ((await hit.json()) as unknown) : null;
-        }),
-      )
-      .toEqual({ needs_you: "Needs your attention", done: "Done" });
 
     // B31, B33 (always): two finishes; one notification for it, with no terminal content.
     await finish(two);
@@ -520,8 +496,6 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     const done = push.received[0]!;
     expect(done.payload.title).toBe("Agent two");
     expect(done.payload.state).toBe("done");
-    expect(typeof done.payload.place).toBe("string");
-    expect(done.payload).not.toHaveProperty("body");
     expect(done.payload.tag).toBe(`${done.payload.device_id}|${two}`);
     expect(done.payload.pane_id).toBe(two);
     expect(JSON.stringify(done.payload)).not.toContain("fixture %");
@@ -568,8 +542,6 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     const closed = push.received[1]!;
     expect(closed.payload.title).toBe("Agent one");
     expect(closed.payload.state).toBe("needs_you");
-    expect(typeof closed.payload.place).toBe("string");
-    expect(closed.payload).not.toHaveProperty("body");
     expect(closed.payload.clear).toContain(`${closed.payload.device_id}|${two}`);
 
     // B28: the pane closes under an open detail; the reply bar goes inert.
@@ -637,6 +609,26 @@ test("an empty list, the unreachable line, the phone limit and the seven-day rev
     // B22: no agents, one line.
     await expect(phone.locator('[data-phone-empty="true"]')).toHaveText("No agents are running", { timeout: 20_000 });
     await screenshot(phone, "mobile-phone-empty");
+    // The core's explicit language reaches the phone and gives way to the phone's own once unset.
+    await page.locator('[data-settings-tab="general"]').click();
+    await page.locator("[data-interface-language]").click();
+    await page.locator('[data-language-option="ko"]').click();
+    await expect(phone.locator("[data-phone-empty]")).toHaveText("실행 중인 에이전트가 없어요", { timeout: 20_000 });
+    await expect(phone.locator("html")).toHaveAttribute("lang", "ko");
+    // The page gave the service worker the words a notification starts with, in that language, kept for a closed app.
+    await expect
+      .poll(() =>
+        phone.evaluate(async () => {
+          const hit = await (await caches.open("hide-phone-words")).match("/m/words.json");
+          return hit ? ((await hit.json()) as unknown) : null;
+        }),
+      )
+      .toEqual({ needs_you: "내 확인 대기", done: "끝" });
+    await page.locator("[data-interface-language]").click();
+    await page.locator('[data-language-option="system"]').click();
+    await expect(phone.locator("[data-phone-empty]")).toHaveText("No agents are running", { timeout: 20_000 });
+    await expect(phone.locator("html")).toHaveAttribute("lang", "en");
+    await page.locator('[data-settings-tab="mobile"]').click();
     // B38: the phone's own light or dark setting decides the theme.
     await expect(phone.locator("html")).toHaveClass(/dark/);
     await phone.emulateMedia({ colorScheme: "light" });

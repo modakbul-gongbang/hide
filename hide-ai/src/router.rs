@@ -222,6 +222,7 @@ pub struct AiRouter {
 }
 
 impl AiRouter {
+    #[allow(clippy::disallowed_methods)] // a production wait, not test code
     pub fn new(
         backends: Vec<Arc<dyn AiBackend>>,
         config: RouterConfig,
@@ -1386,6 +1387,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
     fn a_usage_limit_parks_the_provider_account_wide_until_it_resets() {
         let sink = Arc::new(Recorder::default());
         let codex = Scripted::new(
@@ -1581,6 +1583,7 @@ mod tests {
     /// When the reason ends the router asks the selected provider once and
     /// goes back to it; nobody has to tell it the limit reset.
     #[test]
+    #[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
     fn an_expired_cooldown_re_reads_availability_once_and_returns_to_the_selected_provider() {
         let sink = Arc::new(Recorder::default());
         let codex = Scripted::new(

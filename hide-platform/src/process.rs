@@ -456,6 +456,7 @@ impl Drop for OwnedChild {
     }
 }
 
+#[allow(clippy::disallowed_methods)] // a production wait, not test code
 fn pause_until(deadline: Instant) {
     let remaining = deadline.saturating_duration_since(Instant::now());
     if !remaining.is_zero() {
@@ -582,6 +583,7 @@ const RUN_POLL: std::time::Duration = std::time::Duration::from_millis(20);
 /// The original deadline and stop apply through pipe draining, including after
 /// normal exit. Cleanup precedes that drain on every exit; reaping gets at most
 /// one existing poll interval and uncertainty retains ownership in the error.
+#[allow(clippy::disallowed_methods)] // a production wait, not test code
 pub fn run_to_end(
     command: &mut Command,
     deadline: std::time::Duration,
@@ -631,6 +633,7 @@ pub fn run_to_end(
     }
 }
 
+#[allow(clippy::disallowed_methods)] // a production wait, not test code
 fn capture_run(
     child: &mut OwnedChild,
     end: std::time::Instant,

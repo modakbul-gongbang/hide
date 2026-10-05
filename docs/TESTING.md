@@ -43,10 +43,13 @@ Keep one representative journey per user-visible flow; when a long spec carries 
 ## Wait for state, not time
 
 - Never wait a fixed time: no `page.waitForTimeout`, `sleep`, or `setTimeout` used as a delay in a new test.
+  The e2e lint refuses `waitForTimeout`; the sleeps a spec may use are the named helpers in `web/e2e/wait.ts` (see [Writing a Playwright e2e test](#writing-a-playwright-e2e-test)).
+  It does not see a hand-written `new Promise((resolve) => setTimeout(resolve, ms))`, which is the same mistake and is not allowed.
+  Clippy refuses `std::thread::sleep` in Rust (see [Writing a Rust test](#writing-a-rust-test)).
   Wait for the state the next step needs: a diagnostic `kind` with its subject ID, a snapshot field, a Herdr answer, the bytes in a pane's input log.
 - Wait for the readiness the next step actually depends on.
   A healthy HTTP answer is not a subscribed socket, a delivered first snapshot, or a terminal that accepts input.
-- A poll only observes.
+- A poll only observes (`hide-e2e/no-action-in-poll` in the e2e lint).
   A click, focus, creation or resend is one explicit action outside the poll; an action repeated inside `toPass` or `expect.poll` turns one intent into several and can satisfy the assertion with the wrong one.
 - Prefer subject IDs, request identity and generation or revision numbers over wall-clock comparisons and the last diagnostic string.
 - A test's own waiting must not compete with a deadline the product enforces.
@@ -161,12 +164,19 @@ A piece that another open change is still building is marked as pending with the
    - A diagnostic `kind`, read from the snapshot frames the page receives (`observeDiagnostics` in the same file; `recordWire` in `web/e2e/s7.spec.ts`).
      Wait for `pane.focus.followed`, not for "a moment after the click".
    - What the fixture can read from the real systems: the bytes in a pane's input log, a Herdr answer, a file the core wrote.
+   When there is nothing to wait for, `web/e2e/wait.ts` has the only sleeps a spec may use, one per reason:
+   - `animationsFinished(page)` for the colour transitions before a capture; it waits for the page's finite animations, not for a time.
+   - `quietFor(page, ms, why)` for a window in which something must not happen (nothing is sent, the row does not move); `why` states the claim.
+   - `compositorPresents(page)` for a native capture, because the macOS compositor presents a frame after the page reports it; `animationsFinished` before it does not replace it.
+   - `unchangedForFrames(page, read)` for "the burst has finished" before a baseline is taken: it waits until `read()` has not changed for thirty animation frames, counted in frames and bounded, not in time.
+   - `measureFor(page, ms, why)` for an interval a measurement spans on purpose.
+   Waiting for something to appear or settle with one of these is the mistake the lint exists for: wait for the data attribute, the size or the frame count instead.
    If the product has no signal for the readiness the next step needs, add one to the product (a data attribute, a diagnostic) in the same pull request.
    A signal added for a test is still a product contract: it is an attribute or a diagnostic, not a banner ([UI_BEHAVIOR.md](UI_BEHAVIOR.md)).
 3. **Fix the order with a gate when two events race.**
    [The test decides the order](#the-test-decides-the-order) owns the rule; `focusGate` in `web/e2e/pane-focus-ordering.spec.ts` is the reference.
    It holds `pane.focus` only, and only while armed.
-   Pending: a change in progress (no pull request yet) generalizes it into a shared gate that can hold any Herdr method; once that merges, import the shared gate and do not write a second proxy.
+   Pending #438 (not merged): it generalizes it into a shared gate that can hold any Herdr method; once that merges, import the shared gate and do not write a second proxy.
 4. **Control UI timers with `page.clock`, not with a wait.**
    A timer the page owns (a toast timeout, a debounce, a hover delay) is advanced with `page.clock.install()` and `page.clock.fastForward()`.
    Why: waiting out a 3-second timer costs 3 seconds on every run and still races a slow runner.
@@ -178,7 +188,9 @@ A piece that another open change is still building is marked as pending with the
    A long journey that joins several contracts is quarantined whole, because quarantine is per test, so one shaky step takes every contract in it out of the required lane; split a test so the part that shakes can be fixed alone.
    The reference splits are `agent-close-contract.spec.ts` (one Herdr contract, two UI contracts), the drag contracts in `agent-tab-groups.spec.ts`, the row menus in `sidebar-menus.spec.ts` and the view caps in `s7.spec.ts`: each spec starts from one shared `start...` helper, puts itself into the shape it needs as setup, and asserts one contract.
    Splitting costs a stack start per spec, so say in the pull request what the split bought.
-   A numeric limit on lines and `expect` calls per test is being added as a lint; this step names the numbers when it lands, and until then the reviewer checks the shape.
+   `web/scripts/check-e2e-test-size.mjs` (run by `lint` in `web` and `desktop`) fails a test over 120 lines or 40 `expect` calls, counted on the `test(...)` call itself.
+   The tests that were already over are recorded in `e2e/test-size-baseline.json` as a ceiling that only shrinks: a recorded test that grows fails, and so does an entry whose test is gone or fits the limit, until the entry is removed.
+   Moving assertions into a helper lowers the count, not the line span, so the line limit stays; a split that removes an entry is the intended way out.
 6. **Leave the renderer off; turn WebGL on only in a spec that tests it.**
    Headless Chromium composites in software, so each frame of xterm's WebGL canvas is read back synchronously on the page's main thread, 250 to 500 ms at a time.
    `web/playwright.config.ts` launches every web e2e Chromium with `--disable-webgl`, so the shell uses xterm's DOM renderer, its existing fallback, and a spec needs no setting of its own; [Wait for state, not time](#wait-for-state-not-time) has the measurement.
@@ -191,7 +203,8 @@ A piece that another open change is still building is marked as pending with the
    A navigation that only changes the hash does not remount the connection, so the old page keeps its old token and socket and races the new one.
    Go through `about:blank` before opening the new origin and token, as `openSettings` in `web/e2e/interface-language.spec.ts` does, and keep that step in one helper per spec.
    Why: the old page and the new token reconnect at the same time and either can win.
-   Several specs still repeat the step by hand, and `sidebar-pr-start.spec.ts`'s `attach` is one that does not cross `about:blank`; they move to a helper as they are touched.
+   `hide-e2e/reopen-after-restart-through-blank` fails a `goto` of `#token=` after `restart()` in the same function; a helper defined elsewhere and called after the restart is not seen, so keep the step in the helper.
+   A test whose subject is a surviving page reconnecting to the restarted daemon (`web/e2e/s3.spec.ts`, the two draft recovery tests) must not reload it, and says so in a line allow.
 8. **Put a system difference in one fixture helper.**
    See [Operating-system differences belong to one fixture helper](#operating-system-differences-belong-to-one-fixture-helper); native home variables, executable names, the tool path, the compiler and the no-op opener live in `web/e2e/platform-fixture.ts`, not in a `process.platform` branch in a spec.
    The endpoint helper (`focusGate` spells the Windows pipe itself in `web/e2e/pane-focus-ordering.spec.ts`) is not there yet; add it to `platform-fixture.ts` when a second spec needs it.
@@ -225,6 +238,7 @@ The crate's own `AGENTS.md` says where the file goes; this section says how the 
    Where a test could not inject one, it orders the events itself instead of waiting a time: the router tests hold the provider on a gate and wait for the `ai.request.joined` log event (`hide-ai/src/router.rs`), the usage test's worker reports when it began and waits to be released (`herdr-core/src/usage.rs`), and the pane-control test makes `FakeHerdr` hold its answer until the spawn has returned (`herdr-core/src/live.rs`).
    New code with a deadline takes the clock from the start.
 5. **Never bound a test by a short wall-clock.**
+   `clippy.toml` refuses `std::thread::sleep`; the sleeps that remain carry an `#[allow(clippy::disallowed_methods)]` with the reason: a bounded polling helper, a production wait, a sleep that is the subject of the test or keeps a child process alive, or a stand-in for a state that a tracking issue lists.
    A bound such as `assert!(started.elapsed() < Duration::from_millis(1850))` passes on an idle machine and fails on a loaded runner unless the bound is itself the product's deadline (`hide-platform/tests/process.rs` checks one); a bound that is only a guess at "fast enough" says nothing about the product.
    Assert the counted result (how many requests, how many attempts, which one won) or observe the event, with a generous deadline that is only a hang guard.
    A `thread::sleep` that stands in for a state is the same mistake in the other direction: the test waits a time chosen by a person, not the state the next line needs.

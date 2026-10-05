@@ -480,6 +480,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::disallowed_methods)] // the sleep is the subject of the test: a fake peer or backend that is slow on purpose
     fn small_response_rejects_a_peer_that_never_finishes_its_frame() {
         let root = tempfile::tempdir().unwrap();
         let socket = root.path().join("peer.sock");

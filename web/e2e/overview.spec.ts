@@ -28,6 +28,7 @@ import { agentsIn, continueFixtureTranscript, declareParent, labelAgent, session
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, screenshot } from "./wire";
 import { chord, field } from "./chords";
+import { animationsFinished, quietFor, unchangedForFrames } from "./wait";
 
 test.describe.configure({ timeout: 240_000 });
 
@@ -168,7 +169,7 @@ async function chooseTheme(page: Page, theme: "light" | "dark"): Promise<void> {
   await page.keyboard.press("Escape");
   await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
   // Controls fade their colors into the new theme; a capture waits them out.
-  await page.waitForTimeout(400);
+  await animationsFinished(page);
 }
 
 /**
@@ -179,6 +180,7 @@ async function chooseTheme(page: Page, theme: "light" | "dark"): Promise<void> {
  * open for good (overview.spec on CI, 2026-09-29..10-01).
  */
 async function leaveHoverCard(page: Page, gone: Locator): Promise<void> {
+  // eslint-disable-next-line hide-e2e/no-action-in-poll -- #433 retried interaction: a bare move can land before the card's leave listener
   await expect(async () => {
     await page.mouse.move(2, 998);
     await page.mouse.move(4, 996, { steps: 4 });
@@ -214,6 +216,9 @@ async function restOn(page: Page, target: Locator, texts: string[], within?: Loc
   }
   throw lastFailure;
 }
+
+/** The graph draws frames only while it glides: thirty animation frames with no graph frame drawn is rest. */
+const graphAtRest = (page: Page, canvas: Locator) => unchangedForFrames(page, () => canvas.getAttribute("data-graph-frames"));
 
 /** Clears hover and keyboard focus so a capture shows the page at rest. */
 async function atRest(page: Page): Promise<void> {
@@ -593,12 +598,12 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     // The graph's own relayouts and animation frames are counted on its canvas;
     // the last glide (a chip just changed the picture) is let finish first.
     await atRest(page);
-    await page.waitForTimeout(800);
+    await graphAtRest(page, canvas);
     const revision = async () => Number(await canvas.getAttribute("data-graph-revision"));
     const frames = async () => Number(await canvas.getAttribute("data-graph-frames"));
     const revisionBefore = await revision();
     const framesBefore = await frames();
-    await page.waitForTimeout(1500);
+    await quietFor(page, 1500, "an unchanged picture is neither relaid out nor redrawn");
     expect(await revision()).toBe(revisionBefore);
     expect(await frames()).toBe(framesBefore);
     // The Implementor asks: its row grows a second line, its line turns orange, the graph is laid out once and glides.
@@ -769,7 +774,7 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await issueCard(2).hover();
     await expect(issueCard(2).locator("[data-card-workspace]")).toBeVisible();
     expect((await issueCard(2).boundingBox())?.height).toBe(restHeight);
-    await page.waitForTimeout(600);
+    await quietFor(page, 600, "the card height holds at rest");
     expect([...sent.values()].reduce((sum, count) => sum + count, 0)).toBe(quietIssues);
     // Each button says what it does (B7).
     await restOn(page, issueCard(2).locator("[data-card-workspace]"), ["Open Workspace"], issueCard(2));

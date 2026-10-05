@@ -99,8 +99,9 @@ test("a Project's Sessions: history, filters, a read-only session, failures and 
     await page.locator('[data-main-tab="projects"]').click();
     await page.locator("[data-main-project]", { hasText: "fixture" }).click();
     await expect(page.locator("[data-workspace-screen]")).toBeVisible();
-    const fixtureCheckout = await page.locator("[data-workspace-screen]").getAttribute("data-workspace-screen");
-    expect(fixtureCheckout).toBeTruthy();
+    const fixtureCheckoutLocator = page.locator("[data-workspace-screen]");
+    await expect(fixtureCheckoutLocator).toHaveAttribute("data-workspace-screen", /./);
+    const fixtureCheckout = await fixtureCheckoutLocator.getAttribute("data-workspace-screen");
     await openCurrentProjectOverview(page, "fixture");
     await expect(page.locator("[data-overview-screen]")).toBeVisible();
     await expect(page.locator("[data-overview-screen]")).not.toContainText(/memory/i);

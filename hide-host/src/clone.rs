@@ -240,6 +240,7 @@ impl CloneFailure {
 /// Clones `source` into `parent/<name>` and answers the new folder. `cancel`
 /// is asked every [`POLL`]; answering true ends the run as cancelled.
 /// `progress` hears each change of stage or percent.
+#[allow(clippy::disallowed_methods)] // a production wait, not test code
 pub fn clone_repository(
     source: &CloneSource,
     parent: &Path,

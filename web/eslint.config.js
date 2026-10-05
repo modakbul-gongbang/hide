@@ -1,6 +1,7 @@
 import js from "@eslint/js";
 import i18next from "eslint-plugin-i18next";
 import tseslint from "typescript-eslint";
+import e2e from "./eslint.e2e.mjs";
 
 // A product-owned sentence belongs in `src/i18n/resources` (docs/LOCALIZATION.md).
 // Two guards keep one from appearing anywhere else:
@@ -30,6 +31,7 @@ const CJK = "[\\u3040-\\u30ff\\u3400-\\u4dbf\\u4e00-\\u9fff\\uac00-\\ud7a3]";
 export default tseslint.config(
   js.configs.recommended,
   ...tseslint.configs.recommended,
+  e2e,
   {
     ignores: ["dist/**", "src/generated/**"],
   },

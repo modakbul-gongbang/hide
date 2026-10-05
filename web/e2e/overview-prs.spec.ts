@@ -22,6 +22,7 @@ import { labelAgent, agentsIn, startHerdr, setFixtureLifecycle, type HerdrFixtur
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, screenshot } from "./wire";
 import { chord } from "./chords";
+import { animationsFinished } from "./wait";
 
 test.describe.configure({ timeout: 240_000 });
 
@@ -190,7 +191,7 @@ async function chooseTheme(page: Page, theme: "light" | "dark"): Promise<void> {
   await expect(page.locator("html")).toHaveClass(new RegExp(`\\b${theme}\\b`));
   await page.keyboard.press("Escape");
   await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
-  await page.waitForTimeout(400);
+  await animationsFinished(page);
 }
 
 async function atRest(page: Page): Promise<void> {

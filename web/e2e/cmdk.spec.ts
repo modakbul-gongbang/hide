@@ -404,8 +404,9 @@ test("⌘K lists the checkouts last brought to the front under Recent, keeps the
     daemon = await startHided(herdr, "cmdk-recent");
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await enterWorkspace(page, "fixture");
-    const fixture = await page.locator("[data-project] [data-checkout]").first().getAttribute("data-checkout");
-    expect(fixture).toBeTruthy();
+    const fixtureLocator = page.locator("[data-project] [data-checkout]").first();
+    await expect(fixtureLocator).toHaveAttribute("data-checkout", /./);
+    const fixture = await fixtureLocator.getAttribute("data-checkout");
 
     // B6: a second project's checkout brought to the front goes to the top of the list.
     await registerFolder(page, daemon, `${daemon.home}/projects/alpha`);
@@ -439,6 +440,7 @@ test("⌘K lists the checkouts last brought to the front under Recent, keeps the
       stored.recent_checkouts.push({ device_id: "ghost", checkout_id: "remote:ghost:checkout:abc", project_name: "api", branch: "release", device_name: "ghost-box" });
       fs.writeFileSync(file, JSON.stringify(stored));
     });
+    await page.goto("about:blank");
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await expect(page.locator("[data-workspace-screen]")).toBeVisible({ timeout: 30_000 });
     await page.keyboard.press(chord("settings"));

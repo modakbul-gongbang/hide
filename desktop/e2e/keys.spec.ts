@@ -11,6 +11,7 @@ import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import "../../web/src/host";
 import { countSent, enterWorkspace } from "../../web/e2e/wire";
 import { hostLog, isolate, launch, screenshot, test, type Isolated } from "./fixture";
+import { quietFor } from "../../web/e2e/wait";
 
 let herdr: HerdrFixture;
 let run: Isolated;
@@ -44,7 +45,7 @@ function accelerator(id: string): Promise<string | null> {
 /** After the one expected event, a quiet moment in which no second one arrives. */
 async function exactlyOnce(sent: Map<string, number>, kind: string, expected: number, page: Page): Promise<void> {
   await expect.poll(() => sent.get(kind) ?? 0).toBe(expected);
-  await page.waitForTimeout(600);
+  await quietFor(page, 600, "no second event follows the one counted");
   expect(sent.get(kind) ?? 0).toBe(expected);
 }
 

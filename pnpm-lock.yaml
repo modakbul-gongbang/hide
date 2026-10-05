@@ -36,6 +36,9 @@ importers:
       eslint:
         specifier: ^9.24.0
         version: 9.39.5(jiti@2.7.0)
+      eslint-plugin-playwright:
+        specifier: ^2.12.0
+        version: 2.12.0(eslint@9.39.5(jiti@2.7.0))
       i18next:
         specifier: 26.4.2
         version: 26.4.2(typescript@5.9.3)
@@ -208,6 +211,9 @@ importers:
       eslint-plugin-i18next:
         specifier: 6.1.5
         version: 6.1.5
+      eslint-plugin-playwright:
+        specifier: ^2.12.0
+        version: 2.12.0(eslint@9.39.5(jiti@2.7.0))
       jsdom:
         specifier: 26.1.0
         version: 26.1.0
@@ -2116,6 +2122,12 @@ packages:
     resolution: {integrity: sha512-xCTfstbK9ZpQ6UFT5S1s6zbZMhKn2o2jRSQYiU2UkV7wt8y1m3WjkUYGkGlipgRdFInYI9+LAqE+JQU/L73HmA==}
     engines: {node: '>=18.10.0'}
 
+  eslint-plugin-playwright@2.12.0:
+    resolution: {integrity: sha512-7HpSKR/D2oCH4RKRauFskcrnDrHvLQKopW7Nen8lqrFZtx/SB+FgqVaH+zyQd32noZSZy9Lrsa+DsYrVUpn6hg==}
+    engines: {node: '>=16.9.0'}
+    peerDependencies:
+      eslint: '>=8.40.0'
+
   eslint-scope@8.4.0:
     resolution: {integrity: sha512-sNXOfKCn74rt8RICKMvJS7XKV/Xk9kA7DyJr8mJik3S7Cwgy3qlkkmyS2uQB3jiJg6VNdZd/pDBJu0nvG2NlTg==}
     engines: {node: ^18.18.0 || ^20.9.0 || >=21.1.0}
@@ -2242,6 +2254,10 @@ packages:
 
   globals@14.0.0:
     resolution: {integrity: sha512-oahGvuMGQlPw/ivIYBjVSrWAfWLBeku5tpPE2fOPLi+WHffIWbuh2tCjhyQhTBPMf5E9jDEH4FOmTYgYwbKwtQ==}
+    engines: {node: '>=18'}
+
+  globals@17.13.0:
+    resolution: {integrity: sha512-RwMTC61u7hrG3ZJMkZQOK4JLJrKS8QtoTii63EmWvFXHqycY9FObBJQCbsLxSO8kjKhWE5kV1GC+Vb1g3RI0Zg==}
     engines: {node: '>=18'}
 
   graceful-fs@4.2.11:
@@ -5075,6 +5091,11 @@ snapshots:
     dependencies:
       requireindex: 1.1.0
 
+  eslint-plugin-playwright@2.12.0(eslint@9.39.5(jiti@2.7.0)):
+    dependencies:
+      eslint: 9.39.5(jiti@2.7.0)
+      globals: 17.13.0
+
   eslint-scope@8.4.0:
     dependencies:
       esrecurse: 4.3.0
@@ -5214,6 +5235,8 @@ snapshots:
       path-scurry: 2.0.2
 
   globals@14.0.0: {}
+
+  globals@17.13.0: {}
 
   graceful-fs@4.2.11: {}
 

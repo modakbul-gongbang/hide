@@ -42,6 +42,7 @@ const AGENT_START_TIMEOUT_MS: u64 = 120_000;
 /// when that group is not the shell's: the agent and what it started in its
 /// own group (MCP servers, tool processes) end, the shell and every other
 /// pane stay (B7).
+#[allow(clippy::disallowed_methods)] // a production wait, not test code
 pub(crate) fn end_agent(
     connector: &dyn ApiConnector,
     pane_id: &str,

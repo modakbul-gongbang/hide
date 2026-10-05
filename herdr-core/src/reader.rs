@@ -151,6 +151,7 @@ where
 mod tests {
     use super::*;
 
+    #[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
     fn settle<Q, A>(reader: &mut BackgroundRead<Q, A>, request: Q) -> A
     where
         Q: Clone + PartialEq + Send + 'static,
@@ -166,6 +167,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
     fn an_answer_arrives_on_a_later_poll_rather_than_blocking_the_first() {
         let mut reader =
             BackgroundRead::new(Duration::from_secs(60), Duration::ZERO, |request: &u8| {
@@ -195,6 +197,7 @@ mod tests {
     /// read for the new one starts on that same poll - so a request that
     /// keeps moving still publishes on every completed read instead of never.
     #[test]
+    #[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
     fn a_changed_request_publishes_the_overtaken_answer_and_reads_again() {
         let mut reader =
             BackgroundRead::new(Duration::from_secs(60), Duration::ZERO, |request: &u8| {
