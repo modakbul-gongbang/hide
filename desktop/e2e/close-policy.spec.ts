@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace, showExplorer } from "../../web/e2e/wire";
-import { isolate, launch, NEEDS_FOCUS, test } from "./fixture";
+import { focusPage, isolate, launch, NEEDS_FOCUS, test } from "./fixture";
 
 type Session = { herdr: HerdrFixture; app: ElectronApplication; page: Page; capture: (name: string) => void };
 
@@ -88,18 +88,9 @@ test("Command W from the app menu closes a browser page that holds the keyboard,
     await page.locator('[data-explorer-menu] [data-menu-item="open-browser"]').click();
     await expect(page.locator("[data-browser-slot]")).toBeVisible();
     // A page holds the keyboard only in the key window, so this test's window comes to the front.
-    // eslint-disable-next-line hide-e2e/no-action-in-poll -- #433 retried interaction: native focus lands after the page is shown
-    await expect.poll(() => app.evaluate(({ app: electron, BrowserWindow }) => {
-      const window = BrowserWindow.getAllWindows()[0]!;
-      const view = window.contentView.children.find((child) =>
-        (child as { webContents?: Electron.WebContents }).webContents?.getTitle() === "Close page");
-      if (!view) return false;
-      electron.focus({ steal: true });
-      window.focus();
-      const contents = (view as unknown as { webContents: Electron.WebContents }).webContents;
-      contents.focus();
-      return contents.isFocused();
-    })).toBe(true);
+    await expect.poll(() => app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.contentView.children.some((child) =>
+      (child as { webContents?: Electron.WebContents }).webContents?.getTitle() === "Close page")), { message: "the page has loaded" }).toBe(true);
+    await focusPage(app, { title: "Close page" });
     // The native application menu uses the same Command W command while a
     // child page owns focus; it must not close the agents behind that page.
     await app.evaluate(({ Menu }) => {
