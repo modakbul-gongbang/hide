@@ -1,5 +1,5 @@
 # Every pull request, every merge queue group and every push to main runs this
-# workflow, and the single `verify` job is what branch protection requires. Adding a lane means adding
+# workflow, and nightly calls it; the single `verify` job is what branch protection requires. Adding a lane means adding
 # it to `scripts/ci-plan.py`'s LANES and to `verify`'s `needs`; the protection
 # rule never changes.
 #
@@ -8,9 +8,11 @@
 # runs", owns the rules). Each lane runs when the plan names it, and `verify`
 # passes only when every planned lane succeeded and every other lane was
 # skipped, so a lane whose `if:` is wrong fails `verify` rather than passing
-# it. A push to main, a comparison that cannot be computed, and a path no rule
-# claims plan every lane; main's full run is the net under a lane a pull
-# request left out.
+# it. A comparison that cannot be computed and a path no rule claims plan every
+# lane. A push to main plans none when a merge queue run already verified its
+# commit and it changed no cache key (main saves the caches), and every lane
+# otherwise. Nightly's call plans every lane: it is the net under a lane a
+# pull request left out.
 #
 # A draft pull request runs the `plan` job and `verify` only: the lanes wait
 # for the pull request to be marked ready for review, and `verify` fails with
@@ -57,17 +59,20 @@ on:
     types: [checks_requested]
   push:
     branches: [main]
+  # nightly.yml runs every lane on main once a day.
+  workflow_call:
 
 permissions:
   contents: read
 
 # A new push to a pull request replaces that pull request's run. Main's runs
-# are not cancelled once they start: each merge's full run is the net under the
-# lanes a plan left out. GitHub keeps one pending run per group, so in a burst
-# of merges a newer run replaces the pending one and tests their combined
-# state. A merge queue group's ref is its own, so groups never cancel each other.
+# are not cancelled once they start. GitHub keeps one pending run per group, so
+# in a burst of merges a newer run replaces the pending one and checks their
+# combined state. A merge queue group's ref is its own, so groups never cancel
+# each other. A called run takes its caller's name (`nightly`), so it never
+# replaces a push run's place.
 concurrency:
-  group: verify-${{ github.event.pull_request.number || github.ref }}
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
@@ -75,10 +80,15 @@ jobs:
     name: plan
     runs-on: ubuntu-latest
     timeout-minutes: 5
+    permissions:
+      contents: read
+      # A push asks the Actions API whether the merge queue verified its commit.
+      actions: read
     outputs:
       lanes: ${{ steps.plan.outputs.lanes }}
       full: ${{ steps.plan.outputs.full }}
       rust-packages: ${{ steps.plan.outputs.rust-packages }}
+      verified-by: ${{ steps.plan.outputs.verified-by }}
     steps:
       - uses: actions/checkout@v7
         with:
@@ -90,15 +100,32 @@ jobs:
         env:
           # A merge queue group names the main commit it starts from.
           BASE: ${{ github.event.merge_group.base_sha || 'HEAD^1' }}
+          GH_TOKEN: ${{ github.token }}
         # The crate graph comes from `cargo metadata`, which needs no build. A
-        # group's base can be several queued merges back, past the checkout's
-        # depth, so it is fetched; one that cannot be leaves the comparison
-        # unavailable, and the plan runs every lane.
+        # push compares from the last main commit whose push run passed, not
+        # from `before`: GitHub replaces a pending run, and the replaced run's
+        # merges are this run's to check. Its base and a group's can be
+        # several merges back, past the checkout's depth, so they are fetched;
+        # one that cannot be leaves the comparison unavailable, and the plan
+        # runs every lane. The queue lookup's answer is written only when the
+        # API answers, and a missing one also plans every lane.
         run: |
-          if [ "$GITHUB_EVENT_NAME" = merge_group ]; then
-            git fetch --no-tags --depth=1 origin "$BASE" || echo "::warning::the merge group's base $BASE could not be fetched"
+          queue=()
+          if [ "$GITHUB_EVENT_NAME" = push ]; then
+            runs="repos/$GITHUB_REPOSITORY/actions/workflows/pr.yml/runs"
+            BASE=$(gh api "$runs?branch=main&event=push&status=success&per_page=1" --jq '.workflow_runs[0].head_sha // ""') || BASE=
+            answer="$RUNNER_TEMP/queue-runs.json"
+            if gh api "$runs?head_sha=$GITHUB_SHA&event=merge_group&status=success&per_page=20" > "$answer.part"; then
+              mv "$answer.part" "$answer"
+            else
+              echo "::warning::the merge queue lookup failed"
+            fi
+            queue=(--queue-runs "$answer")
           fi
-          python3 scripts/ci-plan.py plan --event "$GITHUB_EVENT_NAME" --base "$BASE" --draft "${{ github.event.pull_request.draft || false }}"
+          if [ -n "$BASE" ] && { [ "$GITHUB_EVENT_NAME" = merge_group ] || [ "$GITHUB_EVENT_NAME" = push ]; }; then
+            git fetch --no-tags --depth=1 origin "$BASE" || echo "::warning::the base $BASE could not be fetched"
+          fi
+          python3 scripts/ci-plan.py plan --event "$GITHUB_EVENT_NAME" --base "$BASE" --draft "${{ github.event.pull_request.draft || false }}" "${queue[@]}"
 
   policy:
     name: policy checks

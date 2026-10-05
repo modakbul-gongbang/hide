@@ -7,9 +7,11 @@ step: a planned lane must have succeeded and an unplanned one must have been
 skipped, so a lane whose `if:` is wrong fails `verify` instead of passing it.
 
 A merge queue group plans from the paths between its base and its head. A
-push to main, a comparison that cannot be computed, and a path no rule claims
-all plan every lane. docs/TESTING.md, "Which lanes a pull request
-runs", owns the rules and the reasons for them.
+push to main plans no lane when a merge queue run already verified that
+commit and the push changed no file a CI cache key hashes; otherwise it plans
+every lane, as do a comparison that cannot be computed, a path no rule claims
+and the nightly call. docs/TESTING.md, "Which lanes a pull request runs", owns
+the rules and the reasons for them.
 """
 import argparse
 from fnmatch import fnmatchcase
@@ -267,6 +269,32 @@ def classify(path, status, crates, root):
     return None, f"shared or unclassified: {path}", set()
 
 
+# Files a CI cache key hashes, and the workflows that name the caches. The
+# caches save only from main and only under a new key (rust-cache hashes
+# Cargo.lock, every crate's Cargo.toml and a toolchain file; setup-node hashes
+# pnpm-lock.yaml), so a push that changes one runs every lane on main to save
+# the new caches, even when the merge queue verified the commit.
+CACHE_KEYS = (
+    "Cargo.lock", "Cargo.toml", "*/Cargo.toml", "rust-toolchain", "rust-toolchain.toml", ".cargo/*",
+    "pnpm-lock.yaml", ".github/workflows/*",
+)
+
+
+def queue_verification(runs_file, head, root=ROOT):
+    """The URL of a successful merge queue run of this workflow on `head`, from
+    the Actions API answer in `runs_file`, or None and the reason there is none."""
+    try:
+        with open(runs_file, encoding="utf-8") as answer:
+            runs = json.load(answer)["workflow_runs"]
+        sha = subprocess.check_output(["git", "rev-parse", head], cwd=root, text=True, stderr=subprocess.PIPE).strip()
+    except (OSError, ValueError, KeyError, TypeError, subprocess.CalledProcessError) as error:
+        return None, f"merge queue lookup failed: {error}"
+    for run in runs:
+        if run.get("event") == "merge_group" and run.get("conclusion") == "success" and run.get("head_sha") == sha:
+            return run["html_url"], None
+    return None, f"no merge queue run verified {sha[:12]}"
+
+
 def select(entries, crates, root=ROOT, full_reason=None):
     """The plan for a list of (status, path) entries from `git diff --name-status`."""
     reasons = {lane: [] for lane in LANES}
@@ -318,7 +346,7 @@ def changed_entries(base, head, root=ROOT):
     return list(zip(fields[:-1:2], fields[1:-1:2]))
 
 
-def plan(event, base, head, root=ROOT, crates=None, draft=False):
+def plan(event, base, head, root=ROOT, crates=None, draft=False, queue_runs=None):
     if draft:
         # A draft is not a merge candidate: no lane runs, `aggregate` fails
         # `verify` for it, and marking the pull request ready for review
@@ -331,6 +359,8 @@ def plan(event, base, head, root=ROOT, crates=None, draft=False):
             # Without the crate graph no Rust change can be narrowed; the full
             # Rust lane runs the whole workspace and needs no package list.
             return select([], {}, root, f"crate graph unavailable: {error}")
+    if event == "push":
+        return plan_push(base, head, root, crates, queue_runs)
     if event not in ("pull_request", "merge_group"):
         return select([], crates, root, f"{event}: every lane runs on main")
     try:
@@ -354,6 +384,28 @@ def plan(event, base, head, root=ROOT, crates=None, draft=False):
     return select(entries, crates, root)
 
 
+def plan_push(before, head, root, crates, queue_runs):
+    """A push to main: no lane when a merge queue run verified this commit and
+    the push changed no cache key, every lane with the reason otherwise."""
+    if not before:
+        return select([], crates, root, "push: no passing push run on main to compare from")
+    try:
+        # `before` is the last main commit whose push run passed, so
+        # before..head is every merge since, including a replaced run's.
+        changed = [name for _, name in changed_entries(before, head, root)]
+    except (subprocess.CalledProcessError, UnicodeDecodeError, ValueError) as error:
+        return select([], crates, root, f"push: cache keys unknown, comparison unavailable: {error}")
+    keyed = [name for name in changed if any(fnmatchcase(name, pattern) for pattern in CACHE_KEYS)]
+    if keyed:
+        return select([], crates, root, f"push: {keyed[0]} changes a CI cache key, which main saves")
+    if queue_runs is None:
+        return select([], crates, root, "push: merge queue lookup not given")
+    url, reason = queue_verification(queue_runs, head, root)
+    if url is None:
+        return select([], crates, root, f"push: {reason}")
+    return {"full": False, "lanes": [], "rust_packages": [], "reasons": {}, "verified_by": url}
+
+
 def aggregate(needs):
     """Raise unless every planned lane succeeded and every other lane was skipped."""
     if set(needs) != set(LANES) | {"plan"}:
@@ -367,7 +419,12 @@ def aggregate(needs):
     if needs["plan"]["outputs"].get("draft") == "true":
         raise ValueError("draft: lanes not run, mark ready for review")
     planned = json.loads(needs["plan"]["outputs"]["lanes"])
-    if not planned or not set(planned) <= set(LANES):
+    # A push to main that a merge queue run verified plans no lane; every lane
+    # must then have been skipped.
+    verified = bool(needs["plan"]["outputs"].get("verified-by"))
+    if verified and planned:
+        raise ValueError(f"a verified push planned lanes: {planned}")
+    if (not planned and not verified) or not set(planned) <= set(LANES):
         raise ValueError(f"plan named no lane or an unknown one: {planned}")
     errors = []
     for lane in LANES:
@@ -382,6 +439,8 @@ def aggregate(needs):
 def summary(result):
     if result.get("draft"):
         return "A draft pull request plans no lane; marking it ready for review runs them.\n"
+    if result.get("verified_by"):
+        return f"The merge queue verified this commit ({result['verified_by']}); no lane runs again on main.\n"
     lines = ["| Lane | Runs | Why |", "| --- | --- | --- |"]
     for lane in LANES:
         reasons = result["reasons"].get(lane, [])
@@ -401,17 +460,21 @@ def main():
     plan_parser.add_argument("--base", default="HEAD^1")
     plan_parser.add_argument("--head", default="HEAD")
     plan_parser.add_argument("--draft", choices=("true", "false"), default="false", help="the pull request is a draft")
+    plan_parser.add_argument(
+        "--queue-runs", help="a push: the Actions API answer listing merge queue runs of this workflow on HEAD; missing means the lookup failed"
+    )
     sub.add_parser("aggregate", help="check toJSON(needs), read from NEEDS")
     args = parser.parse_args()
 
     if args.command == "plan":
-        result = plan(args.event, args.base, args.head, draft=args.draft == "true")
+        result = plan(args.event, args.base, args.head, draft=args.draft == "true", queue_runs=args.queue_runs)
         print(json.dumps(result, indent=2))
         if os.environ.get("GITHUB_OUTPUT"):
             with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
                 output.write(f"lanes={json.dumps(result['lanes'])}\n")
                 output.write(f"full={str(result['full']).lower()}\n")
                 output.write(f"draft={str(result.get('draft', False)).lower()}\n")
+                output.write(f"verified-by={result.get('verified_by', '')}\n")
                 output.write(f"rust-packages={json.dumps(result['rust_packages'])}\n")
         if os.environ.get("GITHUB_STEP_SUMMARY"):
             with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as output:

@@ -289,14 +289,18 @@ A planned lane that was skipped, failed or cancelled fails `verify`, so a wrong 
 | The paths `NAMED_LANES` names, whose readers are a known set: a `web/e2e` file that is not a spec (the `desktop` suites import it, and `desktop/e2e` unit tests run in `windows-check`), a `desktop/e2e` file that is not a spec, the Playwright, eslint and vitest configurations, `web/scripts`, `desktop/scripts` | the lanes that read it, listed in the script and its test; never `rust` or `os-contract` |
 | `.github/` (`pr.yml`, `web-e2e.yml`, `os-contract.yml`), `scripts/` the lanes call (`verify-*.sh`, `ci-flaky-report.py`, `ci-plan.py`, ...), `contracts/` (the Herdr pin and schemas), any `package.json`, lockfile, the workspace `Cargo.toml`, a type change, and any path no row above names | every lane |
 
-Every plan includes `policy`, whatever else it names, except a draft pull request's: it plans no lane, and `verify` fails with "draft: lanes not run, mark ready for review".
+Every plan includes `policy`, whatever else it names, except a draft pull request's and a verified push's (below): a draft plans no lane, and `verify` fails with "draft: lanes not run, mark ready for review".
 Marking the pull request ready (`ready_for_review`) starts the run that plans and runs the lanes, and that run's `verify` replaces the failed one.
 `verify` fails on a draft instead of being skipped because a skipped required check counts as passed, and `verify` is not started until its lanes finish: a skipped `verify` from the draft run would otherwise be the only check on the commit for the minutes after it is marked ready.
 Keep `ready_for_review` in `pr.yml`'s `types`, and keep `verify` running on a draft; `scripts/tests/test_ci_plan.py` reads the workflow for both.
-A hand run of `nightly.yml` takes a `lane` (`all`, `linux`, `macos`, `windows`): one system's web and desktop suites, with `os contract` and `package` for `all` only; the schedule runs everything.
-A push to main plans every lane, and so does a plan that cannot be computed: a missing base, a checkout that is not the merge commit, a diff that does not parse, or a crate graph `cargo metadata` cannot read.
+A hand run of `nightly.yml` takes a `lane` (`all`, `linux`, `macos`, `windows`): one system's web and desktop suites, with `verify`, `os contract` and `package` for `all` only; the schedule runs everything.
+A plan that cannot be computed plans every lane: a missing base, a checkout that is not the merge commit, a diff that does not parse, or a crate graph `cargo metadata` cannot read.
 A merge queue group (`merge_group`) plans from the paths between the main commit it starts from (`merge_group.base_sha`) and the group's commit, the tree main becomes, so a group queued behind others plans for their changes too; a base the `plan` job cannot fetch is a missing base.
-Main's full run is the net under a pull request that left out a lane it needed; main's runs queue rather than cancel each other.
+A push to main plans no lane when a merge queue run of `verify` succeeded on its commit, which the `plan` job asks the Actions API, and `verify` passes with every lane skipped.
+The exception is a push that changed a file a CI cache key hashes (`CACHE_KEYS` in the script: `Cargo.lock`, a `Cargo.toml`, a toolchain file, `.cargo/`, `pnpm-lock.yaml`, `.github/workflows/`), compared from the last main commit whose push run passed, so a run GitHub replaced while it waited still has its merges checked: the caches save only from main and only under a new key, so that push runs every lane.
+A lookup that fails, no merge queue run on the commit, or a comparison it cannot make also plans every lane, and the plan's output says which.
+Nightly calls `verify` on main with every lane; that run is the net under a pull request that left out a lane it needed, and a lane it fails opens the nightly issue.
+Main's runs queue rather than cancel each other.
 When one does, fix the rule in `scripts/ci-plan.py` with a case in its test; a test that reads a file outside its own folder adds that file to `READERS`.
 A path is narrower than every lane only by being named in `POLICY_ONLY` or `NAMED_LANES`, with its reader in a comment and a case in `NamedPaths`; a new or unknown path plans every lane until someone names it.
 `os-contract` always brings `desktop-e2e`, which holds the OS contract's macOS leg.
