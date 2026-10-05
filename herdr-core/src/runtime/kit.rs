@@ -245,6 +245,11 @@ impl Runtime {
     /// nothing is installed there.
     fn decide_agent_onboarding(&mut self, device_id: &str, report: &KitReport) -> bool {
         use crate::model::AgentOnboarding;
+        // A pass that could not run (retirement refused, account lock) lists
+        // no agents and says nothing about the record, so it decides nothing.
+        if report.agents.is_empty() {
+            return false;
+        }
         if device_id == LOCAL_DEVICE_ID {
             if self.snapshot.ui_state.agent_onboarding.is_some() {
                 return false;

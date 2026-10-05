@@ -514,7 +514,13 @@ pub fn status(target: &KitTarget) -> KitReport {
     if let Err(reason) = record::private_state_dir(&target.home, false) {
         return retirement_blocked(target, reason);
     }
-    let record = record::load(&target.home);
+    let mut record = record::load(&target.home);
+    // A machine the kit never ran on reads as `apply` will leave it until the
+    // operator chooses; nothing is written for that.
+    let held = record
+        .as_mut()
+        .map(agent_kit::hold_for_onboarding)
+        .unwrap_or(false);
     let recorded = |id| record.as_ref().is_ok_and(|record| record.contains(id));
     let switched_off = |id| {
         record
@@ -538,7 +544,7 @@ pub fn status(target: &KitTarget) -> KitReport {
     KitReport {
         components,
         agents,
-        held_for_onboarding: false,
+        held_for_onboarding: held,
         labels_retirement: Retirement::default(),
         legacy_retirement: Retirement::default(),
     }

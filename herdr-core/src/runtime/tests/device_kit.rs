@@ -389,8 +389,19 @@ fn an_agent_switch_on_a_device_sends_the_agent_and_repeats_nothing() {
     );
 }
 
+/// A pass that ran: it lists the agents, which a refused or failed pass never does.
+fn ran(mut report: KitReport) -> KitReport {
+    report.agents = vec![agent_report(
+        "codex",
+        hide_kit::Availability::Available,
+        false,
+        ComponentState::Off,
+    )];
+    report
+}
+
 fn held_report() -> KitReport {
-    let mut report = report(&[(ComponentId::Cli, ComponentState::Installed)]);
+    let mut report = ran(report(&[(ComponentId::Cli, ComponentState::Installed)]));
     report.held_for_onboarding = true;
     report
 }
@@ -406,7 +417,10 @@ fn onboarding(shared: &Mutex<Runtime>) -> Option<crate::model::AgentOnboarding> 
 #[test]
 fn the_first_run_choice_is_asked_once_applied_everywhere_and_remembered_for_later_devices() {
     use crate::model::AgentOnboarding::{Done, Pending};
-    let helper = KitDevice::answering(Ok(report(&[(ComponentId::Cli, ComponentState::Installed)])));
+    let helper = KitDevice::answering(Ok(ran(report(&[(
+        ComponentId::Cli,
+        ComponentState::Installed,
+    )]))));
     let shared = with_consent(Some(Arc::clone(&helper)));
     assert_eq!(onboarding(&shared), None);
 
@@ -482,7 +496,7 @@ fn a_machine_that_already_had_the_kit_never_asks_and_later_ends_the_choice_insta
     let shared = with_consent(None);
     shared.lock().unwrap().ingest_kit_report(
         crate::workspace::LOCAL_DEVICE_ID,
-        &report(&[(ComponentId::Cli, ComponentState::Installed)]),
+        &ran(report(&[(ComponentId::Cli, ComponentState::Installed)])),
     );
     assert_eq!(onboarding(&shared), Some(Done));
     // A later pass does not change a decided choice.
@@ -1056,4 +1070,24 @@ fn the_latest_agent_switch_wins_over_one_still_queued() {
         assert!(scope.agent_off.contains("gemini-cli"), "{scope:?}");
         assert!(!scope.agent_on.contains("gemini-cli"), "{scope:?}");
     }
+}
+
+/// A first pass that could not run (the retirement preflight refused, the
+/// account lock timed out) says nothing about the record, so it must not end
+/// the choice: the next pass that runs is the one that decides.
+#[test]
+fn a_first_pass_that_did_not_run_does_not_decide_the_first_run_choice() {
+    use crate::model::AgentOnboarding::Pending;
+    let shared = with_consent(None);
+    shared.lock().unwrap().ingest_kit_report(
+        crate::workspace::LOCAL_DEVICE_ID,
+        &KitReport::unavailable("another Hide was still changing this account's kit"),
+    );
+    assert_eq!(onboarding(&shared), None);
+
+    shared
+        .lock()
+        .unwrap()
+        .ingest_kit_report(crate::workspace::LOCAL_DEVICE_ID, &held_report());
+    assert_eq!(onboarding(&shared), Some(Pending));
 }
