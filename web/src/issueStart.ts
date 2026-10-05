@@ -4,6 +4,7 @@
 // their own; the AI's name comes from the core (`worktree_name_suggest`) with
 // the same prefix, so a name keeps the issue's number whoever wrote it.
 
+import type { TFunction } from "i18next";
 import type { Task } from "./snapshot";
 
 /** A branch-safe slug of a title: lowercase ASCII words joined by hyphens, cut at a word. The core's `branch_slug` is the same rule. */
@@ -54,11 +55,11 @@ export function defaultWorktreeName(task: Task): string {
  * for a GitHub issue when Settings › Issues asks for it, to open a pull
  * request that closes it. The operator edits it before starting.
  */
-export function firstPrompt(task: Task, body: string | null, closes: boolean): string {
+export function firstPrompt(task: Task, body: string | null, closes: boolean, t: TFunction<"translation">): string {
   const id = task.id ?? task.title;
-  const lines = [task.source === "local" ? `로컬 이슈 ${id}를 해결해줘: ${task.title}` : `Issue ${id}를 해결해줘: ${task.title}`];
+  const lines: string[] = [t(task.source === "local" ? "issue.prompt.local" : "issue.prompt.github", { id, title: task.title })];
   const text = body?.trim();
   if (text) lines.push("", text);
-  if (closes && task.source === "github" && task.id) lines.push("", `완료되면 이 이슈를 닫는 PR을 열어줘 (PR 본문에 Closes ${task.id}).`);
+  if (closes && task.source === "github" && task.id) lines.push("", t("issue.prompt.closes", { id: task.id }));
   return lines.join("\n");
 }

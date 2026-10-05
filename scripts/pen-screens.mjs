@@ -412,7 +412,7 @@ function screenLineageDetails(tokens, suffix) {
   const children = [
     {status: 'working', title: '레이아웃 재구조화', branch: 'web-view-overlay', age: '4m'},
     {status: 'done', title: '패널 디자인 검토', branch: 'web-side-panel', age: '13m'},
-    {status: 'done', title: '원격 분리', branch: 'hcoord-decouple', device: 'mini', age: '1h'},
+    {status: 'done', title: '원격 분리', branch: 'mailbox-decouple', device: 'mini', age: '1h'},
   ];
   const popover = frame(`main-lineage-pop-${suffix}`, 'Children list', {width: num(tokens, '--size-agent-children-popover'), layout: 'vertical', fill: '$--popover', cornerRadius: '$--radius-md', stroke: '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner', padding: ['$--spacing-xxs', 0]}, [
     ...children.map((child, index) => frame(`main-lineage-pop${index}-${suffix}`, 'Child', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', padding: ['$--spacing-xs', '$--spacing-sm'], ...(index === 0 ? {fill: '$--accent'} : {})}, [
@@ -468,10 +468,10 @@ function screenSidebar(tokens, id, suffix, agents, {overview = false} = {}) {
       width: 'fill_container', height: num(tokens, '--size-project-row'), layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', padding: [0, '$--spacing-sm'], cornerRadius: '$--radius-sm',
       ...(overview ? {fill: '$--secondary'} : {}),
     }, [
-      icon(`${id}-overviewi-${suffix}`, 'house', {size: num(tokens, '--size-checkout-icon'), fill: '$--subtle-foreground'}),
-      text(`${id}-overviewt-${suffix}`, 'Home', {size: '$--text-subhead', weight: '600'}),
+      icon(`${id}-overviewi-${suffix}`, 'layout-dashboard', {size: num(tokens, '--size-checkout-icon'), fill: '$--subtle-foreground'}),
+      text(`${id}-overviewt-${suffix}`, 'Overview', {size: '$--text-subhead', weight: '600'}),
       frame(`${id}-overviewgap-${suffix}`, 'Spacer', {width: 'fill_container', height: 1}, []),
-      text(`${id}-overviewn-${suffix}`, '12 projects', {fill: '$--muted-foreground'}),
+      text(`${id}-overviewn-${suffix}`, '2 asking · ⌘⇧O', {fill: '$--muted-foreground'}),
     ]),
     frame(`${id}-tabs-${suffix}`, 'Tabs', {width: 'fill_container', layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center'}, [
       text(`${id}-projectstab-${suffix}`, 'Projects', {size: '$--text-caption', fill: '$--muted-foreground'}),
@@ -1342,7 +1342,7 @@ function buildMain(tokens) {
         {status: 'done', branch: 'web-side-panel', pr: '#170', more: 1},
       ]},
       {title: '조용한 순찰 기능 개발', status: 'Seen', symbol: '○', statusColor: '$--muted-foreground', fold: 'folded', summaries: [
-        {status: 'done', branch: 'hcoord-decouple', device: 'mini'},
+        {status: 'done', branch: 'mailbox-decouple', device: 'mini'},
       ]},
     ], {overview: true});
     const card = (id, value) => taskCard(`main-${id}-${suffix}`, value);
@@ -1361,7 +1361,7 @@ function buildMain(tokens) {
         ], {foot: [foldLine(`main-loose-${suffix}`, '이슈 없는 워크트리 5')]}),
         stageColumn(`main-review-${suffix}`, '리뷰', 2, [
           card('r1', {...ISSUE_186, project: 'herdr-ide'}),
-          card('r2', {task: gh(9), project: 'sasu', title: 'hcoord-decouple: move lineage tokens into the plugin', branch: '9-hcoord-decouple', pr: {number: 12, checks: 'pending', review: 'review_required'}}),
+          card('r2', {task: gh(9), project: 'sasu', title: 'mailbox-decouple: move lineage tokens into the plugin', branch: '9-mailbox-decouple', pr: {number: 12, checks: 'pending', review: 'review_required'}}),
         ]),
         doneColumn(`main-done-${suffix}`, 19, [{name: 'herdr-ide', count: 12}, {name: 'sasu', count: 6}, {name: 'creator', count: 1}]),
       ]),
@@ -1673,7 +1673,7 @@ function buildProjectOverview(tokens) {
         stateCell('primary', '기본 박스 · main', box('primary', {primary: true, branch: 'main', purpose: 'Observer · 계획과 위임', agents: 2, rows: [
           {mark: 'seen', title: 'SIGTERM 정리 오케스트레이션', age: '20m'}, {mark: 'work', title: 'Overview 진입 흐름', age: '1m'},
         ]})),
-        stateCell('pr', '워크트리 · 이슈 칩 + PR 칩', box('pr', {task: '#184', branch: '184-hcoord-plugin', purpose: 'Bundle hcoord as a Herdr plugin', pr: {number: 207, tone: 'open', checks: 'passing', review: 'changes_requested'}, distance: '↑5', files: 3, rows: [
+        stateCell('pr', '워크트리 · 이슈 칩 + PR 칩', box('pr', {task: '#184', branch: '184-mailbox-plugin', purpose: 'Bundle mailbox as a Herdr plugin', pr: {number: 207, tone: 'open', checks: 'passing', review: 'changes_requested'}, distance: '↑5', files: 3, rows: [
           {mark: 'work', provider: 'codex', title: '리뷰 반영', age: '3m'},
         ]})),
         stateCell('merged', '머지됨 · 흐리게 + 정리', box('merged', {branch: 'fix/checkout-capability-follow-up', purpose: '체크아웃 권한 후속', cleanup: true, resting: true, pr: {number: 216, tone: 'merged'}, rows: [CODEX_REST]})),
@@ -1709,7 +1709,7 @@ function buildProjectOverview(tokens) {
         ], {foot: [foldLine(`ov-loose-${suffix}`, '이슈 없는 워크트리 3')]}),
         stageColumn(`ov-review-${suffix}`, '리뷰', 2, [
           card('r1', ISSUE_186),
-          card('r2', {task: gh(184), title: 'Bundle hcoord as a Herdr plugin with checkout lineage', branch: '184-hcoord-plugin', pr: {number: 207, checks: 'pending', review: 'changes_requested'}, agents: [
+          card('r2', {task: gh(184), title: 'Bundle mailbox as a Herdr plugin with checkout lineage', branch: '184-mailbox-plugin', pr: {number: 207, checks: 'pending', review: 'changes_requested'}, agents: [
             {mark: 'work', provider: 'codex', title: '리뷰 반영', age: '3m'},
           ]}),
         ], {foot: [foldLine(`ov-loosepr-${suffix}`, '이슈 없는 PR 1')]}),
@@ -1728,7 +1728,7 @@ function buildProjectOverview(tokens) {
       frame(`ov-states-r1-${suffix}`, 'Under the pointer', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, [
         card('s1', {task: gh(201), labels: [ENHANCEMENT], title: 'Add Workspace design reference and visual review coverage', hover: 'start'}),
         card('s2', {...LOCAL_3, hover: 'workspace'}),
-        card('s3', {task: gh(184), title: 'Bundle hcoord as a Herdr plugin with checkout lineage', branch: '184-hcoord-plugin', pr: {number: 207, checks: 'pending', review: 'changes_requested'}, hover: 'pr'}),
+        card('s3', {task: gh(184), title: 'Bundle mailbox as a Herdr plugin with checkout lineage', branch: '184-mailbox-plugin', pr: {number: 207, checks: 'pending', review: 'changes_requested'}, hover: 'pr'}),
         card('s4', {task: local(3), title: 'Overview 진입 흐름', hover: 'start', edit: true}),
       ]),
       frame(`ov-states-r2-${suffix}`, 'States', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, [
@@ -1759,13 +1759,13 @@ function buildProjectOverview(tokens) {
       ], {newIssue: true}),
       stageColumn(`ov-pgw-${suffix}`, '진행 중', 2, [card('pg-w1', {...ISSUE_192, selected: true}), card('pg-w2', LOCAL_3)], {foot: [foldLine(`ov-pgloose-${suffix}`, '이슈 없는 워크트리 3')]}),
     ], spec: {
-      task: gh(192), title: ISSUE_192.title, stage: '진행 중', labels: [BUG], author: 'yansfil · 9월 27일', updated: '9월 27일',
+      task: gh(192), title: ISSUE_192.title, stage: '진행 중', labels: [BUG], author: 'example · 9월 27일', updated: '9월 27일',
       work: {branch: ISSUE_192.branch, ahead: 3, files: 4, agents: [
         {mark: 'seen', title: 'SIGTERM 정리 오케스트레이션', age: '20m'},
         {mark: 'ask', provider: 'codex', title: 'SIGTERM 처리와 자식 정리 순서', line: '기존 stdin 종료 경로도 남길까요?', tone: 'request', age: '4m', depth: 1},
       ], pr: {number: 221, tone: 'draft', title: 'hided: stop AI children on SIGTERM before exit', review: 'changes_requested'}},
       body: [['h', '배경'], ['p', 'Found during the Swift removal (#188): hided installs no SIGTERM handler, so a background AI child is ended by the OS closing its stdin pipe.'], ['p', 'Add a graceful stop path: signal handler, owner-thread shutdown, child teardown with a bounded wait.']],
-      comments: [['yansfil · 9월 27일', '데스크톱 호스트 종료도 같은 경로로 가야 함']],
+      comments: [['example · 9월 27일', '데스크톱 호스트 종료도 같은 경로로 가야 함']],
     }});
     const localPanel = withPanel('local', {name: 'Local', columns: [
       stageColumn(`ov-plb-${suffix}`, '백로그', 2, [
@@ -3588,7 +3588,7 @@ function buildPalette(tokens) {
       frame(id('side-a0'), 'Agent row', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', padding: ['$--spacing-xs', '$--spacing-md']}, [
         screenStatusMark(tokens, id('side-a0s'), '?', '$--warning'),
         mark('side-a0m', 'claude'),
-        text(id('side-a0t'), 'hcoord 원격 에이전트 구현', {weight: '500'}),
+        text(id('side-a0t'), 'mailbox 원격 에이전트 구현', {weight: '500'}),
       ]),
     ]);
 
@@ -3641,30 +3641,30 @@ function buildPalette(tokens) {
     // elsewhere as one `↑ 부모` line.
     const relations = wide('related', {placeholder: '이름이나 #번호를 입력하세요', list: [
       heading('g-related', 'Related'),
-      row('q0', {lead: glyph('q0i', 'circle-dot'), title: '#273 hcoord 쓰기 명령이 sandbox 거부를 internal로 숨김', detail: 'Issue · herdr-ide', selected: true}),
-      row('q1', {lead: glyph('q1i', 'git-branch'), title: 'fix/hcoord-sandbox-letters', detail: 'herdr-ide'}),
-      row('q2', {lead: glyph('q2i', 'git-pull-request'), title: '#275 Surface hcoord sandbox refusals', detail: 'PR · Open · fix/hcoord-sandbox-letters'}),
-      row('q3', {lead: mark('q3m', 'claude'), title: 'hcoord 쓰기 명령 sandbox 오류 해결', detail: 'herdr-ide › fix/hcoord-sandbox-letters · Done'}),
+      row('q0', {lead: glyph('q0i', 'circle-dot'), title: '#273 mailbox 쓰기 명령이 sandbox 거부를 internal로 숨김', detail: 'Issue · herdr-ide', selected: true}),
+      row('q1', {lead: glyph('q1i', 'git-branch'), title: 'fix/mailbox-sandbox-letters', detail: 'herdr-ide'}),
+      row('q2', {lead: glyph('q2i', 'git-pull-request'), title: '#275 Surface mailbox sandbox refusals', detail: 'PR · Open · fix/mailbox-sandbox-letters'}),
+      row('q3', {lead: mark('q3m', 'claude'), title: 'mailbox 쓰기 명령 sandbox 오류 해결', detail: 'herdr-ide › fix/mailbox-sandbox-letters · Done'}),
       row('q4', {lead: mark('q4m', 'codex'), title: '↑ 부모 codex workspace-write 원인 조사', detail: 'herdr-ide › main · Working'}),
-    ], detail: detailLines('rel-d', 'Issue', 'hcoord 쓰기 명령이 sandbox 거부를 internal로 숨김', [pill('rel-p1', 'Open', '$--secondary', '$--success'), pill('rel-p2', '#273')], [['프로젝트', 'herdr-ide'], ['맡은 곳', 'fix/hcoord-sandbox-letters'], ['닫는 PR', '#275'], ['읽음', '4분 전 읽음']], [['#273 hcoord 쓰기 명령이 sandbox 거부를…', 0, true], ['fix/hcoord-sandbox-letters', 0, false], ['#275 Surface hcoord sandbox refusals', 1, false]])});
+    ], detail: detailLines('rel-d', 'Issue', 'mailbox 쓰기 명령이 sandbox 거부를 internal로 숨김', [pill('rel-p1', 'Open', '$--secondary', '$--success'), pill('rel-p2', '#273')], [['프로젝트', 'herdr-ide'], ['맡은 곳', 'fix/mailbox-sandbox-letters'], ['닫는 PR', '#275'], ['읽음', '4분 전 읽음']], [['#273 mailbox 쓰기 명령이 sandbox 거부를…', 0, true], ['fix/mailbox-sandbox-letters', 0, false], ['#275 Surface mailbox sandbox refusals', 1, false]])});
 
     const typed = wide('typed', {query: 'sand', list: [
       heading('g-issues', 'Issues'),
-      row('t0', {lead: glyph('t0i', 'circle-dot'), title: '#273 hcoord 쓰기 명령이 sandbox 거부를 internal로 숨김', detail: 'Issue · herdr-ide'}),
+      row('t0', {lead: glyph('t0i', 'circle-dot'), title: '#273 mailbox 쓰기 명령이 sandbox 거부를 internal로 숨김', detail: 'Issue · herdr-ide'}),
       heading('g-agents', 'Agents'),
-      row('t1', {lead: mark('t1m', 'claude'), title: 'hcoord 쓰기 명령 sandbox 오류 해결', detail: 'herdr-ide › fix/hcoord-sandbox-letters · Done', selected: true}),
+      row('t1', {lead: mark('t1m', 'claude'), title: 'mailbox 쓰기 명령 sandbox 오류 해결', detail: 'herdr-ide › fix/mailbox-sandbox-letters · Done', selected: true}),
       heading('g-checkouts', 'Checkouts'),
-      row('t2', {lead: glyph('t2i', 'git-branch'), title: 'herdr-ide / fix/hcoord-sandbox-letters', detail: '~/projects/herdr-ide.worktrees/sandbox', mono: true}),
+      row('t2', {lead: glyph('t2i', 'git-branch'), title: 'herdr-ide / fix/mailbox-sandbox-letters', detail: '~/projects/herdr-ide.worktrees/sandbox', mono: true}),
       frame(id('t-gh'), 'GitHub row', {layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center', width: ROW, padding: ['$--spacing-xs', '$--spacing-sm']}, [
         glyph('t-ghi', 'search'),
         text(id('t-ght'), 'GitHub에서 "sand" 검색', {weight: '500'}),
       ]),
-    ], detail: detailLines('typed-d', 'Agent · Claude', 'hcoord 쓰기 명령 sandbox 오류 해결', [pill('typed-p1', 'Done', '$--secondary', '$--success'), pill('typed-p2', 'This Mac')], [['checkout', 'herdr-ide › fix/hcoord-sandbox-letters']], null)});
+    ], detail: detailLines('typed-d', 'Agent · Claude', 'mailbox 쓰기 명령 sandbox 오류 해결', [pill('typed-p1', 'Done', '$--secondary', '$--success'), pill('typed-p2', 'This Mac')], [['checkout', 'herdr-ide › fix/mailbox-sandbox-letters']], null)});
 
     const number = wide('number', {query: '#275', list: [
       heading('g-prs', 'Pull requests'),
-      row('n0', {lead: glyph('n0i', 'git-pull-request'), title: '#275 Surface hcoord sandbox refusals', detail: 'PR · Open · fix/hcoord-sandbox-letters', selected: true}),
-    ], detail: detailLines('number-d', 'Pull request', 'Surface hcoord sandbox refusals', [pill('number-p1', 'Open', '$--secondary', '$--success'), pill('number-p2', 'CI 진행 중', '$--secondary', '$--warning'), pill('number-p3', '#275')], [['Review', '리뷰 필요'], ['브랜치', 'fix/hcoord-sandbox-letters'], ['닫는 이슈', '#273']], null)});
+      row('n0', {lead: glyph('n0i', 'git-pull-request'), title: '#275 Surface mailbox sandbox refusals', detail: 'PR · Open · fix/mailbox-sandbox-letters', selected: true}),
+    ], detail: detailLines('number-d', 'Pull request', 'Surface mailbox sandbox refusals', [pill('number-p1', 'Open', '$--secondary', '$--success'), pill('number-p2', 'CI 진행 중', '$--secondary', '$--warning'), pill('number-p3', '#275')], [['Review', '리뷰 필요'], ['브랜치', 'fix/mailbox-sandbox-letters'], ['닫는 이슈', '#273']], null)});
 
     const collapsed = wide('collapsed', {placeholder: '이름이나 #번호를 입력하세요', list: null});
 
@@ -3684,7 +3684,7 @@ function buildPalette(tokens) {
     const ghResults = wide('gh-results', {query: 'quota wall', list: [
       heading('g-github', 'GitHub'),
       row('gr0', {lead: glyph('gr0i', 'git-pull-request'), title: '#118 Close stale sandbox watches', detail: 'PR · acme/herdr-ide · Merged', selected: true}),
-      row('gr1', {lead: glyph('gr1i', 'circle-dot'), title: '#96 hcoord sandbox 거부 로그가 비어 있음', detail: 'Issue · acme/herdr-ide · Closed'}),
+      row('gr1', {lead: glyph('gr1i', 'circle-dot'), title: '#96 mailbox sandbox 거부 로그가 비어 있음', detail: 'Issue · acme/herdr-ide · Closed'}),
     ], detail: detailLines('gh-results-d', 'Pull request · GitHub', 'Close stale sandbox watches', [pill('gh-results-p1', 'Merged'), pill('gh-results-p2', '#118'), pill('gh-results-p3', 'acme/herdr-ide')], [], null)});
     const ghFailed = wide('gh-failed', {query: 'quota wall', list: [
       empty('gh-failed-e', '일치하는 항목 없음'),
@@ -3962,7 +3962,6 @@ function buildMenus(tokens) {
     // destructive style in the real menu either. The desktop app's menu, with
     // Reveal in Finder, is on Screen / Projects Sidebar.
     const rowMenu = screenMenuContent(`mn-row-${suffix}`, 220, [
-      screenMenuItem(`mn-row0-${suffix}`, 'Open Overview'),
       screenMenuItem(`mn-row1-${suffix}`, 'New worktree…'),
       screenMenuItem(`mn-row2-${suffix}`, 'New tab in main', {shortcut: '⌥T'}),
       screenMenuSeparator(`mn-rowsep1-${suffix}`),
@@ -4240,9 +4239,20 @@ function buildProjectsSidebar(tokens) {
 
   // Projects | Agents, under the header line of every device that can be read.
   function tabStrip(p, {agents = false} = {}) {
-    return frame(`${p}-strip`, 'Tabs', {width, height: num(tokens, '--size-tab-strip'), padding: [0, xs, 0, '$--spacing-md'], gap: sm, alignItems: 'center'}, [
-      text(`${p}-tp`, 'Projects', {size: '$--text-caption', ...(agents ? {fill: MUTED} : {})}),
-      text(`${p}-ta`, 'Agents', {size: '$--text-caption', ...(agents ? {} : {fill: MUTED})}),
+    return frame(`${p}-strip`, 'Tabs', {width, height: num(tokens, '--size-tab-strip'), padding: [0, xs], gap: xs, alignItems: 'center'}, [
+      ...['Projects', 'Agents'].map((label, i) => frame(`${p}-tab${i}`, label, {width: 'fill_container', height: num(tokens, '--size-control-sm'), layout: 'horizontal', gap: xs, alignItems: 'center', justifyContent: 'center', cornerRadius: '$--radius-sm', ...((agents ? i === 1 : i === 0) ? {fill: '$--secondary'} : {})}, [
+        text(`${p}-t${i}`, label, {size: '$--text-caption'}),
+        text(`${p}-k${i}`, i ? '⌘⇧A' : '⌘⇧P', {size: '$--text-micro', fill: MUTED, mono: true}),
+      ])),
+    ]);
+  }
+
+  function sharedOverviewRow(p, count = 0) {
+    return frame(`${p}-overview`, 'Overview', {width, height: num(tokens, '--size-tab-strip'), layout: 'horizontal', gap: sm, padding: [0, '$--spacing-md'], alignItems: 'center'}, [
+      icon(`${p}-overview-g`, 'layout-dashboard', {size: 16, fill: SUBTLE}),
+      text(`${p}-overview-t`, 'Overview', {size: '$--text-body'}), spacer(`${p}-overview-space`),
+      ...(count ? [text(`${p}-overview-n`, `${count} asking`, {size: '$--text-caption', fill: '$--warning'})] : []),
+      text(`${p}-overview-k`, '⌘⇧O', {size: '$--text-micro', fill: MUTED, mono: true}),
     ]);
   }
 
@@ -4301,7 +4311,7 @@ function buildProjectsSidebar(tokens) {
     const id = `${p}-${s}`;
     return frame(`${p}-${s}`, 'Sidebar', {width, ...(height ? {height} : {}), layout: 'vertical', fill: '$--sidebar', clip: true}, [
       headerLine(id, {name, tag, icons, menu}),
-      ruleLine(`${id}-r0`), tabStrip(id, {agents: agentsTab}), ruleLine(`${id}-r1`),
+      ruleLine(`${id}-r0`), sharedOverviewRow(id, counts?.find(([state]) => state === "needs_you")?.[1] ?? (needs ? needs.length - 1 : 0)), tabStrip(id, {agents: agentsTab}), ruleLine(`${id}-r1`),
       ...(counts ? [stateCounts(id, counts)] : []),
       ...(needs ? [frame(`${id}-needs`, 'Needs You', {width, layout: 'vertical', padding: [0, xs, xs, xs]}, needs)] : []),
       ...(home ? [homeBlock(id, home)] : []),
@@ -4322,7 +4332,6 @@ function buildProjectsSidebar(tokens) {
         folderRow(`psb-p-notes-${s}`, {name: 'team-notes', marks: {idle: 1}, purpose: '회의록 요약 정리'}),
         section(`psb-sec-recent-${s}`, 'Projects · Recent activity · 5'),
         projectRow(`psb-p-herdr-${s}`, {name: 'herdr-ide', marks: {question: 3, working: 5, done: 1, idle: 1}, expanded: true}),
-        checkoutRow(`psb-overview-${s}`, {name: 'Overview', kind: 'overview', selected: true}),
         group(`psb-g-main-${s}`, [
           checkoutRow(`psb-c2-${s}`, {name: 'main', kind: 'primary', age: 'now', marks: {question: 2, working: 4, idle: 1}, purpose: '사이드바 가독성 개선', expanded: true}),
           // An unfolded parent: its chevron waits in the slot, its children follow.
@@ -4332,7 +4341,7 @@ function buildProjectsSidebar(tokens) {
           // A folded parent waiting on its children: ring in Working, the badge, the chevron shown.
           foldedAgent(`psb-a2-${s}`, {title: '후속 UX 계획 인터뷰', status: 'working', age: '2m', badge: '?1', fold: 'folded'}, [
             {status: 'working', branch: 'agent-sleep', pr: '#183'},
-            {status: 'done', branch: 'hcoord-decouple', device: 'mini'},
+            {status: 'done', branch: 'mailbox-decouple', device: 'mini'},
           ]),
           agentRow(`psb-a3-${s}`, {title: '배포 전 확인', status: 'asking', age: '30s', line: '프로덕션 배포 전에 변경 내용을 확인해…', bright: true}),
         ]),
@@ -4373,7 +4382,6 @@ function buildProjectsSidebar(tokens) {
       rows: [
         section(`psb-rm-sp-${s}`, 'Projects · Recent activity · 2'),
         projectRow(`psb-rm-p0-${s}`, {name: 'hide', marks: {working: 1}, expanded: true}),
-        checkoutRow(`psb-rm-p0o-${s}`, {name: 'Overview', kind: 'overview'}),
         checkoutRow(`psb-rm-p0m-${s}`, {name: 'main', kind: 'primary', age: '1m', purpose: '릴리스 빌드 확인', marks: {working: 1}, selected: true}),
         checkoutRow(`psb-rm-p0w-${s}`, {name: 'quick/246-frontmost', kind: 'open', age: '3h', purpose: '#246 frontmost 창 고정'}),
         projectRow(`psb-rm-p1-${s}`, {name: 'sasu'}),
@@ -4397,7 +4405,6 @@ function buildProjectsSidebar(tokens) {
       rows: [
         section(`psb-one-sp-${s}`, 'Projects · Recent activity · 4'),
         projectRow(`psb-one-p0-${s}`, {name: 'herdr-ide', marks: mark, expanded: true}),
-        checkoutRow(`psb-one-p0o-${s}`, {name: 'Overview', kind: 'overview'}),
         checkoutRow(`psb-one-p0m-${s}`, {name: 'main', kind: 'primary', age: 'now', purpose: '사이드바 가독성 개선', marks: {question: 1, working: 1}, selected: true}),
         checkoutRow(`psb-one-p0w-${s}`, {name: 'feat/home-device-rail', kind: 'open', age: '12m', purpose: 'Home · 기기 레일', marks: {working: 1}}),
         projectRow(`psb-one-p1-${s}`, {name: 'oh-my-principle', marks: {working: 1}}),
@@ -4459,7 +4466,6 @@ function buildProjectsSidebar(tokens) {
       opened('proj', 'Project row menu', [
         projectRow(`psb-m-proj-row-${s}`, {name: 'herdr-ide', marks: {question: 3, working: 5, done: 1, idle: 1}, expanded: true}),
       ], 220, [
-        I('psb-m-proj-0', 'Open Overview'),
         I('psb-m-proj-1', 'New worktree…'),
         I('psb-m-proj-2', 'New tab in main', {shortcut: '⌘T'}),
         S('psb-m-proj-s1'),
@@ -4510,7 +4516,6 @@ function buildProjectsSidebar(tokens) {
     const cardW = num(tokens, '--size-pr-popover');
     const rows = [
       projectRow(`psb-h-p-${s}`, {name: 'herdr-ide', marks: {question: 3, working: 5, done: 1, idle: 1}, expanded: true}),
-      checkoutRow(`psb-h-overview-${s}`, {name: 'Overview', kind: 'overview'}),
       checkoutRow(`psb-h-c3-${s}`, {name: 'quick/155-browser-display', age: '40m', marks: {question: 1}, purpose: '#155 browser display (WebCon…'}),
       checkoutRow(`psb-h-c4-${s}`, {name: 'quick/154-search-palette', kind: 'draft', age: '1h', marks: {done: 1}, purpose: '#154 ⌘K search palette UI'}),
       checkoutRow(`psb-h-c1-${s}`, {name: 'electron-shortcut-bindings', kind: 'open', age: '2h', marks: {working: 1}, purpose: 'Electron desktop host for the we…', hovered: true}),
@@ -4535,7 +4540,7 @@ function buildProjectsSidebar(tokens) {
     });
     return frame(`psb-hover-${s}`, 'Checkout row under the pointer, with its card', {width: width + gap + cardW, height: listH}, [{...list, x: 0, y: 0}, card]);
   }
-  return screenSheet('screen-projects-sidebar', 'Screen / Projects Sidebar', 'sidebar.tsx, sidebar-header.tsx, projects.ts (quick device-rail-badges, replacing PRD home-device-rail D-09..D-14): the sidebar follows a device rail that is always shown (quick device-rail-slack). The rail is the sidebar’s full-height left column: This Mac and each registered device as a 32 tile with no name under it (the laptop glyph, or the monogram of the device’s name; the hint is the name with its counts in full), the selected tile ringed 2 off its edge, one mark notched into a tile’s top-right for its most urgent state (the Needs You count, ten or more reading 9+, else a dot for unseen Done), no mark for Working, an unreachable device with its glyph dimmed and a x at the bottom-right, and + directly under the last tile to add a device, dashed in the app and drawn solid here. Every device’s sidebar has a header line with the device in front (This Mac, mini Remote) and Add project and Search at its end, then the Projects | Agents strip. Projects holds the device’s Needs You group first, then its Home row (house glyph, the project count, + under the pointer for a new tab in Home) with the agents that belong to no project under it, then Projects. Agents holds the device’s own agents as Needs You, Done, Working and Seen with Needs You N · Done N · Working N above and no device chip on any row. The rest frame is This Mac in front with the Overview child of herdr-ide selected; a remote device in front draws its own Home and Projects; a device that is not connected draws its name, 연결 안 됨 and 다시 연결, and no tree. With one device the rail still shows with This Mac alone. With the rail hidden the name on the header line carries a chevron and opens the device menu (the devices, 기기 추가…, 레일 표시). In the list, pinned and activity-ordered projects, a Git project’s first Overview child as a checkout-row master instance with a layout-dashboard glyph and empty trailing slots, checkout rows with their kind glyph, age and agent line, an opened checkout’s agent rows, and both inactive folds. Every line ends in its time or status badge and then a fold slot, so names never move and the times, badges and chevrons stand in one column each. A row’s menu opens on a right-click, with nothing drawn for it; beside the sidebar each row kind is drawn with its menu open (Project: Open Overview, New worktree…, New tab in main, Reveal in Finder, Copy path, Pin, Remove project…; Checkout: Open, New tab here, Open pull request, Set purpose…, Set as default checkout, Copy branch name, Copy path, Reveal in Finder, Delete worktree…; Agent: Show, Copy title, Copy session id, Close tab…). A status badge counts agents under the mark each agent’s own row draws, worst first (× ! ? ● ✓ ○). A checkout row opens the checkout and unfolds its agents; clicking its already selected, unfolded Workspace folds them without leaving it, and the chevron changes disclosure alone. A checkout name is 12/400 with its prefix up to the first slash muted. Line two is the purpose with the last-commit age on the time column, drawn only for a purpose or a raised-from parent. A parent agent folds its children with the same chevron and speaks for them with its badge; a folded parent draws one line per other checkout, with the server-glyph device chip. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age. Beside the sidebar: a pull-request row under the pointer with its card (Component / PR hover card) opened to its right, the glyph a button that opens the pull request.', build, build);
+  return screenSheet('screen-projects-sidebar', 'Screen / Projects Sidebar', 'sidebar.tsx, sidebar-header.tsx, projects.ts (quick device-rail-badges, replacing PRD home-device-rail D-09..D-14): the sidebar follows a device rail that is always shown (quick device-rail-slack). The rail is the sidebar’s full-height left column: This Mac and each registered device as a 32 tile with no name under it (the laptop glyph, or the monogram of the device’s name; the hint is the name with its counts in full), the selected tile ringed 2 off its edge, one mark notched into a tile’s top-right for its most urgent state (the Needs You count, ten or more reading 9+, else a dot for unseen Done), no mark for Working, an unreachable device with its glyph dimmed and a x at the bottom-right, and + directly under the last tile to add a device, dashed in the app and drawn solid here. Every device’s sidebar has a header line with the device in front (This Mac, mini Remote) and Add project and Search at its end, then the Projects | Agents strip. Projects holds the device’s Needs You group first, then its Home row (house glyph, the project count, + under the pointer for a new tab in Home) with the agents that belong to no project under it, then Projects. Agents holds the device’s own agents as Needs You, Done, Working and Seen with Needs You N · Done N · Working N above and no device chip on any row. The rest frame is This Mac in front with the main checkout of herdr-ide selected; a remote device in front draws its own Home and Projects; a device that is not connected draws its name, 연결 안 됨 and 다시 연결, and no tree. With one device the rail still shows with This Mac alone. With the rail hidden the name on the header line carries a chevron and opens the device menu (the devices, 기기 추가…, 레일 표시). In the list, pinned and activity-ordered projects, checkout rows with their kind glyph, age and agent line, an opened checkout’s agent rows, and both inactive folds. Every line ends in its time or status badge and then a fold slot, so names never move and the times, badges and chevrons stand in one column each. A row’s menu opens on a right-click, with nothing drawn for it; beside the sidebar each row kind is drawn with its menu open (Project: New worktree…, New tab in main, Reveal in Finder, Copy path, Pin, Remove project…; Checkout: Open, New tab here, Open pull request, Set purpose…, Set as default checkout, Copy branch name, Copy path, Reveal in Finder, Delete worktree…; Agent: Show, Copy title, Copy session id, Close tab…). A status badge counts agents under the mark each agent’s own row draws, worst first (× ! ? ● ✓ ○). A checkout row opens the checkout and unfolds its agents; clicking its already selected, unfolded Workspace folds them without leaving it, and the chevron changes disclosure alone. A checkout name is 12/400 with its prefix up to the first slash muted. Line two is the purpose with the last-commit age on the time column, drawn only for a purpose or a raised-from parent. A parent agent folds its children with the same chevron and speaks for them with its badge; a folded parent draws one line per other checkout, with the server-glyph device chip. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age. Beside the sidebar: a pull-request row under the pointer with its card (Component / PR hover card) opened to its right, the glyph a button that opens the pull request.', build, build);
 }
 
 // -- Screen / Mobile ---------------------------------------------------------------
@@ -4678,7 +4683,7 @@ function buildMobile(tokens) {
   const AGENTS = {
     needs: [
       {title: '솔루션 6 구현', status: 'approval', project: 'herdr-ide', branch: 'prd/mobile-companion', age: '2m', request: 'Bash(cargo test -p hided) 실행을 허용할까요?'},
-      {title: 'hcoord 플러그인 구현', status: 'question', kind: 'codex', project: 'herdr-ide', branch: 'prd/hcoord-plugin', machine: 'mini', age: '9m', request: '워크스페이스 이름을 어떤 걸로 할까요?'},
+      {title: 'mailbox 플러그인 구현', status: 'question', kind: 'codex', project: 'herdr-ide', branch: 'prd/mailbox-plugin', machine: 'mini', age: '9m', request: '워크스페이스 이름을 어떤 걸로 할까요?'},
     ],
     done: [
       {title: '사이드바 행 클릭으로 펼치기', status: 'done', project: 'herdr-ide', branch: 'prd/sidebar-row-click-unfold', age: '14m', news: 'PR #186 열림 · CI 통과'},
@@ -5007,9 +5012,49 @@ export function readLocalVariables(root) {
   return {...Object.fromEntries(expected), ...libraryAuthored};
 }
 
+function buildOverview(tokens) {
+  const build = suffix => ['all', 'project', 'zero', 'narrow', 'page'].map((state, index) => {
+    const id = `shared-overview-${suffix}-${state}`;
+    const narrow = state === 'narrow';
+    const width = narrow ? 600 : 960;
+    const contentWidth = width - 2 * num(tokens, '--spacing-lg');
+    const project = state === 'project';
+    const themeIndex = suffix === 'l' ? 2 : 3;
+    const original = project
+      ? buildProjectOverview(tokens).children[themeIndex].children[0].children[0]
+      : buildMain(tokens).children[themeIndex].children[1].children.find(node => node.name === 'Overview · 요청');
+    const copy = node => ({...node, id: `${id}-${node.id}`, ...(typeof node.width === 'number' ? {width: Math.min(node.width, contentWidth)} : {}), ...(node.children ? {children: node.children.map(copy)} : {})});
+    const content = copy(original);
+    content.width = contentWidth;
+    return frame(id, `Overview / ${state}`, {width, height: 640, layout: 'vertical', gap: '$--spacing-sm', fill: '$--popover', cornerRadius: '$--radius-lg', stroke: '$--border', padding: '$--spacing-lg', clip: true}, [
+      frame(`${id}-sidebar`, 'Shared sidebar entry', {width: 'fill_container', layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center'}, [
+        icon(`${id}-entry-icon`, 'layout-dashboard', {size: num(tokens, '--size-icon'), fill: '$--subtle-foreground'}),
+        text(`${id}-entry-label`, 'Overview', {size: '$--text-body'}),
+        ...(state !== 'zero' ? [text(`${id}-asking`, '2 asking', {size: '$--text-caption', fill: '$--warning'})] : []),
+        text(`${id}-entry-key`, '⌘⇧O', {size: '$--text-caption', fill: '$--muted-foreground', mono: true}),
+        screenToggleGroup(`${id}-sidebar-tabs`, ['Projects · ⌘⇧P', 'Agents · ⌘⇧A'], index % 2),
+      ]),
+      frame(`${id}-toolbar`, 'Workspace toolbar icons', {width: 'fill_container', layout: 'horizontal', gap: '$--spacing-sm', alignItems: 'center'}, [
+        frame(`${id}-overview-control`, 'Overview', {layout: 'horizontal', gap: '$--spacing-xxs'}, [screenIconButton(`${id}-overview`, 'layout-dashboard'), ...(state !== 'zero' ? [frame(`${id}-dot`, 'Needs You dot', {width: num(tokens, '--size-tab-status-dot'), height: num(tokens, '--size-tab-status-dot'), fill: '$--warning', cornerRadius: '$--radius-lg'}, [])] : [])]),
+        screenIconButton(`${id}-server`, 'globe'), screenIconButton(`${id}-files`, 'panel-left'),
+        text(`${id}-filecount`, '3', {size: '$--text-caption', fill: '$--primary'}), screenIconButton(`${id}-tools`, 'panel-right'),
+      ]),
+      frame(`${id}-header`, 'Overview scope', {width: 'fill_container', layout: 'horizontal', gap: '$--spacing-md', alignItems: 'center'}, [
+        text(`${id}-title`, 'Overview', {size: '$--text-title', weight: '600'}),
+        screenToggleGroup(`${id}-scope`, ['All projects', 'herdr-ide'], project ? 1 : 0),
+        frame(`${id}-space`, 'Spacer', {width: 'fill_container', height: 1}, []),
+        screenButton(`${id}-close`, 'Esc', {variant: 'ghost'}),
+      ]),
+      content,
+    ]);
+  });
+  return screenSheet('screen-overview', 'Screen / Overview', 'Shared Overview modal over the mounted Workspace, or a central page. Approved 2026-10-04: Overview before Open server; File Views badge retained; zero hides count and dot; Light, narrow windows and selected scope use existing tokens and patterns. Existing content is reused below the shared scope header. The entry and toolbar state rows document their placement separately.', build, build);
+}
+
 export function screenSheets(tokens, root) {
   setLibraryRoot(root, tokens);
   return [
+    {name: 'Screen / Overview', build: () => buildOverview(tokens)},
     {name: 'Screen / Main', build: () => buildMain(tokens)},
     {name: 'Screen / Project Overview', build: () => buildProjectOverview(tokens)},
     {name: 'Screen / Workspace', build: () => buildWorkspace(tokens)},

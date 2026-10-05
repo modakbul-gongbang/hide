@@ -28,6 +28,19 @@ fn run_coordinator(
 ) {
     let home_path = usage_paths.as_ref().and_then(|paths| paths.home.clone());
     let mut process_reader = super::process_info::ProcessReader::new(&context);
+    let mut lineage_writer = match crate::coordination::lineage::Writer::new(
+        context.log_target().to_owned(),
+        Arc::clone(&context.api_connector),
+        context.runtime.clone(),
+    ) {
+        Ok(writer) => Some(writer),
+        Err(message) => {
+            crate::diagnostic!(
+                json!({"component":"lineage","kind":"start_failed","message":message})
+            );
+            None
+        }
+    };
     let mut replica: Option<SessionReplica> = None;
     let mut active_tab_reads: BTreeMap<String, u32> = BTreeMap::new();
     let mut subscription: Option<ActiveSubscription> = None;
@@ -101,6 +114,7 @@ fn run_coordinator(
 
         if subscription.is_none() && Instant::now() >= reconnect_at {
             let has_projection = replica.is_some();
+            let snapshot_started_at = Instant::now();
             match connect(
                 &context,
                 &sender,
@@ -124,6 +138,22 @@ fn run_coordinator(
                     reconnect_delay = RECONNECT_INITIAL_DELAY;
                     next_agent_refresh = Instant::now() + AGENT_REFRESH_INTERVAL;
                     next_operation_tick = Instant::now() + ASYNC_OPERATION_TICK_INTERVAL;
+                    if let Some(writer) = lineage_writer.as_mut()
+                        && let Some(runtime) = context.runtime.upgrade()
+                    {
+                        let state = runtime
+                            .lock()
+                            .ok()
+                            .and_then(|guard| guard.delivery_state().ok());
+                        if let Some(state) = state {
+                            writer.observe(
+                                &state,
+                                &replica.as_ref().unwrap().state.agents,
+                                true,
+                                snapshot_started_at,
+                            );
+                        }
+                    }
                     if replica
                         .as_ref()
                         .is_some_and(SessionReplica::ready_to_publish)
@@ -169,13 +199,25 @@ fn run_coordinator(
 
         if subscription.is_some() && Instant::now() >= next_agent_refresh {
             next_agent_refresh = Instant::now() + AGENT_REFRESH_INTERVAL;
+            let snapshot_started_at = Instant::now();
             match fetch_agents(&context) {
                 Ok(agents) => {
                     let current = replica
                         .as_mut()
                         .expect("active subscription always has a replica");
-                    let requested =
-                        agent_tick_needs_publish(current, &agents, catalog_cache.as_ref());
+                    let (native_changed, requested) =
+                        agent_tick_changes(current, &agents, catalog_cache.as_ref());
+                    if let Some(writer) = lineage_writer.as_mut()
+                        && let Some(runtime) = context.runtime.upgrade()
+                    {
+                        let state = runtime
+                            .lock()
+                            .ok()
+                            .and_then(|guard| guard.delivery_state().ok());
+                        if let Some(state) = state {
+                            writer.observe(&state, &agents, native_changed, snapshot_started_at);
+                        }
+                    }
                     if requested {
                         current.replace_agents(agents);
                         match current.refresh_published_state() {
@@ -228,10 +270,15 @@ fn run_coordinator(
                 .duration_since(UNIX_EPOCH)
                 .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64)
                 .unwrap_or(0);
+            let mut republish_created_tab = false;
             if let Some(runtime) = context.runtime.upgrade() {
                 let changed = match runtime.lock() {
                     Ok(mut guard) => {
                         let changed = guard.tick_async_operations(now_unix_ms);
+                        // Hide creates tabs only on this machine's Herdr, so
+                        // only its replica can place one again.
+                        republish_created_tab =
+                            context.is_local() && guard.take_created_tab_republish();
                         // Agent sleep is this machine's alone (PRD agent-sleep).
                         changed | (context.is_local() && guard.tick_agent_sleep(now_unix_ms))
                     }
@@ -241,6 +288,20 @@ fn run_coordinator(
                 if changed {
                     context.notifier.notify();
                 }
+            }
+            if republish_created_tab
+                && subscription.is_some()
+                && let Some(current) = replica.as_mut()
+                && !publish_replica(
+                    &context,
+                    current,
+                    &mut catalog_cache,
+                    &mut purpose_mirror,
+                    &mut labels,
+                )
+            {
+                stop_subscription(&mut subscription);
+                return;
             }
             if labels.as_mut().is_some_and(|worker| {
                 take_label_switch(&context, worker) | worker.tick(Instant::now())
@@ -668,13 +729,24 @@ fn run_coordinator(
 /// `publish_replica` on its own refresh window, and on an idle session this
 /// tick is the only thing that calls it, so a skip that ignored the window
 /// would freeze every branch and dirty mark in the navigator.
+fn agent_tick_changes(
+    replica: &SessionReplica,
+    agents: &[ProjectedAgent],
+    catalog_cache: Option<&CatalogCache>,
+) -> (bool, bool) {
+    let native_changed = replica.state.agents != agents;
+    let publish = native_changed
+        || catalog_cache.is_none_or(|cache| cache.built_at.elapsed() >= CATALOG_REFRESH_INTERVAL);
+    (native_changed, publish)
+}
+
+#[cfg(test)]
 pub(crate) fn agent_tick_needs_publish(
     replica: &SessionReplica,
     agents: &[ProjectedAgent],
     catalog_cache: Option<&CatalogCache>,
 ) -> bool {
-    replica.state.agents != agents
-        || catalog_cache.is_none_or(|cache| cache.built_at.elapsed() >= CATALOG_REFRESH_INTERVAL)
+    agent_tick_changes(replica, agents, catalog_cache).1
 }
 
 /// Drops the subagent counts of panes Herdr no longer lists.
@@ -755,6 +827,20 @@ fn publish_replica(
     labels: &mut Option<LabelWorker>,
 ) -> bool {
     let mut payload = replica.project();
+    // Observe native state before label overlays add UI timestamps. This is
+    // bounded memory work; no delivery I/O or notifier is started here.
+    if let Some(runtime) = context.runtime.upgrade()
+        && let Ok(mut guard) = runtime.lock()
+    {
+        match &context.target {
+            SessionSyncTarget::Local { socket_path } => {
+                guard.observe_delivery("local", &payload, socket_path.to_str())
+            }
+            SessionSyncTarget::Remote { target_id, .. } => {
+                guard.observe_delivery(target_id, &payload, None)
+            }
+        }
+    }
     let overlay = labels.as_mut().map(|worker| {
         take_pull_request_times(context, worker);
         take_label_switch(context, worker);
@@ -1085,7 +1171,9 @@ fn read_github_request(context: &SessionSyncContext) -> Option<crate::github::Gi
     let runtime = context.runtime.upgrade()?;
     let request = {
         let mut guard = runtime.lock().ok()?;
-        guard.reread_pending_checks(Instant::now());
+        let now = Instant::now();
+        guard.reread_pending_checks(now);
+        guard.reread_stale_github(now);
         guard.github_request()
     };
     drop(runtime);

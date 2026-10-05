@@ -1,3 +1,4 @@
+pub mod agent_cli;
 pub mod attachments;
 pub mod boundary;
 mod browser_assets;
@@ -7,6 +8,7 @@ pub mod browser_routes;
 pub mod build_id;
 pub mod cli;
 pub mod core;
+pub mod delivery_cli;
 pub mod demand;
 pub mod device_watch;
 pub mod env;

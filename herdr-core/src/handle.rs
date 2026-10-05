@@ -74,6 +74,7 @@ impl ChangeNotifier {
 }
 
 pub struct Core {
+    _delivery: Option<crate::delivery::worker::Worker>,
     _terminal_maintenance: Option<crate::terminal_recovery::Maintenance>,
     _changes: Option<crate::changes::ChangesPump>,
     _kit: Option<crate::kit::KitPump>,
@@ -87,6 +88,7 @@ pub struct Core {
 
 impl Drop for Core {
     fn drop(&mut self) {
+        self._delivery.take();
         // Reserve cancellation before any coordinator shutdown can wait: a
         // completing attachment must not enqueue input during destruction.
         let attachment_worker = { lock_recover(&self.runtime).take_attachment_worker() };
@@ -165,6 +167,7 @@ impl Core {
             _kit: None,
             _session_sync: None,
             _session_search: None,
+            _delivery: None,
             labels: None,
             runtime,
             notifier: notifier.clone(),
@@ -202,6 +205,40 @@ impl Core {
         let runtime = Arc::new(Mutex::new(Runtime::new(options.clone(), environment)));
         let notifier = ChangeNotifier::new();
         lock_recover(&runtime).install_worker_context(Arc::downgrade(&runtime), notifier.clone());
+        let delivery_path = hide_kit::layout::delivery_ledger(
+            std::path::Path::new(&options.app_state_path)
+                .parent()
+                .unwrap_or(std::path::Path::new(".")),
+        );
+        let delivery = match crate::delivery::worker::Worker::spawn(
+            Arc::downgrade(&runtime),
+            notifier.clone(),
+            delivery_path,
+        ) {
+            Ok((worker, client)) => {
+                lock_recover(&runtime).install_delivery_client(client);
+                Some(worker)
+            }
+            Err(code) => {
+                crate::diagnostic!(
+                    serde_json::json!({"component":"delivery","kind":"worker.start_failed","code":code})
+                );
+                None
+            }
+        };
+        // Before any coordinator starts, so the sidebar draws the last run's
+        // pull request state from its first frame instead of after a `gh` pass.
+        if let Some(directory) = std::path::Path::new(&options.app_state_path)
+            .parent()
+            .filter(|directory| !directory.as_os_str().is_empty())
+        {
+            // Read before the lock is taken: the file is the disk's, not the
+            // runtime's.
+            let store =
+                crate::github_store::GithubStore::new(hide_kit::layout::github_snapshot(directory));
+            let restored = store.restore();
+            lock_recover(&runtime).install_github_store(store, restored);
+        }
         // Before any coordinator starts, because each builds its label worker
         // on these, and before the kit runs, because the plugin state the
         // store imports once is what the kit's retirement deletes.
@@ -326,6 +363,7 @@ impl Core {
             }
         };
         Some(Box::new(Core {
+            _delivery: delivery,
             _terminal_maintenance: maintenance,
             _changes: changes,
             _kit: kit,
@@ -353,6 +391,27 @@ impl Core {
             notify_change(self);
         }
         changed
+    }
+
+    pub fn prepare_delivery(
+        &self,
+        device: &str,
+        caller: &str,
+        expected: &crate::workspace_control::Context,
+        hint: Option<&str>,
+        command: crate::delivery::Command,
+    ) -> Result<crate::delivery::worker::Prepared, String> {
+        if !check_owner_thread(self, "delivery.prepare") {
+            return Err("delivery_unavailable".into());
+        }
+        lock_recover(&self.runtime).prepare_delivery(device, caller, expected, hint, command)
+    }
+
+    pub fn prepare_delivery_human(&self) -> Result<crate::delivery::worker::PreparedHuman, String> {
+        if !check_owner_thread(self, "delivery.human.prepare") {
+            return Err("delivery_unavailable".into());
+        }
+        lock_recover(&self.runtime).prepare_delivery_human()
     }
 
     /// Where each device's file work runs, handed over once by the daemon.

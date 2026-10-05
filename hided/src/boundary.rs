@@ -441,16 +441,33 @@ impl Boundary {
             && root_identity(&opened) == Some(root.identity)
     }
 
-    /// Clone verified root handles for the core's actual file workers.
-    /// A later pathname replacement cannot redirect an operation through one
-    /// of these already opened capabilities.
+    /// Keep verified root identities alive for the core. Its file workers
+    /// reopen the root against this identity before performing I/O.
+    /// A passive pin must not block removal of an otherwise unused worktree.
     pub fn opened_roots(&self) -> Vec<(PathBuf, fs::File)> {
         self.roots_for_read()
             .iter()
             .filter_map(|root| {
-                open_under_root(root, &root.source.path, true)
-                    .ok()
-                    .map(|opened| (root.source.path.clone(), opened))
+                #[cfg(windows)]
+                {
+                    // Unlike a traversal capability, this handle only pins
+                    // identity. open_dir keeps Windows' default delete sharing
+                    // so retaining it in FileRoots cannot prevent cleanup.
+                    let opened = hide_platform::fs::open_dir(&root.source.path).ok()?;
+                    if root_identity(&opened) != Some(root.identity)
+                        || opened_file_path(&opened).ok().as_deref()
+                            != Some(root.real_path.as_path())
+                    {
+                        return None;
+                    }
+                    Some((root.source.path.clone(), opened))
+                }
+                #[cfg(not(windows))]
+                {
+                    open_under_root(root, &root.source.path, true)
+                        .ok()
+                        .map(|opened| (root.source.path.clone(), opened))
+                }
             })
             .collect()
     }
@@ -1796,6 +1813,40 @@ mod tests {
 #[cfg(all(test, windows))]
 mod windows_boundary_tests {
     use super::*;
+
+    #[test]
+    fn retained_root_identity_pins_allow_cleanup_and_refuse_a_replacement() {
+        let sandbox = tempfile::tempdir().unwrap();
+        let home = sandbox.path().join("home");
+        let root = home.join("checkout");
+        let moved = home.join("removed");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(root.join("inside.txt"), "inside").unwrap();
+        let boundary = Boundary::new(&home).unwrap();
+        boundary.set_roots(vec![Root {
+            workspace_id: "w".to_owned(),
+            checkout_id: "c".to_owned(),
+            path: root.clone(),
+        }]);
+        let opened = boundary.opened_roots();
+        assert_eq!(opened.len(), 1);
+        let retained = herdr_core::FileRoots::from_opened(opened);
+        fs::rename(&root, &moved).unwrap();
+        fs::remove_dir_all(&moved).unwrap();
+        assert!(!root.exists());
+        assert!(!moved.exists());
+
+        fs::create_dir(&root).unwrap();
+        fs::write(root.join("outside.txt"), "outside").unwrap();
+        assert!(boundary.known_root(&root.display().to_string()).is_none());
+        assert!(boundary.opened_roots().is_empty());
+        assert!(
+            boundary
+                .open_file(&root.join("outside.txt").display().to_string())
+                .is_err()
+        );
+        drop(retained);
+    }
 
     #[test]
     fn opened_directory_rows_and_root_identity_follow_the_handle() {

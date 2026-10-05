@@ -1,12 +1,13 @@
 import { Dialog as DialogPrimitive } from "radix-ui";
 import { XIcon } from "lucide-react";
 import { useRef, type ComponentProps } from "react";
+import { useInterfaceTranslation } from "../../i18n/client";
 import { cn } from "../../lib/utils";
 import { useLayerOpen, useReturnFocus } from "./layer";
 
 /** Radix's dialog root, with its open state joined to the shell's Escape layers. */
-function Dialog({ open, defaultOpen, onOpenChange, ...props }: ComponentProps<typeof DialogPrimitive.Root>) {
-  const [current, change] = useLayerOpen(open, defaultOpen, onOpenChange);
+function Dialog({ open, defaultOpen, onOpenChange, baseEscape = false, ...props }: ComponentProps<typeof DialogPrimitive.Root> & { baseEscape?: boolean }) {
+  const [current, change] = useLayerOpen(open, defaultOpen, onOpenChange, baseEscape);
   return <DialogPrimitive.Root data-slot="dialog" open={current} onOpenChange={change} {...props} />;
 }
 
@@ -36,6 +37,7 @@ function DialogContent({
   onCloseAutoFocus,
   ...props
 }: ComponentProps<typeof DialogPrimitive.Content> & { showCloseButton?: boolean; initialFocus?: "first" | "container" }) {
+  const { t } = useInterfaceTranslation();
   const surface = useRef<HTMLDivElement>(null);
   const returnFocus = useReturnFocus(true);
   return (
@@ -64,7 +66,7 @@ function DialogContent({
         {showCloseButton ? (
           <DialogPrimitive.Close
             data-slot="dialog-close"
-            aria-label="Close"
+            aria-label={t("common.close")}
             className="absolute right-md top-md rounded-xs text-muted-foreground outline-none transition-colors hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring [&_svg]:size-(--size-icon)"
           >
             <XIcon />

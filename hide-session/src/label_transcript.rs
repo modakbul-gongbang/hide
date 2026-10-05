@@ -12,7 +12,7 @@
 //! a path. Failures are stable reason codes.
 //!
 //! What every adapter answers, and nothing more: the session's own title,
-//! each person's message with its time, images and hcoord sender, each
+//! each person's message with its time, images and Hide letter sender, each
 //! assistant message, and the pull request addresses its tools printed
 //! (Claude Code's subagents' tools included). Status, pull requests and
 //! lineage do not depend on the agent and are not read here.
@@ -57,7 +57,7 @@ pub struct LabelEvent {
     /// Images attached to a person's message; their bytes are not in `text`.
     #[serde(default)]
     pub images: u32,
-    /// The sender an hcoord header names on a person's message (`envelope`).
+    /// The sender a Hide letter header names on a person's message (`envelope`).
     #[serde(default)]
     pub sender: Option<String>,
 }
@@ -136,32 +136,14 @@ pub fn read(home: &Path, request: &LabelTranscriptRequest) -> Result<LabelTransc
     if request.agent == Agent::OpenCode {
         return crate::opencode::read(home, request);
     }
-    let identity = match request.reference_kind.as_str() {
-        "id" => SessionIdentity::id(&request.reference_value),
-        "path" => SessionIdentity::path(&request.reference_value),
-        _ => return Err("session_kind_unsupported".to_owned()),
-    };
-    if request.reference_value.trim().is_empty() {
-        return Err("label_session_reference_missing".to_owned());
-    }
-    if request.reference_kind == "id" && !is_session_id(&request.reference_value) {
-        return Err("label_session_id_invalid".to_owned());
-    }
-    let located = SessionLocator::new(home)
-        .locate(
-            "label",
-            request.agent,
-            Some(&identity),
-            request.cwd.as_deref(),
-        )
-        .map_err(|error| match error {
-            SessionError::SessionFileMissing => "session_file_missing".to_owned(),
-            _ => "label_session_location_unavailable".to_owned(),
-        })?;
-    let path = inside_agent_root(home, request.agent, &located)?;
+    let (path, before) = locate_confirmed(
+        home,
+        request.agent,
+        &request.reference_kind,
+        &request.reference_value,
+        request.cwd.as_deref(),
+    )?;
     let reported_id = (request.reference_kind == "id").then_some(request.reference_value.as_str());
-    let before = confirm_label_session(request.agent, &path, reported_id)
-        .map_err(|error| error.to_string())?;
     let mut cursor = request
         .checkpoint
         .clone()
@@ -249,6 +231,41 @@ pub fn read(home: &Path, request: &LabelTranscriptRequest) -> Result<LabelTransc
         pr_sightings,
         subagents,
     })
+}
+
+/// Shared location and native ownership proof for conversation and activity
+/// readers. Neither reader may use cwd as ownership evidence or leave the
+/// provider's transcript root through a reported path or a link.
+pub(crate) fn locate_confirmed(
+    home: &Path,
+    agent: Agent,
+    reference_kind: &str,
+    reference_value: &str,
+    cwd: Option<&str>,
+) -> Result<(PathBuf, ConfirmedLabelSession), String> {
+    let identity = match reference_kind {
+        "id" => SessionIdentity::id(reference_value),
+        "path" => SessionIdentity::path(reference_value),
+        _ => return Err("session_kind_unsupported".to_owned()),
+    };
+    if reference_value.trim().is_empty() {
+        return Err("label_session_reference_missing".to_owned());
+    }
+    if reference_kind == "id" && !is_session_id(reference_value) {
+        return Err("label_session_id_invalid".to_owned());
+    }
+    let located = SessionLocator::new(home)
+        .locate("label", agent, Some(&identity), cwd)
+        .map_err(|error| match error {
+            SessionError::SessionFileMissing => "session_file_missing".to_owned(),
+            SessionError::Capacity { .. } => "session_capacity".to_owned(),
+            _ => "label_session_location_unavailable".to_owned(),
+        })?;
+    let path = inside_agent_root(home, agent, &located)?;
+    let reported_id = (reference_kind == "id").then_some(reference_value);
+    let confirmed =
+        confirm_label_session(agent, &path, reported_id).map_err(|error| error.to_string())?;
+    Ok((path, confirmed))
 }
 
 /// Reads what was appended to each of a Claude Code session's subagent files

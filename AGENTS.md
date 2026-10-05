@@ -6,6 +6,7 @@ Do not apply superseded architecture decisions, old milestone reports, or old PR
 Update the owning guide and its active references in the same change as the behavior; keep run evidence outside `docs/`.
 Before changing browser displays, read `docs/BROWSER_DISPLAYS.md` for who owns a page, the `file:` address boundary, and native display verification.
 Before calling a change verified, read `docs/VERIFICATION.md` for which check proves the claim, the traps that made a check prove nothing, and the native QA tools that can address a candidate app without reaching the operator's.
+Before writing or changing a test, read `docs/TESTING.md` for which layer to test at, how to build its fixture, the writing rules that keep it deterministic, and the flaky policy.
 
 ## Repository Layout
 
@@ -18,8 +19,8 @@ Before calling a change verified, read `docs/VERIFICATION.md` for which check pr
 - `hide-platform/` - the operating-system layer under every other crate: what differs between macOS, Linux and Windows is written here once and checked by contract tests that run on all three; today the local stream (`ipc`) the Herdr client uses, the processes (`process`: the one child-start helper and what the kernel says about a pid), the files (`fs`: private files and folders, locks, atomic replacement, links, file identity), and how a path is spelled between machines (`path`: `/` between names on every system, converted to a native path only on the machine that owns it). It has no hide dependencies and no state; see `docs/ARCHITECTURE.md`, The platform layer.
 - `hide-ai/` - the provider boundary for background AI features, backed by the user's own logged-in CLIs; see `docs/AI_PROVIDERS.md`.
 - `hide-session/` - shared local Claude, Codex and OpenCode session location, incremental and backwards page reading, and conversation parsing used by the core's label worker, the core usage fallback and the phone's conversation; `tests/adapters.rs` is each agent reader's contract.
-- `plugins/hcoord/` - hcoord, the agent coordination and lineage component hide's kit installs at `~/.hide/hcoord` (`hide-kit/src/hcoord.rs`); it has no install of its own.
-  Agent labels are made by the core, in `herdr-core/src/labels/`; see `docs/status-model.md`, Task identity.
+Agent registration, spawning and lineage are owned by the core, in `herdr-core/src/coordination/`; see `docs/delivery.md` and `docs/status-model.md`.
+Agent labels are made by the core, in `herdr-core/src/labels/`; see `docs/status-model.md`, Task identity.
 
 ## Before Opening A Pull Request
 
@@ -114,13 +115,19 @@ It owns the reproduction procedure, the isolation checklist, the measurement bou
 
 This project uses the engineering-harness PRD pipeline. Agent-facing assets live in one visible namespace.
 
-**`agents/` is local-only by default, and `agents/prd/<slug>/prd.md` is the one exception.** `.gitignore` carries one anchored line, `/agents/`, which ignores the top-level harness namespace and nothing else, so nothing under it is committed unless someone adds it deliberately. The anchor matters: the unanchored form also matched `.claude/agents/`, which silently made a committed subagent definition uncommittable. A PRD is the approved contract a reviewer reads to judge the change, so it is committed with `git add -f`; interview logs, rules, run state, and every run artifact stay on the machine that produced them.
+**The entire root `agents/` namespace is local-only, including approved PRDs and configuration.**
+`.gitignore` carries one anchored line, `/agents/`, which ignores the top-level harness namespace and nothing else.
+The anchor matters: the unanchored form also matched `.claude/agents/`, which silently made a committed subagent definition uncommittable.
+Nothing under root `agents/` may be force-added.
+`scripts/check-harness-ignore-anchor.sh` requires zero indexed paths there, including newly staged files, and keeps `.claude/agents/` outside the ignore rule.
+Preserve local originals when removing existing paths from Git tracking; do not delete the namespace or rewrite history as part of that operation.
+Ignoring and untracking current files do not remove older public commits or release assets.
 
-Because the ignore rule does not know about the exception, a new PRD is committed only when someone remembers the `-f`. Check `git ls-files agents/` before claiming a PRD is shared.
+Approved PRDs remain local implementation contracts.
+A public pull request states the reviewable behavior, scope, decisions and acceptance evidence in its body and owning guides, without copying private interview logs, configuration or run artifacts.
+Never force-add evidence to make a local path linkable; see `Evidence Belongs Outside The Repository`.
 
-Nothing else under `agents/` may be force-added. In particular, never force-add a run directory to make an evidence path linkable; see `Evidence Belongs Outside The Repository`.
-
-- `agents/prd/` - PRD contracts, human-approved before implementation. Committed.
+- `agents/prd/` - PRD contracts, human-approved before implementation, retained locally.
 - `agents/interview/` - interview sources (`qa-log.md`), the canonical record behind a PRD.
 - `agents/rules/` - learned rules: `INDEX.md` is the ledger, `invariants/` hold machine-checked rules (trigger globs + executable check) that gate delivery, `pending/` holds lessons that have not landed yet.
 - `agents/runs/` - per-run state and evidence (gate verdicts + implement state under one `agents/runs/<slug>/`), never hand-edited. This is also where run artifacts go; see `Evidence Belongs Outside The Repository`.

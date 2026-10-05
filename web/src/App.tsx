@@ -1,3 +1,4 @@
+import { InterfaceLanguageBoundary, translate, useInterfaceTranslation } from "./i18n/client";
 import { agentCapacityNotice } from "./agentLayout";
 import { useEffect, useMemo, useRef } from "react";
 import { createActions, type Actions } from "./actions";
@@ -8,10 +9,9 @@ import { pruneDrafts, settleDraft } from "./editor/draft";
 import { ConnectionBadge } from "./badge";
 import { configureFileBytes } from "./fileBytes";
 import { installKeyboard, observeRecent, reconcileHeldCycle } from "./keyboard";
-import { MainScreen } from "./MainScreen";
+import { OverviewModal, OverviewPage } from "./Overview";
 import { AgentCloseNotice, ConfirmClose, ConfirmTrash, CycleOverlay, NoticeBar } from "./Overlays";
 import { Palette } from "./Palette";
-import { ProjectOverview } from "./ProjectOverview";
 import { installProbe, probeEnabled } from "./probe";
 import { expectPane, expectSurface, focusSignature } from "./recent";
 import { SettingsGate } from "./SettingsSheet";
@@ -233,6 +233,7 @@ export function App() {
 
   return (
     <TooltipProvider>
+      <InterfaceLanguageBoundary />
       <div className="relative flex h-full flex-col bg-background text-foreground">
         <ConnectionBadge />
         <NoticeBar actions={actions} />
@@ -245,6 +246,7 @@ export function App() {
             <CenterScreen actions={actions} />
           </main>
         </div>
+        <OverviewModal actions={actions} />
         <CycleOverlay />
         <ConfirmClose actions={actions} />
         <ConfirmTrash actions={actions} />
@@ -274,6 +276,7 @@ function ShortcutSheetGate({ actions }: { actions: Actions }) {
  * Workspace that goes away while it is shown gives way to All projects.
  */
 function CenterScreen({ actions }: { actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const screen = useUiStore((s) => s.screen);
   const front = useShellStore((s) => frontCheckout(s.rest)?.id ?? null);
   const hasView = useShellStore((s) => Boolean(s.rest?.workspace_view));
@@ -305,10 +308,10 @@ function CenterScreen({ actions }: { actions: Actions }) {
     const timer = window.setTimeout(() => {
       const store = useUiStore.getState();
       if (store.opening !== opening) return;
-      const failure = "It did not come forward in time; nothing changed.";
+      const failure = translate("shell.openTimeout");
       if (store.screen?.kind !== "workspace") return store.setOpening({ ...opening, failure });
       store.setOpening(null);
-      store.setNotice({ text: `Not opened: ${failure}`, refreshable: false });
+      store.setNotice({ text: translate("shell.notOpened", { reason: failure }), refreshable: false });
     }, OPEN_ANSWER_TIMEOUT_MS);
     return () => window.clearTimeout(timer);
   }, [opening]);
@@ -328,11 +331,10 @@ function CenterScreen({ actions }: { actions: Actions }) {
   if (screen === null) {
     return (
       <div className="flex flex-1 items-center justify-center text-caption text-muted-foreground" data-center-screen="starting">
-        Opening your last Workspace…
+        {t("shell.openingLastWorkspace")}
       </div>
     );
   }
-  if (screen.kind === "overview") return <ProjectOverview projectId={screen.projectId} lens={screen.lens} actions={actions} />;
   if (screen.kind === "workspace" && front && hasView) return <WorkspaceScreen actions={actions} />;
-  return <MainScreen actions={actions} />;
+  return <OverviewPage actions={actions} />;
 }

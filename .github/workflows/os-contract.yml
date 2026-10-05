@@ -44,9 +44,9 @@ jobs:
         # Usually a minute or two; a contract test that hangs fails here
         # rather than holding the runner until the job's timeout.
         timeout-minutes: 10
-        run: cargo test --locked -p hide-platform -p hide-herdr-client
+        run: bash scripts/verify-cargo.sh test-scoped -p hide-platform -p hide-herdr-client
       - name: Lint the platform crates
-        run: cargo clippy --locked -p hide-platform -p hide-herdr-client --all-targets -- -D warnings
+        run: bash scripts/verify-cargo.sh clippy -p hide-platform -p hide-herdr-client --all-targets -- -D warnings
       - name: Install zsh for the Herdr fetch
         if: matrix.system == 'linux'
         run: sudo apt-get install -y --no-install-recommends zsh
@@ -56,12 +56,15 @@ jobs:
         # its digest before the binary answers anything.
         run: |
           if [ "${{ matrix.system }}" = linux ]; then
-            echo "bin=$(zsh scripts/fetch-herdr-runtime.sh --platform linux-x86_64)" >> "$GITHUB_OUTPUT"
+            bin=$(zsh scripts/fetch-herdr-runtime.sh --platform linux-x86_64)
           else
-            echo "bin=$(pwsh -NoProfile -File scripts/fetch-herdr-runtime.ps1 | tr -d '\r')" >> "$GITHUB_OUTPUT"
+            bin=$(pwsh -NoProfile -File scripts/fetch-herdr-runtime.ps1 | tr -d '\r')
           fi
+          echo "bin=$bin" >> "$GITHUB_OUTPUT"
+      - name: Compare the binary schema and version with the pin
+        run: python3 scripts/check-herdr-schema.py --herdr-bin "${{ steps.herdr.outputs.bin }}"
       - name: The client against the pinned Herdr
         timeout-minutes: 10
         env:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
-        run: cargo test --locked -p hide-herdr-client --test real_herdr -- --ignored --nocapture
+        run: bash scripts/verify-cargo.sh test-scoped -p hide-herdr-client --test real_herdr -- --ignored --nocapture

@@ -560,7 +560,7 @@ export function attachTerminal(
     try {
       shown.term.loadAddon(new WebglAddon());
     } catch {
-      /* canvas renderer remains */
+      /* xterm's DOM renderer remains */
     }
     // Clicking into a pane is the operator moving keyboard focus; the core
     // owns the focus pane, so the click is an event and the header follows

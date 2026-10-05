@@ -24,6 +24,11 @@
 //!   or not anyone is in `accept`, up to the listener's backlog (#315): a
 //!   socket's queue on Unix, 64 connections plus the listening instances on
 //!   Windows.
+//! - Past the backlog, macOS refuses a connect at once with
+//!   `ConnectionRefused` (its queue holds 128), Windows with `TimedOut` after
+//!   its wait, and Linux, whose queue is the system's `somaxconn`, waits for
+//!   room instead; either way the listener serves on once `accept` catches
+//!   up (#396).
 //! - [`ListenerCloser::close`] called from another thread ends an `accept`
 //!   that is waiting, with `ConnectionAborted`, and every later one.
 //! - Only the account that bound the listener can connect to it, and a
@@ -132,7 +137,8 @@ impl LocalStream {
     }
 
     /// Connects to the listener at `path`. `NotFound` or `ConnectionRefused`
-    /// when nobody answers there; `TimedOut` on Windows when a listener
+    /// when nobody answers there, and `ConnectionRefused` on macOS too when
+    /// the listener's backlog is full; `TimedOut` on Windows when a listener
     /// exists but takes no connection within two seconds.
     pub fn connect(path: &Path) -> io::Result<Self> {
         sys::connect(path).map(Self::from_raw)
@@ -313,6 +319,13 @@ impl Drop for LocalListener {
             let _ = fs::remove_file(&self.path);
         }
     }
+}
+
+/// Whether the entry at `path` has the kind a local listener leaves: a socket
+/// on Unix, a marker file on Windows. A link is judged as itself, not followed.
+/// This only reads metadata; it neither connects nor removes the entry.
+pub fn is_endpoint(path: &Path) -> io::Result<bool> {
+    fs::symlink_metadata(path).map(|metadata| sys::is_leftover_kind(&metadata))
 }
 
 /// Removes what a dead listener left at `path`, and refuses a live one.

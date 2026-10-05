@@ -1,6 +1,20 @@
 import { describe, expect, it } from "vitest";
 import type { Checkout, TaskOperation, Workspace } from "./snapshot";
-import { agentMenu, branchProblem, checkoutMenu, checkoutRemoving, deletionFacts, discardConfirmationKey, factsLine, folderMenu, normalizePurpose, projectMenu, projectRemovalFacts, purposeCountLabel, purposeIsLong, purposeScope, removalFor, scalarCount, taskFor } from "./workspaceManage";
+import * as manage from "./workspaceManage";
+import { branchProblem, checkoutRemoving, discardConfirmationKey, factsLine, normalizePurpose, purposeIsLong, removalFor, scalarCount, taskFor } from "./workspaceManage";
+import { initializeInterfaceI18n } from "./i18n/instance";
+
+const { t } = initializeInterfaceI18n("en");
+const ko = initializeInterfaceI18n("ko").t;
+const agentMenu = (agent: Parameters<typeof manage.agentMenu>[0], chord: string) => manage.agentMenu(agent, chord, t);
+const checkoutMenu = (workspace: Workspace, checkout: Checkout, host: Parameters<typeof manage.checkoutMenu>[2], purposeProblem: string | null = null) => manage.checkoutMenu(workspace, checkout, host, t, purposeProblem);
+const folderMenu = (workspace: Workspace, checkout: Checkout, host: Parameters<typeof manage.folderMenu>[2], purposeProblem: string | null = null) => manage.folderMenu(workspace, checkout, host, t, purposeProblem);
+const projectMenu = (workspace: Workspace, host: Parameters<typeof manage.projectMenu>[1]) => manage.projectMenu(workspace, host, t);
+const deletionFacts = (checkout: Checkout, panes: number) => manage.deletionFacts(checkout, panes, t);
+const projectRemovalFacts = (workspace: Workspace) => manage.projectRemovalFacts(workspace, t);
+const purposeCountLabel = (text: string) => manage.purposeCountLabel(text, t);
+const purposeScope = (device: string | null, branch: string | null) => manage.purposeScope(device, branch, t);
+const remotePurposeProblem = (workspace: Workspace, remote: Parameters<typeof manage.remotePurposeProblem>[1]) => manage.remotePurposeProblem(workspace, remote, t);
 
 const workspace = (patch: Partial<Workspace> = {}): Workspace => ({
   id: "w1",
@@ -82,7 +96,7 @@ describe("branch names", () => {
 });
 
 describe("row menus", () => {
-  const desktop = { reveal: { label: "Reveal in Finder" }, newTabChord: "⌘T" };
+  const desktop = { reveal: { label: "explorer.revealFinder" as const }, newTabChord: "⌘T" };
   const browser = { reveal: null, newTabChord: "⌥T" };
   /** Each item as the menu draws it: a separator line before it, its label, and its reason when disabled. */
   const drawn = (items: { label: string; separated?: boolean; unavailable: string | null; shortcut?: string }[]) =>
@@ -92,7 +106,6 @@ describe("row menus", () => {
   it("draws a project's menu in the board's order, the file manager only on the desktop (B1)", () => {
     const project = workspace({ checkouts: [primary(), checkout()] });
     expect(drawn(projectMenu(project, desktop))).toEqual([
-      "Open Overview",
       "New worktree…",
       "New tab in main ⌘T",
       "─",
@@ -102,7 +115,7 @@ describe("row menus", () => {
       "Pin",
       "Remove project…",
     ]);
-    expect(drawn(projectMenu(project, browser))).toEqual(["Open Overview", "New worktree…", "New tab in main ⌥T", "─", "Copy path", "─", "Pin", "Remove project…"]);
+    expect(drawn(projectMenu(project, browser))).toEqual(["New worktree…", "New tab in main ⌥T", "─", "Copy path", "─", "Pin", "Remove project…"]);
     expect(projectMenu(workspace({ pinned: true, checkouts: [primary()] }), desktop).find((item) => item.id === "unpin")?.label).toBe("Unpin");
     expect(projectMenu(workspace({ is_git: false, checkouts: [primary({ is_primary: false })] }), desktop).find((item) => item.id === "new_worktree")?.unavailable).toMatch(/not a Git/);
   });
@@ -214,7 +227,7 @@ describe("row menus", () => {
   it("puts a folder's own checkout items after its project items, past a separator", () => {
     const folder = primary({ is_primary: false, branch: null });
     const menu = folderMenu(workspace({ is_git: false, checkouts: [folder] }), folder, desktop);
-    expect(drawn(menu)).toEqual(["Open Overview", "New worktree…", "New tab in main ⌘T", "─", "Reveal in Finder", "Copy path", "─", "Pin", "Remove project…", "─", "Open", "Set purpose…"]);
+    expect(drawn(menu)).toEqual(["New worktree…", "New tab in main ⌘T", "─", "Reveal in Finder", "Copy path", "─", "Pin", "Remove project…", "─", "Open", "Set purpose…"]);
     const pr = { number: 7, title: "", url: "https://example.invalid/pull/7", badge: "open" as const, review: null, is_draft: false };
     expect(drawn(folderMenu(workspace({ checkouts: [folder] }), { ...folder, pull_request: pr }, browser)).slice(-4)).toEqual(["─", "Open", "Open pull request #7", "Set purpose…"]);
   });
@@ -279,6 +292,21 @@ it("requires a new Discard choice when the measured repository names change", ()
   expect(discardConfirmationKey(same)).toBe(selected);
   const changed = checkout({ worktree: { ...target.worktree!, ignored_repositories: ["target/vendor/alpha", "node_modules/beta"] } });
   expect(discardConfirmationKey(changed)).not.toBe(selected);
+});
+
+describe("language-dependent sentences", () => {
+  const counted = { removal: { pane_count: 2, running_agent_count: 1 } } as Partial<Workspace>;
+  it("joins a removal's facts in Korean from the plural-free Korean forms", () => {
+    expect(factsLine(manage.projectRemovalFacts(workspace(counted), ko))).toBe("페인 2개 닫힘 · 에이전트 1개 종료 · 등록만 제거 · 디스크의 파일은 유지");
+  });
+
+  it("names the version a remote device lacks, or says it is unknown", () => {
+    const remote = workspace({ remote_target_id: "mini" });
+    expect(remotePurposeProblem(remote, [{ target_id: "mini", herdr_version: "0.9.0" }] as never)).toBe("Set purpose requires Herdr 0.9.1 or newer on the remote device; 0.9.0 is installed.");
+    expect(remotePurposeProblem(remote, [{ target_id: "mini", herdr_version: null }] as never)).toBe("Set purpose requires Herdr 0.9.1 or newer on the remote device; its version is unavailable.");
+    expect(remotePurposeProblem(remote, [{ target_id: "mini", herdr_version: "0.9.1" }] as never)).toBeNull();
+    expect(manage.remotePurposeProblem(remote, [{ target_id: "mini", herdr_version: "0.9.0" }] as never, ko)).toBe("원격 기기의 Herdr 0.9.1 이상에서 용도를 설정할 수 있습니다. 설치된 버전: 0.9.0");
+  });
 });
 
 describe("purposeScope", () => {

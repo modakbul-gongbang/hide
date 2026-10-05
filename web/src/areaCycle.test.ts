@@ -7,7 +7,7 @@ import { commitCycle, reconcileHeldCycle } from "./keyboard";
 import { expectPane, observeEntries, observePane, resetRecent, tabSurface } from "./recent";
 import type { SnapshotRest } from "./snapshot";
 import { useShellStore } from "./store";
-import { entryLens, useUiStore } from "./ui";
+import { useUiStore } from "./ui";
 import type { KeyboardOwner } from "./viewFocus";
 
 // a1 exists independently in Agent and View; another Agent area and
@@ -126,7 +126,7 @@ describe("Agent pane cycle (issue 301)", () => {
     const rest = devices(); draw(rest);
     observePane(rest, "other-tab-pane");
     noteAreaFrame("agent", null);
-    for (const screen of [{ kind: "main" }, { kind: "overview", projectId: "w", lens: entryLens(null, "board") }] as const) {
+    for (const screen of [{ kind: "main" }] as const) {
       useUiStore.setState({ screen });
       // A shortcut can leave the last View owner recorded when its screen
       // unmounts; that is no longer a focused file on Main or Overview.
@@ -161,9 +161,9 @@ describe("Agent pane cycle (issue 301)", () => {
     expect(panes(cycle)).toEqual(["t1-pane", "t2-pane", "other-tab-pane", "remote:mini:pane:p1"]);
     expect(cycle.index).toBe(0);
     const rows = Object.fromEntries(cycle.items.map((row) => [row.target.kind === "pane" ? row.target.paneId : row.key, row]));
-    expect(rows["t1-pane"]).toMatchObject({ title: "planner", detail: "fixture · Terminal", chip: null, agent: expect.objectContaining({ agent_kind: "claude" }) });
-    expect(rows["other-tab-pane"]).toMatchObject({ title: "fixer", detail: "fixture · review · Terminal", chip: null });
-    expect(rows["remote:mini:pane:p1"]).toMatchObject({ title: "reviewer", detail: "api · Terminal", chip: { label: "mini", local: false }, agent: expect.objectContaining({ agent_kind: "codex" }) });
+    expect(rows["t1-pane"]).toMatchObject({ title: "planner", detail: { kind: "surface", place: "fixture", surface: "herdr" }, chip: null, agent: expect.objectContaining({ agent_kind: "claude" }) });
+    expect(rows["other-tab-pane"]).toMatchObject({ title: "fixer", detail: { kind: "surface", place: "fixture · review", surface: "herdr" }, chip: null });
+    expect(rows["remote:mini:pane:p1"]).toMatchObject({ title: "reviewer", detail: { kind: "surface", place: "api", surface: "herdr" }, chip: { label: "mini", local: false }, agent: expect.objectContaining({ agent_kind: "codex" }) });
   });
 
   it("from a pane with no agent, lands first on the most recent agent pane", () => {

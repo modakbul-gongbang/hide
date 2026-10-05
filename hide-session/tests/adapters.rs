@@ -5,7 +5,7 @@
 //!
 //! Each fixture is one session in that agent's own format holding the same
 //! conversation: the operator's two-line request, a hook's injected text,
-//! a tool that printed a pull request address, an hcoord request from
+//! a tool that printed a pull request address, a Hide letter from
 //! `ci-lead`, an image sent alone, and a reply that mentions the pull
 //! request and an older one.
 
@@ -310,7 +310,11 @@ fn every_agent_reads_to_the_same_facts() {
         assert_eq!(people[0].at_unix_ms, START, "{agent:?}");
         assert_eq!(people[0].sender, None);
         assert_eq!(people[1].sender.as_deref(), Some("ci-lead"), "{agent:?}");
-        assert!(people[1].text.ends_with("CI 다시 봐줘"));
+        assert_eq!(
+            people[1].text.trim(),
+            "Hide letter letter-1 from ci-lead (claude) [request]\nCI 다시 봐줘\nFull letter: hide request show letter-1",
+            "{agent:?}: the current delivery header and body stay readable"
+        );
         assert_eq!(
             (people[2].text.trim(), people[2].images),
             ("", 1),

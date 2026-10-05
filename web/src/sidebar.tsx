@@ -1,4 +1,7 @@
-import { ChevronDownIcon, ChevronRightIcon, CornerUpLeftIcon, FolderGit2Icon, FolderIcon, HouseIcon, LayoutDashboardIcon, Loader2Icon, PlusIcon, RefreshCwIcon, ServerIcon, SettingsIcon } from "lucide-react";
+import type { TFunction } from "i18next";
+import type { MessageKey } from "./i18n/catalogs";
+import { translate, useInterfaceTranslation } from "./i18n/client";
+import { ChevronDownIcon, ChevronRightIcon, CornerUpLeftIcon, FolderGit2Icon, FolderIcon, HouseIcon, Loader2Icon, PlusIcon, RefreshCwIcon, ServerIcon, SettingsIcon } from "lucide-react";
 import { memo, useEffect, useMemo, useRef, useState, type CSSProperties, type ReactNode } from "react";
 import type { Actions } from "./actions";
 import { Button } from "./components/ui/button";
@@ -17,7 +20,7 @@ import { checkoutAgentRows, type BoardRow } from "./projectBoard";
 import { FoldLane, SidebarAgentRow, type AgentRowMenu } from "./components/sidebar-agent-row";
 import { StatusBadge } from "./components/status-badge";
 import { WeeklyUsage } from "./components/weekly-usage";
-import { agentPlaces, agentSections, allAgents, allLineageWorkspaces, deviceListedAgents, groupCounts, overviewScreen, projectPaneIds, type ListedAgent } from "./navigation";
+import { agentGroupTitle, agentPlaces, agentSections, allAgents, allLineageWorkspaces, deviceListedAgents, groupCounts, projectPaneIds, type ListedAgent } from "./navigation";
 import { foldedLineage, type FoldedLineage } from "./lineageSummary";
 import {
   activeCheckouts,
@@ -27,7 +30,7 @@ import {
   checkoutPresentation,
   checkoutRowExpansion,
   projectRowExpansion,
-  overviewRowSelected,
+  projectCheckout,
   folderCheckout,
   inactiveCheckouts,
   projectMarks,
@@ -45,29 +48,31 @@ import { focusedRemoteDevice, type AgentRow, type Checkout, type InactiveProject
 import { useShellStore } from "./store";
 import { draggedSidebarWidth, sidebarWidthToSend } from "./sidebarWidth";
 import { useUiStore } from "./ui";
+import { useOverviewCount } from "./Overview";
 
-function herdrRowLabel(state: string | null): string | null {
-  if (state === "unconfigured" || state === "socket_missing") return "Herdr 소켓 없음";
+function herdrRowLabel(state: string | null, t: TFunction<"translation">): string | null {
+  if (state === "unconfigured" || state === "socket_missing") return t("sidebar.herdrSocketMissing");
   if (state === "not_connected" || state === "unreachable" || state === "stale") {
-    return "Herdr 무응답";
+    return t("sidebar.herdrNotResponding");
   }
   return null;
 }
 
 export function Sidebar({ actions }: { actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const herdrState = useShellStore((s) => s.herdrState);
   const mode = useUiStore((s) => s.sidebarMode);
   const visible = useShellStore((s) => s.rest?.ui_state?.left_sidebar_visible ?? true);
   // The row speaks for this machine's Herdr, so it is not shown over a
   // selected SSH device's lists; that device's state is on the canvas.
   const remote = useShellStore((s) => focusedRemoteDevice(s.rest) !== null);
-  const status = remote ? null : herdrRowLabel(herdrState);
+  const status = remote ? null : herdrRowLabel(herdrState, t);
   // The rail is shown unless the operator hid it (quick device-rail-badges B1, B6).
   const rail = useShellStore((s) => railShown(s.rest));
   const body = useShellStore((s) => sidebarBody(s.rest, mode));
   const devices = useShellStore((s) => s.rest?.navigator?.devices);
   const frontId = useShellStore((s) => s.rest?.navigator?.focused_device_id);
-  const title = useMemo(() => frontTitle(devices, frontId), [devices, frontId]);
+  const title = useMemo(() => frontTitle(devices, frontId, t), [devices, frontId, t]);
   const remoteStatus = useShellStore((s) => s.rest?.status?.remote);
   const deviceMenu = useMemo<DeviceMenu>(() => {
     const list = devices ?? [];
@@ -87,7 +92,11 @@ export function Sidebar({ actions }: { actions: Actions }) {
   }, [devices, frontId, remoteStatus, actions]);
   useHomeStart();
   // The switch has no chord of its own until the operator binds one (issue 170).
-  const switchChord = useShellStore((s) => commandLabel("toggle_sidebar_view", s.rest?.ui_state));
+  const projectChord = useShellStore((s) => commandLabel("sidebar_projects", s.rest?.ui_state));
+  const agentChord = useShellStore((s) => commandLabel("sidebar_agents", s.rest?.ui_state));
+  const overviewChord = useShellStore((s) => commandLabel("overview", s.rest?.ui_state));
+  const overviewCount = useOverviewCount();
+  const overviewSelected = useUiStore((s) => s.overviewOpen || s.screen?.kind === "main");
   const storedWidth = useShellStore((s) => s.rest?.ui_state?.sidebar_width ?? null);
   // A drag draws the nav alone at the width under the pointer, over the
   // center, so nothing beside it (a terminal above all) reflows per move; the
@@ -97,6 +106,14 @@ export function Sidebar({ actions }: { actions: Actions }) {
   useEffect(() => {
     if (!dragging.current) setPreview(null);
   }, [storedWidth]);
+  const focusRequest = useUiStore((s) => s.sidebarFocus);
+  useEffect(() => {
+    if (!visible || !focusRequest || body === "disconnected") return;
+    const frame = requestAnimationFrame(() => {
+      document.querySelector<HTMLElement>(`[data-sidebar="${mode}"] [data-sidebar-content] [aria-current="page"], [data-sidebar="${mode}"] [data-sidebar-content] button`)?.focus();
+    });
+    return () => cancelAnimationFrame(frame);
+  }, [visible, mode, body, focusRequest]);
   if (!visible) return null;
   const land = (current: number, landed: number) => {
     const send = sidebarWidthToSend(storedWidth ?? current, landed);
@@ -139,15 +156,18 @@ export function Sidebar({ actions }: { actions: Actions }) {
       >
         {/* The rail is the sidebar's full-height left column, the device's header and lists beside it (quick device-rail-slack). */}
         {rail ? <DeviceRail actions={actions} /> : null}
-        <div className="flex min-h-0 min-w-0 flex-1 flex-col">
+        <div className="sidebar-header-container flex min-h-0 min-w-0 flex-1 flex-col">
           <SidebarHeader
             rail={rail}
             title={title}
             addProject={body !== "agents"}
             tabs={body !== "disconnected"}
             mode={mode}
+            compact={(preview ?? storedWidth ?? tokenPx("--size-sidebar-ideal")) < tokenPx("--size-sidebar-ideal")}
             deviceMenu={deviceMenu}
-            switchChord={switchChord || null}
+            projectChord={projectChord || null}
+            agentChord={agentChord || null}
+            overview={{ selected: overviewSelected, count: overviewCount, chord: overviewChord || null, onOpen: () => actions.openOverviewEntry() }}
             searchChord={commandLabel("search") || null}
             newWorkspaceChord={commandLabel("new_workspace") || null}
             onMode={actions.showSidebarMode}
@@ -162,7 +182,7 @@ export function Sidebar({ actions }: { actions: Actions }) {
             <div className="flex shrink-0 items-center gap-xs border-t border-border px-md py-xs">
               <span className="flex-1" />
               <WeeklyUsage actions={actions} />
-              <Hint label={`Settings (${commandLabel("settings")})`}>
+              <Hint label={`${t("common.settings")} (${commandLabel("settings")})`}>
                 <Button variant="ghost" size="icon-sm" data-open-settings="true" onClick={() => actions.openSettings()}>
                   <SettingsIcon />
                 </Button>
@@ -210,7 +230,7 @@ function useHomeStart() {
       ui.setFocusWhenListed(operation.pane_id);
       return;
     }
-    const refused = error?.request_id === id ? error : operation?.request_id === id && operation.phase === "failed" ? { message: operation.message ?? "Home did not open." } : null;
+    const refused = error?.request_id === id ? error : operation?.request_id === id && operation.phase === "failed" ? { message: operation.message ?? translate("sidebar.homeNotOpened") } : null;
     if (refused) ui.setHomeStart({ ...request, refusal: refused.message });
   }, [request, operation, error]);
 }
@@ -243,6 +263,7 @@ function SidebarEdge({
   onCancel: () => void;
   onReset: (current: number) => void;
 }) {
+  const { t } = useInterfaceTranslation();
   const drag = useRef<{ start: number; x: number; landed: number } | null>(null);
   const [active, setActive] = useState(false);
   // The width the operator sets is the content column's: the nav less the rail column while one shows.
@@ -254,7 +275,7 @@ function SidebarEdge({
     <div
       role="separator"
       aria-orientation="vertical"
-      aria-label="Resize sidebar"
+      aria-label={t("sidebar.resize")}
       data-sidebar-edge="true"
       className="group/edge absolute inset-y-0 z-30 flex w-(--size-resize-grab) cursor-col-resize justify-center"
       style={{ right: "calc(var(--size-resize-grab) / -2)" }}
@@ -305,12 +326,11 @@ function SidebarEdge({
  * the folder is made by the first start.
  */
 const HomeSection = memo(function HomeSection({ actions }: { actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const deviceId = useShellStore((s) => frontDeviceId(s.rest));
   const count = useShellStore((s) => (s.rest === null ? null : homeProjectCount(s.rest, deviceId)));
-  // A Home Overview names its device, or follows the one in front when it names none.
-  const screenDevice = useUiStore((s) => (s.screen?.kind === "main" ? (s.screen.deviceId ?? "") : null));
-  const selected = screenDevice !== null && (screenDevice === "" || screenDevice === deviceId);
-  const workspaceScreen = useUiStore((s) => s.screen?.kind === "workspace");
+  const selected = false;
+  const workspaceScreen = useUiStore((s) => s.screen?.kind === "workspace" && !s.overviewOpen);
   const home = useShellStore((s) => contextHome(s.rest));
   const agents = useShellStore((s) => contextAgents(s.rest, s.agents));
   const localWorkspaces = useShellStore((s) => s.rest?.navigator?.workspaces);
@@ -339,24 +359,24 @@ const HomeSection = memo(function HomeSection({ actions }: { actions: Actions })
           onClick={() => {
             const ui = useUiStore.getState();
             if (refusal !== null) ui.setHomeStart(null);
-            ui.setScreen({ kind: "main", deviceId });
+            actions.openHome(deviceId);
           }}
         >
           <HouseIcon aria-hidden="true" className="size-(--size-checkout-icon) shrink-0 text-subtle-foreground" />
-          <span className="min-w-0 flex-1 truncate text-subhead font-semibold text-foreground">Home</span>
+          <span className="min-w-0 flex-1 truncate text-subhead font-semibold text-foreground">{t("common.home")}</span>
           <span className="flex shrink-0 items-center gap-xs">
             {count === null ? null : (
               <span className="text-body text-muted-foreground" data-home-count="true">
-                {count} {count === 1 ? "project" : "projects"}
+                {t("overview.projects", { count })}
               </span>
             )}
             <FoldLane />
           </span>
         </button>
-        <Hint label="New tab in Home">
+        <Hint label={t("sidebar.newTabInHome")}>
           <button
             type="button"
-            aria-label="New tab in Home"
+            aria-label={t("sidebar.newTabInHome")}
             data-home-new-tab="true"
             className={cn(
               "absolute inset-y-0 right-xs my-auto flex h-(--size-icon-button-toolbar) w-(--size-lineage-chevron) items-center justify-center rounded-xs text-subtle-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring",
@@ -374,7 +394,7 @@ const HomeSection = memo(function HomeSection({ actions }: { actions: Actions })
         </p>
       )}
       {roots.length > 0 ? (
-        <ul aria-label="Home agents" data-home-agents="true">
+        <ul aria-label={t("sidebar.homeAgents")} data-home-agents="true">
           {roots.map((agent) => {
             const presentation = presentations.get(agent.pane_id)!;
             return (
@@ -406,6 +426,7 @@ const NO_HOME_AGENTS: AgentRow[] = [];
 
 /** A selected device the core cannot read: its name, why, and the one way to try again, with the last tree left out (PRD home-device-rail B8, B9). */
 function DisconnectedDevice({ actions }: { actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const deviceId = useShellStore((s) => frontDeviceId(s.rest));
   const label = useShellStore((s) => s.rest?.navigator?.devices?.find((device) => device.id === frontDeviceId(s.rest))?.label ?? frontDeviceId(s.rest));
   return (
@@ -415,11 +436,11 @@ function DisconnectedDevice({ actions }: { actions: Actions }) {
         {label}
       </span>
       <span role="status" className="text-caption text-muted-foreground">
-        연결 안 됨
+        {t("devices.state.unavailable")}
       </span>
       <Button variant="secondary" size="sm" data-device-reconnect={deviceId} onClick={() => actions.retryDevice(deviceId)}>
         <RefreshCwIcon aria-hidden="true" />
-        다시 연결
+        {t("sidebar.reconnect")}
       </Button>
     </div>
   );
@@ -435,6 +456,7 @@ function DisconnectedDevice({ actions }: { actions: Actions }) {
  * the list changes nothing: no focus moves and nothing is marked read.
  */
 function AgentList({ actions }: { actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   // Only what the list reads, so a terminal frame or an editor change does
   // not rebuild it.
   const loaded = useShellStore((s) => s.rest !== null);
@@ -446,7 +468,7 @@ function AgentList({ actions }: { actions: Actions }) {
   const listed = useMemo(() => deviceListedAgents(remote, devices, localAgents, frontId), [remote, devices, localAgents, frontId]);
   const lineageWorkspaces = useMemo(() => allLineageWorkspaces(workspaces, remote), [workspaces, remote]);
   const tree = useMemo(() => agentTree(listed, lineageWorkspaces), [listed, lineageWorkspaces]);
-  const placeOf = useMemo(() => agentPlaces(workspaces, remote, devices), [workspaces, remote, devices]);
+  const placeOf = useMemo(() => agentPlaces(workspaces, remote, devices), [workspaces, remote, devices, t]);
   const focusedPaneId = useShellStore((s) => s.focusedPaneId);
   // An ⌥ hold numbers the drawn rows top to bottom (PRD
   // electron-digit-shortcuts-hints B5); the numbers exist only while it
@@ -457,7 +479,7 @@ function AgentList({ actions }: { actions: Actions }) {
   // Before the first snapshot nothing is known, so an empty list would be a claim.
   if (!loaded) return <ListLoading />;
   if (tree.sections.length === 0) {
-    return <div className="min-h-0 flex-1 px-md py-sm text-caption text-muted-foreground" data-agents-empty="true">No agents are running</div>;
+    return <div className="min-h-0 flex-1 px-md py-sm text-caption text-muted-foreground" data-agents-empty="true">{t("sidebar.noAgents")}</div>;
   }
   return (
     <div className="flex min-h-0 flex-1 flex-col">
@@ -466,7 +488,7 @@ function AgentList({ actions }: { actions: Actions }) {
         {tree.sections.map((section) => (
           <li key={section.group} data-agent-group={section.group}>
             <div className="px-sm pb-xxs pt-sm text-micro font-medium text-muted-foreground" id={`agent-group-${section.group}`}>
-              {section.label} · {section.count}
+              {agentGroupTitle(section.group, t)} · {section.count}
             </div>
             <ul aria-labelledby={`agent-group-${section.group}`}>
               {section.rows.map((row) => (
@@ -503,16 +525,17 @@ function AgentList({ actions }: { actions: Actions }) {
  * rail (quick device-rail-slack).
  */
 function AgentCounts({ agents }: { agents: AgentRow[] }) {
+  const { t } = useInterfaceTranslation();
   const counts = groupCounts(agents);
   const shown = BADGE_STATES.filter(({ state }) => counts[state] > 0);
   if (shown.length === 0) return null;
   return (
     <p className="flex shrink-0 flex-wrap items-center gap-x-xs px-md pt-sm text-caption text-muted-foreground" data-agent-counts="true">
-      {shown.map(({ state, label }, index) => (
+      {shown.map(({ state }, index) => (
         <span key={state} className="flex items-center gap-x-xs">
           {index > 0 ? <span aria-hidden="true">·</span> : null}
           <span className={BADGE_TEXT[state]} data-agent-count={state}>
-            {label} {counts[state]}
+            {agentGroupTitle(state, t)} {counts[state]}
           </span>
         </span>
       ))}
@@ -560,7 +583,7 @@ function agentTree(listed: ListedAgent[], workspaces: Workspace[]) {
       };
       for (const root of roots) visit(root, 0, new Set());
       const count = roots.reduce((total, root) => total + 1 + allDescendants(root), 0);
-      return { group: section.group, label: section.label, rows, count };
+      return { group: section.group, rows, count };
     })
     .filter((section) => section.rows.length > 0);
   return {
@@ -570,18 +593,19 @@ function agentTree(listed: ListedAgent[], workspaces: Workspace[]) {
 }
 /** The first snapshot has not arrived: neither an empty list nor a zero is known yet. */
 function ListLoading() {
+  const { t } = useInterfaceTranslation();
   return (
     <div role="status" className="min-h-0 flex-1 px-md py-sm text-caption text-muted-foreground" data-sidebar-loading="true">
-      Connecting…
+      {t("devices.state.connecting")}
     </div>
   );
 }
 
 const NO_GROUPS: InactiveProjectGroup[] = [];
 
-function catalogLineOf(rest: SnapshotRest | null) {
+function catalogLineOf(rest: SnapshotRest | null, t: TFunction<"translation">) {
   const context = remoteContext(rest);
-  return context ? deviceCatalogLine(context) : null;
+  return context ? deviceCatalogLine(context, t) : null;
 }
 
 /**
@@ -593,6 +617,7 @@ function catalogLineOf(rest: SnapshotRest | null) {
  * focused checkout and its agent while a Workspace is in front.
  */
 function ProjectList({ actions, home }: { actions: Actions; home: ReactNode }) {
+  const { t } = useInterfaceTranslation();
   const loaded = useShellStore((s) => s.rest !== null);
   const remote = useShellStore((s) => focusedRemoteDevice(s.rest) !== null);
   const workspaces = useShellStore((s) => contextWorkspaces(s.rest));
@@ -611,10 +636,9 @@ function ProjectList({ actions, home }: { actions: Actions; home: ReactNode }) {
   const lineageWorkspaces = useMemo(() => allLineageWorkspaces(localWorkspaces, remoteStatuses), [localWorkspaces, remoteStatuses]);
   const openCheckouts = useShellStore((s) => s.rest?.ui_state?.expanded_checkout_ids ?? NO_IDS);
   const focusedPaneId = useShellStore((s) => s.focusedPaneId);
-  const screenKind = useUiStore((s) => s.screen?.kind ?? null);
-  const overviewProjectId = useUiStore((s) => (s.screen?.kind === "overview" ? s.screen.projectId : null));
-  const catalogState = useShellStore((s) => catalogLineOf(s.rest)?.state ?? null);
-  const catalogText = useShellStore((s) => catalogLineOf(s.rest)?.text ?? null);
+  const workspaceVisible = useUiStore((s) => s.screen?.kind === "workspace" && !s.overviewOpen);
+  const catalogState = useShellStore((s) => catalogLineOf(s.rest, t)?.state ?? null);
+  const catalogText = useShellStore((s) => catalogLineOf(s.rest, t)?.text ?? null);
   const catalogLine = catalogState && catalogText ? { state: catalogState, text: catalogText } : null;
   const homeWorkspace = useShellStore((s) => contextHome(s.rest));
   const rows = useMemo(() => projectRows(workspaces, groups, listedAgents, homeWorkspace), [workspaces, groups, listedAgents, homeWorkspace]);
@@ -623,7 +647,7 @@ function ProjectList({ actions, home }: { actions: Actions; home: ReactNode }) {
   const tree = useMemo(() => rows.filter((row) => row.kind !== "raised"), [rows]);
   const agentRowMenu = useAgentRowMenu(actions);
   const presentations = useMemo(() => new Map(agents.map((agent) => [agent.pane_id, foldedLineage(agent, agents, lineageWorkspaces)])), [agents, lineageWorkspaces]);
-  const placeOf = useMemo(() => agentPlaces(localWorkspaces, remoteStatuses, devices), [localWorkspaces, remoteStatuses, devices]);
+  const placeOf = useMemo(() => agentPlaces(localWorkspaces, remoteStatuses, devices), [localWorkspaces, remoteStatuses, devices, t]);
   // An ⌥ hold shows each agent's number once, on its raised row or else its
   // own checkout's row; ⌥n selects by the Agents list, so the number is that list's.
   const numbered = useUiStore((s) => s.hint === "agents");
@@ -640,8 +664,7 @@ function ProjectList({ actions, home }: { actions: Actions; home: ReactNode }) {
     numberOf: numberOfPane,
     focusedCheckoutId,
     focusedPaneId,
-    workspaceScreen: screenKind === "workspace",
-    overviewProjectId,
+    workspaceScreen: workspaceVisible,
     openCheckouts,
     disclosure: !remote,
     actions,
@@ -664,10 +687,10 @@ function ProjectList({ actions, home }: { actions: Actions; home: ReactNode }) {
       ))}
       {!remote && workspaces.length === 0 ? (
         <li className="flex flex-col items-start gap-sm px-sm py-sm text-caption text-muted-foreground" data-projects-empty="true">
-          No project on this machine yet.
+          {t("sidebar.noProjects")}
           {hostBridge() ? (
             <Button variant="secondary" size="sm" onClick={() => actions.openAddProject()} data-projects-empty-add="true">
-              Add project
+              {t("commands.new_workspace")}
             </Button>
           ) : null}
         </li>
@@ -691,7 +714,6 @@ type ListContext = {
   /** A Workspace is in front, so the focused checkout and agent are the scope shown. */
   workspaceScreen: boolean;
   /** The project whose Overview is in front. */
-  overviewProjectId: string | null;
   /** Checkouts whose agent rows the operator opened; every other checkout names its agents on line two. */
   openCheckouts: string[];
   /** False over a selected SSH device, whose tree is drawn with nothing folded. */
@@ -700,10 +722,15 @@ type ListContext = {
   agentRowMenu: AgentRowMenu;
 };
 
+const PROJECT_SECTION_TITLE: Record<Extract<ProjectRow, { kind: "header" }>["section"], MessageKey> = {
+  pinned: "overview.pinned",
+  recent: "sidebar.recentActivity",
+};
+
 function rowKey(row: ProjectRow): string {
   switch (row.kind) {
     case "header":
-      return `header:${row.title}`;
+      return `header:${row.section}`;
     case "raised":
       return `raised:${row.group}`;
     case "workspace":
@@ -714,10 +741,11 @@ function rowKey(row: ProjectRow): string {
 }
 
 const ProjectRowView = memo(function ProjectRowView({ row, context }: { row: ProjectRow; context: ListContext }) {
+  const { t } = useInterfaceTranslation();
   if (row.kind === "header") {
     return (
-      <li className="px-sm pt-sm pb-xxs text-micro font-medium text-muted-foreground" data-section={row.title}>
-        {row.title} · {row.count}
+      <li className="px-sm pt-sm pb-xxs text-micro font-medium text-muted-foreground" data-section={row.section}>
+        {t(PROJECT_SECTION_TITLE[row.section])} · {row.count}
       </li>
     );
   }
@@ -726,7 +754,7 @@ const ProjectRowView = memo(function ProjectRowView({ row, context }: { row: Pro
     return (
       <li>
         <FoldRow
-          label="Inactive projects"
+          label={t("sidebar.inactiveProjects")}
           count={row.count}
           expanded={row.group.expanded}
           level="project"
@@ -747,10 +775,11 @@ const ProjectRowView = memo(function ProjectRowView({ row, context }: { row: Pro
  * same row does in Agents.
  */
 function RaisedSection({ row, context }: { row: Extract<ProjectRow, { kind: "raised" }>; context: ListContext }) {
+  const { t } = useInterfaceTranslation();
   return (
     <li data-raised-group={row.group}>
-      <div className="px-sm pt-sm pb-xxs text-micro font-medium text-muted-foreground" data-section={row.title} id={`raised-group-${row.group}`}>
-        {row.title} · {row.agents.length}
+      <div className="px-sm pt-sm pb-xxs text-micro font-medium text-muted-foreground" data-section={row.group} id={`raised-group-${row.group}`}>
+        {agentGroupTitle(row.group, t)} · {row.agents.length}
       </div>
       <ul aria-labelledby={`raised-group-${row.group}`}>
         {row.agents.map(({ agent, device }) => {
@@ -867,6 +896,7 @@ function FoldToggle({ open, label, onToggle, ...data }: { open: boolean; label: 
 }
 
 function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; level: "root" | "child"; context: ListContext }) {
+  const { t } = useInterfaceTranslation();
   const { agents, actions, disclosure } = context;
   const active = activeCheckouts(workspace);
   const inactive = inactiveCheckouts(workspace);
@@ -880,14 +910,14 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
         workspace={workspace}
         checkout={folder}
         agentRows={rowsByCheckout.get(folder.id) ?? NO_BOARD_ROWS}
-        focused={(context.workspaceScreen && folder.id === context.focusedCheckoutId) || context.overviewProjectId === workspace.id}
+        focused={context.workspaceScreen && folder.id === context.focusedCheckoutId}
         inset={inset}
         context={context}
       />
     );
   }
   const ProjectIcon = workspace.is_git ? FolderGit2Icon : FolderIcon;
-  const selected = overviewRowSelected(workspace, context.overviewProjectId);
+  const target = projectCheckout(workspace, useShellStore.getState().rest?.ui_state?.recent_checkouts);
   const marks = projectMarks(workspace);
   const checkoutRow = (checkout: Checkout) => (
     <CheckoutRowView
@@ -902,8 +932,8 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
   return (
     <li data-project={workspace.id} className={inset}>
       <EntryContextMenu
-        label={`${workspace.label} actions`}
-        items={() => projectMenu(workspace, menuHost())}
+        label={t("common.entryActions", { name: workspace.label })}
+        items={() => projectMenu(workspace, menuHost(), t)}
         onSelect={(item) => runProjectItem(actions, workspace, item)}
         className="group flex items-stretch"
         data-project-menu={workspace.id}
@@ -915,9 +945,9 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
           <button
             type="button"
             data-project-row={workspace.id}
-            aria-label={[workspace.label, badgeWords(marks)].filter(Boolean).join(", ")}
+            aria-label={[workspace.label, badgeWords(marks, t)].filter(Boolean).join(", ")}
             className="flex min-w-0 flex-1 self-stretch items-center gap-sm rounded-xs text-left outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
-            onClick={() => actions.openProject(workspace, projectRowExpansion(workspace, context.overviewProjectId, disclosure))}
+            onClick={() => actions.openProject(workspace, projectRowExpansion(workspace, target, context.workspaceScreen ? context.focusedCheckoutId : null, disclosure))}
           >
             <ProjectIcon aria-hidden="true" className="size-(--size-checkout-icon) shrink-0 text-subtle-foreground" />
             <span data-row-name="true" className="min-w-0 flex-1 truncate text-subhead font-semibold text-foreground">{workspace.label}</span>
@@ -927,7 +957,7 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
           {disclosure ? (
             <FoldToggle
               open={expanded}
-              label={expanded ? `Fold ${workspace.label}` : `Unfold ${workspace.label}`}
+              label={expanded ? t("sidebar.foldProject", { name: workspace.label }) : t("sidebar.unfoldProject", { name: workspace.label })}
               onToggle={() => actions.toggleProjectCheckouts(workspace)}
               data-project-toggle={workspace.id}
             />
@@ -938,12 +968,11 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
       </EntryContextMenu>
       {expanded ? (
         <ul>
-          {workspace.is_git ? <OverviewRow workspace={workspace} selected={selected} /> : null}
           {active.map(checkoutRow)}
           {inactive.length > 0 ? (
             <li>
               <FoldRow
-                label="Inactive"
+                label={t("sidebar.inactive")}
                 count={inactive.length}
                 expanded={workspace.inactive_checkouts.expanded}
                 level="checkout"
@@ -959,28 +988,6 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
   );
 }
 
-function OverviewRow({ workspace, selected }: { workspace: Workspace; selected: boolean }) {
-  return (
-    <li>
-      <button
-        type="button"
-        data-project-overview={workspace.id}
-        aria-current={selected ? "page" : undefined}
-        className={cn(
-          "flex min-h-(--size-checkout-row) w-full items-center gap-sm rounded-sm pr-xs text-left text-body text-foreground outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring",
-          selected ? "bg-secondary font-medium" : "hover:bg-accent",
-        )}
-        style={{ paddingLeft: CHECKOUT_COLUMN }}
-        onClick={() => useUiStore.getState().setScreen(overviewScreen(useShellStore.getState().rest, workspace.id))}
-      >
-        <LayoutDashboardIcon aria-hidden="true" className="size-(--size-checkout-icon) shrink-0 text-subtle-foreground" />
-        <span className="min-w-0 flex-1 truncate">Overview</span>
-        <FoldLane />
-      </button>
-    </li>
-  );
-}
-
 const NO_BOARD_ROWS: BoardRow[] = [];
 
 
@@ -991,7 +998,7 @@ const NO_BOARD_ROWS: BoardRow[] = [];
  * is one (PRD sidebar-typography D-04); opening the agents never grows or
  * shrinks the row.
  */
-function checkoutDisclosure(checkout: Checkout, agentRows: BoardRow[], view: CheckoutPresentation, context: ListContext) {
+function checkoutDisclosure(checkout: Checkout, agentRows: BoardRow[], view: CheckoutPresentation, context: ListContext, t: TFunction<"translation">) {
   const foldable = context.disclosure && agentRows.length > 0;
   const open = foldable && context.openCheckouts.includes(checkout.id);
   const purpose = checkout.purpose?.text ?? null;
@@ -1000,7 +1007,7 @@ function checkoutDisclosure(checkout: Checkout, agentRows: BoardRow[], view: Che
     .map((row) => context.agents.find((candidate) => candidate.pane_id === row.agent.lineage_parent_pane_id))
     .filter((parent): parent is AgentRow => parent !== undefined)
     .map((parent) => parent.identity_label))];
-  const raisedFrom = parents.length > 0 ? `${parents[0]}${parents.length > 1 ? ` +${parents.length - 1}` : ""}에서` : null;
+  const raisedFrom = parents.length > 0 ? t("sidebar.raisedFrom", { name: `${parents[0]}${parents.length > 1 ? ` +${parents.length - 1}` : ""}` }) : null;
   return { foldable, open, purpose, secondLine: checkoutHasSecondLine(view, purpose, raisedFrom), raisedFrom };
 }
 
@@ -1028,12 +1035,13 @@ const CheckoutRowView = memo(function CheckoutRowView({
   focused: boolean;
   context: ListContext;
 }) {
+  const { t } = useInterfaceTranslation();
   const { actions } = context;
-  const purposeProblem = useShellStore((s) => remotePurposeProblem(workspace, s.rest?.status?.remote));
+  const purposeProblem = useShellStore((s) => remotePurposeProblem(workspace, s.rest?.status?.remote, t));
   const removing = useShellStore((s) => checkoutRemoving(s.rest?.worktree_removal, workspace.device_id, checkout.path));
-  const view = checkoutPresentation(workspace, checkout, Date.now());
+  const view = checkoutPresentation(workspace, checkout, Date.now(), t);
   const name = checkout.branch ?? checkout.label;
-  const { foldable, open, purpose, secondLine, raisedFrom } = checkoutDisclosure(checkout, agentRows, view, context);
+  const { foldable, open, purpose, secondLine, raisedFrom } = checkoutDisclosure(checkout, agentRows, view, context, t);
   const marks = checkout.agent_summary?.marks;
   return (
     <li
@@ -1043,8 +1051,8 @@ const CheckoutRowView = memo(function CheckoutRowView({
       className={cn(open && "rounded-sm bg-muted py-xs", removing && "opacity-(--opacity-dimmed)")}
     >
       <EntryContextMenu
-        label={`${name} actions`}
-        items={() => checkoutMenu(workspace, checkout, menuHost(), purposeProblem)}
+        label={t("common.entryActions", { name })}
+        items={() => checkoutMenu(workspace, checkout, menuHost(), t, purposeProblem)}
         onSelect={(item) => runCheckoutItem(actions, workspace, checkout, item)}
         disabled={removing}
         className="group flex items-stretch"
@@ -1064,7 +1072,7 @@ const CheckoutRowView = memo(function CheckoutRowView({
             checkout={checkout}
             view={view}
             focused={focused}
-            label={[name, removing ? "deleting" : open ? null : badgeWords(marks), view.age, purpose].filter(Boolean).join(", ")}
+            label={[name, removing ? t("sidebar.deleting") : open ? null : badgeWords(marks, t), view.age, purpose].filter(Boolean).join(", ")}
             actions={actions}
             expanded={checkoutRowExpansion(foldable, context.workspaceScreen && focused, open)}
             disabled={removing}
@@ -1086,7 +1094,7 @@ const CheckoutRowView = memo(function CheckoutRowView({
               {foldable ? (
                 <FoldToggle
                   open={open}
-                  label={open ? `Hide the agents in ${name}` : `Show the agents in ${name}`}
+                  label={open ? t("sidebar.hideAgentsIn", { name }) : t("sidebar.showAgentsIn", { name })}
                   onToggle={() => actions.toggleCheckoutAgents(checkout.id)}
                   data-checkout-toggle={checkout.id}
                 />
@@ -1108,9 +1116,9 @@ const CheckoutRowView = memo(function CheckoutRowView({
  * one row. Line one is the project's name and its status badge, which stays
  * while the agent rows are open because it is the project's own summary; line
  * two is the purpose. The row opens the checkout and is marked while that
- * checkout is the Workspace in front or the project's Overview is, and its
+ * checkout is the Workspace in front, and its
  * menu is the project's followed by the checkout's. It ends as a checkout row
- * does, and its Overview is reached from All projects.
+ * does, and its project scope is reached from the shared Overview.
  */
 const FolderRowView = memo(function FolderRowView({
   workspace,
@@ -1127,16 +1135,17 @@ const FolderRowView = memo(function FolderRowView({
   inset: string;
   context: ListContext;
 }) {
+  const { t } = useInterfaceTranslation();
   const { actions } = context;
-  const purposeProblem = useShellStore((s) => remotePurposeProblem(workspace, s.rest?.status?.remote));
-  const view = checkoutPresentation(workspace, checkout, Date.now());
+  const purposeProblem = useShellStore((s) => remotePurposeProblem(workspace, s.rest?.status?.remote, t));
+  const view = checkoutPresentation(workspace, checkout, Date.now(), t);
   const marks = checkout.agent_summary?.marks;
-  const { foldable, open, purpose, secondLine, raisedFrom } = checkoutDisclosure(checkout, agentRows, view, context);
+  const { foldable, open, purpose, secondLine, raisedFrom } = checkoutDisclosure(checkout, agentRows, view, context, t);
   return (
     <li data-project={workspace.id} data-checkout-open={open ? "true" : undefined} className={cn(inset, open && "rounded-sm bg-muted py-xs")}>
       <EntryContextMenu
-        label={`${workspace.label} actions`}
-        items={() => folderMenu(workspace, checkout, menuHost(), purposeProblem)}
+        label={t("common.entryActions", { name: workspace.label })}
+        items={() => folderMenu(workspace, checkout, menuHost(), t, purposeProblem)}
         onSelect={(item) => (FOLDER_CHECKOUT_ITEMS.has(item) ? runCheckoutItem(actions, workspace, checkout, item) : runProjectItem(actions, workspace, item))}
         className="group flex items-stretch"
         data-project-menu={workspace.id}
@@ -1154,7 +1163,7 @@ const FolderRowView = memo(function FolderRowView({
             checkout={checkout}
             view={view}
             focused={focused}
-            label={[workspace.label, badgeWords(marks), purpose].filter(Boolean).join(", ")}
+            label={[workspace.label, badgeWords(marks, t), purpose].filter(Boolean).join(", ")}
             actions={actions}
             expanded={checkoutRowExpansion(foldable, context.workspaceScreen && focused, open)}
           />
@@ -1170,7 +1179,7 @@ const FolderRowView = memo(function FolderRowView({
               {foldable ? (
                 <FoldToggle
                   open={open}
-                  label={open ? `Hide the agents in ${workspace.label}` : `Show the agents in ${workspace.label}`}
+                  label={open ? t("sidebar.hideAgentsIn", { name: workspace.label }) : t("sidebar.showAgentsIn", { name: workspace.label })}
                   onToggle={() => actions.toggleCheckoutAgents(checkout.id)}
                   data-checkout-toggle={checkout.id}
                 />
@@ -1196,6 +1205,7 @@ const FolderRowView = memo(function FolderRowView({
  * unfolds. Every other kind is the plain icon the row button covers.
  */
 function KindGlyph({ view, deviceId, actions }: { view: CheckoutPresentation; deviceId: string; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const KindIcon = CHECKOUT_KIND_ICON[view.kind];
   const pr = view.kind.startsWith("pr_") ? view.pullRequest : null;
   if (!pr) return <KindIcon aria-hidden="true" className={cn("size-(--size-checkout-icon) shrink-0", view.kindTone)} />;
@@ -1203,7 +1213,7 @@ function KindGlyph({ view, deviceId, actions }: { view: CheckoutPresentation; de
     <button
       type="button"
       data-checkout-pr-glyph={pr.number}
-      aria-label={`Open pull request #${pr.number}`}
+      aria-label={t("sidebar.openPullRequest", { number: pr.number })}
       className={cn(
         "pointer-events-auto relative flex size-(--size-checkout-icon) shrink-0 cursor-pointer items-center justify-center rounded-xs outline-none hover:ring-1 hover:ring-current focus-visible:ring-1 focus-visible:ring-ring",
         view.kindTone,
@@ -1243,8 +1253,9 @@ function CheckoutOpenButton({
   expanded?: boolean;
   disabled?: boolean;
 }) {
+  const { t } = useInterfaceTranslation();
   // Read on every render, like `view.detail`: a memo keyed on the checkout would keep the Commit age from the last change to this row.
-  const card = checkoutCard(workspace, checkout, Date.now());
+  const card = checkoutCard(workspace, checkout, Date.now(), t);
   return (
     <CheckoutCardHint
       card={card}
@@ -1267,17 +1278,18 @@ function CheckoutOpenButton({
 }
 
 function CheckoutBadge({ checkout }: { checkout: Checkout }) {
+  const { t } = useInterfaceTranslation();
   if (!checkout.exists) {
     return (
       <Badge variant="secondary" className="shrink-0 text-destructive" data-checkout-missing="true">
-        missing
+        {t("sidebar.checkoutMissing")}
       </Badge>
     );
   }
   if (checkout.temporary) {
     return (
       <Badge variant="secondary" className="shrink-0 text-warning">
-        temporary
+        {t("sidebar.checkoutTemporary")}
       </Badge>
     );
   }
@@ -1388,8 +1400,6 @@ function menuHost(): MenuHost {
 
 function runProjectItem(actions: Actions, workspace: Workspace, item: MenuItem["id"]) {
   switch (item) {
-    case "open_overview":
-      return useUiStore.getState().setScreen(overviewScreen(useShellStore.getState().rest, workspace.id));
     case "new_worktree":
       return useUiStore.getState().setWorkspaceDialog({ kind: "new_worktree", workspaceId: workspace.id });
     case "new_tab_primary": {
@@ -1438,13 +1448,14 @@ function runCheckoutItem(actions: Actions, workspace: Workspace, checkout: Check
  * same row in the Agents list, read when the menu opens.
  */
 function useAgentRowMenu(actions: Actions): AgentRowMenu {
+  const { t } = useInterfaceTranslation();
   return useMemo(
     () => ({
       items: (agent) => {
         const state = useShellStore.getState();
         const number = agentNumber(state, agent.pane_id);
         const chord = number === null ? "" : commandLabel(`select_agent_${number}`, state.rest?.ui_state);
-        return agentMenu(agent, chord);
+        return agentMenu(agent, chord, t);
       },
       onSelect: (agent, item) => {
         switch (item) {
@@ -1459,6 +1470,6 @@ function useAgentRowMenu(actions: Actions): AgentRowMenu {
         }
       },
     }),
-    [actions],
+    [actions, t],
   );
 }

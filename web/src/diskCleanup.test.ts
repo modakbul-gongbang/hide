@@ -3,40 +3,51 @@
 // small fixtures. Expected answers are the PRD's Behaviors (B2, B4, B10-B16, B22).
 
 import { describe, expect, it } from "vitest";
+import { initializeInterfaceI18n } from "./i18n/instance";
 import { projectStats } from "./projectBoard";
 import {
   EMPTY_SELECTION,
   LOW_FREE_BYTES,
   SMALL_CHECKOUT_BYTES,
-  BUSY_TEXT,
+  BUSY_KEY,
   bundleRefs,
   bundleState,
-  cellReasonText,
+  cellReasonText as cellReasonTextIn,
   entranceBytes,
-  exclusionText,
+  exclusionText as exclusionTextIn,
   filterCounts,
-  footerOf,
-  gigabytes,
-  layerLines,
+  footerOf as footerOfIn,
+  layerLines as layerLinesIn,
   layoutRows,
   lowFree,
   needsConfirm,
   planOf,
   pruneSelection,
-  reasonText,
+  reasonText as reasonTextIn,
   reclaimable,
   cleanupElsewhere,
-  resultLines,
-  sheetModel,
+  resultLines as resultLinesIn,
+  sheetModel as sheetModelIn,
   toggleBundle,
   toggleCell,
   visibleRows,
   type SheetRow,
 } from "./diskCleanup";
-import type { Checkout, CleanupCellResult, CleanupExclusionCode, CleanupRow, DiskCleanup, DiskLayers, Workspace } from "./snapshot";
+import type { Checkout, CleanupCellResult, CleanupExclusionCode, CleanupInUse, CleanupRow, DiskCleanup, DiskLayers, Workspace } from "./snapshot";
 
 const GB = 1024 ** 3;
 const MB = 1024 ** 2;
+
+// The Korean wording is what the sheet shipped with; the model reads the same under it.
+const t = initializeInterfaceI18n("ko").getFixedT(null, "translation");
+const english = initializeInterfaceI18n("en").getFixedT(null, "translation");
+const sheetModel = (workspace: Workspace, elsewhere: Parameters<typeof sheetModelIn>[1]) => sheetModelIn(workspace, elsewhere, t);
+const footerOf = (rows: readonly SheetRow[], selection: Parameters<typeof footerOfIn>[1], state?: Parameters<typeof footerOfIn>[4]) => footerOfIn(rows, selection, t, "ko", state);
+const layerLines = (workspace: Workspace) => layerLinesIn(workspace, t);
+const resultLines = (cleanup: DiskCleanup) => resultLinesIn(cleanup, t);
+const exclusionText = (row: CleanupRow) => exclusionTextIn(row, t);
+const reasonText = (code: Parameters<typeof reasonTextIn>[0], count?: number | null) => reasonTextIn(code, count, t);
+const cellReasonText = (code: Parameters<typeof cellReasonTextIn>[0]) => cellReasonTextIn(code, t);
 
 function layers(build: number, deps: number, other = 0): DiskLayers {
   const cell = (bytes: number) => ({ bytes, folders: bytes > 0 ? 1 : 0, largest_name: bytes > 0 ? "x" : null });
@@ -75,7 +86,7 @@ function checkout(name: string, options: Options = {}): Checkout {
 }
 
 function core(path: string, extra: Partial<CleanupRow> = {}): CleanupRow {
-  return { path, branch: null, head: null, is_main: false, exclusion_code: null, exclusion_count: null, in_use: null, result: null, result_code: null, bytes: null, ...extra };
+  return { path, branch: null, head: null, is_main: false, exclusion_code: null, exclusion_count: null, in_use: null, pane_count: 0, result: null, result_code: null, bytes: null, ...extra };
 }
 
 function workspace(checkouts: Checkout[], cleanup: Partial<DiskCleanup> | null, rows: Record<string, Partial<CleanupRow>> = {}, id = "p"): Workspace {
@@ -184,7 +195,7 @@ describe("cell availability (B5, B6, B14, B15, B25)", () => {
       ok: {},
     });
     expect(rows[0]?.worktree).toBeNull();
-    expect(rows[1]?.worktree).toEqual({ selectable: false, why: "바뀐 파일 3" });
+    expect(rows[1]?.worktree).toEqual({ selectable: false, why: "바뀐 파일 3", panes: 0 });
     expect(rows[2]?.worktree?.selectable).toBe(true);
   });
 
@@ -201,7 +212,7 @@ describe("cell availability (B5, B6, B14, B15, B25)", () => {
     expect(cleanupElsewhere([other, mine], "p")).toBe("removing");
     expect(cleanupElsewhere([other], "other")).toBeNull();
     expect(sheetModel(mine, "removing").state).toBe("busy");
-    expect(BUSY_TEXT.removing).toBe("다른 정리가 진행 중");
+    expect(t(BUSY_KEY.removing)).toBe("다른 정리가 진행 중");
   });
 
   it("is busy while another project's review still reads, and ready again once that worker ends", () => {
@@ -210,7 +221,7 @@ describe("cell availability (B5, B6, B14, B15, B25)", () => {
     const mine = workspace([checkout("a")], null);
     expect(cleanupElsewhere([reading, mine], "p")).toBe("loading");
     expect(sheetModel(mine, "loading").state).toBe("busy");
-    expect(BUSY_TEXT.loading).toBe("다른 프로젝트를 검토하는 중");
+    expect(t(BUSY_KEY.loading)).toBe("다른 프로젝트를 검토하는 중");
     // The other review ends and stays open with nobody closing it: it no longer holds this project back.
     const finished = workspace([checkout("a")], { phase: "review" }, {}, "other");
     expect(cleanupElsewhere([finished, mine], "p")).toBeNull();
@@ -312,6 +323,24 @@ describe("selection (D-09, B10, B11)", () => {
     const after = ready([checkout("ok", merged)], { ok: { in_use: { code: "process", name: "vite", port: null } } });
     expect(planOf(after, selection).worktrees).toEqual([]);
     expect(needsConfirm(planOf(after, selection))).toBe(false);
+  });
+
+  it("counts the panes that close with a chosen worktree and keeps them out of a cache-only plan", () => {
+    const panes = ready([checkout("finished", merged), checkout("empty", merged)], { finished: { pane_count: 2 }, empty: {} });
+    expect(panes.map((row) => [row.label, row.worktree?.panes])).toEqual([["finished", 2], ["empty", 0]]);
+    const both = toggleBundle(EMPTY_SELECTION, bundleRefs(panes, EMPTY_SELECTION, ["worktree"]));
+    expect(planOf(panes, both).worktrees.map((w) => [w.label, w.panes])).toEqual([["finished", 2], ["empty", 0]]);
+    const caches = toggleBundle(EMPTY_SELECTION, bundleRefs(panes, EMPTY_SELECTION, ["build_cache"]));
+    expect(planOf(panes, caches).worktrees).toEqual([]);
+  });
+
+  it("chooses a worktree whose only panes are a finished agent's and a shell, not one with a waiting agent", () => {
+    const rows = ready([checkout("finished", merged), checkout("blocked", merged)], { finished: { pane_count: 2 }, blocked: { pane_count: 1, in_use: { code: "agent_waiting", name: null, port: null } } });
+    expect(rows.find((row) => row.label === "finished")?.worktree?.selectable).toBe(true);
+    const blocked = rows.find((row) => row.label === "blocked");
+    expect(blocked?.worktree?.selectable).toBe(false);
+    expect(blocked?.bucket).toBe("working");
+    expect(blocked?.inUse).toBe("에이전트가 입력을 기다림");
   });
 
   it("unticks what a filter hides (B12)", () => {
@@ -447,7 +476,7 @@ describe("reasons in the operator's words (B15, B22)", () => {
     const codes: [CleanupExclusionCode, string][] = [
       ["locked", "잠김"],
       ["current", "지금 보고 있는 체크아웃"],
-      ["pane_open", "pane이 열려 있음"],
+      ["pane_open", "이 체크아웃 것이 아닌 pane이 열려 있음"],
       ["dirty", "바뀐 파일 있음"],
       ["not_merged", "main에 머지되지 않음"],
       ["merge_unverified", "머지를 확인하지 못함"],
@@ -455,7 +484,7 @@ describe("reasons in the operator's words (B15, B22)", () => {
       ["detached", "브랜치 없이 떨어진 HEAD"],
       ["contains_worktree", "다른 워크트리를 품고 있음"],
       ["unverified", "확인하지 못함"],
-      ["main_unavailable", "로컬 main을 읽을 수 없음"],
+      ["main_unavailable", "main을 읽을 수 없음"],
       ["alias", "폴더를 읽을 수 없음"],
       ["missing", "폴더를 읽을 수 없음"],
       ["unavailable", "폴더를 읽을 수 없음"],
@@ -471,6 +500,7 @@ describe("reasons in the operator's words (B15, B22)", () => {
     expect(reasonText("changed")).toBe("확인 사이에 바뀜");
     expect(reasonText("not_found")).toBe("이미 없음");
     expect(reasonText("unverified")).toBe("확인하지 못함");
+    expect(reasonText("close_refused")).toBe("pane을 닫지 못함");
     expect(reasonText("remove_refused")).toBe("Git이 워크트리를 지우지 못함");
     // A code this build does not know reads as a plain refusal, never as the raw code.
     expect(reasonText("from_a_newer_core" as CleanupExclusionCode)).toBe("지울 수 없음");
@@ -479,8 +509,10 @@ describe("reasons in the operator's words (B15, B22)", () => {
   it("words every cell code the core sends and the in-use kinds", () => {
     const cells = { in_use: "확인 사이에 쓰는 중이 됨", changed: "확인 사이에 바뀜", tracked_files: "추적 파일이 있음", nested_repository: "안에 다른 저장소", symlink: "심링크라 건너뜀", not_found: "이미 없음", unverified: "확인하지 못함", io: "폴더를 지우지 못함" } as const;
     for (const [code, text] of Object.entries(cells)) expect(cellReasonText(code as keyof typeof cells), code).toBe(text);
-    const inUse = (code: "agent_working" | "process" | "port" | "unverified", name: string | null = null, port: number | null = null) => exclusionText(core("/r/x", { in_use: { code, name, port } }));
+    const inUse = (code: CleanupInUse["code"], name: string | null = null, port: number | null = null) => exclusionText(core("/r/x", { in_use: { code, name, port } }));
     expect(inUse("agent_working")).toBe("에이전트 작업 중");
+    expect(inUse("agent_waiting")).toBe("에이전트가 입력을 기다림");
+    expect(inUse("descendant_busy")).toBe("위임한 에이전트가 일하는 중");
     expect(inUse("process", "cargo")).toBe("터미널에서 cargo 실행 중");
     expect(inUse("port", null, 5173)).toBe("포트 5173 서버");
     expect(inUse("unverified")).toBe("쓰는 중인지 확인하지 못함");
@@ -543,8 +575,13 @@ describe("result (B22)", () => {
     expect(by("worktree:/r/refused")).toMatchObject({ outcome: "failed", reason: "Git이 워크트리를 지우지 못함" });
   });
 
-  it("writes free space to one decimal", () => {
-    expect(gigabytes(18.3 * GB)).toBe("18.3 GB");
-    expect(gigabytes(1.6 * GB)).toBe("1.6 GB");
+  it("words the same model in the interface language", () => {
+    const rows = sheetModelIn(workspace([checkout("a", { working: 1 }), checkout("b")], { phase: "review", usage_ready: true }), null, english).rows;
+    expect(rows[0]?.inUse).toBe("Agent is working");
+    expect(footerOfIn(rows, EMPTY_SELECTION, english, "en").summary).toBe("No cells selected");
+    expect(reasonTextIn("dirty", 3, english)).toBe("3 changed files");
+    expect(reasonTextIn("dirty", 1, english)).toBe("1 changed file");
+    expect(exclusionTextIn(core("/r/x", { in_use: { code: "port", name: null, port: 5173 } }), english)).toBe("Server on port 5173");
+    expect(cellReasonTextIn("symlink", english)).toBe("Skipped a symbolic link");
   });
 });

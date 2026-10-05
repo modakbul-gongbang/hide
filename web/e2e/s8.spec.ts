@@ -15,6 +15,7 @@ import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, registerFolder, screenshot } from "./wire";
+import { openCurrentProjectOverview } from "./overview-entry";
 
 test.describe.configure({ timeout: 180_000 });
 
@@ -97,6 +98,10 @@ test("a Project's Sessions: history, filters, a read-only session, failures and 
     await expect(page.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
     await page.locator('[data-main-tab="projects"]').click();
     await page.locator("[data-main-project]", { hasText: "fixture" }).click();
+    await expect(page.locator("[data-workspace-screen]")).toBeVisible();
+    const fixtureCheckout = await page.locator("[data-workspace-screen]").getAttribute("data-workspace-screen");
+    expect(fixtureCheckout).toBeTruthy();
+    await openCurrentProjectOverview(page, "fixture");
     await expect(page.locator("[data-overview-screen]")).toBeVisible();
     await expect(page.locator("[data-overview-screen]")).not.toContainText(/memory/i);
     await page.locator('[data-lens-tile-button="sessions"]').click();
@@ -257,11 +262,15 @@ test("a Project's Sessions: history, filters, a read-only session, failures and 
     const other = await context.newPage();
     await other.setViewportSize({ width: 1280, height: 800 });
     await open(other, daemon);
-    await expect(other.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
+    // #350's first project activation focused a checkout, so a new window
+    // resumes that exact Workspace under the existing startup contract.
+    await expect(other.locator("[data-workspace-screen]")).toHaveAttribute("data-workspace-screen", fixtureCheckout!, { timeout: 20_000 });
+    await other.locator("[data-go-main]").click();
     await other.locator('[data-main-tab="projects"]').click();
     await other.locator("[data-main-project]", { hasText: "fixture" }).click();
-        const [, second] = herdr.panes;
-    // A Project opens on its request view; the graph is the Agents tile.
+    await openCurrentProjectOverview(other, "fixture");
+    const [, second] = herdr.panes;
+    // Shared Overview's project scope opens requests; the graph is the Agents tile.
     await other.locator('[data-overview-screen] [data-lens-tile-button="agents"]').click();
     await other.locator(`[data-overview-screen] [data-graph-open="${second}"]`).click();
     await expect(other.locator("[data-workspace-screen]")).toBeVisible();
@@ -279,6 +288,7 @@ test("a Project's Sessions: history, filters, a read-only session, failures and 
     await other.locator('[data-main-tab="projects"]').click();
     await expect(other.locator("[data-main-project]", { hasText: "alpha" })).toBeVisible({ timeout: 20_000 });
     await other.locator("[data-main-project]", { hasText: "alpha" }).click();
+    await openCurrentProjectOverview(other, "alpha");
     await other.locator('[data-lens-tile-button="sessions"]').click();
     await expect(other.locator("[data-session-row]")).toHaveCount(1, { timeout: 20_000 });
     await expect(other.locator('[data-session="claude-alpha"]')).toContainText("alpha only request");

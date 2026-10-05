@@ -219,10 +219,10 @@ test("the Projects tab: kind, age, status badges, opened checkouts and folded pr
     // Looking at a row sends nothing: hover, focus and an open menu are the list's own.
     await page.waitForTimeout(300);
     expect([...sent].filter(([kind, count]) => count !== (beforeLooking.get(kind) ?? 0)).map(([kind]) => kind)).toEqual([]);
-    const overview = project.locator("[data-project-overview]");
-    await expect(project.locator("ul").first().locator(":scope > li").first()).toContainText("Overview");
+    const overview = page.locator("[data-home-destination]");
+    await expect(project.locator("[data-project-overview]")).toHaveCount(0);
     await overview.click();
-    await expect(overview).toHaveAttribute("aria-current", "page");
+    await expect(page.locator("[data-sidebar-overview]")).toHaveAttribute("aria-current", "page");
     await expect(project.locator("[data-project-row]")).not.toHaveAttribute("aria-current");
     await expect(project.locator("[data-project-row]").locator("xpath=..")).not.toHaveClass(/bg-secondary/);
     const beforeOpen = new Map(sent);
@@ -244,17 +244,17 @@ test("the Projects tab: kind, age, status badges, opened checkouts and folded pr
     await expect(primaryToggle).toHaveAttribute("aria-expanded", "false");
     await keyboardFocus(page, overview);
     await page.keyboard.press("Enter");
-    await expect(overview).toHaveAttribute("aria-current", "page");
+    await expect(page.locator("[data-sidebar-overview]")).toHaveAttribute("aria-current", "page");
     await expect(primary.locator("[data-checkout]")).not.toHaveAttribute("aria-current");
     await screenshot(page, "overview-row-selected");
     await page.keyboard.press("Space");
-    await expect(overview).toHaveAttribute("aria-current", "page");
+    await expect(page.locator("[data-sidebar-overview]")).toHaveAttribute("aria-current", "page");
     // The existing focused checkout cannot land from the old folded snapshot.
     holdOpen = true;
     await primary.locator("[data-checkout]").click();
     await expect.poll(() => heldOpen.release !== null).toBe(true);
-    await expect(overview).toHaveAttribute("aria-current", "page");
-    await expect(page.locator("[data-overview-screen]")).toBeVisible();
+    await expect(page.locator("[data-sidebar-overview]")).toHaveAttribute("aria-current", "page");
+    await expect(page.locator("[data-main-screen]")).toBeVisible();
     await expect(primaryToggle).toHaveAttribute("aria-expanded", "false");
     holdOpen = false;
     heldOpen.release!();
@@ -271,7 +271,7 @@ test("the Projects tab: kind, age, status badges, opened checkouts and folded pr
     const emptyRow = project.locator("[data-checkout-row]").filter({ has: page.locator('[data-checkout][aria-label^="empty"]') });
     const emptyButton = emptyRow.locator("[data-checkout]");
     await expect(emptyRow.locator("[data-checkout-toggle]")).toHaveCount(0);
-    expect((await emptyButton.boundingBox())!.height).toBe((await overview.boundingBox())!.height);
+    expect((await emptyButton.boundingBox())!.height).toBe(await emptyButton.evaluate((node) => parseFloat(getComputedStyle(node).getPropertyValue("--size-checkout-row"))));
     await emptyButton.click();
     await expect(emptyButton).toHaveAttribute("aria-current", "true");
     expect(last.get("focus_checkout")?.expanded).toBeUndefined();
@@ -322,7 +322,7 @@ test("the Projects tab: kind, age, status badges, opened checkouts and folded pr
     await folderToggle.click();
     await expect(folder.locator("[data-checkout-agents-open]")).toHaveCount(0);
 
-    // sidebar-readability B12, B13, B9 and hcoord-plugin B20, B22: a parent in
+    // sidebar-readability B12, B13, B9 and lineage session contract: a parent in
     // Projects folds its children with the core's lineage state, the one
     // Agents folds by. The worktree's agent becomes the primary agent's child:
     // folded by default, its other-checkout child is a C line rather than a
@@ -385,26 +385,23 @@ test("the Projects tab: kind, age, status badges, opened checkouts and folded pr
     await projectToggle.click();
     await expect(projectToggle).toHaveAttribute("aria-expanded", "false");
     await expect(project.locator("[data-checkout]")).toHaveCount(0);
-    await expect(overview).toHaveCount(0);
+    await expect(project.locator("[data-project-overview]")).toHaveCount(0);
     await open(page, daemon);
     await expect(projectToggle).toHaveAttribute("aria-expanded", "false");
     await expect(project.locator("[data-checkout]")).toHaveCount(0);
-    // The project row takes the checkout rule: it opens the Overview and
-    // unfolds the project with one fold event; a second click on the open,
-    // unfolded project folds it and the Overview stays.
+    // One project-row event returns to the last checkout and carries its fold intent.
     const projectRow = project.locator("[data-project-row]");
     const beforeRow = new Map(sent);
     await projectRow.click();
-    await expect(page.locator("[data-overview-screen]")).toBeVisible();
+    await expect(page.locator("[data-workspace-screen]")).toBeVisible();
     await expect(projectToggle).toHaveAttribute("aria-expanded", "true");
-    await expect(overview).toHaveAttribute("aria-current", "page");
-    expect((sent.get("project_checkouts_fold") ?? 0) - (beforeRow.get("project_checkouts_fold") ?? 0)).toBe(1);
-    expect(last.get("project_checkouts_fold")).toEqual({ workspace_id: await project.getAttribute("data-project"), expanded: true });
-    expect(sent.get("focus_checkout") ?? 0).toBe(beforeRow.get("focus_checkout") ?? 0);
+    expect((sent.get("focus_checkout") ?? 0) - (beforeRow.get("focus_checkout") ?? 0)).toBe(1);
+    expect(last.get("focus_checkout")).toMatchObject({ workspace_id: await project.getAttribute("data-project"), project_expanded: true });
+    expect(sent.get("project_checkouts_fold") ?? 0).toBe(beforeRow.get("project_checkouts_fold") ?? 0);
     await projectRow.click();
     await expect(projectToggle).toHaveAttribute("aria-expanded", "false");
     await expect(project.locator("[data-checkout]")).toHaveCount(0);
-    await expect(page.locator("[data-overview-screen]")).toBeVisible();
+    await expect(page.locator("[data-workspace-screen]")).toBeVisible();
     await projectRow.click();
     await expect(featureToggle).toHaveAttribute("aria-expanded", "true");
     await expect(primaryToggle).toHaveAttribute("aria-expanded", "true");
@@ -527,7 +524,7 @@ test("Needs You is raised above Pinned and stays in its tree, whatever is folded
     const project = page.locator("[data-project]").filter({ has: page.locator("[data-project-row]", { hasText: /^raised/ }) });
     await project.locator("[data-project-row]").click({ button: "right" });
     await page.getByRole("menuitem", { name: "Pin", exact: true }).click();
-    const pinned = page.locator('[data-section="Pinned"]');
+    const pinned = page.locator('[data-section="pinned"]');
     await expect(pinned).toBeVisible();
     // Nothing needs the operator yet: no raised section is drawn.
     await expect(page.locator("[data-raised-group]")).toHaveCount(0);
@@ -538,7 +535,7 @@ test("Needs You is raised above Pinned and stays in its tree, whatever is folded
     const needsYou = page.locator('[data-raised-group="needs_you"]');
     const done = page.locator('[data-raised-group="done"]');
     await expect(needsYou.locator(`[data-pane="${asking}"]`)).toBeVisible({ timeout: 20_000 });
-    await expect(needsYou.locator('[data-section="Needs You"]')).toHaveText("Needs You · 1");
+    await expect(needsYou.locator('[data-section="needs_you"]')).toHaveText("Needs You · 1");
     // Done is not raised: the finished agent is in the Agents tab and its checkout's tree.
     await expect(done).toHaveCount(0);
     // Needs You, then Pinned, at the top of the list.

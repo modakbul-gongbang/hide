@@ -3,7 +3,7 @@
   "checkout_purpose_origin": ["token", "branch_description", "agent_title", "pull_request_title"],
   "document_kind": ["text", "markdown", "image", "pdf", "binary"],
   "editor_tab_kind": ["file", "diff", "session", "memory"],
-  "kit_component_id": ["cli", "claude_code_hook", "codex_hook", "hcoord", "codex_per_pane"],
+  "kit_component_id": ["cli", "claude_code_hook", "codex_hook", "coordination_retirement", "codex_per_pane"],
   "kit_component_state": ["installed", "outdated", "not_installed", "removed", "failed", "absent", "off"],
   "pane_find_route": ["agent", "bar"],
   "pull_request_badge": ["merged", "closed", "review", "open"],

@@ -801,12 +801,34 @@ impl Mobile {
     async fn observe_loop(self: Arc<Self>) {
         let mut stopping = self.stopping.subscribe();
         let mut since_background = Duration::ZERO;
+        let mut since_delivery = BACKGROUND_INTERVAL;
+        let mut pending_delivery: Option<tokio::task::JoinHandle<()>> = None;
         loop {
             tokio::select! {
                 _ = tokio::time::sleep(OBSERVE_INTERVAL) => {}
-                _ = stopping.changed() => return,
+                _ = stopping.changed() => break,
+            }
+            if pending_delivery
+                .as_ref()
+                .is_some_and(tokio::task::JoinHandle::is_finished)
+                && let Some(pending) = pending_delivery.take()
+            {
+                let _ = pending.await;
             }
             since_background += OBSERVE_INTERVAL;
+            since_delivery += OBSERVE_INTERVAL;
+            if since_delivery >= BACKGROUND_INTERVAL {
+                since_delivery = Duration::ZERO;
+                if pending_delivery.is_none() {
+                    let mobile = Arc::clone(&self);
+                    // This resident owner retains one pass until it finishes.
+                    // A slow Push never delays the existing settings checks.
+                    // No timer/queue joins pane input or agent refresh.
+                    pending_delivery = Some(tokio::task::spawn_blocking(move || {
+                        mobile.deliver_delivery()
+                    }));
+                }
+            }
             let (observed, owed) = {
                 let inner = self.lock();
                 let observed = inner.settings.enabled && !inner.observers.is_empty();
@@ -820,6 +842,118 @@ impl Mobile {
                 self.reconcile().await;
             }
         }
+        if let Some(pending) = pending_delivery {
+            // The stop flag prevents another channel call, and this owner
+            // joins the one already started before releasing its resources.
+            let _ = pending.await;
+        }
+    }
+
+    fn deliver_delivery(&self) {
+        if *self.stopping.borrow() {
+            return;
+        }
+        let notices = match self
+            .config
+            .core
+            .prepare_delivery_human()
+            .and_then(|prepared| prepared.run(Duration::from_secs(5)))
+        {
+            Ok(notices) => notices,
+            Err(code) => {
+                herdr_core::diagnostic!(
+                    json!({"component":"delivery","kind":"human.claim_failed","code":code})
+                );
+                return;
+            }
+        };
+        for notice in notices {
+            if *self.stopping.borrow() {
+                return;
+            }
+            if self.push_delivery(&notice) {
+                continue;
+            }
+            if *self.stopping.borrow() {
+                return;
+            }
+            let shown = self
+                .herdr_api(projection::LOCAL_DEVICE)
+                .ok()
+                .and_then(|connector| notice.notify_herdr(connector.as_ref()).ok())
+                .unwrap_or(false);
+            if !shown {
+                // Its ledger claim remains consumed even when both channels
+                // fail. A restart never becomes an external resend.
+                herdr_core::diagnostic!(
+                    json!({"component":"delivery","kind":"human.channels_failed","letter_id":notice.id})
+                );
+            }
+        }
+    }
+
+    fn push_delivery(&self, notice: &herdr_core::delivery::worker::HumanNotice) -> bool {
+        let Some(vapid) = self.vapid.as_ref() else {
+            return false;
+        };
+        let (targets, subject) = {
+            let inner = self.lock();
+            if !inner.settings.enabled
+                || !push::mode_allows(
+                    inner.settings.push_mode,
+                    self.config.renderers.load(Ordering::SeqCst),
+                )
+            {
+                return false;
+            }
+            let targets = inner
+                .phones
+                .list()
+                .iter()
+                .filter_map(|phone| {
+                    phone
+                        .push
+                        .clone()
+                        .map(|subscription| (phone.id.clone(), subscription))
+                })
+                .take(4)
+                .collect::<Vec<_>>();
+            let subject = inner
+                .settings
+                .serve
+                .as_ref()
+                .map(|serve| format!("https://{}", serve.dns_name))
+                .unwrap_or_else(|| "mailto:hide@localhost".into());
+            (targets, subject)
+        };
+        let payload = push::payload(
+            &push::Notice {
+                key: AgentKey {
+                    device_id: notice.actor.device_id.clone(),
+                    pane_id: notice.actor.pane_id.clone(),
+                },
+                title: notice.title.clone(),
+                body: notice.body.clone(),
+            },
+            &BTreeSet::new(),
+        );
+        let mut delivered = false;
+        for (phone_id, subscription) in targets {
+            if *self.stopping.borrow() {
+                return delivered;
+            }
+            match push::send(vapid, &subject, &subscription, &payload, now_ms() / 1000) {
+                push::SendOutcome::Delivered => delivered = true,
+                push::SendOutcome::Gone(_) => {
+                    self.lock()
+                        .phones
+                        .drop_subscription(&phone_id, &subscription.endpoint);
+                    self.publish();
+                }
+                push::SendOutcome::Failed(_) => {}
+            }
+        }
+        delivered
     }
 
     async fn sweep_loop(self: Arc<Self>) {

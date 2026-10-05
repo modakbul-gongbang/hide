@@ -1,7 +1,7 @@
-import { GlobeIcon, Link2Icon, XIcon } from "lucide-react";
+import { GlobeIcon, Link2Icon, LoaderCircleIcon, XIcon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { Actions } from "./actions";
-import { createAreaTree, type AreaAdapter, type AreaTabInteraction } from "./AreaTree";
+import { createAreaTree, tabFit, type AreaAdapter, type AreaTabInteraction } from "./AreaTree";
 import { AreaEmpty } from "./AreaEmpty";
 import { BrowserDisplay } from "./BrowserDisplay";
 import { focusBrowserDisplay, hostKey, useBrowserStore } from "./browserViews";
@@ -11,6 +11,7 @@ import { Hint } from "./components/ui/tooltip";
 import { revealHost } from "./host";
 import { DisplayEditor, DocumentKeeper } from "./Editor";
 import { fileIcon } from "./fileIcons";
+import { useInterfaceTranslation } from "./i18n/client";
 import { editorTabFor, frontCheckout, type ViewDisplaySnapshot, type ViewLayoutSnapshot } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
@@ -26,14 +27,15 @@ import { workspaceViewOf } from "./workspace";
  * the column is not drawn (`columnFrame`).
  */
 export function ViewAreas({ actions }: { actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const view = useShellStore((s) => workspaceViewOf(s.rest));
   if (!view) return null;
   const layout = view.layout;
   if (!layout) {
-    return <AreaEmpty state="view-layout-missing" text="This Hide core publishes no View areas, so no file or diff can be shown here." />;
+    return <AreaEmpty state="view-layout-missing" text={t("documents.view.noLayout")} />;
   }
   if (layout.display_count === 0) {
-    return <AreaEmpty state="view-opening" text="Opening…" />;
+    return <AreaEmpty state="view-opening" text={t("documents.view.opening")} />;
   }
   // One tree per Workspace: a front that moves to another Workspace ends a
   // drag, a divider drag or a menu begun on this one, whose ids (a1, d2, s1)
@@ -43,6 +45,7 @@ export function ViewAreas({ actions }: { actions: Actions }) {
 
 const SharedViewTree = createAreaTree<ViewDisplaySnapshot>("view");
 function ViewTree({ layout, deviceId, path, actions }: { layout: ViewLayoutSnapshot; deviceId: string; path: string; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const owner = useKeyboardOwner();
   const checkoutId = useShellStore((s) => frontCheckout(s.rest)?.id ?? null);
   const workspace = useMemo(() => ({ device_id: deviceId, path }), [deviceId, path]);
@@ -89,9 +92,9 @@ function ViewTree({ layout, deviceId, path, actions }: { layout: ViewLayoutSnaps
     sameContent: showsSameDocument,
     tab: (display, interaction) => <DisplayTab display={display} workspace={workspace} interaction={interaction} actions={actions} />,
     body: (display) => <DisplayBody key={display.id} display={display} workspace={workspace} actions={actions} />,
-    empty: () => <AreaEmpty state="no-view" text="No file, diff or page is open in this area." />,
+    empty: () => <AreaEmpty state="no-view" text={t("documents.view.empty")} />,
     floating: (display) => <>{displayMark(display)}<span className={`truncate ${display.preview ? "italic" : ""}`}>{display.label}</span></>,
-    menu: (id, geometry, sizes) => [{ id: "new_tab", label: "New tab", unavailable: null }, ...displayMenu(layout, geometry, sizes, id, { host: revealHost(), device: workspace.device_id })],
+    menu: (id, geometry, sizes) => [{ id: "new_tab", label: t("panes.area.newTab"), unavailable: null }, ...displayMenu(layout, geometry, sizes, id, { host: revealHost(), device: workspace.device_id })],
     runMenu: (id, displayId) => id === "new_tab" ? actions.openBrowser("", workspace, locateDisplay(layout.root, displayId)?.area.id) : actions.runViewMenu(id as ViewMenuId, displayId),
     focus: actions.focusView,
     focusArea: actions.focusViewArea,
@@ -99,10 +102,10 @@ function ViewTree({ layout, deviceId, path, actions }: { layout: ViewLayoutSnaps
     split: actions.splitView,
     resize: actions.resizeViewSplit,
     newTab: (areaId) => actions.openBrowser("", workspace, areaId),
-    newTabLabel: "New tab",
+    newTabLabel: t("panes.area.newTab"),
     newTabShortcut: commandLabel("new_tab"),
-    tabListLabel: "View tabs",
-    actionsLabel: "View actions",
+    tabListLabel: t("documents.view.tabList"),
+    actionsLabel: t("documents.view.actions"),
     onDraw: (frame) => noteDrawnViews(frame ? { ...frame, workspace } : null),
     onBody: setBody,
   };
@@ -113,21 +116,22 @@ function ViewTree({ layout, deviceId, path, actions }: { layout: ViewLayoutSnaps
 
 /** A display's body: its document or diff, or the state it is in (B16, contract 3). */
 function DisplayBody({ display, workspace, actions }: { display: ViewDisplaySnapshot; workspace: ViewWorkspace; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   if (display.kind === "browser") return <BrowserDisplay display={display} workspace={workspace} actions={actions} />;
   if (display.state === "open") {
     return <DisplayEditor display={display} placeKey={placeKey(workspaceKey(workspace), display)} actions={actions} />;
   }
-  if (display.state === "opening") return <AreaEmpty state="view-opening" text={`Opening ${display.label}…`} />;
-  if (display.state === "waiting") return <AreaEmpty state="view-waiting" text={display.reason ?? `Waiting to read ${display.path}.`} />;
+  if (display.state === "opening") return <AreaEmpty state="view-opening" text={t("documents.view.openingNamed", { label: display.label })} />;
+  if (display.state === "waiting") return <AreaEmpty state="view-waiting" text={display.reason ?? t("documents.view.waitingPath", { path: display.path })} />;
   return (
-    <AreaEmpty state="view-unavailable" text={`${display.path} is unavailable${display.reason ? `: ${display.reason}` : "."}`}>
+    <AreaEmpty state="view-unavailable" text={display.reason ? t("documents.view.unavailableReason", { path: display.path, reason: display.reason }) : t("documents.view.unavailable", { path: display.path })}>
       {/* Each button is one action on this view alone, like a tab's ×: its
           press does not also make the area active (one action, one event). */}
       <Button variant="secondary" onPointerDown={(event) => event.stopPropagation()} onClick={() => actions.closeView(display.id)} data-close-unavailable={display.id}>
-        Close view
+        {t("documents.view.closeView")}
       </Button>
       <Button variant="ghost" onPointerDown={(event) => event.stopPropagation()} onClick={() => actions.retryView(display.id)} data-retry-unavailable={display.id}>
-        Retry
+        {t("common.retry")}
       </Button>
     </AreaEmpty>
   );
@@ -136,12 +140,16 @@ function DisplayBody({ display, workspace, actions }: { display: ViewDisplaySnap
 /** One display's tab: its kind's mark, italic while a preview, its save marks, and its whole identity (B2, B21). */
 export function DisplayTab({ display, workspace, interaction, actions }: { display: ViewDisplaySnapshot; workspace?: ViewWorkspace; interaction: AreaTabInteraction; actions: Actions }) {
   const { selected, areaActive } = interaction;
+  const fit = tabFit(selected, interaction.fit);
+  const { t } = useInterfaceTranslation();
   const dirty = useShellStore((s) => editorTabFor(s.editor, display.tab_id)?.dirty ?? false);
   const saving = useShellStore((s) => display.tab_id !== null && s.savingTabs.has(display.tab_id));
   const tabOnly = useShellStore((s) => display.tab_id !== null && s.bufferWarnings.has(display.tab_id));
   const unavailable = display.state === "unavailable";
   const attached = useBrowserStore((s) => display.kind === "browser" && workspace !== undefined && s.attached[hostKey(workspaceKey(workspace), display.id)] === true);
-  const identity = `${displayIdentity(display)}${attached ? "; Agent attached" : ""}`;
+  const state = saving ? t("documents.tabSaving") : dirty ? t("documents.unsaved") : null;
+  const identity = [displayIdentity(display, t), state, tabOnly ? t("documents.tabOnly") : null, attached ? t("documents.agentAttached") : null].filter(Boolean).join(" · ");
+  const closeLabel = t("documents.closeView", { label: display.label });
   return (
     <Hint label={identity} reveals>
     <div
@@ -157,7 +165,7 @@ export function DisplayTab({ display, workspace, interaction, actions }: { displ
       data-tab-only={tabOnly ? "true" : "false"}
       data-unavailable={unavailable ? "true" : "false"}
       data-view-state={display.state}
-      className={`group relative flex min-w-0 flex-1 cursor-default select-none items-center gap-xs px-sm text-caption outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${
+      className={`group relative flex min-w-0 flex-1 cursor-default select-none items-center gap-xs ${fit.tab} text-caption outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring ${
         selected ? `text-foreground ${areaActive ? "bg-background" : "bg-secondary"}` : "text-subtle-foreground hover:bg-accent"
       } ${interaction.dragging ? "opacity-[var(--opacity-dimmed)]" : ""}`}
       onPointerDown={interaction.press}
@@ -172,19 +180,25 @@ export function DisplayTab({ display, workspace, interaction, actions }: { displ
         }
       }}
     >
-      {displayMark(display)}
-      <span className={`min-w-0 flex-1 truncate ${display.preview ? "italic" : ""} ${unavailable ? "text-muted-foreground line-through" : ""}`}>
-        {display.label}
-        {saving ? <span className="text-muted-foreground"> saving…</span> : dirty ? <span className="text-warning"> ●</span> : null}
-        {tabOnly ? <span className="text-muted-foreground"> kept in this tab only</span> : null}
+      <span className={`relative flex size-(--size-icon) shrink-0 items-center justify-center ${unavailable ? "text-muted-foreground opacity-[var(--opacity-dimmed)]" : ""}`}>
+        {interaction.fit === "marks" ? collapsedDisplayMark(display) : displayMark(display)}
+        {interaction.fit === "marks" && (saving || dirty || tabOnly) ? (
+          saving ? <LoaderCircleIcon aria-hidden="true" data-view-save-mark="saving" className="absolute size-(--size-icon) animate-spin bg-inherit text-muted-foreground" />
+            : <span aria-hidden="true" data-view-save-mark={tabOnly ? "tab-only" : "dirty"} className="absolute right-0 top-0 size-(--size-tab-status-dot) rounded-full bg-warning" />
+        ) : null}
       </span>
       {attached ? <Badge aria-hidden="true" data-browser-attached="true"><Link2Icon /></Badge> : null}
-      <Hint label={`Close view ${display.label}`}>
+      <span className={`min-w-0 flex-1 truncate ${fit.title} ${display.preview ? "italic" : ""} ${unavailable ? "text-muted-foreground line-through" : ""}`}>
+        {display.label}
+        {saving ? <span className="text-muted-foreground"> {t("documents.tabSaving")}</span> : dirty ? <span className="text-warning"> ●</span> : null}
+        {tabOnly ? <span className="text-muted-foreground"> {t("documents.tabOnly")}</span> : null}
+      </span>
+      <Hint label={closeLabel}>
         <Button
           variant="ghost"
           size="icon-sm"
-          className={`shrink-0 hover:bg-popover hover:text-foreground focus-visible:visible group-hover:visible ${selected ? "visible" : "invisible"}`}
-          aria-label={`Close view ${display.label}`}
+          className={`${fit.close} shrink-0 hover:bg-popover hover:text-foreground focus-visible:visible group-hover:visible ${selected ? "visible" : "invisible"}`}
+          aria-label={closeLabel}
           onPointerDown={(event) => event.stopPropagation()}
           onClick={(event) => {
             event.stopPropagation();
@@ -216,4 +230,9 @@ export function displayMark(display: Pick<ViewDisplaySnapshot, "kind" | "label">
       {icon.glyph}
     </span>
   );
+}
+
+/** The minimum-density identity choice lives here so review can replace it without changing the fit curve. */
+function collapsedDisplayMark(display: Pick<ViewDisplaySnapshot, "kind" | "label">) {
+  return displayMark(display);
 }

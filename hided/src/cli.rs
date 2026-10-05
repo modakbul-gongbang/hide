@@ -12,6 +12,7 @@ use crate::state_file::{self, DaemonState};
 
 #[derive(Debug, Eq, PartialEq)]
 pub enum CommandKind {
+    Delivery(herdr_core::delivery::Command),
     Help,
     Open,
     /// `hide connect`: `open` without the browser, answered as one JSON line
@@ -64,6 +65,10 @@ pub fn parse_args(args: &[String]) -> Result<CommandKind, String> {
             Ok(CommandKind::Serve { keep_alive })
         }
         Some("dev") => Ok(CommandKind::Dev),
+        Some("agent") => crate::agent_cli::parse(iter).map(CommandKind::Delivery),
+        Some(topic @ ("request" | "inbox" | "watch")) => {
+            crate::delivery_cli::parse(topic, iter).map(CommandKind::Delivery)
+        }
         Some("browser") => parse_browser(iter),
         Some("workspace") => match (iter.next().map(String::as_str), iter.next()) {
             (Some("bootstrap"), None) => Ok(CommandKind::WorkspaceBootstrap),
@@ -252,6 +257,8 @@ fn parse_browser<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<Comma
 
 pub fn run(kind: CommandKind) -> Result<(), String> {
     if kind == CommandKind::Help {
+        println!("{}", crate::delivery_cli::USAGE);
+        println!("{}", crate::agent_cli::USAGE);
         println!(
             "hide workspace info\nhide file open <path> [--beside] [--reveal] [--request-id <id>]\nhide diff open <path> [--beside] [--reveal] [--request-id <id>]\nhide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>]\nhide browser connect [--display <id>]\nhide view list\nhide view status <view-id>\nhide view select <view-id> [--reveal] [--request-id <id>]\nhide view close <view-id> [--request-id <id>]\nhide view split <view-id> --area <area-id> --edge left|right|up|down [--request-id <id>]\nhide view move <view-id> --area <area-id> --index <n> [--request-id <id>]\nEach Workspace command requires a live Hide renderer and a caller Hide can bind to a checkout, an attested Herdr pane or a shell inside a registered checkout; it never starts Hide."
         );
@@ -263,6 +270,7 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
             if matches!(
                 &kind,
                 CommandKind::WorkspaceBootstrap
+                    | CommandKind::Delivery(_)
                     | CommandKind::WorkspaceInfo
                     | CommandKind::ViewList
                     | CommandKind::ViewStatus { .. }
@@ -285,6 +293,13 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
         }
     };
     match kind {
+        CommandKind::Delivery(command) => {
+            if matches!(&command, herdr_core::delivery::Command::Agents { .. }) {
+                crate::agent_cli::run(&env, command)
+            } else {
+                crate::delivery_cli::run(&env, command)
+            }
+        }
         CommandKind::Help => unreachable!("handled above"),
         CommandKind::Open => open(&env),
         CommandKind::Connect => connect_json(&env),
@@ -477,7 +492,7 @@ fn workspace_action_refusal<T>(request_id: &str, reason: &str) -> Result<T, Stri
     Err(reason.to_owned())
 }
 
-fn workspace_reference(env: &Env) -> Result<(std::path::PathBuf, bool), String> {
+pub(crate) fn workspace_reference(env: &Env) -> Result<(std::path::PathBuf, bool), String> {
     match std::env::var(env::HIDE_CAP_REF) {
         Ok(value) if !value.is_empty() => Ok((std::path::PathBuf::from(value), false)),
         Ok(_) => Err("invalid_reference".to_owned()),

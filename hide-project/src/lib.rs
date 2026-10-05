@@ -152,7 +152,11 @@ pub fn resolve(path: &Path, device_id: &str) -> Result<ProjectIdentity, ResolveE
 pub mod git {
     use super::ResolveError;
     use std::fs;
+    use std::io::{BufRead, BufReader, Read};
     use std::path::{Path, PathBuf};
+
+    /// The most of `packed-refs` `head_oid` reads.
+    const PACKED_REFS_LIMIT: u64 = 8 * 1024 * 1024;
 
     #[derive(Clone, Debug, PartialEq, Eq)]
     pub struct Repository {
@@ -174,6 +178,51 @@ pub mod git {
             let reference = head.trim().strip_prefix("ref:")?.trim();
             let name = reference.strip_prefix("refs/heads/").unwrap_or(reference);
             (!name.is_empty()).then(|| name.to_owned())
+        }
+
+        /// The commit HEAD points at, read from Git's own files and never from
+        /// a Git process: the detached HEAD's object name, else the commit
+        /// the checked-out branch's loose ref holds in the common directory
+        /// (where a linked worktree's branches live), else its line in
+        /// `packed-refs`. `None` when HEAD cannot be read, the branch has no
+        /// commit yet or a ref holds something that is not an object name;
+        /// a wrong commit is never made up.
+        pub fn head_oid(&self) -> Option<String> {
+            let head = fs::read_to_string(self.git_dir.join("HEAD")).ok()?;
+            let head = head.trim();
+            let Some(reference) = head.strip_prefix("ref:") else {
+                return object_name(head);
+            };
+            let reference = reference.trim();
+            // Git forbids these in a ref name, and `\` and `:` would leave
+            // the directory on Windows.
+            let safe = reference.starts_with("refs/")
+                && !reference
+                    .chars()
+                    .any(|character| character.is_control() || matches!(character, '\\' | ':'))
+                && reference
+                    .split('/')
+                    .all(|part| !part.is_empty() && part != "." && part != "..");
+            if !safe {
+                return None;
+            }
+            if let Ok(loose) = fs::read_to_string(self.common_dir.join(reference)) {
+                return object_name(loose.trim());
+            }
+            // Streamed and capped: a repository that has packed many refs
+            // can hold a file of megabytes, and a missing line in the first
+            // `PACKED_REFS_LIMIT` bytes is no answer rather than a guess.
+            let packed = fs::File::open(self.common_dir.join("packed-refs")).ok()?;
+            BufReader::new(packed.take(PACKED_REFS_LIMIT))
+                .lines()
+                .map_while(Result::ok)
+                .filter(|line| !line.starts_with('#') && !line.starts_with('^'))
+                .find_map(|line| {
+                    let (oid, name) = line.split_once(' ')?;
+                    (name.trim() == reference)
+                        .then(|| object_name(oid))
+                        .flatten()
+                })
         }
 
         pub fn branch_description(&self, branch: &str) -> Result<Option<String>, String> {
@@ -392,6 +441,13 @@ pub mod git {
         value
     }
 
+    /// A full object name: 40 hexadecimal digits (SHA-1) or 64 (SHA-256).
+    fn object_name(text: &str) -> Option<String> {
+        let valid =
+            matches!(text.len(), 40 | 64) && text.bytes().all(|byte| byte.is_ascii_hexdigit());
+        valid.then(|| text.to_ascii_lowercase())
+    }
+
     fn parse_quoted(input: &str) -> Option<String> {
         let mut chars = input.chars();
         (chars.next()? == '"').then_some(())?;
@@ -420,6 +476,113 @@ pub mod git {
     #[cfg(test)]
     mod tests {
         use super::*;
+
+        const FIRST: &str = "1111111111111111111111111111111111111111";
+        const SECOND: &str = "2222222222222222222222222222222222222222";
+
+        /// A repository folder laid out as Git leaves it, with HEAD on `head`.
+        fn repository(head: &str) -> (tempfile::TempDir, Repository) {
+            let temp = tempfile::tempdir().unwrap();
+            let git_dir = temp.path().join(".git");
+            fs::create_dir_all(git_dir.join("refs/heads")).unwrap();
+            fs::write(git_dir.join("HEAD"), format!("{head}\n")).unwrap();
+            let repository = Repository {
+                root: temp.path().to_path_buf(),
+                common_dir: git_dir.clone(),
+                git_dir,
+            };
+            (temp, repository)
+        }
+
+        #[test]
+        fn head_is_the_commit_in_the_branchs_loose_ref() {
+            let (_temp, repository) = repository("ref: refs/heads/topic");
+            fs::write(
+                repository.common_dir.join("refs/heads/topic"),
+                format!("{FIRST}\n"),
+            )
+            .unwrap();
+            assert_eq!(repository.head_oid().as_deref(), Some(FIRST));
+        }
+
+        #[test]
+        fn head_falls_back_to_packed_refs_when_the_ref_is_not_loose() {
+            let (_temp, repository) = repository("ref: refs/heads/topic");
+            fs::write(
+                repository.common_dir.join("packed-refs"),
+                format!(
+                    "# pack-refs with: peeled fully-peeled sorted\n{SECOND} refs/heads/other\n{FIRST} refs/heads/topic\n^{SECOND}\n"
+                ),
+            )
+            .unwrap();
+            assert_eq!(repository.head_oid().as_deref(), Some(FIRST));
+        }
+
+        #[test]
+        fn a_loose_ref_wins_over_an_older_packed_one() {
+            let (_temp, repository) = repository("ref: refs/heads/topic");
+            fs::write(
+                repository.common_dir.join("packed-refs"),
+                format!("{FIRST} refs/heads/topic\n"),
+            )
+            .unwrap();
+            fs::write(repository.common_dir.join("refs/heads/topic"), SECOND).unwrap();
+            assert_eq!(repository.head_oid().as_deref(), Some(SECOND));
+        }
+
+        #[test]
+        fn a_detached_head_is_its_own_commit() {
+            let (_temp, repository) = repository(FIRST);
+            assert_eq!(repository.head_oid().as_deref(), Some(FIRST));
+        }
+
+        #[test]
+        fn a_linked_worktree_reads_its_branch_from_the_common_directory() {
+            let (temp, mut repository) = repository("ref: refs/heads/main");
+            fs::write(repository.common_dir.join("refs/heads/feature"), FIRST).unwrap();
+            let linked = repository.common_dir.join("worktrees/feature");
+            fs::create_dir_all(&linked).unwrap();
+            fs::write(linked.join("HEAD"), "ref: refs/heads/feature\n").unwrap();
+            repository.root = temp.path().join("feature-checkout");
+            repository.git_dir = linked;
+            assert_ne!(repository.git_dir, repository.common_dir);
+            assert_eq!(repository.head_oid().as_deref(), Some(FIRST));
+        }
+
+        #[test]
+        fn a_branch_with_no_commit_or_a_damaged_ref_has_no_head() {
+            let (_temp, repository) = repository("ref: refs/heads/unborn");
+            assert_eq!(
+                repository.head_oid(),
+                None,
+                "no loose ref and no packed-refs"
+            );
+            fs::write(
+                repository.common_dir.join("packed-refs"),
+                format!("{FIRST} refs/heads/other\n"),
+            )
+            .unwrap();
+            assert_eq!(repository.head_oid(), None, "not in packed-refs either");
+            fs::write(
+                repository.common_dir.join("refs/heads/unborn"),
+                "not a commit\n",
+            )
+            .unwrap();
+            assert_eq!(repository.head_oid(), None, "a ref that is no object name");
+            fs::write(repository.common_dir.join("escape"), format!("{FIRST}\n")).unwrap();
+            fs::write(
+                repository.git_dir.join("HEAD"),
+                "ref: refs/heads/../../escape\n",
+            )
+            .unwrap();
+            assert_eq!(
+                repository.head_oid(),
+                None,
+                "a ref that leaves the repository"
+            );
+            fs::remove_file(repository.git_dir.join("HEAD")).unwrap();
+            assert_eq!(repository.head_oid(), None, "no HEAD");
+        }
 
         #[test]
         fn branch_issue_reads_the_first_config_line() {

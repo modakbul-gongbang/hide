@@ -4,7 +4,8 @@ export type CheckoutLine = {
   key: string;
   symbol: string;
   agent: AgentRow;
-  branch: string;
+  /** The checkout's branch or label; null when neither it nor the agent names one. */
+  branch: string | null;
   pullRequest: number | null;
   device: string | null;
 };
@@ -95,7 +96,7 @@ export function foldedLineage(parent: AgentRow, agents: AgentRow[], workspaces: 
   const lines = [...grouped.entries()]
     .map(([key, group]) => {
       const agent = group.rows.slice().sort((a, b) => attention(a) - attention(b) || a.identity_label.localeCompare(b.identity_label))[0]!;
-      const branch = group.fact?.checkout.branch ?? group.fact?.checkout.label ?? agent.checkout_label ?? "Checkout";
+      const branch = group.fact?.checkout.branch ?? group.fact?.checkout.label ?? agent.checkout_label ?? null;
       return {
         key,
         symbol: agent.symbol,
@@ -105,7 +106,7 @@ export function foldedLineage(parent: AgentRow, agents: AgentRow[], workspaces: 
         device: agent.device_id !== parent.device_id ? (agent.device_label ?? null) : null,
       };
     })
-    .sort((a, b) => attention(a.agent) - attention(b.agent) || a.branch.localeCompare(b.branch));
+    .sort((a, b) => attention(a.agent) - attention(b.agent) || (a.branch ?? "").localeCompare(b.branch ?? ""));
 
   return {
     lines: lines.slice(0, 3),

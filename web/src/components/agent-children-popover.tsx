@@ -1,6 +1,7 @@
 import { ArrowRightIcon, ListTreeIcon } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { branchChip, markTone } from "../agentRow";
+import { useInterfaceTranslation } from "../i18n/client";
 import type { AgentRow } from "../snapshot";
 import { Command, CommandGroup, CommandItem, CommandList, CommandSeparator } from "./ui/command";
 import { Kbd } from "./ui/kbd";
@@ -38,6 +39,7 @@ export function AgentChildrenPopover({
   returnFocus: () => void;
   trigger: ReactNode;
 }) {
+  const { t } = useInterfaceTranslation();
   const [open, setOpen] = useState(false);
   const list = useRef<HTMLDivElement>(null);
   const empty = childRows.length === 0;
@@ -64,11 +66,11 @@ export function AgentChildrenPopover({
           returnFocus();
         }}
       >
-        <Command ref={list} tabIndex={-1} label={`${parent.identity_label}의 하위 에이전트`} className="outline-none">
+        <Command ref={list} tabIndex={-1} label={t("agents.children.label", { name: parent.identity_label })} className="outline-none">
           <div className="flex items-center gap-sm border-b border-border px-md py-sm text-caption">
-            <span className="flex-1 font-medium text-subtle-foreground">하위 에이전트 {childRows.length}</span>
+            <span className="flex-1 font-medium text-subtle-foreground">{t("agents.children.title", { count: childRows.length })}</span>
             <span className="inline-flex items-center gap-xxs text-muted-foreground">
-              <Kbd>Enter</Kbd> 이동
+              <Kbd>Enter</Kbd> {t("agents.children.goTo")}
             </span>
           </div>
           <CommandList>
@@ -82,7 +84,7 @@ export function AgentChildrenPopover({
                 <CommandSeparator />
                 <CommandItem value="__unfold" onSelect={() => choose(onUnfold)} data-agent-children-unfold="true" className="text-subtle-foreground">
                   <ListTreeIcon />
-                  <span className="flex-1">목록에서 펼치기</span>
+                  <span className="flex-1">{t("agents.children.unfold")}</span>
                   <ArrowRightIcon />
                 </CommandItem>
               </>
@@ -95,6 +97,7 @@ export function AgentChildrenPopover({
 }
 
 function ChildItem({ parent, child, onOpen }: { parent: AgentRow; child: AgentRow; onOpen: () => void }) {
+  const { t } = useInterfaceTranslation();
   const branch = branchChip(child);
   const tone = markTone(child);
   return (
@@ -118,7 +121,7 @@ function ChildItem({ parent, child, onOpen }: { parent: AgentRow; child: AgentRo
       <button
         type="button"
         tabIndex={-1}
-        aria-label={`${child.identity_label} 열기`}
+        aria-label={t("agents.children.openChild", { name: child.identity_label })}
         data-agent-child-open={child.pane_id}
         className="invisible shrink-0 self-center rounded-xs p-xxs text-subtle-foreground hover:bg-secondary hover:text-foreground group-data-[selected=true]/child:visible"
         onClick={(event) => {

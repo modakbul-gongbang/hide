@@ -11,7 +11,7 @@ function header({
   title = { name: "This Mac", note: null as string | null },
   addProject = true,
   tabs = true,
-  switchChord = null as string | null,
+  projectChord = null as string | null,
   canAdd = true,
 } = {}) {
   return renderToStaticMarkup(
@@ -34,7 +34,7 @@ function header({
           onAddDevice: () => undefined,
           onShowRail: () => undefined,
         },
-        switchChord,
+        projectChord,
         searchChord: "⌘K",
         newWorkspaceChord: "⇧⌘N",
         onMode: () => undefined,
@@ -60,8 +60,8 @@ describe("sidebar header (PRD sidebar-shell)", () => {
     expect(useUiStore.getState().sidebarMode).toBe("projects");
     const html = header();
     expect(texts(html, "data-sidebar-mode")).toEqual(["Projects", "Agents"]);
-    expect(tag(html, 'data-sidebar-mode="projects"')).toContain('aria-pressed="true"');
-    expect(tag(html, 'data-sidebar-mode="agents"')).toContain('aria-pressed="false"');
+    expect(tag(html, 'data-sidebar-mode="projects"')).toContain('aria-selected="true"');
+    expect(tag(html, 'data-sidebar-mode="agents"')).toContain('aria-selected="false"');
   });
 
   it("is the device's name with Add project and Search, then the tab strip, for every device (B3)", () => {
@@ -84,7 +84,7 @@ describe("sidebar header (PRD sidebar-shell)", () => {
 
   it("turns the name into the device menu while the rail is hidden (B6)", () => {
     const html = header({ rail: false });
-    expect(tag(html, "data-sidebar-device-menu")).toContain('aria-label="This Mac, 기기 전환"');
+    expect(tag(html, "data-sidebar-device-menu")).toContain('aria-label="This Mac, switch device"');
     expect(texts(html, "data-sidebar-title-name")).toEqual(["This Mac"]);
     expect(header({ rail: true })).not.toContain("data-sidebar-device-menu");
   });
@@ -108,8 +108,8 @@ describe("sidebar header (PRD sidebar-shell)", () => {
 
   it("names a tab by a hint only when the switch has a chord", () => {
     expect(tag(header(), 'data-sidebar-mode="projects"')).not.toContain("aria-label");
-    const bound = header({ switchChord: "⌃⌘S" });
+    const bound = header({ projectChord: "⌃⌘S" });
     expect(tag(bound, 'data-sidebar-mode="projects"')).toContain('aria-label="Projects"');
-    expect(bound).not.toContain("⌃⌘S");
+    expect(bound).toContain("⌃⌘S");
   });
 });

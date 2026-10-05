@@ -3,11 +3,11 @@
 // home-device-rail B1-B13): the rail is the sidebar's full-height left column,
 // shown with This Mac alone, and has no Inbox or footer device button, its
 // `+` opens Settings > Devices > Add device, and each device's sidebar is its
-// name over Projects | Agents with the Home row in Projects. A right-click
+// name, shared Overview and Projects | Agents, with Home in Projects. A right-click
 // hides the rail, the name on the top line becomes the device menu, and the
 // choice survives a reload. Registering one device that cannot be reached (an
 // alias no SSH config knows) adds a dimmed monogram tile with a cross and no
-// mark, named by its hint, and, selected, the sidebar reduced to its name, `연결 안 됨` and `다시 연결`.
+// mark, named by its hint, and, selected, the sidebar reduced to its name, `Not connected` and `Reconnect`.
 // Removing it leaves This Mac's rail. The Add project dialog's Host list entry
 // needs the desktop host's folder picker, so it is proved in desktop/e2e, not
 // in a browser tab.
@@ -16,11 +16,13 @@ import { expect, test, type Page } from "@playwright/test";
 import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { countSent, screenshot } from "./wire";
+import { SYSTEM } from "./chords";
 
 test.describe.configure({ timeout: 180_000 });
 
 const ALIAS = "unreachable-e2e";
 const CENTER = "[data-main-screen], [data-workspace-screen]";
+const SIDEBAR_LABELS = SYSTEM === "mac" ? ["Projects⇧⌘P", "Agents⇧⌘A"] : ["ProjectsAlt+Shift+P", "AgentsCtrl+Alt+A"];
 
 async function openAddDeviceForm(page: Page): Promise<void> {
   await expect(page.locator('[data-settings="true"]')).toBeVisible();
@@ -28,7 +30,7 @@ async function openAddDeviceForm(page: Page): Promise<void> {
   await expect(page.locator("[data-add-device]")).toBeVisible();
 }
 
-test("the rail follows the registered devices; a device that cannot be reached is dimmed and offers 다시 연결", async ({ page }) => {
+test("the rail follows the registered devices; a device that cannot be reached is dimmed and offers Reconnect", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
@@ -46,20 +48,20 @@ test("the rail follows the registered devices; a device that cannot be reached i
     await expect(rail.locator('[data-rail-tile="local"]')).toHaveAttribute("aria-pressed", "true");
     await expect(rail.locator('[data-rail-tile="inbox"]')).toHaveCount(0);
     await expect(page.locator("[data-footer-device]")).toHaveCount(0);
-    // B3: the device's sidebar is its name over Projects | Agents, with the Home row in Projects and no Overview row.
+    // #349: device name, shared Overview, then Projects | Agents with direct keycaps.
     await expect(page.locator("[data-sidebar-title-name]")).toHaveText("This Mac");
-    await expect(page.locator("[data-sidebar-mode]")).toHaveText(["Projects", "Agents"]);
-    await expect(page.locator("[data-overview-destination]")).toHaveCount(0);
+    await expect(page.locator("[data-sidebar-mode]")).toHaveText(SIDEBAR_LABELS);
+    await expect(page.locator("[data-sidebar-overview]")).toHaveText(SYSTEM === "mac" ? "Overview⇧⌘O" : "OverviewAlt+Shift+O");
     await expect(page.locator("[data-project-list] [data-home-destination]")).toContainText("Home");
     await page.locator('[data-sidebar-mode="agents"]').click();
     await expect(page.locator("[data-agent-list], [data-agents-empty]").first()).toBeVisible();
     await expect(page.locator("[data-project-list]")).toHaveCount(0);
     await page.locator('[data-sidebar-mode="projects"]').click();
 
-    // B6: a right-click on the rail offers 레일 숨기기; hidden, the name is the device menu with 기기 추가… and 레일 표시.
+    // B6: a right-click on the rail offers Hide rail; hidden, the name is the device menu with Add device… and Show device rail.
     await rail.click({ button: "right", position: { x: 10, y: 400 } });
     const railMenu = page.locator('[data-device-rail-menu][role="menu"]');
-    await expect(railMenu).toContainText("레일 숨기기");
+    await expect(railMenu).toContainText("Hide rail");
     await railMenu.locator('[data-menu-item="hide"]').click();
     await expect(rail).toHaveCount(0);
     await expect(page.locator("[data-sidebar-device-menu]")).toContainText("This Mac");
@@ -72,7 +74,7 @@ test("the rail follows the registered devices; a device that cannot be reached i
     const deviceMenu = page.locator("[data-device-menu]");
     await expect(deviceMenu.locator('[data-device-menu-item="local"]')).toBeVisible();
     await screenshot(page, "device-rail-hidden-menu");
-    // B1: 기기 추가… opens Settings > Devices > Add device.
+    // B1: Add device… opens Settings > Devices > Add device.
     await deviceMenu.locator("[data-device-menu-add]").click();
     await openAddDeviceForm(page);
     await page.keyboard.press("Escape");
@@ -97,7 +99,7 @@ test("the rail follows the registered devices; a device that cannot be reached i
     await page.keyboard.press("Escape");
     await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
     await expect(rail.locator("[data-rail-tile]")).toHaveCount(2, { timeout: 20_000 });
-    await expect(page.locator("[data-sidebar-mode]")).toHaveText(["Projects", "Agents"]);
+    await expect(page.locator("[data-sidebar-mode]")).toHaveText(SIDEBAR_LABELS);
     const ids = await rail.locator("[data-rail-tile]").evaluateAll((tiles) => tiles.map((tile) => tile.getAttribute("data-rail-tile")));
     expect(ids).toEqual(["local", ALIAS]);
     // The rail is its own fixed column beside the content column: the stored width stays the content's, and the rail adds to it.
@@ -122,7 +124,7 @@ test("the rail follows the registered devices; a device that cannot be reached i
     await expect(tile).toHaveAttribute("data-rail-connected", "false", { timeout: 30_000 });
     await expect(tile.locator("[data-rail-off]")).toBeVisible();
     await expect(tile.locator("[data-rail-badge]")).toHaveCount(0);
-    await expect(tile).toHaveAccessibleName(/연결 안 됨/);
+    await expect(tile).toHaveAccessibleName(/Not connected/);
     for (const theme of ["dark", "light"] as const) {
       await page.evaluate((next) => {
         document.documentElement.classList.toggle("dark", next === "dark");
@@ -139,10 +141,10 @@ test("the rail follows the registered devices; a device that cannot be reached i
     await expect(tile).toHaveAttribute("aria-pressed", "true");
     await expect(rail.locator('[data-rail-tile="local"]')).toHaveAttribute("aria-pressed", "false");
 
-    // B8, B9: selected, the sidebar is the name, 연결 안 됨 and 다시 연결, with no tree.
+    // B8, B9: selected, the sidebar is the name, Not connected and Reconnect, with no tree.
     const disconnected = page.locator("[data-device-disconnected]");
     await expect(disconnected).toBeVisible();
-    await expect(disconnected).toContainText("연결 안 됨");
+    await expect(disconnected).toContainText("Not connected");
     await expect(disconnected.locator("[data-device-disconnected-name]")).toHaveText("연구실 빌드 서버 자동화 장비");
     await expect(page.locator("[data-project-list]")).toHaveCount(0);
     await expect(page.locator("[data-home-destination]")).toHaveCount(0);
@@ -163,7 +165,7 @@ test("the rail follows the registered devices; a device that cannot be reached i
     // The tile draws the name's monogram and no name; its hint is the name and its connection.
     await expect(tile.locator("[data-rail-glyph]")).toHaveText("연빌");
     await tile.hover();
-    await expect(page.getByRole("tooltip")).toContainText("연구실 빌드 서버 자동화 장비 · 연결 안 됨");
+    await expect(page.getByRole("tooltip")).toContainText("연구실 빌드 서버 자동화 장비 · Not connected");
 
     // B13: the rail's + opens the same Add device form.
     await rail.locator("[data-rail-add]").click();
@@ -175,7 +177,7 @@ test("the rail follows the registered devices; a device that cannot be reached i
     await expect(rail.locator("[data-rail-tile]")).toHaveCount(1, { timeout: 20_000 });
     await page.keyboard.press("Escape");
     await expect(rail.locator('[data-rail-tile="local"]')).toHaveAttribute("aria-pressed", "true");
-    await expect(page.locator("[data-sidebar-mode]")).toHaveText(["Projects", "Agents"]);
+    await expect(page.locator("[data-sidebar-mode]")).toHaveText(SIDEBAR_LABELS);
     await expect(page.locator("[data-home-destination]")).toBeVisible();
     await expect(page.locator(CENTER).first()).toBeVisible();
   } finally {

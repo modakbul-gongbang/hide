@@ -68,7 +68,7 @@ pub struct RowFacts {
 #[serde(tag = "kind", content = "name", rename_all = "snake_case")]
 pub enum RequestSender {
     Operator,
-    /// An hcoord sender, or the delegated child's parent by its title.
+    /// A letter sender, or the delegated child's parent by its title.
     Named(String),
     /// Something other than Hide's input wrote it.
     Agent,
@@ -147,6 +147,8 @@ pub struct VerbRecord {
 /// Where a row lives, for its branch's pull requests.
 pub(crate) struct RowPlace<'a> {
     pub(crate) branch: Option<&'a str>,
+    /// The commit the checkout is on, which ties a settled pull request to it.
+    pub(crate) head_sha: Option<&'a str>,
     pub(crate) root_path: &'a str,
 }
 
@@ -297,12 +299,12 @@ fn sender(request: &Request, delegated: bool, parent: Option<&String>) -> Reques
     }
 }
 
-/// The longest sender name a row shows; hcoord names are short handles.
+/// The longest sender name a row shows; participant names are short handles.
 const MAX_SENDER_CHARS: usize = 64;
 /// The longest label line a row carries; the label keeps its own to 40.
 const MAX_LINE_CHARS: usize = 200;
 /// What the row writes for the operator and for an unnamed agent, so no
-/// sender can pass as either (an hcoord name is whatever its sender chose).
+/// sender can pass as either (a participant name is whatever its sender chose).
 const RESERVED_SENDERS: [&str; 3] = ["나", "에이전트", "operator"];
 
 fn named(name: &str) -> RequestSender {
@@ -335,18 +337,19 @@ fn linked_pull_requests<'a>(
         return Vec::new();
     };
     let mut linked: Vec<Linked<'a>> = Vec::new();
-    if let (Some(branch), Some(project)) = (place.branch, github.project(place.root_path)) {
+    if let Some(project) = github.project(place.root_path) {
         linked.extend(
-            project
-                .pull_requests
-                .iter()
-                .filter(|pull_request| pull_request.head_branch == branch)
-                .map(|pull_request| Linked {
-                    pull_request,
-                    on_branch: true,
-                    sighted_at: None,
-                    duty: false,
-                }),
+            crate::github::pull_request_for_checkout(
+                &project.pull_requests,
+                place.branch,
+                place.head_sha,
+            )
+            .map(|pull_request| Linked {
+                pull_request,
+                on_branch: true,
+                sighted_at: None,
+                duty: false,
+            }),
         );
     }
     let created = row

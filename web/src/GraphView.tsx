@@ -1,3 +1,4 @@
+import { useEscapeLayer } from "./components/ui/layer";
 import { CornerDownRightIcon, GitMergeIcon, SearchIcon, XIcon } from "lucide-react";
 import { useLayoutEffect, useMemo, useRef, useState, type KeyboardEvent } from "react";
 import {
@@ -34,13 +35,15 @@ import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { ToggleGroup, ToggleGroupItem } from "./components/ui/toggle-group";
 import { Hint } from "./components/ui/tooltip";
+import type { MessageKey } from "./i18n/catalogs";
+import { useInterfaceTranslation } from "./i18n/client";
 import { readFlowTiming, readGraphGeometry, readMotionMs, type FlowTiming } from "./graphGeometry";
 import { Flow, Tween, type Targets } from "./graphMotion";
 import { cn } from "./lib/utils";
 import { FoldLine, gitHubClick, IssueChip, AgentMessagePopover, PullRequestChip, type LensHandlers } from "./OverviewLenses";
 import type { LensAgent } from "./overviewLens";
 import type { BoardProject } from "./projectBoard";
-import { checkoutPresentation, distanceText, filesText, laneCheckoutCard, shownPullRequest } from "./projects";
+import { checkoutPresentation, distanceText, laneCheckoutCard, shownPullRequest } from "./projects";
 
 // The Agents tab's graph (PRD agents-graph-view): a checkout is a box, an agent
 // a row in it, a delegation into another checkout a line. `agentGraph.ts`
@@ -49,14 +52,14 @@ import { checkoutPresentation, distanceText, filesText, laneCheckoutCard, shownP
 // snapshot that changes nothing draws nothing (B33, B39). Hover, focus and the
 // half-second popover are local and publish nothing (B38).
 
-const FOLD_LABEL: Record<FoldKind, string> = { empty: "에이전트 없는 워크트리", cleanup: "정리할 것", resting: "쉬는 체크아웃" };
+const FOLD_LABEL: Record<FoldKind, MessageKey> = { empty: "graph.fold.empty", cleanup: "graph.fold.cleanup", resting: "graph.fold.resting" };
 
-const EDGE_WORDS: Record<EdgeKind, string> = { ask: "묻는 중", flow: "일하는 중", wait: "하위를 기다리는 중", rest: "쉬는 중" };
+const EDGE_WORDS: Record<EdgeKind, MessageKey> = { ask: "graph.edge.ask", flow: "requests.verb.working", wait: "graph.edge.wait", rest: "requests.verb.idle" };
 
-const CLEANUP_HELP = {
-  merged: "머지됐거나 폴더가 없는 워크트리와 거기서 쉬는 에이전트를 지운다. 확인 대화상자가 먼저 뜬다.",
-  missing: "폴더가 없는 워크트리의 기록을 지운다.",
-} as const;
+const CLEANUP_HELP: Record<"merged" | "missing", MessageKey> = {
+  merged: "graph.cleanup.merged",
+  missing: "graph.cleanup.missing",
+};
 
 // --- painting ------------------------------------------------------------------
 
@@ -178,6 +181,7 @@ export type AgentGraphProps = {
 };
 
 export function AgentGraph({ projects, agents, scope, selectedBox, filter, onFilter, folds, handlers, now }: AgentGraphProps) {
+  const { t } = useInterfaceTranslation();
   // The sizes are tokens, read once: the layout is numbers (D-31).
   const [geometry] = useState(() => readGraphGeometry());
   const [motionMs] = useState(() => readMotionMs());
@@ -192,16 +196,16 @@ export function AgentGraph({ projects, agents, scope, selectedBox, filter, onFil
   if (board.empty) {
     return (
       <div className="flex flex-col items-center justify-center gap-sm p-xl text-center text-caption text-muted-foreground" data-graph-empty="true">
-        <p>실행 중인 에이전트가 없습니다</p>
+        <p>{t("requests.noAgents")}</p>
       </div>
     );
   }
   if (board.filterEmpty) {
     return (
       <div className="flex items-center justify-center gap-sm p-xl text-caption text-muted-foreground" data-graph-filter-empty="true">
-        <p>필터에 맞는 에이전트가 없습니다</p>
+        <p>{t("graph.noMatch")}</p>
         <Button variant="ghost" size="sm" onClick={() => onFilter(NO_GRAPH_FILTER)} data-graph-filter-clear="true">
-          필터 해제
+          {t("board.clearFilter")}
         </Button>
       </div>
     );
@@ -216,6 +220,7 @@ export function AgentGraph({ projects, agents, scope, selectedBox, filter, onFil
 }
 
 function GraphSection({ section, scope, geometry, motionMs, flowTiming, handlers, now }: { section: ProjectGraph; scope: "project" | "all"; geometry: GraphGeometry; motionMs: number; flowTiming: FlowTiming; handlers: LensHandlers; now: number }) {
+  const { t } = useInterfaceTranslation();
   const canvas = useRef<HTMLDivElement>(null);
   const tween = useRef<Tween | null>(null);
   const flow = useRef<Flow | null>(null);
@@ -282,8 +287,8 @@ function GraphSection({ section, scope, geometry, motionMs, flowTiming, handlers
   }, []);
 
   const names = useMemo(() => new Map([...section.rows.values()].map((row) => [row.paneId, row.value.agent.identity_label])), [section]);
-  const lines = useMemo(() => new Map(section.edges.map((edge) => [edge.to, EDGE_WORDS[edge.kind]])), [section]);
-  const label = (kind: FoldKind) => FOLD_LABEL[kind];
+  const lines = useMemo(() => new Map(section.edges.map((edge) => [edge.to, t(EDGE_WORDS[edge.kind])])), [section, t]);
+  const label = (kind: FoldKind) => t(FOLD_LABEL[kind]);
   return (
     <section className="flex min-w-0 flex-col gap-sm" data-graph-section={section.project.id} aria-label={scope === "all" ? section.project.label : undefined}>
       {scope === "all" ? (
@@ -300,7 +305,7 @@ function GraphSection({ section, scope, geometry, motionMs, flowTiming, handlers
                 const faded = edge.dim || (chain !== null && !(chain.has(edge.from) && chain.has(edge.to)));
                 return (
                   <g key={edge.id} className={cn("graph-edge", faded && "opacity-(--opacity-dimmed)")} data-graph-edge={edge.id} data-edge-kind={edge.kind} data-edge-back={edge.back ? "true" : undefined}>
-                    <title>{`${names.get(edge.from) ?? ""} → ${names.get(edge.to) ?? ""} · ${EDGE_WORDS[edge.kind]}`}</title>
+                    <title>{`${names.get(edge.from) ?? ""} → ${names.get(edge.to) ?? ""} · ${t(EDGE_WORDS[edge.kind])}`}</title>
                     <path className="graph-edge-base" fill="none" stroke="currentColor" pathLength={1} />
                     <circle className="graph-port" data-graph-port="out" fill="currentColor" />
                     <circle className="graph-port" data-graph-port="in" fill="currentColor" />
@@ -374,13 +379,14 @@ function BoxView({ box, selected, chain, hover, names, lines, onHover, handlers,
  * branch, the purpose (else the pull request's title), then the issue chip,
  * the PR chip, `↑N ↓N` and the changed files; the primary checkout's says how
  * many agents it has. A merged worktree is dimmed with the merge glyph, a
- * folder-less one is `× 폴더 없음`, and both offer `정리`. The head is one
+ * folder-less one is `× Folder missing`, and both offer `Clean up`. The head is one
  * button to the Workspace; `↵ Workspace` appears over the end of the branch
  * line without moving it, and resting on the head opens the checkout card.
  */
 function BoxHead({ box, handlers, now }: { box: GraphBox; handlers: LensHandlers; now: number }) {
+  const { t } = useInterfaceTranslation();
   const { project, checkout, cleanup } = box;
-  const view = checkoutPresentation(project, checkout, now);
+  const view = checkoutPresentation(project, checkout, now, t);
   const pr = view.pullRequest;
   const Glyph = cleanup === "missing" ? XIcon : cleanup === "merged" && !pr ? GitMergeIcon : CHECKOUT_KIND_ICON[view.kind];
   const glyphTone = cleanup === "missing" ? "text-destructive" : cleanup === "merged" && !pr ? "text-pr-merged" : view.kindTone;
@@ -394,10 +400,10 @@ function BoxHead({ box, handlers, now }: { box: GraphBox; handlers: LensHandlers
   const open = () => handlers.openCheckout(project, checkout);
   return (
     <div className={cn("group/head absolute inset-x-0 top-0 flex h-(--graph-head-height) min-w-0 flex-col justify-center px-sm", cleanup && "opacity-(--opacity-secondary)")} data-graph-head={checkout.id}>
-      <CheckoutCardHint card={laneCheckoutCard(project, checkout, now)} description={view.detail} onOpenPullRequest={(url) => handlers.openGitHub(url, project.device_id)} onOpenWorkspace={open}>
+      <CheckoutCardHint card={laneCheckoutCard(project, checkout, now, t)} description={view.detail} onOpenPullRequest={(url) => handlers.openGitHub(url, project.device_id)} onOpenWorkspace={open}>
         <button
           type="button"
-          aria-label={`Workspace ${name}${purpose ? ` · ${purpose}` : ""}`}
+          aria-label={purpose ? t("graph.workspaceWithPurpose", { workspace: name, purpose }) : t("board.workspaceName", { branch: name })}
           data-graph-focus="head"
           data-graph-head-open={checkout.id}
           className="absolute inset-0 rounded-t-md outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
@@ -410,36 +416,36 @@ function BoxHead({ box, handlers, now }: { box: GraphBox; handlers: LensHandlers
         <Glyph aria-hidden="true" className={cn("size-(--size-checkout-icon) shrink-0", glyphTone)} />
         <span className="min-w-0 flex-1 truncate font-mono text-body text-foreground">{name}</span>
         <span className="absolute inset-y-0 right-0 hidden items-center bg-accent pl-xs text-caption text-foreground group-hover/head:flex group-focus-within/head:flex" data-graph-head-hint="true">
-          ↵ Workspace
+          {t("graph.workspaceHint")}
         </span>
       </span>
       <span className="pointer-events-none relative h-(--graph-head-line) truncate text-caption text-muted-foreground">{purpose}</span>
       <span className="pointer-events-none relative flex h-(--graph-head-line) min-w-0 items-center gap-sm font-mono text-caption text-muted-foreground">
         {box.primary ? (
-          <span data-graph-head-agents={box.rows.filter((row) => !row.dim).length}>에이전트 {box.rows.filter((row) => !row.dim).length}</span>
+          <span data-graph-head-agents={box.rows.filter((row) => !row.dim).length}>{t("graph.agents", { count: box.rows.filter((row) => !row.dim).length })}</span>
         ) : cleanup === "missing" ? (
-          <span className="text-destructive">폴더 없음</span>
+          <span className="text-destructive">{t("graph.folderMissing")}</span>
         ) : (
           <>
             {box.task ? <IssueChip project={project} task={box.task} handlers={handlers} now={now} /> : null}
             <PullRequestChip project={project} checkout={checkout} onOpen={(url) => handlers.openGitHub(url, project.device_id)} onRow={(number) => handlers.openPullRequestRow(project, number)} now={now} />
             {ahead > 0 || behind > 0 ? <span data-graph-head-distance={`${ahead}:${behind}`}>{distanceText(ahead, behind)}</span> : null}
             {unread ? (
-              <Hint label="Git 상태를 아직 읽지 못함">
+              <Hint label={t("graph.gitUnread")}>
                 <span className="pointer-events-auto relative z-10" data-graph-head-files="unread">
                   ?
                 </span>
               </Hint>
             ) : files > 0 ? (
               <span className={cn(worktree?.dirty && "text-warning")} data-graph-head-files={files}>
-                {filesText(files)}
+                {t("issue.changedFiles", { count: files })}
               </span>
             ) : null}
           </>
         )}
         <span className="flex-1" />
         {cleanup ? (
-          <Hint label={CLEANUP_HELP[cleanup]}>
+          <Hint label={t(CLEANUP_HELP[cleanup])}>
             <button
               type="button"
               data-graph-cleanup={checkout.id}
@@ -450,7 +456,7 @@ function BoxHead({ box, handlers, now }: { box: GraphBox; handlers: LensHandlers
                 handlers.cleanup(project, checkout);
               }}
             >
-              정리
+              {t("prList.cleanup")}
             </button>
           </Hint>
         ) : null}
@@ -465,10 +471,11 @@ function BoxHead({ box, handlers, now }: { box: GraphBox; handlers: LensHandlers
  * One agent (B17-B19): its mark, provider, title and age on one line, and
  * only while it asks, its question in the warning colour on a second. The row
  * is one button that opens the agent's pane; hovering or focusing it keeps its
- * delegation chain bright and shows `↵ 패널` where the age was, and resting on
+ * delegation chain bright and shows `↵ Panel` where the age was, and resting on
  * it opens everything the agent last said with where it stands.
  */
 function RowView({ row, faded, peers, parent, line, onHover, handlers }: { row: GraphRow; faded: boolean; peers: readonly string[]; parent: string | null; line: string | null; onHover: (paneId: string | null) => void; handlers: LensHandlers }) {
+  const { t } = useInterfaceTranslation();
   const { agent, project, checkout, task, device } = row.value;
   const asking = row.line !== null;
   const said = rowLine(agent);
@@ -513,7 +520,7 @@ function RowView({ row, faded, peers, parent, line, onHover, handlers }: { row: 
         <AgentMark kind={agent.agent_kind} />
         <span className={cn("min-w-0 flex-1 truncate text-body text-foreground", asking && "font-semibold")}>{agent.identity_label}</span>
         {parts.length > 0 ? (
-          <Hint label={`접힌 하위 에이전트 ${badgeWords(row.tucked ?? undefined)}`}>
+          <Hint label={t("graph.tuckedDescendants", { states: badgeWords(row.tucked ?? undefined, t) })}>
             <span className="pointer-events-auto relative z-10 inline-flex shrink-0 items-center gap-xs font-mono text-caption" data-graph-tucked={parts.map((part) => `${part.state}:${part.count}`).join(" ")}>
               <BadgeMarks parts={parts} />
             </span>
@@ -521,7 +528,7 @@ function RowView({ row, faded, peers, parent, line, onHover, handlers }: { row: 
         ) : null}
         <Elapsed since={agent.changed_at_unix_ms} className="shrink-0 font-mono text-caption text-muted-foreground group-focus-within/row:hidden group-hover/row:hidden" />
         <span className="hidden shrink-0 text-caption text-foreground group-focus-within/row:inline group-hover/row:inline" data-graph-row-hint="true">
-          {asking ? "↵ 답하기" : "↵ 패널"}
+          {t(asking ? "graph.answerHint" : "graph.panelHint")}
         </span>
       </span>
       {asking ? (
@@ -542,13 +549,15 @@ function RowView({ row, faded, peers, parent, line, onHover, handlers }: { row: 
  * matches; all of them together narrow the graph.
  */
 export function GraphFilterControls({ agents, filter, onChange }: { agents: readonly LensAgent[]; filter: GraphFilter; onChange: (filter: GraphFilter) => void }) {
+  const { t } = useInterfaceTranslation();
   const devices = useMemo(() => graphDevices(agents), [agents]);
+  useEscapeLayer(filter.query !== "", () => onChange({ ...filter, query: "" }));
   return (
     <span className="flex min-w-0 flex-wrap items-center gap-sm" data-graph-filter={graphFilterActive(filter) ? "active" : "none"}>
-      <ToggleGroup type="multiple" value={[...filter.chips]} onValueChange={(chips) => onChange({ ...filter, chips: chips as StatusChip[] })} aria-label="상태" data-graph-chips="true">
-        {STATUS_CHIPS.map(({ chip, label }) => (
+      <ToggleGroup type="multiple" value={[...filter.chips]} onValueChange={(chips) => onChange({ ...filter, chips: chips as StatusChip[] })} aria-label={t("graph.filter.status")} data-graph-chips="true">
+        {STATUS_CHIPS.map(({ chip, labelKey }) => (
           <ToggleGroupItem key={chip} value={chip} data-graph-chip={chip}>
-            {label}
+            {t(labelKey)}
           </ToggleGroupItem>
         ))}
       </ToggleGroup>
@@ -561,17 +570,17 @@ export function GraphFilterControls({ agents, filter, onChange }: { agents: read
             // The first Escape clears only the search; on an empty field it is the screen's (B29).
             if (event.key === "Escape" && filter.query !== "") onChange({ ...filter, query: "" });
           }}
-          placeholder="제목 · 브랜치 · #번호"
-          aria-label="에이전트 검색"
+          placeholder={t("graph.filter.query")}
+          aria-label={t("graph.filter.search")}
           className="h-(--size-control-sm) w-(--graph-search-width) pl-lg"
           data-graph-search="true"
         />
       </span>
       {devices.length >= 2 ? (
-        <ToggleGroup type="single" value={filter.device ?? ""} onValueChange={(device) => onChange({ ...filter, device: device || null })} aria-label="기기" data-graph-devices="true">
+        <ToggleGroup type="single" value={filter.device ?? ""} onValueChange={(device) => onChange({ ...filter, device: device || null })} aria-label={t("graph.filter.device")} data-graph-devices="true">
           {devices.map((device) => (
             <ToggleGroupItem key={device} value={device} data-graph-device={device === THIS_DEVICE ? "this" : device}>
-              {device}
+              {device === THIS_DEVICE ? t("common.thisMac") : device}
             </ToggleGroupItem>
           ))}
         </ToggleGroup>

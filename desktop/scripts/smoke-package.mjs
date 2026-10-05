@@ -8,15 +8,13 @@
 // temporary folder (Windows with Expand-Archive, as a user's Extract All
 // reads a zip, rather than the tar that wrote it), and from the unpacked
 // folder: Herdr reports the pinned version, the device helper and the hook
-// helper start, Electron runs the bundled hcoord as Node, and the bundled
+// helper start, and the bundled
 // `hide connect` starts the bundled daemon, which serves the web shell it
 // embeds, installs the CLI and both agent hooks, and is replaced by a second
 // package fixture with a changed daemon hash, before `hide stop` ends it. Every process runs with a private home
 // and state folder, so none reaches a daemon or Herdr of the runner's account.
 //
-// macOS is refused: a daemon run from inside hide.app installs the kit, which
-// bootstraps hcoord's LaunchAgent in the account's own launchd domain, and the
-// macOS package already runs its Electron runtime while it is built.
+// macOS uses the isolated packaged-app e2e lane instead.
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
@@ -60,7 +58,10 @@ check("checksum", () => {
 const scratch = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "hide-smoke-")));
 const unpacked = path.join(scratch, "unpacked");
 const home = path.join(scratch, "home");
-const state = path.join(scratch, "state");
+// Keep the state under its selected HOME authority, as the shipped default
+// does. An unrelated external override would require authenticating the
+// system drive namespace before the kit may treat a missing ledger as empty.
+const state = path.join(home, ".hide", "state");
 
 /** Each fixture starts from the actual archive, as an operator's extraction does. */
 function unpackInto(destination) {
@@ -91,10 +92,9 @@ try {
   const helper = `hide-host-helper-${label}-x86_64`;
 
   const electron = path.join(app, `hide${exe}`);
-  const hcoordCli = path.join(resources, "hcoord", "dist", "hcoord", "cli.js");
 
   check("bundled files", () => {
-    const expected = [path.join(resources, "app.asar"), electron, ...["hide", "hided", "hide-agent-hooks", helper, "herdr"].map(bundled), hcoordCli];
+    const expected = [path.join(resources, "app.asar"), electron, ...["hide", "hided", "hide-agent-hooks", helper, "herdr"].map(bundled)];
     // herdr.exe finds its ConPTY runtime in the folder beside it.
     if (process.platform === "win32") expected.push(path.join(resources, "conpty", "conpty.dll"));
     const absent = expected.filter((file) => !fs.statSync(file, { throwIfNoEntry: false })?.isFile());
@@ -112,7 +112,6 @@ try {
     XDG_CONFIG_HOME: path.join(home, ".config"),
     CODEX_HOME: path.join(home, ".codex"),
     CLAUDE_CONFIG_DIR: path.join(home, ".claude"),
-    HCOORD_HOME: path.join(home, ".hide", "hcoord"),
     HERDR_SOCKET_PATH: path.join(scratch, "herdr.sock"),
     HIDE_STATE_DIR: state,
     HIDE_TAILSCALE_BIN: path.join(home, "no-tailscale"),
@@ -145,12 +144,6 @@ try {
 
   check("hide-agent-hooks doctor --json", () => {
     JSON.parse(output(bundled("hide-agent-hooks"), ["doctor", "--json"], isolated));
-  });
-
-  check("Electron runs the bundled hcoord as Node", () => {
-    const answer = JSON.parse(output(electron, [hcoordCli, "version", "--json"], { ...isolated, ELECTRON_RUN_AS_NODE: "1" }));
-    if (answer?.ok !== true || typeof answer?.value?.hcoordVersion !== "string") throw new Error(`answered ${JSON.stringify(answer)}`);
-    return answer.value.hcoordVersion;
   });
 
   // Prepare the complete second package before either daemon holds an
@@ -202,7 +195,7 @@ try {
         last = JSON.stringify(record.components);
         const parts = new Map(record.components.map((part) => [part.id, part]));
         if (["cli", "claude_code_hook", "codex_hook"].every((id) => parts.get(id)?.state === "installed")
-          && parts.get("hcoord")?.state === "absent" && parts.get("hcoord")?.reason) return;
+          && parts.get("coordination_retirement")?.state === "installed") return;
       }
       await delay(100);
     }
@@ -245,8 +238,7 @@ try {
         ? hook.command !== "powershell.exe" || !hook.args?.includes("-Command")
         : !hook.command.startsWith("if (Test-Path -LiteralPath"))) throw new Error(`${folder} hooks do not use PowerShell`);
     }
-    if (fs.existsSync(path.join(home, ".hide", "hcoord"))) throw new Error("hcoord was installed on an unsupported system");
-    return "command resolves in a fresh shell; both hooks installed; foreign settings preserved; hcoord absent";
+    return "command resolves in a fresh shell; both hooks installed; foreign settings preserved; coordination retirement complete";
   }
 
   let connected = null;

@@ -1,7 +1,11 @@
 import { describe, expect, it } from "vitest";
 import type { Checkout, Device, SnapshotRest, Workspace } from "./snapshot";
-import { checkoutKey, homeKey, NOT_CONNECTED, resolveTarget, startTargets } from "./startTargets";
+import { initializeInterfaceI18n } from "./i18n/instance";
+import { checkoutKey, homeKey, resolveTarget, startTargets as targetsWith } from "./startTargets";
 import type { Screen } from "./ui";
+
+const { t } = initializeInterfaceI18n("en");
+const startTargets = (rest: SnapshotRest | null, screen: Screen | null, settings = false, projectId: string | null = null) => targetsWith(rest, screen, t, settings, projectId);
 
 function checkout(id: string, workspaceId: string, path: string, over: Partial<Checkout> = {}): Checkout {
   return { id, workspace_id: workspaceId, label: path.split("/").pop() ?? id, path, exists: true, ...over } as Checkout;
@@ -50,7 +54,7 @@ function rest(over: { front?: string; connected?: boolean; miniSession?: boolean
   } as unknown as SnapshotRest;
 }
 
-const OVERVIEW = (projectId: string): Screen => ({ kind: "overview", projectId, lens: {} as never });
+const overviewTargets = (snapshot: SnapshotRest, projectId: string) => startTargets(snapshot, { kind: "main" }, false, projectId);
 const keys = (rest: SnapshotRest, screen: Screen | null) => startTargets(rest, screen).groups.map((group) => group.items.map((item) => item.key));
 
 describe("start target default (PRD home-device-rail D-19, B25)", () => {
@@ -61,8 +65,8 @@ describe("start target default (PRD home-device-rail D-19, B25)", () => {
   });
 
   it("is a project Overview's main checkout", () => {
-    expect(startTargets(rest(), OVERVIEW("w-sasu")).defaultKey).toBe(checkoutKey("local", "/sasu"));
-    expect(startTargets(rest(), OVERVIEW("w-herdr")).defaultKey).toBe(checkoutKey("local", "/herdr-ide"));
+    expect(overviewTargets(rest(), "w-sasu").defaultKey).toBe(checkoutKey("local", "/sasu"));
+    expect(overviewTargets(rest(), "w-herdr").defaultKey).toBe(checkoutKey("local", "/herdr-ide"));
   });
 
   it("is the front device's Home when no project is in front", () => {
@@ -72,7 +76,7 @@ describe("start target default (PRD home-device-rail D-19, B25)", () => {
 
   it("is that device's own checkout when a remote device's thing is in front", () => {
     expect(startTargets(rest({ front: "mini", focusedCheckout: "m-main" }), { kind: "workspace" }).defaultKey).toBe(checkoutKey("mini", "/srv/app"));
-    expect(startTargets(rest({ front: "mini" }), OVERVIEW("mw")).defaultKey).toBe(checkoutKey("mini", "/srv/app"));
+    expect(overviewTargets(rest({ front: "mini" }), "mw").defaultKey).toBe(checkoutKey("mini", "/srv/app"));
   });
 
   it("is the front device's Home when the panel took Settings' place, whatever is under it", () => {
@@ -87,11 +91,11 @@ describe("start target default (PRD home-device-rail D-19, B25)", () => {
 
   it("reads a checkout of the Home itself as the Home, since Home is not a project", () => {
     expect(startTargets(rest({ focusedCheckout: "h1" }), { kind: "workspace" }).defaultKey).toBe(homeKey("local"));
-    expect(startTargets(rest(), OVERVIEW("w-home")).defaultKey).toBe(homeKey("local"));
+    expect(overviewTargets(rest(), "w-home").defaultKey).toBe(homeKey("local"));
   });
 
   it("falls back to Home when the thing in front is not listed", () => {
-    expect(startTargets(rest(), OVERVIEW("gone")).defaultKey).toBe(homeKey("local"));
+    expect(overviewTargets(rest(), "gone").defaultKey).toBe(homeKey("local"));
   });
 
   it("falls back to the first usable target when the front device is not connected", () => {
@@ -123,17 +127,20 @@ describe("start target menu (B26)", () => {
     const labels = startTargets(rest(), null).groups.map((group) => group.items.map((item) => item.label));
     expect(labels[0]).toEqual(["Home", "herdr-ide · main", "herdr-ide · rail", "sasu · main"]);
     expect(labels[1]).toEqual(["mini · Home", "mini · app · main"]);
+    // Home is the one word this module words itself.
+    const ko = targetsWith(rest(), null, initializeInterfaceI18n("ko").t).groups.map((group) => group.items[0]!.label);
+    expect(ko).toEqual(["홈", "mini · 홈", "build-box · 홈"]);
   });
 
   it("disables every item of a device that is not connected, with the reason", () => {
     const all = startTargets(rest({ connected: false }), null).groups;
     const mini = all.find((group) => group.deviceId === "mini")!;
     expect(mini.connected).toBe(false);
-    expect(mini.items.every((item) => item.disabled === NOT_CONNECTED)).toBe(true);
+    expect(mini.items.every((item) => item.disabled === "not_connected")).toBe(true);
     expect(all[0]!.items.every((item) => item.disabled === null)).toBe(true);
     // A device that never answered still has its Home, disabled.
     const box = all.find((group) => group.deviceId === "box")!;
-    expect(box.items.map((item) => [item.key, item.disabled])).toEqual([[homeKey("box"), NOT_CONNECTED]]);
+    expect(box.items.map((item) => [item.key, item.disabled])).toEqual([[homeKey("box"), "not_connected"]]);
   });
 
   it("offers nothing before the first snapshot", () => {

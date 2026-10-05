@@ -1,5 +1,19 @@
 use super::*;
 
+/// The most tabs Hide can have created and not yet seen leave Herdr. A tab
+/// past it is placed by its pane cwd and the crossing is reported.
+const CREATED_TAB_CHECKOUT_LIMIT: usize = 64;
+
+/// The checkout a tab Hide created was created for. The creation intent named
+/// it, so it outranks the pane cwd, which Herdr reports from birth and never
+/// announces settling.
+pub(super) struct CreatedTabCheckout {
+    path: String,
+    /// The session has carried the tab at least once, so its absence from a
+    /// later session means it closed.
+    seen: bool,
+}
+
 enum SessionFocusCheck {
     Unchecked,
     Readback(Option<(PendingPaneFocusControl, bool)>),
@@ -222,6 +236,16 @@ impl Runtime {
             },
         );
 
+        // A created tab's record lives as long as its tab: it is kept until
+        // the session has carried the tab once and then drops it. A blocked
+        // workspace republishes its last published tabs, so a tab the session
+        // carried does not vanish from here while its workspace waits.
+        self.created_tab_checkouts.retain(|tab_id, created| {
+            let present = payload.tabs.iter().any(|tab| &tab.tab_id == tab_id);
+            created.seen |= present;
+            present || !created.seen
+        });
+
         // Herdr's tab order is the navigator's tab order. A layout is the
         // per-tab detail looked up by tab id, never what decides where a tab
         // sits: layouts arrive in the order each tab was first drawn, so a tab
@@ -232,6 +256,7 @@ impl Runtime {
         // snapshot's tabs carry the formatted form, so the free number has to
         // be taken here or read back out of display text later.
         let mut raw_tab_labels: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let mut missing_created: Vec<String> = Vec::new();
         for session_tab in &payload.tabs {
             let Some(layout) = payload
                 .layouts
@@ -240,43 +265,83 @@ impl Runtime {
             else {
                 continue;
             };
-            // A plain terminal pane is not necessarily represented in the
-            // agent list. Its cwd is still authoritative for attaching the
-            // live layout to the registered checkout. Falling back to the
-            // agent record keeps agent-specific cwd handling intact.
-            let context_path = layout.panes.iter().find_map(|pane| {
-                payload
-                    .panes
-                    .iter()
-                    .find(|source| source.pane_id == pane.pane_id)
-                    .and_then(|source| source.cwd.clone())
-                    .filter(|path| !path.trim().is_empty())
-                    .or_else(|| {
+            // A tab Hide created belongs to the checkout it was created for.
+            // Its pane cwd is a birth value until the shell has entered the
+            // start folder, and Herdr sends no event when it settles, so
+            // reading it placed a new tab under another checkout until the
+            // next unrelated publish (#400). A checkout no longer in the
+            // catalog is reported once, and the tab falls back to the pane
+            // rule below from then on.
+            let created = self
+                .created_tab_checkouts
+                .get(&session_tab.tab_id)
+                .and_then(|created| {
+                    let found = workspaces
+                        .iter()
+                        .enumerate()
+                        .find_map(|(index, workspace)| {
+                            workspace
+                                .checkouts
+                                .iter()
+                                .position(|checkout| checkout.path == created.path)
+                                .map(|checkout| (index, checkout))
+                        });
+                    if found.is_none() {
+                        missing_created.push(session_tab.tab_id.clone());
+                        crate::diagnostic!(serde_json::json!({
+                            "component": "session",
+                            "kind": "created_tab.checkout_missing",
+                            "tab_id": session_tab.tab_id,
+                            "checkout_path": created.path,
+                        }));
+                    }
+                    found
+                });
+            let (workspace_snapshot, checkout_index) = match created {
+                Some((index, checkout)) => (&mut workspaces[index], Some(checkout)),
+                None => {
+                    // Any other tab has no recorded intent, so its pane cwd
+                    // is all there is. A plain terminal pane is not necessarily
+                    // represented in the agent list. Its cwd is still
+                    // authoritative for attaching the live layout to the
+                    // registered checkout. Falling back to the agent record
+                    // keeps agent-specific cwd handling intact.
+                    let context_path = layout.panes.iter().find_map(|pane| {
                         payload
-                            .agents
+                            .panes
                             .iter()
-                            .find(|agent| {
-                                agent.pane_id.as_deref().or(agent.id.as_deref())
-                                    == Some(pane.pane_id.as_str())
+                            .find(|source| source.pane_id == pane.pane_id)
+                            .and_then(|source| source.cwd.clone())
+                            .filter(|path| !path.trim().is_empty())
+                            .or_else(|| {
+                                payload
+                                    .agents
+                                    .iter()
+                                    .find(|agent| {
+                                        agent.pane_id.as_deref().or(agent.id.as_deref())
+                                            == Some(pane.pane_id.as_str())
+                                    })
+                                    .and_then(|agent| agent.cwd.clone())
                             })
-                            .and_then(|agent| agent.cwd.clone())
-                    })
-            });
-            let Some(workspace_snapshot) = find_workspace_for_context(
-                &mut workspaces,
-                context_path.as_deref(),
-                &layout.workspace_id,
-                &roots,
-                &mut unresolved_roots,
-            ) else {
-                continue;
+                    });
+                    let Some(workspace_snapshot) = find_workspace_for_context(
+                        &mut workspaces,
+                        context_path.as_deref(),
+                        &layout.workspace_id,
+                        &roots,
+                        &mut unresolved_roots,
+                    ) else {
+                        continue;
+                    };
+                    let checkout_index = context_path.as_deref().and_then(|path| {
+                        workspace_snapshot
+                            .checkouts
+                            .iter()
+                            .position(|checkout| path_is_within_checkout(path, &checkout.path))
+                    });
+                    (workspace_snapshot, checkout_index)
+                }
             };
-            let checkout_index = context_path.as_deref().and_then(|path| {
-                workspace_snapshot
-                    .checkouts
-                    .iter()
-                    .position(|checkout| path_is_within_checkout(path, &checkout.path))
-            });
             let Some(checkout) = workspace_snapshot
                 .checkouts
                 .get_mut(checkout_index.unwrap_or(0))
@@ -354,6 +419,9 @@ impl Runtime {
                 .entry(checkout.id.clone())
                 .or_default()
                 .push(session_tab.label.clone());
+        }
+        for tab_id in missing_created {
+            self.created_tab_checkouts.remove(&tab_id);
         }
 
         // A worktree earns its row from git, not from a pane, so which rows
@@ -1259,8 +1327,34 @@ impl Runtime {
                         .iter()
                         .any(|tab| tab.id.as_deref() == Some(tab_id))
                 });
+                // Herdr arriving at a tab Hide asked for and has since moved
+                // off is that request's answer. It is consumed, so the same
+                // tab focused again later is followed like any outside move.
+                let answers_superseded = herdr_tab.as_deref().is_some_and(|tab_id| {
+                    self.superseded_tab_focus
+                        .iter()
+                        .any(|held| held.scope_id == checkout.id && held.target_id == tab_id)
+                });
+                if answers_superseded && let Some(tab_id) = herdr_tab.as_deref() {
+                    self.superseded_tab_focus
+                        .retain(|held| held.scope_id != checkout.id || held.target_id != tab_id);
+                    // Recorded only where the answer would have been followed.
+                    if hide_tab
+                        .as_deref()
+                        .is_some_and(|hide_tab| hide_tab != tab_id)
+                    {
+                        crate::diagnostic!(serde_json::json!({
+                            "component": "view_state",
+                            "kind": "tab.focus.late_answer",
+                            "checkout_id": checkout.id,
+                            "from_tab_id": hide_tab,
+                            "tab_id": tab_id,
+                        }));
+                    }
+                }
                 let visible = match (hide_tab, herdr_tab) {
                     (Some(hide_tab), Some(herdr_tab)) if hide_tab == herdr_tab => Some(hide_tab),
+                    (Some(hide_tab), Some(_)) if answers_superseded => Some(hide_tab),
                     (Some(hide_tab), Some(herdr_tab)) => {
                         if pending_tab.as_deref() == Some(hide_tab.as_str()) {
                             Some(hide_tab)
@@ -1449,6 +1543,11 @@ impl Runtime {
     /// screen out from under them. Dropping the wait is what lets the next
     /// Herdr event be read as an external focus rather than as a late answer.
     pub(super) fn expire_pending_view_focus(&mut self, now_unix_ms: u64) -> bool {
+        // A superseded request Herdr never visibly answered (its event was
+        // folded into the next one) stops claiming that tab with the same
+        // bound; Hide's value never depended on it, so nothing is reported.
+        self.superseded_tab_focus
+            .retain(|held| !held.expired_at(now_unix_ms));
         let mut expired = Vec::new();
         for slot in ViewFocusSlot::ALL {
             // A socket control already has its own bounded transport wait.
@@ -1848,6 +1947,10 @@ impl Runtime {
         if let Ok(payload) = fetched.as_mut() {
             self.label_overlay.apply(payload);
             self.settle_agent_sleep(payload);
+        } else {
+            // Herdr's tab ids are its own server's; a later connection may
+            // hand one to a tab Hide never created.
+            self.created_tab_checkouts.clear();
         }
         // The session update is this runtime's only regular tick, so it is
         // also where a notification Herdr never answered stops being pending.
@@ -2950,6 +3053,31 @@ impl Runtime {
             ),
         );
     }
+    /// Waits on a new tab notification. One still unanswered is remembered
+    /// as superseded rather than forgotten: Herdr applies it anyway, and its
+    /// answer can arrive after the new request has already been confirmed by
+    /// a session that predates both.
+    pub(super) fn await_tab_focus(&mut self, next: PendingViewFocus) {
+        let next_target_id = next.target_id.clone();
+        if let Some(previous) = self.pending_tab_focus.replace(next)
+            && previous.target_id != next_target_id
+        {
+            self.superseded_tab_focus.retain(|held| {
+                held.scope_id != previous.scope_id || held.target_id != previous.target_id
+            });
+            self.superseded_tab_focus.push(previous);
+        }
+        if self.superseded_tab_focus.len() > SUPERSEDED_TAB_FOCUS_LIMIT {
+            let evicted = self.superseded_tab_focus.remove(0);
+            crate::diagnostic!(serde_json::json!({
+                "component": "view_state",
+                "kind": "tab.focus.superseded_evicted",
+                "checkout_id": evicted.scope_id,
+                "tab_id": evicted.target_id,
+                "limit": SUPERSEDED_TAB_FOCUS_LIMIT,
+            }));
+        }
+    }
     /// Rule 11: whether repeating this view-state change would converge on
     /// what the core already holds, so Herdr needs no second notification.
     /// True when nothing is in flight for the slot, or what is in flight is
@@ -3080,10 +3208,16 @@ impl Runtime {
                 let live::WorktreeTaskOutcome {
                     path,
                     pane_id,
+                    created_tab_id,
                     purpose_error,
                     unconfirmed_purpose_token,
                     issue_error,
                 } = outcome;
+                if device.is_none()
+                    && let Some(tab_id) = created_tab_id.as_deref()
+                {
+                    self.record_created_tab_checkout(tab_id, &path);
+                }
                 if let Some(detail) = issue_error {
                     self.push_diagnostic(
                         "checkout_issue.create_failed",
@@ -3913,6 +4047,14 @@ impl Runtime {
                 created_tab_id,
                 created_pane_id,
             }) => {
+                if let (
+                    Some(tab_id),
+                    RemoteControlAction::CreateTab { cwd, .. }
+                    | RemoteControlAction::OpenOwner { cwd, .. },
+                ) = (created_tab_id.as_deref(), &action)
+                {
+                    self.record_created_tab_checkout(tab_id, cwd);
+                }
                 if let Some(tab_id) = created_tab_id.as_ref() {
                     let placement = match &action {
                         RemoteControlAction::CreateTab {
@@ -3978,8 +4120,7 @@ impl Runtime {
                     ) {
                         self.visible_tab_ids
                             .insert(checkout_id.clone(), tab_id.clone());
-                        self.pending_tab_focus =
-                            Some(PendingViewFocus::new(checkout_id, tab_id.clone()));
+                        self.await_tab_focus(PendingViewFocus::new(checkout_id, tab_id.clone()));
                     }
                     self.yield_surface_to_terminal();
                     self.persist_current_ui_state();
@@ -4025,6 +4166,13 @@ impl Runtime {
                 // and the wait ends, so the next Herdr event naming another
                 // tab is read as an external focus rather than a late answer.
                 if let RemoteControlAction::FocusTab { tab_id } = &action {
+                    // A refused superseded request will never be answered.
+                    // One whose result was lost may still have been applied,
+                    // so it keeps waiting for its answer until it expires.
+                    if !error.is_ambiguous() {
+                        self.superseded_tab_focus
+                            .retain(|held| held.target_id != *tab_id);
+                    }
                     self.clear_refused_view_focus(ViewFocusSlot::Tab, tab_id, &message);
                 }
                 self.set_error(
@@ -4664,5 +4812,51 @@ impl Runtime {
                 "git_init": if git_init_failed { "failed" } else { "complete_or_skipped" },
         }));
         true
+    }
+}
+
+impl Runtime {
+    /// Remembers which checkout a created tab was asked for. When the session
+    /// already placed the tab under another checkout, the local coordinator is
+    /// asked to republish, because nothing else would place it again until an
+    /// unrelated change.
+    fn record_created_tab_checkout(&mut self, tab_id: &str, path: &str) {
+        if self.created_tab_checkouts.len() >= CREATED_TAB_CHECKOUT_LIMIT
+            && !self.created_tab_checkouts.contains_key(tab_id)
+        {
+            crate::diagnostic!(serde_json::json!({
+                "component": "session",
+                "kind": "created_tab.checkout_limit",
+                "tab_id": tab_id,
+                "checkout_path": path,
+                "limit": CREATED_TAB_CHECKOUT_LIMIT,
+            }));
+            return;
+        }
+        self.created_tab_checkouts.insert(
+            tab_id.to_owned(),
+            CreatedTabCheckout {
+                path: path.to_owned(),
+                seen: false,
+            },
+        );
+        let misplaced = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|workspace| &workspace.checkouts)
+            .any(|checkout| {
+                checkout.path != path
+                    && checkout
+                        .tabs
+                        .iter()
+                        .any(|tab| tab.id.as_deref() == Some(tab_id))
+            });
+        self.created_tab_republish_requested |= misplaced;
+    }
+
+    pub(crate) fn take_created_tab_republish(&mut self) -> bool {
+        std::mem::take(&mut self.created_tab_republish_requested)
     }
 }

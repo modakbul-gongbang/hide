@@ -251,6 +251,8 @@ fn a_linked_checkout_names_its_task_in_the_projects_task_list() {
             updated_at_unix_ms: None,
             created_at_unix_ms: None,
             closed_at_unix_ms: None,
+            head_oid: None,
+            cross_repository: false,
         });
     runtime.sync_issues();
     assert!(runtime.sync_tasks());
@@ -550,6 +552,7 @@ fn a_task_prompt_is_handed_to_its_agent_start_and_kept_for_a_retry() {
         Ok(live::WorktreeTaskOutcome {
             path: "/tmp/hide-prompt".into(),
             pane_id: "w1:p9".into(),
+            created_tab_id: None,
             purpose_error: None,
             unconfirmed_purpose_token: None,
             issue_error: None,
@@ -626,7 +629,7 @@ fn a_github_issue_panel_read_settles_only_the_issue_it_asked_for() {
     ));
     let answer = crate::tasks::TaskDetail {
         body: "본문".into(),
-        author: Some("yansfil".into()),
+        author: Some("example".into()),
         comment_count: Some(0),
         ..Default::default()
     };
@@ -639,7 +642,7 @@ fn a_github_issue_panel_read_settles_only_the_issue_it_asked_for() {
             detail.body.as_deref(),
             detail.author.as_deref()
         ),
-        ("ready", Some("본문"), Some("yansfil"))
+        ("ready", Some("본문"), Some("example"))
     );
     assert!(!runtime.ingest_issue_detail("github:acme/project#2", Err("late".into())));
 }

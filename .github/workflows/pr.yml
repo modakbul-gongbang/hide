@@ -1,6 +1,16 @@
-# Every pull request and every push to main runs the same required lanes, and the
-# single `verify` job is what branch protection requires. Adding a lane means
-# adding it to `verify`'s `needs`; the protection rule never changes.
+# Every pull request and every push to main runs this workflow, and the single
+# `verify` job is what branch protection requires. Adding a lane means adding
+# it to `scripts/ci-plan.py`'s LANES and to `verify`'s `needs`; the protection
+# rule never changes.
+#
+# The `plan` job classifies the paths a pull request changes into the lanes it
+# needs (`scripts/ci-plan.py`; docs/TESTING.md, "Which lanes a pull request
+# runs", owns the rules). Each lane runs when the plan names it, and `verify`
+# passes only when every planned lane succeeded and every other lane was
+# skipped, so a lane whose `if:` is wrong fails `verify` rather than passing
+# it. A push to main, a comparison that cannot be computed, and a path no rule
+# claims plan every lane; main's full run is the net under a lane a pull
+# request left out.
 #
 # Each gate here has a local command in CONTRIBUTING.md under "CI gates".
 #
@@ -16,12 +26,10 @@
 # `web-e2e.yml`. `nightly.yml` runs the whole web end-to-end on macOS, so the
 # move costs no macOS coverage, only its delay. On Windows, `windows check`
 # compiles the workspace and runs the daemon's and the app's suites there,
-# beside the OS contract's Windows leg (issue #293).
+# beside the OS contract's Windows leg (issue #293), and `windows e2e` runs the
+# browser `@platform` tests.
 #
-# Every job and every long step has a timeout a few times its usual length
-# (measured over the 2026-09-29..10-01 runs): an hcoord end-to-end step that
-# usually takes two minutes hung for 48 and for 156 in two runs, holding a
-# required check, and a job without a timeout runs for six hours.
+# Every job and every long step has a timeout to bound a stalled required check.
 name: verify
 
 on:
@@ -32,15 +40,69 @@ on:
 permissions:
   contents: read
 
+# A new push to a pull request replaces that pull request's run. Main's runs
+# queue instead: each merge's full run is the net under the lanes a pull
+# request's plan left out, so a later merge must not cancel it.
 concurrency:
   group: verify-${{ github.event.pull_request.number || github.ref }}
-  cancel-in-progress: true
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
+  plan:
+    name: plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      lanes: ${{ steps.plan.outputs.lanes }}
+      full: ${{ steps.plan.outputs.full }}
+      rust-packages: ${{ steps.plan.outputs.rust-packages }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          # A pull request checks out its merge commit, whose first parent is
+          # the base it merges into; the plan compares the two.
+          fetch-depth: 2
+      - name: Choose the lanes this change needs
+        id: plan
+        # The crate graph comes from `cargo metadata`, which needs no build.
+        run: python3 scripts/ci-plan.py plan --event "$GITHUB_EVENT_NAME"
+
+  policy:
+    name: policy checks
+    needs: plan
+    if: contains(fromJSON(needs.plan.outputs.lanes), 'policy')
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - name: Install zsh
+        # The invariant scripts are zsh; the image has bash.
+        run: sudo apt-get install -y --no-install-recommends zsh
+      - name: Test the repository scripts, the lane plan included
+        run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
+      - name: Test nightly failure reporting
+        run: node --test scripts/tests/nightly-report.test.cjs
+      - name: Structural checks
+        run: |
+          bash scripts/check-harness-ignore-anchor.sh
+          bash scripts/check-agent-asset-committed.sh
+          bash scripts/check-capability-readers-off-lock.sh
+          bash scripts/check-no-workstation-identity.sh
+          bash scripts/check-worktree-removal-boundary.sh
+          zsh scripts/check-herdr-pin-single-source.sh
+
   rust:
     name: rust workspace
+    needs: plan
+    if: contains(fromJSON(needs.plan.outputs.lanes), 'rust')
     runs-on: ubuntu-latest
     timeout-minutes: 20
+    env:
+      FULL: ${{ needs.plan.outputs.full }}
+      PACKAGES: ${{ needs.plan.outputs.rust-packages }}
     steps:
       - uses: actions/checkout@v7
       - uses: Swatinem/rust-cache@v2
@@ -49,18 +111,34 @@ jobs:
           # A cache per pull request ref pushed the repository past the 10 GB
           # cache limit and evicted main's; main's is the one every run reads.
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      # The ubuntu image ships rustfmt and Clippy with its Rust toolchain.
-      # Every lane covers the whole Rust workspace.
-      - name: Check formatting
-        run: cargo fmt --all --check
-      - name: Lint the workspace
-        run: cargo clippy --locked --workspace --all-targets -- -D warnings
-      - name: Test the workspace
+      # The ubuntu image ships rustfmt and Clippy with its Rust toolchain. A
+      # full plan covers the whole workspace; otherwise the plan names the
+      # changed crates and every crate that depends on them.
+      - name: Check formatting and lint the planned crates
+        run: |
+          if [ "$FULL" = true ]; then
+            bash scripts/verify-cargo.sh lint
+          else
+            mapfile -t packages < <(jq -r '.[] | "-p", .' <<<"$PACKAGES")
+            (( ${#packages[@]} )) || { echo 'the plan chose the rust lane but no crate' >&2; exit 1; }
+            bash scripts/verify-cargo.sh fmt-check
+            bash scripts/verify-cargo.sh clippy "${packages[@]}" --all-targets -- -D warnings
+          fi
+      - name: Test the planned crates
         # hide-ai drives its codex backend against a python fake app server.
-        run: cargo test --locked --workspace
+        run: |
+          if [ "$FULL" = true ]; then
+            bash scripts/verify-cargo.sh test
+          else
+            mapfile -t packages < <(jq -r '.[] | "-p", .' <<<"$PACKAGES")
+            (( ${#packages[@]} )) || { echo 'the plan chose the rust lane but no crate' >&2; exit 1; }
+            bash scripts/verify-cargo.sh test-scoped "${packages[@]}"
+          fi
 
-  checks:
-    name: checks and unit suites
+  web-checks:
+    name: web checks
+    needs: plan
+    if: contains(fromJSON(needs.plan.outputs.lanes), 'web-checks')
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -73,49 +151,40 @@ jobs:
           node-version: 22
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
-      - name: Install zsh
-        # The invariant scripts and the Herdr fetch are zsh; the image has bash.
-        run: sudo apt-get install -y --no-install-recommends zsh
-      - name: Test performance measurement semantics
-        run: python3 -m unittest discover -s scripts/tests -p 'test_*.py'
-      - name: Structural checks
-        run: |
-          bash scripts/check-harness-ignore-anchor.sh
-          bash scripts/check-agent-asset-committed.sh
-          bash scripts/check-capability-readers-off-lock.sh
-          bash scripts/check-no-workstation-identity.sh
-          bash scripts/check-worktree-removal-boundary.sh
-          zsh scripts/check-herdr-pin-single-source.sh
-      - name: Fetch the pinned Herdr runtime
-        id: herdr
-        # The manifest is the pin; the script verifies the download against
-        # the manifest's digest before the binary answers anything. This lane
-        # is the one place the release's Linux asset is run.
-        run: echo "bin=$(zsh scripts/fetch-herdr-runtime.sh --platform linux-x86_64)" >> "$GITHUB_OUTPUT"
-      - name: Compare the Herdr API schema with the contract
-        run: zsh scripts/check-herdr-contract.sh --herdr-bin "${{ steps.herdr.outputs.bin }}" --schema-only
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
-      - name: hcoord typecheck, build, unit test, and end-to-end test
-        timeout-minutes: 10
-        run: |
-          pnpm --dir plugins/hcoord typecheck
-          pnpm --dir plugins/hcoord build
-          pnpm --dir plugins/hcoord test
-          pnpm --dir plugins/hcoord test:e2e
+        run: bash scripts/verify-web.sh install
       - name: Web shell typecheck, lint, unit test, and build
         run: |
-          pnpm --dir web typecheck
-          pnpm --dir web lint
-          pnpm --dir web test
-          pnpm --dir web build
+          bash scripts/verify-web.sh web typecheck
+          bash scripts/verify-web.sh web lint
+          bash scripts/verify-web.sh web test
+          bash scripts/verify-web.sh web build
+
+  desktop-checks:
+    name: desktop checks
+    needs: plan
+    if: contains(fromJSON(needs.plan.outputs.lanes), 'desktop-checks')
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Install dependencies
+        run: bash scripts/verify-web.sh install
       - name: Desktop app typecheck, lint, and unit test
-        # The menu is built from the web registry, so a registry change is
-        # typechecked and tested here too.
+        # The menu is built from the web registry, so the plan brings this
+        # lane for a registry change too.
         run: |
-          pnpm --dir desktop typecheck
-          pnpm --dir desktop lint
-          pnpm --dir desktop test
+          bash scripts/verify-web.sh desktop typecheck
+          bash scripts/verify-web.sh desktop lint
+          bash scripts/verify-web.sh desktop test
 
   # What differs on Windows (issue #293), as a required lane: the whole
   # workspace compiles for Windows, hided's pane bootstrap and end-to-end
@@ -123,12 +192,14 @@ jobs:
   # beside it (what the desktop app does first), the agent hook entries run
   # through PowerShell as Claude Code and Codex run them, hided drives the
   # pinned Herdr for Windows (a pane opened through `/ws` and a typed line
-  # echoed back), and the web and desktop unit
-  # suites pass with the same assertions as on macOS and Linux. The job took
-  # 4-8 minutes on 2026-10-03 with a warm cache; a cold one compiles the
-  # workspace from nothing, so the timeout leaves room for that.
+  # echoed back), and the web and desktop unit suites. Warm-cache jobs took
+  # 4-8 minutes on 2026-10-03; a cold run compiles the workspace from
+  # nothing. The browser `@platform` tests are `windows-e2e` below, so a change
+  # that needs the compile does not also wait for a browser, and the reverse.
   windows-check:
     name: windows check
+    needs: plan
+    if: contains(fromJSON(needs.plan.outputs.lanes), 'windows-check')
     runs-on: windows-latest
     timeout-minutes: 50
     defaults:
@@ -145,26 +216,26 @@ jobs:
           workspaces: ". -> target"
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Compile the workspace for Windows
-        run: cargo check --locked --workspace --all-targets --keep-going --message-format short
+        run: bash scripts/verify-cargo.sh check --workspace --all-targets --keep-going --message-format short
       - name: hided's pane bootstrap, file opener, the device's workspace bridge, the CLI's daemon start and end-to-end tests
         timeout-minutes: 25
         run: |
-          cargo test --locked -p hided --lib -- pane_auth opener open_command workspace_cli
-          cargo test --locked -p hided --test opener_lifecycle
-          cargo test --locked -p hide-host --lib workspace_bridge
-          cargo test --locked -p hided --test connect_stop
-          cargo test --locked -p hided --test handshake
+          bash scripts/verify-cargo.sh test-scoped -p hided --lib -- pane_auth opener open_command workspace_cli
+          bash scripts/verify-cargo.sh test-scoped -p hided --test opener_lifecycle
+          bash scripts/verify-cargo.sh test-scoped -p hide-host --lib workspace_bridge
+          bash scripts/verify-cargo.sh test-scoped -p hided --test connect_stop
+          bash scripts/verify-cargo.sh test-scoped -p hided --test handshake
       - name: Install kit and its Windows command shim
         if: ${{ !cancelled() }}
         timeout-minutes: 10
-        run: cargo test --locked -p hide-kit
+        run: bash scripts/verify-cargo.sh test-scoped -p hide-kit
       - name: Agent hooks, their Windows entries run through PowerShell
         # The hook file writer, the entries Claude Code and Codex run on
         # Windows, and the helper's stdin deadline. It stands on its own, so
         # it runs whatever the step above answered.
         if: ${{ !cancelled() }}
         timeout-minutes: 15
-        run: cargo test --locked -p hide-agent-hooks
+        run: bash scripts/verify-cargo.sh test-scoped -p hide-agent-hooks
       - name: Fetch the pinned Herdr runtime
         id: herdr
         # The proof below stands on its own, so it runs whatever the step
@@ -180,33 +251,67 @@ jobs:
         timeout-minutes: 10
         env:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
-        run: cargo test --locked -p hided --test real_herdr -- --ignored --nocapture
+        run: bash scripts/verify-cargo.sh test-scoped -p hided --test real_herdr -- --ignored --nocapture
+      - name: Attribute a native listening port to its working directory
+        # Cleanup must refuse an unreadable in-use check. This unchanged core
+        # contract exposes the native read reason that a browser error lacks.
+        if: ${{ !cancelled() }}
+        timeout-minutes: 5
+        run: |
+          status=0
+          bash scripts/verify-cargo.sh test-scoped -p herdr-core --lib ports::tests::a_real_listener_is_found_and_attributed_to_the_directory_it_runs_in -- --exact --nocapture || status=$?
+          bash scripts/verify-cargo.sh test-scoped -p herdr-core --lib ports::tests::cleanup_keeps_a_checkout_in_use_when_a_listener_starts_through_another_spelling -- --exact --nocapture || status=$?
+          exit "$status"
       - uses: pnpm/action-setup@v6
+        if: ${{ !cancelled() }}
         with:
           version: 10
       - uses: actions/setup-node@v4
+        if: ${{ !cancelled() }}
         with:
           node-version: 22
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile --ignore-scripts
+        id: web-deps
+        if: ${{ !cancelled() }}
+        run: bash scripts/verify-web.sh install --ignore-scripts
       - name: Web shell typecheck and unit suite, desktop app typecheck
+        if: ${{ !cancelled() && steps.web-deps.outcome == 'success' }}
         timeout-minutes: 10
         run: |
-          pnpm --dir web typecheck
-          pnpm --dir web test
-          pnpm --dir desktop typecheck
+          bash scripts/verify-web.sh web typecheck
+          bash scripts/verify-web.sh web lint
+          bash scripts/verify-web.sh web test
+          bash scripts/verify-web.sh desktop typecheck
+          bash scripts/verify-web.sh desktop lint
       - name: Desktop app unit suite
+        if: ${{ !cancelled() && steps.web-deps.outcome == 'success' }}
         timeout-minutes: 10
-        run: pnpm --dir desktop test
+        run: bash scripts/verify-web.sh desktop test
+
+  # The browser `@platform` tests on Windows, the same set the macOS lane
+  # runs, against hided and the pinned Herdr for Windows.
+  windows-e2e:
+    name: windows e2e
+    needs: plan
+    if: contains(fromJSON(needs.plan.outputs.lanes), 'windows-e2e')
+    uses: ./.github/workflows/web-e2e.yml
+    with:
+      lane: windows
+      runner: windows-latest
+      herdr-platform: windows-x86_64
+      shards: 1
+      grep: "@platform"
 
   # The web shell is the same code on every operating system, so the whole
   # suite runs once, on Linux, where runners are plentiful. What differs by
   # system is the daemon and Herdr under it, and the `@platform` tests cover
-  # that on macOS.
+  # that on macOS and Windows.
   web-e2e:
     name: web e2e
+    needs: plan
+    if: contains(fromJSON(needs.plan.outputs.lanes), 'web-e2e')
     uses: ./.github/workflows/web-e2e.yml
     with:
       lane: linux
@@ -227,6 +332,8 @@ jobs:
 
   web-e2e-platform:
     name: web e2e (macOS)
+    needs: plan
+    if: contains(fromJSON(needs.plan.outputs.lanes), 'web-e2e-platform')
     uses: ./.github/workflows/web-e2e.yml
     with:
       lane: macos
@@ -239,10 +346,14 @@ jobs:
   # leg runs in `desktop-e2e` below, on the runner that job already holds.
   os-contract:
     name: os contract
+    needs: plan
+    if: contains(fromJSON(needs.plan.outputs.lanes), 'os-contract')
     uses: ./.github/workflows/os-contract.yml
 
   desktop-e2e:
     name: desktop e2e
+    needs: plan
+    if: contains(fromJSON(needs.plan.outputs.lanes), 'desktop-e2e')
     runs-on: macos-15
     timeout-minutes: 30
     steps:
@@ -262,22 +373,29 @@ jobs:
       - name: Build hide and hided for the desktop app
         # hide-agent-hooks and hide-host-helper too: the home-layout spec
         # stages every binary the packaged app carries.
-        run: bash -lc 'source scripts/toolchain-env.sh && cargo build --locked -p hided -p hide-agent-hooks -p hide-host'
+        run: bash scripts/verify-cargo.sh cli
       - name: Install dependencies
-        run: pnpm install --frozen-lockfile
+        run: bash scripts/verify-web.sh install
+      - name: Install the pinned Electron runtime
+        id: electron
+        timeout-minutes: 5
+        # Acquire once before the suite, preserving an upstream failure here.
+        run: bash scripts/verify-web.sh desktop electron-install
       - name: Build the web shell
         # The desktop app serves web/dist through the hided it starts.
-        run: pnpm --dir web build
-      - name: Build hcoord
-        # The staged app carries plugins/hcoord/dist, which the kit installs
-        # at ~/.hide/hcoord; the home-layout spec stages it like a package.
-        run: pnpm --dir plugins/hcoord build
+        run: bash scripts/verify-web.sh web build
       - name: Install Playwright Chromium
         # The browser spec opens a page in Chromium beside the Electron app.
-        run: pnpm --dir desktop exec playwright install chromium
+        run: bash scripts/verify-web.sh desktop playwright-install
       - name: Fetch the pinned Herdr runtime
         id: herdr
         run: echo "bin=$(zsh scripts/fetch-herdr-runtime.sh)" >> "$GITHUB_OUTPUT"
+      - name: Compare the binary schema and version with the pin on macOS
+        run: python3 scripts/check-herdr-schema.py --herdr-bin "${{ steps.herdr.outputs.bin }}"
+      - name: Remote mailbox over private SSH
+        env:
+          HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
+        run: bash scripts/verify-cargo.sh test-scoped -p herdr-core --test remote_delivery -- --ignored
       - name: OS contract on macOS
         # The macOS leg of os-contract.yml, here because this job already
         # holds a macOS runner and the workspace build it needs.
@@ -285,23 +403,25 @@ jobs:
         env:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
         run: |
-          bash -lc 'source scripts/toolchain-env.sh && cargo test --locked -p hide-platform -p hide-herdr-client'
-          bash -lc 'source scripts/toolchain-env.sh && cargo test --locked -p hide-herdr-client --test real_herdr -- --ignored --nocapture'
+          bash scripts/verify-cargo.sh test-scoped -p hide-platform -p hide-herdr-client
+          bash scripts/verify-cargo.sh test-scoped -p hide-herdr-client --test real_herdr -- --ignored --nocapture
       - name: Desktop app end-to-end
         # The desktop app against an isolated Herdr, starting its own hided
         # through the hide CLI built above. Electron downloads its runtime on
-        # first launch.
+        # first launch outside CI; this lane acquires it once before the suite.
         timeout-minutes: 20
         env:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
           HIDE_E2E_SCREENSHOT_DIR: ${{ runner.temp }}/hide-e2e
         run: |
           mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
-          pnpm --dir desktop e2e --grep-invert @flaky
-      - name: Quarantined end-to-end (does not block verify)
+          bash scripts/verify-web.sh desktop e2e --grep-invert @flaky
+      - name: Quarantined tests (does not block verify)
         # A test tagged @flaky carries the issue that tracks its cause. It still
         # runs here, once, so a fix shows up as a pass and a regression of the
         # product it covers still shows up in the log; it cannot turn verify red.
+        # A Rust test quarantined on macOS (`ignore = "<issue>"` under
+        # `cfg_attr(target_os = "macos")`) runs here the same way.
         # The build is the required step's. `--no-deps` matters: a project
         # dependency runs whole whatever `--grep` says, so a `@needs-focus`
         # quarantined test would otherwise bring the entire background suite
@@ -311,14 +431,17 @@ jobs:
         # Into its own output directory: Playwright empties its output directory
         # when a run starts, which would delete the required step's failure
         # snapshots.
-        if: ${{ !cancelled() && steps.herdr.outcome == 'success' }}
+        if: ${{ !cancelled() && steps.electron.outcome == 'success' && steps.herdr.outcome == 'success' }}
         continue-on-error: true
         env:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
           HIDE_E2E_SCREENSHOT_DIR: ${{ runner.temp }}/hide-e2e
         run: |
+          status=0
+          bash scripts/verify-cargo.sh test-scoped -p hide-platform -- --ignored || status=$?
           mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
-          pnpm --dir desktop exec playwright test --no-deps --grep @flaky --output=test-results-quarantine
+          bash scripts/verify-web.sh desktop e2e --no-deps --grep @flaky --output=test-results-quarantine || status=$?
+          exit "$status"
       - name: Keep the e2e run's logs
         if: failure() || steps.quarantine.outcome == 'failure'
         uses: actions/upload-artifact@v7
@@ -332,14 +455,19 @@ jobs:
 
   verify:
     name: verify
-    needs: [rust, checks, web-e2e, web-e2e-platform, desktop-e2e, os-contract, windows-check]
+    needs: [plan, policy, rust, web-checks, desktop-checks, os-contract, windows-check, windows-e2e, web-e2e, web-e2e-platform, desktop-e2e]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:
-      - name: Every lane succeeded
-        # A skipped or cancelled lane is a failure here; `needs` alone would
-        # let one through.
-        run: |
-          echo '${{ toJSON(needs) }}' | jq -e 'all(.[]; .result == "success")' >/dev/null \
-            || { echo 'a lane did not succeed:'; echo '${{ toJSON(needs) }}' | jq '.'; exit 1; }
+      - uses: actions/checkout@v7
+        with:
+          sparse-checkout: scripts/ci-plan.py
+          sparse-checkout-cone-mode: false
+      - name: Every planned lane succeeded and every other lane was skipped
+        # A planned lane that was skipped, cancelled or failed fails here, and
+        # so does a lane that ran without being planned or a `needs` entry the
+        # plan does not know.
+        env:
+          NEEDS: ${{ toJSON(needs) }}
+        run: python3 scripts/ci-plan.py aggregate

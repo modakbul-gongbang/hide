@@ -135,8 +135,30 @@ fn the_machine_names_itself_the_same_way_twice() {
     assert_eq!(host::name().unwrap(), name);
     let id = host::machine_id().unwrap();
     assert!(!id.is_empty());
-    assert!(!id.chars().any(char::is_whitespace), "{id:?}");
-    assert_eq!(host::machine_id().unwrap(), id);
+    assert!(
+        !id.chars().any(char::is_whitespace),
+        "machine identities contain no whitespace"
+    );
+    assert!(
+        id == id.to_lowercase(),
+        "lineage identities use one spelling"
+    );
+    assert!(
+        host::machine_id().unwrap() == id,
+        "the native machine identity is stable"
+    );
+    #[cfg(target_os = "macos")]
+    assert!(
+        id.len() == 36
+            && id.bytes().enumerate().all(|(index, byte)| {
+                if matches!(index, 8 | 13 | 18 | 23) {
+                    byte == b'-'
+                } else {
+                    byte.is_ascii_hexdigit()
+                }
+            }),
+        "the macOS identity is a hardware UUID"
+    );
 }
 
 /// Where the system keeps an item it trashed, found and removed again so the
@@ -442,6 +464,14 @@ fn herdrs_default_socket_is_resolved_in_herdrs_own_order() {
         socket(home.join(".config"))
     };
     assert_eq!(
+        host::herdr_config_dir_from(&with_appdata).unwrap(),
+        if cfg!(windows) {
+            roaming.join("herdr")
+        } else {
+            home.join(".config/herdr")
+        }
+    );
+    assert_eq!(
         host::herdr_socket_default_from(&with_appdata).unwrap(),
         expected
     );
@@ -451,6 +481,10 @@ fn herdrs_default_socket_is_resolved_in_herdrs_own_order() {
         ("APPDATA", roaming),
         ("XDG_CONFIG_HOME", config.clone()),
     ]);
+    assert_eq!(
+        host::herdr_config_dir_from(&with_config).unwrap(),
+        config.join("herdr")
+    );
     assert_eq!(
         host::herdr_socket_default_from(&with_config).unwrap(),
         socket(config)

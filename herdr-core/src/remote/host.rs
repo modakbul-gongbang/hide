@@ -15,6 +15,8 @@
 //! by reading the target again rather than by resending it (B14, B33).
 
 use super::*;
+#[path = "retirement.rs"]
+mod retirement;
 pub use crate::host_access::HostCallError;
 use crate::host_access::{HostAnswer, HostChannel, call_as};
 use crate::model::{HostConsent, HostIdentity};
@@ -59,7 +61,7 @@ fn present<'de, D: serde::Deserializer<'de>>(
 /// this contract describes bumps it, and every device asks again (B51).
 /// Contract 2 added the `hide` command installed beside the helper and its
 /// link in the consented command folder. Contract 3 is the whole install kit
-/// (PRD device-parity D-12): the hook entries and hcoord besides the command
+/// (PRD device-parity D-12): the hook entries besides the command
 /// (it also held the labels plugin, which labels-in-hided retired, so the
 /// scope only narrowed); a contract-2 consent with the same folders is
 /// carried to 3 on its next connection without asking (D-13).
@@ -84,14 +86,10 @@ const HELPER_NAME: &str = "hide-host-helper";
 /// device's panes can reach this Hide through their return route.
 const CLI_NAME: &str = "hide";
 /// The rest of the install kit (`hide_kit`), under the names the kit reads
-/// in its folder: the hook helper and hcoord.
+/// in its folder: the hook helper.
 const HOOKS_NAME: &str = "hide-agent-hooks";
-const HCOORD_NAME: &str = "hcoord";
 /// Bounds on a kit folder read into memory for upload (engineering rule
 /// 15); a folder past them is left out and the kit names the missing part.
-const MAX_PAYLOAD_FILES: usize = 1024;
-const MAX_PAYLOAD_BYTES: u64 = 256 * 1024 * 1024;
-const MAX_PAYLOAD_DEPTH: usize = 8;
 const INSTALL_TIMEOUT: Duration = Duration::from_secs(120);
 /// How long a draining connection waits for its admitted requests before it
 /// closes anyway. An admitted request can wait up to its timeout to be
@@ -126,8 +124,7 @@ impl HelperPackages {
 
     /// Everything this build puts on a device of `os`/`arch`: the helper,
     /// which the device cannot do without, and the kit's parts, each found by
-    /// the same rule as the helper (hcoord is JavaScript and serves every
-    /// platform). A part this build does not carry is left out and named, and
+    /// the same rule as the helper. A part this build does not carry is left out and named, and
     /// the kit on the device reports it as missing from the build.
     fn payload(&self, os: &str, arch: &str) -> Result<Payload, EstablishError> {
         let helper = self.find(os, arch).map_err(EstablishError::Unsupported)?;
@@ -147,21 +144,6 @@ impl HelperPackages {
                     platform_label(os)
                 )),
             }
-        }
-        let hcoord = self
-            .directory
-            .as_ref()
-            .map(|directory| directory.join(HCOORD_NAME))
-            .filter(|folder| folder.is_dir());
-        match hcoord {
-            Some(folder) => match read_folder(HCOORD_NAME, &folder) {
-                Ok(files) => payload.files.extend(files),
-                Err(reason) => payload.missing.push(reason),
-            },
-            None => payload.missing.push(format!(
-                "This Hide build does not include {HCOORD_NAME} for {} {arch}",
-                platform_label(os)
-            )),
         }
         Ok(payload)
     }
@@ -248,55 +230,6 @@ fn read_package(relative: &str, path: &Path) -> Result<Package, String> {
         bytes,
         executable: mode & 0o111 != 0,
     })
-}
-
-/// Every regular file under `folder`, as `<name>/<path>`. A link, a folder
-/// deeper than the bound, or a folder past the file or byte bound leaves the
-/// whole part out rather than a partial copy of it.
-fn read_folder(name: &str, folder: &Path) -> Result<Vec<Package>, String> {
-    let mut files = Vec::new();
-    let mut total = 0u64;
-    let mut pending = vec![(folder.to_path_buf(), name.to_owned(), 0usize)];
-    while let Some((path, relative, depth)) = pending.pop() {
-        if depth > MAX_PAYLOAD_DEPTH {
-            return Err(format!(
-                "{} is nested too deeply to install",
-                folder.display()
-            ));
-        }
-        let entries = std::fs::read_dir(&path)
-            .map_err(|error| format!("{} could not be read: {error}", path.display()))?;
-        for entry in entries {
-            let entry =
-                entry.map_err(|error| format!("{} could not be read: {error}", path.display()))?;
-            let Some(file_name) = entry.file_name().to_str().map(str::to_owned) else {
-                return Err(format!("{} holds a name that is not UTF-8", path.display()));
-            };
-            let kind = entry.file_type().map_err(|error| {
-                format!("{} could not be read: {error}", entry.path().display())
-            })?;
-            let child = format!("{relative}/{file_name}");
-            if kind.is_dir() {
-                pending.push((entry.path(), child, depth + 1));
-            } else if kind.is_file() {
-                let package = read_package(&child, &entry.path())?;
-                total += package.bytes.len() as u64;
-                files.push(package);
-                if files.len() > MAX_PAYLOAD_FILES || total > MAX_PAYLOAD_BYTES {
-                    return Err(format!(
-                        "{} is larger than a device install carries",
-                        folder.display()
-                    ));
-                }
-            } else {
-                return Err(format!(
-                    "{} is not a plain file, so {name} is not installed",
-                    entry.path().display()
-                ));
-            }
-        }
-    }
-    Ok(files)
 }
 
 fn platform_label(os: &str) -> &str {
@@ -733,6 +666,7 @@ pub fn establish(
     client: &RusshRemoteClient,
     packages: &HelperPackages,
     consent: &HostConsent,
+    retirement_projects: &[String],
     on_close: Box<dyn FnOnce(String) + Send + 'static>,
 ) -> Result<Established, EstablishError> {
     let observed_key = Arc::new(Mutex::new(None));
@@ -778,7 +712,13 @@ pub fn establish(
     let result = client.runtime.block_on(async {
         tokio::time::timeout(
             INSTALL_TIMEOUT,
-            start_helper(&mut session, client, packages, &consent.helper_root),
+            start_helper(
+                &mut session,
+                client,
+                packages,
+                &consent.helper_root,
+                retirement_projects,
+            ),
         )
         .await
         .unwrap_or_else(|_| {
@@ -838,6 +778,7 @@ async fn start_helper(
     client: &RusshRemoteClient,
     packages: &HelperPackages,
     helper_root: &str,
+    retirement_projects: &[String],
 ) -> Result<(Channel<Msg>, bool, String, Upload), EstablishError> {
     let target = client.host.host_id.clone();
     let uname = execute_channel(
@@ -857,6 +798,21 @@ async fn start_helper(
     }
     let (os, arch) = platform_of(uname.stdout.trim()).map_err(EstablishError::Unsupported)?;
     let payload = packages.payload(&os, &arch)?;
+    // The helper inherits this SSH exec environment. Read its path overrides
+    // before uploading any candidate; older helpers need no new operation.
+    let environment = execute_channel(
+        session,
+        r#"[ "${#HCOORD_HOME}" -le 4096 ] && [ "${#HIDE_STATE_DIR}" -le 4096 ] && [ "${#XDG_STATE_HOME}" -le 4096 ] || exit 65; printf '%s\n' "${HCOORD_HOME-}" "${HIDE_STATE_DIR-}" "${XDG_STATE_HOME-}""#,
+        "remote-retirement-environment",
+        &target,
+        RemoteStage::Sftp,
+    )
+    .await
+    .map_err(EstablishError::Connect)?;
+    if environment.exit_status != 0 {
+        return Err(EstablishError::Install("The device retirement paths could not be inspected; check its SSH environment and retry; no helper was uploaded".into()));
+    }
+    let locations = retirement::Locations::from_environment(&environment.stdout)?;
 
     let channel = session.channel_open_session().await.map_err(|error| {
         EstablishError::Install(format!("The SFTP channel could not be opened: {error}"))
@@ -869,7 +825,7 @@ async fn start_helper(
         })?;
     let raw = RawSftpSession::new(channel.into_stream());
     raw.set_timeout(30);
-    let installed = install(&raw, helper_root, &payload).await;
+    let installed = install(&raw, helper_root, &payload, retirement_projects, &locations).await;
     let _ = raw.close_session();
     let installed = installed?;
     let (helper_path, fresh) = (installed.helper_path, installed.fresh);
@@ -907,7 +863,7 @@ struct Installed {
 
 /// Puts this build's helper and kit parts in `<root>/<version>/`, where the
 /// version is a prefix of the digest over all of them, keeping the folder
-/// layout the kit reads (`hcoord/dist/...`). The
+/// layout the kit reads. The
 /// helper is reused only after checking its bytes, because Hide runs it; any
 /// other file is reused when a file of its size that only the account can
 /// change is already there, because only a verified upload is ever renamed
@@ -921,6 +877,8 @@ async fn install(
     raw: &RawSftpSession,
     helper_root: &str,
     payload: &Payload,
+    retirement_projects: &[String],
+    locations: &retirement::Locations,
 ) -> Result<Installed, EstablishError> {
     raw.init()
         .await
@@ -964,6 +922,13 @@ async fn install(
             "The helper install root is not a plain path".to_owned(),
         ));
     }
+    // No folders, staging files or current link have changed at this point.
+    tokio::time::timeout(
+        SSH_OPERATION_TIMEOUT,
+        retirement::preflight(raw, &home, owner, retirement_projects, locations),
+    ).await.map_err(|_| EstablishError::Install(
+        "The device retirement preflight timed out; inspect its run and request state and retry; no helper was uploaded".into()
+    ))??;
     // Everything from here goes through the path the check resolved, whose
     // every folder was checked and none is a link, so a link on the spelled
     // path cannot be swapped between the check and the launch.
@@ -1608,6 +1573,9 @@ mod tests {
             os: "linux".to_owned(),
             arch: "x86_64".to_owned(),
             home: None,
+            machine_identity: hide_host::protocol::MachineIdentity::Unavailable {
+                reason: "fixture identity is unavailable".to_owned(),
+            },
         };
         let refusal = helper_protocol_refusal(&hello(PROTOCOL_VERSION - 1)).expect("refused");
         assert_eq!(
@@ -1777,21 +1745,15 @@ mod tests {
         let bare = packages.payload(os, arch).unwrap();
         assert_eq!(bare.files[0].relative, HELPER_NAME);
         assert_eq!(bare.files.len(), 1);
-        assert_eq!(bare.missing.len(), 3, "{:?}", bare.missing);
+        assert_eq!(bare.missing.len(), 2, "{:?}", bare.missing);
 
         write(&directory.path().join(CLI_NAME), b"cli", 0o755);
         write(&directory.path().join(HOOKS_NAME), b"hooks", 0o755);
-        write(
-            &directory.path().join("hcoord/dist/hcoord/cli.js"),
-            b"cli",
-            0o644,
-        );
         let full = packages.payload(os, arch).unwrap();
         assert!(full.missing.is_empty(), "{:?}", full.missing);
         assert_eq!(
             relative(&full),
             vec![
-                ("hcoord/dist/hcoord/cli.js".to_owned(), false),
                 ("hide".to_owned(), true),
                 ("hide-agent-hooks".to_owned(), true),
                 ("hide-host-helper".to_owned(), true),
@@ -1799,7 +1761,7 @@ mod tests {
         );
         assert_ne!(full.version(), bare.version());
 
-        // Another processor gets its own helper and platform-neutral hcoord,
+        // Another processor gets its own helper,
         // never this machine's binaries.
         let other_arch = if arch == "x86_64" {
             "aarch64"
@@ -1816,10 +1778,7 @@ mod tests {
         let other = packages.payload(os, other_arch).unwrap();
         assert_eq!(
             relative(&other),
-            vec![
-                ("hcoord/dist/hcoord/cli.js".to_owned(), false),
-                ("hide-host-helper".to_owned(), true),
-            ]
+            vec![("hide-host-helper".to_owned(), true),]
         );
         assert_eq!(other.missing.len(), 2, "{:?}", other.missing);
     }
@@ -1832,26 +1791,14 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let (os, arch) = (std::env::consts::OS, std::env::consts::ARCH);
         write(&directory.path().join(HELPER_NAME), b"helper", 0o755);
-        write(
-            &directory.path().join("hcoord/dist/hcoord/cli.js"),
-            b"one",
-            0o644,
-        );
+        write(&directory.path().join(HOOKS_NAME), b"one", 0o644);
         let packages = HelperPackages::new(Some(directory.path().to_path_buf()));
         let first = packages.payload(os, arch).unwrap().version();
         assert_eq!(packages.payload(os, arch).unwrap().version(), first);
-        write(
-            &directory.path().join("hcoord/dist/hcoord/cli.js"),
-            b"two",
-            0o644,
-        );
+        write(&directory.path().join(HOOKS_NAME), b"two", 0o644);
         let second = packages.payload(os, arch).unwrap().version();
         assert_ne!(second, first);
-        write(
-            &directory.path().join("hcoord/dist/hcoord/cli.js"),
-            b"two",
-            0o755,
-        );
+        write(&directory.path().join(HOOKS_NAME), b"two", 0o755);
         assert_ne!(packages.payload(os, arch).unwrap().version(), second);
     }
 }
@@ -1892,6 +1839,7 @@ mod probe {
             &client,
             &packages,
             &consent,
+            &[],
             Box::new(move |reason| {
                 *lock_recover(&seen) = Some(reason);
             }),

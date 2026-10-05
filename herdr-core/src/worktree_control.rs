@@ -7,7 +7,7 @@ use std::sync::mpsc::{SyncSender, TrySendError, sync_channel};
 
 use crate::agent_start::StartError;
 
-const CONFIRM_TIMEOUT: Duration = Duration::from_secs(5);
+pub(crate) const CONFIRM_TIMEOUT: Duration = Duration::from_secs(5);
 const CONFIRM_POLL: Duration = Duration::from_millis(100);
 /// A host's Git checks answer in seconds; a removal deletes a whole folder.
 const HOST_CHECK_TIMEOUT: Duration = Duration::from_secs(30);
@@ -341,6 +341,9 @@ pub struct WorktreeTaskRequest {
 pub struct WorktreeTaskOutcome {
     pub path: String,
     pub pane_id: String,
+    /// The tab Hide opened in an existing checkout, so the runtime places it
+    /// under `path` rather than under its pane's birth cwd.
+    pub created_tab_id: Option<String>,
     /// Worktree creation succeeded even when its optional purpose did not.
     /// The runtime records this as a diagnostic without turning the finished
     /// creation into a failed operation.
@@ -1224,6 +1227,7 @@ fn create_checkout_tab(
     Ok(WorktreeTaskOutcome {
         path: request.checkout_path.clone(),
         pane_id: tab.pane_id,
+        created_tab_id: Some(tab.tab_id),
         purpose_error: None,
         unconfirmed_purpose_token: None,
         issue_error: None,
@@ -1338,6 +1342,7 @@ fn create_worktree_observing_purpose(
         return Ok(WorktreeTaskOutcome {
             path: created.path,
             pane_id: created.pane_id,
+            created_tab_id: None,
             issue_error,
             purpose_error: purpose_failure
                 .as_ref()
@@ -1646,8 +1651,9 @@ fn trace(_path: &str, pane_ids: &[String], stage: &str, error: Option<&str>) {
 
 /// Closes `pane_ids` and waits until Herdr's snapshot lists none of them and
 /// no pane at any of `paths`, so the caller's next step cannot run beside a
-/// pane that is still there.
-fn close_checkout_panes(
+/// pane that is still there. A worktree deletion and a reviewed cleanup share
+/// this one pane-closing path.
+pub(crate) fn close_checkout_panes(
     connector: &dyn ApiConnector,
     paths: &[String],
     pane_ids: &[String],

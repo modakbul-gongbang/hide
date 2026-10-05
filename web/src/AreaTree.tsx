@@ -6,6 +6,7 @@ import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
 import { holdShellDrag } from "./shellDrag";
 import { useUiStore } from "./ui";
+import { useInterfaceTranslation } from "./i18n/client";
 import { IDLE, movePointer, pressTab, relayout, releasePointer, type DragSession } from "./areaDrag";
 import { focusFromKeyboard, installFocusModality } from "./areaFocus";
 import { RATIO_MAX, RATIO_MIN, RESIZE_STEP, areasOf, dropTarget, findArea, locateDisplay, ratioAtOffset, revealedScroll, sameTarget, singleAreaGeometry, steppedRatio, tabStripFit, areaGeometry,
@@ -13,9 +14,9 @@ import { RATIO_MAX, RATIO_MIN, RESIZE_STEP, areasOf, dropTarget, findArea, locat
   type DividerBox, type DropTarget, type Geometry, type LayoutSizes, type Point, type Rect, type TabFit, type TabSlot, type TabStripSizes } from "./areaLayout";
 
 /**
- * `fit` says how the tab draws its contents in its slot (`tabStripFit`): an
- * Agent tab shrinks from titled through compact to marks as its bar fills;
- * a View tab is always titled.
+ * `fit` says how the tab draws its contents in its slot (`tabStripFit`): a
+ * tab shrinks from titled through compact to marks as its bar fills, with
+ * the selected title kept longest in both Agent and View areas.
  */
 export type AreaTabInteraction = { selected: boolean; fit: TabFit; areaActive: boolean; dragging: boolean; press: (event: React.PointerEvent<HTMLElement>) => void; select: () => void };
 
@@ -40,17 +41,11 @@ export function tabFit(selected: boolean, fit: TabFit): { tab: string; title: st
 }
 
 /**
- * A View tab's slot: every tab asks for the preferred width and all shrink
- * alike down to the title minimum, then the strip scrolls.
- */
-const VIEW_TAB_SLOT = "flex w-(--size-tab-preferred) min-w-(--size-tab-title-min)";
-
-/**
- * An Agent tab's slot, at the width `tabStripFit` gave the selected tab or
+ * An area's tab slot, at the width `tabStripFit` gave the selected tab or
  * the others, which the bar writes on its tab list. A tab being renamed keeps
  * the preferred width so its field stays usable.
  */
-const AGENT_TAB_SLOT = {
+const TAB_SLOT = {
   selected: "flex shrink-0 w-(--tab-selected-width) has-data-renaming:w-(--size-tab-preferred)",
   others: "flex shrink-0 w-(--tab-other-width) has-data-renaming:w-(--size-tab-preferred)",
 };
@@ -133,6 +128,7 @@ export function createAreaTree<I extends AreaItem>(column: "view" | "agent") {
     return tree;
   }
 function AreaTree({ layout, adapter, children }: { layout: AreaLayout<I>; adapter: AreaAdapter<I>; children?: React.ReactNode }) {
+  const { t } = useInterfaceTranslation();
   const [body, setBody] = useState<HTMLDivElement | null>(null);
   const [size, setSize] = useState({ width: 0, height: 0 });
   useLayoutEffect(() => {
@@ -199,7 +195,7 @@ function AreaTree({ layout, adapter, children }: { layout: AreaLayout<I>; adapte
     }, 0);
   };
   const resolve = (displayId: string) => (client: Point): DropTarget => {
-    if (!body || !body.contains(document.elementFromPoint(client.x, client.y))) return { kind: "none", reason: `Drop inside the ${column === "agent" ? "Agent" : "View"} column.` };
+    if (!body || !body.contains(document.elementFromPoint(client.x, client.y))) return { kind: "none", reason: t(`panes.area.dropColumn.${column}` as const) };
     const origin = body.getBoundingClientRect();
     const target = dropTarget({
       layout: layoutRef.current,
@@ -414,12 +410,13 @@ function NodeView({ node }: { node: AreaNode<I> }) {
 /** A divider: dragged with a guide line, or moved a step at a time from the keyboard (B9, B20). */
 function Separator({ split, box }: { split: AreaSplit<I>; box: DividerBox }) {
   const tree = useTree();
+  const { t } = useInterfaceTranslation();
   const row = split.axis === "row";
   return (
     <div
       role="separator"
       aria-orientation={row ? "vertical" : "horizontal"}
-      aria-label={`Resize the ${tree.adapter.words.area}s ${row ? "side by side" : "above and below"}`}
+      aria-label={t(`panes.area.resize.${column}.${row ? "side" : "stack"}` as const)}
       aria-valuenow={Math.round(split.ratio * 100)}
       aria-valuemin={Math.round(RATIO_MIN * 100)}
       aria-valuemax={Math.round(RATIO_MAX * 100)}
@@ -441,6 +438,7 @@ function Separator({ split, box }: { split: AreaSplit<I>; box: DividerBox }) {
 
 function AreaView({ area, index, count, switcher }: { area: Area<I>; index: number; count: number; switcher: boolean }) {
   const tree = useTree();
+  const { t } = useInterfaceTranslation();
   const display = tree.adapter.shown ? tree.adapter.shown(area) : area.displays.find((row) => row.id === area.active) ?? null;
   const active = tree.layout.active_area === area.id;
   const keyboard = tree.adapter.keyboardArea === area.id;
@@ -453,7 +451,7 @@ function AreaView({ area, index, count, switcher }: { area: Area<I>; index: numb
   return (
     <section
       className="flex min-h-0 min-w-0 flex-1 flex-col"
-      aria-label={`${tree.adapter.words.plural.slice(0, -1)} ${index + 1} of ${count}`}
+      aria-label={t(`panes.area.nameOf.${column}` as const, { index: index + 1, total: count })}
       {...data("area-id", area.id)}
       data-active-area={active ? "true" : "false"}
       data-keyboard-area={keyboard ? "true" : "false"}
@@ -475,18 +473,16 @@ function AreaView({ area, index, count, switcher }: { area: Area<I>; index: numb
 
 /**
  * An area's own tab bar; only the active area's shown tab carries the accent
- * indicator (B1, B20). Its New tab follows the tabs and opens the file
- * palette into this area (issue 170).
+ * indicator (B1, B20). Its New tab follows the tabs.
  */
 function AreaTabBar({ area, active, index, count, switcher }: { area: Area<I>; active: boolean; index: number; count: number; switcher: boolean }) {
   const tree = useTree();
+  const { t } = useInterfaceTranslation();
   const shown = area.displays.find((row) => row.id === area.active) ?? null;
   const selectedId = tree.adapter.shown ? tree.adapter.shown(area)?.id : area.active;
-  // The tabs share the room left of the bar's own controls. Agent tabs shrink
-  // in stages, the selected one keeping its title longest (`tabStripFit`); a
-  // file is not told apart by its type's mark, so View tabs keep their titles
-  // and scroll. The room is the zone's, which the bar sizes, so the tabs' own
-  // widths never feed back.
+  // Both columns share the room left of the bar's own controls in stages,
+  // the selected tab keeping its title longest (`tabStripFit`). The room is
+  // the zone's, which the bar sizes, so the tabs' own widths never feed back.
   const zone = useRef<HTMLDivElement>(null);
   const newTab = useRef<HTMLButtonElement>(null);
   const strip = useRef<HTMLDivElement>(null);
@@ -496,7 +492,7 @@ function AreaTabBar({ area, active, index, count, switcher }: { area: Area<I>; a
   useLayoutEffect(() => {
     const node = zone.current;
     const list = strip.current;
-    if (column !== "agent" || !node || !list) return;
+    if (!node || !list) return;
     const sizes = readTabStripSizes();
     // Fractional bounds, rounded down: the tabs fill the bar to its end and never overflow it by a sliver.
     const measure = () => tabStripFit(Math.floor(node.getBoundingClientRect().width - (newTab.current?.getBoundingClientRect().width ?? 0)), tabCount, hasSelected, sizes);
@@ -533,19 +529,19 @@ function AreaTabBar({ area, active, index, count, switcher }: { area: Area<I>; a
   return (
     <div className={`flex h-[var(--size-tab-strip)] shrink-0 items-stretch border-b border-border ${active ? "bg-background" : "bg-card"}`} data-area-tab-bar={area.id} {...data("tab-bar", area.id)} {...tree.adapter.barAttributes}>
       <div ref={zone} className="flex min-w-0 flex-1 items-stretch">
-        <div ref={strip} role="tablist" aria-label={`${tree.adapter.tabListLabel}, area ${index + 1} of ${count}`} className="flex min-w-0 items-stretch overflow-x-auto">
+        <div ref={strip} role="tablist" aria-label={t("panes.area.tabListOf", { label: tree.adapter.tabListLabel, index: index + 1, total: count })} className="flex min-w-0 items-stretch overflow-x-auto">
           {area.displays.map((display) => (
             <EntryContextMenu
               key={display.id}
-              label={`${tree.adapter.label(display)} ${tree.adapter.words.item} actions`}
+              label={t(`panes.area.itemActions.${column}` as const, { label: tree.adapter.label(display) })}
               items={() => tree.menu(display.id)}
               onSelect={(id) => tree.adapter.runMenu(id, display.id)}
               onCloseAutoFocus={tree.adapter.onMenuCloseAutoFocus}
-              className={column === "agent" ? AGENT_TAB_SLOT[display.id === selectedId ? "selected" : "others"] : VIEW_TAB_SLOT}
+              className={TAB_SLOT[display.id === selectedId ? "selected" : "others"]}
               data-tab-menu={display.id}
               data-area-item={display.id}
             >
-              {tree.adapter.tab(display, { selected: display.id === selectedId, fit: column === "agent" ? fits[display.id === selectedId ? "selected" : "others"] : "titled", areaActive: active, dragging: tree.draggingId === display.id, press: (event) => tree.press(display.id, event), select: () => { if (!tree.takeClick()) tree.focus(display.id); } })}
+              {tree.adapter.tab(display, { selected: display.id === selectedId, fit: fits[display.id === selectedId ? "selected" : "others"], areaActive: active, dragging: tree.draggingId === display.id, press: (event) => tree.press(display.id, event), select: () => { if (!tree.takeClick()) tree.focus(display.id); } })}
             </EntryContextMenu>
           ))}
         </div>
@@ -565,8 +561,8 @@ function AreaTabBar({ area, active, index, count, switcher }: { area: Area<I>; a
       {switcher ? <AreaSwitcher current={area.id} /> : null}
       {shown ? (
         <EntryDropdown
-          label={`${tree.adapter.actionsLabel}: ${tree.adapter.label(shown)}`}
-          hint={`${tree.adapter.actionsLabel}: ${tree.adapter.label(shown)}`}
+          label={t("panes.area.actionsFor", { actions: tree.adapter.actionsLabel, label: tree.adapter.label(shown) })}
+          hint={t("panes.area.actionsFor", { actions: tree.adapter.actionsLabel, label: tree.adapter.label(shown) })}
           items={tree.menu(shown.id)}
           onSelect={(id) => tree.adapter.runMenu(id, shown.id)}
           trigger={
@@ -587,15 +583,16 @@ function AreaTabBar({ area, active, index, count, switcher }: { area: Area<I>; a
 /** A narrow window shows one area; this names it and switches to another (B13). */
 function AreaSwitcher({ current }: { current: string }) {
   const tree = useTree();
+  const { t } = useInterfaceTranslation();
   const areas = areasOf(tree.layout.root);
   const index = areas.findIndex((area) => area.id === current);
   const items: MenuEntry<string>[] = areas.map((area, at) => {
     const shown = area.displays.find((row) => row.id === area.active);
-    return { id: area.id, label: `${area.id === current ? "✓ " : ""}Area ${at + 1}${shown ? ` · ${tree.adapter.label(shown)}` : ""}`, unavailable: null };
+    return { id: area.id, label: `${area.id === current ? "✓ " : ""}${t("panes.area.areaN", { index: at + 1 })}${shown ? ` · ${tree.adapter.label(shown)}` : ""}`, unavailable: null };
   });
   return (
     <EntryDropdown
-      label={`${tree.adapter.words.plural.slice(0, -1)} ${index + 1} of ${areas.length}; the window shows one at a time. Switch ${tree.adapter.words.area}`}
+      label={t(`panes.area.switch.${column}` as const, { index: index + 1, total: areas.length })}
       items={items}
       onSelect={(id) => {
         if (id !== current) tree.adapter.focusArea(id);
@@ -604,7 +601,7 @@ function AreaSwitcher({ current }: { current: string }) {
         <Button
           variant="ghost"
           className="min-w-[var(--size-tab-overflow-control)] shrink-0 rounded-none text-subtle-foreground hover:text-foreground focus-visible:bg-accent"
-          aria-label={`${tree.adapter.words.plural.slice(0, -1)} ${index + 1} of ${areas.length}; the window shows one at a time. Switch ${tree.adapter.words.area}`}
+          aria-label={t(`panes.area.switch.${column}` as const, { index: index + 1, total: areas.length })}
           {...data("area-switch", current)}
         >
           {index + 1}/{areas.length}

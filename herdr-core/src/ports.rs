@@ -543,8 +543,7 @@ mod tests {
         }
         let facts = [CheckoutFacts {
             path: checkout.clone(),
-            agent_working: 0,
-            terminal_panes: Vec::new(),
+            ..Default::default()
         }];
         for spelling in spellings {
             let mut command = Command::new(std::env::current_exe().unwrap());

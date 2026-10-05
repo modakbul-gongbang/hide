@@ -1,3 +1,4 @@
+import { openProjectOverview } from "./overview-entry";
 // The PRs tab of a Project's Overview on an isolated pinned Herdr and hided
 // (PRD overview-lenses-prs): a Git project whose pull requests a fake `gh`
 // answers and records every write of, so nothing reaches GitHub. The tile
@@ -9,7 +10,7 @@
 // keeps the issue when the body write fails and writes only the body again
 // (B12, B13); a pull request whose checks failed is handed to an agent in a
 // worktree of its branch, fetched from origin (B15, B16), with the feedback
-// read failing once (B18); merged ones fold and offer 정리 (B19, B20); and
+// read failing once (B18); merged ones fold and offer Clean up (B19, B20); and
 // the PR chips and the sidebar's PR card lead to the row (B21). Light and
 // Dark captures land in HIDE_E2E_SCREENSHOT_DIR.
 
@@ -75,7 +76,7 @@ const PULLS: Listed[] = [
  * releases it, so the tab's skeleton can be seen; `pr edit 22` fails once;
  * the feedback read of #23 fails once. Anything else it is asked is refused.
  */
-function fakeGh(root: string): { bin: string; state: string } {
+function fakeGh(root: string, heads: Record<string, string>): { bin: string; state: string } {
   const bin = path.join(root, "gh-bin");
   const state = path.join(root, "gh-state");
   fs.mkdirSync(bin, { recursive: true });
@@ -94,6 +95,10 @@ function fakeGh(root: string): { bin: string; state: string } {
     title: pr.title,
     statusCheckRollup: pr.checks,
     headRefName: pr.branch,
+    // A settled pull request reaches a checkout only at its own commit, so each one
+    // names the commit its branch has here; a branch with no checkout gets a made-up one.
+    headRefOid: heads[pr.branch] ?? pr.number.toString(16).padStart(40, "0"),
+    isCrossRepository: false,
     baseRefName: "main",
     state: pr.state,
     reviewDecision: pr.review,
@@ -154,7 +159,7 @@ if (a === "issue" && b === "create") {
   process.exit(0);
 }
 if (a === "issue" && b === "list") { out(read("issues.json")); process.exit(0); }
-if (a === "issue" && b === "view") { out({ body: "이슈 본문", labels: [], author: { login: "hoyeon" }, assignees: [], createdAt: "2026-09-19T00:00:00Z", comments: [] }); process.exit(0); }
+if (a === "issue" && b === "view") { out({ body: "이슈 본문", labels: [], author: { login: "example-user" }, assignees: [], createdAt: "2026-09-19T00:00:00Z", comments: [] }); process.exit(0); }
 if (a === "api" && b === "graphql") { out({ data: { r0: { nameWithOwner: "acme/repo" } } }); process.exit(0); }
 fail("unsupported: " + args.join(" "));
 `;
@@ -206,7 +211,7 @@ function total(sent: Map<string, number>): number {
   return sum;
 }
 
-test("a project's PRs tab: grouped pull requests, 이슈 잇기, 맡기기 and 정리", async ({ page }) => {
+test("a project's PRs tab: grouped pull requests, Link issue, Assign and Clean up", async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 1000 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
@@ -247,7 +252,10 @@ test("a project's PRs tab: grouped pull requests, 이슈 잇기, 맡기기 and �
     const fixingPane = await workspaceAt(herdr, tree("fixing"), "리뷰 반영 작업 진행");
     await setFixtureLifecycle(herdr, fixingPane, "working");
 
-    const gh = fakeGh(herdr.root);
+    const heads = Object.fromEntries(
+      ["prd/turn", "prd/new-issue", "prd/fixing", "prd/merged"].map((branch) => [branch, git(repo, ["rev-parse", branch]).trim()]),
+    );
+    const gh = fakeGh(herdr.root, heads);
     daemon = await startHided(herdr, "overview-prs", undefined, { PATH: `${gh.bin}:${herdr.fixturePath}` });
     const last = new Map<string, Record<string, unknown>>();
     const sent = countSent(page, last);
@@ -257,8 +265,7 @@ test("a project's PRs tab: grouped pull requests, 이슈 잇기, 맡기기 and �
 
     // The project row opens the request view (overview-request-view D-05).
     await page.locator('[data-sidebar-mode="projects"]').click();
-    const repoRow = page.locator("[data-project-row]", { hasText: /^repo/ });
-    await repoRow.click();
+    await openProjectOverview(page, "repo");
     const overview = page.locator("[data-overview-screen]");
     await expect(overview).toHaveAttribute("data-overview-view", "requests");
     const tile = (id: string) => overview.locator(`[data-lens-tile="${id}"]`);
@@ -283,20 +290,20 @@ test("a project's PRs tab: grouped pull requests, 이슈 잇기, 맡기기 and �
     await expect(overview.locator('[data-pr="25"]')).toHaveCount(0);
     await expect(overview.locator('[data-pr-group="merged"]')).toHaveAttribute("data-folded", "true");
     await expect(tile("prs").locator("[data-lens-tile-value]")).toHaveAttribute("data-lens-tile-value", "4");
-    await expect(tile("prs")).toContainText("열림");
+    await expect(tile("prs")).toContainText("open");
     await expect(tile("prs").locator("[data-lens-tile-badge]")).toHaveText("2");
     await expect(tile("prs").locator("[data-lens-tile-bar]")).toHaveAttribute("data-lens-tile-bar", "turn:2 fixing:1 blocked:1");
     await tile("prs").locator("[data-lens-tile-badge]").hover();
-    await expect(page.getByRole("tooltip")).toContainText("내 차례 2");
-    await expect(page.getByRole("tooltip")).toContainText("리뷰 2");
+    await expect(page.getByRole("tooltip")).toContainText("My turn 2");
+    await expect(page.getByRole("tooltip")).toContainText("Review 2");
 
     // A row at rest (B3): state glyph, number, title, the empty issue cell,
-    // the agent marks, the branch, CI and the review word; only 변경 요청 is yellow.
+    // the agent marks, the branch, CI and the review word; only Changes requested is yellow.
     const row = (number: number) => overview.locator(`[data-pr="${number}"]`);
     await expect(row(21).locator("[data-pr-state]")).toHaveAttribute("data-pr-state", "open");
     await expect(row(21).locator('[data-pr-issue="none"]')).toBeVisible();
     await expect(row(21).locator("[data-pr-branch]")).toHaveText("prd/turn");
-    await expect(row(21).locator("[data-pr-review]")).toHaveText("리뷰 필요");
+    await expect(row(21).locator("[data-pr-review]")).toHaveText("Review required");
     await expect(row(23).locator("[data-pr-review]")).toHaveClass(/text-warning/);
     await expect(row(23).locator(`[data-pr-agent="${fixingPane}"]`)).toBeVisible();
     await expect(row(24).locator('[data-pr-checks-open="failed"]')).toBeVisible();
@@ -313,13 +320,13 @@ test("a project's PRs tab: grouped pull requests, 이슈 잇기, 맡기기 and �
     await expect(row(21).locator("[data-pr-link-icon]")).toBeHidden();
     await row(21).locator('[data-pr-issue="none"]').hover();
     await expect(row(21).locator("[data-pr-link-icon]")).toBeVisible();
-    await expect(page.getByRole("tooltip")).toContainText("이 PR을 이슈에 잇는다");
+    await expect(page.getByRole("tooltip")).toContainText("Link this PR to an issue");
     await row(21).locator("[data-pr-number]").hover();
     await expect(page.locator('[data-checkout-card="pull_request"]')).toContainText("#21");
     await row(24).locator("[data-pr-row]").hover();
     await expect(row(24).locator("[data-pr-delegate-open]")).toBeVisible();
     await rest(page, row(24).locator("[data-pr-delegate-open]"));
-    await expect(page.getByRole("tooltip")).toContainText("첫 지시 = 실패한 검사 · 리뷰 코멘트");
+    await expect(page.getByRole("tooltip")).toContainText("First instruction = failed checks and review comments");
     await rest(page, row(23).locator(`[data-pr-agent="${fixingPane}"]`));
     await expect(page.locator(`[data-lens-message="${fixingPane}"]`)).toBeVisible();
     expect(total(sent)).toBe(before);
@@ -327,7 +334,7 @@ test("a project's PRs tab: grouped pull requests, 이슈 잇기, 맡기기 and �
     await expect(page.locator(`[data-lens-message="${fixingPane}"]`)).toHaveCount(0);
 
     // The keyboard (B5): → unfolds, ← folds, ↓ moves; an unfolded row shows
-    // the branch's agents and GitHub, Workspace and 이슈 잇기.
+    // the branch's agents and GitHub, Workspace and Link issue.
     await row(23).locator("[data-pr-row]").focus();
     await page.keyboard.press("ArrowRight");
     await expect(row(23)).toHaveAttribute("data-open", "true");
@@ -349,8 +356,8 @@ test("a project's PRs tab: grouped pull requests, 이슈 잇기, 맡기기 and �
     expect((await checks).url()).toBe("https://github.com/acme/repo/pull/24/checks");
     await (await checks).close();
 
-    // 이슈 잇기 with a GitHub issue (B9, B10): the project's open issues,
-    // searchable; one confirmation, 그만두기 first; confirmed, one event, one
+    // Link issue with a GitHub issue (B9, B10): the project's open issues,
+    // searchable; one confirmation, Cancel linking first; confirmed, one event, one
     // body write, and the issue cell filled.
     await row(21).locator("[data-pr-row]").hover();
     await row(21).locator("[data-pr-link-open]").click();
@@ -360,7 +367,7 @@ test("a project's PRs tab: grouped pull requests, 이슈 잇기, 맡기기 and �
     await expect(picker.locator("[data-pr-link-choice]")).toHaveCount(1);
     await picker.locator('[data-pr-link-choice="github:acme/repo#5"]').click();
     const confirm = page.locator('[data-pr-link="21"]');
-    await expect(confirm.locator("[data-pr-link-confirm]")).toHaveText('PR #21 본문에 "Closes #5"을 씁니다. 머지되면 GitHub가 이슈를 닫습니다.');
+    await expect(confirm.locator("[data-pr-link-confirm]")).toHaveText('Add "Closes #5" to the body of PR #21. GitHub closes the issue when the PR is merged.');
     await expect(confirm.locator("[data-pr-link-cancel]")).toBeFocused();
     expect(writes(gh.state)).toEqual([]);
     await screenshot(page, "prs-link-confirm-light");
@@ -371,19 +378,19 @@ test("a project's PRs tab: grouped pull requests, 이슈 잇기, 맡기기 and �
     expect(writes(gh.state)).toEqual([["pr", "edit", "21", "--body", "리뷰를 기다리는 본문\n\nCloses #5"]]);
     await expect(row(21).locator('[data-pr-issue="github:acme/repo#5"]')).toBeVisible({ timeout: 30_000 });
 
-    // 새 이슈 만들기 (B12, B13): the pull request's title and body, one
+    // Create new issue (B12, B13): the pull request's title and body, one
     // confirmation; the body write fails, the issue stays made and linked,
-    // and 본문 다시 쓰기 writes only the body.
+    // and Write body again writes only the body.
     await row(22).locator("[data-pr-row]").hover();
     await row(22).locator("[data-pr-link-open]").click();
     await page.locator('[data-pr-link-picker="22"] [data-pr-link-new]').click();
     const made = page.locator('[data-pr-new-issue="22"]');
     await expect(made.locator("[data-pr-new-issue-title]")).toHaveValue("이슈로 만들 PR");
     await expect(made.locator("[data-pr-new-issue-body]")).toHaveValue("이슈로 옮길 PR 본문", { timeout: 20_000 });
-    await expect(made.locator("[data-pr-new-issue-confirm]")).toHaveText('이슈를 만들고 PR #22 본문에 "Closes #(새 번호)"를 씁니다');
+    await expect(made.locator("[data-pr-new-issue-confirm]")).toHaveText('Create an issue, then add "Closes #(new number)" to the body of PR #22');
     await made.locator('[data-pr-new-issue-submit="create"]').click();
-    await expect(made.locator("[data-pr-link-failure]")).toContainText("이슈 #9은 만들었고 PR 본문 쓰기는 실패했습니다", { timeout: 30_000 });
-    await expect(made.locator('[data-pr-new-issue-submit="retry"]')).toHaveText(/본문 다시 쓰기/);
+    await expect(made.locator("[data-pr-link-failure]")).toContainText("Issue #9 was created, but writing the PR body failed", { timeout: 30_000 });
+    await expect(made.locator('[data-pr-new-issue-submit="retry"]')).toHaveText(/Write body again/);
     await screenshot(page, "prs-new-issue-failed-light");
     await made.locator('[data-pr-new-issue-submit="retry"]').click();
     await expect(made).toHaveCount(0, { timeout: 30_000 });
@@ -407,7 +414,7 @@ test("a project's PRs tab: grouped pull requests, 이슈 잇기, 맡기기 and �
     await expect(row(21)).toHaveAttribute("data-open", "true");
     await expect(row(21).locator("[data-pr-row]")).toBeFocused();
 
-    // The sidebar's PR card has `PRs 탭에서 보기` (B21).
+    // The sidebar's PR card has `View on the PRs tab` (B21).
     await tile("agents").locator("[data-lens-tile-button]").click();
     const sidebarCheckout = page.locator('[data-project-list] [data-checkout][aria-label^="prd/new-issue"]');
     await sidebarCheckout.hover();
@@ -417,8 +424,8 @@ test("a project's PRs tab: grouped pull requests, 이슈 잇기, 맡기기 and �
     await expect(overview).toHaveAttribute("data-overview-view", "prs");
     await expect(row(22)).toHaveAttribute("data-open", "true");
 
-    // 맡기기 whose feedback read fails (B18): the prompt stays empty with why
-    // and 다시 읽기, which fills it; the start is never held back.
+    // Assign whose feedback read fails (B18): the prompt stays empty with why
+    // and Read again, which fills it; the start is never held back.
     await row(23).locator("[data-pr-row]").hover();
     await row(23).locator("[data-pr-menu]").click();
     await page.locator("[data-pr-menu-delegate]").click();
@@ -432,7 +439,7 @@ test("a project's PRs tab: grouped pull requests, 이슈 잇기, 맡기기 and �
     await page.keyboard.press("Escape");
     await expect(retrying).toHaveCount(0);
 
-    // ▷ 맡기기 on a bot's pull request with no checkout here (B15, B16): the
+    // ▷ Assign on a bot's pull request with no checkout here (B15, B16): the
     // branch is fixed, the dialog says it makes the worktree, the prompt is
     // the failed check with its link; started, a worktree of that branch
     // exists, fetched from origin, and the screen is the agent's pane.
@@ -441,9 +448,9 @@ test("a project's PRs tab: grouped pull requests, 이슈 잇기, 맡기기 and �
     const delegate = page.locator('[data-pr-delegate="24"]');
     await expect(delegate.locator("[data-pr-delegate-branch]")).toHaveValue("dependabot/cargo/sha2");
     await expect(delegate.locator("[data-pr-delegate-branch]")).toBeDisabled();
-    await expect(delegate.locator("[data-pr-delegate-new-worktree]")).toHaveText("이 브랜치의 워크트리를 만들고 시작합니다");
+    await expect(delegate.locator("[data-pr-delegate-new-worktree]")).toHaveText("Create a worktree for this branch, then start");
     await expect(delegate.locator("[data-pr-delegate-prompt]")).toHaveValue(
-      "PR #24 (dependabot/cargo/sha2)의 CI 실패와 변경 요청을 고쳐줘: Bump sha2 from 0.10.9 to 0.11.0\n\n실패한 검사:\n- verify https://github.com/acme/repo/actions/runs/7",
+      "Fix the failed CI and change requests of PR #24 (dependabot/cargo/sha2): Bump sha2 from 0.10.9 to 0.11.0\n\nFailed checks:\n- verify https://github.com/acme/repo/actions/runs/7",
       { timeout: 20_000 },
     );
     await expect(delegate.locator('[data-agent-kind="claude"], [data-agent-kind="codex"]')).toHaveCount(1);
@@ -464,9 +471,9 @@ test("a project's PRs tab: grouped pull requests, 이슈 잇기, 맡기기 and �
     await expect.poll(() => agentsIn(herdr, delegated as string), { timeout: 60_000 }).toContain("claude");
     await expect(page.locator('[data-task-agent="failed"]')).toHaveCount(0);
 
-    // 최근 머지 unfolds from its header, dimmed; 정리 opens the existing
+    // Recently merged unfolds from its header, dimmed; Clean up opens the existing
     // Delete worktree dialog, whose cancel changes nothing (B19, B20).
-    await repoRow.click();
+    await openProjectOverview(page, "repo");
     await tile("prs").locator("[data-lens-tile-button]").click();
     await overview.locator('[data-pr-group-toggle="merged"]').click();
     await expect(row(20)).toBeVisible();

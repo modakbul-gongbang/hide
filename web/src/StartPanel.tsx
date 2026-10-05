@@ -8,15 +8,16 @@ import { useEscapeLayer } from "./components/ui/layer";
 import { Kbd } from "./components/ui/kbd";
 import { Select, SelectContent, SelectGroup, SelectItem, SelectSeparator, SelectTrigger, SelectValue } from "./components/ui/select";
 import { startAnswer, startRequestId } from "./startAnswer";
-import { useStartPanel } from "./startDraft";
+import { useStartPanel, startFailure } from "./startDraft";
 import { resolveTarget, startTargets, type StartTarget } from "./startTargets";
 import { useShellStore } from "./store";
 import { restoreFocus } from "./terminals";
 import { useUiStore } from "./ui";
+import { useInterfaceTranslation } from "./i18n/client";
 
 // The start panel (PRD home-device-rail D-17..D-21, B23-B31): ⌘K's position
 // and width, no backdrop, the keyboard in the text box. What is written is the
-// new agent's first prompt; Enter or 시작 sends one `agent_start_in_checkout`
+// new agent's first prompt; Enter or Start sends one `agent_start_in_checkout`
 // and the panel then follows only the answer that carries its request id.
 
 /**
@@ -40,7 +41,7 @@ function useStartAnswer() {
       const panel = useStartPanel.getState();
       if (answer.phase === "pending") return false;
       if (answer.phase === "refused" || answer.phase === "failed") {
-        panel.fail(answer.message);
+        panel.fail(answer.phase === "refused" ? { message: answer.message } : startFailure(answer.message));
         return true;
       }
       const ui = useUiStore.getState();
@@ -48,7 +49,7 @@ function useStartAnswer() {
       if (answer.agentPhase) ui.setWatchedTask(answer.taskId);
       // The pane is opened as an agent row opens it, so a device's pane moves rail, sidebar and center together.
       if (answer.paneId) ui.setFocusWhenListed(answer.paneId);
-      if (answer.agentPhase === "failed") panel.fail(answer.agentMessage ?? "에이전트가 시작되지 않았습니다.");
+      if (answer.agentPhase === "failed") panel.fail(startFailure(answer.agentMessage));
       else panel.finish(answer.agentPhase === "starting" ? answer.taskId : null);
       return true;
     };
@@ -58,7 +59,7 @@ function useStartAnswer() {
     });
     const timer = window.setTimeout(() => {
       unsubscribe();
-      useStartPanel.getState().fail("응답이 없습니다. 연결을 확인하고 다시 시작하세요.");
+      useStartPanel.getState().fail({ key: "shell.startTimeout" });
     }, ANSWER_TIMEOUT_MS);
     return () => {
       unsubscribe();
@@ -79,7 +80,7 @@ function useSpentStart() {
     if (!spent) return;
     const panel = useStartPanel.getState();
     if (!operation || operation.id !== spent.taskId) return panel.settle();
-    if (operation.agent_phase === "failed" || operation.agent_phase === "unknown") panel.restore(operation.agent_message ?? "에이전트가 시작되지 않았습니다.");
+    if (operation.agent_phase === "failed" || operation.agent_phase === "unknown") panel.restore(startFailure(operation.agent_message));
     else if (operation.agent_phase !== "starting") panel.settle();
   }, [spent, operation]);
 }
@@ -102,6 +103,7 @@ function TargetIcon({ target }: { target: StartTarget }) {
 }
 
 function StartPanel({ actions }: { actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const text = useStartPanel((s) => s.text);
   const chosen = useStartPanel((s) => s.target);
   const request = useStartPanel((s) => s.request);
@@ -110,7 +112,8 @@ function StartPanel({ actions }: { actions: Actions }) {
   const screen = useUiStore((s) => s.screen);
   const overSettings = useStartPanel((s) => s.overSettings);
   // What is in front is read again on every open; the panel itself lives only while open.
-  const targets = useMemo(() => startTargets(rest, screen, overSettings), [rest, screen, overSettings]);
+  const overviewProjectId = useUiStore((s) => s.overviewOpen || s.screen?.kind === "main" ? s.overviewProjectId : null);
+  const targets = useMemo(() => startTargets(rest, screen, t, overSettings, overviewProjectId), [rest, screen, t, overSettings, overviewProjectId]);
   const target = resolveTarget(targets, chosen);
   const [selection, setSelection] = useState<AgentSelection>(() => rememberedSelection(useShellStore.getState().rest?.ui_state?.agent_start));
   const surface = useRef<HTMLDivElement>(null);
@@ -157,7 +160,7 @@ function StartPanel({ actions }: { actions: Actions }) {
     <div
       ref={surface}
       role="dialog"
-      aria-label="에이전트 시작"
+      aria-label={t("commands.start_agent")}
       data-start-panel="true"
       className="fixed left-1/2 top-(--size-settings-sheet-window-inset) z-50 flex w-(--size-search-sheet-w) max-w-[calc(100%-var(--spacing-xxl))] -translate-x-1/2 flex-col overflow-hidden rounded-lg border border-border bg-popover text-body text-popover-foreground shadow-lg"
     >
@@ -167,8 +170,8 @@ function StartPanel({ actions }: { actions: Actions }) {
         value={text}
         autoComplete="off"
         spellCheck={false}
-        aria-label="첫 지시"
-        placeholder="무엇을 시킬까요?"
+        aria-label={t("shell.firstInstruction")}
+        placeholder={t("shell.instructionPrompt")}
         data-start-text="true"
         className="h-(--size-control-lg) w-full bg-transparent px-md pt-md pb-md text-body text-foreground outline-none placeholder:text-muted-foreground"
         onChange={(event) => useStartPanel.getState().setText(event.target.value)}
@@ -180,13 +183,13 @@ function StartPanel({ actions }: { actions: Actions }) {
       />
       {failure ? (
         <p role="alert" data-start-failure="true" className="whitespace-pre-line break-words px-md pb-xs text-caption text-destructive">
-          {failure}
+          {"key" in failure ? t(failure.key) : failure.message}
         </p>
       ) : null}
       <div className="flex items-center gap-xs border-t border-border px-sm py-sm">
         <Select value={target?.key ?? ""} disabled={working || targets.groups.length === 0} onValueChange={(key) => useStartPanel.getState().setTarget(key)}>
-          <SelectTrigger aria-label="대상" className="min-w-0 flex-1" data-start-target={target?.key ?? ""}>
-            <SelectValue placeholder="대상 없음" />
+          <SelectTrigger aria-label={t("common.target")} className="min-w-0 flex-1" data-start-target={target?.key ?? ""}>
+            <SelectValue placeholder={t("shell.noTarget")} />
           </SelectTrigger>
           <SelectContent>
             {targets.groups.map((group, index) => (
@@ -197,7 +200,7 @@ function StartPanel({ actions }: { actions: Actions }) {
                     <TargetIcon target={item} />
                     <span className="flex min-w-0 flex-col">
                       <span className="truncate">{item.label}</span>
-                      {item.disabled ? <span className="text-caption text-muted-foreground">{item.disabled}</span> : null}
+                      {item.disabled ? <span className="text-caption text-muted-foreground">{t("devices.rail.notConnected")}</span> : null}
                     </span>
                   </SelectItem>
                 ))}
@@ -208,7 +211,7 @@ function StartPanel({ actions }: { actions: Actions }) {
         <AgentPicker actions={actions} value={selection} onChange={setSelection} disabled={working} />
         <Kbd aria-hidden="true">⏎</Kbd>
         <Button size="default" disabled={!canStart} onClick={start} data-start-submit="true">
-          {working ? "시작하는 중…" : "시작"}
+          {working ? t("shell.starting") : t("common.start")}
         </Button>
       </div>
     </div>

@@ -1,6 +1,10 @@
 import { describe, expect, it } from "vitest";
-import { cardSingleValue, checkoutCard, checkoutHasSecondLine, checkoutNameParts, checkoutRowExpansion, overviewRowSelected, projectRowExpansion, checkoutPresentation, projectMarks, projectRows, pullRequestBadge, relativeActivity, shownPullRequest } from "./projects";
+import { cardSingleValue, checkoutCard, checkoutHasSecondLine, checkoutNameParts, checkoutRowExpansion, projectCheckout, projectRowExpansion, checkoutPresentation, projectMarks, projectRows, pullRequestBadge, relativeActivity, shownPullRequest } from "./projects";
+import { initializeInterfaceI18n } from "./i18n/instance";
 import type { AgentRow, Checkout, GithubStatus, PullRequest, Workspace } from "./snapshot";
+
+const t = initializeInterfaceI18n("en").t;
+const tKo = initializeInterfaceI18n("ko").t;
 
 function workspace(id: string, extra: Partial<Workspace> = {}): Workspace {
   return {
@@ -43,7 +47,7 @@ describe("projectRows", () => {
 
   it("omits the pinned header when nothing is pinned", () => {
     const rows = projectRows([workspace("b")], [], []);
-    expect(rows[0]).toEqual({ kind: "header", title: "Projects · Recent activity", count: 1 });
+    expect(rows[0]).toEqual({ kind: "header", section: "recent", count: 1 });
   });
 
   it("raises Needs You alone above Pinned, in the core's order, and keeps them in the tree", () => {
@@ -60,10 +64,10 @@ describe("projectRows", () => {
     ];
     const rows = projectRows([withPanes("a", ["done-1", "ask-1"], { pinned: true }), withPanes("b", ["ask-2", "run"])], [], listed);
     const shape = rows.map((row) =>
-      row.kind === "raised" ? `${row.title}:${row.agents.map(({ agent }) => agent.pane_id).join(",")}` : row.kind === "header" ? row.title : `${row.kind}:${row.kind === "workspace" ? row.workspace.id : ""}`,
+      row.kind === "raised" ? `${row.group}:${row.agents.map(({ agent }) => agent.pane_id).join(",")}` : row.kind === "header" ? row.section : `${row.kind}:${row.kind === "workspace" ? row.workspace.id : ""}`,
     );
     // Done is the Agents tab's: the Projects list does not raise it.
-    expect(shape).toEqual(["Needs You:ask-2,ask-1", "Pinned", "workspace:a", "Projects · Recent activity", "workspace:b"]);
+    expect(shape).toEqual(["needs_you:ask-2,ask-1", "pinned", "workspace:a", "recent", "workspace:b"]);
     // A raised row never unfolds, whatever the tree below has open.
     const needsYou = rows[0] as Extract<(typeof rows)[number], { kind: "raised" }>;
     expect(needsYou.agents.map(({ agent }) => agent.lineage_collapsed !== false)).toEqual([true, true]);
@@ -76,30 +80,45 @@ describe("projectRows", () => {
 describe("activity", () => {
   it("rounds recency to the coarsest unit that fits", () => {
     const now = 1_000_000_000;
-    expect(relativeActivity(null, now)).toBeNull();
-    expect(relativeActivity(now + 5000, now)).toBe("now");
-    expect(relativeActivity(now - 30_000, now)).toBe("now");
-    expect(relativeActivity(now - 5 * 60_000, now)).toBe("5m");
-    expect(relativeActivity(now - 3 * 3_600_000, now)).toBe("3h");
-    expect(relativeActivity(now - 49 * 3_600_000, now)).toBe("2d");
+    expect(relativeActivity(null, now, t)).toBeNull();
+    expect(relativeActivity(now + 5000, now, t)).toBe("now");
+    expect(relativeActivity(now - 30_000, now, t)).toBe("now");
+    expect(relativeActivity(now - 5 * 60_000, now, t)).toBe("5m");
+    expect(relativeActivity(now - 3 * 3_600_000, now, t)).toBe("3h");
+    expect(relativeActivity(now - 49 * 3_600_000, now, t)).toBe("2d");
+  });
+
+  it("writes the recency in the interface language", () => {
+    const now = 1_000_000_000;
+    expect(relativeActivity(now - 30_000, now, tKo)).toBe("방금");
+    expect(relativeActivity(now - 5 * 60_000, now, tKo)).toBe("5분");
+    expect(relativeActivity(now - 3 * 3_600_000, now, tKo)).toBe("3시간");
+    expect(relativeActivity(now - 49 * 3_600_000, now, tKo)).toBe("2일");
   });
 });
 
 describe("pullRequestBadge", () => {
   it("names the lifecycle, or the review decision for a pull request under review (D-08)", () => {
     const base = { number: 1, title: "", url: "", is_draft: false };
-    expect(pullRequestBadge({ ...base, badge: "merged", review: null })).toEqual({ label: "Merged", color: "text-pr-merged", draft: false });
-    expect(pullRequestBadge({ ...base, badge: "closed", review: null })).toEqual({ label: "Closed", color: "text-pr-closed", draft: false });
-    expect(pullRequestBadge({ ...base, badge: "open", review: null })).toEqual({ label: "Open", color: "text-pr-open", draft: false });
-    expect(pullRequestBadge({ ...base, badge: "open", review: null, is_draft: true })).toEqual({ label: "Draft", color: "text-pr-draft", draft: false });
-    expect(pullRequestBadge({ ...base, badge: "review", review: "approved" })).toEqual({ label: "Approved", color: "text-success", draft: false });
-    expect(pullRequestBadge({ ...base, badge: "review", review: "changes_requested" })).toEqual({ label: "Changes requested", color: "text-destructive", draft: false });
-    expect(pullRequestBadge({ ...base, badge: "review", review: "review_required" })).toEqual({ label: "Review required", color: "text-muted-foreground", draft: false });
+    expect(pullRequestBadge({ ...base, badge: "merged", review: null }, t)).toEqual({ label: "Merged", color: "text-pr-merged", draft: false });
+    expect(pullRequestBadge({ ...base, badge: "closed", review: null }, t)).toEqual({ label: "Closed", color: "text-pr-closed", draft: false });
+    expect(pullRequestBadge({ ...base, badge: "open", review: null }, t)).toEqual({ label: "Open", color: "text-pr-open", draft: false });
+    expect(pullRequestBadge({ ...base, badge: "open", review: null, is_draft: true }, t)).toEqual({ label: "Draft", color: "text-pr-draft", draft: false });
+    expect(pullRequestBadge({ ...base, badge: "review", review: "approved" }, t)).toEqual({ label: "Approved", color: "text-success", draft: false });
+    expect(pullRequestBadge({ ...base, badge: "review", review: "changes_requested" }, t)).toEqual({ label: "Changes requested", color: "text-destructive", draft: false });
+    expect(pullRequestBadge({ ...base, badge: "review", review: "review_required" }, t)).toEqual({ label: "Review required", color: "text-muted-foreground", draft: false });
+  });
+
+  it("names the lifecycle and review decision in the interface language", () => {
+    const base = { number: 1, title: "", url: "", is_draft: false };
+    expect(pullRequestBadge({ ...base, badge: "merged", review: null }, tKo).label).toBe("머지됨");
+    expect(pullRequestBadge({ ...base, badge: "review", review: "changes_requested" }, tKo).label).toBe("변경 요청");
+    expect(pullRequestBadge({ ...base, badge: "open", review: null, is_draft: true }, tKo).label).toBe("초안");
   });
 
   it("keeps the decision on a draft under review and says Draft beside it", () => {
     const base = { number: 1, title: "", url: "", is_draft: true };
-    expect(pullRequestBadge({ ...base, badge: "review", review: "approved" })).toEqual({ label: "Approved", color: "text-success", draft: true });
+    expect(pullRequestBadge({ ...base, badge: "review", review: "approved" }, t)).toEqual({ label: "Approved", color: "text-success", draft: true });
   });
 });
 
@@ -131,49 +150,49 @@ describe("checkoutPresentation", () => {
     }) as Checkout;
 
   it("draws a known pull request's lifecycle before the kind of checkout", () => {
-    expect(checkoutPresentation(project, checkout({ pull_request: pr() }), now)).toMatchObject({ kind: "pr_open", kindTone: "text-pr-open" });
-    expect(checkoutPresentation(project, checkout({ pull_request: pr({ is_draft: true }) }), now).kind).toBe("pr_draft");
-    expect(checkoutPresentation(project, checkout({ pull_request: pr({ badge: "merged" }) }), now)).toMatchObject({ kind: "pr_merged", settled: true });
-    expect(checkoutPresentation(project, checkout({ pull_request: pr({ badge: "review" }) }), now).kind).toBe("pr_open");
+    expect(checkoutPresentation(project, checkout({ pull_request: pr() }), now, t)).toMatchObject({ kind: "pr_open", kindTone: "text-pr-open" });
+    expect(checkoutPresentation(project, checkout({ pull_request: pr({ is_draft: true }) }), now, t).kind).toBe("pr_draft");
+    expect(checkoutPresentation(project, checkout({ pull_request: pr({ badge: "merged" }) }), now, t)).toMatchObject({ kind: "pr_merged", settled: true });
+    expect(checkoutPresentation(project, checkout({ pull_request: pr({ badge: "review" }) }), now, t).kind).toBe("pr_open");
   });
 
   it("draws one shape for a pull request on the row and in its card, a draft under review included", () => {
     for (const request of [pr(), pr({ is_draft: true }), pr({ badge: "review", is_draft: true }), pr({ badge: "merged" }), pr({ badge: "closed", is_draft: true })]) {
       const row = checkout({ pull_request: request });
-      const header = checkoutCard(project, row, now).header;
-      expect(header?.kind === "pull_request" ? header.glyph : null).toBe(checkoutPresentation(project, row, now).kind);
+      const header = checkoutCard(project, row, now, t).header;
+      expect(header?.kind === "pull_request" ? header.glyph : null).toBe(checkoutPresentation(project, row, now, t).kind);
     }
-    expect(checkoutCard(project, checkout({ pull_request: pr({ badge: "review", is_draft: true }) }), now).header).toMatchObject({ glyph: "pr_draft" });
+    expect(checkoutCard(project, checkout({ pull_request: pr({ badge: "review", is_draft: true }) }), now, t).header).toMatchObject({ glyph: "pr_draft" });
   });
 
   it("mutes a stale pull request and falls back to the branch when GitHub could not answer", () => {
-    expect(checkoutPresentation(project, checkout({ pull_request: pr(), github: github({ stale: true }) }), now)).toMatchObject({ kind: "pr_open", kindTone: "text-muted-foreground" });
-    expect(checkoutPresentation(project, checkout({ pull_request: pr(), github: github({ available: false, unavailable_reason: "gh is not signed in" }) }), now).kind).toBe("branch");
+    expect(checkoutPresentation(project, checkout({ pull_request: pr(), github: github({ stale: true }) }), now, t)).toMatchObject({ kind: "pr_open", kindTone: "text-muted-foreground" });
+    expect(checkoutPresentation(project, checkout({ pull_request: pr(), github: github({ available: false, unavailable_reason: "gh is not signed in" }) }), now, t).kind).toBe("branch");
   });
 
   it("names the primary checkout, a detached one and a plain folder", () => {
-    expect(checkoutPresentation(project, checkout({ is_primary: true, is_worktree: false, path: "/h/repo" }), now).kind).toBe("primary");
-    expect(checkoutPresentation(project, checkout({ worktree: { branch: null, head_sha: "abc1234" } as Checkout["worktree"] }), now).kind).toBe("detached");
-    expect(checkoutPresentation(workspace("notes", { is_git: false }), checkout({ worktree: null, is_worktree: false }), now).kind).toBe("folder");
+    expect(checkoutPresentation(project, checkout({ is_primary: true, is_worktree: false, path: "/h/repo" }), now, t).kind).toBe("primary");
+    expect(checkoutPresentation(project, checkout({ worktree: { branch: null, head_sha: "abc1234" } as Checkout["worktree"] }), now, t).kind).toBe("detached");
+    expect(checkoutPresentation(workspace("notes", { is_git: false }), checkout({ worktree: null, is_worktree: false }), now, t).kind).toBe("folder");
   });
 
   it("uses the snapshot home choice even on a linked worktree with a pull request", () => {
-    expect(checkoutPresentation(project, checkout({ is_primary: true, pull_request: pr() }), now).kind).toBe("primary");
-    expect(checkoutPresentation(project, checkout({ is_primary: false, is_worktree: false, path: project.path }), now).kind).toBe("branch");
-    expect(checkoutPresentation({ ...project, device_id: "remote" }, checkout({ is_primary: true }), now).kind).toBe("primary");
+    expect(checkoutPresentation(project, checkout({ is_primary: true, pull_request: pr() }), now, t).kind).toBe("primary");
+    expect(checkoutPresentation(project, checkout({ is_primary: false, is_worktree: false, path: project.path }), now, t).kind).toBe("branch");
+    expect(checkoutPresentation({ ...project, device_id: "remote" }, checkout({ is_primary: true }), now, t).kind).toBe("primary");
   });
 
   it("dates the last commit, and draws a missing folder in danger with no age", () => {
-    expect(checkoutPresentation(project, checkout(), now).age).toBe("2h");
-    expect(checkoutPresentation(project, checkout({ exists: false }), now)).toMatchObject({ kindTone: "text-destructive", age: null });
+    expect(checkoutPresentation(project, checkout(), now, t).age).toBe("2h");
+    expect(checkoutPresentation(project, checkout({ exists: false }), now, t)).toMatchObject({ kindTone: "text-destructive", age: null });
   });
 
   it("holds line two back until Git has been read", () => {
-    expect(checkoutPresentation(project, checkout({ worktree: null }), now)).toMatchObject({ secondLineReady: false, age: null });
+    expect(checkoutPresentation(project, checkout({ worktree: null }), now, t)).toMatchObject({ secondLineReady: false, age: null });
   });
 
   it("lists the agents by state in the tooltip", () => {
-    const view = checkoutPresentation(project, checkout({ agent_summary: { representative_pane_id: "p1", needs_you: 1, done: 0, working: 2, seen: 1, unknown: 1, marks: NO_MARKS } }), now);
+    const view = checkoutPresentation(project, checkout({ agent_summary: { representative_pane_id: "p1", needs_you: 1, done: 0, working: 2, seen: 1, unknown: 1, marks: NO_MARKS } }), now, t);
     expect(view.detail.split("\n")).toEqual(["Needs You: 1 · Working: 2 · Seen: 1 (1 Unknown)", "feature", "/h/repo.worktrees/feature"]);
   });
 });
@@ -214,7 +233,7 @@ describe("checkoutCard", () => {
   const keys = (card: ReturnType<typeof checkoutCard>) => card.rows.map((row) => row.key);
 
   it("heads a pull request's card with its badge, number, url and title, then every row with a value (B5)", () => {
-    const card = checkoutCard(project, checkout({ pull_request: pr(), agent_summary: summary({ question: 1, working: 2 }, { needs_you: 1, working: 2 }) }), now);
+    const card = checkoutCard(project, checkout({ pull_request: pr(), agent_summary: summary({ question: 1, working: 2 }, { needs_you: 1, working: 2 }) }), now, t);
     expect(card.header).toEqual({
       kind: "pull_request",
       badge: { label: "Approved", color: "text-success", draft: false },
@@ -234,52 +253,61 @@ describe("checkoutCard", () => {
   });
 
   it("colors Checks by result and leaves the row out when there are none or they are unknown (B6)", () => {
-    expect(checkoutCard(project, checkout({ pull_request: pr({ checks: "failed" }) }), now).rows[1]).toEqual({ key: "checks", label: "Checks", value: "Failed", tone: "text-destructive" });
-    expect(checkoutCard(project, checkout({ pull_request: pr({ checks: "pending" }) }), now).rows[1]).toMatchObject({ value: "Pending", tone: "text-muted-foreground" });
-    expect(keys(checkoutCard(project, checkout({ pull_request: pr({ checks: "none" }) }), now))).toEqual(["review", "branch", "commit", "path"]);
-    expect(keys(checkoutCard(project, checkout({ pull_request: pr({ checks: "unknown" }) }), now))).toEqual(["review", "branch", "commit", "path"]);
-    expect(keys(checkoutCard(project, checkout({ pull_request: pr({ checks: undefined }) }), now))).toEqual(["review", "branch", "commit", "path"]);
+    expect(checkoutCard(project, checkout({ pull_request: pr({ checks: "failed" }) }), now, t).rows[1]).toEqual({ key: "checks", label: "Checks", value: "Failed", tone: "text-destructive" });
+    expect(checkoutCard(project, checkout({ pull_request: pr({ checks: "pending" }) }), now, t).rows[1]).toMatchObject({ value: "Pending", tone: "text-muted-foreground" });
+    expect(keys(checkoutCard(project, checkout({ pull_request: pr({ checks: "none" }) }), now, t))).toEqual(["review", "branch", "commit", "path"]);
+    expect(keys(checkoutCard(project, checkout({ pull_request: pr({ checks: "unknown" }) }), now, t))).toEqual(["review", "branch", "commit", "path"]);
+    expect(keys(checkoutCard(project, checkout({ pull_request: pr({ checks: undefined }) }), now, t))).toEqual(["review", "branch", "commit", "path"]);
   });
 
   it("leaves Review out of an open pull request with no decision, and names the others (B6)", () => {
-    expect(keys(checkoutCard(project, checkout({ pull_request: pr({ badge: "open", review: null }) }), now))).toEqual(["checks", "branch", "commit", "path"]);
-    expect(checkoutCard(project, checkout({ pull_request: pr({ review: "changes_requested" }) }), now).rows[0]).toMatchObject({ value: "Changes requested", tone: "text-destructive" });
-    expect(checkoutCard(project, checkout({ pull_request: pr({ review: "review_required" }) }), now).rows[0]).toMatchObject({ value: "Review required", tone: "text-muted-foreground" });
+    expect(keys(checkoutCard(project, checkout({ pull_request: pr({ badge: "open", review: null }) }), now, t))).toEqual(["checks", "branch", "commit", "path"]);
+    expect(checkoutCard(project, checkout({ pull_request: pr({ review: "changes_requested" }) }), now, t).rows[0]).toMatchObject({ value: "Changes requested", tone: "text-destructive" });
+    expect(checkoutCard(project, checkout({ pull_request: pr({ review: "review_required" }) }), now, t).rows[0]).toMatchObject({ value: "Review required", tone: "text-muted-foreground" });
   });
 
   it("has no header without a pull request and draws only the rows with a value (B8, D-09)", () => {
-    const plain = checkoutCard(project, checkout(), now);
+    const plain = checkoutCard(project, checkout(), now, t);
     expect(plain.header).toBeNull();
     expect(keys(plain)).toEqual(["branch", "commit", "path"]);
     // Git not read yet: neither branch nor commit, no loading row.
-    expect(keys(checkoutCard(project, checkout({ worktree: null }), now))).toEqual(["path"]);
+    expect(keys(checkoutCard(project, checkout({ worktree: null }), now, t))).toEqual(["path"]);
     // No agents: no Agents row; agents with a zero sum: none either.
-    expect(keys(checkoutCard(project, checkout({ agent_summary: summary({}) }), now))).toEqual(["branch", "commit", "path"]);
+    expect(keys(checkoutCard(project, checkout({ agent_summary: summary({}) }), now, t))).toEqual(["branch", "commit", "path"]);
     // A commit whose age is not known has no row.
-    expect(keys(checkoutCard(project, checkout({ worktree: { branch: "feature", head_sha: "abc1234def" } as Checkout["worktree"] }), now))).toEqual(["branch", "path"]);
+    expect(keys(checkoutCard(project, checkout({ worktree: { branch: "feature", head_sha: "abc1234def" } as Checkout["worktree"] }), now, t))).toEqual(["branch", "path"]);
   });
 
   it("names a detached HEAD by its short sha, dates the first minute as now, and a folder has only its path and agents", () => {
-    expect(checkoutCard(project, checkout({ worktree: { branch: null, head_sha: "abc1234def", last_commit_unix_seconds: now / 1000 } as Checkout["worktree"] }), now).rows).toEqual([
+    expect(checkoutCard(project, checkout({ worktree: { branch: null, head_sha: "abc1234def", last_commit_unix_seconds: now / 1000 } as Checkout["worktree"] }), now, t).rows).toEqual([
       { key: "branch", label: "Branch", value: "Detached HEAD at abc1234" },
       { key: "commit", label: "Commit", value: "now" },
       { key: "path", label: "Path", value: "/h/repo.worktrees/feature" },
     ]);
     const folder = workspace("notes", { is_git: false });
-    expect(keys(checkoutCard(folder, checkout({ worktree: null, is_worktree: false, path: "/h/notes", agent_summary: summary({ idle: 1 }, { seen: 1 }) }), now))).toEqual(["agents", "path"]);
+    expect(keys(checkoutCard(folder, checkout({ worktree: null, is_worktree: false, path: "/h/notes", agent_summary: summary({ idle: 1 }, { seen: 1 }) }), now, t))).toEqual(["agents", "path"]);
+  });
+
+  it("words the detached HEAD row and the commit age in the interface language", () => {
+    const card = checkoutCard(project, checkout({ worktree: { branch: null, head_sha: "abc1234def", last_commit_unix_seconds: (now - 3 * 3_600_000) / 1000 } as Checkout["worktree"] }), now, tKo);
+    expect(card.rows).toEqual([
+      { key: "branch", label: "브랜치", value: "abc1234에서 분리된 HEAD" },
+      { key: "commit", label: "커밋", value: "3시간 전" },
+      { key: "path", label: "경로", value: "/h/repo.worktrees/feature" },
+    ]);
   });
 
   it("heads a missing folder with Folder missing over its path alone, whatever else is known", () => {
-    const card = checkoutCard(project, checkout({ exists: false, pull_request: pr(), agent_summary: summary({ idle: 1 }, { seen: 1 }) }), now);
+    const card = checkoutCard(project, checkout({ exists: false, pull_request: pr(), agent_summary: summary({ idle: 1 }, { seen: 1 }) }), now, t);
     expect(card.header).toEqual({ kind: "missing", label: "Folder missing" });
     expect(card.rows).toEqual([{ key: "path", label: "Path", value: "/h/repo.worktrees/feature" }]);
   });
 
   it("falls back to a text tooltip only when the card would hold one value and no header (D-09)", () => {
     const folder = workspace("notes", { is_git: false });
-    expect(cardSingleValue(checkoutCard(folder, checkout({ worktree: null, is_worktree: false, path: "/h/notes" }), now))).toBe("/h/notes");
-    expect(cardSingleValue(checkoutCard(project, checkout(), now))).toBeNull();
-    expect(cardSingleValue(checkoutCard(project, checkout({ exists: false }), now))).toBeNull();
+    expect(cardSingleValue(checkoutCard(folder, checkout({ worktree: null, is_worktree: false, path: "/h/notes" }), now, t))).toBe("/h/notes");
+    expect(cardSingleValue(checkoutCard(project, checkout(), now, t))).toBeNull();
+    expect(cardSingleValue(checkoutCard(project, checkout({ exists: false }), now, t))).toBeNull();
   });
 
   it("shows the pull request a stale refresh kept and none an unavailable lookup lost", () => {
@@ -288,7 +316,7 @@ describe("checkoutCard", () => {
     expect(shownPullRequest(checkout({ pull_request: pr(), github: github({ stale: true, available: false }) }))?.number).toBe(180);
     expect(shownPullRequest(checkout({ pull_request: pr(), github: github({ available: false, unavailable_reason: "gh is not signed in" }) }))).toBeNull();
     expect(shownPullRequest(checkout({ pull_request: null }))).toBeNull();
-    expect(checkoutCard(project, checkout({ pull_request: pr(), github: github({ available: false, unavailable_reason: "gh is not signed in" }) }), now).header).toBeNull();
+    expect(checkoutCard(project, checkout({ pull_request: pr(), github: github({ available: false, unavailable_reason: "gh is not signed in" }) }), now, t).header).toBeNull();
   });
 });
 
@@ -315,21 +343,25 @@ describe("sidebar row activation", () => {
     expect(checkoutRowExpansion(false, true, true)).toBeUndefined();
   });
 
-  it("unfolds a project row unless its own Overview is open and it is unfolded", () => {
-    expect(projectRowExpansion(workspace("repo", { expanded: false }), null, true)).toBe(true);
-    expect(projectRowExpansion(workspace("repo", { expanded: false }), "repo", true)).toBe(true);
-    expect(projectRowExpansion(workspace("repo", { expanded: true }), "other", true)).toBe(true);
-    expect(projectRowExpansion(workspace("repo", { expanded: true }), "repo", true)).toBe(false);
-    expect(projectRowExpansion(workspace("repo", {}), "repo", true)).toBe(false);
-    expect(projectRowExpansion(workspace("repo", { expanded: true }), "repo", false)).toBeUndefined();
+  it("unfolds a project unless its return checkout is already in front", () => {
+    const target = { id: "main" } as Checkout;
+    expect(projectRowExpansion(workspace("repo", { expanded: false }), target, "main", true)).toBe(true);
+    expect(projectRowExpansion(workspace("repo", { expanded: true }), target, "other", true)).toBe(true);
+    expect(projectRowExpansion(workspace("repo", { expanded: true }), target, "main", true)).toBe(false);
+    expect(projectRowExpansion(workspace("repo", { expanded: true }), target, "main", false)).toBeUndefined();
   });
 
-  it("selects the Git project's Overview child only for its own Overview", () => {
-    const project = workspace("repo", { is_git: true });
-    expect(overviewRowSelected(project, "repo")).toBe(true);
-    expect(overviewRowSelected(project, "other")).toBe(false);
-    expect(overviewRowSelected(project, null)).toBe(false);
-    expect(overviewRowSelected(workspace("notes", { is_git: false }), "notes")).toBe(false);
+  it("returns to the latest usable checkout on the same device before primary and row order", () => {
+    const checkouts = [
+      { id: "first", exists: true }, { id: "primary", exists: true, is_primary: true },
+      { id: "recent", exists: true }, { id: "missing", exists: false },
+    ] as Checkout[];
+    const project = workspace("repo", { device_id: "mini", checkouts });
+    const visit = (device_id: string, checkout_id: string) => ({ device_id, checkout_id, project_name: "repo", branch: checkout_id, device_name: device_id });
+    expect(projectCheckout(project, [visit("local", "first"), visit("mini", "missing"), visit("mini", "recent")])?.id).toBe("recent");
+    expect(projectCheckout(project)?.id).toBe("primary");
+    expect(projectCheckout({ ...project, checkouts: [checkouts[0]!, checkouts[2]!] })?.id).toBe("first");
+    expect(projectCheckout({ ...project, checkouts: [checkouts[3]!] })).toBeNull();
   });
 });
 
@@ -357,7 +389,7 @@ describe("checkout row lines (PRD sidebar-typography D-04, D-06)", () => {
         next_tab_label: "Tab 1",
         ...extra,
       } as Checkout,
-      now,
+      now, t
     );
 
   it("draws line two only for a purpose or a raised-from parent, agents or not", () => {

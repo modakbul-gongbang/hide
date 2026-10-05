@@ -63,6 +63,7 @@ pub struct CoreOptions {
 #[derive(Clone, Debug, Serialize)]
 pub struct Snapshot {
     pub schema_version: u32,
+    pub delivery_watches: Vec<crate::delivery::watch::View>,
     pub navigator: NavigatorSnapshot,
     pub overlay: OverlaySnapshot,
     pub tab: TabSnapshot,
@@ -830,7 +831,7 @@ pub struct SidebarAgentSnapshot {
     /// cross-device parent resolve again when its machine reconnects.
     #[serde(skip_serializing)]
     pub declared_parent_pane_id: Option<String>,
-    /// The stable machine identity hcoord recorded for a cross-device parent.
+    /// The stable machine identity recorded for a cross-device parent.
     #[serde(skip_serializing)]
     pub spawned_from_machine_id: Option<String>,
     /// The digest of the parent's session the declaration was written for.
@@ -1140,6 +1141,12 @@ pub struct CheckoutSnapshot {
     pub closes_task_keys: Vec<String>,
     #[serde(skip_serializing)]
     pub branch_issue: Option<String>,
+    /// The commit HEAD pointed at when the catalog built this row, read from
+    /// Git's files beside the branch name and so known before the worktree
+    /// reader has answered. Core only, and never fresher than the reader's
+    /// own value: see `head_sha`.
+    #[serde(skip_serializing)]
+    pub head_oid: Option<String>,
     pub github: GithubStatusSnapshot,
     pub agent_summary: CheckoutAgentSummary,
     pub id: String,
@@ -2194,6 +2201,30 @@ impl RightPanelSection {
     }
 }
 
+/// Explicit interface languages shared by every client of this core.
+#[derive(Clone, Copy, Debug, PartialEq, Deserialize, Serialize)]
+pub enum InterfaceLanguage {
+    #[serde(rename = "en")]
+    English,
+    #[serde(rename = "ko")]
+    Korean,
+    #[serde(rename = "zh-CN")]
+    SimplifiedChinese,
+    #[serde(rename = "ja")]
+    Japanese,
+}
+
+/// The store retains an invalid value; the wire exposes its English fallback.
+fn serialize_interface_language<S: serde::Serializer>(
+    value: &Option<serde_json::Value>,
+    serializer: S,
+) -> Result<S::Ok, S::Error> {
+    value
+        .as_ref()
+        .map(|value| InterfaceLanguage::deserialize(value).unwrap_or(InterfaceLanguage::English))
+        .serialize(serializer)
+}
+
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct UiStateSnapshot {
     #[serde(default = "default_panel_visible")]
@@ -2277,6 +2308,10 @@ pub struct UiStateSnapshot {
     /// The web shell's color theme.
     #[serde(default)]
     pub theme: ThemePreference,
+    /// None follows each client's system language. Raw JSON preserves an
+    /// invalid stored selection through unrelated saves without publishing it.
+    #[serde(default, serialize_with = "serialize_interface_language")]
+    pub interface_language: Option<serde_json::Value>,
     /// The Projects and Agents sidebar's width in CSS pixels, dragged on its
     /// right edge and kept within `SIDEBAR_WIDTH_MIN..=SIDEBAR_WIDTH_MAX`
     /// (PRD sidebar-typography D-08, D-09). A store written before the drag
@@ -2740,6 +2775,7 @@ impl Default for UiStateSnapshot {
             device_registrations: Vec::new(),
             accent_hex: default_accent_hex(),
             theme: ThemePreference::Dark,
+            interface_language: None,
             sidebar_width: default_sidebar_width(),
             font_size: default_font_size(),
             pane_text_scales: BTreeMap::new(),
@@ -3001,7 +3037,7 @@ pub struct ViewDiffSnapshot {
 /// and the card show. The mapping from `gh`'s `state`/`reviewDecision`/
 /// `isDraft` triple lives in [`crate::github`]; nothing downstream re-derives
 /// it, so the badge cannot drift between the row and the card.
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PullRequestBadge {
     Merged,
@@ -3030,7 +3066,7 @@ impl PullRequestBadge {
     }
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ReviewDecision {
     ReviewRequired,
@@ -3039,7 +3075,7 @@ pub enum ReviewDecision {
 }
 
 /// CI rollup. Unknown and absent checks must never look like a pass.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PullRequestChecks {
     #[default]
@@ -3050,9 +3086,10 @@ pub enum PullRequestChecks {
     Passing,
 }
 
-/// One branch's pull request, already tie-broken against every other pull
-/// request on that branch.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+/// One pull request GitHub listed. Which checkout it belongs to is decided
+/// by `github::pull_request_for_checkout`, never by comparing branch names
+/// where a call site stands.
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct PullRequestSnapshot {
     pub closing_issues: Vec<crate::issues::IssueReference>,
     pub title: String,
@@ -3074,6 +3111,16 @@ pub struct PullRequestSnapshot {
     /// When it was closed or merged, for a row's chip after the request.
     #[serde(skip_serializing)]
     pub closed_at_unix_ms: Option<u64>,
+    /// The commit its head branch pointed at when GitHub last saw it. A
+    /// settled pull request belongs to a checkout only at exactly this
+    /// commit, because a branch name can be used again for new work. Core
+    /// only: no shell draws or compares it.
+    #[serde(skip_serializing)]
+    pub head_oid: Option<String>,
+    /// The head branch lives in another repository (a fork), so its name says
+    /// nothing about this repository's branch of the same name.
+    #[serde(skip_serializing, default)]
+    pub cross_repository: bool,
 }
 
 /// How a repository's `gh` lookup is doing, independent of what it found.
@@ -3082,7 +3129,7 @@ pub struct PullRequestSnapshot {
 /// answers and the card must not show one as the other, so availability,
 /// staleness, and the reason travel beside the results rather than being
 /// inferred from an empty list.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub struct GithubStatusSnapshot {
     pub failure_category: Option<String>,
     /// `gh` is installed and logged in.
@@ -3098,7 +3145,7 @@ pub struct GithubStatusSnapshot {
 }
 
 /// One repository's pull requests as `gh` reported them.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub struct GithubProjectSnapshot {
     /// Successful component payloads, including a successful empty answer.
     /// Internal reader provenance, not a snapshot wire field.
@@ -3125,6 +3172,25 @@ impl GithubSnapshot {
         self.projects
             .iter()
             .find(|project| project.root_path == root_path)
+    }
+}
+
+impl CheckoutSnapshot {
+    /// The commit this checkout is on: the one fact that tells a branch's
+    /// current work from an older one of the same name.
+    ///
+    /// The worktree reader's value wins when it has one, because the reader
+    /// runs again whenever a watched HEAD or ref changes, while `head_oid` is
+    /// only as new as the row's last build (a topology change or the catalog's
+    /// 30-second refresh). Until the reader has answered, and for a checkout
+    /// it never listed, the commit read from Git's files stands in, so a
+    /// settled pull request is connected from the first frame after a restart
+    /// instead of after the reader's first full pass.
+    pub fn head_sha(&self) -> Option<&str> {
+        self.worktree
+            .as_ref()
+            .and_then(|worktree| worktree.head_sha.as_deref())
+            .or(self.head_oid.as_deref())
     }
 }
 
@@ -3754,6 +3820,7 @@ impl Snapshot {
 
         Self {
             schema_version: SCHEMA_VERSION,
+            delivery_watches: Vec::new(),
             navigator: NavigatorSnapshot {
                 root_path: None,
                 changes_root_path: None,
@@ -3895,6 +3962,7 @@ impl PetSnapshot {
 /// no mutation site needs dirty-tracking discipline.
 #[derive(Clone, Debug, PartialEq)]
 pub struct RestSections {
+    pub delivery_watches: Vec<crate::delivery::watch::View>,
     pub navigator: NavigatorSnapshot,
     pub sessions: SessionsSnapshot,
     pub card: CheckoutCardSnapshot,
@@ -3931,6 +3999,7 @@ pub struct RestSections {
 impl RestSections {
     pub fn capture(snapshot: &Snapshot) -> Self {
         Self {
+            delivery_watches: snapshot.delivery_watches.clone(),
             navigator: snapshot.navigator.clone(),
             sessions: snapshot.sessions.clone(),
             card: snapshot.card.clone(),
@@ -3968,7 +4037,8 @@ impl RestSections {
     /// Field-by-field equality against the live snapshot, so the unchanged
     /// case costs a comparison instead of a clone.
     pub fn matches(&self, snapshot: &Snapshot) -> bool {
-        self.navigator == snapshot.navigator
+        self.delivery_watches == snapshot.delivery_watches
+            && self.navigator == snapshot.navigator
             && self.sessions == snapshot.sessions
             && self.card == snapshot.card
             && self.git_worktrees == snapshot.git_worktrees
@@ -4116,6 +4186,7 @@ pub struct ChangedDocumentWire<'a> {
 
 #[derive(Serialize)]
 pub struct RestWire<'a> {
+    pub delivery_watches: &'a [crate::delivery::watch::View],
     pub navigator: &'a NavigatorSnapshot,
     pub sessions: &'a SessionsSnapshot,
     pub card: &'a CheckoutCardSnapshot,
@@ -4149,6 +4220,7 @@ pub struct RestWire<'a> {
 impl<'a> RestWire<'a> {
     fn borrow(rest: &'a RestSections) -> Self {
         Self {
+            delivery_watches: &rest.delivery_watches,
             navigator: &rest.navigator,
             sessions: &rest.sessions,
             card: &rest.card,
@@ -4470,7 +4542,7 @@ mod wire_enum_tests {
                 hide_kit::ComponentId::Cli
                 | hide_kit::ComponentId::ClaudeCodeHook
                 | hide_kit::ComponentId::CodexHook
-                | hide_kit::ComponentId::Hcoord
+                | hide_kit::ComponentId::CoordinationRetirement
                 | hide_kit::ComponentId::CodexPerPane => {}
             }
         }

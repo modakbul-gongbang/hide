@@ -1,6 +1,9 @@
-import { ChevronRightIcon, GitBranchIcon, HomeIcon, Loader2Icon, LockIcon, RefreshCwIcon, Trash2Icon } from "lucide-react";
+import { ChevronRightIcon, GitBranchIcon, HomeIcon, Loader2Icon, LockIcon, RefreshCwIcon, SquareTerminalIcon, Trash2Icon } from "lucide-react";
 import { useEffect, useMemo, useState } from "react";
 import type { Actions } from "./actions";
+import { useInterfaceTranslation } from "./i18n/client";
+import { formatBytes as formatSize, formatGigabytes } from "./i18n/format";
+import { requireInterfaceLanguage } from "./i18n/locale";
 import { AlertDialog, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "./components/ui/alert-dialog";
 import { Button } from "./components/ui/button";
 import { Checkbox } from "./components/ui/checkbox";
@@ -10,15 +13,14 @@ import { Hint } from "./components/ui/tooltip";
 import {
   EMPTY_SELECTION,
   FILTERS,
-  FILTER_LABEL,
-  LAYER_LABEL,
-  BUSY_TEXT,
+  FILTER_KEY,
+  LAYER_KEY,
+  BUSY_KEY,
   cleanupElsewhere,
   bundleRefs,
   bundleState,
   filterCounts,
   footerOf,
-  gigabytes,
   isChecked,
   isIncluded,
   entranceBytes,
@@ -41,8 +43,9 @@ import {
   type SheetModel,
   type SheetRow,
 } from "./diskCleanup";
+import type { MessageKey } from "./i18n/catalogs";
 import { cn } from "./lib/utils";
-import { formatBytes, prChip } from "./projectBoard";
+import { prChip } from "./projectBoard";
 import type { CacheLayer, Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { PR_TONE } from "./TaskBoards";
@@ -73,15 +76,17 @@ type Step = "table" | "confirm";
 const CONFIRM_ANSWER_MS = 5000;
 
 export function DiskCleanupSheet({ actions, workspace, filter: initialFilter, onClose }: { actions: Actions; workspace: Workspace; filter: Filter; onClose: () => void }) {
+  const { t, i18n } = useInterfaceTranslation();
+  const language = requireInterfaceLanguage(i18n.language);
   const workspaces = useShellStore((s) => s.rest?.navigator?.workspaces);
   const elsewhere = cleanupElsewhere(workspaces ?? [], workspace.id);
-  const model = useMemo(() => sheetModel(workspace, elsewhere), [workspace, elsewhere]);
+  const model = useMemo(() => sheetModel(workspace, elsewhere, t), [workspace, elsewhere, t]);
   const cleanup = workspace.cleanup ?? null;
   const [filter, setFilter] = useState<Filter>(initialFilter);
   const [selection, setSelection] = useState<Selection>(EMPTY_SELECTION);
   const [foldOpen, setFoldOpen] = useState(false);
   const [step, setStep] = useState<Step>("table");
-  // A press on `정리` is one event; until the core answers with `removing` a second press is not another (B23).
+  // A press on Clean up is one event; until the core answers with `removing` a second press is not another (B23).
   const [sent, setSent] = useState(false);
   const cleanupId = cleanup?.id ?? null;
   const phase = cleanup?.phase ?? null;
@@ -91,7 +96,7 @@ export function DiskCleanupSheet({ actions, workspace, filter: initialFilter, on
   useEffect(() => {
     if (elsewhere || phase === "removing" || phase === "complete") return;
     actions.reviewDiskCleanup(workspace.id);
-    // On opening and when the daemon's other cleanup ends; a later `다시 검토` is its own press.
+    // On opening and when the daemon's other cleanup ends; a later Review again is its own press.
   }, [elsewhere === null]);
   // A new review starts from nothing ticked, and a settled press can be made again.
   useEffect(() => {
@@ -103,7 +108,7 @@ export function DiskCleanupSheet({ actions, workspace, filter: initialFilter, on
     if (phase !== "review") setSent(phase === "removing");
   }, [phase]);
   // The core drops a confirm it cannot take (stale id, review gone) with no phase change: after its answer window
-  // the press is released, so `정리` never stays disabled with nothing said.
+  // the press is released, so Clean up never stays disabled with nothing said.
   useEffect(() => {
     if (!sent || phase !== "review") return;
     const timer = window.setTimeout(() => setSent(false), CONFIRM_ANSWER_MS);
@@ -113,7 +118,7 @@ export function DiskCleanupSheet({ actions, workspace, filter: initialFilter, on
   const shown = visibleRows(model.rows, filter);
   const counts = filterCounts(model.rows);
   const layout = layoutRows(shown);
-  const footer = footerOf(shown, selection, model.state);
+  const footer = footerOf(shown, selection, t, language, model.state);
   const plan = planOf(shown, selection);
 
   const close = () => {
@@ -138,11 +143,13 @@ export function DiskCleanupSheet({ actions, workspace, filter: initialFilter, on
   // The one worktree the confirmation named can stop being removable while it is open (a row turned in use):
   // with none left the sheet is back on the table, where that row says why.
   const confirming = step === "confirm" && plan.worktrees.length > 0;
+  /** The confirmation says the panes close, so the button is named by what it does (UI_BEHAVIOR, Destructive buttons). */
+  const closingPanes = plan.worktrees.reduce((sum, worktree) => sum + worktree.panes, 0);
   useEffect(() => {
     if (step === "confirm" && plan.worktrees.length === 0) setStep("table");
   }, [step, plan.worktrees.length]);
 
-  const title = "디스크 정리";
+  const title = t("cleanup.title");
   const body =
     model.state === "removing" ? (
       <RunningView progress={cleanup?.progress ?? null} />
@@ -182,11 +189,11 @@ export function DiskCleanupSheet({ actions, workspace, filter: initialFilter, on
               </div>
               <div className="flex items-center gap-sm">
                 <Button variant="ghost" onClick={close} data-disk-cancel="true">
-                  취소
+                  {t("common.cancel")}
                 </Button>
                 <Button onClick={press} disabled={footer.empty || model.state !== "ready" || sent} data-disk-clean="true">
                   <Trash2Icon aria-hidden="true" />
-                  {model.state === "busy" && elsewhere ? BUSY_TEXT[elsewhere] : "정리"}
+                  {model.state === "busy" && elsewhere ? t(BUSY_KEY[elsewhere]) : t("cleanup.clean")}
                 </Button>
               </div>
             </DialogFooter>
@@ -196,24 +203,29 @@ export function DiskCleanupSheet({ actions, workspace, filter: initialFilter, on
       <AlertDialog open={confirming} onOpenChange={(next) => { if (!next) setStep("table"); }}>
         <AlertDialogContent data-disk-confirm="true">
           <AlertDialogHeader>
-            <AlertDialogTitle>{plan.worktrees.length === 1 ? `${plan.worktrees[0]!.label} 폴더째 삭제` : `워크트리 ${plan.worktrees.length}개 폴더째 삭제`}</AlertDialogTitle>
-            <AlertDialogDescription>브랜치는 남음</AlertDialogDescription>
+            <AlertDialogTitle>{plan.worktrees.length === 1 ? t("cleanup.deleteNamed", { name: plan.worktrees[0]!.label }) : t("cleanup.deleteWorktrees", { count: plan.worktrees.length })}</AlertDialogTitle>
+            <AlertDialogDescription>{t("cleanup.branchesRemain")}</AlertDialogDescription>
           </AlertDialogHeader>
           <ul className="flex flex-col gap-xxs font-mono text-body text-foreground" data-disk-confirm-list="true">
             {plan.worktrees.map((worktree) => (
               <li key={worktree.path} className="flex min-w-0 items-baseline justify-between gap-md">
                 <span className="min-w-0 truncate">{worktree.label}</span>
-                <span className="shrink-0 text-muted-foreground">{formatBytes(worktree.bytes)}</span>
+                <span className="flex shrink-0 items-center gap-md text-muted-foreground">
+                  {worktree.panes > 0 ? <PaneCount count={worktree.panes} /> : null}
+                  {formatSize(language, worktree.bytes)}
+                </span>
               </li>
             ))}
           </ul>
           <AlertDialogFooter>
             {/* Plain buttons, not Action and Cancel: neither is the default and neither closes the sheet behind. */}
             <Button variant="secondary" onClick={() => setStep("table")} data-disk-confirm-back="true">
-              돌아가기
+              {t("common.back")}
             </Button>
             <Button variant="destructive" onClick={run} data-disk-confirm-run="true">
-              워크트리 {plan.worktrees.length}개와 캐시 정리
+              {closingPanes > 0
+                ? t("cleanup.confirmClosingPanes", { count: closingPanes, worktrees: t("cleanup.worktreeCount", { count: plan.worktrees.length }) })
+                : t("cleanup.confirm", { count: plan.worktrees.length })}
             </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
@@ -251,6 +263,8 @@ function TableView({
   onFold: () => void;
   onRetry: () => void;
 }) {
+  const { t, i18n } = useInterfaceTranslation();
+  const language = requireInterfaceLanguage(i18n.language);
   const all = bundleRefs(shown, selection, ["build_cache", "dependencies"]);
   const columnRefs = (column: Column) => bundleRefs(shown, selection, [column]);
   const measured = model.rows.some((row) => row.measure !== "pending");
@@ -259,18 +273,18 @@ function TableView({
       <UsageBar workspace={workspace} />
       {model.state === "unreadable" ? (
         <p className="flex items-center gap-sm text-body text-warning" data-disk-unreadable="true">
-          지금 쓰는 중인지 확인할 수 없다
+          {t("cleanup.inUseUnknown")}
           <Button variant="ghost" size="sm" onClick={onRetry} data-disk-retry="true">
             <RefreshCwIcon aria-hidden="true" />
-            다시
+            {t("common.retry")}
           </Button>
         </p>
       ) : null}
       <div className="flex flex-wrap items-center justify-between gap-md">
-        <ToggleGroup type="single" value={filter} onValueChange={(value) => value && onFilter(value as Filter)} aria-label="체크아웃 필터" data-disk-filters="true">
+        <ToggleGroup type="single" value={filter} onValueChange={(value) => value && onFilter(value as Filter)} aria-label={t("cleanup.filter")} data-disk-filters="true">
           {FILTERS.map((name) => (
             <ToggleGroupItem key={name} value={name} data-disk-filter-item={name}>
-              {FILTER_LABEL[name]}
+              {t(FILTER_KEY[name])}
               <span className="font-mono text-caption text-muted-foreground">{counts[name]}</span>
             </ToggleGroupItem>
           ))}
@@ -278,28 +292,28 @@ function TableView({
       </div>
       {shown.length === 0 && measured ? (
         <div className="flex flex-col items-center gap-sm py-xl text-body text-muted-foreground" data-disk-empty="true">
-          이 필터에 맞는 체크아웃이 없다
+          {t("cleanup.noFilteredRows")}
           <Button variant="secondary" size="sm" onClick={() => onFilter("all")} data-disk-show-all="true">
-            전체 보기
+            {t("cleanup.showAll")}
           </Button>
         </div>
       ) : (
-        <div role="table" aria-label="체크아웃별 디스크" className="flex min-w-0 flex-col" data-disk-table="true">
+        <div role="table" aria-label={t("cleanup.table")} className="flex min-w-0 flex-col" data-disk-table="true">
           <div role="row" className="grid items-end gap-x-sm border-b border-border pb-sm" style={{ gridTemplateColumns: GRID }}>
-            <BundleBox state={bundleState(selection, all)} label="보이는 행의 빌드 캐시와 의존성 전부" onToggle={() => onSelection(toggleBundle(selection, all))} data="all" />
+            <BundleBox state={bundleState(selection, all)} label={t("cleanup.visibleCaches")} onToggle={() => onSelection(toggleBundle(selection, all))} data="all" />
             <span role="columnheader" className="text-caption text-subtle-foreground">
-              체크아웃
+              {t("cleanup.checkout")}
             </span>
             {(["build_cache", "dependencies", "worktree"] as const).map((column) => (
               <ColumnHead key={column} column={column} rows={shown} selection={selection} refs={columnRefs(column)} onToggle={() => onSelection(toggleBundle(selection, columnRefs(column)))} />
             ))}
             <span role="columnheader" className="flex flex-col items-end gap-xxs text-caption text-subtle-foreground">
-              기타
-              <span className="font-mono text-muted-foreground">{formatBytes(shown.reduce((sum, row) => sum + (row.other?.bytes ?? 0), 0))}</span>
+              {t("cleanup.layer.other")}
+              <span className="font-mono text-muted-foreground">{formatSize(language, shown.reduce((sum, row) => sum + (row.other?.bytes ?? 0), 0))}</span>
             </span>
             <span role="columnheader" className="flex flex-col items-end gap-xxs text-caption text-subtle-foreground" data-disk-column="total">
-              합계
-              <span className="font-mono text-muted-foreground" data-disk-total-head="true">{formatBytes(shown.reduce((sum, row) => sum + (row.total ?? 0), 0))}</span>
+              {t("cleanup.total")}
+              <span className="font-mono text-muted-foreground" data-disk-total-head="true">{formatSize(language, shown.reduce((sum, row) => sum + (row.total ?? 0), 0))}</span>
             </span>
           </div>
           {layout.main ? <Row row={layout.main} selection={selection} onSelection={onSelection} /> : null}
@@ -314,27 +328,30 @@ function TableView({
 }
 
 function UsageBar({ workspace }: { workspace: Workspace }) {
+  const { t, i18n } = useInterfaceTranslation();
+  const language = requireInterfaceLanguage(i18n.language);
   const disk = workspace.disk;
   const layers = disk?.layers;
   const size = entranceBytes(workspace);
   if (!disk || !size || !layers) return null;
   const parts = [
-    { key: "build_cache", label: "빌드 캐시", bytes: layers.build_cache },
-    { key: "dependencies", label: "의존성", bytes: layers.dependencies },
-    { key: "other", label: "기타", bytes: layers.other },
-    { key: "source", label: "소스 · .git", bytes: layers.source + layers.shared_git },
+    { key: "build_cache", label: t("cleanup.layer.build_cache"), bytes: layers.build_cache },
+    { key: "dependencies", label: t("cleanup.layer.dependencies"), bytes: layers.dependencies },
+    { key: "other", label: t("cleanup.layer.other"), bytes: layers.other },
+    { key: "source", label: t("cleanup.layer.source"), bytes: layers.source + layers.shared_git },
   ] as const;
+  const named = (part: (typeof parts)[number]) => t("cleanup.layerSize", { layer: part.label, size: formatSize(language, part.bytes) });
   return (
     <div className="flex flex-col gap-xs" data-disk-usage="true">
       <div className="flex items-baseline justify-between gap-md text-caption text-subtle-foreground">
         <span>
-          이 프로젝트 <span className="font-mono text-foreground">{size.partial ? "≥ " : ""}{formatBytes(size.bytes)}</span>
+          {t("cleanup.thisProject")} <span className="font-mono text-foreground">{size.partial ? "≥ " : ""}{formatSize(language, size.bytes)}</span>
         </span>
-        {disk.free_bytes != null ? <span className="font-mono" data-disk-free="true">디스크 여유 {formatBytes(disk.free_bytes)}</span> : null}
+        {disk.free_bytes != null ? <span className="font-mono" data-disk-free="true">{t("cleanup.diskFree", { size: formatSize(language, disk.free_bytes) })}</span> : null}
       </div>
-      <div className="flex h-(--lens-bar-height) w-full gap-px overflow-hidden rounded-xs bg-muted" role="img" aria-label={parts.map((part) => `${part.label} ${formatBytes(part.bytes)}`).join(", ")}>
+      <div className="flex h-(--lens-bar-height) w-full gap-px overflow-hidden rounded-xs bg-muted" role="img" aria-label={parts.map(named).join(", ")}>
         {parts.map((part) => (
-          <Hint key={part.key} label={`${part.label} ${formatBytes(part.bytes)}`} reveals>
+          <Hint key={part.key} label={named(part)} reveals>
             <span className={LAYER_DOT[part.key]} style={{ flexGrow: part.bytes, flexBasis: 0 }} data-disk-bar-part={part.key} />
           </Hint>
         ))}
@@ -357,20 +374,24 @@ function BundleBox({ state, label, onToggle, data }: { state: BundleState; label
 }
 
 function ColumnHead({ column, rows, selection, refs, onToggle }: { column: Column; rows: SheetRow[]; selection: Selection; refs: CellRef[]; onToggle: () => void }) {
+  const { t, i18n } = useInterfaceTranslation();
+  const language = requireInterfaceLanguage(i18n.language);
   const state = bundleState(selection, refs);
   const bytes = rows.reduce((sum, row) => sum + (column === "worktree" ? (row.total ?? 0) * (row.isMain ? 0 : 1) : row.cache[column].bytes), 0);
   return (
     <div role="columnheader" className="flex flex-col gap-xxs" data-disk-column={column}>
       <span className="flex items-center gap-xs text-caption font-medium text-foreground">
-        <BundleBox state={state} label={`보이는 행의 ${LAYER_LABEL[column]} 전부`} onToggle={onToggle} data={column} />
-        {LAYER_LABEL[column]}
+        <BundleBox state={state} label={t("cleanup.visibleLayer", { layer: t(LAYER_KEY[column]) })} onToggle={onToggle} data={column} />
+        {t(LAYER_KEY[column])}
       </span>
-      <span className="pl-lg font-mono text-caption text-muted-foreground">{formatBytes(bytes)}</span>
+      <span className="pl-lg font-mono text-caption text-muted-foreground">{formatSize(language, bytes)}</span>
     </div>
   );
 }
 
 function Row({ row, selection, onSelection, nested = false }: { row: SheetRow; selection: Selection; onSelection: (next: Selection) => void; nested?: boolean }) {
+  const { t, i18n } = useInterfaceTranslation();
+  const language = requireInterfaceLanguage(i18n.language);
   const caches = bundleRefs([row], selection, ["build_cache", "dependencies"]);
   const state = bundleState(selection, caches);
   const included = selection.worktrees.has(row.path);
@@ -387,14 +408,14 @@ function Row({ row, selection, onSelection, nested = false }: { row: SheetRow; s
     >
       <span role="cell">
         {included && state === "none" ? (
-          <Checkbox checked disabled aria-label={`${row.label} 캐시는 워크트리에 포함됨`} data-disk-bundle="row" data-disk-bundle-state="included" />
+          <Checkbox checked disabled aria-label={t("cleanup.includedCaches", { name: row.label })} data-disk-bundle="row" data-disk-bundle-state="included" />
         ) : (
-          <BundleBox state={state} label={`${row.label} 빌드 캐시와 의존성`} onToggle={() => onSelection(toggleBundle(selection, caches))} data="row" />
+          <BundleBox state={state} label={t("cleanup.rowCaches", { name: row.label })} onToggle={() => onSelection(toggleBundle(selection, caches))} data="row" />
         )}
       </span>
       <span role="rowheader" className="flex min-w-0 items-center gap-xs text-body text-foreground">
         {row.isMain ? <HomeIcon aria-hidden="true" className="size-(--size-icon) shrink-0 text-muted-foreground" /> : <GitBranchIcon aria-hidden="true" className="size-(--size-icon) shrink-0 text-muted-foreground" />}
-        <Hint label={row.measure === "unavailable" ? "크기를 재지 못함" : row.label} reveals>
+        <Hint label={row.measure === "unavailable" ? t("cleanup.sizeUnknown") : row.label} reveals>
           <span className="min-w-0 truncate" data-disk-label="true">
             {row.label}
           </span>
@@ -416,7 +437,7 @@ function Row({ row, selection, onSelection, nested = false }: { row: SheetRow; s
       <WorktreeCellView row={row} selection={selection} onSelection={onSelection} />
       <OtherCellView row={row} />
       <span role="cell" className="text-right font-mono text-body text-subtle-foreground" data-disk-total={row.path}>
-        {row.measure === "measured" && row.total !== null ? formatBytes(row.total) : row.measure === "pending" ? <Skeleton /> : ""}
+        {row.measure === "measured" && row.total !== null ? formatSize(language, row.total) : row.measure === "pending" ? <Skeleton /> : ""}
       </span>
     </div>
   );
@@ -427,13 +448,15 @@ function Skeleton() {
 }
 
 function CacheCellView({ row, layer, selection, onSelection }: { row: SheetRow; layer: CacheLayer; selection: Selection; onSelection: (next: Selection) => void }) {
+  const { t, i18n } = useInterfaceTranslation();
+  const language = requireInterfaceLanguage(i18n.language);
   const cell: CacheCell = row.cache[layer];
   const ref: CellRef = { path: row.path, column: layer };
   const included = isIncluded(selection, ref);
   if (row.measure === "pending") {
     return (
       <span role="cell" className="flex items-center gap-xs" data-disk-cell={`${row.path}:${layer}`} data-disk-cell-state="pending">
-        <Checkbox disabled aria-label={`${row.label} ${LAYER_LABEL[layer]}`} />
+        <Checkbox disabled aria-label={t("cleanup.rowLayer", { name: row.label, layer: t(LAYER_KEY[layer]) })} />
         <Skeleton />
       </span>
     );
@@ -446,8 +469,8 @@ function CacheCellView({ row, layer, selection, onSelection }: { row: SheetRow; 
       </span>
     );
   }
-  const detail = `폴더 ${cell.folders}개${cell.largest_name ? ` · 가장 큰 폴더 ${cell.largest_name}` : ""}`;
-  const name = `${row.label} ${LAYER_LABEL[layer]} ${formatBytes(cell.bytes)}`;
+  const detail = cell.largest_name ? t("cleanup.folderDetail", { count: cell.folders, name: cell.largest_name }) : t("cleanup.folderCount", { count: cell.folders });
+  const name = t("cleanup.rowLayerSize", { name: row.label, layer: t(LAYER_KEY[layer]), size: formatSize(language, cell.bytes) });
   const stateName = included ? "included" : cell.selectable ? "selectable" : "blocked";
   const box = (
     <Checkbox
@@ -469,7 +492,7 @@ function CacheCellView({ row, layer, selection, onSelection }: { row: SheetRow; 
       )}
       <Hint label={cell.why && !cell.selectable ? `${cell.why}\n${detail}` : detail} reveals>
         <span className="font-mono text-body text-foreground" data-disk-bytes="true">
-          {formatBytes(cell.bytes)}
+          {formatSize(language, cell.bytes)}
         </span>
       </Hint>
     </span>
@@ -477,12 +500,14 @@ function CacheCellView({ row, layer, selection, onSelection }: { row: SheetRow; 
 }
 
 function WorktreeCellView({ row, selection, onSelection }: { row: SheetRow; selection: Selection; onSelection: (next: Selection) => void }) {
+  const { t, i18n } = useInterfaceTranslation();
+  const language = requireInterfaceLanguage(i18n.language);
   const key = `${row.path}:worktree`;
   if (row.isMain || !row.worktree) return <span role="cell" data-disk-cell={key} data-disk-cell-state="none" />;
   if (row.measure === "pending") {
     return (
       <span role="cell" className="flex items-center gap-xs" data-disk-cell={key} data-disk-cell-state="pending">
-        <Checkbox disabled aria-label={`${row.label} 워크트리`} />
+        <Checkbox disabled aria-label={t("cleanup.rowLayer", { name: row.label, layer: t(LAYER_KEY.worktree) })} />
         <Skeleton />
       </span>
     );
@@ -492,7 +517,7 @@ function WorktreeCellView({ row, selection, onSelection }: { row: SheetRow; sele
   if (!row.worktree.selectable) {
     return (
       <span role="cell" className="flex min-w-0 items-center gap-xs text-muted-foreground" data-disk-cell={key} data-disk-cell-state="blocked">
-        <Hint label={row.worktree.why ?? "지울 수 없음"}>
+        <Hint label={row.worktree.why ?? t("cleanup.reason.cannotRemove")}>
           <LockIcon aria-hidden="true" className="size-(--size-icon)" data-disk-lock="true" />
         </Hint>
       </span>
@@ -503,38 +528,57 @@ function WorktreeCellView({ row, selection, onSelection }: { row: SheetRow; sele
       <Checkbox
         checked={isChecked(selection, ref)}
         onCheckedChange={() => onSelection(toggleCell(selection, ref))}
-        aria-label={`${row.label} 워크트리 ${formatBytes(row.total)}`}
+        aria-label={t("cleanup.rowLayerSize", { name: row.label, layer: t(LAYER_KEY.worktree), size: formatSize(language, row.total) })}
         data-disk-check={key}
       />
       <span className={cn("font-mono text-body", isChecked(selection, ref) ? "text-destructive" : "text-foreground")} data-disk-bytes="true">
-        {formatBytes(row.total)}
+        {formatSize(language, row.total)}
       </span>
+      {row.worktree.panes > 0 ? <PaneCount count={row.worktree.panes} /> : null}
     </span>
   );
 }
 
+/** The panes that close with a worktree, as a mark and a count: the state shown, not a sentence about it. */
+function PaneCount({ count }: { count: number }) {
+  const { t } = useInterfaceTranslation();
+  const label = t("cleanup.panesClose", { count });
+  return (
+    <Hint label={label} reveals>
+      <span className="inline-flex shrink-0 items-center gap-xxs font-mono text-caption text-muted-foreground" data-disk-panes={count} aria-label={label}>
+        <SquareTerminalIcon aria-hidden="true" className="size-(--size-icon)" />
+        {count}
+      </span>
+    </Hint>
+  );
+}
+
 function OtherCellView({ row }: { row: SheetRow }) {
+  const { t, i18n } = useInterfaceTranslation();
+  const language = requireInterfaceLanguage(i18n.language);
   const other = row.other;
   if (row.measure !== "measured" || !other || other.bytes === 0) return <span role="cell" data-disk-cell={`${row.path}:other`} />;
-  const hint = `${other.largest_name ? `가장 큰 폴더 ${other.largest_name}\n` : ""}hide가 모르는 폴더라 지우지 않는다`;
+  const hint = other.largest_name ? t("cleanup.otherNamedFolder", { name: other.largest_name }) : t("cleanup.unknownFolder");
   return (
     <span role="cell" className="text-right" data-disk-cell={`${row.path}:other`}>
       <Hint label={hint} reveals>
-        <span className="font-mono text-body text-subtle-foreground">{formatBytes(other.bytes)}</span>
+        <span className="font-mono text-body text-subtle-foreground">{formatSize(language, other.bytes)}</span>
       </Hint>
     </span>
   );
 }
 
 function FoldedRows({ layout, open, onToggle, selection, onSelection }: { layout: ReturnType<typeof layoutRows>; open: boolean; onToggle: () => void; selection: Selection; onSelection: (next: Selection) => void }) {
+  const { t, i18n } = useInterfaceTranslation();
+  const language = requireInterfaceLanguage(i18n.language);
   const refs = bundleRefs(layout.small, selection, ["build_cache", "dependencies"]);
   return (
     <>
       <div role="row" className="flex items-center gap-sm border-b border-border py-sm" data-disk-fold={open ? "open" : "closed"}>
-        <BundleBox state={bundleState(selection, refs)} label={`작은 체크아웃 ${layout.small.length}곳의 빌드 캐시와 의존성`} onToggle={() => onSelection(toggleBundle(selection, refs))} data="fold" />
+        <BundleBox state={bundleState(selection, refs)} label={t("cleanup.smallCaches", { count: layout.small.length })} onToggle={() => onSelection(toggleBundle(selection, refs))} data="fold" />
         <button type="button" aria-expanded={open} className="flex items-center gap-xs rounded-xs text-body text-subtle-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring" onClick={onToggle} data-disk-fold-toggle="true">
           <ChevronRightIcon aria-hidden="true" className={cn("size-(--size-icon) transition-transform", open && "rotate-90")} />
-          작은 체크아웃 {layout.small.length} · <span className="font-mono">{formatBytes(layout.smallBytes)}</span>
+          {t("cleanup.smallCheckouts", { count: layout.small.length })} · <span className="font-mono">{formatSize(language, layout.smallBytes)}</span>
         </button>
       </div>
       {open ? layout.small.map((row) => <Row key={row.path} row={row} selection={selection} onSelection={onSelection} nested />) : null}
@@ -545,28 +589,31 @@ function FoldedRows({ layout, open, onToggle, selection, onSelection }: { layout
 // --- running and result ---------------------------------------------------------------
 
 function RunningView({ progress }: { progress: { done: number; total: number } | null }) {
+  const { t } = useInterfaceTranslation();
   return (
     <div className="flex flex-col gap-sm py-lg" data-disk-running="true">
       <span className="flex items-center gap-sm text-title font-semibold text-foreground">
         <Loader2Icon aria-hidden="true" className="size-(--size-icon) animate-spin text-muted-foreground" />
-        비우는 중{progress ? ` · ${progress.done}/${progress.total}` : ""}
+        {progress ? t("cleanup.clearingProgress", { done: progress.done, total: progress.total }) : t("cleanup.removing")}
       </span>
-      <span className="text-body text-muted-foreground">닫아도 정리는 계속된다. 다시 열면 진행이나 결과가 보인다.</span>
+      <span className="text-body text-muted-foreground">{t("cleanup.continues")}</span>
     </div>
   );
 }
 
-const OUTCOME_TEXT: Record<ResultLine["outcome"], string> = { removed: "지움", skipped: "건너뜀", failed: "실패" };
+const OUTCOME_KEY: Record<ResultLine["outcome"], MessageKey> = { removed: "cleanup.outcome.removed", skipped: "cleanup.outcome.skipped", failed: "cleanup.outcome.failed" };
 
 function ResultView({ workspace, onReview, onClose }: { workspace: Workspace; onReview: () => void; onClose: () => void }) {
+  const { t, i18n } = useInterfaceTranslation();
+  const language = requireInterfaceLanguage(i18n.language);
   const cleanup = workspace.cleanup!;
-  const lines = resultLines(cleanup);
+  const lines = resultLines(cleanup, t);
   return (
     <div className="flex flex-col gap-md" data-disk-result="true">
       <span className="flex items-baseline gap-sm font-mono text-headline font-semibold text-foreground" data-disk-free-change="true">
-        여유 {cleanup.free_before != null ? gigabytes(cleanup.free_before) : "-"}
+        {t("cleanup.free", { size: cleanup.free_before != null ? formatGigabytes(language, cleanup.free_before) : "-" })}
         <span aria-hidden="true">→</span>
-        {cleanup.free_after != null ? gigabytes(cleanup.free_after) : "…"}
+        {cleanup.free_after != null ? formatGigabytes(language, cleanup.free_after) : "…"}
       </span>
       <ul className="flex flex-col divide-y divide-border border-y border-border" data-disk-result-lines="true">
         {lines.map((line) => (
@@ -574,21 +621,21 @@ function ResultView({ workspace, onReview, onClose }: { workspace: Workspace; on
             <span className="truncate text-foreground">{line.label}</span>
             <span className="truncate text-muted-foreground">{line.what}</span>
             <span className={cn("truncate text-caption", line.outcome === "removed" ? "text-success" : line.outcome === "failed" ? "text-destructive" : "text-warning")}>
-              {OUTCOME_TEXT[line.outcome]}
-              {line.reason ? ` · ${line.outcome === "removed" ? "남긴 폴더: " : ""}${line.reason}` : ""}
+              {t(OUTCOME_KEY[line.outcome])}
+              {line.reason ? ` · ${line.outcome === "removed" ? t("cleanup.keptReason", { reason: line.reason }) : line.reason}` : ""}
             </span>
-            <span className="text-right font-mono text-caption text-subtle-foreground">{line.bytes !== null ? formatBytes(line.bytes) : ""}</span>
+            <span className="text-right font-mono text-caption text-subtle-foreground">{line.bytes !== null ? formatSize(language, line.bytes) : ""}</span>
           </li>
         ))}
-        {lines.length === 0 ? <li className="py-sm text-body text-muted-foreground">정리한 칸이 없다</li> : null}
+        {lines.length === 0 ? <li className="py-sm text-body text-muted-foreground">{t("cleanup.noResults")}</li> : null}
       </ul>
       <div className="flex justify-end gap-sm">
         <Button variant="ghost" onClick={onReview} data-disk-review-again="true">
           <RefreshCwIcon aria-hidden="true" />
-          다시 검토
+          {t("cleanup.reviewAgain")}
         </Button>
         <Button variant="secondary" onClick={onClose} data-disk-close="true">
-          닫기
+          {t("common.close")}
         </Button>
       </div>
     </div>

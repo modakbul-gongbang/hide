@@ -38,7 +38,8 @@ The probe does not need a pane id: the daemon binds a caller inside a Herdr pane
 The guidance names that checkout path, so a session can read which Workspace its commands reach.
 The helper uses the `hide` CLI beside it in the kit folder, or the CLI on `PATH` when none is there; on a device that is the helper root's current build, whose `hide` reaches this Mac's daemon through the device's return route (PRD device-parity B15).
 The hook starts nothing and installs nothing; when the CLI does not answer within its two-second bound the session starts without Workspace guidance and the next one tries again (B26).
-A device session gets no Project Memory capsule and its `UserPromptSubmit` injects nothing: the Memory database is this Mac's and is never copied to a device, so the device's hook finds none and succeeds at once (B25).
+A device session gets no Project Memory capsule: the Memory database is this Mac's and is never copied to a device, so the device's `UserPromptSubmit` omits Memory context (B25).
+A connected device pane can still receive pending letters through its sibling `hide` CLI and the return route within the same two-second caller budget; [delivery.md](delivery.md#safe-intake-and-manual-fallback) owns that intake and confirmation contract.
 An ordinary Claude Code or Codex session started in a connected Herdr pane receives the same conditional guidance as a Hide-managed session when Hide's hook is installed in that runtime's configuration on that machine.
 A disconnected pane, a cwd outside every registered checkout, an unavailable renderer, or an unsupported Browser surface receives no Workspace capability claim.
 The guidance scopes every command to the caller's checkout Workspace and lists only capabilities returned by the daemon; `hide workspace info` remains the live check and `hide --help` gives the full syntax.
@@ -47,7 +48,7 @@ The path is a credential reference and should be handled as private session cont
 The credential's bearer bytes and file contents never enter hook stdout, arguments, or the agent context, and each command rechecks the caller's checkout membership and renderer availability.
 The prefix is a convenience, not the only way in: a bare `hide` command bootstraps its own one-shot credential, and a caller the daemon cannot place in a pane is bound to the registered checkout holding its working directory (`docs/ARCHITECTURE.md`, hided and the WebSocket boundary).
 That covers Codex 0.157 with `daemon_auto_start`, where the tool shell and this hook both run inside the shared `codex app-server` daemon under launchd rather than in the pane: the hook may run with the daemon's environment instead of the pane's, so its Workspace guidance can be missing, and the bare commands still reach the checkout the tool shell runs in.
-The kit's `Codex를 pane마다 실행` part turns that daemon off on each machine, and every Codex Hide or hcoord starts passes `--no-daemon`, so a Codex runs its hooks in its pane; `src/codex_daemon.rs` is the only code that changes the setting, through `codex features` (`docs/ARCHITECTURE.md`, The install kit).
+The kit's `Codex를 pane마다 실행` part turns that daemon off on each machine, and every Codex Hide starts passes `--no-daemon`, so a Codex runs its hooks in its pane; `src/codex_daemon.rs` is the only code that changes the setting, through `codex features` (`docs/ARCHITECTURE.md`, The install kit).
 The SessionStart command hook has an eight-second timeout, including two bounded two-second CLI probes; a failed probe leaves the existing purpose and Memory context intact.
 An issued credential remains unclaimed for at most 30 seconds until a CLI receives and acknowledges a Workspace response.
 The CLI writes the claimed marker only after the daemon acknowledges that claim, so a caller killed before acknowledgement leaves an unclaimed reference that expires.
@@ -70,7 +71,13 @@ Claude Code and Codex currently accept the same envelope, but the installed runt
 `SubagentStart`, `SubagentStop`, and `Stop` write nothing to stdout, preserving their existing silent behavior.
 This stdout is advisory context for the agent and is independent of the best-effort metadata report described below.
 
-The prompt path performs no provider or embedding call, transcript scan, child-process launch, or database write.
+For local and connected device agent delivery, `UserPromptSubmit` also pulls at most five pending letters and 8 KiB of letter context from the sibling `hide` CLI within one total two-second budget.
+Only a successful stdout flush permits confirmation, so pre-confirm interruption can repeat an ID and confirmed letters do not repeat.
+The doorbell itself carries manual `hide inbox` guidance; a missing or failed hook leaves pending letters available through `hide inbox` and `hide request show`.
+This delivery path has its own bounded private diagnostics and does not extend Memory's in-process budget described below.
+[delivery.md](delivery.md#safe-intake-and-manual-fallback) owns these intake, failure and confirmation rules.
+
+The Memory lookup itself performs no provider or embedding call, transcript scan, child-process launch, or database write.
 Missing, locked, corrupt, stale, over-limit, unresolved-Project, and over-deadline stores return no Memory context and still exit zero.
 The caller-visible deadline is 100 ms from process launch, including stdin collection and SQLite work, and candidate, item, and token counts are hard bounded.
 The helper gives its in-process work 75 ms so process startup, scheduling, stdout flush, and teardown stay inside that caller-visible limit.

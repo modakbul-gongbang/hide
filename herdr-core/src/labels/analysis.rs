@@ -547,7 +547,7 @@ mod tests {
         let events = vec![
             human("요청 보기 만들기", 1),
             assistant("착수", 2),
-            human("hcoord: 테스트 결과 알려줘", 3),
+            human("테스트 결과 알려줘", 3),
             assistant("결과", 4),
         ];
         let context = analysis_context(&events, &|event| event.offset != 3);

@@ -1,7 +1,9 @@
+import type { TFunction } from "i18next";
 import { useEffect } from "react";
 import type { Actions } from "../actions";
 import { AgentMark } from "../AgentMark";
 import { catalogFor, modelToSend, selectKind, type AgentKind, type AgentSelection, type ModelCatalog, type ProviderKind } from "../agentPicker";
+import { useInterfaceTranslation } from "../i18n/client";
 import { useShellStore } from "../store";
 import { cn } from "../lib/utils";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
@@ -9,20 +11,19 @@ import { Hint } from "./ui/tooltip";
 
 // The one kind and model control every start surface shares (PRD
 // home-device-rail D-18, D-20): ⌘N's panel, New worktree, Start from an issue
-// and 맡기기. The kind menu carries the provider marks; the model menu is the
+// and Delegate. The kind menu carries the provider marks; the model menu is the
 // chosen kind's catalog. Both are controlled by the surface, which starts
 // from the remembered choice (`rememberedSelection`) and sends what is
 // chosen. While any picker shows, the catalog is observed.
 
-const KIND_LABELS: Record<AgentKind, string> = { claude: "Claude", codex: "Codex", terminal: "Terminal only" };
-const CLI_DEFAULT = "CLI 기본값";
+const KIND_LABELS: Record<ProviderKind, string> = { claude: "Claude", codex: "Codex" };
 /** Radix items cannot carry an empty value; this stands for the CLI's own default. */
 const DEFAULT_ITEM = "__cli_default";
 
 /** Why the model menu has no list to open, for its tooltip; null while there is one. */
-function catalogReason(catalog: ModelCatalog): string | null {
-  if (catalog.state === "loading") return "모델 목록을 읽는 중입니다. 기다리지 않고 시작할 수 있습니다.";
-  if (catalog.state === "unavailable") return `모델 목록을 읽지 못했습니다: ${catalog.reason}`;
+function catalogReason(catalog: ModelCatalog, t: TFunction<"translation">): string | null {
+  if (catalog.state === "loading") return t("agentPicker.catalogLoading");
+  if (catalog.state === "unavailable") return t("agentPicker.catalogUnavailable", { reason: catalog.reason ?? t("agentPicker.catalogEmpty") });
   return null;
 }
 
@@ -86,18 +87,19 @@ export function AgentPickerView({
   disabled?: boolean;
   className?: string;
 }) {
+  const { t } = useInterfaceTranslation();
   const kinds: readonly AgentKind[] = withTerminal ? ["terminal", "claude", "codex"] : ["claude", "codex"];
   return (
     <div className={cn("flex min-w-0 gap-xs", className)} data-agent-picker="true">
       <Select value={value.kind} disabled={disabled} onValueChange={(next) => onKind(next as AgentKind)}>
-        <SelectTrigger aria-label="에이전트 종류" className="w-auto min-w-0" data-agent-kind={value.kind}>
+        <SelectTrigger aria-label={t("agentPicker.kind")} className="w-auto min-w-0" data-agent-kind={value.kind}>
           <SelectValue />
         </SelectTrigger>
         <SelectContent>
           {kinds.map((kind) => (
             <SelectItem key={kind} value={kind} data-agent-kind-option={kind}>
               <AgentMark kind={kind === "terminal" ? null : kind} />
-              {KIND_LABELS[kind]}
+              {kind === "terminal" ? t("agentPicker.terminalOnly") : KIND_LABELS[kind]}
             </SelectItem>
           ))}
         </SelectContent>
@@ -123,11 +125,12 @@ function ModelSelect({
   model: string | null;
   onChange: (model: string | null) => void;
 }) {
-  const reason = catalogReason(catalog);
+  const { t } = useInterfaceTranslation();
+  const reason = catalogReason(catalog, t);
   const disabled = pickerDisabled || reason !== null;
   const models = catalog.state === "ready" ? catalog.models : [];
   const trigger = (
-    <SelectTrigger aria-label="모델" className="w-auto min-w-0" data-agent-model={shown ?? ""} data-agent-model-kind={kind}>
+    <SelectTrigger aria-label={t("common.model")} className="w-auto min-w-0" data-agent-model={shown ?? ""} data-agent-model-kind={kind}>
       <SelectValue />
     </SelectTrigger>
   );
@@ -136,7 +139,7 @@ function ModelSelect({
       {trigger}
       <SelectContent>
         <SelectItem value={DEFAULT_ITEM} data-agent-model-option="">
-          {CLI_DEFAULT}
+          {t("agentPicker.cliDefault")}
         </SelectItem>
         {models.map((id) => (
           <SelectItem key={id} value={id} data-agent-model-option={id}>

@@ -85,6 +85,8 @@ struct StoredUiState {
     /// store written before the web theme existed, which loads as Dark.
     #[serde(default)]
     theme: Option<String>,
+    #[serde(default)]
+    interface_language: Option<serde_json::Value>,
     #[serde(default = "default_sidebar_width")]
     sidebar_width: u32,
     #[serde(default = "default_font_size")]
@@ -282,6 +284,7 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
             device_registrations: stored.device_registrations,
             accent_hex: stored.accent_hex,
             theme,
+            interface_language: stored.interface_language,
             sidebar_width: stored.sidebar_width,
             font_size: stored.font_size,
             pane_text_scales: stored.pane_text_scales,
@@ -364,6 +367,7 @@ pub fn save(
         device_registrations: state.device_registrations.clone(),
         accent_hex: state.accent_hex.clone(),
         theme: Some(state.theme.as_str().to_owned()),
+        interface_language: state.interface_language.clone(),
         sidebar_width: state.sidebar_width,
         font_size: state.font_size,
         pane_text_scales: state.pane_text_scales.clone(),

@@ -1,5 +1,5 @@
 // The start panel (PRD home-device-rail B23-B33, B35) on an isolated pinned
-// Herdr and hided with the fixture's `claude` shim: ⌘K's `에이전트 시작…`
+// Herdr and hided with the fixture's `claude` shim: ⌘K's `Start an agent…`
 // opens it on any screen with the keyboard in the text box; the target is the
 // checkout in front; a start with a model runs the agent with `--model <id>`
 // and hands it the first prompt; the next open preselects the kind and model;
@@ -18,13 +18,13 @@ async function openFromPalette(page: Page) {
   await page.keyboard.press(chord("search"));
   const input = page.locator('[data-palette="Search"] [data-palette-input]');
   await expect(input).toBeFocused();
-  await page.keyboard.type("에이전트");
+  await page.keyboard.type("Start an agent");
   await page.locator('[data-palette-row="command:start-agent"]').click();
   await expect(page.locator("[data-start-panel]")).toBeVisible();
   await expect(page.locator("[data-start-text]")).toBeFocused();
 }
 
-test("⌘K 에이전트 시작… starts an agent in the checkout in front with the chosen model and first prompt", async ({ page }) => {
+test("⌘K Start an agent… starts an agent in the checkout in front with the chosen model and first prompt", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
@@ -45,7 +45,7 @@ test("⌘K 에이전트 시작… starts an agent in the checkout in front with 
     // B24: text box, target, kind, model, ⏎ and 시작.
     await expect(panel.locator("[data-agent-kind]")).toHaveAttribute("data-agent-kind", "claude");
     await expect(panel.locator("[data-agent-model-kind]")).toBeVisible();
-    await expect(panel.locator("[data-start-submit]")).toHaveText("시작");
+    await expect(panel.locator("[data-start-submit]")).toHaveText("Start");
     await screenshot(page, "start-panel-open");
 
     // B27: the model menu is the chosen kind's catalog; B28 waits for it (Claude's is its aliases).

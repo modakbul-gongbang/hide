@@ -29,9 +29,8 @@ use crate::workspace::LOCAL_DEVICE_ID;
 
 const PUMP_TICK: Duration = Duration::from_millis(250);
 
-/// The longest a device's kit call may take: a plugin uninstall and
-/// hcoord's daemon check are each bounded at twenty seconds on the device,
-/// and Node is probed with five, so this outlasts a whole install.
+/// The longest a device's kit call may take: bounded daemon retirement,
+/// login-agent removal, plugin uninstall and the remaining kit components.
 const DEVICE_KIT_TIMEOUT: Duration = Duration::from_secs(180);
 
 pub(crate) struct KitPump {
@@ -77,16 +76,19 @@ impl KitPump {
                     let Some(core) = runtime.upgrade() else {
                         break;
                     };
-                    let Ok(job) = core
-                        .lock()
-                        .map(|mut locked| locked.take_local_kit_job(Instant::now()))
-                    else {
+                    let Ok(job) = core.lock().map(|mut locked| {
+                        locked
+                            .take_local_kit_job(Instant::now())
+                            .map(|job| (job, locked.retirement_projects(LOCAL_DEVICE_ID)))
+                    }) else {
                         break;
                     };
                     drop(core);
-                    let Some(job) = job else {
+                    let Some((job, projects)) = job else {
                         continue;
                     };
+                    let mut target = target.clone();
+                    target.retirement_projects = projects.into_iter().map(PathBuf::from).collect();
                     let report = run(&target, &job);
                     // The hook diagnosis reads the same files, so it is read
                     // again here: Memory's "update hooks" and the agent rows
@@ -221,6 +223,7 @@ fn call_device(call: &DeviceKitCall) -> DeviceKitAnswer {
         action,
         cli_dir: call.cli_dir.clone(),
         herdr_socket: call.herdr_socket.clone(),
+        retirement_projects: call.retirement_projects.clone(),
     };
     if removing {
         DeviceKitAnswer::Removed(

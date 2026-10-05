@@ -12,13 +12,17 @@ This table describes the checked-in workflows, not a claim that a particular PR'
 
 | Layer | What it catches | Current execution |
 | --- | --- | --- |
-| Deterministic regression tests and structural checks | Blank repaint buffers, cache bounds, incorrect state transitions, blocking work in forbidden paths | The Rust workspace suite and repository invariant checks run on every PR and main push in `.github/workflows/pr.yml`; `design-contract.yml` adds static design checks |
-| Automated end-to-end | Real window launch, attach to a private Herdr server, IPC between the desktop host and `hided`, occluded-window rendering, packaging mistakes | Playwright drives the web shell in a browser and the desktop app through `desktop/e2e/fixture.ts`; the web suite runs in the six Linux `web-e2e` shards and, for its `@platform` tests, in one macOS job, the desktop app in the macOS `desktop-e2e` job of `pr.yml`, and `nightly.yml` runs the whole web suite on macOS; `verify` requires the pull request's jobs |
+| Deterministic regression tests and structural checks | Blank repaint buffers, cache bounds, incorrect state transitions, blocking work in forbidden paths | The repository invariant checks run on every PR and main push in `.github/workflows/pr.yml`, and the Rust suite on every main push and on each PR whose plan includes it (docs/TESTING.md, "Which lanes a pull request runs"); `design-contract.yml` adds static design checks |
+| Automated end-to-end | Real window launch, attach to a private Herdr server, IPC between the desktop host and `hided`, occluded-window rendering, packaging mistakes | Playwright drives the web shell in a browser and the desktop app through `desktop/e2e/fixture.ts`; the web suite runs in the six Linux `web-e2e` shards and, for its `@platform` tests, in one macOS job and one Windows job, the desktop app in the macOS `desktop-e2e` job of `pr.yml`, each when the pull request's plan includes it, and `nightly.yml` configures full web and desktop suites on Linux, macOS and Windows, with tracked flaky tests blocking nightly; Linux desktop uses Xvfb; `verify` requires the pull request's jobs |
 | Controlled performance comparison | Warm/cold latency distributions, periodic stalls, CPU/lock contention, sustained RSS, and cost that grows with process uptime | Local matched baseline/candidate measurements (`scripts/web-shell-measure/run.sh`); no checked-in scheduled or required performance job |
 
-The repository-invariant Python tests run in the required `checks` lane of `pr.yml`.
+The repository-invariant Python tests run in the `policy` lane of `pr.yml`, which every plan includes.
 Fixture/replay commands under `scripts/web-shell-measure/` do not become CI gates merely because this guide lists them.
 Check the workflow before claiming any of them runs automatically.
+The per-OS schema/runtime contracts and two package lanes are nightly configuration; actual executed jobs, failures and skips establish a particular head's coverage.
+PR macOS queue comparisons use actual executed jobs (exclude skipped reusable placeholders), recorded SHA/time windows and sample counts, and report run wall time and runner cost separately.
+A before/after observational sample with different workloads or little concurrent queueing does not establish the concurrent-PR p90 target.
+Hosted desktop automation and private hook fixtures do not establish physical IME, first-launch security prompts or real agent hook behavior.
 
 ### Maintenance and review policy
 
@@ -35,7 +39,7 @@ Check the workflow before claiming any of them runs automatically.
 
 Use this ledger when deciding whether a feature can reuse an owner instead of adding another permanent loop.
 The source paths are the authority for cadence, admission and cleanup; a duration is a scheduling interval or deadline, never a measured latency guarantee.
-The ledger covers core/daemon background schedules, the desktop host's discovery watch, hcoord and the shared elapsed display clock.
+The ledger covers core/daemon background schedules, the desktop host's discovery watch and the shared elapsed display clock.
 Finite request deadlines, UI debounce/animation timers and the upstream Herdr server's internal schedules are outside this ledger.
 An active-worker limit does not cap queue length, retained bytes or all work done by a tick.
 The missing bounds and shutdown gaps below describe the current implementation; this documentation change does not add them.
@@ -44,6 +48,7 @@ The missing bounds and shutdown gaps below describe the current implementation; 
 | --- | --- | --- | --- | --- |
 | Session coordinator: `herdr-core/src/session_sync.rs`, `session_sync/coordinator.rs` | Operation tick 250 ms; `agent.list` 1 s; catalog due at 30 s; reconnect backoff 100 ms to 5 s. | Advance pending operations, compare telemetry and publish only changed state or a due catalog; due socket reads run off-lock. | One coordinator per followed server; active-tab recovery allows 8 reads; the coordinator `mpsc::channel` mailbox has no numeric capacity. | `SessionSyncHandle::drop` sends Stop and joins; coordinator exit stops its subscription; loss of the weak runtime owner also ends the loop. |
 | Agent sleep: `runtime/agent_sleep.rs`, `agent_sleep.rs` | Minute decision on the local coordinator tick; committed visits update last look. | Inside the minute, a due-time comparison; when due, inspect pane/agent state, persist changed last-look stamps and schedule eligible ends. | At most 4 automatic ends in flight; the full decision scans the current agents and has no separate per-pass agent-count cap. | Decision polling ends with the coordinator; individual end/wake work is finite and separate from this timer. |
+| Lineage reconciliation: `coordination/lineage.rs` | Existing one-second native agent refresh, also requested by native events, and startup/reconnect; no new timer or general replica-publication trigger. | Reuse the existing native-agent equality result and append-only registration count; settled observations with no successful write awaiting native confirmation only drain bounded completions and compare the count. A native change, new registration, failed write or outstanding successful write triggers O(registrations + agents) indexed planning and differing-token I/O outside Runtime; a read begun before that write completed cannot confirm it, while a newer read can repair missing tokens. Registered targets are selected across the supplied native list, with at most one patch per registered pane; letter/watch writes and label/process/catalog publications do not trigger planning. | One worker per followed server, one active and one pending batch; 2,048 patches per batch, 4,096 completions and 2,048 cached signatures; one-second API deadline per changed pane. | Drop raises its stop flag, closes admission and joins outside Runtime; cancellation skips the remaining patches after the current one-second API read. |
 | Process names: `session_sync/process_info.rs`, `hide-herdr-client/src/lib.rs` | Focus, agent-state or subscription-generation change, or 30 s after a settled read. | Sequential `pane.process_info` reads on one off-lock worker; reject obsolete generations and publish only changed names. | At most 5 attached tabs' focused panes and one worker; each small response has a 1 s read deadline and 64 KiB frame cap. Connection setup depends on the connector; local Unix has no explicit setup deadline here. | Reader Drop cancels between batch reads and joins the current read off-lock; it does not interrupt an in-flight connection attempt or impose a platform-independent batch/join deadline. |
 | Label follow-ups and generator retry: `labels/worker.rs`, `labels/generator.rs`, `labels/analyzer.rs` | Changed agent/session; one follow-up at 3 s, unavailable transcript retry at 15 s, standby lock retry at 30 s. | Check retained panes, schedule transcript reads and analyses, drain results and persist label records off-lock. | One transcript read and one analysis submission per server; one analyzer executes per Core instance, shared by its followed servers; waiting panes and analyzer `mpsc` have no fixed numeric queue cap. | Coordinator drops its transcript reader and joins it; core analyzer shutdown cancels the provider, answers queued jobs and joins. |
 | Capability readers: `session_sync/coordinator.rs`, `ports.rs`, `usage.rs`, `ai.rs` | UI-attached gate; Ports 5 s after completion; Usage initial 1 s, visible-window refresh 5 min or popover opening after 60 s; Background AI probes 30 s with 2 s changed-request spacing; hook diagnosis 1 s while Settings is observed. | Run due `lsof`, credential/network/transcript reads, provider probes or hook diagnosis outside Runtime; ingest changed answers. | Ports are synchronous on the coordinator, with a 10 s subprocess deadline; Claude usage and AI probes each use one `BackgroundRead`; no general aggregate response-byte cap covers this group. | Coordinator ends polling; Usage Drop cancels Claude; generic `BackgroundRead` Drop does not cancel or join an in-flight read. |
@@ -61,12 +66,13 @@ The missing bounds and shutdown gaps below describe the current implementation; 
 | Daemon idle check: `hided/src/server.rs`, `env.rs` | 1 s check; Herdr probe no more often than 30 s with a 2 s request deadline. | With no clients, check Mobile keep-alive and Herdr reachability before advancing idle expiry. | One serial idle task; default expiry 600 s; keep-alive can disable it; no overlapping probe queue. | Idle expiry signals shutdown; normal server completion aborts the idle task; process/runtime exit also ends it. |
 | Mobile reconciliation/retention: `hided/src/mobile/mod.rs`, `mobile/phones.rs`, `mobile/store.rs` | 3 s observation clock; reconcile while enabled Settings is watched, or every 60 s when enabled/removal owed; phone sweep hourly. | Serialize reconciliation and sweep phones not seen for seven days, except live connected phones; changes publish existing Mobile state. | Pairing admits at most 4 phones and refuses further pairing with `phone_limit`; persisted-file loading has no equivalent count or byte validation. One reconciliation executes under the lock, but spawned reconciliation calls waiting for it have no fixed admission cap or shared coalescing flag; sweep work follows the loaded phone vector. | Mobile shutdown signals its stopping channel and removes the owned serve entry after any reconciliation; crash cleanup waits for next startup. |
 | Phone connection/detail: `hided/src/mobile/phone.rs`, `mobile/mod.rs` | Live ping 20 s; open pane detail refresh 1 s. | Ping/check silence and read the open detail's pane/conversation. | 2 live connections per phone, 8 queued detail frames, 16 KiB inbound frame, 10 s send bound and 45 s silent limit. | Socket close/revoke/eviction ends its loop; dropping the open detail aborts its detail task. |
-| hcoord scheduler: `plugins/hcoord/src/hcoord/transport.ts`, `model.ts` | 1 s scheduler; lineage local 5 s/remote 60 s, refused-write retry 5 min; remote collect 5 s/backoff 30 s; retention hourly. | Queue coalesced lineage/tick work, inspect due watches, collect letters and persist changed ledger state. | One pending tick and one pending lineage pass; at most 4 due watches plus 1 stale unwatched participant, 16 newly applied local letters per sweep; 256 admitted client operations, refusing excess with `capacity`, 64 connections and 64 MiB ledger. Internal remote-result/diagnostic operations bypass the client counter; remote collection permits one in flight per distinct machine, with 2,048 retained participants and 4,096 spawn intents. There is no shared total pending-operation admission cap on the processing chain. | Clean close clears the timer, aborts remote collection, waits for in-flight work/processing and removes owned socket/lock files. |
 | Desktop daemon watch: `desktop/src/main/host.ts`, `spawn.ts` | Health recheck 2 s after each response; lost-daemon status poll 3 s after completion. | One HTTP health read or attach-only `hide status`; discovery replaces the watch. | One watch timer and one CLI child; health deadline 1.5 s, status deadline 5 s; 2 health misses mark lost. | Host quit or new discovery clears the timer; quit kills its in-flight CLI child and leaves detached daemons alone. |
+| GitHub project re-read and store: `runtime/projects.rs` (`reread_stale_github`), `github.rs`, `github_store.rs` | UI-attached gate, like the other capability readers: no read and no comparison while no window is attached. Then a comparison on each coordinator wake; a project is asked for again 5 min after its last answer, and not while its previous ask is unanswered; one `gh` pass per changed request. | Compare the instants of at most 64 projects (`GithubClock`), advance the generation of the due ones, and let the single reader read only those; after an answer that changed, copy the snapshot under the lock and write it on the store thread. | 64 projects, the one in front and the ones a screen named first (a count past it is logged as `projects.over_limit` when it changes); one reader worker; one store thread with one pending slot, so a burst writes the latest; the file is capped at 32 MiB on read. | The store's Drop joins its thread, so a queued write lands before quit; the reader keeps its existing `BackgroundRead` ownership. |
 | Elapsed display clock: `web/src/components/elapsed.tsx` | One shared 1 s timer per window while subscribed. | Update the time and notify elapsed-span subscribers in memory; no core snapshot. | One timer; listener count has no fixed numeric cap and fan-out follows the mounted elapsed spans. | Last unsubscribe clears the timer; window destruction ends it. |
 
 Worktree, GitHub and disk readers also run on changed explicit requests; those requests are not extra permanent timers (`worktrees.rs`, `github.rs`, `disk.rs`).
 Their command, walk and storage bounds remain in the feature cost contracts below and must still be reviewed when changed.
+Agent registration and spawn records share the durable delivery worker: 2,048 agent records, 4,096 spawn intents, 128 native arguments totaling 8 KiB, the 16 MiB ledger bound and a 64-slot admitted-operation queue.
 The shared `BackgroundRead` has one in-flight request and observes the latest desired request at its next poll; only owners that explicitly cancel and call `join_pending` obtain that shutdown guarantee (`reader.rs`, `session_sync/process_info.rs`).
 
 ## Resident work cost review
@@ -140,6 +146,7 @@ Every invocation, including cleanup, must use the same explicit routing environm
 
 | Input | Required isolation |
 | --- | --- |
+| `HOME` | A private home under the run directory, including kit and retirement state |
 | `HERDR_SESSION` | A unique run-owned session name |
 | `HERDR_SOCKET_PATH` | An unused short absolute socket path |
 | `HERDR_CONFIG_PATH` | A private config file under the run directory |
@@ -147,7 +154,6 @@ Every invocation, including cleanup, must use the same explicit routing environm
 | `HERDR_PANE_ID`, `HERDR_TAB_ID`, `HERDR_WORKSPACE_ID` | Clear inherited identifiers before launching the fixture |
 | `HERDR_ENV` | Clear inherited nesting marker when starting the standalone reference TUI |
 | `HIDE_STATE_DIR`, `HERDR_BIN_PATH` | A run-owned `hided` state directory and pinned Herdr binary path |
-| `HCOORD_HOME` | A run-owned hcoord home, so the run's daemon gets a launchd label of its own instead of the account's `com.hcoord.daemon` |
 | `HIDE_DESKTOP_USER_DATA_DIR` | A run-owned Electron user-data directory for the desktop app |
 
 `desktop/e2e/fixture.ts` builds exactly this environment and refuses to launch unless `HOME`, `HIDE_STATE_DIR`, `HIDE_DESKTOP_USER_DATA_DIR`, and `HERDR_SOCKET_PATH` all resolve under the run's own temporary directory; `web/e2e/herdr-fixture.ts` does the same for the private Herdr server and clears the inherited `HERDR_PANE_ID`/`HERDR_TAB_ID`/`HERDR_WORKSPACE_ID`/`HERDR_ENV` identifiers.
@@ -155,7 +161,7 @@ Follow that same pattern for an ad hoc fixture: forward `HERDR_SESSION`, `HERDR_
 Check the pinned runtime's path behavior when updating it.
 The tested session layout stores sessions under `<XDG_CONFIG_HOME>/herdr/sessions/<HERDR_SESSION>`; changing `HERDR_CONFIG_PATH` alone does not isolate session data.
 The client socket inserts `-client` before `.sock`; allow room for that suffix in the platform's Unix socket path limit.
-Do not repurpose `HOME` or assume a private local socket disables SSH discovery.
+Do not repurpose the shell's own `HOME`; pass a private HOME explicitly to fixture children, and do not assume a private local socket disables SSH discovery.
 Inspect remote registrations, automatic SSH connection attempts, and remote client state too; an unexpected remote connection is an isolation failure to resolve before interacting.
 SSH devices are registrations kept under the daemon's state directory (the operator's is `~/.hide/state`), so a run-owned `HIDE_STATE_DIR` is what keeps a scenario that does not exercise remote behavior from making an SSH connection attempt.
 Do not edit the operator's SSH configuration or stop remote services to make a local fixture pass.
@@ -272,6 +278,9 @@ Use a qualified verdict when coverage is bounded: "no whole-body blanking observ
 
 ## Web shell echo and frame measurement
 
+Published figures and their measurement boundaries live in the dated [performance observations](PERFORMANCE_RESULTS.md).
+That report is an observed candidate result, not a new threshold or a replacement for the measurement contract here.
+
 `scripts/web-shell-measure/run.sh` measures the product `hided` the way the S0 spike measured its prototype, so the numbers stay comparable to the S0 spike baseline.
 It owns every process it starts: an isolated pinned Herdr server on a socket inside a run-specific mode-0700 directory under `/tmp` (`isolated-env.sh`, the same routing table as section 3), one linked Git checkout and workspace with a `stty -echo -icanon; cat` pane, the release `hided` with its embedded `web/dist`, and one Google Chrome with an automatically assigned CDP port on the page opened with `?probe=1`.
 The runner reads Chrome's CDP port from its own profile and sends the page URL over standard input so the token is absent from the Chrome command line.
@@ -284,7 +293,7 @@ The baseline is reused from the S0 report rather than re-measured, and `summariz
 Frames (PRD B12) is one 120 s window with the pane printing a line every 8 ms while a `requestAnimationFrame` loop injected through CDP records every frame's `dt`; the result is the fraction of frames over 16.7 ms, the WebSocket frame count the page received during the window, and the pane tail that proves the driver ran.
 This is a live driven pipeline, not the in-page replay the spike used: a replay mode would put spike code into the product, and the threshold is absolute, so the live run is the stricter measurement.
 
-Run it as `HIDE_MEASURE_RUN_DIR=agents/runs/<slug>/measure/<attempt> bash scripts/web-shell-measure/run.sh` after `pnpm --dir web build` and `cargo build --release -p hided`.
+Run it as `HIDE_MEASURE_RUN_DIR=agents/runs/<slug>/measure/<attempt> bash scripts/web-shell-measure/run.sh` after `bash scripts/verify-web.sh web build` and `bash scripts/verify-cargo.sh release`.
 For an unattended comparison, append `--isolated-headless`: Chrome has no native window and the runner records that operator topology observation was skipped, without contacting the operator socket.
 Use that same browser mode for baseline and candidate, and report it with the results; a headless measurement does not prove native presentation.
 `MEASURE_SCENARIO=areas2` or `areas3` shows two or three Agent tabs through the real area menu, each with one pane.
@@ -292,6 +301,9 @@ All shown panes receive the same line-every-8-ms driver; the measured pane also 
 `resources-idle.json` and `resources-driven.json` record twenty one-second CPU-time deltas and RSS sums for the owned hided, Herdr and Chrome process trees, independently of the echo and frame samples.
 For an RSS comparison, append `--memory-series` after `--isolated-headless` to extend the driven window to ten minutes and collect eleven one-minute process-tree RSS samples in `memory-series.json`.
 A first run opens on Main (PRD S6), so the harness uses the Projects sidebar to open its linked fixture checkout before measuring.
+The fixture workspace reports the checkout's `hide_owner` token before startup so the core reuses the prepared pane rather than creating a different workspace.
+The Projects control is a tab, so readiness reads `aria-selected`; opening the fixture is one click after its checkout row appears.
+Cleanup removes the private socket's label-generator lock as well as its socket before removing the owned socket directory.
 The run directory keeps `identity.txt` (head, dirty count, binary hash, Herdr and Chrome versions, load), `echo-*.json`, `frames.json`, both summaries and the owned PID status at cleanup.
 The harness resolves that directory to an absolute path before starting child panes, so their private HOME, state, and checkout paths remain valid after the pane changes directory.
 `MEASURE_SCENARIO=multi` is the S2 shape (PRD web-shell-pivot-s2 D-08): the measured pane shares its tab with four splits and four more tabs are shown once each so the core holds five attached tabs before the shell returns to the measured tab; `page.json` records the pane, split and tab counts, the attached pane ids and the live xterm instances the run started from (every attached pane keeps its instance parked while its tab is hidden, D-05).
@@ -439,8 +451,11 @@ An automated deadline test proves bounded return under its fixture conditions; i
 
 The shell memoizes the board by navigation snapshot revision, project identity and connection state.
 A body re-evaluation on unchanged input does not regroup cards or rebuild lineage.
-The core issue projection uses accepted catalog and metadata only; it schedules GitHub work on a changed selected reference, board open, project selection or explicit refresh, never a timer.
+The core issue projection uses accepted catalog and metadata only; it schedules GitHub work on a changed selected reference, board open, project selection or explicit refresh; the one timer it adds is the re-read of every local Git project in the ledger above, five minutes after a good answer and 30 seconds doubling to five minutes after a failed one.
 The GitHub reader keeps its existing single worker and per-project generation cache.
+A project's pull request read is two concurrent `gh pr list` calls under the same 15-second limit, so it adds one short-lived thread per read and no timer; a read asks for the checks of the open pull requests only, which took it from 11 - 14 seconds to about 5 on this repository (2026-10-05, same Mac and `gh`), and the cache keeps at most one check result per listed pull request.
+Each read's `pull_requests.ok`, `pull_requests.empty` or `pull_requests.failed` diagnostic carries `duration_ms`, which is where a slow read is found afterwards.
+Tying a pull request to a checkout compares the checkout's already-held HEAD with at most 200 listed pull requests under the lock, with no Git process or file read.
 At most 200 linked identities and backlog entries are retained per project; one extra list result reports overflow.
 Closed and cross-repository identities are resolved in one bounded query.
 Manual writes use the existing task-operation slot and a terminating worker; cleanup shares the bounded purpose mirror queue.

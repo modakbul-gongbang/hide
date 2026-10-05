@@ -4,10 +4,14 @@
 // agents per card, and both scopes.
 
 import { describe, expect, it } from "vitest";
-import { allProjectsStats, buildDependencies, buildPullRequests, buildTasks, filterActive, filterBoard, formatBytes, NO_FILTER, projectStats, shownAgents, stageCards, stageOf, type BoardProject } from "./projectBoard";
+import { initializeInterfaceI18n } from "./i18n/instance";
+import { allProjectsStats, buildDependencies, buildPullRequests, buildTasks, filterActive, filterBoard, issueDate, NO_FILTER, projectStats, readFailureText, shownAgents, stageCards, stageOf, type BoardProject } from "./projectBoard";
 import type { AgentRow, Checkout, PullRequest, Task, Workspace } from "./snapshot";
 
 const NOW = 1_800_000_000_000;
+
+const t = initializeInterfaceI18n("ko").getFixedT(null, "translation");
+const english = initializeInterfaceI18n("en").getFixedT(null, "translation");
 
 function pr(badge: PullRequest["badge"], checks: PullRequest["checks"] = "unknown", draft = false): PullRequest {
   return { number: 7, title: "PR", url: "https://github.com/acme/project/pull/7", badge, review: null, is_draft: draft, checks };
@@ -172,7 +176,7 @@ describe("the Issues board", () => {
     expect(more).toBe(1);
   });
 
-  it("offers 시작 on an open backlog issue of a project on this Mac and editing on a Local one only (B6, D-41)", () => {
+  it("offers Start on an open backlog issue of a project on this Mac and editing on a Local one only (B6, D-41)", () => {
     const project = workspace([checkout("linked", { task: key(1), changed: 1 })], { tasks: [task(1), task(2)] });
     const board = buildTasks(one(project), "project", NOW);
     expect(board.cards.filter((card) => card.canStart).map((card) => card.id)).toEqual(["task:project:github:acme/project#2"]);
@@ -221,8 +225,11 @@ describe("the Issues board", () => {
   it("keeps the last issues when the source could not be read and says so on every card with the value's age (B17)", () => {
     const board = buildTasks(one(workspace([checkout("feat", { task: key(170) }), checkout("loose")], { tasks: [task(170), task(171)], failure: "rate limited" })), "project", NOW);
     expect(board.cards).toHaveLength(2);
-    expect(board.cards.map((card) => card.sourceFailure)).toEqual(["GitHub 읽기 실패 · 5분 전 값 · 이유는 로그에", "GitHub 읽기 실패 · 5분 전 값 · 이유는 로그에"]);
-    expect(board.source.failure).toBe("GitHub 읽기 실패 · 이유는 로그에");
+    const aged = { project: null, source: "GitHub", value: { minutes: 5 } };
+    expect(board.cards.map((card) => card.sourceFailure)).toEqual([aged, aged]);
+    expect(readFailureText(aged, t)).toBe("GitHub 읽기 실패 · 5분 전 값 · 이유는 로그에");
+    expect(board.source.failure).toEqual({ project: null, source: "GitHub", value: "omitted" });
+    expect(readFailureText(board.source.failure!, t)).toBe("GitHub 읽기 실패 · 이유는 로그에");
   });
 
   it("puts a folder or the primary checkout on the board only while an agent there works on an issue", () => {
@@ -367,9 +374,6 @@ describe("the facts line", () => {
     expect(sized({ total_bytes: null, unavailable_reason: "Permission denied", measuring: false })).toBeNull();
     // One checkout that could not be read leaves the subtotal of the others, not a total.
     expect(sized({ total_bytes: null, unavailable_reason: "over the limit", measuring: false, confirmed_bytes: 1_503_238_553 })).toBe(1_503_238_553);
-    expect(formatBytes(512)).toBe("512 B");
-    expect(formatBytes(812 * 1024 * 1024)).toBe("812 MB");
-    expect(formatBytes(1_503_238_553)).toBe("1.4 GB");
   });
 });
 
@@ -380,7 +384,9 @@ describe("the PRs tab", () => {
   }
   function repo(checkouts: Checkout[], pullRequests: PullRequest[], options: { tasks?: Task[]; github?: Checkout["github"] } = {}): Workspace {
     const main = { ...checkout("main", { worktree: false }), github: options.github ?? answered };
-    return { ...workspace([main, ...checkouts], { tasks: options.tasks ?? [] }), pull_requests: pullRequests };
+    // The core connects a pull request to the checkout on its branch (a settled one only at its commit).
+    const held = (row: Checkout) => ({ ...row, pull_request: row.pull_request ?? pullRequests.find((pull) => pull.head_branch === row.branch) ?? null });
+    return { ...workspace([main, ...checkouts].map(held), { tasks: options.tasks ?? [] }), pull_requests: pullRequests };
   }
   const groups = (board: ReturnType<typeof buildPullRequests>) => board.groups.map((entry) => [entry.group, entry.rows.map((row) => row.number)]);
 
@@ -433,7 +439,7 @@ describe("the PRs tab", () => {
     expect(groups(board)).toEqual([["turn", [6]]]);
   });
 
-  it("lists recent merges newest first and offers 정리 for the worktree still here, or for its record once its folder is gone (B19, B20)", () => {
+  it("lists recent merges newest first and offers Clean up for the worktree still here, or for its record once its folder is gone (B19, B20)", () => {
     const gone = { ...checkout("old"), exists: false };
     const project = repo(
       [checkout("kept"), gone],
@@ -451,7 +457,22 @@ describe("the PRs tab", () => {
     ]);
   });
 
-  it("fills the issue cell from the branch's link, else the issue the body closes, and offers 이슈 잇기 only on an open one without (B3, B7, D-34)", () => {
+  it("ties a pull request to the checkout the core connected it to, so a branch name used again does not offer Clean up for the new worktree", () => {
+    const reused = checkout("reused");
+    const old = listed(30, "reused", { badge: "merged", merged_at_unix_ms: NOW - 86_400_000 });
+    // The core left the old merge off the new worktree: it is not on the merged pull request's commit.
+    const project = { ...repo([reused], [old]), checkouts: [checkout("main", { worktree: false }), reused] };
+    const row = buildPullRequests({ workspace: project, agents: [], device: null }, NOW).groups.flatMap((entry) => entry.rows)[0]!;
+    expect(row).toMatchObject({ number: 30, checkout: null, cleanup: null });
+  });
+
+  it("draws a merged pull request whose checks were never read with no CI mark", () => {
+    const merged = listed(31, "gone", { badge: "merged", merged_at_unix_ms: NOW - 60_000, checks: "unknown" });
+    const row = buildPullRequests({ workspace: repo([], [merged]), agents: [], device: null }, NOW).groups.flatMap((entry) => entry.rows)[0]!;
+    expect(row.checks).toBeNull();
+  });
+
+  it("fills the issue cell from the branch's link, else the issue the body closes, and offers Link issue only on an open one without (B3, B7, D-34)", () => {
     const project = repo(
       [checkout("linked", { task: task(21).key })],
       [listed(1, "linked"), listed(2, "closing", { closing_issues: [{ repository: "acme/project", number: 22 }] }), listed(3, "elsewhere", { closing_issues: [{ repository: "acme/other", number: 5 }] }), listed(4, "bare"), listed(5, "done", { badge: "merged" })],
@@ -476,8 +497,25 @@ describe("the PRs tab", () => {
     const reading = buildPullRequests({ workspace: repo([], [], { github: { ...answered, last_success_at_unix_ms: null, loading: true } }), agents: [], device: null }, NOW);
     expect(reading).toMatchObject({ open: null, reading: true, failure: null });
     const failed = buildPullRequests({ workspace: repo([], [listed(6, "asks")], { github: { ...answered, stale: true, last_success_at_unix_ms: NOW - 3 * 60_000 } }), agents: [], device: null }, NOW);
-    expect(failed).toMatchObject({ open: 1, reading: false, failure: "GitHub 읽기 실패 · 3분 전 값 · 이유는 로그에" });
+    expect(failed).toMatchObject({ open: 1, reading: false, failure: { project: null, source: "GitHub", value: { minutes: 3 } } });
     const none = buildPullRequests({ workspace: repo([], [], { github: { ...answered, last_success_at_unix_ms: null, available: false, failure_category: "no GitHub remote", unavailable_reason: "no remote" } }), agents: [], device: null }, NOW);
     expect(none).toMatchObject({ open: 0, reading: false, failure: null });
+  });
+});
+
+describe("the board's words follow the interface language", () => {
+  it("writes a failed read with the project, the source, the value's age and the log pointer", () => {
+    const failure = { project: "herdr-ide", source: "GitHub", value: { minutes: 1 } };
+    expect(readFailureText(failure, english)).toBe("herdr-ide · GitHub read failed · Value from 1 minute ago · Reason in logs");
+    expect(readFailureText({ ...failure, value: { minutes: 5 } }, english)).toBe("herdr-ide · GitHub read failed · Value from 5 minutes ago · Reason in logs");
+    expect(readFailureText({ project: null, source: "Local", value: "last" }, english)).toBe("Local read failed · Last known value · Reason in logs");
+    expect(readFailureText({ project: null, source: "GitHub", value: "none" }, english)).toBe("GitHub read failed · No value read yet · Reason in logs");
+    expect(readFailureText({ project: null, source: "GitHub", value: "omitted" }, english)).toBe("GitHub read failed · Reason in logs");
+  });
+
+  it("states a day in the language's own calendar words", () => {
+    const day = new Date(2026, 8, 27, 12).getTime();
+    expect(issueDate(day, "en")).toBe("Sep 27");
+    expect(issueDate(day, "ko")).toBe("9월 27일");
   });
 });

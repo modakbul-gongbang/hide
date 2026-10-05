@@ -19,9 +19,10 @@ import { Command, CommandEmpty, CommandGroup, CommandInput, CommandItem, Command
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from "./components/ui/dropdown-menu";
 import { Popover, PopoverAnchor, PopoverContent } from "./components/ui/popover";
 import { Hint } from "./components/ui/tooltip";
+import { useInterfaceTranslation } from "./i18n/client";
 import { cn } from "./lib/utils";
 import { AgentMessagePopover, IssueChip, type LensHandlers } from "./OverviewLenses";
-import type { PrBoard, PrRow } from "./projectBoard";
+import { PR_GROUP_LABEL, type PrBoard, type PrRow } from "./projectBoard";
 import { checkoutCard, laneCheckoutCard, pullRequestCard, pullRequestKind, relativeActivity, shownPullRequest } from "./projects";
 import type { Workspace } from "./snapshot";
 import { CardAgentRow, ChecksMark, PR_TONE, REVIEW, TaskGlyph } from "./TaskBoards";
@@ -37,10 +38,6 @@ import { holdsCommandKey } from "./host";
 // unfolding are the screen's own state and publish nothing (B24); a GitHub
 // write happens only after its dialog's one confirmation (`PrDialogs.tsx`).
 
-const TAKE_HINT = "에이전트에게 맡기기\nPR 브랜치에서 시작 대화상자를 연다. 첫 지시 = 실패한 검사 · 리뷰 코멘트";
-const LINK_HINT = "이슈 잇기\n이 PR을 이슈에 잇는다. 이을 이슈가 없으면 PR 제목 · 본문으로 새로 만든다";
-const CLEAN_HINT = "정리\n머지됐거나 폴더가 없는 워크트리와 거기서 쉬는 에이전트를 지운다. 확인 대화상자가 먼저 뜬다";
-const GITHUB_HINT = "GitHub\n리뷰하고 머지";
 const MARKS = 3;
 
 function toggled(values: readonly number[], value: number): number[] {
@@ -48,6 +45,7 @@ function toggled(values: readonly number[], value: number): number[] {
 }
 
 export function PullRequestsView({ board, project, lens, onLens, handlers, now }: { board: PrBoard; project: Workspace; lens: PrLens; onLens: (prs: Partial<PrLens>) => void; handlers: LensHandlers; now: number }) {
+  const { t } = useInterfaceTranslation();
   const root = useRef<HTMLDivElement>(null);
   const merged = board.groups.find((entry) => entry.group === "merged");
   // A merged row asked for by a chip unfolds its group too (B21).
@@ -91,13 +89,14 @@ export function PullRequestsView({ board, project, lens, onLens, handlers, now }
   if (board.groups.length === 0) {
     return (
       <p className="px-lg pb-xl text-caption text-muted-foreground" data-prs-view="empty">
-        열린 PR이 없습니다.
+        {t("prList.empty")}
       </p>
     );
   }
   return (
     <div ref={root} className="flex flex-col gap-md px-lg pb-xl" data-prs-view="board" onKeyDown={keys}>
-      {board.groups.map(({ group, label, rows }) => {
+      {board.groups.map(({ group, rows }) => {
+        const label = t(PR_GROUP_LABEL[group]);
         const folded = group === "merged" && !mergedOpen;
         return (
           <section key={group} className="flex flex-col" data-pr-group={group} data-folded={folded ? "true" : undefined}>
@@ -140,19 +139,20 @@ function own(handler: (event: MouseEvent) => void) {
 
 /**
  * One pull request (B3-B8): `▸`, its state glyph, number and title, the issue
- * cell, the yellow `확인` when an agent there finished unseen, then the agent
+ * cell, the yellow `Review` when an agent there finished unseen, then the agent
  * marks, the branch, CI, the review word and the time. The row itself is one
  * button that unfolds it (⌘-click: GitHub); every part above it is its own
  * destination.
  */
 function PullRequestRowView({ row, project, open, onToggle, onUnfold, handlers, now }: { row: PrRow; project: Workspace; open: boolean; onToggle: () => void; onUnfold: () => void; handlers: LensHandlers; now: number }) {
+  const { t } = useInterfaceTranslation();
   const [picking, setPicking] = useState(false);
   const github = (url: string) => handlers.openGitHub(url, project.device_id);
   const Glyph = CHECKOUT_KIND_ICON[pullRequestKind(row.pr)];
   const place = row.checkout?.branch ?? row.branch;
   const checkoutHere = row.checkout !== null && row.checkout.exists;
-  const numberCard = row.checkout && shownPullRequest(row.checkout)?.number === row.number ? checkoutCard(project, row.checkout, now) : pullRequestCard(row.pr);
-  const age = relativeActivity(row.at, now);
+  const numberCard = row.checkout && shownPullRequest(row.checkout)?.number === row.number ? checkoutCard(project, row.checkout, now, t) : pullRequestCard(row.pr, t);
+  const age = relativeActivity(row.at, now, t);
   return (
     <li className="flex flex-col" data-pr={row.number} data-pr-group-row={row.group} data-open={open ? "true" : undefined}>
       <div className={cn("group/pr-row relative flex h-(--size-control-lg) min-w-0 items-center gap-sm rounded-sm pr-sm pl-xs", open && "bg-secondary", row.group === "merged" && "opacity-(--opacity-secondary)")}>
@@ -186,7 +186,7 @@ function PullRequestRowView({ row, project, open, onToggle, onUnfold, handlers, 
         <IssueCell row={row} project={project} picking={picking} onPicking={setPicking} handlers={handlers} now={now} />
         {row.needsLook ? (
           <Badge variant="outline" className="pointer-events-none relative shrink-0 border-warning text-warning" data-pr-look="true">
-            확인
+            {t("board.turn.review")}
           </Badge>
         ) : null}
         <span className="flex-1" />
@@ -194,7 +194,7 @@ function PullRequestRowView({ row, project, open, onToggle, onUnfold, handlers, 
         <BranchCell row={row} project={project} checkoutHere={checkoutHere} handlers={handlers} now={now} />
         <span className="relative flex w-(--size-icon-sm) shrink-0 justify-center">
           {row.checks ? (
-            <Hint label={`${row.checks === "failed" ? "실패한 검사" : "검사"} GitHub에서 보기`}>
+            <Hint label={t(row.checks === "failed" ? "prList.openFailedChecks" : "prList.openChecks")}>
               <button type="button" className="inline-flex rounded-xs outline-none focus-visible:ring-1 focus-visible:ring-ring" onClick={own(() => github(`${row.url}/checks`))} data-pr-checks-open={row.checks}>
                 <ChecksMark checks={row.checks} />
               </button>
@@ -204,7 +204,7 @@ function PullRequestRowView({ row, project, open, onToggle, onUnfold, handlers, 
         <span className="relative flex w-(--size-pr-review) shrink-0 justify-end">
           {row.review ? (
             <button type="button" className={cn("rounded-xs text-caption outline-none hover:underline focus-visible:ring-1 focus-visible:ring-ring", REVIEW[row.review].tone)} onClick={own(() => github(`${row.url}/files`))} data-pr-review={row.review}>
-              {REVIEW[row.review].label}
+              {t(REVIEW[row.review].label)}
             </button>
           ) : null}
         </span>
@@ -223,11 +223,12 @@ function PullRequestRowView({ row, project, open, onToggle, onUnfold, handlers, 
 /**
  * The issue cell (B7-B9): the issue's chip, its card after a half-second
  * rest and its panel on a click; empty, a dotted circle that turns into the
- * 이슈 잇기 icon under the pointer where the pull request can be linked, and
- * opens the project's open issues to choose from, searchable, with `새 이슈
- * 만들기` last.
+ * Link issue icon under the pointer where the pull request can be linked, and
+ * opens the project's open issues to choose from, searchable, with `Create
+ * new issue` last.
  */
 function IssueCell({ row, project, picking, onPicking, handlers, now }: { row: PrRow; project: Workspace; picking: boolean; onPicking: (open: boolean) => void; handlers: LensHandlers; now: number }) {
+  const { t } = useInterfaceTranslation();
   const issue = row.issue;
   if (issue?.task) {
     return (
@@ -239,7 +240,7 @@ function IssueCell({ row, project, picking, onPicking, handlers, now }: { row: P
   if (issue) {
     // A reference the source does not list (closed, or another repository's): GitHub has it.
     return (
-      <Hint label={`${issue.label} GitHub에서 열기`}>
+      <Hint label={t("prList.openIssue", { issue: issue.label })}>
         <button type="button" className="relative shrink-0 rounded-xs font-mono text-caption text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring" onClick={own(() => issue.url && handlers.openGitHub(issue.url, project.device_id))} data-pr-issue={issue.key}>
           {issue.label}
         </button>
@@ -256,7 +257,7 @@ function IssueCell({ row, project, picking, onPicking, handlers, now }: { row: P
   }
   return (
     <IssuePicker row={row} project={project} open={picking} onOpenChange={onPicking}>
-      <button type="button" aria-label="이슈 잇기" className="group/pr-issue relative inline-flex w-(--size-icon) shrink-0 justify-center rounded-xs outline-none focus-visible:ring-1 focus-visible:ring-ring" onClick={own(() => onPicking(true))} data-pr-issue="none" data-pr-link-open={row.number}>
+      <button type="button" aria-label={t("prList.linkIssue")} className="group/pr-issue relative inline-flex w-(--size-icon) shrink-0 justify-center rounded-xs outline-none focus-visible:ring-1 focus-visible:ring-ring" onClick={own(() => onPicking(true))} data-pr-issue="none" data-pr-link-open={row.number}>
         <span className={cn("group-hover/pr-issue:hidden group-focus-visible/pr-issue:hidden", picking && "hidden")}>{empty}</span>
         <Link2Icon aria-hidden="true" className={cn("hidden size-(--size-icon-sm) text-foreground group-hover/pr-issue:block group-focus-visible/pr-issue:block", picking && "block")} data-pr-link-icon={row.number} />
       </button>
@@ -264,8 +265,9 @@ function IssueCell({ row, project, picking, onPicking, handlers, now }: { row: P
   );
 }
 
-/** The project's open issues and `새 이슈 만들기` (B9) under the issue cell, `children`, which carries the 이슈 잇기 hint; choosing one opens its confirmation, or for a Local issue links it. */
+/** The project's open issues and `Create new issue` (B9) under the issue cell, `children`, which carries the Link issue hint; choosing one opens its confirmation, or for a Local issue links it. */
 function IssuePicker({ row, project, open, onOpenChange, children }: { row: PrRow; project: Workspace; open: boolean; onOpenChange: (open: boolean) => void; children: ReactNode }) {
+  const { t } = useInterfaceTranslation();
   const issues = (project.tasks?.tasks ?? []).filter((task) => task.open);
   // A choice hands the keyboard to the dialog it opens, not back to the cell.
   const chosen = useRef(false);
@@ -276,7 +278,7 @@ function IssuePicker({ row, project, open, onOpenChange, children }: { row: PrRo
   };
   return (
     <Popover open={open} onOpenChange={onOpenChange}>
-      <Hint label={LINK_HINT}>
+      <Hint label={t("prList.linkHint")}>
         <PopoverAnchor asChild>{children}</PopoverAnchor>
       </Hint>
       <PopoverContent
@@ -292,10 +294,10 @@ function IssuePicker({ row, project, open, onOpenChange, children }: { row: PrRo
         }}
       >
         <Command>
-          <CommandInput placeholder="이슈 검색" autoFocus />
+          <CommandInput placeholder={t("prList.searchIssues")} autoFocus />
           <CommandList>
-            <CommandEmpty>열린 이슈가 없습니다</CommandEmpty>
-            <CommandGroup heading={project.tasks?.source?.label ?? "이슈"}>
+            <CommandEmpty>{t("board.empty")}</CommandEmpty>
+            <CommandGroup heading={project.tasks?.source?.label ?? t("issue.label")}>
               {issues.map((task) => (
                 <CommandItem key={task.key} value={`${task.id ?? ""} ${task.title} ${task.key}`} onSelect={() => choose({ kind: "pr_link", workspaceId: project.id, prNumber: row.number, issueKey: task.key })} data-pr-link-choice={task.key}>
                   <TaskGlyph task={task} />
@@ -306,8 +308,8 @@ function IssuePicker({ row, project, open, onOpenChange, children }: { row: PrRo
             </CommandGroup>
             <CommandSeparator />
             <CommandGroup>
-              <CommandItem value="새 이슈 만들기" onSelect={() => choose({ kind: "pr_new_issue", workspaceId: project.id, prNumber: row.number })} data-pr-link-new="true">
-                새 이슈 만들기
+              <CommandItem value={t("prList.newIssue")} onSelect={() => choose({ kind: "pr_new_issue", workspaceId: project.id, prNumber: row.number })} data-pr-link-new="true">
+                {t("prList.newIssue")}
               </CommandItem>
             </CommandGroup>
           </CommandList>
@@ -344,6 +346,7 @@ function AgentMarks({ row, place, onUnfold, handlers }: { row: PrRow; place: str
 
 /** The branch in mono (B7, B8): its checkout's Workspace and checkout card where it has one here, else only its name. */
 function BranchCell({ row, project, checkoutHere, handlers, now }: { row: PrRow; project: Workspace; checkoutHere: boolean; handlers: LensHandlers; now: number }) {
+  const { t } = useInterfaceTranslation();
   const checkout = row.checkout;
   const text = <span className="truncate">{row.branch}</span>;
   const shape = "relative min-w-0 max-w-(--size-pr-branch-max) shrink truncate rounded-xs font-mono text-caption text-muted-foreground";
@@ -357,7 +360,7 @@ function BranchCell({ row, project, checkoutHere, handlers, now }: { row: PrRow;
     );
   }
   return (
-    <CheckoutCardHint card={laneCheckoutCard(project, checkout, now)} description={`${row.branch} · ${checkout.path}`} onOpenPullRequest={(url) => handlers.openGitHub(url, project.device_id)} onOpenWorkspace={() => handlers.openCheckout(project, checkout)}>
+    <CheckoutCardHint card={laneCheckoutCard(project, checkout, now, t)} description={`${row.branch} · ${checkout.path}`} onOpenPullRequest={(url) => handlers.openGitHub(url, project.device_id)} onOpenWorkspace={() => handlers.openCheckout(project, checkout)}>
       <button type="button" className={cn(shape, "inline-flex outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring")} onClick={own(() => handlers.openCheckout(project, checkout))} data-pr-branch={row.branch}>
         {text}
       </button>
@@ -367,20 +370,21 @@ function BranchCell({ row, project, checkoutHere, handlers, now }: { row: PrRow;
 
 /**
  * The buttons that stand in the time slot under the pointer or the keyboard
- * (B6): `▷ 맡기기` where a failing or change-requested pull request has no
- * agent, `정리` on a merged one whose worktree is still here, else the GitHub
- * icon and `⋯` with 맡기기, 이슈 잇기 and 브랜치 이름 복사.
+ * (B6): `▷ Assign` where a failing or change-requested pull request has no
+ * agent, `Clean up` on a merged one whose worktree is still here, else the GitHub
+ * icon and `⋯` with Assign, Link issue and Copy branch name.
  */
 function RowActions({ row, project, onLink, handlers }: { row: PrRow; project: Workspace; onLink: () => void; handlers: LensHandlers }) {
+  const { t } = useInterfaceTranslation();
   const reveal = "invisible absolute inset-y-0 right-0 flex items-center gap-xxs group-focus-within/pr-row:visible group-hover/pr-row:visible has-data-[state=open]:visible";
   const delegate = () => useUiStore.getState().setWorkspaceDialog({ kind: "pr_delegate", workspaceId: project.id, prNumber: row.number });
   if (row.delegate) {
     return (
       <span className={reveal} data-pr-actions="delegate">
-        <Hint label={TAKE_HINT}>
+        <Hint label={t("prList.takeHint")}>
           <Button variant="secondary" size="sm" onClick={own(delegate)} data-pr-delegate-open={row.number}>
             <PlayIcon aria-hidden="true" />
-            맡기기
+            {t("prList.delegate")}
           </Button>
         </Hint>
       </span>
@@ -390,9 +394,9 @@ function RowActions({ row, project, onLink, handlers }: { row: PrRow; project: W
     const checkout = row.checkout;
     return (
       <span className={reveal} data-pr-actions="cleanup">
-        <Hint label={CLEAN_HINT}>
+        <Hint label={t("prList.cleanHint")}>
           <Button variant="ghost" size="sm" onClick={own(() => handlers.cleanup(project, checkout))} data-pr-cleanup={row.cleanup}>
-            정리
+            {t("prList.cleanup")}
           </Button>
         </Hint>
       </span>
@@ -401,22 +405,22 @@ function RowActions({ row, project, onLink, handlers }: { row: PrRow; project: W
   const open = row.group !== "merged";
   return (
     <span className={reveal} data-pr-actions="default">
-      <Hint label={GITHUB_HINT}>
+      <Hint label={t("prList.gitHubHint")}>
         <Button variant="ghost" size="icon-sm" aria-label="GitHub" onClick={own(() => handlers.openGitHub(row.url, project.device_id))} data-pr-github={row.number}>
           <ExternalLinkIcon aria-hidden="true" />
         </Button>
       </Hint>
       <DropdownMenu>
         <DropdownMenuTrigger asChild>
-          <Button variant="ghost" size="icon-sm" aria-label="PR 동작" onClick={(event) => event.stopPropagation()} data-pr-menu={row.number}>
+          <Button variant="ghost" size="icon-sm" aria-label={t("prList.actions")} onClick={(event) => event.stopPropagation()} data-pr-menu={row.number}>
             <EllipsisIcon aria-hidden="true" />
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" onClick={(event) => event.stopPropagation()}>
-          {open ? <DropdownMenuItem onSelect={delegate} data-pr-menu-delegate="true">맡기기</DropdownMenuItem> : null}
-          {row.linkable ? <DropdownMenuItem onSelect={onLink} data-pr-menu-link="true">이슈 잇기</DropdownMenuItem> : null}
+          {open ? <DropdownMenuItem onSelect={delegate} data-pr-menu-delegate="true">{t("prList.delegate")}</DropdownMenuItem> : null}
+          {row.linkable ? <DropdownMenuItem onSelect={onLink} data-pr-menu-link="true">{t("prList.linkIssue")}</DropdownMenuItem> : null}
           <DropdownMenuItem onSelect={() => void navigator.clipboard?.writeText(row.branch)} data-pr-menu-copy="true">
-            브랜치 이름 복사
+            {t("prList.copyBranch")}
           </DropdownMenuItem>
         </DropdownMenuContent>
       </DropdownMenu>
@@ -427,9 +431,10 @@ function RowActions({ row, project, onLink, handlers }: { row: PrRow; project: W
 /**
  * The unfolded row (B5): the branch's agents under their ancestors, root
  * first, the operator's turn on its yellow line, then GitHub, Workspace and,
- * with no issue, 이슈 잇기 as icon buttons.
+ * with no issue, Link issue as icon buttons.
  */
 function UnfoldedRow({ row, project, place, checkoutHere, onLink, handlers }: { row: PrRow; project: Workspace; place: string; checkoutHere: boolean; onLink: () => void; handlers: LensHandlers }) {
+  const { t } = useInterfaceTranslation();
   const checkout = row.checkout;
   return (
     <div className="flex flex-col gap-xxs pb-sm pl-(--size-pr-indent)" data-pr-unfolded={row.number}>
@@ -441,21 +446,21 @@ function UnfoldedRow({ row, project, place, checkoutHere, onLink, handlers }: { 
         </ul>
       ) : null}
       <span className="flex items-center gap-xs">
-        <Hint label={GITHUB_HINT}>
+        <Hint label={t("prList.gitHubHint")}>
           <Button variant="ghost" size="icon-sm" aria-label="GitHub" onClick={() => handlers.openGitHub(row.url, project.device_id)} data-pr-unfolded-github={row.number}>
             <ExternalLinkIcon aria-hidden="true" />
           </Button>
         </Hint>
         {checkout && checkoutHere ? (
-          <Hint label="Workspace 열기">
-            <Button variant="ghost" size="icon-sm" aria-label="Workspace" onClick={() => handlers.openCheckout(project, checkout)} data-pr-unfolded-workspace={row.number}>
+          <Hint label={t("issue.openWorkspace")}>
+            <Button variant="ghost" size="icon-sm" aria-label={t("issue.workspace")} onClick={() => handlers.openCheckout(project, checkout)} data-pr-unfolded-workspace={row.number}>
               <SquareTerminalIcon aria-hidden="true" />
             </Button>
           </Hint>
         ) : null}
         {row.linkable ? (
-          <Hint label={LINK_HINT}>
-            <Button variant="ghost" size="icon-sm" aria-label="이슈 잇기" onClick={onLink} data-pr-unfolded-link={row.number}>
+          <Hint label={t("prList.linkHint")}>
+            <Button variant="ghost" size="icon-sm" aria-label={t("prList.linkIssue")} onClick={onLink} data-pr-unfolded-link={row.number}>
               <Link2Icon aria-hidden="true" />
             </Button>
           </Hint>

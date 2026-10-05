@@ -1,5 +1,5 @@
 # The unsigned Windows x64 and Linux x64 packages (operator decision
-# 2026-10-03), each built on its own runner by `pnpm --dir desktop package`
+# 2026-10-03), each built on its own runner by `bash scripts/verify-web.sh desktop package`
 # and then started without a window by `desktop/scripts/smoke-package.mjs`,
 # because no machine of either system is at hand to try a package on.
 #
@@ -19,6 +19,11 @@ on:
         description: The version the packages report, a release tag with or without its v
         type: string
         required: true
+      include-macos:
+        description: Also test the macOS archive and its packaged app (nightly).
+        type: boolean
+        required: false
+        default: false
   pull_request:
     paths:
       - desktop/scripts/**
@@ -27,6 +32,7 @@ on:
       - contracts/herdr-bundle.json
       - scripts/fetch-herdr-runtime.*
       - scripts/verify-cargo.sh
+      - scripts/verify-web.sh
       - scripts/toolchain-env.sh
       - hided/build.rs
       - hided/src/cli.rs
@@ -84,12 +90,12 @@ jobs:
         run: |
           version="${REQUESTED#v}"
           echo "HIDE_VERSION=${version:-0.0.0-ci.${{ github.run_number }}}" >> "$GITHUB_ENV"
-      - run: pnpm install --frozen-lockfile
+      - run: bash scripts/verify-web.sh install
       - name: Package the unsigned app and its checksum
-        # The packager builds the web shell, hcoord and the release binaries,
+        # The packager builds the web shell and the release binaries,
         # fetches the pinned Herdr and refuses when any of them cannot run.
         timeout-minutes: 50
-        run: pnpm --dir desktop package
+        run: bash scripts/verify-web.sh desktop package
       - name: Unpack, install the kit, and replace the daemon without a window
         timeout-minutes: 5
         run: node desktop/scripts/smoke-package.mjs "desktop/out/hide-v${HIDE_VERSION}-${{ matrix.system }}-x64.${{ matrix.archive }}"
@@ -103,4 +109,77 @@ jobs:
           if-no-files-found: error
           # A release attaches it within the same run; a pull request's copy
           # is there to be tried on a real machine within the week.
+          retention-days: 7
+
+  macos-package:
+    name: package (macos)
+    if: ${{ inputs.include-macos }}
+    runs-on: macos-15
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v7
+      - uses: pnpm/action-setup@v6
+        with:
+          version: 10
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+          cache-dependency-path: pnpm-lock.yaml
+      - name: Name the version
+        env:
+          REQUESTED: ${{ inputs.version }}
+        run: |
+          version="${REQUESTED#v}"
+          echo "HIDE_VERSION=$version" >> "$GITHUB_ENV"
+      - name: Install dependencies
+        timeout-minutes: 5
+        run: bash scripts/verify-web.sh install
+      - name: Package the app and checksum
+        timeout-minutes: 50
+        run: bash scripts/verify-web.sh desktop package
+      - name: Verify the archive and the extracted bundle
+        id: bundle
+        run: |
+          archive="hide-v${HIDE_VERSION}-macos-arm64.zip"
+          (cd desktop/out && shasum -a 256 -c "$archive.sha256")
+          mkdir desktop/out/extracted
+          ditto -x -k "desktop/out/$archive" desktop/out/extracted
+          app="$PWD/desktop/out/extracted/hide.app"
+          codesign --verify --deep --strict --verbose=2 "$app"
+          echo "app=$app" >> "$GITHUB_OUTPUT"
+          # The existing fixtures locate the CLI in target/debug. These exact
+          # archived release binaries avoid building a second workspace.
+          mkdir -p target/debug
+          cp "$app/Contents/Resources/hide" "$app/Contents/Resources/hided" target/debug/
+      - name: Install the pinned Electron runtime for the package fixtures
+        timeout-minutes: 5
+        run: bash scripts/verify-web.sh desktop electron-install
+      - name: Packaged app launch, session search, and isolated install kit
+        timeout-minutes: 10
+        env:
+          HIDE_E2E_APP: ${{ steps.bundle.outputs.app }}
+          HIDE_E2E_PACKAGED_APP: ${{ steps.bundle.outputs.app }}/Contents/MacOS/hide
+          HIDE_E2E_HERDR_BIN: ${{ steps.bundle.outputs.app }}/Contents/Resources/herdr
+          HIDE_E2E_SCREENSHOT_DIR: ${{ runner.temp }}/hide-e2e
+        run: |
+          mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
+          bash scripts/verify-web.sh desktop e2e local-kit.spec.ts server-session-search.spec.ts --project background
+      - name: Keep the failed package run
+        if: failure()
+        uses: actions/upload-artifact@v7
+        with:
+          name: hide-macos-package-logs
+          path: |
+            ${{ runner.temp }}/hide-e2e
+            desktop/test-results
+          if-no-files-found: ignore
+      - name: Keep the package
+        uses: actions/upload-artifact@v7
+        with:
+          name: hide-package-macos
+          path: |
+            desktop/out/hide-v*-macos-arm64.zip
+            desktop/out/hide-v*-macos-arm64.zip.sha256
+          if-no-files-found: error
           retention-days: 7

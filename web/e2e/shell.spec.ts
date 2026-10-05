@@ -1,10 +1,12 @@
 import { expect, test, type Page } from "@playwright/test";
-import { spawn, spawnSync } from "node:child_process";
+import { spawn, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { herdrBinary, linkFixtureTranscripts, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { enterWorkspace } from "./wire";
+import { fixtureExecutable, fixtureHomeEnv, fixtureOpenCommand, fixtureToolPath, inheritedFixtureEnv } from "./platform-fixture";
+import { ownUntilWorkerExit } from "./worker-owned";
 
 type Daemon = {
   origin: string;
@@ -15,82 +17,117 @@ type Daemon = {
 
 /** `herdr` lends the daemon its transcripts and its `claude` label provider. */
 async function startHided(extra: Record<string, string> = {}, herdr?: HerdrFixture): Promise<Daemon> {
-  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hide-e2e-"));
-  if (herdr) linkFixtureTranscripts(herdr, dir);
-  const bin = path.resolve("..", "target", "debug", "hided");
-  const uiDir = path.resolve("dist");
-  const env = { ...process.env };
-  delete env.HERDR_SOCKET_PATH;
-  delete env.HERDR_PANE_ID;
-  delete env.HERDR_TAB_ID;
-  delete env.HERDR_WORKSPACE_ID;
-  delete env.HERDR_ENV;
-  const child = spawn(bin, [], {
-    env: {
-      ...env,
-      HOME: dir,
-      HIDE_STATE_DIR: path.join(dir, "hide"),
-      HIDE_KEEP_ALIVE: "1",
-      HIDE_PORT: "0",
-      HIDED_UI_DIR: uiDir,
-      // Resolve the fixture binary even when this test creates no server.
-      // An inherited app-bundle override may have moved since this shell began.
-      HERDR_BIN_PATH: herdrBinary(),
-      ...(herdr ? { PATH: herdr.fixturePath } : {}),
-      ...extra,
-    },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  // The daemon's structured log is run evidence when a directory is given.
-  const logDir = process.env.HIDE_E2E_SCREENSHOT_DIR;
-  if (logDir) {
-    const log = fs.createWriteStream(path.join(logDir, `hided-${path.basename(dir)}.log`), { flags: "a" });
-    child.stdout?.pipe(log);
-    child.stderr?.pipe(log);
-  }
-  const stop = () => {
-    child.kill();
-    // The daemon may still be writing its state file as it dies; removing the
-    // directory under it fails with ENOTEMPTY.
+  const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "hide-e2e-")));
+  let child: ChildProcess | undefined;
+  let spawnAttempted = false;
+  let spawnFailed: Error | null = null;
+  let stopping = false;
+  let cleaned = false;
+  const canRemove = () => !spawnAttempted || (child !== undefined &&
+    (child.exitCode != null || child.signalCode != null || (spawnFailed !== null && child.pid === undefined)));
+  const incomplete = () => new Error(`hided fixture cleanup incomplete; preserve ${dir}: child exit unconfirmed (PID: ${child?.pid ?? "unavailable"}); wait for the recorded child's exit/close and owned cleanup, or confirm its exit before removing this retained root after worker loss`);
+  const cleanup = () => {
+    if (cleaned) return;
+    if (!canRemove()) throw incomplete();
+    // The child has exited or was never started; retry only filesystem removal.
     for (let attempt = 0; attempt < 40; attempt += 1) {
       try {
         fs.rmSync(dir, { recursive: true, force: true });
+        cleaned = true;
+        owned.disown();
         return;
       } catch {
-        spawnSync("/bin/sleep", ["0.05"]);
+        Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 50);
       }
     }
     fs.rmSync(dir, { recursive: true, force: true });
+    cleaned = true;
+    owned.disown();
   };
-  for (let i = 0; i < 50; i += 1) {
-    const statePath = path.join(dir, "hide", "hided.json");
-    if (fs.existsSync(statePath)) {
-      try {
-        // The file may be mid-write on the first read; the next tick reads it whole.
-        const state = JSON.parse(fs.readFileSync(statePath, "utf8")) as {
-          port: number;
-          token: string;
-        };
-        const origin = `http://127.0.0.1:${state.port}`;
-        const health = await fetch(`${origin}/health`);
-        if (health.ok) {
-          return { origin, token: state.token, stop };
-        }
-      } catch {
-        /* still starting */
-      }
+  const stop = () => {
+    if (cleaned) return;
+    stopping = true;
+    if (spawnAttempted && !child) throw incomplete();
+    if (child && !canRemove()) {
+      try { child.kill(); } catch (error) { throw new Error(incomplete().message, { cause: error }); }
     }
-    await new Promise((resolve) => setTimeout(resolve, 100));
+    if (canRemove()) cleanup();
+    else console.error("hided fixture cleanup pending", { root: dir, pid: child?.pid, action: "wait for the recorded child's exit/close; its root remains owned" });
+  };
+  const owned = ownUntilWorkerExit(() => {
+    try { stop(); cleanup(); } catch (error) { process.exitCode = 1; throw error; }
+  });
+  try {
+    if (herdr) linkFixtureTranscripts(herdr, dir);
+    const bin = path.resolve("..", "target", "debug", fixtureExecutable("hided"));
+    const env = {
+      ...inheritedFixtureEnv(),
+      ...fixtureHomeEnv(dir),
+      HIDE_STATE_DIR: path.join(dir, "hide"),
+      HIDE_KEEP_ALIVE: "1",
+      HIDE_PORT: "0",
+      HIDED_UI_DIR: path.resolve("dist"),
+      // Resolve the fixture binary even when this test creates no server.
+      // Keep HERDR_SOCKET_PATH absent in those missing-socket/auth cases.
+      HERDR_BIN_PATH: herdrBinary(),
+      PATH: herdr?.fixturePath ?? fixtureToolPath(path.join(dir, "bin")),
+      HIDE_OPEN_COMMAND: fixtureOpenCommand(herdr?.root, dir),
+      ...extra,
+    };
+    spawnAttempted = true;
+    child = spawn(bin, [], { env, stdio: ["ignore", "pipe", "pipe"] });
+    child.once("error", (error) => { spawnFailed = error; });
+    let closeLog = () => {};
+    child.once("close", () => {
+      closeLog();
+      if (stopping) cleanup();
+    });
+    // Two pipes share the evidence file; neither may end it before child close.
+    const logDir = process.env.HIDE_E2E_SCREENSHOT_DIR;
+    if (logDir) {
+      const log = fs.createWriteStream(path.join(logDir, `hided-${path.basename(dir)}.log`), { flags: "a" });
+      closeLog = () => log.end();
+      child.stdout?.pipe(log, { end: false });
+      child.stderr?.pipe(log, { end: false });
+    }
+    for (let i = 0; i < 50; i += 1) {
+      if (spawnFailed) throw new Error(`hided did not start from ${bin}: ${(spawnFailed as Error).message}`, { cause: spawnFailed });
+      const statePath = path.join(dir, "hide", "hided.json");
+      if (fs.existsSync(statePath)) {
+        try {
+          // The file may be mid-write on the first read; the next tick reads it whole.
+          const state = JSON.parse(fs.readFileSync(statePath, "utf8")) as {
+            port: number;
+            token: string;
+          };
+          const origin = `http://127.0.0.1:${state.port}`;
+          const health = await fetch(`${origin}/health`);
+          if (health.ok) {
+            return { origin, token: state.token, stop };
+          }
+        } catch {
+          /* still starting */
+        }
+      }
+      await new Promise((resolve) => setTimeout(resolve, 100));
+    }
+    throw new Error("hided did not write a state file");
+  } catch (error) {
+    try {
+      stop();
+      cleanup();
+    } catch (cleanupError) {
+      throw new AggregateError([error, cleanupError], `hided setup failed; cleanup incomplete; preserve ${dir}`);
+    }
+    throw error;
   }
-  stop();
-  throw new Error("hided did not write a state file");
 }
 
 test("sidebar shows a missing Herdr socket and the badge goes live", async ({ page }) => {
   const daemon = await startHided();
   try {
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
-    await expect(page.getByText("Herdr 소켓 없음")).toBeVisible();
+    await expect(page.getByText("Herdr socket missing")).toBeVisible();
     await expect(page.locator("[data-connection]")).toHaveCount(0);
   } finally {
     daemon.stop();
@@ -101,7 +138,7 @@ test("a bad token shows the refused connection state", async ({ page }) => {
   const daemon = await startHided();
   try {
     await page.goto(`${daemon.origin}/#token=${"aa".repeat(32)}`);
-    await expect(page.getByText("연결 거부")).toBeVisible();
+    await expect(page.getByText("connection refused - run hide again")).toBeVisible();
   } finally {
     daemon.stop();
   }

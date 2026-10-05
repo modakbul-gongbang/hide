@@ -46,6 +46,8 @@ describe("the model catalog (B28)", () => {
   it("gives the reason when the catalog cannot list", () => {
     const state = ai(provider("codex", { state: "needs_login", models_unavailable_reason: "Codex is not signed in" }));
     expect(catalogFor(state, "codex")).toEqual({ state: "unavailable", reason: "Codex is not signed in" });
+    // A provider that answered with no models and no reason leaves the wording to the picker, in the interface language.
+    expect(catalogFor(ai(provider("claude", { state: "ready" })), "claude")).toEqual({ state: "unavailable", reason: null });
   });
 
   it("keeps the last list while the catalog is read again", () => {

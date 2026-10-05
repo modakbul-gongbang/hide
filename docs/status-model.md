@@ -146,10 +146,20 @@ Done is therefore scoped to the lineage root: a delegated child that finishes le
 ## Where a parent comes from
 
 Ownership, the tree, the breadcrumb and the descendant badge all start from one fact per agent: the pane it was spawned from.
-Herdr records no lineage, so hcoord is the sole writer of four pane tokens through `pane.report_metadata`: `parent_pane` names the parent's pane id, `parent_machine` names the machine that owns that pane when the parent is on another device, and `child_session` and `parent_session` carry a digest of the session each pane hosted when the relationship was written.
-The complete writer, value, lifetime, machine identity, and clone-limit contract lives in [plugins/hcoord/docs/pane-tokens.md](../plugins/hcoord/docs/pane-tokens.md).
-Hide's fork and an external coordinator both register a completed spawn through the fixed hcoord binary; neither Hide nor another integration writes the tokens directly.
-`wire.rs` is the only conversion point from those tokens into the projection, and the runtime resolves machine-qualified parents only after it has read each connected device's immutable hcoord machine identity outside the runtime mutex.
+Herdr records no lineage, so hided writes the four pane tokens through `pane.report_metadata`: `parent_pane` names the parent's pane id, `parent_machine` names its machine when the parent is remote, and `child_session` and `parent_session` are the original session digests.
+The value and lifetime contract is unchanged.
+The session tokens are lowercase hexadecimal SHA-256 digests of each original `agent_session.value`; this keeps even a path-valued session inside Herdr's 80-character token limit.
+A same-server relationship omits `parent_machine`.
+A changed child session clears all four tokens, while an absent session proves neither a valid relationship nor a session change.
+Ending registration leaves the tokens until the child pane changes or disappears.
+A relationship is accepted only when both panes still report the recorded session digests; without both digests the child is a root until a complete declaration is written.
+A changed parent session cannot adopt the previous session's children, and an absent parent agent retains the existing orphan presentation.
+A missing or unknown remote machine identity leaves the child a root until its matching device connects.
+The operating-system identity is the platform UUID on macOS and the machine-id on Linux; cloned machines need distinct identities before they can safely resolve different parents.
+`hide agent register` and `hide agent spawn`, including Hide's fork, record the relationship in the core's coordination ledger.
+The existing one-second agent refresh writes only panes whose tokens differ, with a complete reconciliation on startup or reconnect and an immediate write after spawn.
+`wire.rs` and `sidebar.rs` remain the readers of this contract.
+A connected device's immutable machine identity comes from its consented helper's connection greeting, outside the runtime mutex; an unavailable identity leaves the parent unresolved and records a diagnostic.
 A declaration whose machine cannot be matched stays a root and records one diagnostic for that pane instead of guessing.
 
 A pane outlives the agent it hosted and the tokens outlive the agent with it, so a declaration is only a claim until the sessions prove it: it holds while the child's pane reports the `child_session` and the parent's pane the `parent_session`.
@@ -342,20 +352,35 @@ A count Hide cannot read is reported as unknown and never as zero, because a zer
 ## GitHub status in the Workspace row
 
 The PR icon is independent of agent status and Workspace disclosure.
-It appears for a known pull request, an in-progress lookup, or a GitHub lookup failure; a successful lookup with no matching PR leaves it absent.
+It appears for a known pull request, an in-progress first lookup, or a GitHub lookup failure; a successful lookup with no matching PR leaves it absent.
+A pull request restored from the previous run draws as soon as its checkout row exists.
 Clicking opens details without selecting a pane, marking agents read, or folding the Workspace.
 The popover shows the PR number, title, Open/Draft/Merged/Closed state, head and base branches, and CI rollup.
 Its refresh action reloads one repository; its external action opens the PR URL through the existing external browser route.
 
-The first appearance of a local Git project requests its GitHub status once for the runtime session.
-Repeated appearances are no-ops; explicit refresh advances that repository's generation.
-The selected Overview project and explicit sidebar requests share `GithubReader`, its per-project cache, 15-second subprocess timeout, one active worker and coalesced pending requests.
-The existing [`gh pr list`](https://cli.github.com/manual/gh_pr_list) request additionally asks for `title` and `statusCheckRollup`; it retains the 200-PR limit and existing branch tie-breaking policy.
+The core reads GitHub for every registered local Git project from the moment a window attaches to the daemon (the reader sits in the coordinator's UI-attached block, so a daemon with no window reads nothing), whether or not Overview, the palette or any other screen was opened; a device's project and a plain folder are not read.
+A project's status is read once when a window first attaches, again five minutes after its last answer, or sooner when that read failed to get the project's pull requests (`Runtime::reread_stale_github`, with the clock passed in so a test advances it without sleeping; a project whose ask is unanswered is not asked again, so a slow pass is never overtaken by the next), and on an explicit refresh, which advances that repository's generation.
+A failed read (the answer's `pull_requests_read` is false, whatever the reason) is asked again after 30 seconds, then 60, 120 and 240, and from the fifth failure in a row every five minutes; the first read that works starts the count over, and another project's clock is untouched: the reader hands back its cached entry for every project in a request, so an answer counts for a project only when that project's generation moved since its last answer.
+The previous answer stays drawn while a retry waits, and nothing new is shown for it: the row keeps its muted stale state (design principle 13), and each retry writes one `github` `read.retry` diagnostic with the project, the attempt and the delay.
+The failure count lives in the clock (`GithubClock`), not in a second delay, and a project is asked again only after its previous ask answered, so at most 64 projects each cost one read per 30 seconds in the worst case and an outage backs every one of them off to the five-minute pace within four retries.
+At most 64 local Git projects are read: the project in front first, then the ones a screen named with `github_request` or `overview_refresh`, then the rest in path order; a count past that is stated in the diagnostic log as `projects.over_limit` each time it changes and the ones left out show no PR icon.
+Every project shares `GithubReader`, its per-project cache, 15-second subprocess timeout, one active worker and coalesced pending requests.
+The last successful answer of every project is kept in `github-snapshot.json` in the state folder (`hide_kit::layout::github_snapshot`, written by `github_store.rs`) and restored when the daemon starts, so the first frame already draws it; the file also keeps what the wire leaves out of a pull request (its head commit, its repository and its created and closed times), because a settled pull request reconnects to its worktree only at that commit.
+A restored answer is stale until a read replaces it: `stale` is set and `last_success_at_unix_ms` stays the time of the read that produced it, so the icon is muted and the popover says how old it is.
+A file that cannot be read, decoded or is of another schema version is not used and is named in the diagnostic log as `snapshot.discarded`; the next answer replaces it.
+`loading` is true only for a project with no answer to show whose first read has not yet answered; a project the reader answers nothing for is not loading either, and a project with a restored or earlier answer is loading only while an explicit refresh of it is in flight.
+A project's pull requests are two [`gh pr list`](https://cli.github.com/manual/gh_pr_list) calls asked for at the same time, each under the 15-second limit: the 200 newest pull requests of any state without `statusCheckRollup` (with `headRefOid` and `isCrossRepository`), and the open ones with `number,statusCheckRollup` only.
+Asking for the checks of every merged and closed pull request made one read take 11 - 14 seconds, so a settled pull request's checks are not asked for again: the checks read for the same number and head commit while it was open stay in the reader's cache, and without them its checks are `Unknown`, drawn as no mark.
+Either call failing fails the project's read, which keeps the last answer and states the failure, so half an answer is never a repository with no pull requests; `pull_requests.ok`, `pull_requests.empty` and `pull_requests.failed` carry the read's `duration_ms`.
+Which pull request belongs to a checkout is one rule (`github::belongs_to_checkout`, chosen by `pull_request_for_checkout`), because a branch name is used again for new work: a pull request from a fork never belongs to a local branch of the same name, an open one belongs to the checkout on its head branch, and a merged or closed one only while the checkout's commit (the worktree reader's `head_sha`, or, before that reader has answered, the commit `Repository::head_oid` read from the repository's own files with no process) is exactly the pull request's head commit on that branch; a checkout that was amended, rebased or left behind after the last push therefore loses its merged pull request.
+Several candidates resolve open, then merged, then closed, the most recently updated first among equals, and a checkout whose commit is not read yet takes no settled pull request.
+The sidebar row, the worktree catalog, the agent rows' pull request chip and the link and hand-off actions all ask that rule, and a catalog read that moves a HEAD decides the connection again.
+The PRs view and a worktree's base still list one pull request per head branch (`preferred_per_branch`).
 The same generation also reads open issues, their Project Status, and PR closing references for Project Home.
 The issue list uses `sort:updated-desc` and reads one sentinel beyond the 200-issue display cap so overflow is based on evidence.
 Issue references accept a GitHub issue URL, `owner/repo#N`, or `#N` when the repository is known; unsupported hosts and malformed references are rejected.
 A failed component read retains that component's last successful answer, including a successfully empty answer, while a successful PR read still advances if issue reading fails.
-Hide stores no new credentials and adds no polling timer or subprocess under the runtime mutex.
+Hide stores no new credentials and runs no subprocess or file write under the runtime mutex; the five-minute ask is a comparison on the coordinator's existing wake, and the file is written by its own thread from an owned copy.
 The project request event, result status and PR fields travel through revisioned `rest`; presentation reads that snapshot only.
 
 | GitHub checks | UI |
@@ -364,7 +389,7 @@ The project request event, result status and PR fields travel through revisioned
 | Any failure, error, cancellation, timeout, or required action | Failing, red |
 | At least one running, queued, waiting, pending, or requested check, with no failure | Running, yellow |
 | An explicitly empty check list | No checks, gray |
-| Absent check data, an unknown check kind, or an unrecognized terminal result | Unknown, gray |
+| Absent check data, an unknown check kind, an unrecognized terminal result, or a merged or closed pull request whose checks were never read while it was open | Unknown, no mark |
 
 Failure takes precedence over pending, then unknown, then passing.
 A failed refresh preserves the last known PR and reports the lookup failure and last successful read time.
@@ -384,7 +409,7 @@ CI colors remain separate from PR lifecycle, so Merged does not imply Passing.
 
 ### Project Overview summary
 
-Overview reuses this cached per-branch PR answer, including failure and stale status.
+Overview reuses this cached PR answer, including failure and stale status.
 Its active-branch and draft counts describe the selected results, not every PR in the repository's history.
 The details state the reader's lookup window and offer the existing PR URL and scoped refresh actions.
 A failed or unrequested lookup never becomes a zero count.

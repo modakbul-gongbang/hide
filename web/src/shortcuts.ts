@@ -116,11 +116,12 @@ export type CommandId =
   | "search"
   | "open_file"
   | "toggle_left_sidebar"
-  | "toggle_sidebar_view"
+  | "overview"
+  | "sidebar_projects"
+  | "sidebar_agents"
   | "toggle_device_rail"
   | "toggle_explorer"
   | "toggle_right_panel"
-  | "project_home"
   | "keep_open"
   | "find_in_pane"
   | "save_file"
@@ -208,8 +209,11 @@ export type Command = {
   /** True when the browser chord differs from the desktop app's because Chrome keeps the desktop chord on this system. */
   moved: boolean;
   /** Not intercepted at the window: the chord reaches the terminal (⌘⌫ is ^U there) and its shell owner is a later stage. */
-  passthrough?: string;
+  passthrough?: Passthrough;
 };
+
+/** Why a chord is not intercepted; the sheet and Settings word each in the operator's language. */
+export type Passthrough = "explorer" | "explorer_terminal_clears_line";
 
 export const REGISTRY: readonly Command[] = [
   { id: "new_tab", title: "New tab", group: "Tabs", browser: { code: "KeyT", alt: true }, electron: { code: "KeyT", meta: true }, moved: true },
@@ -227,9 +231,10 @@ export const REGISTRY: readonly Command[] = [
   ...numberedEntries(NUMBERED_FAMILIES[1]!),
   { id: "search", title: "Search", group: "Navigate", browser: { code: "KeyK", meta: true }, electron: { code: "KeyK", meta: true }, moved: false },
   { id: "open_file", title: "Open file", group: "Navigate", browser: { code: "KeyP", meta: true }, electron: { code: "KeyP", meta: true }, moved: false },
-  { id: "project_home", title: "Project home", group: "Navigate", browser: { code: "KeyH", meta: true, shift: true }, electron: { code: "KeyH", meta: true, shift: true }, moved: false },
   { id: "toggle_left_sidebar", title: "Toggle left sidebar", group: "Panels", browser: { code: "KeyB", meta: true }, electron: { code: "KeyB", meta: true }, moved: false },
-  { id: "toggle_sidebar_view", title: "Toggle sidebar view", group: "Panels", browser: null, electron: null, moved: false },
+  { id: "overview", title: "Overview", group: "Navigate", browser: { code: "KeyO", meta: true, shift: true }, electron: { code: "KeyO", meta: true, shift: true }, moved: false },
+  { id: "sidebar_projects", title: "Projects sidebar", group: "Panels", browser: { code: "KeyP", meta: true, shift: true }, electron: { code: "KeyP", meta: true, shift: true }, moved: false },
+  { id: "sidebar_agents", title: "Agents sidebar", group: "Panels", browser: { code: "KeyA", meta: true, shift: true }, electron: { code: "KeyA", meta: true, shift: true }, moved: false },
   { id: "toggle_device_rail", title: "Toggle device rail", group: "Panels", browser: null, electron: null, moved: false },
   { id: "toggle_explorer", title: "Toggle Tools", group: "Panels", browser: { code: "KeyE", meta: true }, electron: { code: "KeyE", meta: true }, moved: false },
   { id: "toggle_right_panel", title: "Toggle File Views", group: "Panels", browser: { code: "KeyB", meta: true, shift: true }, electron: { code: "KeyB", meta: true, shift: true }, moved: false },
@@ -251,7 +256,7 @@ export const REGISTRY: readonly Command[] = [
   { id: "focus_previous_view_area", title: "Focus previous View area", group: "Panes", browser: null, electron: null, moved: false },
   { id: "grow_view_area", title: "Grow View area", group: "Panes", browser: null, electron: null, moved: false },
   { id: "shrink_view_area", title: "Shrink View area", group: "Panes", browser: null, electron: null, moved: false },
-  { id: "move_to_trash", title: "Move to Trash", group: "Panes", browser: { code: "Backspace", meta: true }, electron: { code: "Backspace", meta: true }, moved: false, passthrough: "Explorer only; in a terminal ⌘⌫ clears the line" },
+  { id: "move_to_trash", title: "Move to Trash", group: "Panes", browser: { code: "Backspace", meta: true }, electron: { code: "Backspace", meta: true }, moved: false, passthrough: "explorer_terminal_clears_line" },
   { id: "settings", title: "Settings", group: "Help", browser: { code: "Comma", alt: true }, electron: { code: "Comma", meta: true }, moved: true },
   { id: "shortcuts", title: "Keyboard shortcuts", group: "Help", browser: { code: "Slash", meta: true }, electron: { code: "Slash", meta: true }, moved: false },
 ];
@@ -262,7 +267,7 @@ export const REGISTRY: readonly Command[] = [
  * The same keys hold in both hosts; a host without the command stays
  * without it, and an operator's own binding replaces the entry.
  */
-export const PC_KEYS: Readonly<Partial<Record<CommandId, { chord?: Chord; browser?: Chord; passthrough?: string }>>> = {
+export const PC_KEYS: Readonly<Partial<Record<CommandId, { chord?: Chord; browser?: Chord; passthrough?: Passthrough }>>> = {
   // Alt+Tab is the system's window switcher and never reaches an app, so the
   // cycle moves to ` under the rule (macOS keeps ⌘` for its own window cycle,
   // which is why it uses ⌥Tab). Going back adds Alt to the Ctrl+Shift the
@@ -274,6 +279,7 @@ export const PC_KEYS: Readonly<Partial<Record<CommandId, { chord?: Chord; browse
   // Chrome keeps Alt+Shift+T (focus the toolbar) on Windows and Linux, and the
   // macOS browser chord ⌥⇧T is those same keys there, so a browser tab
   // reopens with the one free chord on that key.
+  sidebar_agents: { browser: { code: "KeyA", ctrl: true, alt: true } },
   reopen_closed_tab: { browser: { code: "KeyT", ctrl: true, alt: true, shift: true } },
   // Windows Terminal, GNOME Terminal, WezTerm, VS Code and every browser size
   // text with Ctrl and =, - or 0.
@@ -282,7 +288,7 @@ export const PC_KEYS: Readonly<Partial<Record<CommandId, { chord?: Chord; browse
   text_reset: { chord: { code: "Digit0", ctrl: true } },
   // Windows Explorer and the Linux file managers move a file to the Recycle
   // Bin or Trash with Delete.
-  move_to_trash: { chord: { code: "Delete" }, passthrough: "Explorer only" },
+  move_to_trash: { chord: { code: "Delete" }, passthrough: "explorer" },
 };
 
 /** Chords Chrome or the system keeps for itself, per system; a browser chord using one is a registry error. */
@@ -347,7 +353,7 @@ function pcCommand(command: Command): Command {
   const deviation = PC_KEYS[command.id];
   const keys = (chord: Chord | null) => chord && (deviation?.chord ?? modChord(chord, "pc"));
   const electron = keys(command.electron);
-  const moved = command.moved && electron !== null && isChromeReserved(electron, "pc");
+  const moved = (command.moved || command.id === "sidebar_agents") && electron !== null && isChromeReserved(electron, "pc");
   return {
     ...command,
     browser: deviation?.browser ?? (command.moved && !moved ? electron : keys(command.browser)),
@@ -397,7 +403,7 @@ export function matchHost(event: KeyEventLike, registry: readonly Command[], hos
 // honours the operator's existing shortcut settings).
 export const EDITABLE_PANE_COMMANDS: readonly CommandId[] = [
   "recent_area_tab", "previous_recent_area_tab", "recent_panel", "previous_recent_panel",
-  "toggle_sidebar_view",
+  "overview", "sidebar_projects", "sidebar_agents",
   "toggle_device_rail",
   "split_right",
   "split_down",
@@ -410,13 +416,15 @@ export const EDITABLE_PANE_COMMANDS: readonly CommandId[] = [
 ];
 
 /**
- * The macOS set's name for each editable command. `toggle_sidebar_view`
- * and `toggle_device_rail` have no pane command there: the set keeps the key and the desktop host
+ * The macOS set's name for each editable command. `toggle_device_rail`
+ * has no pane command there: the set keeps the key and the desktop host
  * ignores it, the way this shell ignores
  * `toggle_conversation`.
  */
 const MACOS_KEYS: Readonly<Partial<Record<CommandId, string>>> = {
-  toggle_sidebar_view: "toggle_sidebar_view",
+  overview: "overview",
+  sidebar_projects: "sidebar_projects",
+  sidebar_agents: "sidebar_agents",
   toggle_device_rail: "toggle_device_rail",
   split_right: "split_right",
   split_down: "split_down",
@@ -517,9 +525,6 @@ const MACOS_RESERVED: readonly Chord[] = ["Tab", "KeyQ", "KeyH", "KeyM", "KeyS",
 /** Chords Windows and Linux keep from the desktop app: the window switcher. */
 const PC_RESERVED: readonly Chord[] = [{ code: "Tab", alt: true }, { code: "Tab", alt: true, shift: true }];
 
-/** The modifier every app chord holds on `system`, as the operator reads it. */
-const MOD_NAME: Readonly<Record<KeySystem, string>> = { mac: "⌘", pc: "Ctrl+Shift or Alt+Shift" };
-
 /** The key a command's chord is stored under in `host`'s set. */
 export function storedKey(id: CommandId, host: HostKind): string {
   return host === "electron" ? (MACOS_KEYS[id] ?? id) : id;
@@ -549,9 +554,21 @@ export function storedBindings(uiState: StoredShortcutSets, host: HostKind): Rec
   return host === "electron" ? uiState?.shortcut_bindings : uiState?.browser_shortcut_bindings;
 }
 
-function withChord(command: Command, chord: Chord, host: HostKind): Command {
+function withChord(command: Command, chord: Chord | null, host: HostKind): Command {
   return host === "electron" ? { ...command, electron: chord } : { ...command, browser: chord, moved: false };
 }
+
+/**
+ * Why a chord cannot be bound. `chord` is the offending chord as `system`
+ * prints it; the operator's wording lives in `bindingProblemText`
+ * (`shortcutLabels.ts`).
+ */
+export type BindingProblem =
+  | { code: "system_key" | "native_key" | "browser_key" }
+  | { code: "modifier"; modifier: "desktop_mac" | "desktop_pc" | "browser_mac" | "browser_pc" }
+  | { code: "mac_reserved" | "system_reserved" | "terminal_copy" | "terminal_paste"; chord: string }
+  | { code: "browser_reserved"; chord: string; macos: boolean }
+  | { code: "conflict"; chord: string; commandId: CommandId };
 
 /**
  * Why `chord` cannot become `id`'s binding on `host` in `registry`, or null
@@ -561,29 +578,29 @@ function withChord(command: Command, chord: Chord, host: HostKind): Command {
  * desktop host's rules are the macOS set's own, with ⌘ read as Ctrl+Shift
  * off macOS.
  */
-export function bindingProblem(id: CommandId, chord: Chord, registry: readonly Command[], host: HostKind, system: KeySystem): string | null {
+export function bindingProblem(id: CommandId, chord: Chord, registry: readonly Command[], host: HostKind, system: KeySystem): BindingProblem | null {
   const shown = displayChord(chord, system);
-  if (system === "pc" && chord.meta) return "Leave out the Windows or Super key; the system keeps it.";
+  if (system === "pc" && chord.meta) return { code: "system_key" };
   if (host === "electron") {
     // Exactly one of Ctrl and Alt: Ctrl+Alt+Shift is the rule's image of no
     // macOS chord, so a set holding one would be refused on a Mac.
     const mod = system === "mac" ? !!chord.meta : !!chord.shift && !!chord.ctrl !== !!chord.alt;
-    if (!macosKeyName(chord.code)) return "Use one letter, digit or punctuation key, or Return.";
-    if (!mod && !(isCycleCommand(id) && (chord.ctrl || chord.alt))) return `Include ${MOD_NAME[system]} so typing in a terminal stays typing.`;
-    if (system === "mac" && MACOS_RESERVED.some((reserved) => chordEquals(reserved, chord))) return `${shown} is kept by macOS or the app menu.`;
-    if (system === "pc" && PC_RESERVED.some((reserved) => chordEquals(reserved, chord))) return `${shown} is kept by the system.`;
+    if (!macosKeyName(chord.code)) return { code: "native_key" };
+    if (!mod && !(isCycleCommand(id) && (chord.ctrl || chord.alt))) return { code: "modifier", modifier: system === "mac" ? "desktop_mac" : "desktop_pc" };
+    if (system === "mac" && MACOS_RESERVED.some((reserved) => chordEquals(reserved, chord))) return { code: "mac_reserved", chord: shown };
+    if (system === "pc" && PC_RESERVED.some((reserved) => chordEquals(reserved, chord))) return { code: "system_reserved", chord: shown };
   } else {
-    if (!BINDABLE_CODE.test(chord.code)) return "Use a letter, a digit, Return, an arrow or a punctuation key.";
-    if (!chord.meta && !chord.ctrl && !chord.alt) return `Include ${system === "mac" ? "⌘, ⌥ or ⌃" : "Ctrl or Alt"} so typing in a terminal stays typing.`;
-    if (isChromeReserved(chord, system)) return `${shown} is kept by Chrome or ${system === "mac" ? "macOS" : "the system"}.`;
+    if (!BINDABLE_CODE.test(chord.code)) return { code: "browser_key" };
+    if (!chord.meta && !chord.ctrl && !chord.alt) return { code: "modifier", modifier: system === "mac" ? "browser_mac" : "browser_pc" };
+    if (isChromeReserved(chord, system)) return { code: "browser_reserved", chord: shown, macos: system === "mac" };
   }
-  if (chordEquals(chord, modChord(TERMINAL_COPY, system))) return `${shown} copies a terminal's selection.`;
-  if (chordEquals(chord, modChord(TERMINAL_PASTE, system))) return `${shown} pastes into a terminal.`;
+  if (chordEquals(chord, modChord(TERMINAL_COPY, system))) return { code: "terminal_copy", chord: shown };
+  if (chordEquals(chord, modChord(TERMINAL_PASTE, system))) return { code: "terminal_paste", chord: shown };
   const taken = registry.find((command) => {
     const bound = command.id === id ? null : hostChord(command, host);
     return bound && chordEquals(bound, chord);
   });
-  if (taken) return `${shown} is already ${taken.title}.`;
+  if (taken) return { code: "conflict", chord: shown, commandId: taken.id };
   return null;
 }
 
@@ -600,13 +617,19 @@ export type EffectiveRegistry = { registry: readonly Command[]; diagnostic: stri
 export function effectiveRegistry(stored: Record<string, string> | null | undefined, host: HostKind, system: KeySystem): EffectiveRegistry {
   const which = host === "electron" ? "pane" : "browser";
   const defaults = systemRegistry(system);
-  const entries = Object.entries(stored ?? {}).filter(([key]) => !(host === "electron" && MACOS_ONLY_KEYS.includes(key)));
-  if (entries.length === 0) return { registry: defaults, diagnostic: null };
+  const retired = Object.keys(stored ?? {}).some((key) => ["toggle_sidebar_view", "project_home"].includes(key));
+  const diagnostic = retired ? "Stored project_home or toggle_sidebar_view shortcut is retired and was ignored." : null;
+  const entries = Object.entries(stored ?? {}).filter(([key]) => !["toggle_sidebar_view", "project_home"].includes(key) && !(host === "electron" && MACOS_ONLY_KEYS.includes(key)));
+  if (entries.length === 0) return { registry: defaults, diagnostic };
   let registry: Command[] = [...defaults];
   const applied: [CommandId, Chord][] = [];
   for (const [key, text] of entries) {
     const id = EDITABLE_PANE_COMMANDS.find((command) => storedKey(command, host) === key);
     if (!id) return { registry: defaults, diagnostic: `Stored ${which} shortcuts name an unknown command (${key}); defaults are in use.` };
+    if (text === "none") {
+      registry = registry.map((command) => command.id === id ? withChord(command, null, host) : command);
+      continue;
+    }
     const chord = parseStoredChord(text, host, system);
     if (!chord) return { registry: defaults, diagnostic: `Stored ${which} shortcut for ${key} was not usable (unreadable chord); defaults are in use.` };
     registry = registry.map((command) => (command.id === id ? withChord(command, chord, host) : command));
@@ -614,9 +637,9 @@ export function effectiveRegistry(stored: Record<string, string> | null | undefi
   }
   for (const [id, chord] of applied) {
     const problem = bindingProblem(id, chord, registry, host, system);
-    if (problem) return { registry: defaults, diagnostic: `Stored ${which} shortcut for ${storedKey(id, host)} was not usable (${problem}); defaults are in use.` };
+    if (problem) return { registry: defaults, diagnostic: `Stored ${which} shortcut for ${storedKey(id, host)} was not usable (${problem.code}${problem.code === "conflict" ? ` ${problem.commandId}` : ""}); defaults are in use.` };
   }
-  return { registry, diagnostic: null };
+  return { registry, diagnostic };
 }
 
 const resolved = new Map<string, { stored: Record<string, string> | null | undefined; value: EffectiveRegistry }>();
@@ -728,7 +751,7 @@ export function familyModifiers(family: NumberedFamily, registry: readonly Comma
 }
 
 /** One line of the shortcut sheet: a command, or a numbered family folded into one row with its range. */
-export type SheetRow = { id: CommandId; title: string; chord: string | null; moved: boolean; movedFrom?: string; passthrough?: string };
+export type SheetRow = { id: CommandId; title: string; chord: string | null; moved: boolean; movedFrom?: string; passthrough?: Passthrough; range?: string };
 
 /**
  * The sheet's rows for `group` on `host`, in registry order, with each
@@ -755,6 +778,7 @@ export function sheetRows(group: Command["group"], registry: readonly Command[],
     rows.push({
       id: command.id,
       title: `${spec.title} ${DIGITS[0]}-${DIGITS[DIGITS.length - 1]}`,
+      range: `${DIGITS[0]}-${DIGITS[DIGITS.length - 1]}`,
       chord: chords ? `${displayChord(chords[0]!, system)} … ${displayChord(chords[chords.length - 1]!, system)}` : null,
       moved: false,
     });

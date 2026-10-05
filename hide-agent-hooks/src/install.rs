@@ -750,8 +750,8 @@ mod tests {
     /// either shape.
     #[test]
     fn the_windows_entries_are_powershell_guards_hide_reads_back() {
-        let helper = Path::new("C:\\Users\\Ann O'Brien\\it\u{2019}s\\hide-agent-hooks.exe");
-        let quoted = "'C:\\Users\\Ann O''Brien\\it\u{2019}\u{2019}s\\hide-agent-hooks.exe'";
+        let helper = Path::new("C:\\Users\\example\\a b'c\\it\u{2019}s\\hide-agent-hooks.exe");
+        let quoted = "'C:\\Users\\example\\a b''c\\it\u{2019}\u{2019}s\\hide-agent-hooks.exe'";
         let guard = |runtime: &str| {
             format!(
                 "if (Test-Path -LiteralPath {quoted} -PathType Leaf) {{ & {quoted} hook --runtime {runtime} --event Stop --memory-injection --source hide-subagents@6 }}"

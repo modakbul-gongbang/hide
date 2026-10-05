@@ -1,7 +1,49 @@
 import { describe, expect, it } from "vitest";
 import tokensText from "../../design/tokens.json?raw";
-import { ACCENT_CHOICES, canRetryDevice, deviceFacts, deviceIdFor, deviceProblemLine, deviceRemovalLines, deviceLine, diagnosticsText, ownerLine, kitConsentTerms, kitRemovalLine, herdrLine, hostLine, kitHookMachines, kitPartLine, kitPartNeedsReinstall, kitPartSwitch, offeredModels, redact, socketProblem, usableAccent, usableFontSize, unstoredDeviceDrafts } from "./settings";
-import type { AiProvider, Device, DeviceHost, KitComponent } from "./snapshot";
+import { initializeInterfaceI18n } from "./i18n/instance";
+import {
+  ACCENT_CHOICES,
+  canRetryDevice,
+  deviceFacts as deviceFactsIn,
+  deviceIdFor,
+  deviceProblemLine as deviceProblemLineIn,
+  deviceRemovalLines as deviceRemovalLinesIn,
+  deviceLine as deviceLineIn,
+  diagnosticsText,
+  kitConsentTerms as kitConsentTermsIn,
+  kitRemovalLine as kitRemovalLineIn,
+  herdrLine as herdrLineIn,
+  hostLine as hostLineIn,
+  kitHookMachines,
+  kitPartLine as kitPartLineIn,
+  kitPartNeedsReinstall,
+  kitPartSwitch,
+  offeredModels,
+  redact,
+  shownIn,
+  sleepAfterLabel,
+  SLEEP_AFTER_CHOICES,
+  socketProblem as socketProblemIn,
+  usableAccent,
+  usableFontSize,
+  unstoredDeviceDrafts,
+} from "./settings";
+import type { AiProvider, Device, DeviceHost, KitComponent, RemoteStatus } from "./snapshot";
+
+// The English strings are what the sheet shipped with; the rules read the same under them.
+const t = initializeInterfaceI18n("en").getFixedT(null, "translation");
+const korean = initializeInterfaceI18n("ko").getFixedT(null, "translation");
+const deviceFacts = (device: Device, remote: RemoteStatus | undefined) => deviceFactsIn(device, remote, t);
+const deviceProblemLine = (problem: string | null | undefined, alias: string | null) => deviceProblemLineIn(problem, alias, t);
+const deviceRemovalLines = (deviceId: string, registrations: Parameters<typeof deviceRemovalLinesIn>[1], tabs: Parameters<typeof deviceRemovalLinesIn>[2], drafts: Parameters<typeof deviceRemovalLinesIn>[3], onlyExported: (tabId: string) => boolean = () => false) =>
+  deviceRemovalLinesIn(deviceId, registrations, tabs, drafts, onlyExported, t);
+const deviceLine = (device: Device, remote: RemoteStatus | undefined) => deviceLineIn(device, remote, t);
+const kitConsentTerms = (helperRoot: string | null, cliDir: string | null) => kitConsentTermsIn(helperRoot, cliDir, t);
+const kitRemovalLine = (device: Device) => kitRemovalLineIn(device, t);
+const herdrLine = (herdr: Parameters<typeof herdrLineIn>[0]) => herdrLineIn(herdr, t);
+const hostLine = (host: DeviceHost | undefined) => hostLineIn(host, t);
+const kitPartLine = (part: KitComponent) => kitPartLineIn(part, t);
+const socketProblem = (path: string) => socketProblemIn(path, t);
 
 const device = (patch: Partial<Device>): Device => ({
   id: "studio",
@@ -16,29 +58,6 @@ const device = (patch: Partial<Device>): Device => ({
 });
 
 describe("where settings live and what a device reported", () => {
-  const daemon = {
-    version: "0.1.0",
-    host_id: "host-00000000000000000000000000000000",
-    host_name: "mini",
-    schema_version: 2,
-    pid: 42,
-    started_at_unix: "1",
-    state_dir: "/s",
-    core_state_path: "/s/core-state.json",
-    herdr_bin_path: null,
-    herdr_socket_path: null,
-    keep_alive: false,
-    idle_secs: 600,
-  };
-
-  it("names the daemon's machine as the owner whichever device is selected", () => {
-    expect(ownerLine(daemon, null)).toContain("kept by hided on mini.");
-    const selected = ownerLine(daemon, device({ label: "Studio" }));
-    expect(selected).toContain("kept by hided on mini.");
-    expect(selected).toContain("Studio is selected");
-    expect(ownerLine({ ...daemon, host_name: null }, null)).toContain("the daemon's machine");
-  });
-
   it("shows only facts the device reported", () => {
     expect(deviceFacts(device({}), undefined)).toEqual([]);
     const host = { state: "ready", platform: "macos aarch64" } as DeviceHost;
@@ -201,12 +220,12 @@ describe("settings rules", () => {
   it("names every kit part and where it goes in the one consent, and refuses a relative device socket", () => {
     const lines = kitConsentTerms("/opt/hide", "/opt/bin");
     const terms = lines.join(" ");
-    for (const named of ["/opt/hide", "/opt/bin", "hook helper", "hcoord", "~/.claude/settings.json", "~/.codex/hooks.json", "~/.hide/hcoord/bin/hcoord"]) {
+    for (const named of ["/opt/hide", "/opt/bin", "hook helper", "old records preserved", "~/.claude/settings.json", "~/.codex/hooks.json"]) {
       expect(terms).toContain(named);
     }
     expect(lines).toHaveLength(6);
     // The Codex part says once what it changes (PRD overview-request-view B33).
-    expect(lines.filter((line) => line.includes("Codex의 백그라운드 데몬을 끈다"))).toHaveLength(1);
+    expect(lines.filter((line) => line.includes("turns off Codex's background daemon"))).toHaveLength(1);
     expect(terms).toContain("~/hide");
     expect(terms).not.toContain("changes no hook");
     expect(socketProblem("")).toBeNull();
@@ -236,8 +255,8 @@ describe("the install kit rows (PRD device-parity B7, B8, B27)", () => {
   it("offers Reinstall only for a part a reinstall would change", () => {
     const offered = (["installed", "outdated", "not_installed", "removed", "failed", "absent", "off"] as const).filter((state) => kitPartNeedsReinstall(part("cli", state)));
     expect(offered).toEqual(["outdated", "not_installed", "removed", "failed"]);
-    expect(kitPartLine(part("hcoord", "removed"))).toEqual({ text: "Removed", tone: "warn" });
-    expect(kitPartLine(part("hcoord", "absent")).tone).toBe("muted");
+    expect(kitPartLine(part("coordination_retirement", "removed"))).toEqual({ text: "Removed", tone: "warn" });
+    expect(kitPartLine(part("coordination_retirement", "absent")).tone).toBe("muted");
   });
 
   it("gives the Codex part a switch while it has a setting to switch, and reads off as neutral (PRD overview-request-view B36)", () => {
@@ -246,7 +265,7 @@ describe("the install kit rows (PRD device-parity B7, B8, B27)", () => {
     expect(kitPartSwitch(part("codex_per_pane", "absent"))).toBeNull();
     expect(kitPartSwitch(part("codex_per_pane", "failed"))).toBeNull();
     expect(kitPartSwitch(part("cli", "installed"))).toBeNull();
-    expect(kitPartLine(part("codex_per_pane", "off"))).toEqual({ text: "꺼짐", tone: "muted" });
+    expect(kitPartLine(part("codex_per_pane", "off"))).toEqual({ text: "Off", tone: "muted" });
   });
 
   it("lists This Mac first and then each device, with only their hook parts", () => {
@@ -262,10 +281,25 @@ describe("the install kit rows (PRD device-parity B7, B8, B27)", () => {
 
   it("says in one line what removing a device takes off it and what stays (B22, B24)", () => {
     const connected = device({ host: { state: "ready", helper_root: "~/.hide/host-helper" } as DeviceHost });
-    expect(kitRemovalLine(connected)).toMatch(/removes its hook entries, its hide link and its helper folder \(~\/\.hide\/host-helper\); hcoord and the records in ~\/\.hide stay/);
+    expect(kitRemovalLine(connected)).toMatch(/removes its hook entries, its hide link and its helper folder \(~\/\.hide\/host-helper\); the records in ~\/\.hide stay/);
     const offline = device({ host: { state: "unavailable" } as DeviceHost });
     expect(kitRemovalLine(offline)).toMatch(/not connected .* its kit stays there/);
     const shared = device({ host: { state: "ready" } as DeviceHost, kit: { ...kit([]), shares_account_with: "Studio, second Herdr" } });
     expect(kitRemovalLine(shared)).toMatch(/^Studio, second Herdr reaches the same account on .*, so Hide's kit stays there for it\.$/);
   });
 });
+
+describe("in Korean", () => {
+  it("words the removal summary, the sleep choices and a missing value in the interface language", () => {
+    const lines = deviceRemovalLinesIn("mini", [{ device_id: "mini" }], [{ id: "t1", checkout_id: "remote:mini:checkout:w1", dirty: true }], [{ device: "mini" }], () => false, korean);
+    expect(lines).toEqual([
+      "여기서 프로젝트 1개의 등록을 지우고 파일 탭 1개을 닫습니다.",
+      "저장하지 않은 초안 2개는 이 브라우저의 저장하지 않은 초안 목록에 남아 내보내거나 버릴 수 있습니다.",
+    ]);
+    expect(SLEEP_AFTER_CHOICES.map((choice) => sleepAfterLabel(choice, korean))).toEqual(["절전 안 함", "12시간", "24시간", "3일"]);
+    expect(shownIn(undefined, korean)).toBe("사용할 수 없음");
+    expect(shownIn("/state", korean)).toBe("/state");
+    expect(kitPartLineIn({ id: "cli", label: "cli", state: "installed", reason: null, location: null }, korean).text).toBe("설치됨");
+  });
+});
+

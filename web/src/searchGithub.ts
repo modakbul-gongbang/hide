@@ -1,17 +1,19 @@
 // What ⌘K asks GitHub and how it says so (PRD cmdk-navigation B8-B10, B16-B19).
 // Two readings meet here: the one read of the project in front, which ⌘K asks
 // for once and which the core answers on the project's own checkouts, and the
-// explicit search a `GitHub에서 "…" 검색` row starts. Typing never calls
+// explicit search the `Search GitHub for "…"` row starts. Typing never calls
 // GitHub; both are pure decisions over the snapshot so they test without a
 // browser.
 
+import type { TFunction } from "i18next";
 import { frontDeviceId, localDeviceId } from "./devices";
+import type { InterfaceLanguage } from "./i18n/locale";
 import { ageWords } from "./overviewLens";
 import type { Checkout, GithubSearch, SnapshotRest, Workspace } from "./snapshot";
 
-/** The decimal minutes-ago words the detail and the failure tooltip use. */
-function readAge(at: number | null | undefined, now: number): string | null {
-  return at == null ? null : ageWords(now - at);
+/** The age words the detail and the failure tooltip use, from the shared elapsed-time words. */
+function readAge(at: number | null | undefined, now: number, t: TFunction<"translation">, language: InterfaceLanguage): string | null {
+  return at == null ? null : ageWords(language, now - at, t);
 }
 
 function githubStatus(workspace: Workspace) {
@@ -47,23 +49,23 @@ export type ProjectRead = { state: "reading" } | { state: "failed"; tooltip: str
  * says so, with the last value's age (B9); nothing otherwise, so a project
  * nobody asked for never shows a progress mark.
  */
-export function projectRead(workspace: Workspace, asked: ReadonlySet<string>, now: number): ProjectRead {
+export function projectRead(workspace: Workspace, asked: ReadonlySet<string>, now: number, t: TFunction<"translation">, language: InterfaceLanguage): ProjectRead {
   const status = githubStatus(workspace);
   const failure = workspace.tasks?.source?.failure ?? null;
   const failed = status?.failure_category !== "no GitHub remote" && (status?.stale === true || (status?.unavailable_reason != null && !status.available) || failure !== null);
   if (failed) {
-    const age = readAge(status?.last_success_at_unix_ms ?? workspace.tasks?.source?.last_read_at_unix_ms, now);
-    return { state: "failed", tooltip: ["GitHub 읽기 실패", age ? `${age} 값` : "읽은 값 없음", "이유는 로그에"].join(" · ") };
+    const age = readAge(status?.last_success_at_unix_ms ?? workspace.tasks?.source?.last_read_at_unix_ms, now, t, language);
+    return { state: "failed", tooltip: age ? t("search.readFailedWithAge", { age }) : t("search.readFailedNoValue") };
   }
   if (asked.has(workspace.id) && !answered(workspace)) return { state: "reading" };
   return null;
 }
 
-/** The `N분 전 읽음` a pull request's or issue's detail carries (B10): when its project was last read. */
-export function lastReadWords(workspace: Workspace, now: number): string | null {
+/** The `Read 3 min. ago` a pull request's or issue's detail carries (B10): when its project was last read. */
+export function lastReadWords(workspace: Workspace, now: number, t: TFunction<"translation">, language: InterfaceLanguage): string | null {
   const at = githubStatus(workspace)?.last_success_at_unix_ms ?? workspace.tasks?.source?.last_read_at_unix_ms;
-  const age = readAge(at, now);
-  return age ? `${age} 읽음` : null;
+  const age = readAge(at, now, t, language);
+  return age ? t("search.lastRead", { age }) : null;
 }
 
 /** Whether this Mac has a project a GitHub search could look in (B16). */
@@ -71,23 +73,23 @@ export function hasGithubProject(rest: SnapshotRest | null): boolean {
   return (rest?.navigator?.workspaces ?? []).some((workspace) => !workspace.is_home && !workspace.remote_target_id && workspace.is_git && workspace.tasks?.source?.kind === "github");
 }
 
-/** The state of the `GitHub에서 "…" 검색` row. */
+/** The state of the `Search GitHub for "…"` row. */
 export type GithubRow = { state: "idle" | "working" | "failed" | "none"; label: string };
 
 /**
  * The row's words for the answer to this query: the search itself while none
- * ran or one is running, `GitHub 검색 실패 · 다시 시도` when it failed (B18),
- * `GitHub에도 없음` once it answered with nothing, and says so when the core
+ * ran or one is running, a retry line when it failed (B18), a "none on GitHub
+ * either" line once it answered with nothing, and says so when the core
  * searched only some of the repositories (its `message`).
  */
-export function githubRow(query: string, answer: GithubSearch | null): GithubRow {
-  const label = `GitHub에서 "${query}" 검색`;
+export function githubRow(query: string, answer: GithubSearch | null, t: TFunction<"translation">): GithubRow {
+  const label = t("search.githubQuery", { query });
   if (!answer) return { state: "idle", label };
   if (answer.phase === "working") return { state: "working", label };
-  if (answer.phase === "failed") return { state: "failed", label: "GitHub 검색 실패 · 다시 시도" };
+  if (answer.phase === "failed") return { state: "failed", label: t("search.githubFailed") };
   // A search the core cut short does not claim GitHub has nothing.
   if (answer.results.length > 0) return { state: "idle", label };
-  return { state: "none", label: answer.message ? "찾은 결과 없음 · 일부 저장소만 검색" : "GitHub에도 없음" };
+  return { state: "none", label: answer.message ? t("search.githubPartialNone") : t("search.githubNone") };
 }
 
 /** The core's answer for what this palette asked: only the request it sent, and only while the query is still the one it searched (B19). */

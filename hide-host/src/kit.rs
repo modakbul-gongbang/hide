@@ -35,7 +35,12 @@ pub use hide_kit::is_build_name;
 
 /// Answers one `kit` request for the helper root the running helper was
 /// installed under.
-pub fn handle(action: KitAction, cli_dir: &str, herdr_socket: Option<&str>) -> HostResult<Value> {
+pub fn handle(
+    action: KitAction,
+    cli_dir: &str,
+    herdr_socket: Option<&str>,
+    retirement_projects: &[String],
+) -> HostResult<Value> {
     let executable = std::env::current_exe().map_err(|error| {
         HostError::new(
             ErrorCode::Io,
@@ -51,7 +56,7 @@ pub fn handle(action: KitAction, cli_dir: &str, herdr_socket: Option<&str>) -> H
             ),
         )
     })?;
-    run(
+    run_for_projects(
         &Placement {
             root,
             version,
@@ -60,6 +65,7 @@ pub fn handle(action: KitAction, cli_dir: &str, herdr_socket: Option<&str>) -> H
         action,
         cli_dir,
         herdr_socket,
+        retirement_projects,
         Arc::clone(&STOP),
     )
 }
@@ -104,7 +110,22 @@ pub fn run(
     herdr_socket: Option<&str>,
     stop: Arc<AtomicBool>,
 ) -> HostResult<Value> {
+    run_for_projects(placement, action, cli_dir, herdr_socket, &[], stop)
+}
+
+fn run_for_projects(
+    placement: &Placement,
+    action: KitAction,
+    cli_dir: &str,
+    herdr_socket: Option<&str>,
+    retirement_projects: &[String],
+    stop: Arc<AtomicBool>,
+) -> HostResult<Value> {
     let home = &placement.home;
+    let projects = retirement_projects
+        .iter()
+        .map(|project| expand(project, home))
+        .collect::<HostResult<Vec<_>>>()?;
     let cli_dir = expand(cli_dir, home)?;
     let herdr_socket = match herdr_socket {
         Some(socket) => expand(socket, home)?,
@@ -126,16 +147,22 @@ pub fn run(
         }
     };
     let target = || {
-        hide_kit::device_target(
+        let mut target = hide_kit::device_target(
             &placement.root,
             home,
             &cli_dir,
             &herdr_socket,
             Arc::clone(&stop),
-        )
+        );
+        target.retirement_projects = projects.clone();
+        target
     };
     match action {
         KitAction::Apply | KitAction::Reinstall { .. } => {
+            let preflight_target = target();
+            if let Err(reason) = hide_kit::retirement_preflight(&preflight_target) {
+                return to_value(hide_kit::retirement_blocked(&preflight_target, reason));
+            }
             point_current(&placement.root, &placement.version)?;
             remove_other_builds(&placement.root, &placement.version);
             let scope = match action {
@@ -332,6 +359,46 @@ mod tests {
         assert!(placement.root.join("current/hide-host-helper").is_file());
         // Only build folders are Hide's to remove.
         assert!(placement.root.join("notes.txt").is_file());
+    }
+
+    #[test]
+    fn blocked_retirement_does_not_repoint_current_or_remove_a_build() {
+        let directory = tempfile::tempdir().unwrap();
+        let older = placed(directory.path(), "aaaaaaaaaaaaaaaa");
+        let placement = placed(directory.path(), "bbbbbbbbbbbbbbbb");
+        hide_platform::fs::link::create_link(
+            Path::new(&older.version),
+            &placement.root.join("current"),
+        )
+        .unwrap();
+        let ledger = placement.home.join(".hide/hcoord/ledger.json");
+        std::fs::create_dir_all(ledger.parent().unwrap()).unwrap();
+        let bytes = serde_json::json!({"schema":"hcoord.ledger.v1","requests":{"open":{"status":"open"}},"watches":{}}).to_string();
+        std::fs::write(&ledger, &bytes).unwrap();
+        let report = run(
+            &placement,
+            KitAction::Apply,
+            "~/.local/bin",
+            Some("~/private-herdr.sock"),
+            Arc::default(),
+        )
+        .unwrap();
+        let report: hide_kit::KitReport = serde_json::from_value(report).unwrap();
+        assert_eq!(
+            report
+                .component(hide_kit::ComponentId::CoordinationRetirement)
+                .unwrap()
+                .state,
+            hide_kit::ComponentState::Failed
+        );
+        assert!(hide_platform::fs::link::is_link_to(
+            &placement.root.join("current"),
+            Path::new(&older.version)
+        ));
+        assert!(placement.root.join(&older.version).is_dir());
+        assert_eq!(std::fs::read_to_string(ledger).unwrap(), bytes);
+        assert!(!placement.home.join(".hide/kit").exists());
+        assert!(!placement.home.join(".local/bin").exists());
     }
 
     #[test]

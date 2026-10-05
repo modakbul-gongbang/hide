@@ -9,11 +9,11 @@ import { remoteView } from "./remote";
 import { holdShellDrag } from "./shellDrag";
 import { canRetryDevice, deviceLine } from "./settings";
 import { catalogWorkspaces, focusedRemoteDevice, frontCheckout, type Checkout } from "./snapshot";
-import { overviewScreen } from "./navigation";
 import { useShellStore } from "./store";
 import { focusTerminal } from "./terminals";
 import { AgentAreas } from "./AgentAreas";
 import { Tools } from "./Tools";
+import { OverviewButton } from "./Overview";
 import { RunningServers } from "./RunningServers";
 import { useUiStore } from "./ui";
 import { ViewAreas } from "./ViewAreas";
@@ -21,6 +21,7 @@ import { workspaceKey } from "./viewLayout";
 import { bodyStep, columnFrame, dividerLanding, slotsForStep, workspaceViewOf, type BodyStep, type ColumnFrame, type ColumnSizes, type SideColumn, type WorkspaceView } from "./workspace";
 import { keyboardOwner, noteKeyboardOwner } from "./viewFocus";
 import { commandLabel } from "./shortcutLabels";
+import { useInterfaceTranslation } from "./i18n/client";
 import "./columnCalls";
 
 // A Workspace (PRD S6 D-01..D-05; S7 B12, B13; PRD three-column-panel D-01,
@@ -44,6 +45,7 @@ const HOME_FOLDER = "~/hide";
 const DIVIDER_STEP = 32;
 
 export function WorkspaceScreen({ actions }: { actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const checkout = useShellStore((s) => frontCheckout(s.rest));
   const view = useShellStore((s) => workspaceViewOf(s.rest));
   const slots = useUiStore((s) => s.columnSlots);
@@ -116,7 +118,7 @@ export function WorkspaceScreen({ actions }: { actions: Actions }) {
   return (
     <section
       className="flex min-h-0 min-w-0 flex-1 flex-col overflow-hidden"
-      aria-label={`Workspace ${checkout.branch ?? checkout.label}`}
+      aria-label={t("panes.workspace.aria", { name: checkout.branch ?? checkout.label })}
       data-workspace-screen={checkout.id}
       data-file-views={viewsShown ? "shown" : view.views ? "hidden" : "off"}
       data-tools={toolsShown ? "shown" : view.tools ? "hidden" : "off"}
@@ -153,6 +155,7 @@ function useWidth(element: HTMLElement | null): number {
  * terminal.
  */
 function ColumnRow({ view, frame, body, setBody, sizes, actions, checkout }: { view: WorkspaceView; frame: ColumnFrame; body: HTMLElement | null; setBody: (element: HTMLElement | null) => void; sizes: ColumnSizes; actions: Actions; checkout: Checkout }) {
+  const { t } = useInterfaceTranslation();
   const [guide, setGuide] = useState<number | null>(null);
   const narrow = frame.step === "narrow";
   const covered = frame.agents === null;
@@ -176,7 +179,7 @@ function ColumnRow({ view, frame, body, setBody, sizes, actions, checkout }: { v
           <div
             className={`flex min-h-0 min-w-0 shrink-0 flex-col bg-card ${narrow ? "absolute inset-0" : ""}`}
             style={narrow ? undefined : { width: frame.views }}
-            aria-label="File Views"
+            aria-label={t("panes.workspace.fileViews")}
             role="region"
             data-column="views"
             data-view-area="true"
@@ -232,8 +235,9 @@ function ColumnDivider({ workspace, acknowledged, column, frame, body, sizes, se
   // A captured pointer belongs to the Workspace and geometry it started on.
   // Switching either, or unmounting, retires the guide and its page still.
   useLayoutEffect(() => () => cancelDrag.current?.(), [workspace, body, frame.agents, frame.views, frame.tools]);
+  const { t } = useInterfaceTranslation();
   const width = (column === "views" ? frame.views : frame.tools) ?? 0;
-  const name = column === "views" ? "File Views" : "Tools";
+  const name = column === "views" ? t("panes.workspace.fileViews") : t("panes.workspace.tools");
   const land = (x: number, basis = frame, request?: string) => {
     const total = body?.clientWidth ?? 0;
     if (total <= 0) return;
@@ -304,7 +308,7 @@ function ColumnDivider({ workspace, acknowledged, column, frame, body, sizes, se
     <div
       role="separator"
       aria-orientation="vertical"
-      aria-label={`Resize ${name}`}
+      aria-label={t("panes.workspace.resize", { name })}
       aria-valuenow={width}
       aria-valuemin={min}
       aria-valuemax={width + Math.max(0, spare)}
@@ -346,9 +350,9 @@ function DividerGrip({ className = "" }: { className?: string }) {
  * the right end, icons only, Open server, File Views and Tools (D-04).
  */
 function WorkspaceToolbar({ checkout, view, viewsShown, toolsShown, actions }: { checkout: Checkout; view: WorkspaceView; viewsShown: boolean; toolsShown: boolean; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const project = useShellStore((s) => catalogWorkspaces(s.rest).find((row) => row.checkouts.some((candidate) => candidate.id === checkout.id)) ?? null);
   const device = useShellStore((s) => focusedRemoteDevice(s.rest));
-  const setScreen = useUiStore((s) => s.setScreen);
   // The chords as bound, so a rebound one shows as bound (B7).
   const viewsChord = useShellStore((s) => commandLabel("toggle_right_panel", s.rest?.ui_state));
   const toolsChord = useShellStore((s) => commandLabel("toggle_explorer", s.rest?.ui_state));
@@ -356,21 +360,19 @@ function WorkspaceToolbar({ checkout, view, viewsShown, toolsShown, actions }: {
   // What the toolbar acts on is this Workspace: its columns, its path and
   // its Project (B15). Opening the menu changes none of them.
   const menuItems = (): MenuEntry<ToolbarMenuId>[] => [
-    { id: "views", label: viewsShown ? "Hide File Views" : "Show File Views", unavailable: null },
-    { id: "tools", label: toolsShown ? "Hide Tools" : "Show Tools", unavailable: null },
-    { id: "copy_path", label: "Copy Workspace path", unavailable: null, separated: true },
-    { id: "overview", label: "Open Project Overview", unavailable: project ? null : "This Workspace's Project is not in the catalog" },
+    { id: "views", label: viewsShown ? t("panes.workspace.hideFileViews") : t("panes.workspace.showFileViews"), unavailable: null },
+    { id: "tools", label: toolsShown ? t("panes.workspace.hideTools") : t("panes.workspace.showTools"), unavailable: null },
+    { id: "copy_path", label: t("panes.workspace.copyPath"), unavailable: null, separated: true },
   ];
   const select = (id: ToolbarMenuId) => {
     if (id === "views") return actions.toggleFileViews();
     if (id === "tools") return actions.toggleTools();
     if (id === "copy_path") return void navigator.clipboard?.writeText(checkout.path).catch(() => undefined);
-    if (id === "overview" && project) setScreen(overviewScreen(useShellStore.getState().rest, project.id));
   };
   const count = viewsShown ? 0 : (view.layout?.display_count ?? 0);
-  const viewsOpen = count > 0 ? `${count} ${count === 1 ? "view" : "views"} open` : undefined;
+  const viewsOpen = count > 0 ? t("panes.workspace.viewsOpen", { count }) : undefined;
   return (
-    <EntryContextMenu label={`Workspace ${name}`} items={menuItems} onSelect={select} className="shrink-0" data-workspace-menu="true">
+    <EntryContextMenu label={t("panes.workspace.aria", { name })} items={menuItems} onSelect={select} className="shrink-0" data-workspace-menu="true">
       <div className="flex h-[var(--size-tab-strip)] shrink-0 items-center gap-sm border-b border-border bg-sidebar pl-sm pr-sm text-caption" data-workspace-toolbar="true">
         {device ? (
           // The front thing is a remote device's: its color and name lead the toolbar, and the pane border wears the same color (PRD home-device-rail D-15).
@@ -379,22 +381,17 @@ function WorkspaceToolbar({ checkout, view, viewsShown, toolsShown, actions }: {
             <span className="min-w-0 truncate">{device.label}</span>
           </span>
         ) : null}
-        <nav aria-label="Location" className="flex min-w-0 flex-1 items-center gap-xs">
-          <button type="button" className="shrink-0 rounded-xs px-xs text-subtle-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent" data-go-main="true" onClick={() => setScreen({ kind: "main" })}>
-            Home
+        <nav aria-label={t("panes.workspace.location")} className="flex min-w-0 flex-1 items-center gap-xs">
+          <button type="button" className="shrink-0 rounded-xs px-xs text-subtle-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent" data-go-main="true" onClick={() => actions.openHome()}>
+            {t("common.home")}
           </button>
           {project && !project.is_home ? (
             <>
               <span aria-hidden="true" className="text-muted-foreground">/</span>
               <Hint label={`${project.label} · ${project.path}${device ? ` · ${device.label}` : ""}`}>
-                <button
-                  type="button"
-                  className="min-w-0 max-w-[var(--size-recent-location-max)] shrink truncate rounded-xs px-xs text-subtle-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent"
-                  data-go-overview={project.id}
-                  onClick={() => setScreen(overviewScreen(useShellStore.getState().rest, project.id))}
-                >
+                <span className="min-w-0 max-w-[var(--size-recent-location-max)] shrink truncate px-xs text-subtle-foreground" data-workspace-project={project.id}>
                   {project.label}
-                </button>
+                </span>
               </Hint>
             </>
           ) : null}
@@ -406,16 +403,17 @@ function WorkspaceToolbar({ checkout, view, viewsShown, toolsShown, actions }: {
             </span>
           </Hint>
         </nav>
-        <div className="flex shrink-0 items-center gap-xxs" role="group" aria-label="Workspace columns" data-column-toggles="true">
+        <div className="flex shrink-0 items-center gap-xxs" role="group" aria-label={t("panes.workspace.columns")} data-column-toggles="true">
+          <OverviewButton actions={actions} />
           <RunningServers key={checkout.id} checkout={checkout} view={view} actions={actions} />
           {/* One name per icon, its state in aria-pressed; the tooltip carries the name and the chord (B7, B8). */}
-          <Hint label="File Views" shortcut={viewsChord}>
+          <Hint label={t("panes.workspace.fileViews")} shortcut={viewsChord}>
             <Button
               variant={viewsShown ? "secondary" : "ghost"}
               size="icon-sm"
               className="relative"
               aria-pressed={viewsShown}
-              aria-label="File Views"
+              aria-label={t("panes.workspace.fileViews")}
               aria-description={viewsOpen}
               data-column-toggle="views"
               onClick={() => actions.toggleFileViews()}
@@ -428,8 +426,8 @@ function WorkspaceToolbar({ checkout, view, viewsShown, toolsShown, actions }: {
               ) : null}
             </Button>
           </Hint>
-          <Hint label="Tools" shortcut={toolsChord}>
-            <Button variant={toolsShown ? "secondary" : "ghost"} size="icon-sm" aria-pressed={toolsShown} aria-label="Tools" data-column-toggle="tools" onClick={() => actions.toggleTools()}>
+          <Hint label={t("panes.workspace.tools")} shortcut={toolsChord}>
+            <Button variant={toolsShown ? "secondary" : "ghost"} size="icon-sm" aria-pressed={toolsShown} aria-label={t("panes.workspace.tools")} data-column-toggle="tools" onClick={() => actions.toggleTools()}>
               <PanelRightIcon />
             </Button>
           </Hint>
@@ -439,7 +437,7 @@ function WorkspaceToolbar({ checkout, view, viewsShown, toolsShown, actions }: {
   );
 }
 
-type ToolbarMenuId = "views" | "tools" | "copy_path" | "overview";
+type ToolbarMenuId = "views" | "tools" | "copy_path";
 
 /** This machine's tabs, or the selected SSH device's own tabs and panes in their place (S5 B19). */
 function AgentArea({ checkout, actions }: { checkout: Checkout; actions: Actions }) {
@@ -466,6 +464,7 @@ function LocalAgentArea({ checkout, actions }: { checkout: Checkout; actions: Ac
  * and names the device (B21); nothing here reads this machine's tabs.
  */
 function RemoteAgentArea({ actions }: { actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const device = useShellStore((s) => focusedRemoteDevice(s.rest));
   const status = useShellStore((s) => (device ? (s.rest?.status?.remote?.find((row) => row.target_id === device.id) ?? null) : null));
   const session = status?.session ?? null;
@@ -473,21 +472,21 @@ function RemoteAgentArea({ actions }: { actions: Actions }) {
   if (!device) return null;
   const connected = status?.state === "connected";
   if (!view) {
-    const line = deviceLine(device, status ?? undefined);
+    const line = deviceLine(device, status ?? undefined, t);
     return (
       <div className="flex min-h-0 flex-1 flex-col items-start justify-center gap-sm p-xl text-body text-subtle-foreground" data-remote-device-surface={device.id} data-remote-state={status?.state ?? "none"}>
         <h2 className="text-title font-semibold text-foreground">
           {device.label} <span className="font-mono text-caption text-muted-foreground">{device.ssh_alias}</span>
         </h2>
-        <p>{connected ? `${device.label} is connected, but no Herdr workspace is open there.` : `${device.label} is ${line.text}${status?.message ? `: ${status.message}` : "."}`}</p>
+        <p>{connected ? t("panes.workspace.connectedEmpty", { device: device.label }) : status?.message ? t("panes.workspace.remoteStateMessage", { device: device.label, state: line.text, message: status.message }) : t("panes.workspace.remoteState", { device: device.label, state: line.text })}</p>
         <div className="flex gap-sm">
           {canRetryDevice(device, status ?? undefined) ? (
             <Button variant="secondary" onClick={() => actions.retryDevice(device.id)} data-remote-retry={device.id}>
-              Retry
+              {t("common.retry")}
             </Button>
           ) : null}
           <Button variant="ghost" onClick={() => actions.focusDevice("local")} data-use-local-device="true">
-            Show this machine
+            {t("panes.workspace.showThisMachine")}
           </Button>
         </div>
       </div>
@@ -502,17 +501,17 @@ function RemoteAgentArea({ actions }: { actions: Actions }) {
           {status?.message ? (
             <Hint label={status.message} reveals>
               <span className="min-w-0 flex-1 truncate">
-                {device.label} is not connected: {status.message}. Showing the last state it reported; nothing is sent until it reconnects.
+                {t("panes.workspace.staleMessage", { device: device.label, message: status.message })}
               </span>
             </Hint>
           ) : (
             <span className="min-w-0 flex-1 truncate">
-              {device.label} is not connected. Showing the last state it reported; nothing is sent until it reconnects.
+              {t("panes.workspace.stale", { device: device.label })}
             </span>
           )}
           {canRetryDevice(device, status ?? undefined) ? (
             <Button variant="secondary" onClick={() => actions.retryDevice(device.id)} data-remote-retry={device.id}>
-              Retry
+              {t("common.retry")}
             </Button>
           ) : null}
         </div>

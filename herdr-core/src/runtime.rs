@@ -11,6 +11,7 @@ mod agent_sleep;
 mod agents;
 mod attachments;
 mod clone;
+pub(crate) mod delivery;
 mod device_catalog;
 mod devices;
 mod documents;
@@ -69,7 +70,7 @@ use crate::model::{
     UiStateSnapshot, WorkspaceSnapshot, clamp_pane_text_scale,
 };
 use crate::recent_closed::{ClosedAgent, ClosedContext, ClosedItem, ClosedPane, push_bounded};
-use crate::remote::{RemoteReadCommand, RusshSftpTransport, parse_machine_identity};
+use crate::remote::RusshSftpTransport;
 use crate::sidebar::{ReadRecordScope, SessionSnapshotPayload, project_agents};
 use crate::{environment, files, live, persistence, pet, session_sync, workspace};
 
@@ -363,6 +364,11 @@ const CLOSE_STAGE_TIMEOUT_MS: u64 = 5_000;
 /// stopped answering. The value is kept when the wait expires; only the
 /// waiting stops.
 const VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS: u64 = 3_000;
+
+/// How many replaced, unanswered tab notifications Hide remembers at once.
+/// Each lives at most `VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS`; a burst of tab
+/// switches faster than that evicts the oldest and reports it.
+const SUPERSEDED_TAB_FOCUS_LIMIT: usize = 16;
 
 /// A view-state change Hide has already made and told Herdr about.
 ///
@@ -952,8 +958,13 @@ pub(crate) struct TaskAgentLaunch {
 
 pub struct Runtime {
     snapshot: Snapshot,
+    delivery_ledger: Result<Arc<crate::delivery::ledger::Ledger>, String>,
+    delivery_client: Option<crate::delivery::worker::Client>,
+    delivery_observations: HashMap<String, delivery::Observation>,
+    delivery_overflow: HashSet<String>,
+    delivery_connected: HashSet<String>,
     /// Stable identities are separate from device labels: labels are mutable
-    /// presentation, while hcoord lineage is keyed by operating-system id.
+    /// presentation, while lineage is keyed by operating-system id.
     local_machine_id: Option<String>,
     device_machine_ids: HashMap<String, String>,
     unresolved_machine_lineage: HashSet<String>,
@@ -1151,6 +1162,13 @@ pub struct Runtime {
     /// A shell-requested read-only `agent.list` refresh, drained by the
     /// coordinator on its next pass.
     status_refresh_requested: bool,
+    /// The checkout each tab Hide created was created for, keyed by the tab
+    /// id Herdr acknowledged; it decides the tab's checkout instead of the
+    /// pane cwd (`session.rs`, `CreatedTabCheckout`).
+    created_tab_checkouts: BTreeMap<String, session::CreatedTabCheckout>,
+    /// An acknowledgment arrived for a tab the session had already placed
+    /// under another checkout, so the local coordinator republishes once.
+    created_tab_republish_requested: bool,
     next_async_operation_id: u64,
     /// Panes that were scrolled before any view reported their size. One
     /// diagnostic answers for the whole wait; a wheel burst against a pane
@@ -1217,6 +1235,12 @@ pub struct Runtime {
     /// confirmed. Latest request wins; a second switch replaces the first
     /// rather than queueing behind it.
     pending_tab_focus: Option<PendingViewFocus>,
+    /// Tab notifications a later switch replaced before Herdr answered them,
+    /// oldest first. Herdr still applies each one, and the pinned stream has
+    /// no cursor to say which request an event answers, so a session naming
+    /// one of these tabs is Hide's own late answer, not an operator focusing
+    /// that tab outside Hide.
+    superseded_tab_focus: Vec<PendingViewFocus>,
     /// The tab Herdr had focused at the last session update. A follow needs
     /// Herdr's focus to have moved; a focused tab that merely differs from
     /// Hide's, as it does after a notification Herdr never answered, is not
@@ -1359,7 +1383,29 @@ pub struct Runtime {
     /// project counter; equal generations reuse the cached answer indefinitely.
     github_generations: HashMap<String, u64>,
     worktree_project_generations: HashMap<String, u64>,
-    sidebar_github_projects: HashSet<String>,
+    /// Where each local project is in the re-read cycle: five minutes after a
+    /// good answer, sooner after a failed read (`reread_stale_github`).
+    github_clock: HashMap<String, projects::GithubClock>,
+    /// Projects a screen named with `github_request` or `overview_refresh`;
+    /// they are read before the others when the count passes the limit.
+    github_wanted: HashSet<String>,
+    /// Projects an answer arrived for since the clock last looked, each with
+    /// whether that read failed to get its pull requests; the next wake starts
+    /// their wait.
+    github_answered: HashMap<String, bool>,
+    /// The generation each project was last answered for: the reader returns
+    /// its cached entry for every project in a request, and only a moved
+    /// generation is a read.
+    github_read_generation: HashMap<String, u64>,
+    /// Local projects whose first read has been answered, with or without a
+    /// result; until then a project without an answer is loading.
+    github_settled: HashSet<String>,
+    /// The number of local Git projects past `GITHUB_PROJECT_LIMIT` last
+    /// stated, so a count is logged once rather than on every wake.
+    github_over_limit: usize,
+    /// Where the last answer is kept across a restart; absent in a runtime
+    /// that has no state folder to keep it in.
+    github_store: Option<crate::github_store::GithubStore>,
     /// Bumped when visible Git rows must be measured again: section opening,
     /// explicit refresh, and opening the delete confirmation.
     disk_generation: u64,
@@ -1427,8 +1473,22 @@ struct RuntimeWorkerContext {
 impl Runtime {
     pub fn new(options: CoreOptions, environment: environment::EnvironmentReport) -> Self {
         let state_path = PathBuf::from(&options.app_state_path);
+        let delivery_path =
+            hide_kit::layout::delivery_ledger(state_path.parent().unwrap_or(Path::new(".")));
+        let delivery_ledger = crate::delivery::ledger::recover(&delivery_path)
+            .map(Arc::new)
+            .map_err(|error| {
+                crate::diagnostic!(serde_json::json!({
+                    "component":"delivery","kind":"ledger.load_failed",
+                    "code":error.code(),"persistence":error.diagnostic(),
+                }));
+                error.code().to_owned()
+            });
         let (host_packages, host_helper_root, host_cli_dir) = Self::helper_packages_from(&options);
         let mut snapshot = Snapshot::initial(&options);
+        if let Ok(ledger) = &delivery_ledger {
+            snapshot.delivery_watches = ledger.watches.iter().map(|watch| watch.view()).collect();
+        }
         snapshot.status.environment = environment.statuses;
         let (ui_state, pane_terminal_sizes, disposition) = persistence::load(&state_path);
         let local_issues_path = options.local_issues_path.as_ref().map(PathBuf::from);
@@ -1490,6 +1550,25 @@ impl Runtime {
                 occurred_at: unix_milliseconds(),
             });
         }
+        if snapshot
+            .ui_state
+            .interface_language
+            .as_ref()
+            .is_some_and(|value| {
+                serde_json::from_value::<crate::model::InterfaceLanguage>(value.clone()).is_err()
+            })
+        {
+            let kind = "ui_state.interface_language_invalid";
+            let message = "The stored interface language is invalid; English is used and the value is retained";
+            crate::diagnostic!(serde_json::json!({
+                "component": "ui_state", "kind": kind, "fallback": "en"
+            }));
+            snapshot.status.diagnostics.push(DiagnosticSnapshot {
+                kind: kind.to_owned(),
+                message: message.to_owned(),
+                occurred_at: unix_milliseconds(),
+            });
+        }
         // A stored width the drag could not have produced (a hand-edited
         // store) is not drawn; the sidebar opens at its default.
         if !crate::model::sidebar_width_fits(snapshot.ui_state.sidebar_width) {
@@ -1536,6 +1615,11 @@ impl Runtime {
         });
         let mut runtime = Self {
             snapshot,
+            delivery_ledger,
+            delivery_client: None,
+            delivery_observations: HashMap::new(),
+            delivery_overflow: HashSet::new(),
+            delivery_connected: HashSet::new(),
             local_machine_id: options.machine_id.clone(),
             device_machine_ids: HashMap::new(),
             unresolved_machine_lineage: HashSet::new(),
@@ -1620,6 +1704,8 @@ impl Runtime {
             reopen_in_flight: None,
             live_generation: 0,
             status_refresh_requested: false,
+            created_tab_checkouts: BTreeMap::new(),
+            created_tab_republish_requested: false,
             next_async_operation_id: 0,
             #[cfg(test)]
             suppress_terminal_session_workers: false,
@@ -1655,6 +1741,7 @@ impl Runtime {
             pending_read_record_reconciliation: HashSet::new(),
             visible_tab_ids: BTreeMap::new(),
             pending_tab_focus: None,
+            superseded_tab_focus: Vec::new(),
             herdr_focused_tab_seen: None,
             herdr_tab_focus_seen: None,
             pending_pane_focus: None,
@@ -1706,7 +1793,13 @@ impl Runtime {
             disk_usage: Vec::new(),
             github_generations: HashMap::new(),
             worktree_project_generations: HashMap::new(),
-            sidebar_github_projects: HashSet::new(),
+            github_clock: HashMap::new(),
+            github_wanted: HashSet::new(),
+            github_answered: HashMap::new(),
+            github_read_generation: HashMap::new(),
+            github_settled: HashSet::new(),
+            github_over_limit: 0,
+            github_store: None,
             disk_generation: 0,
             disk_project: None,
             cleanup: None,

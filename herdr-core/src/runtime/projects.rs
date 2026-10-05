@@ -2,6 +2,57 @@ use super::*;
 
 const MINIMUM_PURPOSE_HERDR_VERSION: (u64, u64, u64) = (0, 9, 1);
 
+/// How long a project's pull requests are trusted before the core asks again.
+const GITHUB_REREAD: std::time::Duration = std::time::Duration::from_secs(5 * 60);
+
+/// How long a project waits after its first failed read; each further failure
+/// in a row doubles it, up to `GITHUB_REREAD`.
+const GITHUB_RETRY_FIRST: std::time::Duration = std::time::Duration::from_secs(30);
+
+/// A project's place in the re-read cycle. The wait runs from the answer, not
+/// from the ask: counted from the ask, a pass over many projects that
+/// outlasts it would be overtaken by its own next ask and never land.
+///
+/// `failures` is how many reads in a row ended without the project's pull
+/// requests (the answer's `pull_requests_read` was false), so a read that
+/// failed is asked again sooner than one that worked and a success starts the
+/// count over.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum GithubClock {
+    /// A read is asked for and has not answered.
+    Waiting { failures: u32 },
+    /// The read answered at this instant.
+    Answered {
+        at: std::time::Instant,
+        failures: u32,
+    },
+}
+
+impl GithubClock {
+    fn failures(self) -> u32 {
+        match self {
+            Self::Waiting { failures } | Self::Answered { failures, .. } => failures,
+        }
+    }
+}
+
+/// The wait after an answer that came after `failures` failed reads in a row:
+/// the full re-read for a success, else 30 s doubling per failure and stopping
+/// at the full re-read.
+fn github_wait(failures: u32) -> std::time::Duration {
+    match failures {
+        0 => GITHUB_REREAD,
+        failures => GITHUB_RETRY_FIRST
+            .saturating_mul(1u32.checked_shl(failures - 1).unwrap_or(u32::MAX))
+            .min(GITHUB_REREAD),
+    }
+}
+
+/// The most local Git projects the core reads GitHub for. Every registered one
+/// is read, and each costs `gh` calls every `GITHUB_REREAD`; a count past this
+/// is a reported shortfall, not a larger number.
+const GITHUB_PROJECT_LIMIT: usize = 64;
+
 fn herdr_version_supports_purpose(version: Option<&str>) -> bool {
     parse_herdr_version(version.unwrap_or_default())
         .is_some_and(|version| version >= MINIMUM_PURPOSE_HERDR_VERSION)
@@ -255,9 +306,8 @@ impl Runtime {
                     .github
                     .project(&workspace.path)
                     .map(|project| {
-                        project
-                            .pull_requests
-                            .iter()
+                        crate::github::preferred_per_branch(&project.pull_requests)
+                            .into_iter()
                             .map(|pull_request| {
                                 (
                                     pull_request.head_branch.clone(),
@@ -317,6 +367,10 @@ impl Runtime {
         self.worktree_catalog = catalog;
         self.snapshot.git_worktrees_loading = loading;
         self.refresh_worktree_projection();
+        // A HEAD the reader moved decides again which pull request a checkout
+        // holds, and what hangs off that (its issues, its request rows).
+        self.apply_pull_requests();
+        self.refresh_worktree_projection();
         changed
     }
 
@@ -331,26 +385,82 @@ impl Runtime {
         &self,
         workspace: &crate::model::WorkspaceSnapshot,
     ) -> Vec<live::cleanup::CheckoutFacts> {
-        let agent_panes: HashSet<&str> = self
+        use live::cleanup::AgentUse;
+        // A delegated agent can run on a connected device, so its state is
+        // read from the device's own rows too.
+        let agents: HashMap<&str, &crate::model::SidebarAgentSnapshot> = self
             .snapshot
             .navigator
             .agents
             .iter()
-            .map(|agent| agent.pane_id.as_str())
+            .chain(
+                self.snapshot
+                    .status
+                    .remote
+                    .iter()
+                    .filter_map(|status| status.session.as_ref())
+                    .flat_map(|session| session.agents.iter()),
+            )
+            .map(|agent| (agent.pane_id.as_str(), agent))
             .collect();
+        let state = |agent: &crate::model::SidebarAgentSnapshot| {
+            AgentUse::of(&agent.demand, agent.blocked, &agent.activity)
+        };
         workspace
             .checkouts
             .iter()
-            .map(|checkout| live::cleanup::CheckoutFacts {
-                path: PathBuf::from(&checkout.path),
-                agent_working: checkout.agent_summary.working,
-                terminal_panes: checkout
+            .map(|checkout| {
+                let panes: Vec<String> = checkout
                     .tabs
                     .iter()
                     .flat_map(|tab| tab.panes.iter())
                     .map(|pane| pane.id.clone())
-                    .filter(|id| !agent_panes.contains(id.as_str()))
-                    .collect(),
+                    .collect();
+                let mut facts = live::cleanup::CheckoutFacts {
+                    path: PathBuf::from(&checkout.path),
+                    ..Default::default()
+                };
+                for pane in &panes {
+                    let Some(agent) = agents.get(pane.as_str()) else {
+                        facts.terminal_panes.push(pane.clone());
+                        continue;
+                    };
+                    match state(agent) {
+                        AgentUse::Quiet => {}
+                        AgentUse::Working => facts.agent_working += 1,
+                        AgentUse::Waiting => facts.agent_waiting += 1,
+                        AgentUse::Unknown => facts.agent_unknown += 1,
+                    }
+                    // A delegated agent keeps its parent's checkout in use
+                    // wherever it runs, and a device that went away leaves its
+                    // last state, not an idle one. Ones in this checkout are
+                    // counted above, and an unknown one is not vouched for
+                    // either way. The children are walked rather than the
+                    // close list, which leaves out unreachable devices.
+                    let mut seen: HashSet<&str> = HashSet::new();
+                    let mut pending: Vec<&str> = agent
+                        .lineage_child_pane_ids
+                        .iter()
+                        .map(String::as_str)
+                        .collect();
+                    while let Some(id) = pending.pop() {
+                        if !seen.insert(id) {
+                            continue;
+                        }
+                        let Some(descendant) = agents.get(id) else {
+                            continue;
+                        };
+                        pending
+                            .extend(descendant.lineage_child_pane_ids.iter().map(String::as_str));
+                        if !panes.iter().any(|own| own == id)
+                            && matches!(state(descendant), AgentUse::Working | AgentUse::Waiting)
+                        {
+                            facts.descendants_busy += 1;
+                        }
+                    }
+                }
+                facts.panes = panes;
+                facts
             })
             .collect()
     }
@@ -614,8 +724,15 @@ impl Runtime {
                     ..Default::default()
                 }
             });
+            // One per branch, as the catalog always carried; a checkout's own
+            // pull request is on its row (`associate_pull_requests`).
             project.pull_requests = github_project
-                .map(|g| g.pull_requests.clone())
+                .map(|g| {
+                    crate::github::preferred_per_branch(&g.pull_requests)
+                        .into_iter()
+                        .cloned()
+                        .collect()
+                })
                 .unwrap_or_default();
             project.pull_request_window = crate::github::PULL_REQUEST_LIMIT.into();
             for worktree in &mut project.worktrees {
@@ -635,12 +752,13 @@ impl Runtime {
                 worktree.github = github_project
                     .map(|project| project.status.clone())
                     .unwrap_or_default();
-                worktree.pull_request = worktree.branch.as_deref().and_then(|branch| {
-                    github_project?
-                        .pull_requests
-                        .iter()
-                        .find(|pull_request| pull_request.head_branch == branch)
-                        .cloned()
+                worktree.pull_request = github_project.and_then(|project| {
+                    crate::github::pull_request_for_checkout(
+                        &project.pull_requests,
+                        worktree.branch.as_deref(),
+                        worktree.head_sha.as_deref(),
+                    )
+                    .cloned()
                 });
                 worktree.deletion_gate = crate::worktrees::deletion_gate(
                     worktree,
@@ -700,6 +818,10 @@ impl Runtime {
                 continue;
             }
             workspace::apply_worktrees(workspace, &self.worktree_catalog);
+            // The commit a checkout is on is what ties a settled pull request
+            // to it, so a catalog read that moved a HEAD decides again here.
+            let project = github.project(&workspace.path);
+            associate_pull_requests(workspace, project);
             // Git refreshes the persistent purpose sources. Restore the
             // agent/PR fallback in this same projection before publishing it.
             crate::sidebar::sync_checkout_purposes(
@@ -751,24 +873,48 @@ impl Runtime {
         self.worktree_catalog.clone()
     }
 
+    /// Every local Git project, whether or not a screen that shows its pull
+    /// requests is open: the sidebar row is such a screen. At most
+    /// `GITHUB_PROJECT_LIMIT` of them: the project in front first, then those
+    /// a screen named, then the rest, each group in path order. The chosen are
+    /// returned in path order so the request does not move when the projects'
+    /// activity order does; the second value is how many local Git projects
+    /// there are in all.
+    fn github_projects(&self) -> (Vec<&WorkspaceSnapshot>, usize) {
+        let in_front = self
+            .focused_local_checkout()
+            .map(|(workspace, _)| workspace.path.as_str());
+        let mut projects: Vec<&WorkspaceSnapshot> = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .filter(|workspace| workspace.remote_target_id.is_none() && workspace.is_git)
+            .collect();
+        let total = projects.len();
+        projects.sort_by(|left, right| {
+            let rank = |workspace: &WorkspaceSnapshot| {
+                if Some(workspace.path.as_str()) == in_front {
+                    0
+                } else if self.github_wanted.contains(&workspace.path) {
+                    1
+                } else {
+                    2
+                }
+            };
+            (rank(left), &left.path).cmp(&(rank(right), &right.path))
+        });
+        projects.truncate(GITHUB_PROJECT_LIMIT);
+        projects.sort_by(|left, right| left.path.cmp(&right.path));
+        (projects, total)
+    }
+
     pub fn github_request(&self) -> crate::github::GithubRequest {
-        if !self.github_lookup_requested() && self.sidebar_github_projects.is_empty() {
-            return crate::github::GithubRequest::default();
-        }
         crate::github::GithubRequest {
             projects: self
-                .snapshot
-                .navigator
-                .workspaces
-                .iter()
-                .filter(|workspace| workspace.remote_target_id.is_none() && workspace.is_git)
-                .filter(|workspace| {
-                    (self.github_lookup_requested()
-                        && self
-                            .focused_local_checkout()
-                            .is_some_and(|(focused, _)| focused.path == workspace.path))
-                        || self.sidebar_github_projects.contains(&workspace.path)
-                })
+                .github_projects()
+                .0
+                .into_iter()
                 .map(|workspace| crate::github::GithubProjectRequest {
                     links: workspace
                         .checkouts
@@ -790,12 +936,107 @@ impl Runtime {
         }
     }
 
-    pub(super) fn github_lookup_requested(&self) -> bool {
-        self.snapshot.ui_state.right_panel_visible
-            && matches!(
-                self.snapshot.ui_state.right_panel_section,
-                RightPanelSection::Overview
-            )
+    /// Asks again for each project whose last answer is `github_wait` old (the full
+    /// re-read after a success, sooner after a failed read),
+    /// by moving its generation; the reader re-reads exactly the projects
+    /// whose generation moved. A project is not asked again while its last ask
+    /// is unanswered, so a slow pass is never overtaken by the next one. A
+    /// project seen for the first time is not asked for here: the reader has
+    /// no answer for it, so its first read is already due.
+    pub(crate) fn reread_stale_github(&mut self, now: std::time::Instant) {
+        let (projects, total) = self.github_projects();
+        let paths: Vec<String> = projects
+            .into_iter()
+            .map(|workspace| workspace.path.clone())
+            .collect();
+        let over_limit = total.saturating_sub(GITHUB_PROJECT_LIMIT);
+        if over_limit != self.github_over_limit {
+            self.github_over_limit = over_limit;
+            if over_limit > 0 {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "github",
+                    "kind": "projects.over_limit",
+                    "limit": GITHUB_PROJECT_LIMIT,
+                    "local_git_projects": total,
+                    "not_read": over_limit,
+                }));
+            }
+        }
+        let registered: HashSet<&str> = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .map(|workspace| workspace.path.as_str())
+            .collect();
+        self.github_wanted
+            .retain(|path| registered.contains(path.as_str()));
+        let known = |path: &String| paths.contains(path);
+        self.github_clock.retain(|path, _| known(path));
+        self.github_answered.retain(|path, _| known(path));
+        self.github_read_generation.retain(|path, _| known(path));
+        self.github_settled.retain(known);
+        for path in paths {
+            let before = self.github_clock.get(&path).copied();
+            if let Some(failed) = self.github_answered.remove(&path) {
+                let failures = if failed {
+                    before.map_or(0, GithubClock::failures).saturating_add(1)
+                } else {
+                    0
+                };
+                self.github_clock
+                    .insert(path, GithubClock::Answered { at: now, failures });
+                continue;
+            }
+            match before {
+                None => {
+                    self.github_clock
+                        .insert(path, GithubClock::Waiting { failures: 0 });
+                }
+                Some(GithubClock::Answered { at, failures })
+                    if now.duration_since(at) >= github_wait(failures) =>
+                {
+                    if failures > 0 {
+                        crate::diagnostic!(serde_json::json!({
+                            "component": "github",
+                            "kind": "read.retry",
+                            "project": path,
+                            "attempt": failures,
+                            "delay_ms": github_wait(failures).as_millis(),
+                        }));
+                    }
+                    self.github_clock
+                        .insert(path.clone(), GithubClock::Waiting { failures });
+                    self.bump_github_generation(&path);
+                }
+                Some(_) => {}
+            }
+        }
+    }
+
+    /// Whether `path` is read for GitHub and no read has answered for it yet.
+    fn github_awaiting(&self, path: &str) -> bool {
+        !self.github_settled.contains(path)
+            && self
+                .github_projects()
+                .0
+                .iter()
+                .any(|workspace| workspace.path == path)
+    }
+
+    /// Restores what the last run saved, as stale until a read replaces it,
+    /// and keeps the store to save every later answer into.
+    pub(crate) fn install_github_store(
+        &mut self,
+        store: crate::github_store::GithubStore,
+        restored: Option<crate::model::GithubSnapshot>,
+    ) {
+        if let Some(restored) = restored {
+            self.github = restored;
+            self.apply_pull_requests();
+            self.refresh_worktree_projection();
+        }
+        self.github_store = Some(store);
     }
 
     pub fn ingest_github(&mut self, github: crate::model::GithubSnapshot) -> bool {
@@ -809,6 +1050,37 @@ impl Runtime {
     ) -> bool {
         if !current {
             return false;
+        }
+        // An empty answer to an empty request says nothing: the navigator has
+        // not arrived yet, and taking it would erase the answer restored from
+        // the last run and the file it was saved in.
+        let requested = self.github_request();
+        if requested.projects.is_empty() && github.projects.is_empty() {
+            return false;
+        }
+        // The answer is for the request as it stands now, so every project in
+        // it has been read once, including one that returned nothing.
+        let mut newly_settled = false;
+        for project in requested.projects {
+            let path = project.root.to_string_lossy().into_owned();
+            // The read's own provenance, taken before a failed one is filled
+            // in from the previous answer below.
+            let failed = github
+                .project(&path)
+                .is_some_and(|read| !read.pull_requests_read);
+            // The reader hands back its cached entry for every project in the
+            // request, so only a project whose generation moved since the
+            // last answer was actually read; counting the others would
+            // restart their wait, or climb a failing project's backoff,
+            // because a neighbour was asked.
+            if self
+                .github_read_generation
+                .insert(path.clone(), project.generation)
+                != Some(project.generation)
+            {
+                self.github_answered.insert(path.clone(), failed);
+            }
+            newly_settled |= self.github_settled.insert(path);
         }
         // A failed lookup must not erase the answer it failed to replace: the
         // card shows the previous pull requests with `as of` beside them, so a
@@ -856,20 +1128,32 @@ impl Runtime {
             }
         }
         if self.github == merged {
-            return false;
+            // Nothing to show changed, but a project that returned nothing
+            // stops loading.
+            if newly_settled {
+                self.apply_pull_requests();
+            }
+            return newly_settled;
         }
         self.github = merged;
+        if let Some(store) = &self.github_store {
+            store.save(self.github.clone());
+        }
         self.apply_pull_requests();
         self.refresh_worktree_projection();
         true
     }
 
-    pub fn refresh_pull_requests(&mut self, project_path: &str) {
+    fn bump_github_generation(&mut self, project_path: &str) {
         let generation = self
             .github_generations
             .entry(project_path.to_owned())
             .or_insert(0);
         *generation = generation.wrapping_add(1);
+    }
+
+    pub fn refresh_pull_requests(&mut self, project_path: &str) {
+        self.bump_github_generation(project_path);
         if let Some(cached) = self
             .github
             .projects
@@ -2297,16 +2581,19 @@ impl Runtime {
     pub(super) fn apply_pull_requests(&mut self) -> bool {
         let mut changed = false;
         let github = self.github.clone();
-        let git_requested = self.github_lookup_requested();
+        let awaiting: HashSet<String> = self
+            .github_projects()
+            .0
+            .into_iter()
+            .map(|workspace| workspace.path.clone())
+            .filter(|path| !self.github_settled.contains(path))
+            .collect();
         for workspace in self.snapshot.navigator.workspaces.iter_mut() {
             let project = github.project(&workspace.path);
             let status = project
                 .map(|project| project.status.clone())
                 .unwrap_or_else(|| crate::model::GithubStatusSnapshot {
-                    loading: workspace.is_git
-                        && workspace.remote_target_id.is_none()
-                        && (self.sidebar_github_projects.contains(&workspace.path)
-                            || git_requested),
+                    loading: awaiting.contains(&workspace.path),
                     ..Default::default()
                 });
             let home_issues = project
@@ -2335,18 +2622,8 @@ impl Runtime {
                     checkout.github = status.clone();
                     changed = true;
                 }
-                let pull_request = checkout.branch.as_deref().and_then(|branch| {
-                    project?
-                        .pull_requests
-                        .iter()
-                        .find(|pull_request| pull_request.head_branch == branch)
-                        .cloned()
-                });
-                if checkout.pull_request != pull_request {
-                    checkout.pull_request = pull_request;
-                    changed = true;
-                }
             }
+            changed |= associate_pull_requests(workspace, project);
         }
         let times = pull_request_times(&github);
         if *self.pull_request_times != times {
@@ -2398,11 +2675,11 @@ impl Runtime {
             self.github
                 .project(&workspace.path)
                 .map(|project| project.status.clone())
-                // An absent answer is loading only while the Git section
-                // requests it. Explorer also renders this card but starts
-                // no lookup, so absence there must not imply work in flight.
+                // An absent answer is loading until the first read of this
+                // project has answered; a project the core does not read
+                // (past the limit) has no work in flight.
                 .unwrap_or(crate::model::GithubStatusSnapshot {
-                    loading: self.github_lookup_requested(),
+                    loading: self.github_awaiting(&workspace.path),
                     ..crate::model::GithubStatusSnapshot::default()
                 })
         } else {
@@ -3234,6 +3511,32 @@ pub(super) fn owner_open(
         project.is_git,
         label,
     )
+}
+
+/// Gives each checkout the one pull request that is its own work
+/// (`github::pull_request_for_checkout`), and reports whether any changed.
+/// Both places that learn something new about a checkout, GitHub's list and
+/// the worktree reader's HEAD, come through here.
+fn associate_pull_requests(
+    workspace: &mut crate::model::WorkspaceSnapshot,
+    project: Option<&crate::model::GithubProjectSnapshot>,
+) -> bool {
+    let mut changed = false;
+    for checkout in &mut workspace.checkouts {
+        let found = project.and_then(|project| {
+            crate::github::pull_request_for_checkout(
+                &project.pull_requests,
+                checkout.branch.as_deref(),
+                checkout.head_sha(),
+            )
+        });
+        // Cloned only when it moved: this runs on every session update.
+        if checkout.pull_request.as_ref() != found {
+            checkout.pull_request = found.cloned();
+            changed = true;
+        }
+    }
+    changed
 }
 
 /// When GitHub made each pull request read, by the address's lowercase

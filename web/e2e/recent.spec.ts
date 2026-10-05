@@ -222,8 +222,8 @@ test("Recent Panels crosses checkouts onto a display and a tab; Recent Projects 
 
     // Overview has no drawn Agent area; reverse cycling still selects an
     // agent and returns to its Workspace with one event on release.
-    await page.keyboard.press(chord("project_home"));
-    await expect(page.locator("[data-overview-screen]")).toBeVisible();
+    await page.keyboard.press(chord("overview"));
+    await expect(page.locator("[data-overview-modal]")).toBeVisible();
     await page.keyboard.down("Alt");
     await page.keyboard.press("Shift+Backquote");
     await expect(agents).toBeVisible();

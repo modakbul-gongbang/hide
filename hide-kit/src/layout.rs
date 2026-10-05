@@ -2,8 +2,8 @@
 //!
 //! Everything Hide owns sits under `~/.hide`: the daemon's state folder, a
 //! device's helper root, the kit's record and copies, the hook counters and
-//! hcoord's home. Outside it stay only what another program reads at a place
-//! it chose (the hook entries, the `hide` and `hcoord` links on `PATH`). The
+//! retirement records. Outside it stay only what another program reads at a place
+//! it chose (the hook entries and the `hide` link on `PATH`). The
 //! legacy spellings are kept here too, for the one-time moves that read them
 //! and the kit passes that retire them; nothing else may name them.
 
@@ -20,10 +20,6 @@ pub const HELPER_ROOT: &str = "~/.hide/host-helper";
 /// it is carried to [`HELPER_ROOT`] without asking (D-12), and the kit pass
 /// retires it once the helper runs from the new root (D-13).
 pub const LEGACY_HELPER_ROOT: &str = "~/.local/share/hide/host-helper";
-
-/// hcoord's own relocation variable: every hcoord file and its daemon's
-/// LaunchAgent label follow it, and a relocated hcoord is never moved.
-pub const HCOORD_HOME_VARIABLE: &str = "HCOORD_HOME";
 
 pub fn hide_home(home: &Path) -> PathBuf {
     home.join(HIDE_HOME)
@@ -78,6 +74,17 @@ pub fn label_generators(state_dir: &Path) -> PathBuf {
     state_dir.join("label-generators")
 }
 
+/// Durable local requests and watches; its owner is the core delivery worker.
+pub fn delivery_ledger(state_dir: &Path) -> PathBuf {
+    state_dir.join("delivery-ledger.json")
+}
+
+/// The last GitHub answer per project, restored when the daemon starts; its
+/// owner is the core's GitHub store.
+pub fn github_snapshot(state_dir: &Path) -> PathBuf {
+    state_dir.join("github-snapshot.json")
+}
+
 /// `~/rest` of a helper root spelling under `home`; an absolute spelling as
 /// it is.
 pub fn expand_home(spelling: &str, home: &Path) -> PathBuf {
@@ -93,34 +100,6 @@ pub fn helper_root(home: &Path) -> PathBuf {
 
 pub fn legacy_helper_root(home: &Path) -> PathBuf {
     expand_home(LEGACY_HELPER_ROOT, home)
-}
-
-/// hcoord's home when nothing relocates it (D-08).
-pub fn default_hcoord_home(home: &Path) -> PathBuf {
-    hide_home(home).join("hcoord")
-}
-
-/// The home hcoord used before this layout; moved once by the kit (D-09).
-pub fn legacy_hcoord_home(home: &Path) -> PathBuf {
-    home.join(".hcoord")
-}
-
-/// hcoord's home: the relocation when one is given, the default otherwise.
-pub fn hcoord_home(home: &Path, relocated: Option<&Path>) -> PathBuf {
-    relocated.map_or_else(|| default_hcoord_home(home), Path::to_path_buf)
-}
-
-/// The `hcoord` command the kit writes in a home.
-pub fn hcoord_command(hcoord_home: &Path) -> PathBuf {
-    hcoord_home.join("bin").join("hcoord")
-}
-
-/// The hcoord relocation this process was started with; empty means none,
-/// as hcoord reads it.
-pub fn hcoord_home_override() -> Option<PathBuf> {
-    std::env::var_os(HCOORD_HOME_VARIABLE)
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
 }
 
 #[cfg(test)]
@@ -154,15 +133,9 @@ mod tests {
         for path in [
             default_state_dir(home),
             helper_root(home),
-            default_hcoord_home(home),
-            hcoord_command(&default_hcoord_home(home)),
             crate::kit_state_dir(home),
         ] {
             assert!(path.starts_with("/home/me/.hide"), "{}", path.display());
         }
-        assert_eq!(
-            hcoord_command(&hcoord_home(home, Some(Path::new("/iso/hc")))),
-            PathBuf::from("/iso/hc/bin/hcoord")
-        );
     }
 }

@@ -1,10 +1,17 @@
 import { renderToStaticMarkup } from "react-dom/server";
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
+import type { TFunction } from "i18next";
+import { createInterfaceI18n } from "./i18n/instance";
 import { NewTabBody } from "./components/new-tab-body";
 import { changedFiles } from "./newTab";
 import { displayIdentity } from "./viewLayout";
 import { browserDisplays } from "./browserViews";
 import type { ChangesSnapshot, ViewLayoutSnapshot, ViewDisplaySnapshot } from "./snapshot";
+
+let t: TFunction<"translation">;
+beforeAll(async () => {
+  t = (await createInterfaceI18n("en")).t;
+});
 
 describe("new-tab choices", () => {
   it("offers only File and, when changes exist, Diff", () => {
@@ -38,7 +45,7 @@ describe("new-tab choices", () => {
       { id: "d1", kind: "browser", url: null },
       { id: "d2", kind: "browser", url: "about:blank" },
     ] } } } as unknown as ViewLayoutSnapshot;
-    expect(displayIdentity({ kind: "browser", url: null } as ViewDisplaySnapshot)).toBe("New tab");
+    expect(displayIdentity({ kind: "browser", url: null } as ViewDisplaySnapshot, t)).toBe("New tab");
     expect(browserDisplays(layout)).toEqual([{ id: "d2", area_id: "a1", url: "about:blank", load: 0 }]);
   });
 });

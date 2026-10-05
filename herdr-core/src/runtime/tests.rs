@@ -24,6 +24,8 @@ mod documents;
 mod editor_preview;
 #[path = "tests/editor_reopen.rs"]
 mod editor_reopen;
+#[path = "tests/github_reads.rs"]
+mod github_reads;
 #[path = "tests/home.rs"]
 mod home;
 #[path = "tests/issues.rs"]
@@ -102,6 +104,8 @@ fn settled_worktree(badge: crate::model::PullRequestBadge) -> CheckoutSnapshot {
         updated_at_unix_ms: None,
         created_at_unix_ms: None,
         closed_at_unix_ms: None,
+        head_oid: None,
+        cross_repository: false,
     };
     CheckoutSnapshot {
         id: "checkout-feature".to_owned(),
@@ -873,6 +877,109 @@ fn strip_checkout(name: &str) -> (Runtime, String, PathBuf) {
     std::fs::write(directory.join("notes.md"), "notes\n").expect("fixture file");
     let (runtime, checkout_id) = tab_order_runtime(&directory.to_string_lossy());
     (runtime, checkout_id, directory)
+}
+
+/// #400: a tab Hide created belongs to the checkout it was created for while
+/// its pane still reports the cwd it was born with, whether the session or
+/// Herdr's acknowledgment arrives first; a tab made outside Hide with the same
+/// cwd follows its pane, and a created tab's record leaves with the tab.
+#[test]
+fn a_created_tab_joins_its_requested_checkout_while_an_external_tab_follows_its_pane_cwd() {
+    let (mut runtime, checkout_id, directory) = strip_checkout("created-membership");
+    let checkout_path = directory.to_string_lossy().into_owned();
+    let birth_cwd = directory
+        .parent()
+        .expect("the checkout has a parent folder")
+        .to_string_lossy()
+        .into_owned();
+    // Every tab but the first reports the birth cwd, outside the checkout.
+    let payload = |tabs: &[&str]| {
+        let mut payload = tab_order_payload(&checkout_path, tabs, tabs, "w-order:t1");
+        for pane in &mut payload.panes {
+            if pane.pane_id != "w-order:t1:p" {
+                pane.cwd = Some(birth_cwd.clone());
+            }
+        }
+        payload
+    };
+    let acknowledge = |runtime: &mut Runtime, tab_id: &str| {
+        runtime.ingest_local_control_result(
+            RemoteControlAction::CreateTab {
+                workspace_id: "w-order".to_owned(),
+                cwd: checkout_path.clone(),
+                label: "new".to_owned(),
+                area_id: None,
+                admission_id: None,
+            },
+            Ok(RemoteControlOutcome::Acknowledged {
+                created_tab_id: Some(tab_id.to_owned()),
+                created_pane_id: Some(format!("{tab_id}:p")),
+            }),
+            1,
+        );
+    };
+    let checkout_path_of = |runtime: &Runtime, tab_id: &str| {
+        runtime
+            .snapshot()
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .find(|checkout| {
+                checkout
+                    .tabs
+                    .iter()
+                    .any(|tab| tab.id.as_deref() == Some(tab_id))
+            })
+            .map(|checkout| checkout.path.clone())
+    };
+
+    // Acknowledged before the session carries the tab.
+    acknowledge(&mut runtime, "w-order:t2");
+    runtime.ingest_session(Ok(payload(&["w-order:t1", "w-order:t2", "w-order:t3"])));
+    assert_eq!(
+        ordered_tab_ids(&runtime, &checkout_id),
+        ["w-order:t1", "w-order:t2"]
+    );
+    assert_eq!(
+        checkout_path_of(&runtime, "w-order:t3").as_deref(),
+        Some(birth_cwd.as_str()),
+        "a tab made outside Hide is placed by its pane cwd"
+    );
+    assert!(!runtime.take_created_tab_republish());
+
+    // The session placed the tab before the acknowledgment arrived, so the
+    // acknowledgment asks for one more publish, which moves it.
+    let all = ["w-order:t1", "w-order:t2", "w-order:t3", "w-order:t4"];
+    runtime.ingest_session(Ok(payload(&all)));
+    assert_eq!(
+        checkout_path_of(&runtime, "w-order:t4").as_deref(),
+        Some(birth_cwd.as_str())
+    );
+    acknowledge(&mut runtime, "w-order:t4");
+    assert!(runtime.take_created_tab_republish());
+    runtime.ingest_session(Ok(payload(&all)));
+    assert_eq!(
+        ordered_tab_ids(&runtime, &checkout_id),
+        ["w-order:t1", "w-order:t2", "w-order:t4"]
+    );
+
+    // A closed tab takes its record along: a later tab under the same id is
+    // one Hide did not create.
+    runtime.ingest_session(Ok(payload(&["w-order:t1", "w-order:t3", "w-order:t4"])));
+    runtime.ingest_session(Ok(payload(&all)));
+    assert_eq!(
+        ordered_tab_ids(&runtime, &checkout_id),
+        ["w-order:t1", "w-order:t4"]
+    );
+
+    // Losing Herdr drops every record, because the next server numbers its
+    // own tabs.
+    runtime.ingest_session(Err(SessionFetchError::SocketMissing(
+        "herdr went away".to_owned(),
+    )));
+    runtime.ingest_session(Ok(payload(&all)));
+    assert_eq!(ordered_tab_ids(&runtime, &checkout_id), ["w-order:t1"]);
 }
 
 fn reorder_tab(runtime: &mut Runtime, checkout_id: &str, entry_id: &str, to_index: usize) -> bool {

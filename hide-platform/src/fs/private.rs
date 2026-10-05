@@ -7,7 +7,7 @@
 
 use std::fs;
 use std::io;
-use std::path::Path;
+use std::path::{Component, Path, PathBuf};
 
 use super::Handle;
 
@@ -36,6 +36,388 @@ pub fn create_dir_all(path: &Path) -> io::Result<()> {
         // Another process made it between the look and the make.
         Err(error) if error.kind() == io::ErrorKind::AlreadyExists && path.is_dir() => Ok(()),
         made => made,
+    }
+}
+
+/// A bootstrap failure, with the last directory whose entries were synced.
+/// An uncertain component is retained, including one this call created;
+/// recovery revalidates and syncs the chain rather than assuming rollback.
+#[derive(Debug)]
+pub enum DirectoryDurabilityError {
+    /// Validation failed before any directory creation was attempted.
+    BeforeCreate { source: io::Error },
+    /// A component was attempted but its durability was not established.
+    Uncertain {
+        completed: PathBuf,
+        path: PathBuf,
+        source: io::Error,
+    },
+}
+
+impl std::fmt::Display for DirectoryDurabilityError {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::BeforeCreate { source } => {
+                write!(formatter, "before directory creation: {source}")
+            }
+            Self::Uncertain {
+                completed,
+                path,
+                source,
+            } => write!(
+                formatter,
+                "directory durability unconfirmed at {} after {}: {source}",
+                path.display(),
+                completed.display(),
+            ),
+        }
+    }
+}
+
+impl std::error::Error for DirectoryDurabilityError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        Some(match self {
+            Self::BeforeCreate { source } | Self::Uncertain { source, .. } => source,
+        })
+    }
+}
+
+/// Establishes an existing directory's ancestor barriers, returning its
+/// canonical spelling for use as a [`create_dir_all_durable`] anchor.
+/// The leaf must be a real directory owned by this account that other
+/// accounts cannot modify. The caller must trust and keep its ancestor
+/// namespace stable; system aliases in that namespace are canonicalized.
+/// Shared system ancestors are not made private or treated as account-owned.
+///
+/// Unix syncs the existing chain from the filesystem root, with at most 64
+/// components. No directory is created or removed, including on failure.
+/// Windows currently reports `Unsupported`, never the legacy sync no-op.
+pub fn establish_dir_durability(path: &Path) -> Result<PathBuf, DirectoryDurabilityError> {
+    let before = |source| DirectoryDurabilityError::BeforeCreate { source };
+    #[cfg(windows)]
+    {
+        let _ = path;
+        Err(before(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "directory-chain persistence is not established on Windows",
+        )))
+    }
+    #[cfg(unix)]
+    {
+        let leaf = trusted_dir(path).map_err(before)?;
+        let canonical = fs::canonicalize(path).map_err(before)?;
+        if canonical.components().count() > 65 {
+            return Err(before(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "durable directory chain exceeds 64 components",
+            )));
+        }
+        let canonical_leaf = trusted_dir(&canonical).map_err(before)?;
+        if super::identity::file_id_of(&leaf).map_err(before)?
+            != super::identity::file_id_of(&canonical_leaf).map_err(before)?
+        {
+            return Err(before(io::Error::new(
+                io::ErrorKind::PermissionDenied,
+                "directory identity changed during validation",
+            )));
+        }
+        let mut completed = PathBuf::from("/");
+        let mut parent = super::open_dir(&completed).map_err(before)?;
+        super::atomic::sync_dir(&parent).map_err(|source| DirectoryDurabilityError::Uncertain {
+            completed: completed.clone(),
+            path: completed.clone(),
+            source,
+        })?;
+        for part in canonical.components().skip(1) {
+            let child_path = completed.join(part.as_os_str());
+            let step: io::Result<fs::File> = (|| {
+                let child = super::open_dir(&child_path)?;
+                #[cfg(test)]
+                bootstrap_faults::fail(bootstrap_faults::Point::ChildSync)?;
+                super::atomic::sync_dir(&child)?;
+                #[cfg(test)]
+                bootstrap_faults::fail(bootstrap_faults::Point::ParentSync)?;
+                super::atomic::sync_dir(&parent)?;
+                Ok(child)
+            })();
+            parent = step.map_err(|source| DirectoryDurabilityError::Uncertain {
+                completed: completed.clone(),
+                path: child_path.clone(),
+                source,
+            })?;
+            completed = child_path;
+        }
+        let changed = |source| DirectoryDurabilityError::Uncertain {
+            completed: completed.clone(),
+            path: canonical.clone(),
+            source,
+        };
+        if super::identity::file_id_of(&parent).map_err(changed)?
+            != super::identity::file_id_of(&leaf).map_err(changed)?
+        {
+            return Err(DirectoryDurabilityError::Uncertain {
+                completed,
+                path: canonical,
+                source: io::Error::new(
+                    io::ErrorKind::PermissionDenied,
+                    "directory identity changed during barriers",
+                ),
+            });
+        }
+        Ok(canonical)
+    }
+}
+
+/// Creates at most 64 private descendant directories and checks their
+/// persistence barriers. `durable_ancestor` must be an absolute, existing,
+/// trusted directory whose ancestor durability the caller already knows.
+/// Neither a successful read nor `AlreadyExists` establishes that fact.
+/// The caller must keep the entire namespace stable, with no competing writer.
+///
+/// On Unix, each new or existing child and its containing directory are
+/// synced before proceeding. Links and directories another account can
+/// modify are refused. Existing permissions are left unchanged, so a caller
+/// requiring privacy also checks any existing directory's access.
+/// Failures retain the partial chain and identify its uncertain component;
+/// a later explicit recovery checks all existing levels again.
+///
+/// Windows currently returns `Unsupported` before creating anything: the
+/// legacy directory-sync no-op is not a persistence barrier. This is not a
+/// cross-platform bootstrap guarantee or a physical power-loss promise.
+pub fn create_dir_all_durable(
+    path: &Path,
+    durable_ancestor: &Path,
+) -> Result<(), DirectoryDurabilityError> {
+    let before = |source| DirectoryDurabilityError::BeforeCreate { source };
+    let invalid = || {
+        io::Error::new(
+            io::ErrorKind::InvalidInput,
+            "invalid durable directory chain",
+        )
+    };
+    if !durable_ancestor.is_absolute()
+        || durable_ancestor
+            .components()
+            .any(|part| matches!(part, Component::ParentDir | Component::CurDir))
+    {
+        return Err(before(invalid()));
+    }
+    let relative = path
+        .strip_prefix(durable_ancestor)
+        .map_err(|_| before(invalid()))?;
+    for (count, part) in relative.components().enumerate() {
+        if !matches!(part, Component::Normal(_)) || count == 64 {
+            return Err(before(invalid()));
+        }
+    }
+    #[cfg(windows)]
+    {
+        Err(before(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "directory-chain persistence is not established on Windows",
+        )))
+    }
+    #[cfg(unix)]
+    {
+        let mut parent = trusted_dir(durable_ancestor).map_err(before)?;
+        let mut completed = durable_ancestor.to_path_buf();
+        for part in relative.components() {
+            let child_path = completed.join(part.as_os_str());
+            let step: io::Result<fs::File> = (|| {
+                #[cfg(test)]
+                bootstrap_faults::fail(bootstrap_faults::Point::Create)?;
+                match create_dir(&child_path) {
+                    Ok(()) => {
+                        #[cfg(test)]
+                        bootstrap_faults::fail(bootstrap_faults::Point::Created)?;
+                    }
+                    Err(error) if error.kind() == io::ErrorKind::AlreadyExists => {}
+                    Err(error) => return Err(error),
+                }
+                let child = trusted_dir(&child_path)?;
+                #[cfg(test)]
+                bootstrap_faults::fail(bootstrap_faults::Point::ChildSync)?;
+                super::atomic::sync_dir(&child)?;
+                #[cfg(test)]
+                bootstrap_faults::fail(bootstrap_faults::Point::ParentSync)?;
+                super::atomic::sync_dir(&parent)?;
+                Ok(child)
+            })();
+            parent = step.map_err(|source| DirectoryDurabilityError::Uncertain {
+                completed: completed.clone(),
+                path: child_path.clone(),
+                source,
+            })?;
+            completed = child_path;
+        }
+        Ok(())
+    }
+}
+
+#[cfg(unix)]
+fn trusted_dir(path: &Path) -> io::Result<fs::File> {
+    let metadata = fs::symlink_metadata(path)?;
+    if !metadata.is_dir() || metadata.file_type().is_symlink() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "not a real trusted directory",
+        ));
+    }
+    let directory = super::open_dir(path)?;
+    if !handle_owned_by_current_user(&directory)? || others_can_modify(path)? {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "directory can be modified by another account",
+        ));
+    }
+    Ok(directory)
+}
+
+// Only the external syscall boundary is faulted; the public bootstrap,
+// directory validation and sync helpers remain real.
+#[cfg(all(test, unix))]
+mod bootstrap_faults {
+    use std::cell::Cell;
+    use std::io;
+
+    #[derive(Clone, Copy, PartialEq)]
+    pub(super) enum Point {
+        Create,
+        Created,
+        ChildSync,
+        ParentSync,
+    }
+
+    thread_local! {
+        static FAULT: Cell<Option<(Point, usize)>> = const { Cell::new(None) };
+    }
+
+    pub(super) struct Scope(Option<(Point, usize)>);
+
+    pub(super) fn install(point: Point, skip: usize) -> Scope {
+        Scope(FAULT.replace(Some((point, skip))))
+    }
+
+    impl Drop for Scope {
+        fn drop(&mut self) {
+            FAULT.set(self.0);
+        }
+    }
+
+    pub(super) fn fail(point: Point) -> io::Result<()> {
+        if let Some((wanted, skip)) = FAULT.get()
+            && wanted == point
+        {
+            if skip == 0 {
+                return Err(io::Error::from_raw_os_error(libc::EIO));
+            }
+            FAULT.set(Some((wanted, skip - 1)));
+        }
+        Ok(())
+    }
+}
+
+#[cfg(all(test, unix))]
+mod bootstrap_tests {
+    use super::bootstrap_faults::{self, Point};
+    use super::*;
+
+    #[test]
+    fn an_existing_anchor_failure_retains_the_chain_and_recovery_rechecks_it() {
+        for point in [Point::ChildSync, Point::ParentSync] {
+            let root = tempfile::tempdir().unwrap();
+            let anchor = root.path().join("anchor");
+            create_dir(&anchor).unwrap();
+            let identity = super::super::identity::file_id(&anchor).unwrap();
+            let fault = bootstrap_faults::install(point, 0);
+            assert!(matches!(
+                establish_dir_durability(&anchor),
+                Err(DirectoryDurabilityError::Uncertain { source, .. })
+                    if source.raw_os_error() == Some(libc::EIO)
+            ));
+            assert_eq!(super::super::identity::file_id(&anchor).unwrap(), identity);
+            drop(fault);
+            let established = establish_dir_durability(&anchor).unwrap();
+            assert_eq!(established, fs::canonicalize(&anchor).unwrap());
+            let fault = bootstrap_faults::install(point, 0);
+            assert!(matches!(
+                establish_dir_durability(&anchor),
+                Err(DirectoryDurabilityError::Uncertain { source, .. })
+                    if source.raw_os_error() == Some(libc::EIO)
+            ));
+            drop(fault);
+            establish_dir_durability(&anchor).unwrap();
+        }
+    }
+
+    #[test]
+    fn failed_creation_retains_the_completed_chain_and_reports_the_os_cause() {
+        for point in [Point::Create, Point::Created] {
+            let root = tempfile::tempdir().unwrap();
+            let first = root.path().join("first");
+            let second = first.join("second");
+            let end = second.join("last");
+            let fault = bootstrap_faults::install(point, 1);
+            let error = create_dir_all_durable(&end, root.path()).unwrap_err();
+            match error {
+                DirectoryDurabilityError::Uncertain {
+                    completed,
+                    path,
+                    source,
+                } => {
+                    assert_eq!(completed, first);
+                    assert_eq!(path, second);
+                    assert_eq!(source.raw_os_error(), Some(libc::EIO));
+                }
+                other => panic!("unexpected outcome: {other:?}"),
+            }
+            assert!(first.is_dir());
+            assert_eq!(second.is_dir(), point == Point::Created);
+            assert!(!end.exists());
+            drop(fault);
+            create_dir_all_durable(&end, root.path()).unwrap();
+            assert!(is_private(&end).unwrap());
+        }
+    }
+
+    #[test]
+    fn failed_barriers_retain_real_directories_and_recovery_checks_existing_levels() {
+        for point in [Point::ChildSync, Point::ParentSync] {
+            let root = tempfile::tempdir().unwrap();
+            let first = root.path().join("first");
+            let second = first.join("second");
+            let end = second.join("last");
+            let fault = bootstrap_faults::install(point, 1);
+            let error = create_dir_all_durable(&end, root.path()).unwrap_err();
+            match error {
+                DirectoryDurabilityError::Uncertain {
+                    completed,
+                    path,
+                    source,
+                } => {
+                    assert_eq!(completed, first);
+                    assert_eq!(path, second);
+                    assert_eq!(source.raw_os_error(), Some(libc::EIO));
+                }
+                other => panic!("unexpected outcome: {other:?}"),
+            }
+            assert!(first.is_dir());
+            assert!(second.is_dir());
+            assert!(is_private(&second).unwrap());
+            assert!(!end.exists());
+            drop(fault);
+            // Existing directories must not let recovery bypass a barrier.
+            let fault = bootstrap_faults::install(point, 0);
+            assert!(matches!(
+                create_dir_all_durable(&end, root.path()),
+                Err(DirectoryDurabilityError::Uncertain { path, source, .. })
+                    if path == first && source.raw_os_error() == Some(libc::EIO)
+            ));
+            assert!(!end.exists());
+            drop(fault);
+            create_dir_all_durable(&end, root.path()).unwrap();
+            assert!(is_private(&end).unwrap());
+        }
     }
 }
 
@@ -96,6 +478,12 @@ pub fn others_can_modify(path: &Path) -> io::Result<bool> {
     sys::access_of_others(path, true)
 }
 
+/// Whether another account can change an open file or folder. The descriptor
+/// is judged directly, so replacing its path cannot change this answer.
+pub fn handle_others_can_modify(handle: &impl Handle) -> io::Result<bool> {
+    sys::handle_access_of_others(handle, true)
+}
+
 /// Whether the file or folder at `path` belongs to the current account.
 pub fn owned_by_current_user(path: &Path) -> io::Result<bool> {
     sys::owned_by_current_user(path)
@@ -106,6 +494,26 @@ pub fn handle_owned_by_current_user(handle: &impl Handle) -> io::Result<bool> {
     sys::handle_owned_by_current_user(handle)
 }
 
+/// One authenticated directory entry. The caller still validates every
+/// containing directory and, for an alias, its returned target namespace.
+#[derive(Debug, Eq, PartialEq)]
+pub enum InspectionDirectory {
+    /// A real directory protected from replacement by another account.
+    Real,
+    /// An alias owned by the system, inspected as the alias itself.
+    SystemAlias(PathBuf),
+}
+
+/// Inspects one entry without following it. Real directories must belong
+/// to this account or the system and deny other-account modification; a
+/// root-owned sticky system directory also protects existing child names.
+/// A system-owned alias returns its raw target so the caller can inspect
+/// that namespace before following it. Account-owned links are refused.
+/// This creates nothing and leaves permissions unchanged.
+pub fn inspect_directory_entry(path: &Path) -> io::Result<InspectionDirectory> {
+    sys::inspect_directory_entry(path)
+}
+
 #[cfg(unix)]
 mod sys {
     use std::fs;
@@ -113,7 +521,7 @@ mod sys {
     use std::os::unix::fs::{DirBuilderExt, MetadataExt, OpenOptionsExt, PermissionsExt};
     use std::path::Path;
 
-    use super::Handle;
+    use super::{Handle, InspectionDirectory};
 
     pub(super) fn create_dir(path: &Path) -> io::Result<()> {
         fs::DirBuilder::new().mode(0o700).create(path)
@@ -158,6 +566,11 @@ mod sys {
         Ok(fs::metadata(path)?.mode() & watched != 0)
     }
 
+    pub(super) fn handle_access_of_others(handle: &impl Handle, changes: bool) -> io::Result<bool> {
+        let watched = if changes { 0o022 } else { 0o077 };
+        Ok(crate::fs::duplicate(handle)?.metadata()?.mode() & watched != 0)
+    }
+
     fn current_user() -> u32 {
         // SAFETY: geteuid has no preconditions and cannot fail.
         unsafe { libc::geteuid() }
@@ -170,6 +583,22 @@ mod sys {
     pub(super) fn handle_owned_by_current_user(handle: &impl Handle) -> io::Result<bool> {
         let metadata = crate::fs::duplicate(handle)?.metadata()?;
         Ok(metadata.uid() == current_user())
+    }
+
+    pub(super) fn inspect_directory_entry(path: &Path) -> io::Result<InspectionDirectory> {
+        let metadata = fs::symlink_metadata(path)?;
+        if metadata.file_type().is_symlink() && metadata.uid() == 0 {
+            return fs::read_link(path).map(InspectionDirectory::SystemAlias);
+        }
+        let shared = metadata.mode() & 0o022 != 0;
+        let system = metadata.uid() == 0 && (!shared || metadata.mode() & 0o1000 != 0);
+        if metadata.is_dir() && (system || (metadata.uid() == current_user() && !shared)) {
+            return Ok(InspectionDirectory::Real);
+        }
+        Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "directory entry is not an owned real directory safe to inspect",
+        ))
     }
 }
 
@@ -207,7 +636,7 @@ mod sys {
     };
     use windows_sys::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
 
-    use super::Handle;
+    use super::{Handle, InspectionDirectory};
     use crate::fs::wide;
 
     /// Access that changes a file: write, append, delete, delete a child,
@@ -575,10 +1004,55 @@ mod sys {
         owned(&security_of_handle(handle)?)
     }
 
+    pub(super) fn inspect_directory_entry(path: &Path) -> io::Result<InspectionDirectory> {
+        use std::os::windows::fs::MetadataExt;
+        use std::os::windows::fs::OpenOptionsExt;
+        use windows_sys::Win32::Storage::FileSystem::{
+            FILE_ATTRIBUTE_REPARSE_POINT, FILE_FLAG_BACKUP_SEMANTICS, FILE_READ_ATTRIBUTES,
+            READ_CONTROL,
+        };
+
+        // Security inspection needs READ_CONTROL, unlike identity-only
+        // queries. Open the entry itself, including a directory or alias.
+        let entry = fs::OpenOptions::new()
+            .access_mode(READ_CONTROL | FILE_READ_ATTRIBUTES)
+            .share_mode(FILE_SHARE_READ | FILE_SHARE_WRITE | FILE_SHARE_DELETE)
+            .custom_flags(FILE_FLAG_BACKUP_SEMANTICS | FILE_FLAG_OPEN_REPARSE_POINT)
+            .open(path)?;
+        let metadata = entry.metadata()?;
+        let security = security_of_handle(&entry)?;
+        let system = [
+            Sid::well_known(WinLocalSystemSid)?,
+            Sid::well_known(WinBuiltinAdministratorsSid)?,
+        ]
+        .iter()
+        .any(|sid| sid.same_as(security.owner));
+        if !access_of_security(&security, true)? {
+            if metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0 {
+                if system && metadata.file_type().is_symlink() {
+                    return fs::read_link(path).map(InspectionDirectory::SystemAlias);
+                }
+            } else if metadata.is_dir() && (system || owned(&security)?) {
+                return Ok(InspectionDirectory::Real);
+            }
+        }
+        Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "directory entry is not an owned real directory safe to inspect",
+        ))
+    }
+
     /// Whether an access list the current account does not own grants `others`
     /// any access (`changes` false) or any access that changes the file.
     pub(super) fn access_of_others(path: &Path, changes: bool) -> io::Result<bool> {
-        let security = security_of_path(path)?;
+        access_of_security(&security_of_path(path)?, changes)
+    }
+
+    pub(super) fn handle_access_of_others(handle: &impl Handle, changes: bool) -> io::Result<bool> {
+        access_of_security(&security_of_handle(handle)?, changes)
+    }
+
+    fn access_of_security(security: &Security, changes: bool) -> io::Result<bool> {
         let account = account()?;
         let trusted = [
             account.user,

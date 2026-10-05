@@ -465,6 +465,7 @@ fn a_helper_attempt_from_before_a_removal_cannot_settle_the_new_connection() {
         platform: "macos aarch64".to_owned(),
         helper_path: "/fake/hide-host-helper".to_owned(),
     };
+    runtime.ingest_device_machine_id(TARGET, Ok("machine-device".to_owned()));
 
     assert!(!runtime.ingest_host_established(
         TARGET,
@@ -478,7 +479,12 @@ fn a_helper_attempt_from_before_a_removal_cannot_settle_the_new_connection() {
         runtime.device_hosts[TARGET].phase,
         hosts::HostPhase::Ready { .. }
     ));
+    assert_eq!(runtime.device_machine_ids[TARGET], "machine-device");
     assert!(runtime.ingest_host_closed(TARGET, current, "closed".to_owned()));
+    assert!(
+        !runtime.device_machine_ids.contains_key(TARGET),
+        "a disconnected helper cannot keep a stale lineage identity"
+    );
 }
 
 fn dispatch(runtime: &mut Runtime, kind: &str, payload: serde_json::Value) {

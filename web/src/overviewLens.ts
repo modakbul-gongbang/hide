@@ -4,8 +4,12 @@
 // value comes from the snapshot and a value not read yet is null, never a
 // zero (design 10).
 
+import type { TFunction } from "i18next";
+import type { MessageKey } from "./i18n/catalogs";
+import { formatRelativeTime } from "./i18n/format";
+import type { InterfaceLanguage } from "./i18n/locale";
 import type { DeviceAvailability } from "./navigation";
-import { stageOf, type BoardProject, type PrBoard, type TasksBoard } from "./projectBoard";
+import { readFailureText, stageOf, type BoardProject, type PrBoard, type TasksBoard } from "./projectBoard";
 import type { AgentRow, Checkout, ProjectSessions, Task, Workspace } from "./snapshot";
 
 // --- agents ------------------------------------------------------------------
@@ -17,12 +21,14 @@ import type { AgentRow, Checkout, ProjectSessions, Task, Workspace } from "./sna
  */
 export type AgentBucket = "turn" | "working" | "delegating" | "resting";
 
-const BUCKETS: readonly { bucket: AgentBucket; label: string }[] = [
-  { bucket: "turn", label: "내 차례" },
-  { bucket: "working", label: "일하는 중" },
-  { bucket: "delegating", label: "자식 대기" },
-  { bucket: "resting", label: "쉬는 중" },
-];
+const BUCKET_LABEL: Record<AgentBucket, MessageKey> = {
+  turn: "board.prGroup.turn",
+  working: "requests.verb.working",
+  delegating: "overview.bucket.delegating",
+  resting: "requests.verb.idle",
+};
+
+const BUCKETS: readonly AgentBucket[] = ["turn", "working", "delegating", "resting"];
 
 export function bucketOf(agent: AgentRow): AgentBucket {
   if (agent.group === "needs_you" || agent.group === "done") return "turn";
@@ -91,27 +97,27 @@ export type Tile = {
  * questions, approvals, errors and finished ones, and the bar of the four
  * buckets. A device that has not answered has no count.
  */
-export function agentsTile(agents: readonly LensAgent[], availability: DeviceAvailability): Tile {
+export function agentsTile(agents: readonly LensAgent[], availability: DeviceAvailability, t: TFunction<"translation">): Tile {
   const known = availability.state === "ready";
   const count = (bucket: AgentBucket) => agents.filter((value) => value.bucket === bucket).length;
   const demand = (kind: string) => agents.filter((value) => value.agent.group === "needs_you" && value.agent.demand === kind).length;
   const turn = count("turn");
   const parts = [
-    { key: "question", label: "질문", count: demand("question") },
-    { key: "approval", label: "승인", count: demand("approval") },
-    { key: "error", label: "오류", count: demand("error") },
-    { key: "done", label: "끝남", count: agents.filter((value) => value.agent.group === "done").length },
+    { key: "question", label: t("board.turn.question"), count: demand("question") },
+    { key: "approval", label: t("overview.approval"), count: demand("approval") },
+    { key: "error", label: t("common.error"), count: demand("error") },
+    { key: "done", label: t("overview.finished"), count: agents.filter((value) => value.agent.group === "done").length },
   ].filter((part) => part.count > 0);
   return {
     id: "agents",
-    label: "Agents",
+    label: t("overview.agents"),
     value: known ? agents.length : null,
     unit: null,
     badge: known && turn > 0 ? { count: turn, parts } : null,
-    bar: known ? BUCKETS.map(({ bucket, label }) => ({ key: bucket, label, count: count(bucket) })) : null,
+    bar: known ? BUCKETS.map((bucket) => ({ key: bucket, label: t(BUCKET_LABEL[bucket]), count: count(bucket) })) : null,
     // The agents are the device's live rows, so a device that cannot answer
     // has no last value to keep: the ⚠ says why (B6), and the count stays empty.
-    failure: availability.state === "unavailable" ? `에이전트를 읽지 못함 · ${availability.text}` : null,
+    failure: availability.state === "unavailable" ? t("overview.agentsReadFailed", { reason: availability.text }) : null,
   };
 }
 
@@ -120,23 +126,23 @@ export function agentsTile(agents: readonly LensAgent[], availability: DeviceAva
  * the bar of where they stand, the backlog, in progress and in review. A
  * failed read keeps the last value and says so by the name (B6).
  */
-export function issuesTile(board: TasksBoard, now: number, lastReadAt: number | null): Tile {
+export function issuesTile(board: TasksBoard, now: number, lastReadAt: number | null, language: InterfaceLanguage, t: TFunction<"translation">): Tile {
   const open = board.source.openIssues;
   const stage = (value: "backlog" | "working" | "review") => board.cards.filter((card) => card.task?.open && card.stage === value).length;
-  const failure = board.source.failure ? `${board.source.failure}${lastReadAt === null ? "" : ` · ${ageWords(now - lastReadAt)} 값`}` : null;
+  const failure = board.source.failure ? `${readFailureText(board.source.failure, t)}${lastReadAt === null ? "" : ` · ${t("requests.staleValue", { age: ageWords(language, now - lastReadAt, t) })}`}` : null;
   return {
     id: "issues",
-    label: "Issues",
+    label: t("overview.issues"),
     value: open,
-    unit: "열림",
+    unit: t("board.unit.open"),
     badge: null,
     bar:
       open === null
         ? null
         : [
-            { key: "backlog", label: "백로그", count: stage("backlog") },
-            { key: "working", label: "진행 중", count: stage("working") },
-            { key: "review", label: "리뷰", count: stage("review") },
+            { key: "backlog", label: t("board.stage.backlog"), count: stage("backlog") },
+            { key: "working", label: t("board.stage.working"), count: stage("working") },
+            { key: "review", label: t("board.stage.review"), count: stage("review") },
           ],
     failure,
   };
@@ -149,31 +155,31 @@ export function issuesTile(board: TasksBoard, now: number, lastReadAt: number | 
  * operator's turn, an agent fixing and the blocked ones. A failed read keeps
  * the last value and says so by the name (B22).
  */
-export function prsTile(board: PrBoard): Tile {
+export function prsTile(board: PrBoard, t: TFunction<"translation">): Tile {
   const rows = (group: string) => board.groups.find((entry) => entry.group === group)?.rows ?? [];
   const turn = rows("turn");
   const look = turn.filter((row) => row.needsLook).length;
   const drafts = turn.filter((row) => !row.needsLook && row.tone === "draft").length;
   const parts = [
-    { key: "review", label: "리뷰", count: turn.length - look - drafts },
-    { key: "draft", label: "초안", count: drafts },
-    { key: "look", label: "끝난 에이전트 확인", count: look },
+    { key: "review", label: t("board.stage.review"), count: turn.length - look - drafts },
+    { key: "draft", label: t("overview.draft"), count: drafts },
+    { key: "look", label: t("overview.reviewFinishedAgent"), count: look },
   ].filter((part) => part.count > 0);
   return {
     id: "prs",
-    label: "PRs",
+    label: t("overview.prs"),
     value: board.open,
-    unit: "열림",
+    unit: t("board.unit.open"),
     badge: board.open !== null && turn.length > 0 ? { count: turn.length, parts } : null,
     bar:
       board.open === null
         ? null
         : [
-            { key: "turn", label: "내 차례", count: turn.length },
-            { key: "fixing", label: "에이전트가 고치는 중", count: rows("fixing").length },
-            { key: "blocked", label: "CI 실패 · 맡은 에이전트 없음", count: rows("blocked").length },
+            { key: "turn", label: t("board.prGroup.turn"), count: turn.length },
+            { key: "fixing", label: t("board.prGroup.fixing"), count: rows("fixing").length },
+            { key: "blocked", label: t("board.prGroup.blocked"), count: rows("blocked").length },
           ],
-    failure: board.failure,
+    failure: board.failure ? readFailureText(board.failure, t) : null,
   };
 }
 
@@ -195,7 +201,7 @@ export function startOfDay(now: number): number {
  * the history named for this Project has answered; a failed read keeps what
  * it had and says so by the name.
  */
-export function sessionsTile(sessions: ProjectSessions | null | undefined, workspaceId: string, now: number): Tile {
+export function sessionsTile(sessions: ProjectSessions | null | undefined, workspaceId: string, now: number, t: TFunction<"translation">): Tile {
   const mine = sessions && sessions.workspace_id === workspaceId ? sessions : null;
   const failure = mine ? (mine.failure ?? mine.unavailable_reason) : null;
   const answered = mine !== null && !(mine.loading && mine.rows.length === 0) && !(failure && mine.rows.length === 0);
@@ -203,9 +209,9 @@ export function sessionsTile(sessions: ProjectSessions | null | undefined, works
   const today = answered ? mine.rows.filter((row) => row.updated_at_unix_ms >= since) : [];
   return {
     id: "sessions",
-    label: "Sessions",
+    label: t("overview.sessions"),
     value: answered ? today.length : null,
-    unit: "오늘",
+    unit: t("board.unit.today"),
     badge: null,
     bar: answered
       ? [
@@ -213,18 +219,18 @@ export function sessionsTile(sessions: ProjectSessions | null | undefined, works
           { key: "codex", label: "Codex", count: today.filter((row) => row.provider === "codex").length },
         ]
       : null,
-    failure: failure ? `세션 기록을 읽지 못함 · ${mine?.rows.length ? "마지막으로 읽은 값" : "읽은 값 없음"}` : null,
+    failure: failure ? t("overview.sessionsReadFailed", { value: mine?.rows.length ? t("overview.lastReadValue") : t("board.noValue") }) : null,
   };
 }
 
-/** `3분 전`, `2시간 전`, the age a failure's popover gives its last value. */
-export function ageWords(ms: number): string {
+/** The age a failure's popover gives its last value: the language's own relative form, and `overview.justNow` under a minute. */
+export function ageWords(language: InterfaceLanguage, ms: number, t: TFunction<"translation">): string {
   const minutes = Math.max(0, Math.floor(ms / 60_000));
-  if (minutes < 1) return "방금";
-  if (minutes < 60) return `${minutes}분 전`;
+  if (minutes < 1) return t("overview.justNow");
+  if (minutes < 60) return formatRelativeTime(language, -minutes, "minute");
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}시간 전`;
-  return `${Math.floor(hours / 24)}일 전`;
+  if (hours < 24) return formatRelativeTime(language, -hours, "hour");
+  return formatRelativeTime(language, -Math.floor(hours / 24), "day");
 }
 
 // --- worktree cleanup --------------------------------------------------------

@@ -1,13 +1,14 @@
 // What is connected to a thing, drawn the way a Project's Overview groups it
 // (PRD cmdk-navigation D-07, D-08): the issues on top, then one group per
 // checkout whose head is the checkout and whose rows are its pull request and
-// the agent's lineage. A parent that works in another checkout is one `↑ 부모`
+// the agent's lineage. A parent that works in another checkout is one parent
 // line under the agent; a child delegated to another checkout stands in that
 // checkout's own group. The facts are the ones the snapshot already carries -
 // `checkout.task_key`, `closes_task_keys`, `checkout.pull_request` and the
 // agent lineage fields - and a connection the snapshot does not name has no
 // row, never an empty line (design principle 10).
 
+import type { TFunction } from "i18next";
 import { frontDeviceId } from "./devices";
 import {
   agentEntry,
@@ -50,13 +51,13 @@ function paneSet(checkout: Checkout): Set<string> {
 }
 
 /** The issues a checkout works on or its pull request closes, as the project's own task rows. */
-function checkoutIssues(scope: SearchDevice, workspace: Workspace, checkout: Checkout, front: string): SearchEntry[] {
+function checkoutIssues(scope: SearchDevice, workspace: Workspace, checkout: Checkout, front: string, t: TFunction<"translation">): SearchEntry[] {
   const keys = [checkout.task_key, ...(checkout.closes_task_keys ?? [])].filter((key): key is string => Boolean(key));
   const tasks = workspace.tasks?.tasks ?? [];
   const issues: SearchEntry[] = [];
   for (const key of new Set(keys)) {
     const task = tasks.find((row) => row.key === key);
-    if (task) issues.push(issueEntry(scope, workspace, task, front));
+    if (task) issues.push(issueEntry(scope, workspace, task, front, t));
   }
   return issues;
 }
@@ -117,13 +118,13 @@ function descendantsOf(agent: AgentRow, byPane: Map<string, AgentRow>): AgentRow
   return found;
 }
 
-function group(scope: SearchDevice, workspace: Workspace, checkout: Checkout, front: string, rows: SearchEntry[]): RelationGroup {
-  const pr = checkout.pull_request ? pullRequestEntry(scope, workspace, checkout.pull_request, front) : null;
+function group(scope: SearchDevice, workspace: Workspace, checkout: Checkout, front: string, rows: SearchEntry[], t: TFunction<"translation">): RelationGroup {
+  const pr = checkout.pull_request ? pullRequestEntry(scope, workspace, checkout.pull_request, front, t) : null;
   return { head: checkoutEntry(scope, workspace, checkout, front, true), rows: pr ? [pr, ...rows] : rows };
 }
 
 /** The group of a checkout the agent was delegated work in: the descendants there, each naming its parent. */
-function delegatedGroup(scope: SearchDevice, workspace: Workspace, checkout: Checkout, front: string, lineage: Lineage, descendants: AgentRow[], places: Map<string, string>): RelationGroup {
+function delegatedGroup(scope: SearchDevice, workspace: Workspace, checkout: Checkout, front: string, lineage: Lineage, descendants: AgentRow[], places: Map<string, string>, t: TFunction<"translation">): RelationGroup {
   const inside = paneSet(checkout);
   const rows = descendants
     .filter((agent) => inside.has(agent.pane_id))
@@ -136,7 +137,7 @@ function delegatedGroup(scope: SearchDevice, workspace: Workspace, checkout: Che
         subtitle: parent && !inside.has(parent.pane_id) ? `↑ ${parent.identity_label} · ${entry.subtitle}` : entry.subtitle,
       };
     });
-  return group(scope, workspace, checkout, front, rows);
+  return group(scope, workspace, checkout, front, rows, t);
 }
 
 /**
@@ -145,9 +146,9 @@ function delegatedGroup(scope: SearchDevice, workspace: Workspace, checkout: Che
  * request and lineage, and a group for each other checkout it delegated work
  * to; a checkout's are its issues, itself and its pull request; a pull
  * request's or an issue's are those of the checkouts that carry it. `anchor`
- * marks the agent the operator is in front of with the `여기` tag.
+ * marks the agent the operator is in front of with the `here` tag.
  */
-export function relationsOf(rest: SnapshotRest | null, target: RelationTarget, anchor = false): Relations | null {
+export function relationsOf(rest: SnapshotRest | null, target: RelationTarget, t: TFunction<"translation">, anchor = false): Relations | null {
   if (!rest) return null;
   const front = frontDeviceId(rest);
   const scopes = searchDevices(rest);
@@ -160,7 +161,7 @@ export function relationsOf(rest: SnapshotRest | null, target: RelationTarget, a
       const places = checkoutPlaces(scope.allWorkspaces);
       const byPane = new Map(scope.agents.map((row) => [row.pane_id, row]));
       const lineage: Lineage = { byPane, here: paneSet(placed.checkout) };
-      const own = group(scope, placed.workspace, placed.checkout, front, lineageRows(scope, lineage, agent, places, front, anchor));
+      const own = group(scope, placed.workspace, placed.checkout, front, lineageRows(scope, lineage, agent, places, front, anchor), t);
       const groups = [own];
       const delegated = descendantsOf(agent, byPane);
       for (const workspace of scope.allWorkspaces) {
@@ -168,10 +169,10 @@ export function relationsOf(rest: SnapshotRest | null, target: RelationTarget, a
           if (checkout.id === placed.checkout.id) continue;
           const inside = paneSet(checkout);
           if (!delegated.some((child) => inside.has(child.pane_id))) continue;
-          groups.push(delegatedGroup(scope, workspace, checkout, front, lineage, delegated, places));
+          groups.push(delegatedGroup(scope, workspace, checkout, front, lineage, delegated, places, t));
         }
       }
-      return { issues: checkoutIssues(scope, placed.workspace, placed.checkout, front), groups };
+      return { issues: checkoutIssues(scope, placed.workspace, placed.checkout, front, t), groups };
     }
     return null;
   }
@@ -186,14 +187,14 @@ export function relationsOf(rest: SnapshotRest | null, target: RelationTarget, a
       const issues: SearchEntry[] = [];
       const seen = new Set<string>();
       for (const checkout of matching) {
-        for (const issue of checkoutIssues(scope, workspace, checkout, front)) {
+        for (const issue of checkoutIssues(scope, workspace, checkout, front, t)) {
           if (!seen.has(issue.id)) {
             seen.add(issue.id);
             issues.push(issue);
           }
         }
       }
-      return { issues, groups: matching.map((checkout) => group(scope, workspace, checkout, front, [])) };
+      return { issues, groups: matching.map((checkout) => group(scope, workspace, checkout, front, [], t)) };
     }
   }
   return null;

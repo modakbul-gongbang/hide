@@ -114,13 +114,13 @@ pub fn herdr_socket_default() -> io::Result<PathBuf> {
 
 /// [`herdr_socket_default`] from the caller's variables.
 pub fn herdr_socket_default_from(variables: Variables) -> io::Result<PathBuf> {
-    Ok(herdr_config_dir(variables)?.join("herdr.sock"))
+    Ok(herdr_config_dir_from(variables)?.join("herdr.sock"))
 }
 
 /// Herdr's config folder, resolved in Herdr's own order (`config::io` of the
 /// pinned release); where Herdr would fall back to a temporary folder, this
 /// says there is none.
-fn herdr_config_dir(variables: Variables) -> io::Result<PathBuf> {
+pub fn herdr_config_dir_from(variables: Variables) -> io::Result<PathBuf> {
     if variables("XDG_CONFIG_HOME").is_some() {
         return Ok(absolute_variable(variables, "XDG_CONFIG_HOME")?.join("herdr"));
     }
@@ -249,6 +249,7 @@ pub fn name() -> io::Result<String> {
 /// The machine's own identity, which survives a rename and a reinstall of
 /// Hide: the hardware UUID on macOS (`IOPlatformUUID`), `/etc/machine-id` on
 /// Linux, the `MachineGuid` Windows keeps in its registry.
+/// Its trimmed lowercase spelling is shared with stored lineage tokens.
 pub fn machine_id() -> io::Result<String> {
     let id = sys::machine_id()?;
     let id = id.trim();
@@ -258,7 +259,7 @@ pub fn machine_id() -> io::Result<String> {
             "the system reports an empty machine id",
         ));
     }
-    Ok(id.to_owned())
+    Ok(id.to_lowercase())
 }
 
 fn nonempty_variable(variables: Variables, name: &str) -> Option<OsString> {
@@ -308,13 +309,78 @@ mod sys {
                 output.status
             )));
         }
-        String::from_utf8_lossy(&output.stdout)
+        machine_id_from_ioreg(&String::from_utf8_lossy(&output.stdout))
+    }
+
+    #[cfg(target_os = "macos")]
+    fn machine_id_from_ioreg(output: &str) -> io::Result<String> {
+        let value = output
             .lines()
             .find_map(|line| {
-                let (_, value) = line.split_once("IOPlatformUUID")?;
-                value.split('"').nth(1).map(str::to_owned)
+                let (key, value) = line.split_once('=')?;
+                (key.trim() == "\"IOPlatformUUID\"").then(|| value.trim())
             })
-            .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "ioreg names no IOPlatformUUID"))
+            .ok_or_else(|| {
+                io::Error::new(io::ErrorKind::NotFound, "ioreg names no IOPlatformUUID")
+            })?;
+        value
+            .strip_prefix('"')
+            .and_then(|value| value.strip_suffix('"'))
+            .filter(|value| !value.trim().is_empty() && !value.contains('"'))
+            .map(str::to_owned)
+            .ok_or_else(|| {
+                io::Error::new(
+                    io::ErrorKind::InvalidData,
+                    "ioreg reports an invalid IOPlatformUUID string",
+                )
+            })
+    }
+
+    #[cfg(all(test, target_os = "macos"))]
+    mod tests {
+        use super::*;
+
+        #[test]
+        fn ioreg_machine_identity_is_the_quoted_property_value() {
+            let output = r#"+-o platform
+    {
+      "IOPlatformSerialNumber" = "fixture-serial"
+      "IOPlatformUUID" = "ABCDEF12-3456-7890-ABCD-EF1234567890"
+    }
+"#;
+            assert_eq!(
+                machine_id_from_ioreg(output).unwrap(),
+                "ABCDEF12-3456-7890-ABCD-EF1234567890"
+            );
+        }
+
+        #[test]
+        fn ioreg_machine_identity_refuses_missing_and_malformed_properties() {
+            for output in [
+                "",
+                "\"OtherIOPlatformUUID\" = \"fixture\"",
+                "\"name\" = \"IOPlatformUUID\"",
+            ] {
+                assert_eq!(
+                    machine_id_from_ioreg(output).unwrap_err().kind(),
+                    io::ErrorKind::NotFound
+                );
+            }
+            for value in [
+                "unquoted",
+                "\"unterminated",
+                "\"\"",
+                "\"   \"",
+                "\"fixture\" \"extra\"",
+            ] {
+                assert_eq!(
+                    machine_id_from_ioreg(&format!("\"IOPlatformUUID\" = {value}"))
+                        .unwrap_err()
+                        .kind(),
+                    io::ErrorKind::InvalidData
+                );
+            }
+        }
     }
 
     #[cfg(not(target_os = "macos"))]

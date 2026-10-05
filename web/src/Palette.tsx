@@ -14,6 +14,7 @@ import { besideUnavailable } from "./viewLayout";
 import { workspaceViewOf } from "./workspace";
 import { holdsCommandKey } from "./host";
 import { fieldLabel } from "./shortcutLabels";
+import { useInterfaceTranslation } from "./i18n/client";
 
 // The file and diff palettes (PRD B12, B13) on the System command palette: a
 // query field, a list cmdk's own arrow keys and Enter walk, and Escape closes
@@ -85,6 +86,7 @@ function PaletteRow({ icon, title }: { icon?: ReactNode; title: string }) {
 }
 
 function FilePalette({ actions }: { actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   // The checkout in front on the device in front, as the Explorer shows it.
   const device = useShellStore((s) => explorerContext(s.rest).device);
   const root = useShellStore((s) => explorerContext(s.rest).checkout?.path ?? null);
@@ -121,8 +123,8 @@ function FilePalette({ actions }: { actions: Actions }) {
 
   return (
     <PaletteShell
-      label="Open file"
-      placeholder="Search files by name"
+      label={t("documents.openFile")}
+      placeholder={t("documents.searchFiles")}
       query={query}
       onQuery={(next) => {
         setBesideReason(null);
@@ -141,22 +143,22 @@ function FilePalette({ actions }: { actions: Actions }) {
       }}
       footer={
         <span className="flex items-center gap-md">
-          <span data-palette-hint="beside">{besideReason ?? `${fieldLabel("Enter")} 옆에 열기`}</span>
-          {fileIndex?.truncated ? <span>The index is truncated at 50,000 files</span> : null}
+          <span data-palette-hint="beside">{besideReason ?? t("documents.openBeside", { shortcut: fieldLabel("Enter") })}</span>
+          {fileIndex?.truncated ? <span>{t("documents.indexTruncated", { limit: 50000 })}</span> : null}
         </span>
       }
     >
       {fileIndex?.unavailable ? (
         <div className="px-md py-sm text-caption text-muted-foreground" role="alert" data-palette-state="unavailable">
-          {`Files could not be listed: ${fileIndex.unavailable}`}
+          {t("documents.filesUnavailable", { reason: fileIndex.unavailable })}
         </div>
       ) : fileIndex?.indexing && entries.length === 0 ? (
         <div className="px-md py-sm text-caption text-muted-foreground" data-palette-state="indexing">
-          Indexing…
+          {t("documents.indexing")}
         </div>
       ) : entries.length === 0 ? (
         <div className="px-md py-sm text-caption text-muted-foreground" data-palette-state="empty">
-          {query ? "No matching files" : "Type to search this checkout"}
+          {query ? t("documents.noMatchingFiles") : t("documents.typeToSearch")}
         </div>
       ) : (
         entries.map((entry) => (
@@ -179,12 +181,13 @@ function FilePalette({ actions }: { actions: Actions }) {
 }
 
 function DiffPalette({ actions }: { actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const root = useShellStore((s) => s.rest?.navigator?.changes_root_path ?? null);
   const changes = useShellStore((s) => s.changes);
   const [query, setQuery] = useState("");
   const entries = changedFiles(changes, root, query);
   return (
-    <PaletteShell label="Open diff" placeholder="Search changed files" query={query} onQuery={setQuery} footer="">
+    <PaletteShell label={t("documents.openDiff")} placeholder={t("documents.searchChangedFiles")} query={query} onQuery={setQuery} footer="">
       {entries.length ? entries.map((entry) => (
         <CommandItem key={entry.path} asChild value={entry.path} onSelect={() => {
           useUiStore.getState().closeOverlay();
@@ -194,7 +197,7 @@ function DiffPalette({ actions }: { actions: Actions }) {
             <PaletteRow title={entry.relative_path} />
           </button>
         </CommandItem>
-      )) : <div className="px-md py-sm text-caption text-muted-foreground">No matching changed files</div>}
+      )) : <div className="px-md py-sm text-caption text-muted-foreground">{t("documents.noMatchingChangedFiles")}</div>}
     </PaletteShell>
   );
 }

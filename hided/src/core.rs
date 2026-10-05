@@ -16,6 +16,17 @@ pub struct SnapshotReply {
 }
 
 enum Command {
+    DeliveryHuman {
+        reply: Sender<Result<herdr_core::delivery::worker::PreparedHuman, String>>,
+    },
+    DeliveryPrepare {
+        device_id: String,
+        pane_id: String,
+        expected: Context,
+        hint: Option<String>,
+        command: herdr_core::delivery::Command,
+        reply: Sender<Result<herdr_core::delivery::worker::Prepared, String>>,
+    },
     SetFileRoots {
         roots: Vec<(std::path::PathBuf, std::fs::File)>,
         reply: Sender<Result<(), String>>,
@@ -80,6 +91,39 @@ pub struct CoreHandle {
 }
 
 impl CoreHandle {
+    pub fn prepare_delivery_human(
+        &self,
+    ) -> Result<herdr_core::delivery::worker::PreparedHuman, String> {
+        let (reply, result) = mpsc::channel();
+        self.commands
+            .send(Command::DeliveryHuman { reply })
+            .map_err(|_| "delivery_unavailable")?;
+        result.recv().map_err(|_| "delivery_unavailable")?
+    }
+    pub fn prepare_delivery(
+        &self,
+        device: &str,
+        pane: &str,
+        expected: &Context,
+        hint: Option<String>,
+        command: herdr_core::delivery::Command,
+    ) -> Result<herdr_core::delivery::worker::Prepared, String> {
+        let (reply, result) = mpsc::channel();
+        self.commands
+            .send(Command::DeliveryPrepare {
+                device_id: device.to_owned(),
+                pane_id: pane.to_owned(),
+                expected: expected.clone(),
+                hint,
+                command,
+                reply,
+            })
+            .map_err(|_| "delivery_unavailable".to_owned())?;
+        result
+            .recv()
+            .map_err(|_| "delivery_unavailable".to_owned())?
+    }
+
     pub fn set_file_roots(
         &self,
         roots: Vec<(std::path::PathBuf, std::fs::File)>,
@@ -313,6 +357,25 @@ fn owner_loop(
     let _ = ready.send(Ok(()));
     while let Ok(command) = commands.recv() {
         match command {
+            Command::DeliveryHuman { reply } => {
+                let _ = reply.send(core.prepare_delivery_human());
+            }
+            Command::DeliveryPrepare {
+                device_id,
+                pane_id,
+                expected,
+                hint,
+                command,
+                reply,
+            } => {
+                let _ = reply.send(core.prepare_delivery(
+                    &device_id,
+                    &pane_id,
+                    &expected,
+                    hint.as_deref(),
+                    command,
+                ));
+            }
             Command::SetFileRoots { roots, reply } => {
                 core.set_file_roots(herdr_core::FileRoots::from_opened(roots));
                 let _ = reply.send(Ok(()));

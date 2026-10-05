@@ -28,10 +28,14 @@ use crate::root::RootIdentity;
 /// 14: the kit carries `codex_per_pane` with its `off` state, and a
 /// `reinstall` names the parts the operator turned off (PRD
 /// overview-request-view D-21, D-24); a helper on 13 would not know them.
+/// 15: `session_activity` answers only a proven session's modification time
+/// and size, for the parent-owned inactivity watcher.
 /// 16: worktree facts carry lock reasons and measured ignored repositories;
 /// `worktree_removal_check` measures the exact accepted deletion before any
 /// pane closes. A helper without this preflight must never remove instead.
-pub const PROTOCOL_VERSION: u32 = 16;
+/// 17: Hello carries native machine identity for lineage, and the kit reports
+/// the one-release coordination retirement instead of installing it.
+pub const PROTOCOL_VERSION: u32 = 17;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Request {
@@ -187,6 +191,9 @@ pub enum Call {
         action: KitAction,
         cli_dir: String,
         herdr_socket: Option<String>,
+        /// Known registered checkout roots on this helper's device only.
+        #[serde(default)]
+        retirement_projects: Vec<String>,
     },
     /// One bounded read of a pane's conversation for its label, from the
     /// checkpoint the caller kept (`hide_session::label_transcript::read`).
@@ -194,6 +201,10 @@ pub enum Call {
     /// next checkpoint, never a path.
     LabelTranscript {
         request: hide_session::label_transcript::LabelTranscriptRequest,
+    },
+    /// Metadata-only activity using the same native ownership proof as labels.
+    SessionActivity {
+        request: hide_session::session_activity::SessionActivityRequest,
     },
 }
 
@@ -250,6 +261,35 @@ pub struct Hello {
     /// The home directory of the account the helper runs as, the boundary
     /// the device's own registration listing applies (PRD S5.5 B24).
     pub home: Option<String>,
+    /// Read once when this connection starts; a failure leaves lineage
+    /// unresolved without making the file helper unavailable.
+    pub machine_identity: MachineIdentity,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum MachineIdentity {
+    Available { id: String },
+    Unavailable { reason: String },
+}
+
+impl MachineIdentity {
+    pub fn into_result(self) -> Result<String, String> {
+        match self {
+            Self::Available { id }
+                if !id.is_empty()
+                    && id.len() <= 256
+                    && id == id.trim()
+                    && !id.bytes().any(|byte| byte.is_ascii_control()) =>
+            {
+                Ok(id)
+            }
+            Self::Available { .. } => {
+                Err("The device helper reported an invalid machine identity".to_owned())
+            }
+            Self::Unavailable { reason } => Err(reason),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
@@ -260,4 +300,46 @@ pub struct RootOpened {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RevisionNow {
     pub revision: String,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn machine_identity_reports_unavailability_and_refuses_invalid_ids() {
+        let decode = |value| serde_json::from_value::<MachineIdentity>(value).unwrap();
+        assert_eq!(
+            decode(serde_json::json!({"state":"available", "id":"machine-device"})).into_result(),
+            Ok("machine-device".to_owned())
+        );
+        assert_eq!(
+            decode(
+                serde_json::json!({"state":"unavailable", "reason":"native identity unavailable"})
+            )
+            .into_result(),
+            Err("native identity unavailable".to_owned())
+        );
+        let longest_id = "x".repeat(256);
+        assert_eq!(
+            MachineIdentity::Available {
+                id: longest_id.clone()
+            }
+            .into_result(),
+            Ok(longest_id)
+        );
+        for id in [
+            String::new(),
+            "device\n".to_owned(),
+            "device\0suffix".to_owned(),
+            " device".to_owned(),
+            "x".repeat(257),
+        ] {
+            assert!(MachineIdentity::Available { id }.into_result().is_err());
+        }
+        assert!(
+            serde_json::from_value::<MachineIdentity>(serde_json::json!({"state":"available"}))
+                .is_err()
+        );
+    }
 }
