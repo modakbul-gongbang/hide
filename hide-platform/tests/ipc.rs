@@ -683,6 +683,47 @@ fn shutdown_frees_a_read_that_has_a_timeout_too() {
     held.join().unwrap();
 }
 
+/// The three tests above leave the last step into the blocking call to the
+/// scheduler; a close or shutdown that lands before the call must give the
+/// same answer, or a slow runner would fail them.
+#[test]
+fn a_close_before_the_accept_gives_the_answer_a_blocked_accept_gets() {
+    let (_folder, path) = endpoint();
+    let listener = LocalListener::bind(&path).unwrap();
+    let closer = listener.closer();
+    closer.close();
+    closer.close();
+    let first = listener.accept().map(drop).map_err(|error| error.kind());
+    let later = listener.accept().map(drop).map_err(|error| error.kind());
+    assert_eq!(first, Err(std::io::ErrorKind::ConnectionAborted));
+    assert_eq!(later, Err(std::io::ErrorKind::ConnectionAborted));
+}
+
+#[test]
+fn a_shutdown_before_the_read_gives_the_answer_a_blocked_read_gets() {
+    for timeout in [None, Some(Duration::from_secs(30))] {
+        let (_folder, path) = endpoint();
+        let listener = LocalListener::bind(&path).unwrap();
+        let (release, released) = mpsc::channel::<()>();
+        let held = thread::spawn(move || {
+            let stream = listener.accept().unwrap();
+            let _ = released.recv_timeout(Duration::from_secs(10));
+            drop(stream);
+        });
+        let mut client = LocalStream::connect(&path).unwrap();
+        client.set_read_timeout(timeout).unwrap();
+        client.shutdown_handle().shutdown();
+        let read = client.read(&mut [0_u8; 1]).map_err(|error| error.kind());
+        assert_eq!(read, Ok(0), "timeout {timeout:?}");
+        assert!(
+            client.write(b"x").is_err(),
+            "a write after shutdown must fail"
+        );
+        drop(release);
+        held.join().unwrap();
+    }
+}
+
 #[test]
 fn the_accepted_stream_names_the_connecting_process() {
     let (_folder, path) = endpoint();
