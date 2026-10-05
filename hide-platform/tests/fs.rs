@@ -566,21 +566,33 @@ fn a_lock_on_a_file_is_taken_through_the_file_that_stays_open() {
     locked(lock::lock_file(open(), Mode::Exclusive, RELEASED_WITHIN, &never).unwrap());
 }
 
+/// A wait asks `cancelled` after every try that found the lock held, so its
+/// first question is the waiter's own report that it is waiting.
 #[test]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn a_wait_ends_when_the_holder_lets_go_and_not_before() {
     let outer = folder();
     let first = open_dir(outer.path());
     let second = open_dir(outer.path());
     let held = locked(lock::lock_dir(&first, Mode::Exclusive, Duration::ZERO, &never).unwrap());
-    let releaser = thread::spawn(move || {
-        thread::sleep(Duration::from_millis(200));
+    let (waiting, heard) = std::sync::mpsc::channel();
+    thread::scope(|scope| {
+        let waiter = scope.spawn(|| {
+            lock::lock_dir(&second, Mode::Exclusive, Duration::from_secs(20), &|| {
+                let _ = waiting.send(());
+                false
+            })
+            .unwrap()
+        });
+        heard
+            .recv_timeout(Duration::from_secs(20))
+            .expect("the waiter never found the lock held");
+        assert!(
+            !waiter.is_finished(),
+            "the waiter stopped while it was held"
+        );
         drop(held);
+        locked(waiter.join().unwrap());
     });
-    let started = Instant::now();
-    locked(lock::lock_dir(&second, Mode::Exclusive, Duration::from_secs(20), &never).unwrap());
-    assert!(started.elapsed() >= Duration::from_millis(150));
-    releaser.join().unwrap();
 }
 
 #[test]
@@ -597,27 +609,21 @@ fn a_wait_that_is_not_answered_times_out_after_the_time_it_was_given() {
     assert!(started.elapsed() >= Duration::from_millis(300));
 }
 
+/// The caller answers "go on" to the first question and "stop" to the second,
+/// so the wait has gone round once before it is cancelled.
 #[test]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn a_wait_stops_when_the_caller_cancels_it() {
     let outer = folder();
     let first = open_dir(outer.path());
     let second = open_dir(outer.path());
     let _held = locked(lock::lock_dir(&first, Mode::Exclusive, Duration::ZERO, &never).unwrap());
-    let stop = AtomicBool::new(false);
-    thread::scope(|scope| {
-        scope.spawn(|| {
-            thread::sleep(Duration::from_millis(100));
-            stop.store(true, Ordering::Relaxed);
-        });
-        let started = Instant::now();
-        let waited = lock::lock_dir(&second, Mode::Exclusive, Duration::from_secs(30), &|| {
-            stop.load(Ordering::Relaxed)
-        })
-        .unwrap();
-        assert!(matches!(waited, Waited::Cancelled));
-        assert!(started.elapsed() < Duration::from_secs(10));
-    });
+    let asked = std::sync::atomic::AtomicUsize::new(0);
+    let waited = lock::lock_dir(&second, Mode::Exclusive, Duration::from_secs(30), &|| {
+        asked.fetch_add(1, Ordering::Relaxed) == 1
+    })
+    .unwrap();
+    assert!(matches!(waited, Waited::Cancelled));
+    assert_eq!(asked.load(Ordering::Relaxed), 2);
 }
 
 /// A folder opened the way `cap-std` opens one on Linux, with `O_PATH`: the

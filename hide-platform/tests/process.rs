@@ -31,6 +31,9 @@ const ROLE: &str = "HIDE_PLATFORM_PROC_ROLE";
 const HANG_LIMIT: Duration = Duration::from_secs(30);
 // Test-only handoff: arm recovery before the short-lived parent exits.
 const PIPE_OWNER: &str = "HIDE_PLATFORM_PROC_PIPE_OWNER";
+/// Where the `sleep` role writes its pid once it runs, for a test that cannot
+/// read the child's output before the call that started it returns.
+const READY_FILE: &str = "HIDE_PLATFORM_PROC_READY_FILE";
 
 /// Windows hands a freed pid to the next process that starts, so a test that
 /// asks about a pid it has finished with must not run beside one that starts
@@ -85,6 +88,13 @@ fn child_role() {
         }
         "sleep" => {
             println!("READY {}", std::process::id());
+            if let Some(path) = std::env::var_os(READY_FILE) {
+                // Renamed into place, so a reader never sees half a number.
+                let path = PathBuf::from(path);
+                let partial = path.with_extension("partial");
+                std::fs::write(&partial, std::process::id().to_string()).unwrap();
+                std::fs::rename(&partial, &path).unwrap();
+            }
             thread::sleep(Duration::from_secs(60));
         }
         // A child with one child of its own that has left no handle behind.
@@ -225,6 +235,21 @@ fn ready_number(stdout: std::process::ChildStdout) -> u32 {
     heard
         .recv_timeout(Duration::from_secs(30))
         .expect("the child role did not become ready")
+}
+
+/// The pid a `sleep` child wrote to `path` once it ran.
+#[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
+fn announced_pid(path: &std::path::Path) -> u32 {
+    let started = Instant::now();
+    loop {
+        match std::fs::read_to_string(path) {
+            Ok(pid) => return pid.parse().unwrap(),
+            Err(error) if error.kind() == ErrorKind::NotFound => {}
+            Err(error) => panic!("cannot read the child's pid: {error}"),
+        }
+        assert!(started.elapsed() < HANG_LIMIT, "the child never ran");
+        thread::sleep(Duration::from_millis(10));
+    }
 }
 
 #[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
@@ -827,23 +852,32 @@ fn a_child_past_its_deadline_is_ended_with_its_tree() {
     assert!(started.elapsed() < Duration::from_secs(10));
 }
 
+/// The stop is raised once the child runs, so it ends a running child rather
+/// than one still starting.
 #[test]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn a_raised_stop_ends_the_child_before_its_deadline() {
     let _serial = serial();
-    let stop = std::sync::Arc::new(std::sync::atomic::AtomicBool::new(false));
-    let raiser = {
-        let stop = std::sync::Arc::clone(&stop);
-        thread::spawn(move || {
-            thread::sleep(Duration::from_millis(300));
+    let folder = tempfile::tempdir().unwrap();
+    let ready = folder.path().join("ready");
+    let stop = std::sync::atomic::AtomicBool::new(false);
+    let mut command = Command::new(std::env::current_exe().unwrap());
+    command
+        .args(["--exact", "child_role", "--nocapture", "--test-threads=1"])
+        .env(ROLE, "sleep")
+        .env(READY_FILE, &ready);
+    let (failure, child, raised) = thread::scope(|scope| {
+        let raiser = scope.spawn(|| {
+            let child = announced_pid(&ready);
             stop.store(true, std::sync::atomic::Ordering::Relaxed);
-        })
-    };
-    let started = Instant::now();
-    let failure = run_role("sleep", Duration::from_secs(60), &stop).unwrap_err();
-    raiser.join().unwrap();
+            (child, Instant::now())
+        });
+        let failure = run_to_end(&mut command, Duration::from_secs(60), &stop).unwrap_err();
+        let (child, raised) = raiser.join().unwrap();
+        (failure, child, raised)
+    });
     assert!(matches!(failure, RunFailure::Stopped), "{failure:?}");
-    assert!(started.elapsed() < Duration::from_secs(10));
+    assert!(raised.elapsed() < Duration::from_secs(10));
+    assert!(!is_alive(child), "the stopped child outlived the call");
 }
 
 /// Recovery is armed before the parent exits, so a hanging public call fails
