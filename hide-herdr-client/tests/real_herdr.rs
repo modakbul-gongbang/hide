@@ -53,7 +53,6 @@ struct PrivateHerdr {
 }
 
 impl PrivateHerdr {
-    #[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
     fn start(bin: PathBuf) -> Self {
         let version = String::from_utf8(
             Command::new(&bin)
@@ -101,13 +100,7 @@ impl PrivateHerdr {
             server,
             _root: root,
         };
-        let deadline = Instant::now() + Duration::from_secs(60);
-        while request_with_timeout(&herdr.socket, "ping", json!({}), Duration::from_secs(2))
-            .is_err()
-        {
-            assert!(Instant::now() < deadline, "the server never answered ping");
-            thread::sleep(Duration::from_millis(250));
-        }
+        wait_for_ping(&herdr.socket);
         herdr
     }
 
@@ -116,6 +109,17 @@ impl PrivateHerdr {
             .args(args)
             .output()
             .expect("herdr cli runs")
+    }
+}
+
+/// Asks a starting server `ping` until it answers; the minute only ends a
+/// server that never comes up.
+#[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
+fn wait_for_ping(socket: &Path) {
+    let deadline = Instant::now() + Duration::from_secs(60);
+    while request_with_timeout(socket, "ping", json!({}), Duration::from_secs(2)).is_err() {
+        assert!(Instant::now() < deadline, "the server never answered ping");
+        thread::sleep(Duration::from_millis(250));
     }
 }
 

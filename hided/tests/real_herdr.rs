@@ -15,6 +15,7 @@ use std::time::{Duration, Instant};
 
 use base64::Engine;
 use futures_util::{SinkExt, StreamExt};
+use hide_platform::process::OwnedChild;
 use hided::env::Env;
 use serde_json::{Value, json};
 use tokio_tungstenite::tungstenite::Message;
@@ -61,7 +62,6 @@ struct PrivateHerdr {
 }
 
 impl PrivateHerdr {
-    #[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
     fn start(bin: PathBuf, root: &Path) -> Self {
         let version = String::from_utf8(
             Command::new(&bin)
@@ -103,9 +103,17 @@ impl PrivateHerdr {
             log,
             server: Some(server),
         };
+        herdr.wait_for_ping();
+        herdr
+    }
+
+    /// Asks the starting server `ping` until it answers; the minute only ends
+    /// a server that never comes up, and then its log is the report.
+    #[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
+    fn wait_for_ping(&self) {
         let deadline = Instant::now() + Duration::from_secs(60);
         while hide_herdr_client::request_with_timeout(
-            &herdr.socket,
+            &self.socket,
             "ping",
             json!({}),
             Duration::from_secs(2),
@@ -115,11 +123,10 @@ impl PrivateHerdr {
             assert!(
                 Instant::now() < deadline,
                 "the server never answered ping: {}",
-                std::fs::read_to_string(&herdr.log).unwrap_or_default()
+                std::fs::read_to_string(&self.log).unwrap_or_default()
             );
             std::thread::sleep(Duration::from_millis(250));
         }
-        herdr
     }
 
     fn stop(&mut self) -> std::io::Result<()> {
@@ -146,36 +153,37 @@ impl Drop for PrivateHerdr {
 /// Runs the control session the core runs for `pane` once more, by hand,
 /// and says what it answered: only a failure calls it, so the exact command,
 /// exit and output are in the report.
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn control_attempt(herdr: &PrivateHerdr, pane: &str) -> String {
     let arguments = [
         "terminal", "session", "control", pane, "--cols", "100", "--rows", "30",
     ];
-    let child = herdr_command(&herdr.bin, &herdr.home, &herdr.socket, &herdr.config)
+    let mut command = herdr_command(&herdr.bin, &herdr.home, &herdr.socket, &herdr.config);
+    command
         .args(arguments)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
-        .stderr(Stdio::piped())
-        .spawn();
-    let mut child = match child {
+        .stderr(Stdio::piped());
+    let mut child = match OwnedChild::spawn(&mut command) {
         Ok(child) => child,
         Err(error) => return format!("`herdr {}` did not start: {error}", arguments.join(" ")),
     };
     // Given ten seconds to answer, then ended, so a session that only waits
     // still reports what it wrote.
-    let deadline = Instant::now() + Duration::from_secs(10);
-    while child.try_wait().ok().flatten().is_none() && Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(100));
-    }
-    let _ = child.kill();
-    let output = child.wait_with_output().unwrap();
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let (ended, stdout, stderr) =
+        match child.capture_until(Instant::now() + Duration::from_secs(10), 64 * 1024) {
+            Ok(output) => (
+                format!("exited {:?}", output.status.code()),
+                output.stdout,
+                output.stderr,
+            ),
+            Err(error) => (format!("was ended ({error})"), error.stdout, error.stderr),
+        };
+    let stdout = String::from_utf8_lossy(&stdout);
     format!(
-        "`herdr {}` exited {:?}; stdout: {:?}; stderr: {:?}",
+        "`herdr {}` {ended}; stdout: {:?}; stderr: {:?}",
         arguments.join(" "),
-        output.status.code(),
         &stdout[..stdout.len().min(2000)],
-        String::from_utf8_lossy(&output.stderr)
+        String::from_utf8_lossy(&stderr)
     )
 }
 
