@@ -13,15 +13,15 @@
 //! switch gates that part here ([`part_gate`]); everything else about the
 //! part is the code that already ran.
 
-use std::collections::BTreeSet;
 use std::path::Path;
 
 use hide_agent_hooks::guidance::GuidanceAgent;
 use hide_agent_hooks::{HookStatus, InstallFailure};
 
 use crate::agents::{
-    ADAPTERS, AgentAdapter, AgentReport, Availability, HookSupport, PieceReport, SkillDir,
-    SkillObserved, adapter_of_part, install_skill, observe_skill, remove_skill, skill_location,
+    ADAPTERS, AgentAdapter, AgentReport, Detection, HookSupport, PieceReport, SkillDir,
+    SkillObserved, adapter_of_part, availability, install_skill, observe_skill, program_version,
+    remove_skill, skill_location,
 };
 use crate::record::Record;
 use crate::{ComponentId, ComponentState, KitTarget, Observed, RemoveOutcome, Scope};
@@ -100,13 +100,25 @@ fn helper(target: &KitTarget) -> std::path::PathBuf {
     target.kit_dir.join(hide_agent_hooks::HELPER_BINARY_NAME)
 }
 
-fn observe_guidance(target: &KitTarget, adapter: &AgentAdapter, agent: GuidanceAgent) -> Observed {
+fn observe_guidance(
+    target: &KitTarget,
+    adapter: &AgentAdapter,
+    agent: GuidanceAgent,
+    detection: &Detection,
+) -> Observed {
     use hide_agent_hooks::guidance;
+    if let Err(why) = agent.supported_here() {
+        return Observed::Unsupported(format!(
+            "{}'s hook is not written here: {why}",
+            adapter.label
+        ));
+    }
     let observed = match guidance::status(agent, &target.home) {
         HookStatus::RuntimeAbsent => {
             return Observed::Absent(format!("{} is not set up on this machine", adapter.label));
         }
-        HookStatus::NotInstalled => Observed::Missing,
+        // Reading a file never says Off: the kit's record does (`HookStatus::Off`).
+        HookStatus::NotInstalled | HookStatus::Off => Observed::Missing,
         HookStatus::Outdated { version } => Observed::Stale(format!(
             "version {version} of the hook is there; this build writes version {}",
             guidance::GUIDANCE_VERSION
@@ -136,7 +148,7 @@ fn observe_guidance(target: &KitTarget, adapter: &AgentAdapter, agent: GuidanceA
             helper(target).display()
         ));
     }
-    match version_gate(target, adapter) {
+    match version_gate(adapter, detection) {
         Ok(()) => observed,
         // Nothing a Reinstall can change: the agent is too old, or its
         // version cannot be read, so the row says why and is not repairable.
@@ -146,13 +158,11 @@ fn observe_guidance(target: &KitTarget, adapter: &AgentAdapter, agent: GuidanceA
 
 /// An agent with a documented minimum version gets the hook only when its
 /// CLI answers a version at or above it; one with none has no gate.
-fn version_gate(target: &KitTarget, adapter: &AgentAdapter) -> Result<(), String> {
+fn version_gate(adapter: &AgentAdapter, detection: &Detection) -> Result<(), String> {
     let Some(minimum) = adapter.min_version else {
         return Ok(());
     };
-    let version = adapter
-        .executable(&target.home)
-        .and_then(|binary| hide_agent_hooks::program_version(&binary));
+    let version = detection.executable(adapter).and_then(program_version);
     match version {
         Some(version) if hide_agent_hooks::version_at_least(&version, minimum) => Ok(()),
         Some(version) => Err(format!(
@@ -198,6 +208,13 @@ fn dir_state(
             ComponentState::Outdated,
             Some("an older version of the skill is there".to_owned()),
         ),
+        SkillObserved::Edited => (
+            ComponentState::Outdated,
+            Some(
+                "the skill was edited after Hide wrote it; Reinstall puts Hide's text back"
+                    .to_owned(),
+            ),
+        ),
         SkillObserved::Missing if recorded => (
             ComponentState::Removed,
             Some("taken out after Hide installed it; Reinstall puts it back".to_owned()),
@@ -223,7 +240,8 @@ pub(crate) fn status(
     let empty = Record::default();
     let scope = Scope::default();
     let readable = record.as_ref().unwrap_or(&empty);
-    let dirs = observe_dirs(target, readable, &scope);
+    let detection = Detection::probe(&target.home);
+    let dirs = observe_dirs(target, readable, &scope, &detection);
     ADAPTERS
         .iter()
         .map(|adapter| {
@@ -234,6 +252,7 @@ pub(crate) fn status(
                 readable,
                 on,
                 &dirs,
+                &detection,
                 None,
                 record.is_ok(),
                 parts,
@@ -248,6 +267,7 @@ fn observe_dirs(
     target: &KitTarget,
     record: &Record,
     scope: &Scope,
+    detection: &Detection,
 ) -> Vec<(SkillDir, SkillObserved, bool)> {
     SkillDir::ALL
         .into_iter()
@@ -256,7 +276,7 @@ fn observe_dirs(
                 adapter.skill_dir == dir
                     && adapter.skill_supported()
                     && enabled(record, scope, adapter)
-                    && adapter.detected(&target.home)
+                    && detection.detected(adapter)
                     && dir.writable(&target.home)
             });
             (dir, observe_skill(dir, &target.home), wanted)
@@ -271,18 +291,19 @@ fn report_agent(
     record: &Record,
     on: bool,
     dirs: &[(SkillDir, SkillObserved, bool)],
+    detection: &Detection,
     failures: Option<&AgentFailures>,
     record_readable: bool,
     parts: &[PartView],
 ) -> AgentReport {
-    let detected = adapter.detected(&target.home);
-    let availability = if !detected {
-        Availability::NotInstalled
-    } else if !adapter.skill_supported() {
-        Availability::UnsupportedSystem
-    } else {
-        Availability::Available
-    };
+    let detected = detection.detected(adapter);
+    // The switch works while either piece can be put here: Codex on a system
+    // with no documented skill folder still has its hook to switch off.
+    let availability = availability(
+        detected,
+        adapter.skill_supported(),
+        adapter.hook_supported(),
+    );
     let skill = if !on {
         let location = skill_location(adapter.skill_dir, &target.home);
         // A switch-off whose removal failed, or that left Hide's stub behind,
@@ -302,17 +323,16 @@ fn report_agent(
                 location: Some(location),
             },
         }
-    } else if availability != Availability::Available {
+    } else if !detected || !adapter.skill_supported() {
         PieceReport {
             state: ComponentState::Absent,
-            reason: Some(match availability {
-                Availability::NotInstalled => {
-                    format!("{} is not set up on this machine", adapter.label)
-                }
-                _ => format!(
+            reason: Some(if detected {
+                format!(
                     "{}'s documentation gives no skill folder for this system",
                     adapter.label
-                ),
+                )
+            } else {
+                format!("{} is not set up on this machine", adapter.label)
             }),
             location: None,
         }
@@ -370,13 +390,7 @@ fn report_agent(
             })
         }
         HookSupport::Guidance(agent) => Some(guidance_piece(
-            target,
-            adapter,
-            agent,
-            record,
-            on,
-            availability,
-            failures,
+            target, adapter, agent, record, on, detection, failures,
         )),
     };
     AgentReport {
@@ -418,7 +432,7 @@ fn guidance_piece(
     agent: GuidanceAgent,
     record: &Record,
     on: bool,
-    availability: Availability,
+    detection: &Detection,
     failures: Option<&AgentFailures>,
 ) -> PieceReport {
     let location = Some(agent.config_path(&target.home).display().to_string());
@@ -448,7 +462,7 @@ fn guidance_piece(
             },
         };
     }
-    if availability != Availability::Available {
+    if !detection.detected(adapter) {
         return PieceReport {
             state: ComponentState::Absent,
             reason: Some(format!("{} is not set up on this machine", adapter.label)),
@@ -458,7 +472,7 @@ fn guidance_piece(
     let recorded = record.contains_piece(&hook_code(adapter));
     let (state, reason) = match failures.and_then(|failures| failures.hook.get(adapter.id)) {
         Some(reason) => (ComponentState::Failed, Some(reason.clone())),
-        None => match observe_guidance(target, adapter, agent) {
+        None => match observe_guidance(target, adapter, agent, detection) {
             Observed::Current => (ComponentState::Installed, None),
             Observed::Stale(reason) => (ComponentState::Outdated, Some(reason)),
             Observed::Missing if recorded => (
@@ -499,12 +513,14 @@ pub(crate) fn apply(
     let mut changed = false;
     let mut failures = AgentFailures::default();
     let record_readable = record_failure.is_none();
+    // Looked for once: every decision below reads this, not the PATH.
+    let detection = Detection::probe(&target.home);
 
     // What the operator chose now is the record's, whatever else this pass
     // can or cannot do for the agent. A switch for an agent that is not set
     // up here has nothing to switch.
     for adapter in ADAPTERS {
-        let detected = adapter.detected(&target.home);
+        let detected = detection.detected(adapter);
         if record_readable {
             if scope.agent_on.contains(adapter.id) && detected {
                 changed |= record.set_agent_choice(adapter.id, true);
@@ -520,7 +536,7 @@ pub(crate) fn apply(
             continue;
         };
         let on = enabled(record, scope, adapter);
-        let detected = adapter.detected(&target.home);
+        let detected = detection.detected(adapter);
         let code = hook_code(adapter);
         if !on {
             if scope.agent_off.contains(adapter.id) {
@@ -533,10 +549,10 @@ pub(crate) fn apply(
             }
             continue;
         }
-        if !detected || !adapter.skill_supported() {
+        if !detected {
             continue;
         }
-        let observed = observe_guidance(target, adapter, agent);
+        let observed = observe_guidance(target, adapter, agent, &detection);
         let recorded = record.contains_piece(&code);
         let restore = scope.agent_on.contains(adapter.id);
         let install_now = match &observed {
@@ -549,7 +565,7 @@ pub(crate) fn apply(
             continue;
         }
         let after = if install_now {
-            observe_guidance(target, adapter, agent)
+            observe_guidance(target, adapter, agent, &detection)
         } else {
             observed
         };
@@ -568,18 +584,20 @@ pub(crate) fn apply(
         let wanted = readers().any(|adapter| {
             adapter.skill_supported()
                 && enabled(record, scope, adapter)
-                && adapter.detected(&target.home)
+                && detection.detected(adapter)
                 && dir.writable(&target.home)
         });
         let switched_off = readers().any(|adapter| scope.agent_off.contains(adapter.id));
         let switched_on = readers()
-            .any(|adapter| scope.agent_on.contains(adapter.id) && adapter.detected(&target.home));
+            .any(|adapter| scope.agent_on.contains(adapter.id) && detection.detected(adapter));
         let code = skill_code(dir);
         if wanted {
             let observed = observe_skill(dir, &target.home);
             let recorded = record.contains_piece(&code);
             let install_now = match &observed {
                 SkillObserved::Stale => true,
+                // The operator's edit is theirs until Reinstall.
+                SkillObserved::Edited => switched_on,
                 SkillObserved::Missing => switched_on || (!recorded && record_readable),
                 _ => false,
             };
@@ -605,7 +623,7 @@ pub(crate) fn apply(
         }
     }
 
-    let dirs = observe_dirs(target, record, scope);
+    let dirs = observe_dirs(target, record, scope, &detection);
     let reports = ADAPTERS
         .iter()
         .map(|adapter| {
@@ -616,6 +634,7 @@ pub(crate) fn apply(
                 record,
                 on,
                 &dirs,
+                &detection,
                 Some(&failures),
                 record_readable,
                 parts,
@@ -637,11 +656,7 @@ pub(crate) fn remove(target: &KitTarget) -> Vec<(String, RemoveOutcome)> {
             ));
         }
     }
-    let mut seen = BTreeSet::new();
     for dir in SkillDir::ALL {
-        if !seen.insert(dir) {
-            continue;
-        }
         let outcome = match remove_skill(dir, &target.home) {
             Ok(true) => RemoveOutcome::Removed,
             Ok(false) => RemoveOutcome::Absent,

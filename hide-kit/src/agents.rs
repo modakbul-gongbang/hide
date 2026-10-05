@@ -136,7 +136,9 @@ pub struct AgentAdapter {
     /// The name the operator reads (a product name, never translated).
     pub label: &'static str,
     /// Program names looked for on the login `PATH` and the usual install
-    /// folders; empty when the name is too generic to mean this agent.
+    /// folders; empty when the name is too generic to mean this agent
+    /// (`goose`, `amp`, `droid`, `copilot` and `kilo` are also other
+    /// programs), which is then detected by its home folder alone.
     pub executables: &'static [&'static str],
     /// Folders under the home the agent creates; any one present means it is
     /// set up here.
@@ -224,7 +226,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
     AgentAdapter {
         id: "copilot-cli",
         label: "GitHub Copilot CLI",
-        executables: &["copilot"],
+        executables: &[],
         home_markers: &[".copilot"],
         skill_dir: SkillDir::Shared,
         skill_os: ALL_OS,
@@ -236,7 +238,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
     AgentAdapter {
         id: "amp",
         label: "Amp",
-        executables: &["amp"],
+        executables: &[],
         home_markers: &[".config/amp"],
         skill_dir: SkillDir::Shared,
         skill_os: UNIX_OS,
@@ -248,7 +250,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
     AgentAdapter {
         id: "factory-droid",
         label: "Factory Droid",
-        executables: &["droid"],
+        executables: &[],
         home_markers: &[".factory"],
         skill_dir: SkillDir::Shared,
         skill_os: UNIX_OS,
@@ -284,7 +286,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
     AgentAdapter {
         id: "goose",
         label: "Goose",
-        executables: &["goose"],
+        executables: &[],
         home_markers: &[".config/goose"],
         skill_dir: SkillDir::Shared,
         skill_os: UNIX_OS,
@@ -308,7 +310,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
     AgentAdapter {
         id: "kilo-code",
         label: "Kilo Code",
-        executables: &["kilo"],
+        executables: &[],
         home_markers: &[".config/kilo"],
         skill_dir: SkillDir::Shared,
         skill_os: ALL_OS,
@@ -417,6 +419,11 @@ pub fn adapter(id: &str) -> Option<&'static AgentAdapter> {
     ADAPTERS.iter().find(|adapter| adapter.id == id)
 }
 
+/// The id of the agent whose hook is the kit part `part`, when there is one.
+pub fn agent_of_part(part: ComponentId) -> Option<&'static str> {
+    adapter_of_part(part).map(|adapter| adapter.id)
+}
+
 /// The agent whose hook is the kit part `part`, when there is one.
 pub(crate) fn adapter_of_part(part: ComponentId) -> Option<&'static AgentAdapter> {
     ADAPTERS
@@ -428,6 +435,15 @@ impl AgentAdapter {
     /// Whether the agent's documentation confirms its skill folder here.
     pub fn skill_supported(&self) -> bool {
         self.skill_os.contains(&Os::CURRENT)
+    }
+
+    /// Whether Hide writes this agent's hook on this system.
+    pub fn hook_supported(&self) -> bool {
+        match self.hook {
+            HookSupport::Part(_) => true,
+            HookSupport::Guidance(agent) => agent.supported_here().is_ok(),
+            HookSupport::None => false,
+        }
     }
 
     /// The agent's program, when it is on this machine.
@@ -460,6 +476,81 @@ impl AgentAdapter {
     }
 }
 
+/// What one pass found out about the agents on a machine: each adapter's
+/// program and home folder, looked for once. Every decision of the pass reads
+/// this instead of searching the `PATH` again.
+pub(crate) struct Detection {
+    rows: Vec<(&'static str, Option<PathBuf>, bool)>,
+}
+
+impl Detection {
+    pub(crate) fn probe(home: &Path) -> Self {
+        let rows = ADAPTERS
+            .iter()
+            .map(|adapter| {
+                let executable = adapter.executable(home);
+                let present = executable.is_some()
+                    || adapter
+                        .home_markers
+                        .iter()
+                        .any(|marker| home.join(marker).is_dir());
+                (adapter.id, executable, present)
+            })
+            .collect();
+        Self { rows }
+    }
+
+    pub(crate) fn detected(&self, adapter: &AgentAdapter) -> bool {
+        self.rows
+            .iter()
+            .any(|(id, _, present)| *id == adapter.id && *present)
+    }
+
+    pub(crate) fn executable(&self, adapter: &AgentAdapter) -> Option<&Path> {
+        self.rows
+            .iter()
+            .find(|(id, ..)| *id == adapter.id)
+            .and_then(|(_, executable, _)| executable.as_deref())
+    }
+}
+
+/// How long a version that could not be read is not asked for again. A
+/// version that was read stays until the program's file changes.
+const UNREAD_VERSION_RETRY: std::time::Duration = std::time::Duration::from_secs(60);
+
+type VersionKey = (PathBuf, Option<std::time::SystemTime>, u64);
+
+/// What was answered for a program's version, and when it was asked.
+type VersionAnswers = std::collections::HashMap<VersionKey, (Option<String>, std::time::Instant)>;
+
+/// `binary --version`, asked at most once per version of the file: Settings
+/// re-reads the kit every few seconds, and a subprocess per read would put a
+/// slow or hanging program on the kit worker for as long as Settings is open.
+/// The probe itself is bounded (`hide_agent_hooks::program_version`).
+pub(crate) fn program_version(binary: &Path) -> Option<String> {
+    use std::sync::{LazyLock, Mutex};
+    use std::time::Instant;
+
+    static ANSWERS: LazyLock<Mutex<VersionAnswers>> = LazyLock::new(Mutex::default);
+    let key = std::fs::metadata(binary)
+        .map(|meta| (binary.to_path_buf(), meta.modified().ok(), meta.len()))
+        .ok();
+    if let Some(key) = &key
+        && let Ok(answers) = ANSWERS.lock()
+        && let Some((version, asked)) = answers.get(key)
+        && (version.is_some() || asked.elapsed() < UNREAD_VERSION_RETRY)
+    {
+        return version.clone();
+    }
+    let version = hide_agent_hooks::program_version(binary);
+    if let Some(key) = key
+        && let Ok(mut answers) = ANSWERS.lock()
+    {
+        answers.insert(key, (version.clone(), Instant::now()));
+    }
+    version
+}
+
 // --- The skill stub ------------------------------------------------------------
 
 /// The text of the stub. It points at the binary and carries no usage, so it
@@ -470,12 +561,22 @@ fn skill_text() -> String {
     )
 }
 
+/// The version in the stub's marker line. The marker counts only where Hide
+/// puts it, as the first line after the front matter and in Hide's own form:
+/// a file that merely mentions `hide-skill@` somewhere is the operator's.
 fn skill_marker_version(text: &str) -> Option<u32> {
-    let start = text.find(&format!("{SKILL_MARKER_NAME}@"))? + SKILL_MARKER_NAME.len() + 1;
-    let digits: String = text[start..]
-        .chars()
-        .take_while(char::is_ascii_digit)
-        .collect();
+    let body = text.strip_prefix("---\n")?;
+    let (_, after) = body.split_once("\n---\n")?;
+    let line = after.lines().find(|line| !line.trim().is_empty())?.trim();
+    let rest = line
+        .strip_prefix("<!-- ")?
+        .strip_prefix(SKILL_MARKER_NAME)?
+        .strip_prefix('@')?;
+    let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+    rest[digits.len()..]
+        .starts_with(':')
+        .then_some(())
+        .filter(|()| line.ends_with("-->"))?;
     digits.parse().ok()
 }
 
@@ -483,7 +584,12 @@ fn skill_marker_version(text: &str) -> Option<u32> {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum SkillObserved {
     Current,
+    /// Hide's stub of an older version: a pass replaces it.
     Stale,
+    /// Hide's marker at this version (or a newer one) over text that is not
+    /// the stub's: the operator edited it. A pass leaves it as it is and only
+    /// Reinstall puts Hide's text back.
+    Edited,
     Missing,
     /// A file there that Hide did not write; it is left as it is.
     Foreign,
@@ -494,10 +600,9 @@ pub(crate) fn observe_skill(dir: SkillDir, home: &Path) -> SkillObserved {
     let path = dir.skill_file(home);
     match std::fs::read_to_string(&path) {
         Ok(text) => match skill_marker_version(&text) {
-            Some(version) if version == SKILL_VERSION && text == skill_text() => {
-                SkillObserved::Current
-            }
-            Some(_) => SkillObserved::Stale,
+            Some(SKILL_VERSION) if text == skill_text() => SkillObserved::Current,
+            Some(version) if version < SKILL_VERSION => SkillObserved::Stale,
+            Some(_) => SkillObserved::Edited,
             None => SkillObserved::Foreign,
         },
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => SkillObserved::Missing,
@@ -520,7 +625,8 @@ pub(crate) fn install_skill(dir: SkillDir, home: &Path) -> Result<(), String> {
 /// else is in it.
 pub(crate) fn remove_skill(dir: SkillDir, home: &Path) -> Result<bool, String> {
     match observe_skill(dir, home) {
-        SkillObserved::Missing | SkillObserved::Foreign => Ok(false),
+        // An edited stub carries the operator's changes, so it stays.
+        SkillObserved::Missing | SkillObserved::Foreign | SkillObserved::Edited => Ok(false),
         SkillObserved::Unreadable(reason) => Err(reason),
         SkillObserved::Current | SkillObserved::Stale => {
             let path = dir.skill_file(home);
@@ -552,13 +658,26 @@ pub struct PieceReport {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Availability {
-    /// Detected, with a documented skill folder: the switch works.
+    /// Detected, and at least one of its pieces (the skill, the hook) works
+    /// on this system: the switch works.
     Available,
     /// Not found on this machine.
     NotInstalled,
-    /// Found, but the agent's documentation gives no skill folder for this
-    /// system.
+    /// Found, but neither the skill folder nor the hook is documented for
+    /// this system, so there is nothing for the switch to do.
     UnsupportedSystem,
+}
+
+/// What the switch can do for an agent: it needs the agent on the machine and
+/// at least one piece that works on this system.
+pub(crate) fn availability(detected: bool, skill_here: bool, hook_here: bool) -> Availability {
+    if !detected {
+        Availability::NotInstalled
+    } else if !skill_here && !hook_here {
+        Availability::UnsupportedSystem
+    } else {
+        Availability::Available
+    }
 }
 
 /// One agent as Settings shows it.

@@ -420,14 +420,23 @@ impl Runtime {
         let Some(now) = state.agents.iter().find(|row| row.id == agent) else {
             return false;
         };
-        let already = if enabled {
-            // Nothing to switch on where the agent is not set up; an agent
-            // that is on and has nothing to repair is met.
-            now.availability != hide_kit::Availability::Available
-                || (now.enabled && !now.needs_attention())
-        } else {
-            !now.enabled
+        // The latest intent wins (engineering rule 11): what is queued for
+        // this agent decides, and while an install runs the last report is
+        // older than that install, so it decides nothing.
+        let already = match self.queued_agent_choice(device_id, agent) {
+            Some(queued) => queued == enabled,
+            None if state.busy => false,
+            None if enabled => {
+                // Nothing to switch on where the agent is not set up; an agent
+                // that is on and has nothing to repair is met.
+                now.availability != hide_kit::Availability::Available
+                    || (now.enabled && !now.needs_attention())
+            }
+            None => !now.enabled,
         };
+        if enabled && now.availability != hide_kit::Availability::Available {
+            return false;
+        }
         if already {
             return false;
         }
@@ -437,6 +446,26 @@ impl Runtime {
             Scope::agents([], [agent])
         };
         self.queue_kit_scope(device_id, scope)
+    }
+
+    /// What the work still queued for a machine says about one agent's
+    /// switch: `Some(true)` on, `Some(false)` off, `None` when it says nothing.
+    fn queued_agent_choice(&self, device_id: &str, agent: &str) -> Option<bool> {
+        let scope = if device_id == LOCAL_DEVICE_ID {
+            self.local_kit_pending.as_ref()
+        } else {
+            match self.device_kit_pending.get(device_id) {
+                Some(KitJob::Apply(scope)) => Some(scope),
+                _ => None,
+            }
+        }?;
+        if scope.agent_off.contains(agent) {
+            Some(false)
+        } else if scope.agent_on.contains(agent) {
+            Some(true)
+        } else {
+            None
+        }
     }
 
     /// Queues a Reinstall of `parts` on one machine.
@@ -747,6 +776,10 @@ impl Runtime {
                 "device_id": device_id,
                 "components": removed.kit.components.iter().map(|(id, outcome)| {
                     serde_json::json!({ "id": id.code(), "outcome": outcome })
+                }).collect::<Vec<_>>(),
+                // The agents' hooks and skill stubs, a failed one included.
+                "agents": removed.kit.agents.iter().map(|(piece, outcome)| {
+                    serde_json::json!({ "piece": piece, "outcome": outcome })
                 }).collect::<Vec<_>>(),
                 "helper_root": removed.helper_root,
             })),

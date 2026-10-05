@@ -725,11 +725,21 @@ impl KitSnapshot {
         Self {
             unavailable: None,
             busy: false,
-            offers_reinstall: components.iter().any(|part| part.state.needs_attention())
-                || report
-                    .agents
-                    .iter()
-                    .any(hide_kit::AgentReport::needs_attention),
+            // Reinstall repairs what is on: a hook part of an agent that is
+            // switched off is not a repair, and the pass would refuse it.
+            offers_reinstall: components.iter().any(|part| {
+                part.state.needs_attention()
+                    && hide_kit::agents::agent_of_part(part.id).is_none_or(|agent| {
+                        report
+                            .agents
+                            .iter()
+                            .find(|row| row.id == agent)
+                            .is_none_or(|row| row.enabled)
+                    })
+            }) || report
+                .agents
+                .iter()
+                .any(hide_kit::AgentReport::needs_attention),
             components,
             agents,
             shares_account_with: None,

@@ -1299,6 +1299,7 @@ When another registered device reaches the same account on that machine, such as
 
 Settings > Agents lists, for every machine, This Mac first and then each device in the Devices order, one row per agent that is set up there or is on: its name, one line saying what its switch puts there (a skill and a session hook, or the skill only), its state, and the switch.
 An agent that is off reads `Off` with nothing else, an agent that is on reads the state of its worst piece with that piece's reason when it is not installed, and Reinstall sits on an agent's row only while that agent is on and one of its pieces needs it.
+An agent set up on the machine keeps its switch whatever the system, as long as one of its pieces (the skill, the hook) works there, so one switched off can be switched on again; a hook that cannot be written (Kiro below 3.0, a version Hide cannot read) shows its reason beside the skill's `Installed`.
 The agents Hide knows that are not set up on the machine are one muted line, with no switch and no row each, so a machine with two agents shows two rows and not twenty.
 Settings > Devices shows the same agents on a machine's kit rows, each with its switch.
 

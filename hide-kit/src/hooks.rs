@@ -23,7 +23,8 @@ pub(crate) fn observe(target: &KitTarget, runtime: AgentRuntime) -> Observed {
         HookStatus::RuntimeAbsent => {
             return Observed::Absent(format!("{} is not set up on this machine", runtime.label()));
         }
-        HookStatus::NotInstalled => Observed::Missing,
+        // Reading a file never says Off: the kit's record does (`HookStatus::Off`).
+        HookStatus::NotInstalled | HookStatus::Off => Observed::Missing,
         HookStatus::Outdated { version } => Observed::Stale(format!(
             "version {version} of the hook is there; this build writes version {}",
             hide_agent_hooks::HOOK_VERSION

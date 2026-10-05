@@ -255,10 +255,9 @@ fn a_second_install_changes_nothing_and_a_removal_leaves_no_trace_of_an_own_file
             agent,
             GuidanceAgent::Copilot | GuidanceAgent::Kiro | GuidanceAgent::Droid
         ) {
-            // Hide's own file is gone; Droid's hooks.json held only Hide's
-            // event, so it reads as empty rather than removed.
-            let exists = agent.config_path(fixture.home()).exists();
-            assert_eq!(exists, agent == GuidanceAgent::Droid, "{agent:?}");
+            // Hide's own file is gone, and so is Droid's hooks.json, which held
+            // only Hide's event.
+            assert!(!agent.config_path(fixture.home()).exists(), "{agent:?}");
         }
     }
 }
@@ -363,4 +362,88 @@ fn the_same_session_start_twice_prints_the_same_bytes() {
             "{agent:?}"
         );
     }
+}
+
+#[test]
+fn another_tools_hook_in_the_same_group_survives_a_reinstall_and_a_removal() {
+    for (agent, shared) in [
+        (
+            GuidanceAgent::Gemini,
+            r#"{"hooks":{"SessionStart":[{"matcher":"*","hooks":[{"type":"command","command":"/theirs.sh"}]}]}}"#,
+        ),
+        (
+            GuidanceAgent::Qwen,
+            r#"{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"/theirs.sh"}]}]}}"#,
+        ),
+        (
+            GuidanceAgent::Droid,
+            r#"{"SessionStart":[{"hooks":[{"type":"command","command":"/theirs.sh"}]}]}"#,
+        ),
+    ] {
+        let fixture = Fixture::new(agent);
+        // The operator's tool and Hide's hook end up as two hooks of one group.
+        fixture.write(agent, shared);
+        install(agent, fixture.home(), &fixture.helper).unwrap();
+        let mut document = fixture.read(agent);
+        let hide = document
+            .pointer_mut(if agent == GuidanceAgent::Droid {
+                "/SessionStart/1/hooks/0"
+            } else {
+                "/hooks/SessionStart/1/hooks/0"
+            })
+            .unwrap()
+            .take();
+        let theirs_group = if agent == GuidanceAgent::Droid {
+            document.pointer_mut("/SessionStart/0/hooks").unwrap()
+        } else {
+            document.pointer_mut("/hooks/SessionStart/0/hooks").unwrap()
+        };
+        theirs_group.as_array_mut().unwrap().push(hide);
+        let list = if agent == GuidanceAgent::Droid {
+            document.pointer_mut("/SessionStart").unwrap()
+        } else {
+            document.pointer_mut("/hooks/SessionStart").unwrap()
+        };
+        list.as_array_mut().unwrap().truncate(1);
+        fixture.write(agent, &document.to_string());
+        assert_eq!(commands(&fixture.read(agent)).len(), 2, "{agent:?}");
+
+        // A reinstall takes Hide's hook out of the shared group and keeps theirs.
+        install(agent, fixture.home(), &fixture.helper).unwrap();
+        let found = commands(&fixture.read(agent));
+        assert!(found.iter().any(|c| c == "/theirs.sh"), "{agent:?}");
+        assert_eq!(found.len(), 2, "{agent:?}: theirs and one Hide hook");
+
+        let removed = remove(agent, fixture.home()).unwrap();
+        assert_eq!(removed.removed_entries, 1, "{agent:?}");
+        assert_eq!(
+            commands(&fixture.read(agent)),
+            vec!["/theirs.sh".to_owned()],
+            "{agent:?}"
+        );
+    }
+}
+
+#[test]
+fn removing_hide_from_droids_own_hooks_file_deletes_the_file_it_would_leave_empty() {
+    let fixture = Fixture::new(GuidanceAgent::Droid);
+    install(GuidanceAgent::Droid, fixture.home(), &fixture.helper).unwrap();
+    let path = GuidanceAgent::Droid.config_path(fixture.home());
+    assert!(path.exists());
+    remove(GuidanceAgent::Droid, fixture.home()).unwrap();
+    // `{}` left behind would shadow hooks the operator later adds to settings.json.
+    assert!(!path.exists());
+
+    // Another event in the same file keeps it.
+    fixture.write(
+        GuidanceAgent::Droid,
+        r#"{"Stop":[{"hooks":[{"type":"command","command":"/theirs.sh"}]}]}"#,
+    );
+    install(GuidanceAgent::Droid, fixture.home(), &fixture.helper).unwrap();
+    remove(GuidanceAgent::Droid, fixture.home()).unwrap();
+    assert!(path.exists());
+    assert_eq!(
+        commands(&fixture.read(GuidanceAgent::Droid)),
+        vec!["/theirs.sh".to_owned()]
+    );
 }

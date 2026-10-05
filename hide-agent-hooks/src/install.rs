@@ -73,6 +73,10 @@ pub enum HookStatus {
     Outdated { version: u32 },
     /// The runtime is here and carries no entry of Hide's.
     NotInstalled,
+    /// The operator switched the agent off in Settings, Agents, so Hide's
+    /// hook is meant to be absent. Nothing in the runtime's file says so:
+    /// the kit's record does, and whoever holds it sets this.
+    Off,
     /// The file could not be read, parsed or written.
     Failed { reason: InstallFailure },
 }
