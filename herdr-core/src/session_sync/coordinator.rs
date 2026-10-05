@@ -883,16 +883,22 @@ fn publish_replica(
     let Some(runtime) = context.runtime.upgrade() else {
         return false;
     };
-    let (registrations, worktrees, unconfirmed_created_purposes, focus_readback_target) =
-        match runtime.lock() {
-            Ok(guard) => (
-                guard.snapshot().ui_state.workspace_registrations.clone(),
-                guard.worktree_catalog(),
-                guard.unconfirmed_created_purpose_values(),
-                guard.pane_focus_readback_target(&payload),
-            ),
-            Err(_) => return false,
-        };
+    let (
+        registrations,
+        worktrees,
+        unconfirmed_created_purposes,
+        focus_readback_target,
+        created_tab_clamps,
+    ) = match runtime.lock() {
+        Ok(guard) => (
+            guard.snapshot().ui_state.workspace_registrations.clone(),
+            guard.worktree_catalog(),
+            guard.unconfirmed_created_purpose_values(),
+            guard.pane_focus_readback_target(&payload),
+            guard.created_tab_clamps(),
+        ),
+        Err(_) => return false,
+    };
     drop(runtime);
 
     // The unsequenced stream can still contain a layout from an older focus
@@ -913,7 +919,18 @@ fn publish_replica(
         (identity, result.is_ok())
     });
 
-    let spaces = Runtime::session_spaces(&payload);
+    // The catalog is built here, outside the lock, from the cwd the runtime
+    // will read for a created tab, not the one it was born with.
+    let clamped;
+    let birth_free = if created_tab_clamps.is_empty() {
+        &payload
+    } else {
+        let mut copy = payload.clone();
+        Runtime::clamp_created_tab_cwds(&mut copy, &created_tab_clamps);
+        clamped = copy;
+        &clamped
+    };
+    let spaces = Runtime::session_spaces(birth_free);
     let cache_is_fresh = catalog_cache.as_ref().is_some_and(|cache| {
         cache.registrations == registrations
             && cache.spaces == spaces

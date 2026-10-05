@@ -12,6 +12,9 @@ pub(super) struct CreatedTabCheckout {
     /// The session has carried the tab at least once, so its absence from a
     /// later session means it closed.
     seen: bool,
+    /// A pane of the tab has reported a cwd inside the checkout, so the cwd
+    /// is no longer a birth value and is read as it is.
+    settled: bool,
 }
 
 enum SessionFocusCheck {
@@ -1946,6 +1949,8 @@ impl Runtime {
         if let Ok(payload) = fetched.as_mut() {
             self.label_overlay.apply(payload);
             self.settle_agent_sleep(payload);
+            self.settle_created_tabs(payload);
+            Self::clamp_created_tab_cwds(payload, &self.created_tab_clamps());
         } else {
             // Herdr's tab ids are its own server's; a later connection may
             // hand one to a tab Hide never created.
@@ -4836,6 +4841,7 @@ impl Runtime {
             CreatedTabCheckout {
                 path: path.to_owned(),
                 seen: false,
+                settled: false,
             },
         );
         let misplaced = self
@@ -4852,6 +4858,76 @@ impl Runtime {
                         .any(|tab| tab.id.as_deref() == Some(tab_id))
             });
         self.created_tab_republish_requested |= misplaced;
+    }
+
+    /// Notes which created tabs report a cwd inside their checkout, read off
+    /// the session as Herdr sent it: from then on the cwd is where the shell
+    /// is, not where it was born.
+    fn settle_created_tabs(&mut self, payload: &SessionSnapshotPayload) {
+        for (tab_id, created) in &mut self.created_tab_checkouts {
+            if created.settled {
+                continue;
+            }
+            created.settled = payload
+                .layouts
+                .iter()
+                .filter(|layout| &layout.tab_id == tab_id)
+                .flat_map(|layout| &layout.panes)
+                .filter_map(|pane| Self::pane_cwd(payload, &pane.pane_id))
+                .any(|cwd| path_is_within_checkout(&cwd, &created.path));
+        }
+    }
+
+    /// The created tabs whose pane cwd is still a birth value, with the
+    /// checkout each was created for.
+    pub(crate) fn created_tab_clamps(&self) -> Vec<(String, String)> {
+        self.created_tab_checkouts
+            .iter()
+            .filter(|(_, created)| !created.settled)
+            .map(|(tab_id, created)| (tab_id.clone(), created.path.clone()))
+            .collect()
+    }
+
+    /// Reads a created tab's panes as inside the checkout the tab was created
+    /// for until their cwd has settled there. Every reader of the session sees
+    /// the intended folder: the project and checkout rows, the purpose mirror,
+    /// the pane's cwd and the ports attributed by it. A birth cwd outside the
+    /// checkout would otherwise make a project row for the parent folder and
+    /// claim the listeners of its siblings (#400).
+    pub(crate) fn clamp_created_tab_cwds(
+        payload: &mut SessionSnapshotPayload,
+        clamps: &[(String, String)],
+    ) {
+        for (tab_id, path) in clamps {
+            let pane_ids = payload
+                .layouts
+                .iter()
+                .filter(|layout| &layout.tab_id == tab_id)
+                .flat_map(|layout| layout.panes.iter().map(|pane| pane.pane_id.clone()))
+                .collect::<Vec<_>>();
+            for pane_id in pane_ids {
+                let outside = |cwd: &Option<String>| {
+                    cwd.as_deref()
+                        .is_none_or(|cwd| !path_is_within_checkout(cwd, path))
+                };
+                for pane in payload
+                    .panes
+                    .iter_mut()
+                    .filter(|pane| pane.pane_id == pane_id)
+                {
+                    if outside(&pane.cwd) {
+                        pane.cwd = Some(path.clone());
+                    }
+                }
+                for agent in payload.agents.iter_mut().filter(|agent| {
+                    agent.pane_id.as_deref().or(agent.id.as_deref()) == Some(pane_id.as_str())
+                }) {
+                    if outside(&agent.cwd) {
+                        agent.cwd = Some(path.clone());
+                    }
+                }
+            }
+        }
     }
 
     pub(crate) fn take_created_tab_republish(&mut self) -> bool {

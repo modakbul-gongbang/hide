@@ -262,8 +262,12 @@ A tab Hide created belongs to the checkout it was created for, never to the chec
 The core keeps the checkout from the creation's answer, `CreateTab` and `OpenOwner` acknowledgments and the task slot's agent start and Home tab (`WorktreeTaskOutcome::created_tab_id`), for at most 64 tabs with the crossing reported to the diagnostic log.
 A record lives until the session has carried its tab and then lost it, or until the session becomes unreachable, since the next Herdr server numbers its own tabs; when the session placed the tab before the answer arrived, the local coordinator republishes once on its next operation tick.
 The record is runtime only, so after hided restarts a tab Hide created is placed like any other; a recorded checkout no longer in the catalog is reported once (`created_tab.checkout_missing`) and its tab falls back to that rule.
-A new worktree's first tab is not recorded, because its checkout reaches the catalog only after the worktree reader sees it.
-Any other tab, a new worktree's first tab or one made outside Hide by Herdr, a shell or another tool, belongs to the checkout its first pane's cwd names.
+A new worktree's first tab is recorded from `worktree.create`'s own `tab` (`created_tab_id`), under the worktree's path.
+Until a pane of a recorded tab reports a cwd inside its checkout, the core reads that pane's cwd, and its agent's, as the checkout's own path, before any reader of the session sees it (`clamp_created_tab_cwds`; the coordinator applies the same clamp before it builds the catalog off the lock).
+Every reader then agrees: the project and checkout rows and the purpose mirror (`session_spaces`), the pane's `cwd` and the listeners attributed by prefix (`project_layout_panes`), and the tab's own placement.
+Without it a birth cwd in a parent folder made a project row for that folder with no tabs, claimed the listeners of its sibling projects, and could give another checkout's purpose to the worktree's workspace.
+Once a pane has reported a cwd inside the checkout the record is `settled` and the cwd is read as reported, so a later `cd` out of the checkout is not hidden.
+Any other tab, one made outside Hide by Herdr, a shell or another tool, belongs to the checkout its first pane's cwd names.
 A tab already in a workspace that is not the owner stays in that workspace and is never moved (`pane.move` would change its pane id and cut its lineage, read and sleep state); the protected primary close's replacement shell and a delegated child's own tab stay in their workspace.
 Tools outside Hide, such as sasu dispatch, choose their own workspace; `hide agent spawn` uses the core's checkout and device start paths.
 
