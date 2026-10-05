@@ -23,6 +23,28 @@ const agentTab = (page: Page, id: string) => page.locator(`[data-agent-tab-bar] 
 const viewTabs = (page: Page) => page.locator('[data-view-tab-bar] [role="tab"]');
 const front = (page: Page) => page.locator('[data-view-tab-bar] [role="tab"][aria-selected="true"]');
 
+/**
+ * The Agent tab each saved Workspace has in front. A restart kills the
+ * daemon outright on Windows, so the state it restores has to be on disk
+ * before it goes, as `savedFront` in `s6.spec.ts` waits for.
+ */
+function savedAgentTabs(daemon: Daemon): string[] {
+  type Node = { area?: { id: string; active?: string }; split?: { first: Node; second: Node } };
+  const areaIn = (node: Node, id: string): { id: string; active?: string } | undefined =>
+    node.area ? (node.area.id === id ? node.area : undefined) : node.split && (areaIn(node.split.first, id) ?? areaIn(node.split.second, id));
+  const tabs: string[] = [];
+  const walk = (node: unknown): void => {
+    if (!node || typeof node !== "object") return;
+    if (Array.isArray(node)) return node.forEach(walk);
+    const layout = (node as { agent_layout?: { root: Node; active_area: string } }).agent_layout;
+    const active = layout && areaIn(layout.root, layout.active_area)?.active;
+    if (active) tabs.push(active);
+    Object.values(node).forEach(walk);
+  };
+  walk(JSON.parse(fs.readFileSync(path.join(daemon.stateDir, "workspace-views.json"), "utf8")));
+  return tabs;
+}
+
 test("an Agent tab gets back the View it had in front, and an agent in another tab opens its View behind the operator's", async ({ page }) => {
   await page.setViewportSize({ width: 1920, height: 1080 });
   const herdr = await startHerdr({ agents: false });
@@ -87,6 +109,7 @@ test("an Agent tab gets back the View it had in front, and an agent in another t
 
     // B18: the bookmarks are in the file and survive a daemon restart.
     await expect.poll(() => fs.readFileSync(path.join(daemon!.stateDir, "workspace-views.json"), "utf8")).toContain("view_bookmarks");
+    await expect.poll(() => savedAgentTabs(daemon!)).toContain(second);
     daemon = await daemon.restart();
     await page.goto("about:blank");
     await page.goto(`${daemon.origin}/?probe=1#token=${daemon.token}`);
