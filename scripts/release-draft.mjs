@@ -1,5 +1,5 @@
 // Never publish, PATCH release metadata, DELETE or overwrite an asset.
-// Owner-enforced GitHub immutability protects publication during an upload.
+// The repository's immutable releases setting protects publication during an upload.
 import { createReadStream } from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
@@ -9,16 +9,16 @@ const MAX_PAGES = 100;
 const MAX_JSON_BYTES = 8 * 1024 * 1024;
 const MAX_INVENTORY_BYTES = 16 * 1024 * 1024;
 
-export function createGitHubClient({ repository, writeToken, policyToken, fetchImpl = fetch }) {
+export function createGitHubClient({ repository, writeToken, fetchImpl = fetch }) {
   if (!/^[\w.-]+\/[\w.-]+$/.test(repository)) throw new Error("a GitHub owner/repository is required");
-  if (!writeToken || !policyToken) throw new Error("release write and Administration-read policy credentials are required");
+  if (!writeToken) throw new Error("a release write credential is required");
   const prefix = `/repos/${repository}`;
-  async function request(method, suffix, { policy = false, body, upload = false, uploadSize } = {}) {
+  async function request(method, suffix, { body, upload = false, uploadSize } = {}) {
     const base = upload ? "https://uploads.github.com" : "https://api.github.com";
     const response = await fetchImpl(`${base}${prefix}${suffix}`, {
       method, redirect: "error", signal: AbortSignal.timeout(30_000),
       headers: {
-        Authorization: `Bearer ${policy ? policyToken : writeToken}`,
+        Authorization: `Bearer ${writeToken}`,
         Accept: "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28",
         ...(body ? { "Content-Type": upload ? "application/octet-stream" : "application/json" } : {}),
         ...(upload ? { "Content-Length": String(uploadSize) } : {}),
@@ -56,7 +56,6 @@ export function createGitHubClient({ repository, writeToken, policyToken, fetchI
     throw new Error("GitHub inventory exceeds 100 pages; preparation stopped");
   }
   return {
-    policy: () => request("GET", "/immutable-releases", { policy: true }),
     releases: () => list("/releases"),
     release: (id) => request("GET", `/releases/${id}`),
     assets: async (id) => (await list(`/releases/${id}/assets`)).flat(),
@@ -82,16 +81,10 @@ export function createGitHubClient({ repository, writeToken, policyToken, fetchI
   };
 }
 
-function requirePolicy(policy) {
-  if (policy?.enabled !== true || policy?.enforced_by_owner !== true) {
-    throw new Error("owner-enforced immutable releases are required before any release write");
-  }
-}
-
 function requireRelease(release, tag, marker, id = release?.id) {
   if (!Number.isSafeInteger(release?.id) || release.id <= 0 || release.tag_name !== tag
     || release.id !== id || release.draft !== true || release.prerelease !== false || release.body !== marker) {
-    throw new Error("release must be the exact unpublished draft created under this source and policy; review legacy drafts separately");
+    throw new Error("release must be the exact unpublished draft created under this source; review legacy drafts separately");
   }
 }
 
@@ -112,9 +105,8 @@ function compareAssets(remote, manifest, complete = false) {
 export async function prepareDraft({ tag, sha, directory, client }) {
   if (!/^[a-f0-9]{40}$/.test(sha)) throw new Error("the release event must identify an exact commit SHA");
   const manifest = await verifyAssets(tag, directory);
-  const marker = `<!-- hide-release-source:${sha}; immutable-policy:owner-enforced -->`;
+  const marker = `<!-- hide-release-source:${sha} -->`;
   async function preflight() {
-    requirePolicy(await client.policy());
     if (await client.tag(tag) !== sha) throw new Error("the current tag no longer identifies the release event commit");
   }
   await preflight();
@@ -147,7 +139,7 @@ if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.ar
   const [tag, sha, directory] = process.argv.slice(2);
   try {
     if (!tag || !sha || !directory || process.argv.length !== 5) throw new Error("usage: node scripts/release-draft.mjs <vX.Y.Z> <commit-sha> <directory>");
-    const client = createGitHubClient({ repository: process.env.GITHUB_REPOSITORY, writeToken: process.env.GH_TOKEN, policyToken: process.env.HIDE_RELEASE_POLICY_TOKEN });
+    const client = createGitHubClient({ repository: process.env.GITHUB_REPOSITORY, writeToken: process.env.GH_TOKEN });
     const result = await prepareDraft({ tag, sha, directory, client });
     console.log(`complete unpublished draft verified: ${result.tag}, release ${result.id}, ${result.assets} assets`);
   } catch (error) {

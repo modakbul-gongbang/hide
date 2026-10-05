@@ -9,7 +9,7 @@ import { createGitHubClient, prepareDraft } from "../release-draft.mjs";
 
 const tag = "v1.2.3";
 const sha = "1".repeat(40);
-const marker = `<!-- hide-release-source:${sha}; immutable-policy:owner-enforced -->`;
+const marker = `<!-- hide-release-source:${sha} -->`;
 const names = ["macos-arm64.zip", "windows-x64.zip", "linux-x64.tar.gz"].map((s) => `hide-${tag}-${s}`);
 const digest = (data) => `sha256:${createHash("sha256").update(data).digest("hex")}`;
 
@@ -30,7 +30,6 @@ async function fixture(t, options = {}) {
     release: options.release ? structuredClone(options.release) : null,
     assets: options.assets ? structuredClone(options.assets) : [],
     requests: [], writes: [], assetGets: 0,
-    policy: options.policy ?? { enabled: true, enforced_by_owner: true },
   };
   const server = http.createServer(async (req, res) => {
     const url = new URL(req.url, "http://fixture.invalid");
@@ -42,7 +41,6 @@ async function fixture(t, options = {}) {
     if (req.method !== "GET") state.writes.push({ method: req.method, route });
     const answer = (status, body) => { res.writeHead(status, { "Content-Type": "application/json" }); res.end(JSON.stringify(body)); };
     if (options.fail === route) return answer(options.status ?? 500, { message: "fixture failure" });
-    if (route === "/immutable-releases") return answer(200, state.policy);
     if (route === `/git/ref/tags/${tag}`) return answer(200, { object: { type: options.annotated ? "tag" : "commit", sha: options.tagSha ?? sha } });
     if (route === `/git/tags/${sha}`) return answer(200, { object: { type: "commit", sha } });
     if (route === "/releases" && req.method === "GET") {
@@ -66,7 +64,7 @@ async function fixture(t, options = {}) {
     }
     if (route === "/releases/7/assets" && req.method === "POST") {
       if (Number(req.headers["content-length"]) !== bytes.length) return answer(411, { message: "asset byte length is required" });
-      // A publication after the client's last GET is blocked by server policy.
+      // A publication after the client's last GET is blocked by the immutable releases setting.
       if (options.publishDuringUpload) state.release.draft = false;
       if (!state.release.draft) return answer(422, { message: "immutable published release" });
       const name = url.searchParams.get("name");
@@ -80,7 +78,7 @@ async function fixture(t, options = {}) {
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));
   t.after(() => new Promise((resolve) => { server.closeAllConnections(); server.close(resolve); }));
   const base = `http://127.0.0.1:${server.address().port}`;
-  const client = createGitHubClient({ repository: "example/project", writeToken: "fixture-write", policyToken: "fixture-policy", fetchImpl: (url, opts) => fetch(`${base}${new URL(url).pathname}${new URL(url).search}`, opts) });
+  const client = createGitHubClient({ repository: "example/project", writeToken: "fixture-write", fetchImpl: (url, opts) => fetch(`${base}${new URL(url).pathname}${new URL(url).search}`, opts) });
   return { state, directory, files, run: () => prepareDraft({ tag, sha, directory, client }) };
 }
 
@@ -96,14 +94,6 @@ test("complete fresh draft posts six matching assets without PATCH or DELETE; re
   f.state.writes.length = 0;
   await f.run();
   assert.deepEqual(f.state.writes, []);
-});
-
-test("disabled, unenforced or inaccessible policy stops before any release write", async (t) => {
-  for (const options of [{ policy: { enabled: false, enforced_by_owner: false } }, { policy: { enabled: true, enforced_by_owner: false } }, { policy: {} }, { fail: "/immutable-releases", status: 403 }]) {
-    const f = await fixture(t, options);
-    await assert.rejects(f.run());
-    assert.deepEqual(f.state.writes, []);
-  }
 });
 
 test("published, legacy and ambiguous drafts stop without mutation", async (t) => {
@@ -163,8 +153,4 @@ test("moved tag, wrong release ID and incomplete local package fail; annotated t
   assert.deepEqual(local.state.requests, []);
   const annotated = await fixture(t, { annotated: true });
   assert.equal((await annotated.run()).assets, 6);
-});
-
-test("missing policy credentials are a source-visible blocker", () => {
-  assert.throws(() => createGitHubClient({ repository: "example/project", writeToken: "fixture-write" }), /Administration-read/);
 });
