@@ -157,8 +157,8 @@ fn settings_has_hooks(settings: &Path) -> bool {
 struct Layout {
     path: PathBuf,
     shape: Shape,
-    /// The file is Hide's alone: it is created, and deleted when nothing
-    /// else is left in it.
+    /// The file may be Hide's alone: Hide creates it, and deletes it when
+    /// nothing else is left in it.
     own_file: bool,
 }
 
@@ -184,7 +184,11 @@ impl Layout {
                 under_hooks_key,
                 event,
             },
-            own_file: false,
+            // A file of events at its top level is one Hide may have created
+            // (Droid's `hooks.json`), and an emptied one is deleted: left as
+            // `{}` it would still shadow the hooks the operator keeps in
+            // `settings.json`.
+            own_file: !under_hooks_key,
         }
     }
 }
@@ -427,6 +431,30 @@ fn entry_helper(entry: &Value) -> Option<String> {
         .find_map(|text| Quoting::NATIVE.first_quoted(text))
 }
 
+/// Takes Hide's own hook out of `list` and nothing else. A group another
+/// tool shares with Hide (`{"matcher": "*", "hooks": [hide, theirs]}`) keeps
+/// the other tool's hook and loses only Hide's; a group left with no hook
+/// goes, and so does a flat entry that carries the marker. Returns how many
+/// of Hide's hooks were taken out.
+fn strip_owned(list: &mut Vec<Value>) -> usize {
+    let mut removed = 0;
+    list.retain_mut(|entry| {
+        if let Some(hooks) = entry.get_mut("hooks").and_then(Value::as_array_mut) {
+            let before = hooks.len();
+            hooks.retain(|hook| entry_marker_version(hook).is_none());
+            let taken = before - hooks.len();
+            removed += taken;
+            return taken == 0 || !hooks.is_empty();
+        }
+        if entry_marker_version(entry).is_some() {
+            removed += 1;
+            return false;
+        }
+        true
+    });
+    removed
+}
+
 fn owned(entries: &[Value]) -> impl Iterator<Item = &Value> {
     entries
         .iter()
@@ -504,7 +532,7 @@ pub fn install(
     let before = serde_json::to_string(&document).unwrap_or_default();
     let list = entries(&mut document, &layout, true)?
         .ok_or_else(|| failure_shape(&layout.path, "the hook list could not be created"))?;
-    list.retain(|entry| entry_marker_version(entry).is_none());
+    strip_owned(list);
     let preserved = list.len();
     list.push(entry(agent, helper));
     let after = serde_json::to_string(&document).unwrap_or_default();
@@ -567,9 +595,7 @@ fn remove_in(layout: &Layout) -> Result<RemoveOutcome, InstallFailure> {
             preserved_entries: 0,
         });
     };
-    let before = list.len();
-    list.retain(|entry| entry_marker_version(entry).is_none());
-    let removed = before - list.len();
+    let removed = strip_owned(list);
     let preserved = list.len();
     if removed == 0 {
         return Ok(RemoveOutcome {
@@ -637,7 +663,7 @@ fn only_scaffolding(document: &Value, layout: &Layout) -> bool {
             .and_then(Value::as_object)
             .is_none_or(Map::is_empty),
         Shape::Kiro => !root.contains_key("hooks"),
-        Shape::EventMap { .. } => false,
+        Shape::EventMap { .. } => root.is_empty(),
     };
     hooks_empty && root.keys().all(|key| key == "version" || key == "hooks")
 }
