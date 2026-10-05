@@ -53,7 +53,16 @@ case "${1:-}" in
                     ;;
             esac
         done
-        [[ "$mode" != nextest ]] || exec cargo nextest run --locked "$@"
+        if [[ "$mode" == nextest ]]; then
+            status=0
+            cargo nextest run --locked "$@" || status=$?
+            # A lane runs nextest several times and every run writes the same
+            # JUnit path; keep each report under its own name for
+            # scripts/ci-flaky-report.py, which reads them all.
+            report=target/nextest/ci/junit.xml
+            [[ ! -f "$report" ]] || mv "$report" "target/nextest/ci/junit.$$.$RANDOM.xml"
+            exit "$status"
+        fi
         [[ "$mode" != test-scoped ]] || mode=test
         exec cargo "$mode" --locked "$@"
         ;;
