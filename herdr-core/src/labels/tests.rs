@@ -275,6 +275,13 @@ fn observe(worker: &mut LabelWorker, agent: &ObservedAgent) {
     worker.tick(Instant::now());
 }
 
+fn unix_now_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap()
+        .as_millis() as u64
+}
+
 /// Takes results until nothing is read or analyzed.
 fn settle(worker: &mut LabelWorker, woken: &Receiver<()>) {
     let deadline = Instant::now() + Duration::from_secs(20);
@@ -282,7 +289,7 @@ fn settle(worker: &mut LabelWorker, woken: &Receiver<()>) {
         let left = deadline.saturating_duration_since(Instant::now());
         assert!(!left.is_zero(), "the worker did not settle");
         let _ = woken.recv_timeout(left.min(Duration::from_millis(200)));
-        worker.drain(Instant::now());
+        worker.drain(Instant::now(), unix_now_ms());
     }
 }
 
@@ -491,7 +498,7 @@ fn an_analysis_that_lands_after_the_session_changed_is_dropped() {
     while harness.backend.calls() == 0 {
         assert!(Instant::now() < deadline, "A was never analyzed");
         let _ = woken.recv_timeout(Duration::from_millis(50));
-        worker.drain(Instant::now());
+        worker.drain(Instant::now(), unix_now_ms());
     }
     let on_b = agent(&b, "idle", 2);
     observe(&mut worker, &on_b);
@@ -620,7 +627,7 @@ fn a_shutdown_answers_the_running_request_without_recording_it() {
     while harness.backend.calls() == 0 {
         assert!(Instant::now() < deadline, "nothing was analyzed");
         let _ = woken.recv_timeout(Duration::from_millis(50));
-        worker.drain(Instant::now());
+        worker.drain(Instant::now(), unix_now_ms());
     }
     harness.analyzer.shutdown();
     settle(&mut worker, &woken);
@@ -1141,7 +1148,7 @@ fn turning_summaries_off_ends_the_request_and_on_asks_for_the_current_turn() {
     while harness.backend.calls() < 2 {
         assert!(Instant::now() < deadline, "the turn was not asked");
         let _ = woken.recv_timeout(Duration::from_millis(50));
-        worker.drain(Instant::now());
+        worker.drain(Instant::now(), unix_now_ms());
     }
     assert!(worker.set_summaries(false, Instant::now()));
     settle(&mut worker, &woken);
@@ -1200,5 +1207,153 @@ fn a_restarted_transcript_keeps_the_operators_request_the_operators() {
             .other_request
             .is_none(),
         "the request is not read as another agent's"
+    );
+}
+
+/// A Claude session whose request is followed by one tool output per entry
+/// of `outputs` (its text and when it was printed), then a reply.
+fn tool_session(harness: &Harness, name: &str, outputs: &[(String, u64)]) -> PathBuf {
+    let project = harness.home.path().join(".claude/projects/-project");
+    std::fs::create_dir_all(&project).unwrap();
+    let path = project.join(format!("{name}.jsonl"));
+    let first = outputs.first().map_or(1_000, |(_, at)| at - 1_000);
+    let last = outputs.last().map_or(2_000, |(_, at)| at + 1_000);
+    let mut records = vec![json!({"type":"user","sessionId":name,"timestamp":first,
+        "origin":{"kind":"human"},"message":{"role":"user","content":"PR 올려줘"}})];
+    for (index, (text, at)) in outputs.iter().enumerate() {
+        records.push(json!({"type":"user","sessionId":name,"timestamp":at,
+            "message":{"role":"user","content":[{"type":"tool_result",
+            "tool_use_id":format!("t{index}"),"content":text}]}}));
+    }
+    records.push(json!({"type":"assistant","sessionId":name,"timestamp":last,
+        "message":{"role":"assistant","content":[{"type":"text","text":"올렸습니다"}]}}));
+    let lines: String = records.iter().map(|record| format!("{record}\n")).collect();
+    std::fs::write(&path, lines).unwrap();
+    path
+}
+
+fn addresses(sighted: &[super::worker::SightedPullRequest]) -> Vec<(&str, &str, u64)> {
+    sighted
+        .iter()
+        .map(|sighting| {
+            (
+                sighting.pane_id.as_str(),
+                sighting.repository.as_str(),
+                sighting.number,
+            )
+        })
+        .collect()
+}
+
+#[test]
+fn a_read_hands_on_each_pull_request_the_core_has_not_read_once() {
+    let harness = Harness::new();
+    let (mut worker, woken, _) = harness.worker(harness.store());
+    let now = unix_now_ms();
+    let path = tool_session(
+        &harness,
+        "native-pr",
+        &[(
+            "https://github.com/Owner/Repo/pull/12\nhttps://github.com/owner/repo/pull/3"
+                .to_owned(),
+            now - 60_000,
+        )],
+    );
+    worker.set_pull_request_times(Arc::new(super::facts::PullRequestTimes::from([(
+        ("owner/repo".to_owned(), 3),
+        1,
+    )])));
+    harness
+        .backend
+        .answer("풀 리퀘스트 올리기 작업", "done", "");
+    let idle = agent(&path, "idle", 3);
+
+    observe(&mut worker, &idle);
+    settle(&mut worker, &woken);
+    assert_eq!(
+        addresses(&worker.take_sighted()),
+        vec![("w1:p1", "owner/repo", 12)],
+        "the address the core holds stays; the other is handed on once, in lowercase"
+    );
+    assert!(worker.take_sighted().is_empty());
+}
+
+#[test]
+fn a_read_keeps_the_newest_recent_sightings_and_reports_the_rest() {
+    let harness = Harness::new();
+    let (mut worker, woken, _) = harness.worker(harness.store());
+    let now = unix_now_ms();
+    let output = |numbers: std::ops::RangeInclusive<u64>| {
+        numbers
+            .map(|number| format!("https://github.com/owner/repo/pull/{number}\n"))
+            .collect::<String>()
+    };
+    // One old address, then five outputs of eight, oldest first.
+    let mut outputs = vec![(output(99..=99), now - 20 * 60 * 1_000)];
+    for batch in 0..5u64 {
+        outputs.push((
+            output(batch * 8 + 1..=batch * 8 + 8),
+            now - 50_000 + batch * 10_000,
+        ));
+    }
+    let path = tool_session(&harness, "native-many", &outputs);
+    harness
+        .backend
+        .answer("풀 리퀘스트 올리기 작업", "done", "");
+    let idle = agent(&path, "idle", 3);
+
+    observe(&mut worker, &idle);
+    let ((), records) = crate::diagnostics::capture(|| settle(&mut worker, &woken));
+    let mut kept: Vec<u64> = worker
+        .take_sighted()
+        .iter()
+        .map(|sighting| sighting.number)
+        .collect();
+    kept.sort_unstable();
+    assert_eq!(
+        kept,
+        (9..=40).collect::<Vec<_>>(),
+        "the newest 32, and not the old one"
+    );
+    let capped: Vec<_> = records
+        .iter()
+        .filter(|record| record["kind"] == "read.sighted_capped")
+        .collect();
+    assert_eq!(capped.len(), 1, "{records:?}");
+    assert_eq!(
+        capped[0]["dropped"], 8,
+        "the old address is skipped, not dropped"
+    );
+}
+
+#[test]
+fn a_devices_worker_keeps_no_sightings() {
+    let harness = Harness::new();
+    let helper: Arc<dyn crate::host_access::HostChannel> =
+        Arc::new(HelperAt(harness.home.path().to_path_buf()));
+    let (mut worker, woken) = harness.device_worker(Box::new(move || Ok(Arc::clone(&helper))));
+    let path = tool_session(
+        &harness,
+        "native-device",
+        &[(
+            "https://github.com/owner/repo/pull/12".to_owned(),
+            unix_now_ms() - 60_000,
+        )],
+    );
+    harness
+        .backend
+        .answer("풀 리퀘스트 올리기 작업", "done", "");
+    let idle = agent(&path, "idle", 3);
+
+    observe(&mut worker, &idle);
+    settle(&mut worker, &woken);
+    assert_eq!(
+        task(shown(&worker, &idle)).as_deref(),
+        Some("풀 리퀘스트 올리기 작업"),
+        "the session was read"
+    );
+    assert!(
+        worker.take_sighted().is_empty(),
+        "a device's pull requests are not read on this Mac"
     );
 }
