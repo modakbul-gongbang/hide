@@ -28,7 +28,8 @@
 # before its lanes started. A run therefore uses two macOS jobs: the Electron
 # end-to-end and the web end-to-end's `@platform` tests, the ones that touch
 # what differs by operating system (Trash, process ownership, file watching and
-# saving, worktree paths, terminal input, ⌘ chords and Korean input).
+# saving, worktree paths, terminal input, ⌘ chords and Korean input), which
+# also runs the remote mailbox lane over private SSH.
 # Everything else runs on Linux: the Rust suite, the unit suites, the invariant
 # checks and the whole web end-to-end, dealt out to six shards by
 # `web-e2e.yml`. `nightly.yml` runs the whole web end-to-end on macOS, so the
@@ -395,6 +396,11 @@ jobs:
       herdr-platform: macos-aarch64
       shards: 1
       grep: "@platform"
+      # The remote mailbox lane needs a macOS runner, a Rust build and the
+      # pinned Herdr, which this job already has. It ran in `desktop-e2e`, the
+      # longest job of a run (13.8 minutes against this job's 9, 2026-10-05),
+      # where its 2 minutes set the time `verify` took.
+      remote-mailbox: true
 
   # The OS contract's Linux and Windows legs (see os-contract.yml). Its macOS
   # leg runs in `desktop-e2e` below, on the runner that job already holds.
@@ -456,10 +462,6 @@ jobs:
         run: echo "bin=$(zsh scripts/fetch-herdr-runtime.sh)" >> "$GITHUB_OUTPUT"
       - name: Compare the binary schema and version with the pin on macOS
         run: python3 scripts/check-herdr-schema.py --herdr-bin "${{ steps.herdr.outputs.bin }}"
-      - name: Remote mailbox over private SSH
-        env:
-          HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
-        run: bash scripts/verify-cargo.sh nextest --profile ci -p herdr-core --test remote_delivery --run-ignored only
       - name: OS contract on macOS
         # The macOS leg of os-contract.yml, here because this job already
         # holds a macOS runner and the workspace build it needs.
