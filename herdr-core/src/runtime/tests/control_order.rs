@@ -643,3 +643,35 @@ fn a_tab_move_queued_on_an_earlier_connection_is_not_sent() {
     assert!(next.is_none());
     assert!(!runtime.control_lane.is_busy());
 }
+
+/// A pane close is not a lane control: it runs on its own worker, so a tab
+/// focus whose answer has not come back neither holds it nor is held by it.
+/// The lane stays as the unanswered focus left it, and the close is already
+/// in progress (#438 review: a close that "waits behind" the lane).
+#[test]
+fn a_pane_close_starts_while_an_unanswered_tab_focus_holds_the_lane() {
+    let herdr = FakeHerdr::start("order-close", |method, params| match method {
+        "tab.focus" => tab_info(params["tab_id"].as_str().expect("a tab id")),
+        _ => serde_json::json!({"type": "ok"}),
+    });
+    let (mut runtime, checkout_id) = runtime_on(&herdr, "/private/tmp/hide-control-order-close");
+    assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2")));
+    assert!(
+        runtime.control_lane.is_busy(),
+        "the focus has not been answered"
+    );
+
+    runtime.dispatch_json(br#"{"schema_version":2,"kind":"close_pane","payload":{"pane_id":"w-order:t3:p","confirmed":false}}"#);
+
+    assert_eq!(
+        runtime.close_operations.len(),
+        1,
+        "the close began without waiting for the lane"
+    );
+    assert!(runtime.control_lane.is_busy());
+    assert_eq!(
+        runtime.control_lane.queued_len(),
+        0,
+        "the close was not queued behind the focus"
+    );
+}
