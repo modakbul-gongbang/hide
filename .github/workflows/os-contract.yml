@@ -6,10 +6,10 @@
 # unchanged on every system. Each leg then runs `hide-herdr-client` against the
 # pinned Herdr for that system, the one place the pinned Windows asset runs.
 # The crates are small, so this lane builds in minutes and does not wait for
-# the workspace. A caller names the systems: `pr.yml` runs Linux and Windows for
-# a change to anything that differs by system and macOS, whose runners are the
-# scarce ones, only for a change to these two crates (`os-contract-macos`);
-# `nightly.yml` takes the default, all three.
+# the workspace. The caller names the systems: `pr.yml` runs Linux and Windows
+# for a change to anything that differs by system and macOS, whose runners are
+# the scarce ones, only for a change to these two crates (`os-contract-macos`);
+# the nightly's call of `pr.yml` plans every lane, so it runs all three.
 name: os contract
 
 on:
@@ -18,8 +18,7 @@ on:
       systems:
         description: The systems to run, as a JSON array of `linux`, `macos` and `windows`.
         type: string
-        required: false
-        default: '["linux","macos","windows"]'
+        required: true
 
 # `issues: write` files a flaky test; a caller must grant it.
 permissions:

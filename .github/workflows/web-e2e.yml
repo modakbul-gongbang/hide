@@ -52,12 +52,14 @@ jobs:
   # disk at run time, so the binaries are all a shard needs from cargo; the
   # `hide` CLI comes from the same package and `workspace-cli.spec.ts` runs it.
   #
-  # On Linux it also downloads zsh once for the shards. The Ubuntu mirror serves
+  # On Linux it also hands the shards the zsh packages. The Ubuntu mirror serves
   # one connection at about 60 kB/s when many runners ask at once (2026-10-01:
   # 5 MB of zsh took 88 s in every shard that asked), and a shard that stalled
-  # on it held its slot until the job timeout. Here the download runs before
-  # the build, retries, gives up on a silent connection after 30 s, and fails
-  # the lane with its own step name after 5 minutes.
+  # on it held its slot until the job timeout. The packages are cached under
+  # the runner image's version, so the mirror is asked only after the image
+  # changes, once, here and not in a shard; that download runs before the build
+  # so a stalled mirror fails the lane at once, retries, gives up on a silent
+  # connection after 30 s, and fails with its own step name after 5 minutes.
   build:
     name: build hided ${{ inputs.lane }}
     if: ${{ inputs.shards > 1 }}
@@ -77,8 +79,21 @@ jobs:
           workspaces: ". -> target"
           shared-key: web-e2e
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Download the zsh packages
+      - name: Name the runner image for the zsh cache
+        id: image
         if: runner.os == 'Linux'
+        # ImageVersion is a runner variable, not a workflow `env` value.
+        run: echo "version=$ImageVersion" >> "$GITHUB_OUTPUT"
+      - name: Look for the zsh packages in the cache
+        id: zsh-cache
+        if: runner.os == 'Linux'
+        uses: actions/cache@v6
+        timeout-minutes: 5
+        with:
+          path: zsh-debs
+          key: zsh-debs-${{ steps.image.outputs.version }}
+      - name: Download the zsh packages
+        if: runner.os == 'Linux' && steps.zsh-cache.outputs.cache-hit != 'true'
         timeout-minutes: 5
         run: |
           printf 'Acquire::Retries "3";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' \

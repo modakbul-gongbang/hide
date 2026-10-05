@@ -10,11 +10,11 @@ A merge queue group plans from the paths between its base (main, or the
 group queued ahead of it) and its head. A
 push to main plans no lane when a merge queue run already verified that
 commit and the push changed no file a CI cache key hashes; otherwise it plans
-every lane, as do a comparison that cannot be computed and a path no rule
-claims. The lanes in NIGHTLY_ONLY are the exception: only the nightly call
-plans them, so no pull request or push to main waits for a macOS runner for
-them. docs/TESTING.md, "Which lanes a pull request runs", owns the rules and
-the reasons for them.
+every lane, as do a comparison that cannot be computed, a path no rule
+claims and the nightly call. No lane takes a macOS runner for anything but
+what only macOS proves (`os-contract-macos`, `desktop-e2e`); the rest of the
+macOS checks are jobs of `nightly.yml`. docs/TESTING.md, "Which lanes a pull
+request runs", owns the rules and the reasons for them.
 """
 import argparse
 from fnmatch import fnmatchcase
@@ -36,15 +36,9 @@ LANES = (
     "windows-check",
     "windows-e2e",
     "web-e2e",
-    "web-e2e-platform",
     "remote-mailbox",
     "desktop-e2e",
 )
-
-# Lanes only the nightly call plans: what a macOS runner proves about the web
-# shell's `@platform` tests, which Linux and Windows run in every pull request
-# and the nightly's own macOS jobs run whole.
-NIGHTLY_ONLY = ("web-e2e-platform",)
 
 # Crates whose change reaches what differs by operating system: the platform
 # layer, the Herdr client's IPC, the install kit and hooks, and the daemon and
@@ -61,9 +55,12 @@ OS_CRATES = {
 # The OS contract's macOS leg tests only these two, so only a change to one of
 # them plans it; the others reach it through the nightly.
 OS_CONTRACT_CRATES = {"hide-herdr-client", "hide-platform"}
-# The remote mailbox lane runs on Linux but keeps the reach it had as the tail
-# of the macOS `@platform` job: every change to what differs by system.
-OS_LANES = ("os-contract", "windows-check", "windows-e2e", "remote-mailbox")
+OS_LANES = ("os-contract", "windows-check", "windows-e2e")
+# The remote mailbox lane builds the CLI binaries (`hided` and `hide`, the agent
+# hooks, the host helper) and runs `herdr-core`'s `remote_delivery` test: a
+# change to one of these crates, or to a crate any of them depends on, plans it.
+# Web code and the web end-to-end specs do not reach it.
+MAILBOX_CRATES = {"herdr-core", "hided", "hide-agent-hooks", "hide-host"}
 
 # Web files the desktop host imports or drives through native input: the host
 # bridge, the shortcut registry the menu is built from, the store and
@@ -92,7 +89,7 @@ SHARED_WEB = (
     "web/src/App.tsx",
     "web/src/main.tsx",
 )
-SHARED_WEB_LANES = ("checks", "desktop-e2e", "remote-mailbox", "windows-e2e")
+SHARED_WEB_LANES = ("checks", "desktop-e2e", "windows-e2e")
 
 # Files a lane outside their own directory reads: a change to one also plans
 # that lane, and the Rust crates whose tests read it. An entry ending in `/`
@@ -106,7 +103,7 @@ READERS = (
     ("web/src/", {"rust"}, {"herdr-core"}),
     ("hided/src/", {"rust"}, {"herdr-core"}),
     # web/e2e/s2, s3 and s7 import the wire path conversion.
-    ("desktop/src/main/wirePath.ts", {"checks", "web-e2e", "remote-mailbox", "windows-e2e"}, set()),
+    ("desktop/src/main/wirePath.ts", {"checks", "web-e2e", "windows-e2e"}, set()),
     # web/src/settings.test.ts, theme.test.ts and web/e2e/theme.spec.ts read the tokens.
     ("design/tokens.json", {"checks", "web-e2e"}, set()),
 )
@@ -140,12 +137,12 @@ POLICY_ONLY = (
 # Paths whose readers are a known set of lanes. `web/e2e` helpers are imported
 # by the desktop suites too, and `desktop/e2e` unit tests run in `windows
 # check`, so neither is web-only or desktop-only.
-WEB_E2E_LANES = {"checks", "web-e2e", "remote-mailbox", "windows-e2e", "desktop-e2e", "windows-check"}
+WEB_E2E_LANES = {"checks", "web-e2e", "windows-e2e", "desktop-e2e", "windows-check"}
 DESKTOP_E2E_LANES = {"checks", "desktop-e2e", "windows-check"}
 NAMED_LANES = (
     ("web/e2e/*", WEB_E2E_LANES),
     ("desktop/e2e/*", DESKTOP_E2E_LANES),
-    ("web/playwright.config.ts", {"checks", "web-e2e", "remote-mailbox", "windows-e2e"}),
+    ("web/playwright.config.ts", {"checks", "web-e2e", "windows-e2e"}),
     ("desktop/playwright.config.ts", DESKTOP_E2E_LANES),
     ("desktop/vitest.config.ts", DESKTOP_E2E_LANES),
     # `web` and `desktop` lint share the e2e rules and the size check.
@@ -244,6 +241,8 @@ def classify(path, status, crates, root):
         # Every end-to-end lane drives hided, so a crate it links reaches them.
         if "hided" in packages:
             lanes.add("web-e2e")
+        if packages & MAILBOX_CRATES:
+            lanes.add("remote-mailbox")
         if crate["name"] in OS_CRATES:
             lanes.update(OS_LANES)
         if crate["name"] in OS_CONTRACT_CRATES:
@@ -255,7 +254,7 @@ def classify(path, status, crates, root):
             spec = root / path
             # A deleted spec cannot be read; keep the platform lanes for it.
             if status == "D" or "@platform" in spec.read_text(encoding="utf-8"):
-                lanes.update(("remote-mailbox", "windows-e2e"))
+                lanes.add("windows-e2e")
             return lanes, f"web e2e spec: {path}", set()
         if parts[1] in ("src", "public") or path.as_posix() in ("web/index.html", "web/mobile.html"):
             lanes = {"checks", "web-e2e"}
@@ -308,12 +307,8 @@ def queue_verification(runs_file, head, root=ROOT):
     return None, f"no merge queue run verified {sha[:12]}"
 
 
-def select(entries, crates, root=ROOT, full_reason=None, nightly=False):
-    """The plan for a list of (status, path) entries from `git diff --name-status`.
-
-    `nightly` is the nightly call: its every-lane plan also takes the lanes in
-    NIGHTLY_ONLY, which no other plan names.
-    """
+def select(entries, crates, root=ROOT, full_reason=None):
+    """The plan for a list of (status, path) entries from `git diff --name-status`."""
     reasons = {lane: [] for lane in LANES}
     packages = set()
     full = []
@@ -339,8 +334,7 @@ def select(entries, crates, root=ROOT, full_reason=None, nightly=False):
             reasons[lane].append(reason)
     if full:
         for lane in LANES:
-            if nightly or lane not in NIGHTLY_ONLY:
-                reasons[lane] = list(full)
+            reasons[lane] = list(full)
         packages = {crate["name"] for crate in crates.values()}
     planned = [lane for lane in LANES if reasons[lane]]
     return {
@@ -367,19 +361,17 @@ def plan(event, base, head, root=ROOT, crates=None, draft=False, queue_runs=None
         # `verify` for it, and marking the pull request ready for review
         # starts the run that plans lanes.
         return {"full": False, "lanes": [], "rust_packages": [], "reasons": {}, "draft": True}
-    # Any event that is not a change under review is the nightly's call.
-    nightly = event not in ("pull_request", "merge_group", "push")
     if crates is None:
         try:
             crates = cargo_crates(root)
         except (subprocess.CalledProcessError, ValueError, KeyError) as error:
             # Without the crate graph no Rust change can be narrowed; the full
             # Rust lane runs the whole workspace and needs no package list.
-            return select([], {}, root, f"crate graph unavailable: {error}", nightly=nightly)
+            return select([], {}, root, f"crate graph unavailable: {error}")
     if event == "push":
         return plan_push(base, head, root, crates, queue_runs)
-    if nightly:
-        return select([], crates, root, f"{event}: every lane runs on main", nightly=True)
+    if event not in ("pull_request", "merge_group"):
+        return select([], crates, root, f"{event}: every lane runs on main")
     try:
         if event == "pull_request":
             # A pull request's checkout is the merge commit GitHub made;

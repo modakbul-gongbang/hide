@@ -276,7 +276,7 @@ The crate's own `AGENTS.md` says where the file goes; this section says how the 
 ## Which lanes a pull request runs
 
 `pr.yml`'s `plan` job reads the paths a pull request changes against the base it merges into and plans the lanes they need; `scripts/ci-plan.py` is the one place the rules live, and `scripts/tests/test_ci_plan.py` checks them against real paths.
-`remote-mailbox` (the remote mailbox lane, its own Linux job) is planned for the changes that planned the macOS `@platform` job it used to run inside, so the lane keeps its reach.
+`remote-mailbox` (the remote mailbox lane, its own Linux job) is planned for a change to any crate it builds and tests (`MAILBOX_CRATES` in the script: `herdr-core`, `hided`, `hide-agent-hooks`, `hide-host`, and so every crate they depend on); web code and web specs do not reach it.
 Every lane is a job whose `if:` asks the plan, and `verify` passes only when every planned lane succeeded and every other lane was skipped.
 A planned lane that was skipped, failed or cancelled fails `verify`, so a wrong `if:` shows up as a red check rather than a lane quietly left out.
 
@@ -286,11 +286,11 @@ A planned lane that was skipped, failed or cancelled fails `verify`, so a wrong 
 | `design/` | `policy`; `design-contract.yml` checks the library |
 | A file a lane outside its folder reads (`READERS` in the script): the root `AGENTS.md`, `web/src` and `hided/src`, which herdr-core's tests read; `desktop/src/main/wirePath.ts`, which web e2e specs import; `design/tokens.json`, which web tests read | also that lane, and `rust` over `herdr-core` for the first three |
 | `web/src`, `web/public`, `web/index.html`, `web/mobile.html` | `checks` (the web shell's and the desktop app's typecheck, lint and unit suites in one job) and the Linux `web-e2e` |
-| Web code the desktop host imports or drives through native input (the host bridge, the shortcut registry, keys and keyboard, store, snapshot and socket, terminals, focus and area cycling, `App.tsx`, `main.tsx`; `SHARED_WEB` in the script) | also `desktop-e2e`, `windows-e2e` and `remote-mailbox` |
-| A `web/e2e` spec | `checks` and `web-e2e`; a spec tagged `@platform` also runs `windows-e2e` and `remote-mailbox` (the whole suite runs on Linux, so the Linux leg of `@platform` is `web-e2e`) |
+| Web code the desktop host imports or drives through native input (the host bridge, the shortcut registry, keys and keyboard, store, snapshot and socket, terminals, focus and area cycling, `App.tsx`, `main.tsx`; `SHARED_WEB` in the script) | also `desktop-e2e` and `windows-e2e` |
+| A `web/e2e` spec | `checks` and `web-e2e`; a spec tagged `@platform` also runs `windows-e2e` (the whole suite runs on Linux, so the Linux leg of `@platform` is `web-e2e`) |
 | `desktop/src`, `desktop/static`, a `desktop/e2e` spec | `checks` and `desktop-e2e`, the only macOS job a change outside the two crates below asks for; `desktop/src/main` also runs `windows-check`, where the main process's unit suite runs on Windows |
 | A Rust crate | `rust` over the crate and every crate that depends on it (from `cargo metadata`), `windows-check`, which compiles every crate for Windows, and the Linux `web-e2e`, since every crate reaches `hided` |
-| `herdr-core`, `hided`, `hide-platform`, `hide-herdr-client`, `hide-host`, `hide-kit`, `hide-agent-hooks` | also `os-contract` (its Linux and Windows legs), `windows-e2e` and `remote-mailbox`; no macOS job |
+| `herdr-core`, `hided`, `hide-platform`, `hide-herdr-client`, `hide-host`, `hide-kit`, `hide-agent-hooks` | also `os-contract` (its Linux and Windows legs) and `windows-e2e`; no macOS job |
 | `hide-platform`, `hide-herdr-client` | also `os-contract-macos`, the OS contract's macOS leg, which tests exactly these two crates |
 | The paths `POLICY_ONLY` names, which no lane reads: `agents/`, `site/`, `tools/`, `spikes/`, `.gitignore` files, the PR template and `dependabot.yml`, the workflows no `pr.yml` job calls (`nightly`, `package`, `release`, `herdr-update`, `design-contract`), `scripts/tests/`, the policy `check-*` scripts and the design, release and measurement scripts, and Markdown below a folder no rule claims | `policy` alone |
 | The paths `NAMED_LANES` names, whose readers are a known set: a `web/e2e` file that is not a spec (the `desktop` suites import it, and `desktop/e2e` unit tests run in `windows-check`), a `desktop/e2e` file that is not a spec, the Playwright, eslint and vitest configurations, `web/scripts`, `desktop/scripts` | the lanes that read it, listed in the script and its test; never `rust`, `os-contract` or `os-contract-macos` |
@@ -300,8 +300,7 @@ Every plan includes `policy`, whatever else it names, except a draft pull reques
 Marking the pull request ready (`ready_for_review`) starts the run that plans and runs the lanes, and that run's `verify` replaces the failed one.
 `verify` fails on a draft instead of being skipped because a skipped required check counts as passed, and `verify` is not started until its lanes finish: a skipped `verify` from the draft run would otherwise be the only check on the commit for the minutes after it is marked ready.
 Keep `ready_for_review` in `pr.yml`'s `types`, and keep `verify` running on a draft; `scripts/tests/test_ci_plan.py` reads the workflow for both.
-The lane `web-e2e-platform` (the web `@platform` tests on macOS) is in `NIGHTLY_ONLY` in the script: only the nightly's call plans it, and a pull request, a merge queue group or a push to main never does.
-A hand run of `nightly.yml` takes a `lane` (`all`, `linux`, `macos`, `windows`): one system's web and desktop suites, with `verify`, `os contract` and `package` for `all` only; the schedule runs everything.
+A hand run of `nightly.yml` takes a `lane` (`all`, `linux`, `macos`, `windows`): one system's web and desktop suites and the remote mailbox lane, with `verify` and `package` for `all` only; the schedule runs everything.
 A plan that cannot be computed plans every lane: a missing base, a checkout that is not the merge commit, a diff that does not parse, or a crate graph `cargo metadata` cannot read.
 A merge queue group (`merge_group`) plans from the paths between the commit it starts from (`merge_group.base_sha`) and the group's commit; that base is main for the first group and the commit of the group queued ahead for every later one, so each group plans its own pull request's changes on the tree the groups ahead make, and a base the `plan` job cannot fetch is a missing base.
 That is enough because each group's run checks its own lanes on a tree that already holds every group ahead: a lane is checked by the run of the last group that touched its inputs, on the same inputs as the tree main finally becomes, which assumes the path rules are right, as a pull request's plan does.
@@ -320,8 +319,9 @@ The organization runs 20 jobs at once and five of them on macOS, so a pull reque
 | macOS job | Runs in a pull request | Otherwise guarded by |
 | --- | --- | --- |
 | `desktop e2e` (the Electron app) | a change to `desktop/` or to the web code the app drives (`SHARED_WEB`, the `web/e2e` helpers), and a full plan | The nightly's whole desktop suite on macOS; a core or daemon change is observed through `web-e2e` on Linux and the Linux and Windows legs of the OS contract |
-| `os contract (macOS)` | a change to `hide-platform` or `hide-herdr-client`, and a full plan | The nightly's `os contract` job, which runs all three legs |
-| `web e2e (macOS)` (the `@platform` tests) | never | The same tests run in every pull request on Linux (`web-e2e` runs the whole suite) and on Windows (`windows-e2e`); the nightly runs them on macOS, in its own web job and through the `verify` call |
+| `os contract (macOS)` | a change to `hide-platform` or `hide-herdr-client`, and a full plan | The nightly's `verify` call, which plans every lane and so runs all three legs |
+| the web `@platform` tests on macOS | never (no lane) | The same tests run in every pull request on Linux (`web-e2e` runs the whole suite) and on Windows (`windows-e2e`); the nightly runs them on macOS in `web e2e (macOS full)` |
+| the remote mailbox lane on macOS | never | The nightly's `remote mailbox (macOS)` job; a pull request runs the lane on Linux, and the Mac-only parts of the fixture (codesign of the staged binaries, the system's SFTP server, the macOS Herdr asset) are checked there |
 
 A change to `herdr-core` or `hided` alone therefore starts no macOS job.
 What only macOS shows for such a change (Trash, file watching, process ownership, the ⌘ chords) is found by the next nightly, which opens the nightly issue when it fails; the cost is that delay.
@@ -337,7 +337,7 @@ A run that plans every lane a pull request can plan starts at most 17 jobs, down
 | `windows e2e` | 1 | the reusable workflow no longer starts a `plan` job that only fanned the shard numbers out; a matrix picks its list by index |
 | `web e2e` (Linux) | 5 | one build, which also downloads the zsh packages the `fetch zsh` job used to, and four shards instead of six; fewer jobs queue at the 20-job limit, and a shard's time at four is measured after merge |
 | `os contract` (Linux, Windows), `os contract (macOS)` | 3 | one job per system, the macOS leg planned only for its two crates |
-| `remote mailbox` | 1 | the lane that was the tail of the macOS `@platform` job, now on Linux |
+| `remote mailbox` | 1 | the lane that was the tail of the macOS `@platform` job, now on Linux and, in the nightly, on macOS |
 | `desktop e2e` | 1 | the only macOS job of the desktop app's own changes |
 
 The common runs are smaller: a `herdr-core` or `hided` change starts 14 jobs and none on macOS, a web shell change 10, a desktop-only change 5 with one on macOS, a `hide-platform` change 15 with one on macOS, and a documentation change 3.

@@ -13,10 +13,9 @@ SPEC.loader.exec_module(ci)
 ROOT = Path(__file__).parents[2]
 CRATES = ci.cargo_crates(ROOT)
 EVERY_PACKAGE = sorted(crate["name"] for crate in CRATES.values())
-# What a pull request or a push to main plans when it plans every lane.
-PR_LANES = [lane for lane in ci.LANES if lane not in ci.NIGHTLY_ONLY]
-# The lanes that take a macOS runner.
-MACOS_LANES = {"web-e2e-platform", "os-contract-macos", "desktop-e2e"}
+# The lanes that take a macOS runner; every other check on macOS is a job of
+# `nightly.yml`.
+MACOS_LANES = {"os-contract-macos", "desktop-e2e"}
 
 
 def plan(*paths, status="M"):
@@ -55,30 +54,39 @@ class Selection(unittest.TestCase):
         for path in ("web/src/shortcuts.ts", "web/src/host.ts", "web/src/store.ts", "web/src/keys.ts"):
             with self.subTest(path=path):
                 lanes = set(plan(path)["lanes"])
-                self.assertTrue({"checks", "web-e2e", "desktop-e2e", "remote-mailbox", "windows-e2e"} <= lanes)
+                self.assertTrue({"checks", "web-e2e", "desktop-e2e", "windows-e2e"} <= lanes)
                 self.assertNotIn("windows-check", lanes)
-                self.assertNotIn("web-e2e-platform", lanes)
+                self.assertNotIn("remote-mailbox", lanes)
 
     def test_a_platform_spec_keeps_its_platform_lanes_on_linux_and_windows(self):
         lanes = set(plan("web/e2e/s3.spec.ts")["lanes"])
-        self.assertEqual(lanes, {"policy", "checks", "web-e2e", "remote-mailbox", "windows-e2e"})
+        self.assertEqual(lanes, {"policy", "checks", "web-e2e", "windows-e2e"})
         lanes = set(plan("web/e2e/new-tab.spec.ts")["lanes"])
         self.assertEqual(lanes, {"policy", "checks", "web-e2e"})
 
-    def test_the_remote_mailbox_lane_keeps_the_reach_it_had_inside_the_macos_job(self):
+    def test_the_remote_mailbox_lane_follows_the_crates_it_builds_and_tests(self):
+        # It builds hided, hide, the agent hooks and the host helper and runs
+        # herdr-core's remote_delivery test, so a change to one of those crates
+        # or to a crate they depend on plans it.
         for path in (
-            "web/e2e/s3.spec.ts", "web/src/host.ts", "web/playwright.config.ts", "web/e2e/herdr-fixture.ts",
-            "desktop/src/main/wirePath.ts", "hide-platform/src/process.rs", "herdr-core/src/lib.rs", "hided/src/lib.rs",
+            "herdr-core/src/lib.rs", "hided/src/lib.rs", "hide-agent-hooks/src/lib.rs", "hide-host/src/lib.rs",
+            "hide-platform/src/process.rs", "hide-kit/src/lib.rs", "hide-session/src/lib.rs", "herdr-core/tests/remote_delivery.rs",
         ):
             with self.subTest(path=path):
                 self.assertIn("remote-mailbox", plan(path)["lanes"])
+        # The web shell, its specs and the desktop host do not reach it.
         for path in (
-            "web/e2e/new-tab.spec.ts", "web/src/Overview.tsx", "hide-session/src/lib.rs", "desktop/src/preload/index.ts",
-            "docs/TESTING.md",
+            "web/e2e/s3.spec.ts", "web/e2e/new-tab.spec.ts", "web/src/host.ts", "web/src/Overview.tsx", "web/playwright.config.ts",
+            "web/e2e/herdr-fixture.ts", "desktop/src/main/wirePath.ts", "desktop/src/preload/index.ts", "docs/TESTING.md",
         ):
             with self.subTest(path=path):
                 self.assertNotIn("remote-mailbox", plan(path)["lanes"])
-        self.assertIn("remote-mailbox", plan("web/e2e/gone.spec.ts", status="D")["lanes"])
+        # Every workspace crate is built into one of the four binaries or one
+        # they depend on, so each crate's change plans the lane.
+        for directory in CRATES:
+            with self.subTest(crate=directory):
+                self.assertIn("remote-mailbox", plan(f"{directory}/src/lib.rs")["lanes"])
+        self.assertIn("remote-mailbox", plan(".github/workflows/pr.yml")["lanes"])
 
     def test_desktop_changes_run_the_desktop_lanes(self):
         result = plan("desktop/src/preload/index.ts")
@@ -88,7 +96,7 @@ class Selection(unittest.TestCase):
     def test_a_platform_crate_reaches_every_os_and_its_consumers(self):
         result = plan("hide-platform/src/process.rs")
         self.assertTrue({"rust", "os-contract", "os-contract-macos", "windows-check", "windows-e2e", "web-e2e", "remote-mailbox"} <= set(result["lanes"]))
-        self.assertFalse({"desktop-e2e", "web-e2e-platform"} & set(result["lanes"]))
+        self.assertNotIn("desktop-e2e", result["lanes"])
         # hide-project depends on nothing in the workspace, so it is the one
         # crate a platform change does not reach.
         self.assertEqual(result["rust_packages"], [name for name in EVERY_PACKAGE if name != "hide-project"])
@@ -129,14 +137,6 @@ class Selection(unittest.TestCase):
             with self.subTest(path=path):
                 self.assertIn("desktop-e2e", plan(path)["lanes"])
 
-    def test_a_pull_request_never_plans_a_lane_only_the_nightly_runs(self):
-        for entries in ([("M", ".github/workflows/pr.yml")], [("M", "hide-platform/src/process.rs")], [("M", "web/e2e/s3.spec.ts")], []):
-            with self.subTest(entries=entries):
-                self.assertFalse(set(ci.select(entries, CRATES, ROOT)["lanes"]) & set(ci.NIGHTLY_ONLY))
-        for event in ("pull_request", "merge_group", "push"):
-            with self.subTest(event=event):
-                self.assertFalse(set(ci.plan(event, "0" * 40, "HEAD", ROOT, CRATES)["lanes"]) & set(ci.NIGHTLY_ONLY))
-
     def test_shared_unknown_and_unsafe_changes_run_everything(self):
         for entries in (
             [("M", ".github/workflows/pr.yml")],
@@ -156,16 +156,13 @@ class Selection(unittest.TestCase):
             with self.subTest(entries=entries):
                 result = ci.select(entries, CRATES, ROOT)
                 self.assertTrue(result["full"])
-                self.assertEqual(result["lanes"], PR_LANES)
+                self.assertEqual(result["lanes"], list(ci.LANES))
                 self.assertEqual(result["rust_packages"], EVERY_PACKAGE)
 
-    def test_the_nightly_call_runs_every_lane_and_a_failed_comparison_every_lane_but_its_own(self):
-        for event in ("schedule", "workflow_dispatch"):
-            with self.subTest(event=event):
-                self.assertEqual(ci.plan(event, "HEAD^1", "HEAD", ROOT)["lanes"], list(ci.LANES))
+    def test_the_nightly_call_and_a_failed_comparison_run_everything(self):
+        self.assertEqual(ci.plan("schedule", "HEAD^1", "HEAD", ROOT)["lanes"], list(ci.LANES))
         result = ci.plan("pull_request", "0" * 40, "HEAD", ROOT)
         self.assertTrue(result["full"])
-        self.assertEqual(result["lanes"], PR_LANES)
         self.assertIn("comparison unavailable", result["reasons"]["rust"][0])
 
     def test_a_draft_plans_no_lane_and_ready_for_review_runs_them(self):
@@ -186,9 +183,8 @@ class Selection(unittest.TestCase):
     def test_a_missing_crate_graph_runs_everything(self):
         with tempfile.TemporaryDirectory() as directory:
             result = ci.plan("pull_request", "HEAD^1", "HEAD", Path(directory))
-            self.assertEqual(result["lanes"], PR_LANES)
+            self.assertEqual(result["lanes"], list(ci.LANES))
             self.assertIn("crate graph unavailable", result["reasons"]["rust"][0])
-            self.assertEqual(ci.plan("schedule", "HEAD^1", "HEAD", Path(directory))["lanes"], list(ci.LANES))
 
     def test_a_pull_request_diff_is_read_from_git(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -316,12 +312,12 @@ class Selection(unittest.TestCase):
             ):
                 with self.subTest(reason=reason, runs=runs):
                     result = ci.plan("push", before, "HEAD", repo, CRATES, queue_runs=runs)
-                    self.assertEqual(result["lanes"], PR_LANES)
+                    self.assertEqual(result["lanes"], list(ci.LANES))
                     self.assertIn(reason, result["reasons"]["policy"][0])
             for base, reason in (("0" * 40, "comparison unavailable"), ("", "no passing push run on main")):
                 with self.subTest(base=base):
                     result = ci.plan("push", base, "HEAD", repo, CRATES, queue_runs=answer(queue_run(head)))
-                    self.assertEqual(result["lanes"], PR_LANES)
+                    self.assertEqual(result["lanes"], list(ci.LANES))
                     self.assertIn(reason, result["reasons"]["policy"][0])
 
             # A cache key input runs every lane even when the queue verified the
@@ -333,7 +329,7 @@ class Selection(unittest.TestCase):
                     merge(f"key-{index}", path)
                     head = merge(f"docs-{index}", f"docs/after-{index}.md")
                     result = ci.plan("push", start, "HEAD", repo, CRATES, queue_runs=answer(queue_run(head)))
-                    self.assertEqual(result["lanes"], PR_LANES)
+                    self.assertEqual(result["lanes"], list(ci.LANES))
                     self.assertIn(f"{path} changes a CI cache key", result["reasons"]["policy"][0])
                     self.assertEqual(ci.plan("push", "HEAD^1", "HEAD", repo, CRATES, queue_runs=answer(queue_run(head)))["lanes"], [])
 
@@ -390,7 +386,7 @@ class NamedPaths(unittest.TestCase):
                 self.assertFalse(result["full"])
 
     def test_web_e2e_helpers_reach_the_desktop_and_windows_lanes_but_not_rust(self):
-        want = {"policy", "checks", "web-e2e", "remote-mailbox", "windows-e2e", "desktop-e2e", "windows-check"}
+        want = {"policy", "checks", "web-e2e", "windows-e2e", "desktop-e2e", "windows-check"}
         for path in ("web/e2e/herdr-fixture.ts", "web/e2e/shims/build.ts", "web/e2e/shims/noop.c", "web/e2e/test-size-baseline.json"):
             with self.subTest(path=path):
                 self.assertEqual(self.lanes(path), want)
@@ -402,7 +398,7 @@ class NamedPaths(unittest.TestCase):
 
     def test_configuration_names_the_lanes_that_read_it(self):
         expected = {
-            "web/playwright.config.ts": {"checks", "web-e2e", "remote-mailbox", "windows-e2e"},
+            "web/playwright.config.ts": {"checks", "web-e2e", "windows-e2e"},
             "web/eslint.config.js": {"checks"},
             "web/eslint.e2e.mjs": {"checks"},
             "web/eslint-rules/hide-e2e.mjs": {"checks"},
@@ -429,7 +425,7 @@ class NamedPaths(unittest.TestCase):
         ):
             with self.subTest(path=path):
                 self.assertTrue(plan(path)["full"])
-                self.assertEqual(plan(path)["lanes"], PR_LANES)
+                self.assertEqual(plan(path)["lanes"], list(ci.LANES))
 
     def test_a_crate_readme_is_still_the_crates_change(self):
         # The crate may include it in a doc test; the documentation rule only
@@ -438,7 +434,7 @@ class NamedPaths(unittest.TestCase):
 
     def test_a_named_path_does_not_narrow_a_plan_that_has_another_reason(self):
         self.assertEqual(self.lanes("site/index.html", "web/src/Overview.tsx"), self.lanes("web/src/Overview.tsx"))
-        self.assertEqual(plan("site/index.html", "scripts/verify-cargo.sh")["lanes"], PR_LANES)
+        self.assertEqual(plan("site/index.html", "scripts/verify-cargo.sh")["lanes"], list(ci.LANES))
 
     def test_no_script_named_as_unread_is_called_by_a_lane(self):
         # The claim behind POLICY_ONLY's scripts: nothing but `policy` (and a
@@ -492,6 +488,21 @@ class Workflows(unittest.TestCase):
         self.assertEqual(sorted(name.strip() for name in verify.split(",")), sorted(["plan", *ci.LANES]))
         self.assertEqual(set(jobs), {"plan", "verify", *ci.LANES})
 
+    def test_the_nightly_runs_each_macos_check_once(self):
+        nightly = (ROOT / ".github/workflows/nightly.yml").read_text()
+        # The OS contract runs through `verify` (all three legs), not again as a
+        # job of its own or a step in the desktop job.
+        self.assertNotIn("\n  os-contract:\n", nightly)
+        self.assertNotIn("OS contract on macOS", nightly)
+        # The macOS web tests are the nightly's own job, not a `verify` lane.
+        self.assertIn("\n  web-e2e-macos:\n", nightly)
+        self.assertNotIn("web-e2e-platform", nightly)
+        # The mailbox lane runs on macOS here and on Linux in `pr.yml`.
+        call = nightly[nightly.index("\n  remote-mailbox-macos:\n"):]
+        self.assertIn("uses: ./.github/workflows/remote-mailbox.yml", call)
+        self.assertIn("runner: macos-15", call)
+        self.assertRegex(nightly[nightly.index("\n  report:\n"):], r"needs: \[[^\]]*\bremote-mailbox-macos\b[^\]]*\]")
+
     def test_only_the_macos_lanes_name_a_macos_runner(self):
         # The macOS jobs are the ones in MACOS_LANES; no other job names a macOS
         # runner, so a plan without those lanes holds no macOS job.
@@ -504,7 +515,7 @@ class Workflows(unittest.TestCase):
 
     def test_the_most_a_pull_request_starts_is_the_count_testing_md_states(self):
         jobs = pr_jobs()
-        most = 2 + sum(runner_jobs(jobs[lane]) for lane in PR_LANES)
+        most = 2 + sum(runner_jobs(jobs[lane]) for lane in ci.LANES)
         self.assertLess(most, 23, "the run before the macOS and merge work started 23 jobs")
         testing = (ROOT / "docs/TESTING.md").read_text()
         self.assertIn(f"starts at most {most} jobs", testing)
