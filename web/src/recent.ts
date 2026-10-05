@@ -195,6 +195,19 @@ let projects: string[] = [];
 let reportVisit: (paneId: string) => void = () => {};
 /** The pane last reported, so a repeated focus in the same pane is not reported again before the core echoes it. */
 let reported: string | null = null;
+/**
+ * The core's order when `reported` was sent, until that order moves. While it
+ * has not moved the core has not echoed the visit, and the order read back
+ * puts the reported pane first, so a cycle opened in that gap starts where
+ * the keyboard last was; once it moves, the core's order is the order.
+ */
+let reportedOver: string | null = null;
+const orderOf = (rest: SnapshotRest | null) => (rest?.ui_state?.recent_pane_ids ?? []).join("\n");
+/** The reported pane while the core's order has not moved since; the first look that sees it move ends the wait for good. */
+function unechoedVisit(rest: SnapshotRest | null): string | null {
+  if (reportedOver !== null && orderOf(rest) !== reportedOver) reportedOver = null;
+  return reportedOver === null ? null : reported;
+}
 /** The entry a Recent Panels or Recent Projects commit asked for, until the page shows it (see `expectSurface`). */
 let expected: string | null = null;
 /** The pane an Agent pane commit asked for, until the keyboard is in it (see `expectPane`). */
@@ -240,6 +253,7 @@ export function observeEntries(rest: SnapshotRest | null, current: RecentEntry |
 export function configurePaneVisits(report: (paneId: string) => void) {
   reportVisit = report;
   reported = null;
+  reportedOver = null;
 }
 
 /**
@@ -249,12 +263,14 @@ export function configurePaneVisits(report: (paneId: string) => void) {
  * focused) are not visits, as for `observeEntries`.
  */
 export function observePane(rest: SnapshotRest | null, current: string | null) {
+  unechoedVisit(rest);
   if (expectedPane && current !== expectedPane) return;
   expectedPane = null;
   if (!current || !allPanes(rest).some((row) => row.pane.id === current)) return;
   // Another window's visit moves the core's head, so the same pane is reported again once it is not first.
   if (current === reported && recentPanes(rest)[0] === current) return;
   reported = current;
+  reportedOver = orderOf(rest);
   reportVisit(current);
 }
 
@@ -265,7 +281,9 @@ export function expectPane(paneId: string | null) {
 
 /** Pane ids, the one the keyboard was in last first; remote ids are scoped to their device, so one id names one pane. */
 export function recentPanes(rest: SnapshotRest | null): readonly string[] {
-  return rest?.ui_state?.recent_pane_ids ?? [];
+  const held = rest?.ui_state?.recent_pane_ids ?? [];
+  const pending = unechoedVisit(rest);
+  return pending === null ? held : [pending, ...held.filter((id) => id !== pending)];
 }
 
 /** The project in front, first in the Recent Projects order. */
@@ -301,6 +319,7 @@ export function resetRecent() {
   projects = [];
   reportVisit = () => {};
   reported = null;
+  reportedOver = null;
   expected = null;
   expectedPane = null;
 }
