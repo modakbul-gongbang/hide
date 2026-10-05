@@ -8,6 +8,8 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { startHerdr } from "../../web/e2e/herdr-fixture";
+import { chord } from "../../web/e2e/chords";
+import { toPage } from "../src/main/wirePath";
 import { sendEvent } from "../../web/e2e/wire";
 import { isolate, launch, test } from "./fixture";
 import { compositorPresents } from "../../web/e2e/wait";
@@ -31,7 +33,8 @@ async function stubPicker(app: ElectronApplication, answers: Pick[]): Promise<vo
 
 const pickCalls = (app: ElectronApplication) => app.evaluate(() => (globalThis as unknown as { __pickCalls: number }).__pickCalls);
 
-test("Add a project picks a folder with the native picker, and a cancel or a refusal keeps the dialog", async () => {
+// @platform: The picker answers a native path, which the host spells for the wire (`wirePath.ts`: `/` on every system, a drive path on Windows).
+test("Add a project picks a folder with the native picker, and a cancel or a refusal keeps the dialog", { tag: "@platform" }, async () => {
   const herdr = await startHerdr();
   const run = isolate(herdr, "add-project");
   let app: ElectronApplication | undefined;
@@ -74,8 +77,8 @@ test("Add a project picks a folder with the native picker, and a cancel or a ref
     await stubPicker(app, [{ canceled: false, filePaths: [outside] }]);
     await browse.click();
     await expect(alert).toHaveAttribute("data-registration-reason", "outside_home");
-    await expect(alert).toHaveAttribute("data-registration-path", outside);
-    await expect(alert).toContainText(outside);
+    await expect(alert).toHaveAttribute("data-registration-path", toPage(outside));
+    await expect(alert).toContainText(toPage(outside));
     await expect(browse).toBeEnabled();
     await captureWindow(app, page, "add-project-refused");
 
@@ -86,12 +89,12 @@ test("Add a project picks a folder with the native picker, and a cancel or a ref
     await expect(page.locator("[data-project-list]")).toContainText("alpha", { timeout: 20_000 });
 
     // ⌘⇧N opens it again; the same folder is refused by the shell before anything is sent.
-    await page.keyboard.press("Meta+Shift+KeyN");
+    await page.keyboard.press(chord("new_workspace", "electron"));
     await expect(dialog).toBeVisible();
     await stubPicker(app, [{ canceled: false, filePaths: [alpha] }]);
     await page.keyboard.press("Enter");
     await expect(alert).toHaveAttribute("data-registration-reason", "already_registered");
-    await expect(alert).toContainText(alpha);
+    await expect(alert).toContainText(toPage(alpha));
     await page.keyboard.press("Escape");
     await expect(dialog).toHaveCount(0);
 
@@ -109,7 +112,7 @@ test("Add a project picks a folder with the native picker, and a cancel or a ref
     await sendEvent(page, { origin: new URL(page.url()).origin, token: state.token }, "register_device", {
       id: "ssh-none", label: "Offline box", ssh_alias: "hide-e2e-no-such-host.invalid", host_consent: false,
     });
-    await page.keyboard.press("Meta+Shift+KeyN");
+    await page.keyboard.press(chord("new_workspace", "electron"));
     await dialog.locator("[data-add-project-host]").click();
     await page.locator('[data-host-option="ssh-none"]').click();
     await expect(dialog).toHaveAttribute("data-add-project", "ssh-none");
@@ -156,7 +159,7 @@ test("Create new project makes a Git repository and adds it; a name already take
 
     // Under Browse folder, Create new project opens its own view with the name field focused;
     // with no project yet the folder goes in home.
-    await page.keyboard.press("Meta+Shift+KeyN");
+    await page.keyboard.press(chord("new_workspace", "electron"));
     await expect(dialog.locator("[data-add-project-other-ways]")).toContainText("Other ways to add");
     await dialog.locator('[data-add-project-way="create"]').click();
     await expect(view.getByRole("heading", { name: "Create a new project" })).toBeVisible();
@@ -168,7 +171,7 @@ test("Create new project makes a Git repository and adds it; a name already take
     await stubPicker(app, [{ canceled: false, filePaths: [projects] }]);
     await location.click();
     await expect(location).toContainText("Git repository in ~/projects");
-    await expect(preview).toHaveAttribute("data-create-project-path", path.join(projects, "project-name"));
+    await expect(preview).toHaveAttribute("data-create-project-path", toPage(path.join(projects, "project-name")));
     await name.fill("taken");
     await expect(problem).toHaveAttribute("data-create-project-problem", "already_exists");
     await expect(submit).toBeDisabled();
@@ -176,7 +179,7 @@ test("Create new project makes a Git repository and adds it; a name already take
     await expect(problem).toHaveAttribute("data-create-project-problem", "name");
     await expect(submit).toBeDisabled();
     await name.fill("fresh");
-    await expect(preview).toHaveAttribute("data-create-project-path", path.join(projects, "fresh"));
+    await expect(preview).toHaveAttribute("data-create-project-path", toPage(path.join(projects, "fresh")));
     await expect(problem).toHaveCount(0);
     await expect(submit).toBeEnabled();
     await captureWindow(app, page, "create-project");
@@ -190,7 +193,7 @@ test("Create new project makes a Git repository and adds it; a name already take
     expect(fs.readFileSync(path.join(projects, "taken", "notes.md"), "utf8")).toBe("mine\n");
 
     // The next create starts beside it, and the same name again is the project already added.
-    await page.keyboard.press("Meta+Shift+KeyN");
+    await page.keyboard.press(chord("new_workspace", "electron"));
     await dialog.locator('[data-add-project-way="create"]').click();
     await expect(location).toContainText("Git repository in ~/projects");
     await name.fill("fresh");
@@ -264,8 +267,8 @@ test("Clone from URL clones a repository into a folder under home and adds it as
     // Another parent from the folder picker frees it.
     await stubPicker(app, [{ canceled: false, filePaths: [projects] }]);
     await dialog.locator("[data-clone-browse]").click();
-    await expect(dialog.locator("[data-clone-parent]")).toHaveValue(projects);
-    await expect(dialog.locator("[data-clone-target]")).toHaveAttribute("data-clone-target", path.join(projects, "origin"));
+    await expect(dialog.locator("[data-clone-parent]")).toHaveValue(toPage(projects));
+    await expect(dialog.locator("[data-clone-target]")).toHaveAttribute("data-clone-target", toPage(path.join(projects, "origin")));
     await expect(submit).toBeEnabled();
     await captureWindow(app, page, "clone-from-url-ready");
 
@@ -277,9 +280,9 @@ test("Clone from URL clones a repository into a folder under home and adds it as
     expect(fs.readdirSync(projects)).toEqual(["origin"]);
 
     // Opened again, the parent defaults beside the project just added, where the folder is now taken.
-    await page.keyboard.press("Meta+Shift+KeyN");
+    await page.keyboard.press(chord("new_workspace", "electron"));
     await dialog.locator('[data-add-project-way="clone"]').click();
-    await expect(dialog.locator("[data-clone-parent]")).toHaveValue(path.join(projects));
+    await expect(dialog.locator("[data-clone-parent]")).toHaveValue(toPage(projects));
     await dialog.locator("[data-clone-url]").fill(url);
     await expect(dialog.locator("[data-clone-target-reason]")).toHaveAttribute("data-clone-target-reason", "already_exists");
     await expect(dialog.locator("[data-clone-submit]")).toBeDisabled();
@@ -298,7 +301,8 @@ test("Clone from URL clones a repository into a folder under home and adds it as
 /** A capture of the candidate window by its own id, when a run directory was named. */
 async function captureWindow(app: ElectronApplication, page: Page, name: string): Promise<void> {
   const dir = process.env.HIDE_E2E_SCREENSHOT_DIR;
-  if (!dir) return;
+  // The capture tool is macOS's; other systems keep the renderer captures.
+  if (!dir || process.platform !== "darwin") return;
   // The window paints on its own frame; capture after two, so the state just asserted is on screen.
   await page.evaluate(() => new Promise<void>((resolve) => requestAnimationFrame(() => requestAnimationFrame(() => resolve()))));
   await compositorPresents(page);
