@@ -77,13 +77,10 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     await screenshot(page, "s6-main");
 
     // #350's project card opens its checkout. Shared Overview's scope
-    // opens on the request view (overview-request-view D-05);
-    // the Agents graph's rows list both agents, and an agent enters the
-    // Workspace at that pane (B2).
+    // opens on the Agents graph, whose rows list both agents, and an agent
+    // enters the Workspace at that pane (B2).
     await project.click();
     await openCurrentProjectOverview(page, "fixture");
-    await expect(page.locator('[data-overview-screen][data-overview-view="requests"]')).toBeVisible();
-    await page.locator('[data-lens-tile-button="agents"]').click();
     await expect(page.locator('[data-overview-screen][data-overview-view="agents"]')).toBeVisible();
     await expect(page.locator("[data-overview-screen] [data-graph-open]")).toHaveCount(2);
     await screenshot(page, "s6-overview");

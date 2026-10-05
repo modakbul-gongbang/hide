@@ -63,7 +63,7 @@ export type Screen = { kind: "main"; deviceId?: string; requests?: RequestLens }
  */
 export type MainView = "requests" | "tasks" | "agents" | "projects";
 
-/** A Project Overview's tiles (PRD overview-lenses-tiles-agents D-02, D-36; overview-lenses-prs D-14; overview-request-view D-05): its requests, its agents, its issues, its pull requests, its sessions. */
+/** A Project Overview's lens tabs (PRD overview-lenses-tiles-agents D-02, D-36; overview-lenses-prs D-14; overview-request-view): its agents, its requests, its issues, its pull requests, its sessions. */
 export type OverviewTab = "requests" | "agents" | "issues" | "prs" | "sessions";
 
 /**
@@ -120,13 +120,12 @@ export function toggledFold(folds: readonly string[], fold: string): string[] {
 }
 
 /**
- * Where every way into a Project's Overview lands (overview-request-view D-05):
- * the request view, with the given box selected for when the Agents graph is
- * chosen and no filter. The Issues mode is the page's, the one All projects'
+ * Where every way into a Project's Overview lands: the Agents graph with the
+ * given box selected and no filter. The Issues mode is the page's, the one All projects'
  * Tasks shows too (task-agents-views D-10).
  */
 export function entryLens(box: string | null, tasksMode: TasksMode): OverviewLens {
-  return { tab: "requests", tasksMode, box, folds: [], graph: NO_GRAPH_FILTER, focusTask: null, panel: null, filter: NO_FILTER, prs: NO_PR_LENS, requests: NO_REQUEST_LENS };
+  return { tab: "agents", tasksMode, box, folds: [], graph: NO_GRAPH_FILTER, focusTask: null, panel: null, filter: NO_FILTER, prs: NO_PR_LENS, requests: NO_REQUEST_LENS };
 }
 
 /**
@@ -303,7 +302,7 @@ type UiStore = {
    * closes these itself as it consumes.
    */
   tooltips: (() => void)[];
-  /** A way into a screen; Home from another screen opens its request view (overview-request-view D-05). */
+  /** A way into a screen; Home from another screen opens its Agents graph. */
   setScreen: (screen: Screen) => void;
   /** A screen brought back as it was left (Recent Panels): Home keeps the view it had. */
   restoreScreen: (screen: Screen) => void;
@@ -360,7 +359,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
   searchReturnFocus: null,
   setOverviewOpen: (overviewOpen) => set({ overviewOpen }),
   setOverviewProject: (overviewProjectId, lens) => set({ overviewProjectId, overviewLens: lens ?? entryLens(null, get().tasksMode) }),
-  mainView: "requests",
+  mainView: "agents",
   tasksMode: "board",
   relation: null,
   sidebarMode: "projects",
@@ -393,7 +392,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
   tooltips: [],
   // Moving by hand drops an open still waiting for its Workspace, so a late
   // answer does not pull the screen away from where the operator went.
-  setScreen: (screen) => set((state) => (screen.kind === "main" && state.screen?.kind !== "main" ? { screen, opening: null, overviewOpen: false, mainView: "requests" } : { screen, opening: null, overviewOpen: false })),
+  setScreen: (screen) => set((state) => (screen.kind === "main" && state.screen?.kind !== "main" ? { screen, opening: null, overviewOpen: false, mainView: "agents" } : { screen, opening: null, overviewOpen: false })),
   restoreScreen: (screen) => set({ screen, opening: null, overviewOpen: false }),
   setMainView: (mainView) => set({ mainView }),
   setMainRequestLens: (patch) => {

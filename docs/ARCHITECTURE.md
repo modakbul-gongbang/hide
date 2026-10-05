@@ -119,7 +119,7 @@ The shell renders those snapshot values and dispatches typed actions; it does no
 
 The web shell reads a Project's Sessions through the same catalog, but for a Project it names rather than the focused checkout (PRD S8 D-03, `herdr-core/src/runtime/project_sessions.rs`).
 `sessions_refresh` with `{workspace_id, device_id}` names one Project for every window of the daemon and reads its history on a worker, and `archive_open` with `workspace_id` reads one of that Project's sessions beside it; without those fields both keep the meaning above.
-Overview's project scope sends it once when it opens, so its Sessions tile counts today's sessions without the Sessions view being chosen (PRD overview-lenses-tiles-agents B5).
+Overview's project scope sends it once when it opens, so its Sessions tab counts today's sessions without the Sessions view being chosen (PRD overview-lenses-tiles-agents B5).
 The named Project stays named while the focus moves, a read that finishes after another Project was named is dropped by the existing generation fence, and naming another Project closes the open session.
 A device Project reads no local session: the section carries the device's reason, because the provider files live on the device and there is no contract yet for reading them there.
 The section rides the snapshot delta on its own revision, `project_sessions`, beside `rest`, `editor` and `changes`, so an agent or navigator change never resends a history; its immutable history rows and open transcript use shared pointers for O(1) unchanged comparisons and payload capture under the lock, and it is absent from the wire until a Project is named.

@@ -457,31 +457,32 @@ Reintroducing a shared attachment shelf requires a supported provider contract f
 
 ## Project Home
 
-Web owner: `web/src/ProjectOverview.tsx` (the Project Overview screen), `web/src/MainScreen.tsx` (the Overview of every project), `web/src/RequestView.tsx` and `web/src/requestList.ts` (the request view both scopes draw and its grouping, one-line and chip rules), `web/src/OverviewLenses.tsx` (the tiles, and the chips, popover and fold line the Agents graph shares), `web/src/GraphView.tsx` and `web/src/agentGraph.ts` (the Agents graph both scopes draw and its layout, routing and filter rules), `web/src/overviewLens.ts` (the buckets, the tile values and the cleanup rule), `web/src/IssuesView.tsx` (the Issues view both scopes draw, with its panel beside the board), `web/src/TaskBoards.tsx` (the Board, List and Dependencies modes and the issue card, which the Overview of every project calls Tasks), `web/src/IssuePanel.tsx` (the issue panel), `web/src/issueDetails.ts` (the issue reads the panel and the preview share), `web/src/MarkdownText.tsx` (an issue's body in Markdown), `web/src/IssueDialogs.tsx` (New issue and Start), `web/src/issueStart.ts` (the Start dialog's first name and prompt), `web/src/PullRequestsView.tsx` (the PRs view), `web/src/PrDialogs.tsx` (이슈 잇기 and 맡기기), `web/src/prDelegate.ts` (맡기기's first prompt), `web/src/projectBoard.ts` (the board rules, the PRs tab's groups included); a card's agent row is the Agents list's `web/src/components/agent-row.tsx`.
+Web owner: `web/src/ProjectOverview.tsx` (the Project Overview screen), `web/src/MainScreen.tsx` (the Overview of every project), `web/src/RequestView.tsx` and `web/src/requestList.ts` (the request view both scopes draw and its grouping, one-line and chip rules), `web/src/OverviewLenses.tsx` (the lens tabs, and the chips, popover and fold line the Agents graph shares), `web/src/GraphView.tsx` and `web/src/agentGraph.ts` (the Agents graph both scopes draw and its layout, routing and filter rules), `web/src/overviewLens.ts` (the buckets, the tab values and the cleanup rule), `web/src/IssuesView.tsx` (the Issues view both scopes draw, with its panel beside the board), `web/src/TaskBoards.tsx` (the Board, List and Dependencies modes and the issue card, which the Overview of every project calls Tasks), `web/src/IssuePanel.tsx` (the issue panel), `web/src/issueDetails.ts` (the issue reads the panel and the preview share), `web/src/MarkdownText.tsx` (an issue's body in Markdown), `web/src/IssueDialogs.tsx` (New issue and Start), `web/src/issueStart.ts` (the Start dialog's first name and prompt), `web/src/PullRequestsView.tsx` (the PRs view), `web/src/PrDialogs.tsx` (이슈 잇기 and 맡기기), `web/src/prDelegate.ts` (맡기기's first prompt), `web/src/projectBoard.ts` (the board rules, the PRs tab's groups included); a card's agent row is the Agents list's `web/src/components/agent-row.tsx`.
 The web boards follow PRD task-agents-views, reworked issue-first on 2026-09-28: work starts from an issue, and a card reads issue, then agents, then pull request.
-The project's page is laid out by PRD overview-lenses-tiles-agents: tiles where the tab row was, and an Agents view, one graph of checkout boxes and delegation lines (the Agents graph), in place of the agent inbox.
-Its PRs tile and view, 이슈 잇기 and 맡기기 are PRD overview-lenses-prs's.
-Its first screen, the request view and its `요청` tile and tab, is PRD overview-request-view's; the verb each row carries is the core's (`docs/status-model.md`, The request view's verb).
+The project's page is laid out by PRD overview-lenses-tiles-agents: an Agents view, one graph of checkout boxes and delegation lines (the Agents graph), in place of the agent inbox; its tiles became one row of tabs on 2026-10-06, when the Overview modal grew to the window, because the tiles took a third of the modal's height.
+Its PRs tab and view, 이슈 잇기 and 맡기기 are PRD overview-lenses-prs's.
+The request view and its `요청` tab are PRD overview-request-view's, which made it the first screen; since 2026-10-06 the first screen is the Agents graph and 요청 the tab beside it, because the operator looked at the graph first.
+The verb each row carries is the core's (`docs/status-model.md`, The request view's verb).
 
 Project Home uses the shared tab choice, badges, agent identity marks, settings field, icon buttons, and command tooltip.
 
-### Tiles and the first screen
+### Tabs and the first screen
 
-Under the facts line stand five tiles of one width, `요청 · Agents · Issues · PRs · Sessions`, in the place of a tab row; the chosen one is outlined and a click on a tile opens its view.
-A tile holds its name, a yellow badge of how many agents it is the operator's turn with (none at zero), a large number and a small unit, and one bar; it carries no sentence.
-요청 counts the rows that are the operator's to do (답할 것, 고칠 것, 리뷰·머지, 멈춤 and 결과 볼 것), its badge the ones to answer, and its bar splits them by those five verbs.
-Agents counts the project's agents, its badge the ones asking or finished and not yet looked at, and its bar splits them into 내 차례, 일하는 중, 자식 대기 and 쉬는 중.
+Under the header's rule one row carries five tabs, `Agents · 요청 · Issues · PRs · Sessions`, with the chosen view's controls at the row's right end, as the Home Overview's tab row has them; a click or the arrow keys choose a tab and its view.
+A tab holds its name, its number, a yellow count of what is the operator's turn raised beside that number (none at zero) and, after a failed read, a ⚠; the chosen tab carries its bar as a thin line along its foot, and no tab carries a sentence.
+Agents counts the project's agents, its yellow count the ones asking or finished and not yet looked at, and its bar splits them into 내 차례, 일하는 중, 자식 대기 and 쉬는 중.
+요청 counts the rows that are the operator's to do (답할 것, 고칠 것, 리뷰·머지, 멈춤 and 결과 볼 것), its yellow count the ones to answer, and its bar splits them by those five verbs.
 Issues counts the open issues, `열림`, and its bar splits them into 백로그, 진행 중 and 리뷰.
-PRs counts the open pull requests, `열림`, its badge the ones that are the operator's turn, and its bar splits them into 내 차례, 에이전트가 고치는 중 and CI 실패; its badge's breakdown is `리뷰 · 초안 · 끝난 에이전트 확인`.
+PRs counts the open pull requests, `열림`, its yellow count the ones that are the operator's turn, and its bar splits them into 내 차례, 에이전트가 고치는 중 and CI 실패; that count's breakdown is `리뷰 · 초안 · 끝난 에이전트 확인`.
 Sessions counts the project's sessions updated today by this machine's date, `오늘`, and its bar splits them into Claude and Codex; opening the Overview reads the project's session history once to fill it.
-Resting on a bar shows its legend, each part's name and count, and resting on a badge its breakdown (`질문 1 · 승인 1 · 끝남 1`).
-A value not yet read leaves the number and the bar out, and zero is drawn as zero; when a source read fails, a ⚠ stands by the tile's name and resting on it says what failed and how old the value is, with the reason in the diagnostic log and no banner.
-The Agents tile's agents are the device's live rows, so it has no last value to age: while the device cannot answer, its ⚠ says why and the number stays empty.
+Resting on a tab shows one popover: the number with its unit (`3 열림`), the yellow count with its breakdown (`내 차례 3 (질문 1 · 승인 1 · 끝남 1)`), the bar's legend, each part's name and count, and what failed.
+A value not yet read leaves the number and the bar out, and zero is drawn as zero; when a source read fails, a ⚠ stands by the tab's name and its popover says what failed and how old the value is, with the reason in the diagnostic log and no banner.
+The Agents tab's agents are the device's live rows, so it has no last value to age: while the device cannot answer, its ⚠ says why and the number stays empty.
 
-Selecting the current-project scope starts on the request view; closing and reopening the shared Overview retains its lens within this window, while ⌘K issue and PR results select their own lens; the Agents tile then opens the graph with the box of the checkout in front selected (outlined and scrolled into view), or main's box when the checkout in front is elsewhere or folded away, and with no filter.
-Every way into the Home Overview from another screen, the Home row and the path back included, opens its `요청` tab.
-Only Global Recent Panels (a separate command, unbound by default) brings an Overview back as it was left, its tile, mode, selected box, filter, opened folds and expanded request rows; the view lives on the screen, not in stored settings.
-The PRs view opens only from its tile, a PR chip, `이슈 없는 PR N`, the sidebar's PR card and Recent Panels.
+Every way into a project's Overview starts on the Agents graph with the box of the checkout in front selected (outlined and scrolled into view), or main's box when the checkout in front is elsewhere or folded away, and with no filter; closing and reopening the shared Overview retains its lens within this window, while ⌘K issue and PR results select their own lens.
+Every way into the Home Overview from another screen, the Home row and the path back included, opens its Agents tab.
+Only Global Recent Panels (a separate command, unbound by default) brings an Overview back as it was left, its tab, mode, selected box, filter, opened folds and expanded request rows; the view lives on the screen, not in stored settings.
+The PRs view opens only from its tab, a PR chip, `이슈 없는 PR N`, the sidebar's PR card and Recent Panels.
 The facts line's right end carries the chosen view's controls: the status chips, search and device choice for Agents, the filter and `Board · List · Dependencies` for Issues, and nothing for PRs.
 
 ### 요청: the request view
@@ -558,13 +559,12 @@ A selected box that is folded away leaves main's box carrying the selection, so 
 The lines a folded box would have drawn are gone, and the row that delegated into it carries a tucked badge, the mark and count of the folded agents (`✓2`), counted on the nearest row still drawn; its tooltip says the words.
 The Issues view's `이슈 없는 워크트리 N` opens this graph with `에이전트 없는 워크트리` unfolded.
 
-The filter is at the facts line's right end: the status chips `내 차례 · 일하는 중 · 쉬는 중`, a search field, and, only when two or more devices run agents in scope, a device choice with this Mac first.
+The filter is at the tab row's right end: the status chips `내 차례 · 일하는 중 · 쉬는 중`, a search field, and, only when two or more devices run agents in scope, a device choice with this Mac first.
 Chips are multiple choice and any lit one keeps its rows; `일하는 중` keeps working agents and agents waiting on their children together, pressing a lit chip turns it off, and with none lit the state does not filter.
 The search keeps the agents whose title, branch, issue number or pull request number contains it, case ignored, and `#272` and `272` find the same number.
 The chips are alternatives of one kind, and the three kinds (status, search, device) all have to match, so a row stays only when it passes each kind that is set.
 A row or box that does not match is hidden, except that the chain of parents leading to a matching row stays, faded, so no line breaks; a filter draws every box it keeps and folds nothing, and turning one filter off redraws from the rest at once.
 When nothing matches, the graph's place holds one line, `필터에 맞는 에이전트가 없습니다`, with `필터 해제`, which turns off the chips, the search and the device together.
-Pressing a segment of the Agents tile's bar lights only the chip that segment belongs to (working and waiting on children are both `일하는 중`) and opens this graph.
 Escape in the search field clears the search alone, leaving chips and device; in an empty field it leaves the Overview as before.
 The shared Overview's project lens keeps its filter, selected box and folds for that window; returning to the same scope retains them.
 
@@ -588,7 +588,7 @@ The graph's elements carry `data-graph-box`, `data-graph-row`, `data-graph-edge`
 
 ### Issues
 
-The Issues tile opens a board of issues, laid out by PRD overview-lenses-issues: four columns, `백로그 · 진행 중 · 리뷰 · 완료`, each headed `name count`, on a page that scrolls as one; a column grows with its cards and its head stays in view while the page scrolls under it.
+The Issues tab opens a board of issues, laid out by PRD overview-lenses-issues: four columns, `백로그 · 진행 중 · 리뷰 · 완료`, each headed `name count`, on a page that scrolls as one; a column grows with its cards and its head stays in view while the page scrolls under it.
 백로그 always stands, so a new issue has somewhere to go; another column shows only while it holds a card or a line of work with no issue.
 
 Every project on this Mac has one issue source, chosen in Settings › Issues: GitHub issues, read and written through the operator's own `gh`, or Local issues, which Hide keeps in `local-issues.json` in its state directory, numbered per project and shown as `L-N`.
@@ -615,7 +615,7 @@ Hover or focus fills the id line's reserved slot without changing the card's hei
 Resting half a second on the id opens the issue's preview (id, labels, state, title, the body's first three lines as plain words, the author, the date and the comment count); the preview reads the issue once, at most one read at a time.
 Resting on an agent row's line opens what that agent last said, on the checkout chip the checkout card, and on the PR chip the PR card.
 A card's empty space and its title open the issue panel, an agent row that agent's pane, the checkout chip its Workspace, the PR chip the pull request's row on the PRs view (⌘-click GitHub), and a ⌘-click on the id GitHub; every area has one destination.
-When the source cannot be read the board keeps the last issues it read, each card carries a small ⚠ whose popover says `GitHub 읽기 실패 · N분 전 값 · 이유는 로그에`, and 백로그's head and the Issues tile carry the same mark; there is no banner, and the reason is in the diagnostic log.
+When the source cannot be read the board keeps the last issues it read, each card carries a small ⚠ whose popover says `GitHub 읽기 실패 · N분 전 값 · 이유는 로그에`, and 백로그's head and the Issues tab carry the same mark; there is no banner, and the reason is in the diagnostic log.
 
 The issue panel opens to the right of the board, which stays in the width left to it; its head is the source glyph, the id, the source's name, Open or Closed and ×, then the title, then an action line: `▷ 시작` and `S` on a backlog issue, Workspace and `O` in progress, the pull request in review, beside it GitHub (a GitHub issue) or edit (a Local one), and `⋯` at its end.
 Its properties are the stage, the labels, the author and date and the assignees for a GitHub issue, the day a Local issue was made, when it last changed, and what blocks it; a property with no value has no row.
@@ -626,7 +626,7 @@ The body is drawn as Markdown, and under it a GitHub issue shows `댓글 N`, the
 Opening the panel reads the issue's body, labels, author, assignees and comments once, on a worker off the core's lock; while it reads, the body and those properties are skeletons and the rest stands on the snapshot, and an issue opened again shows what was read before while it reads again.
 A failed read puts one line of why and `재시도` in the body's place and leaves the rest of the panel standing; `재시도` reads that issue again.
 A Local issue's title or body edits in place on a click or the edit icon: ⌘↵ saves, Escape cancels, the card changes only once the save is answered, and a refused save keeps the text with the reason in place.
-The arrow keys move the panel with the card: ↑↓ within a column, ←→ to the card at the same height in the next column, staying at a column's end; Escape closes the panel first and leaves the Overview after, and choosing another tile closes it.
+The arrow keys move the panel with the card: ↑↓ within a column, ←→ to the card at the same height in the next column, staying at a column's end; Escape closes the panel first and leaves the Overview after, and choosing another tab closes it.
 On the board a card takes focus, the arrows move between cards, Enter opens the panel, Space the preview, `S` starts, `O` opens the Workspace, and `C` makes a new issue.
 Hover, focus and a half-second rest publish no snapshot and start no Git or disk work; the preview's one read is the only event they send.
 
@@ -638,7 +638,7 @@ A name that is already a branch says so, and when a worktree has it the primary 
 The first prompt is filled from the issue's body, which the dialog reads when it opens, names the issue, and for a GitHub issue asks for a pull request that closes it when Settings › Issues says so; the operator edits it before starting.
 Starting creates the worktree, writes the link into it, starts the agent with the prompt as its first instruction, then brings the new pane's Workspace to the front; a folder project has no worktree, so its agent starts in the folder with the prompt.
 
-The facts line's right end carries the filter and `Board | List | Dependencies` (on the Overview of every project, the right of its tab row).
+The tab row's right end carries the filter and `Board | List | Dependencies` on both scopes.
 The filter keeps the cards whose id or title holds every word typed and, with `내 차례만`, only the ones waiting on the operator; the lines of work with no issue stay, and with no card left 백로그 says `필터에 맞는 이슈 없음` with `필터 지우기`.
 A project's filter lives with its Overview's lens and comes back with it; the Overview of every project keeps its own while the page is open.
 The mode is a mode of the Issues view, not a tab; it belongs to the page, so the Overview of every project's Tasks and every entry into a project keep it.
@@ -653,7 +653,7 @@ When the source answers the issues but not their dependencies, the last blockers
 
 ### PRs
 
-The PRs tile opens the project's pull requests grouped by whose move it is: `내 차례`, `에이전트가 고치는 중`, `CI 실패 · 맡은 에이전트 없음` and `최근 머지`, each headed `name count`, a group with no row not drawn.
+The PRs tab opens the project's pull requests grouped by whose move it is: `내 차례`, `에이전트가 고치는 중`, `CI 실패 · 맡은 에이전트 없음` and `최근 머지`, each headed `name count`, a group with no row not drawn.
 A merged pull request is 최근 머지; an open one whose branch's checkout has a working agent (a parent waiting on its working children included) is 에이전트가 고치는 중; otherwise failed checks or a change request make it CI 실패; every other open one, asking for review, approved, a draft, or with an agent there finished and not looked at, is the operator's.
 A closed pull request that was not merged is not shown.
 최근 머지 starts folded and its head unfolds it: every merged pull request whose worktree record is still here, and the others merged in the last 14 days, newest merge first, each row dimmed.
@@ -666,8 +666,8 @@ The row's click and Enter unfold it: the branch's agents under their ancestors, 
 Under the pointer or the keyboard the time's fixed slot holds the row's buttons and nothing moves: `▷ 맡기기` on a failing or change-requested pull request with no working agent, `정리` on a merged one whose worktree is still here, otherwise the GitHub icon and `⋯` with 맡기기, 이슈 잇기 and 브랜치 이름 복사.
 Resting half a second on the issue cell opens the issue's preview, on the number the PR card, on the branch the checkout card, and on an agent's mark everything that agent last said; an empty issue cell turns into the 이슈 잇기 icon under the pointer, whose popover says `이 PR을 이슈에 잇는다. 이을 이슈가 없으면 PR 제목 · 본문으로 새로 만든다`.
 The issue chip opens the issue's panel, the branch its Workspace, the CI mark the checks on GitHub, the review word the review on GitHub, and one agent's mark its pane (several unfold the row).
-Until GitHub has answered the view is three skeleton rows and the tile has no number; when a read fails the last pull requests stay, the PRs tile carries ⚠ whose popover says `GitHub 읽기 실패 · N분 전 값 · 이유는 로그에`, and there is no banner.
-A repository with no GitHub remote has no pull requests, which is an answer: the tile reads 0.
+Until GitHub has answered the view is three skeleton rows and the tab has no number; when a read fails the last pull requests stay, the PRs tab carries ⚠ whose popover says `GitHub 읽기 실패 · N분 전 값 · 이유는 로그에`, and there is no banner.
+A repository with no GitHub remote has no pull requests, which is an answer: the tab reads 0.
 Hover, focus, unfolding and a half-second rest are the screen's own state and publish nothing; the view's state rides on the screen, so Recent Panels brings back its unfolded rows.
 
 이슈 잇기 opens the project source's open issues, searchable, with `새 이슈 만들기` last; closed issues and another repository's are not in it.
@@ -689,7 +689,7 @@ Started, the agent works in that checkout and the screen goes to its pane; while
 Overview is one page-local surface, entered from the sidebar's Overview row, the Workspace toolbar icon or ⌘⇧O.
 Its title, scope labels, close control, sidebar navigation and attention tooltip follow the confirmed interface language; project names and shortcut keycaps stay unchanged.
 The project scope's path back and missing-project action both select All projects within the same surface.
-It opens as a centered modal over a mounted Workspace, preserving terminal geometry and output, and otherwise as a central page.
+It opens as a centered modal over a mounted Workspace, as large as the window allows with the window inset (`--size-settings-sheet-window-inset`) clear on every side and at most `--size-overview-sheet-w` by `--size-overview-sheet-h`, preserving terminal geometry and output, and otherwise as a central page.
 All projects shows the device in front; the other scope shows the front Workspace's project.
 The scope choice lasts for the window's session, starts at All projects, follows a changed current project and resets to All projects for Home or no Workspace.
 The shared header reads Overview, All projects / current project and Esc; long project names truncate with their full name in a tooltip, and the content scrolls within the window.
@@ -701,8 +701,8 @@ Native browser displays use the existing dialog still rules without reloading.
 Project rows and ⌘K project results open their most recent usable checkout, not an Overview destination.
 Issue and PR results open the shared Overview in that project's scope with their panel or PR selected.
 The Home row opens its device's All projects page; the shared Overview row carries the selection.
-The title row carries the path back (`Home / Project`, where Home is the project's device's), New agent and 새 이슈; directly under it is one line of facts, then the tiles, which show even while the project has no agent.
-The facts line holds only facts about storage: for a Local Git project the worktree count, the disk every worktree and the shared Git directory occupy, main's distance behind origin only above zero, a warning cell only while the volume is short of room, and `N merged → 정리` only above zero; the open issues and pull requests are counted on the tiles, not here.
+The title row carries the path back (`Home / Project`, where Home is the project's device's), New agent and 새 이슈; directly under it is one line of facts, then, under the header's rule, the tab row, which shows even while the project has no agent.
+The facts line holds only facts about storage: for a Local Git project the worktree count, the disk every worktree and the shared Git directory occupy, main's distance behind origin only above zero, a warning cell only while the volume is short of room, and `N merged → 정리` only above zero; the open issues and pull requests are counted on the tabs, not here.
 The disk number's tooltip lists build cache, dependencies, worktree source, the folders Hide does not know and the shared Git data, and pressing the number opens the disk cleanup sheet.
 `N merged → 정리` opens the same sheet filtered to finished checkouts; the `정리할 것` fold on Agents and the box's own `정리` (the Delete worktree dialog) are unchanged.
 The warning cell `여유 X GB · Y GB 비울 수 있음` stands only once the measurement is back and the volume has less than 10 GB free; Y is the build cache and dependencies of finished checkouts no agent is working in, and pressing the cell opens the sheet filtered to finished checkouts.
@@ -712,7 +712,7 @@ The size reads `… GB` while measurement runs and is left out, with the reason 
 Local checkout commits, branch switches, pulls, merges, fetches, rebases and staging changes refresh that repository's worktree facts after the Git directory becomes quiet; Hide does not fetch automatically, so `behind origin` follows the local remote ref.
 An edit confined to a working-tree file is reflected when the Overview opens again.
 Each issue card and List row shows its creation age in the same compact relative-time form used for activity, or no age when its source did not provide creation time; the backlog remains sorted by latest update.
-The Home Overview keeps its tab row, `요청 · Tasks · Agents · Projects`: 요청 is the request view over the device's projects, the Tasks board mixes the device's projects' issues, Agents is the same graph over those projects with the project's name on a header line above each project's boxes, and Projects is the device's registered projects; the device's Home folder is none of them.
+The Home Overview keeps its tab row, `Agents · 요청 · Tasks · Projects`: Agents is the same graph over the device's projects with the project's name on a header line above each project's boxes, 요청 is the request view over those projects, the Tasks board mixes their issues, and Projects is the device's registered projects; the device's Home folder is none of them.
 Its 요청 tab carries the count of rows to answer and its Agents tab the count of agents it is the operator's turn with; there is no band under the header.
 Its title row carries Add project in the desktop app and 새 이슈 (for the project in front, else the first one with a source), and its facts line the project count, the open issues once every source has answered, and, only when every project can give its part, the open pull-request and merged totals.
 New agent opens the New worktree dialog on a Git project and the folder's Workspace otherwise.

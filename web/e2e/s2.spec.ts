@@ -172,14 +172,11 @@ test("switching checkouts is one focus_checkout, and a plain folder's Overview o
     await expect.poll(() => sent.get("focus_checkout")).toBe(focusEvents + 1);
 
     // A plain folder's sidebar row opens its checkout, so its Overview is
-    // reached from All projects (S6 B1). It opens on the request view
-    // (overview-request-view D-05), its Agents tile on its agents' boxes,
-    // and the sidebar row enters the Workspace again.
+    // reached from All projects (S6 B1). It opens on its Agents graph, on
+    // its agents' boxes, and the sidebar row enters the Workspace again.
     await firstRow.click();
     await page.locator("[data-go-main]").click();
     await page.getByRole("tab", { name: "fixture", exact: true }).click();
-    await expect(page.locator('[data-overview-screen][data-overview-view="requests"]')).toBeVisible();
-    await page.locator('[data-lens-tile-button="agents"]').click();
     await expect(page.locator('[data-overview-screen][data-overview-view="agents"] [data-graph-box]')).toHaveCount(1);
     await firstRow.click();
     await expect(page.locator("[data-canvas]")).toHaveAttribute("data-canvas", herdr.tab);
