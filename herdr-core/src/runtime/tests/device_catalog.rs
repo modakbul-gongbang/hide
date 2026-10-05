@@ -1951,5 +1951,8 @@ fn a_device_pane_operation_whose_session_arrived_before_its_answer_settles_on_th
     // The next operation in the tab is sent, not turned away as running.
     zoom(&mut runtime, "zoom-2");
     assert_eq!(runtime.snapshot.status.last_error, None);
-    assert_eq!(runtime.remote_operations.len(), 1);
+    assert_eq!(
+        runtime.remote_operations.keys().collect::<Vec<_>>(),
+        [&(TARGET.to_owned(), "zoom-2".to_owned())]
+    );
 }
