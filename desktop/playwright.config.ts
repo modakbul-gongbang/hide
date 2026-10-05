@@ -2,6 +2,8 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./e2e",
+  // The web fixtures' C programs, built once before any test.
+  globalSetup: "./e2e/global-setup.ts",
   timeout: 90_000,
   // Each spec starts its own isolated Herdr server, hided and Electron app;
   // one worker keeps them from contending for the machine.

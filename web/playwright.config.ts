@@ -2,6 +2,8 @@ import { defineConfig } from "@playwright/test";
 
 export default defineConfig({
   testDir: "./e2e",
+  // Builds the fixtures' C programs once, before any test (e2e/shims/build.ts).
+  globalSetup: "./e2e/global-setup.ts",
   timeout: 30_000,
   // Each spec starts its own isolated Herdr server, hided and Chromium; running
   // them in parallel makes them contend for the runner's cores, and a timing
