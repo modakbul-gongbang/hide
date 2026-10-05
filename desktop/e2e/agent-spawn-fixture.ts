@@ -7,7 +7,7 @@ import path from "node:path";
 import type { HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { compileFixtureC, fixtureExecutable, fixtureToolPath, inheritedFixtureEnv } from "../../web/e2e/platform-fixture";
 
-export type SpawnProvider = { script: string; completed: string };
+type SpawnProvider = { script: string; completed: string };
 const shellQuote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
 const powershellQuote = (value: string) => `'${value.replaceAll("'", "''")}'`;
 

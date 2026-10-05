@@ -488,9 +488,11 @@ fn read_issues(
     // failure keeps each issue's earlier blockers (`ingest_github`) and is
     // said beside the tasks, not in place of them.
     let dependencies_failure = match read_dependencies(root, &issues) {
-        Ok(blockers) => {
+        Ok(mut dependencies) => {
             for issue in &mut issues {
-                issue.blocked_by = blockers.get(&issue.reference).cloned().unwrap_or_default();
+                let known = dependencies.remove(&issue.reference).unwrap_or_default();
+                issue.blocked_by = known.blocked_by;
+                issue.sub_issues = known.sub_issues;
             }
             None
         }
@@ -519,18 +521,29 @@ fn read_issues(
 /// issue blocked by more than this is drawn with the first ones.
 const BLOCKERS_PER_ISSUE: usize = 20;
 
-type Blockers =
-    std::collections::BTreeMap<crate::issues::IssueReference, Vec<crate::issues::IssueReference>>;
+/// How many sub-issues of one issue a read lists: GitHub's own limit per
+/// issue, so the list is never shorter than the count GitHub reports.
+const SUB_ISSUES_PER_ISSUE: usize = 100;
 
-/// The open issues blocking each of `issues`, from GitHub's issue
-/// dependencies (`Issue.blockedBy`), read in one GraphQL query grouped by
-/// repository. A closed blocker no longer blocks and is left out.
+/// What GitHub relates to one issue besides its pull requests.
+#[derive(Default)]
+struct IssueDependencies {
+    blocked_by: Vec<crate::issues::IssueReference>,
+    sub_issues: crate::issues::SubIssuesSnapshot,
+}
+
+type Dependencies = std::collections::BTreeMap<crate::issues::IssueReference, IssueDependencies>;
+
+/// The open issues blocking each of `issues` (`Issue.blockedBy`) and their
+/// sub-issues (`Issue.subIssuesSummary`, `Issue.subIssues`), read in one
+/// GraphQL query grouped by repository. A closed blocker no longer blocks and
+/// is left out.
 fn read_dependencies(
     root: &Path,
     issues: &[crate::issues::IssueSnapshot],
-) -> Result<Blockers, GhFailure> {
+) -> Result<Dependencies, GhFailure> {
     if issues.is_empty() {
-        return Ok(Blockers::new());
+        return Ok(Dependencies::new());
     }
     let query = dependency_query(issues)?;
     let output = gh(
@@ -561,7 +574,7 @@ fn dependency_query(issues: &[crate::issues::IssueSnapshot]) -> Result<String, G
             "r{index}:repository(owner:\"{owner}\",name:\"{name}\"){{nameWithOwner"
         ));
         for number in numbers {
-            query.push_str(&format!(" i{number}:issue(number:{number}){{number blockedBy(first:{BLOCKERS_PER_ISSUE}){{nodes{{number state repository{{nameWithOwner}}}}}}}}"));
+            query.push_str(&format!(" i{number}:issue(number:{number}){{number blockedBy(first:{BLOCKERS_PER_ISSUE}){{nodes{{number state repository{{nameWithOwner}}}}}} subIssuesSummary{{total completed}} subIssues(first:{SUB_ISSUES_PER_ISSUE}){{nodes{{number title state repository{{nameWithOwner}}}}}}}}"));
         }
         query.push('}');
     }
@@ -569,7 +582,7 @@ fn dependency_query(issues: &[crate::issues::IssueSnapshot]) -> Result<String, G
     Ok(query)
 }
 
-fn parse_dependencies(output: &str) -> Result<Blockers, GhFailure> {
+fn parse_dependencies(output: &str) -> Result<Dependencies, GhFailure> {
     let answer: serde_json::Value =
         serde_json::from_str(output).map_err(|error| GhFailure::network(error.to_string()))?;
     if answer.get("errors").is_some() {
@@ -588,7 +601,7 @@ fn parse_dependencies(output: &str) -> Result<Blockers, GhFailure> {
         crate::issues::IssueReference::parse(&format!("{repository}#{number}"), None)
             .map_err(GhFailure::network)
     };
-    let mut blockers = Blockers::new();
+    let mut dependencies = Dependencies::new();
     for repository in data.values() {
         let Some(fields) = repository.as_object() else {
             continue;
@@ -617,10 +630,49 @@ fn parse_dependencies(output: &str) -> Result<Blockers, GhFailure> {
                     .unwrap_or(name);
                 open.push(reference(owner, &node["number"])?);
             }
-            blockers.insert(blocked, open);
+            let count = |field: &str| {
+                issue
+                    .pointer(&format!("/subIssuesSummary/{field}"))
+                    .and_then(serde_json::Value::as_u64)
+                    .and_then(|count| u32::try_from(count).ok())
+                    .ok_or_else(|| {
+                        GhFailure::network(
+                            "GitHub returned an issue without sub-issue counts".into(),
+                        )
+                    })
+            };
+            let mut listed = Vec::new();
+            for node in issue
+                .pointer("/subIssues/nodes")
+                .and_then(serde_json::Value::as_array)
+                .into_iter()
+                .flatten()
+            {
+                let owner = node
+                    .pointer("/repository/nameWithOwner")
+                    .and_then(serde_json::Value::as_str)
+                    .unwrap_or(name);
+                listed.push(crate::issues::SubIssueSnapshot {
+                    reference: reference(owner, &node["number"])?,
+                    title: node["title"].as_str().unwrap_or_default().to_owned(),
+                    open: node["state"] == "OPEN",
+                });
+            }
+            let sub_issues = crate::issues::SubIssuesSnapshot {
+                total: count("total")?,
+                completed: count("completed")?,
+                listed,
+            };
+            dependencies.insert(
+                blocked,
+                IssueDependencies {
+                    blocked_by: open,
+                    sub_issues,
+                },
+            );
         }
     }
-    Ok(blockers)
+    Ok(dependencies)
 }
 
 pub(crate) fn read_linked_issue(
@@ -670,6 +722,7 @@ pub(crate) fn create_issue(
         created_at_unix_ms: None,
         closed_at_unix_ms: None,
         blocked_by: Vec::new(),
+        sub_issues: Default::default(),
     })
 }
 
@@ -2813,6 +2866,7 @@ esac"#,
             created_at_unix_ms: None,
             closed_at_unix_ms: None,
             blocked_by: Vec::new(),
+            sub_issues: Default::default(),
         };
         let query = dependency_query(&[
             issue("acme/app", 171),
@@ -2824,6 +2878,7 @@ esac"#,
         assert_eq!(query.matches(":repository(").count(), 2);
         assert!(query.contains("i171:issue(number:171)") && query.contains("i9:issue(number:9)"));
         assert!(query.contains("blockedBy(first:20)"));
+        assert!(query.contains("subIssuesSummary{total completed} subIssues(first:100)"));
         assert!(
             run_gh(
                 Path::new("/nonexistent/gh"),
@@ -2839,24 +2894,44 @@ esac"#,
                 "i171": {"number": 171, "blockedBy": {"nodes": [
                     {"number": 170, "state": "OPEN", "repository": {"nameWithOwner": "acme/app"}},
                     {"number": 160, "state": "CLOSED", "repository": {"nameWithOwner": "acme/app"}},
+                ]}, "subIssuesSummary": {"total": 3, "completed": 1},
+                "subIssues": {"nodes": [
+                    {"number": 173, "title": "Done piece", "state": "CLOSED", "repository": {"nameWithOwner": "acme/app"}},
+                    {"number": 174, "title": "Open piece", "state": "OPEN", "repository": {"nameWithOwner": "acme/app"}},
+                    {"number": 5, "title": "Other repository", "state": "OPEN", "repository": {"nameWithOwner": "acme/other"}},
                 ]}},
                 "i172": {"number": 172, "blockedBy": {"nodes": [
                     {"number": 3, "state": "OPEN", "repository": {"nameWithOwner": "acme/other"}},
-                ]}}},
+                ]}, "subIssuesSummary": {"total": 0, "completed": 0}, "subIssues": {"nodes": []}}},
             "r1": {"nameWithOwner": "acme/other", "i9": null},
         }});
-        let blockers = parse_dependencies(&answer.to_string()).unwrap();
+        let dependencies = parse_dependencies(&answer.to_string()).unwrap();
         let reference = |value: &str| crate::issues::IssueReference::parse(value, None).unwrap();
         assert_eq!(
-            blockers[&reference("acme/app#171")],
+            dependencies[&reference("acme/app#171")].blocked_by,
             vec![reference("acme/app#170")]
         );
         assert_eq!(
-            blockers[&reference("acme/app#172")],
+            dependencies[&reference("acme/app#172")].blocked_by,
             vec![reference("acme/other#3")]
         );
+        let sub_issues = &dependencies[&reference("acme/app#171")].sub_issues;
+        assert_eq!((sub_issues.total, sub_issues.completed), (3, 1));
         assert_eq!(
-            blockers.len(),
+            sub_issues
+                .listed
+                .iter()
+                .map(|sub| (sub.reference.token(), sub.title.as_str(), sub.open))
+                .collect::<Vec<_>>(),
+            vec![
+                ("acme/app#173".to_owned(), "Done piece", false),
+                ("acme/app#174".to_owned(), "Open piece", true),
+                ("acme/other#5".to_owned(), "Other repository", true),
+            ]
+        );
+        assert_eq!(dependencies[&reference("acme/app#172")].sub_issues.total, 0);
+        assert_eq!(
+            dependencies.len(),
             2,
             "an issue GitHub could not return has no entry"
         );
@@ -2868,6 +2943,12 @@ esac"#,
             serde_json::json!({"errors": [{"message": "Field 'blockedBy' doesn't exist"}]});
         assert!(parse_dependencies(&errors.to_string()).is_err());
         assert!(parse_dependencies("not json").is_err());
+        let no_counts = serde_json::json!({"data": {"r0": {"nameWithOwner": "acme/app",
+            "i1": {"number": 1, "blockedBy": {"nodes": []}}}}});
+        assert!(
+            parse_dependencies(&no_counts.to_string()).is_err(),
+            "an issue without sub-issue counts is a failure, not zero sub-issues"
+        );
     }
 
     /// What `gh search prs` and `gh search issues` printed against cli/cli

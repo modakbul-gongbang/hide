@@ -942,7 +942,6 @@ mod tests {
         probes: AtomicUsize,
         outcomes: Mutex<VecDeque<Result<Value, AiError>>>,
         calls: AtomicUsize,
-        delay: Duration,
     }
 
     impl Scripted {
@@ -953,7 +952,6 @@ mod tests {
                 probes: AtomicUsize::new(0),
                 outcomes: Mutex::new(outcomes.into()),
                 calls: AtomicUsize::new(0),
-                delay: Duration::ZERO,
             })
         }
 
@@ -964,7 +962,6 @@ mod tests {
                 probes: AtomicUsize::new(0),
                 outcomes: Mutex::new(VecDeque::new()),
                 calls: AtomicUsize::new(0),
-                delay: Duration::ZERO,
             })
         }
 
@@ -996,10 +993,8 @@ mod tests {
         fn models(&self) -> ModelCatalog {
             ModelCatalog::Offered(vec![format!("{}-model", self.id)])
         }
-        #[allow(clippy::disallowed_methods)] // the sleep is the subject of the test: a fake peer or backend that is slow on purpose
         fn execute(&self, _: &AiRequest, _: &CancelToken) -> Result<AiResponse, AiError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
-            std::thread::sleep(self.delay);
             let next = self
                 .outcomes
                 .lock()
@@ -1014,15 +1009,29 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct Recorder(Mutex<Vec<AiLogEvent>>);
+    struct Recorder(Mutex<Vec<AiLogEvent>>, Condvar);
 
     impl AiLogSink for Recorder {
         fn log(&self, event: AiLogEvent) {
             self.0.lock().unwrap().push(event);
+            self.1.notify_all();
         }
     }
 
     impl Recorder {
+        /// Blocks until `count` events named `name` were logged. The limit
+        /// only ends a wait on an event that never comes; it is not measured.
+        fn wait_for_events(&self, name: &str, count: usize) {
+            let logged = self.0.lock().unwrap();
+            let (_events, timeout) = self
+                .1
+                .wait_timeout_while(logged, Duration::from_secs(30), |events| {
+                    events.iter().filter(|e| e.event == name).count() < count
+                })
+                .unwrap();
+            assert!(!timeout.timed_out(), "{count} x {name} was never logged");
+        }
+
         fn events(&self, name: &str) -> Vec<AiLogEvent> {
             self.0
                 .lock()
@@ -1031,6 +1040,57 @@ mod tests {
                 .filter(|e| e.event == name)
                 .cloned()
                 .collect()
+        }
+    }
+
+    /// A flag one thread raises and another waits for: what a test holds a
+    /// request on, so it decides when a call is still running instead of a delay.
+    #[derive(Default)]
+    struct Gate(Mutex<bool>, Condvar);
+
+    impl Gate {
+        fn open(&self) {
+            *self.0.lock().unwrap() = true;
+            self.1.notify_all();
+        }
+
+        /// The limit only ends a wait on a gate nobody opens; it is not measured.
+        fn wait(&self) {
+            let open = self.0.lock().unwrap();
+            let (_open, timeout) = self
+                .1
+                .wait_timeout_while(open, Duration::from_secs(30), |open| !*open)
+                .unwrap();
+            assert!(!timeout.timed_out(), "the gate was never opened");
+        }
+    }
+
+    /// A provider that answers `shared` only once the test opens `release`.
+    #[derive(Default)]
+    struct Held {
+        started: Gate,
+        release: Gate,
+        calls: AtomicUsize,
+    }
+
+    impl AiBackend for Held {
+        fn id(&self) -> ProviderId {
+            ProviderId::Codex
+        }
+        fn availability(&self) -> Availability {
+            Availability::Ready
+        }
+        fn models(&self) -> ModelCatalog {
+            ModelCatalog::Offered(Vec::new())
+        }
+        fn execute(&self, _: &AiRequest, _: &CancelToken) -> Result<AiResponse, AiError> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            self.started.open();
+            self.release.wait();
+            Ok(AiResponse {
+                value: json!({"summary": "shared"}),
+                usage: crate::AiUsage::default(),
+            })
         }
     }
 
@@ -1200,7 +1260,6 @@ mod tests {
 
     /// A leader that panics must not strand its joiners or its key.
     #[test]
-    #[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
     fn a_panicking_leader_settles_every_joiner_with_an_error_and_frees_the_key() {
         struct Panicking {
             started: Arc<(Mutex<bool>, Condvar)>,
@@ -1246,7 +1305,7 @@ mod tests {
             calls: AtomicUsize::new(0),
         });
         let sink = Arc::new(Recorder::default());
-        let router = Arc::new(make_router(vec![backend.clone()], sink));
+        let router = Arc::new(make_router(vec![backend.clone()], sink.clone()));
         let leader = {
             let router = Arc::clone(&router);
             std::thread::spawn(move || router.execute(&request("same", "x"), &CancelToken::new()))
@@ -1256,9 +1315,9 @@ mod tests {
             let router = Arc::clone(&router);
             std::thread::spawn(move || router.execute(&request("same", "x"), &CancelToken::new()))
         };
-        // Give the joiner time to attach to the in-flight entry, then let
-        // the leader blow up.
-        std::thread::sleep(Duration::from_millis(100));
+        // The joiner logs that it joined before it waits on the entry; only
+        // then let the leader blow up.
+        sink.wait_for_events("ai.request.joined", 1);
         signal(&backend.release);
         assert!(leader.join().is_err(), "the leader's panic propagates");
         assert_eq!(
@@ -1397,15 +1456,8 @@ mod tests {
     #[test]
     fn concurrent_duplicates_share_one_provider_call() {
         let sink = Arc::new(Recorder::default());
-        let codex = Arc::new(Scripted {
-            id: ProviderId::Codex,
-            availability: Mutex::new(Availability::Ready),
-            probes: AtomicUsize::new(0),
-            outcomes: Mutex::new(vec![ok("shared")].into()),
-            calls: AtomicUsize::new(0),
-            delay: Duration::from_millis(200),
-        });
-        let router = Arc::new(make_router(vec![codex.clone()], sink.clone()));
+        let held = Arc::new(Held::default());
+        let router = Arc::new(make_router(vec![held.clone()], sink.clone()));
         let handles: Vec<_> = (0..3)
             .map(|_| {
                 let router = Arc::clone(&router);
@@ -1416,16 +1468,18 @@ mod tests {
                 })
             })
             .collect();
+        // The one call stays running until both duplicates have joined it.
+        sink.wait_for_events("ai.request.joined", 2);
+        held.release.open();
         for handle in handles {
             assert_eq!(handle.join().unwrap().value["summary"], "shared");
         }
-        assert_eq!(codex.calls(), 1);
-        assert_eq!(sink.events("ai.request.joined").len(), 2);
+        assert_eq!(held.calls.load(Ordering::SeqCst), 1);
         // A different input for the same subject is a new intent.
         router
             .execute(&request("same", "other input"), &CancelToken::new())
             .unwrap();
-        assert_eq!(codex.calls(), 2);
+        assert_eq!(held.calls.load(Ordering::SeqCst), 2);
     }
 
     /// The availability cache is deliberately switched off here, so what
@@ -1741,23 +1795,15 @@ mod tests {
     /// A second concurrent intent is refused by the concurrency cap without
     /// touching a provider, and the first request is untouched.
     #[test]
-    #[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
     fn a_second_concurrent_request_is_over_budget_in_flight() {
         let sink = Arc::new(Recorder::default());
-        let codex = Arc::new(Scripted {
-            id: ProviderId::Codex,
-            availability: Mutex::new(Availability::Ready),
-            probes: AtomicUsize::new(0),
-            outcomes: Mutex::new(vec![ok("first")].into()),
-            calls: AtomicUsize::new(0),
-            delay: Duration::from_millis(300),
-        });
-        let router = Arc::new(make_router(vec![codex.clone()], sink.clone()));
+        let held = Arc::new(Held::default());
+        let router = Arc::new(make_router(vec![held.clone()], sink.clone()));
         let leader = {
             let router = Arc::clone(&router);
             std::thread::spawn(move || router.execute(&request("a", "x"), &CancelToken::new()))
         };
-        std::thread::sleep(Duration::from_millis(50));
+        held.started.wait();
         let rejected = router
             .execute(&request("b", "y"), &CancelToken::new())
             .unwrap_err();
@@ -1765,9 +1811,10 @@ mod tests {
             AiError::OverBudget { cap, .. } => assert_eq!(cap, "in_flight"),
             other => panic!("{other:?}"),
         }
-        assert_eq!(leader.join().unwrap().unwrap().value["summary"], "first");
+        held.release.open();
+        assert_eq!(leader.join().unwrap().unwrap().value["summary"], "shared");
         assert_eq!(
-            codex.calls(),
+            held.calls.load(Ordering::SeqCst),
             1,
             "the rejected request never reached a provider"
         );

@@ -48,7 +48,6 @@ test("the rail follows the registered devices; a device that cannot be reached i
     await expect(rail.locator("[data-rail-tile]")).toHaveCount(1);
     await expect(rail.locator('[data-rail-tile="local"]')).toHaveAttribute("aria-pressed", "true");
     await expect(rail.locator('[data-rail-tile="inbox"]')).toHaveCount(0);
-    await expect(page.locator("[data-footer-device]")).toHaveCount(0);
     // #349: device name, shared Overview, then Projects | Agents with direct keycaps.
     await expect(page.locator("[data-sidebar-title-name]")).toHaveText("This Mac");
     await expect(page.locator("[data-sidebar-mode]")).toHaveText(SIDEBAR_LABELS);

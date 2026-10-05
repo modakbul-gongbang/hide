@@ -46,13 +46,13 @@ describe("placing pages", () => {
   it("names every browser display of the layout and where its page shows", () => {
     const rows = browserDisplays(layout);
     expect(rows).toEqual([
-      { id: "d2", url: "https://a.test/", load: 7 },
-      { id: "d3", url: "http://localhost:3000/", load: 9 },
+      { id: "d2", area_id: "a1", url: "https://a.test/", load: 7 },
+      { id: "d3", area_id: "a2", url: "http://localhost:3000/", load: 9 },
     ]);
     const rect = { x: 10, y: 20, width: 300, height: 200 };
     expect(placements(rows, new Map([["d2", rect]]), new Set())).toEqual([
-      { id: "d2", url: "https://a.test/", load: 7, rect, visible: true },
-      { id: "d3", url: "http://localhost:3000/", load: 9, rect: null, visible: false },
+      { id: "d2", area_id: "a1", url: "https://a.test/", load: 7, rect, visible: true },
+      { id: "d3", area_id: "a2", url: "http://localhost:3000/", load: 9, rect: null, visible: false },
     ]);
     // A still standing in its place keeps the page placed but not shown.
     expect(placements(rows, new Map([["d2", rect]]), new Set(["d2"]))[0]).toMatchObject({ rect, visible: false });

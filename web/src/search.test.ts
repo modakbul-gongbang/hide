@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { CHILD, RICH } from "./gallery/cmdkSceneData";
 import { initializeInterfaceI18n } from "./i18n/instance";
-import { filterEntries, fuzzyScore, groupEntries, numberQuery, recentEntries, searchEntries, type SearchEntry } from "./search";
+import { filterEntries, fuzzyScore, groupEntries, numberQuery, openUrlEntry, recentEntries, searchEntries, type SearchEntry } from "./search";
 import type { SnapshotRest } from "./snapshot";
 
 const { t } = initializeInterfaceI18n("en");
@@ -280,5 +280,26 @@ describe("recent entries (PRD cmdk-recent)", () => {
   it("has no rows without a record, or for a device that was removed", () => {
     expect(recentEntries(REST, new Set())).toEqual([]);
     expect(recentEntries(withRecent([record("removed-device", "x")]), new Set())).toEqual([]);
+  });
+});
+
+describe("Open URL in Browser", () => {
+  it("reads an http(s) address and a loopback host as a web address to open", () => {
+    expect(openUrlEntry("https://example.com/a?b=1", null, t)?.url).toBe("https://example.com/a?b=1");
+    expect(openUrlEntry(" http://example.com ", null, t)?.url).toBe("http://example.com");
+    expect(openUrlEntry("localhost:5173", null, t)?.url).toBe("http://localhost:5173");
+    expect(openUrlEntry("127.0.0.1:3000/app", null, t)?.url).toBe("http://127.0.0.1:3000/app");
+  });
+
+  it("leaves a name, a bare host, another scheme and a path to the search", () => {
+    for (const query of ["fixture", "agent one", "#273", "example.com", "ftp://example.com", "mailto:a@b.c", "/tmp/fixture"]) {
+      expect(openUrlEntry(query, null, t)).toBeNull();
+    }
+  });
+
+  it("stays listed and dimmed with its reason when it cannot run", () => {
+    const entry = openUrlEntry("localhost:5173", "Pages open in the hide desktop app.", t);
+    expect(entry).toMatchObject({ dimmed: true, subtitle: "Pages open in the hide desktop app." });
+    expect(openUrlEntry("localhost:5173", null, t)).toMatchObject({ dimmed: false, subtitle: "http://localhost:5173" });
   });
 });

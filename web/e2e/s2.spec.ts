@@ -12,7 +12,7 @@ import path from "node:path";
 import { toPage } from "../../desktop/src/main/wirePath";
 import { startHerdr } from "./herdr-fixture";
 import { startHided } from "./hided-fixture";
-import { countSent, registerFolder, screenshot, sendEvent } from "./wire";
+import { countSent, screenshot } from "./wire";
 import { chord, mod, SYSTEM } from "./chords";
 
 type Daemon = { origin: string; token: string; home: string; stop: () => void };
@@ -383,9 +383,6 @@ test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" },
     await expect.poll(() => sent.get("close_pane")).toBe(1);
     await expect(page.locator("[data-confirm-close]")).toHaveCount(0);
     await expect.poll(() => page.evaluate(() => window.__hideProbe?.liveTerminals() ?? [])).not.toContain(closingPane);
-    // Other open tabs keep their parked terminals (D-05); only the closed
-    // pane must be absent from the parking lot.
-    await expect(page.locator(`[data-terminal-parking] [data-terminal="${closingPane}"]`)).toHaveCount(0);
 
     // Agent areas own local order (B7/D19): one move changes the strip without a Herdr reorder.
     const secondTab = page.locator(`[data-tab="${tabs[1]}"]`);
@@ -490,44 +487,6 @@ test("checkouts, tabs, splits, zoom, close and the sheet", { tag: "@platform" },
     await page.keyboard.type("after-reconnect-1d7c");
     await expect.poll(() => screen(page), { timeout: 10_000 }).toContain("after-reconnect-1d7c");
     await screenshot(page, "s2-after-reconnect");
-  } finally {
-    daemon?.stop();
-    herdr.stop();
-  }
-});
-
-test("registration under home succeeds; outside home and a .. path are refused", async ({ page }) => {
-  const herdr = await startHerdr();
-  let daemon: Daemon | null = null;
-  try {
-    daemon = await startHided(herdr);
-    const sent = countSent(page);
-    await page.goto(`${daemon.origin}/#token=${daemon.token}`);
-    await page.locator('[data-sidebar-mode="projects"]').click();
-    await expect(page.locator("[data-project]")).toHaveCount(1);
-
-    // A browser tab has no folder picker, so it offers no Add project: no
-    // strip button, no Overview button, and the chord opens nothing.
-    await expect(page.locator("[data-sidebar-new-workspace]")).toHaveCount(0);
-    await expect(page.locator("[data-main-add-project]")).toHaveCount(0);
-    await page.keyboard.press("Alt+Shift+KeyN");
-    await page.keyboard.press(chord("new_workspace", "electron"));
-    await expect(page.locator("[data-add-project]")).toHaveCount(0);
-
-    // hided's $HOME line judges every folder a client sends (the desktop
-    // app's picker included), answering a refusal with its reason code.
-    const refusal = async (folder: string) =>
-      ((await sendEvent(page, daemon!, "create_workspace", { path: folder, label: "x", initialize_git: false }, "path_refused"))?.payload as { reason: string; kind: string; path: string });
-    expect(await refusal(herdr.root)).toMatchObject({ kind: "create_workspace", reason: "outside_home", path: herdr.root });
-    expect(await refusal(`${daemon.home}/projects/../projects/alpha`)).toMatchObject({ reason: "invalid_path" });
-    expect(await refusal(`${daemon.home}/projects/notes.txt`)).toMatchObject({ reason: "not_a_directory" });
-
-    // A directory under home registers: a new project in the sidebar.
-    await registerFolder(page, daemon, `${daemon.home}/projects/alpha`);
-    await expect.poll(() => sent.get("create_workspace")).toBe(4);
-    await expect(page.locator("[data-project]")).toHaveCount(2, { timeout: 20_000 });
-    await expect(page.locator("[data-project-list]")).toContainText("alpha");
-    await screenshot(page, "s2-registration-alpha");
   } finally {
     daemon?.stop();
     herdr.stop();

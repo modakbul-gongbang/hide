@@ -4,6 +4,14 @@
     "expect": 40
   },
   "tests": {
+    "browser-cdp.spec.ts::browser CDP: standard Playwright controls the scoped native page and disconnect preserves it": {
+      "lines": 172,
+      "expect": 51
+    },
+    "browser-cdp.spec.ts::browser CDP: native files cannot be read through runtime, frames, redirects or creation": {
+      "lines": 121,
+      "expect": 39
+    },
     "browser.spec.ts::browser: a page opens from an agent's pane, follows its area, moves without loading again, freezes under the palette and ends with its display": {
       "lines": 212,
       "expect": 56
@@ -13,8 +21,8 @@
       "expect": 42
     },
     "device-home.spec.ts::a device's Home is made on its first start, the rail follows registration, and a device start lands on that device": {
-      "lines": 127,
-      "expect": 36
+      "lines": 126,
+      "expect": 35
     },
     "digit-shortcuts.spec.ts::⌘n selects a tab, ⌥n an agent, and holding ⌘ or ⌥ shows the numbers without moving anything": {
       "lines": 184,

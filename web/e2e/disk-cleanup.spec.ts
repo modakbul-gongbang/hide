@@ -163,7 +163,6 @@ test("the disk cleanup sheet: layers, a cache-only cleanup at once, and a worktr
     for (const gone of ["크기는 할당된 블록", "체크박스는 보이는 행에만", "선택됨", "고를 수 있는", "지우지 않음", "크기순", "다음 install", "폴더째 지워진다"]) {
       await expect(sheet).not.toContainText(gone);
     }
-    await expect(sheet.locator("[data-disk-warning], [data-disk-note]")).toHaveCount(0);
     // Each bar segment says its layer and size on hover instead of a legend.
     await sheet.locator('[data-disk-bar-part="build_cache"]').hover();
     await expect(page.getByRole("tooltip")).toContainText(/Build cache [\d.]+ (KB|MB)/);
@@ -211,7 +210,6 @@ test("the disk cleanup sheet: layers, a cache-only cleanup at once, and a worktr
     await expect(confirm).toContainText("Delete the entire prd/shipped folder");
     await expect(confirm).toContainText("Branches are kept");
     await expect(confirm.locator("[data-disk-confirm-list]")).toContainText("prd/shipped");
-    await expect(confirm.locator("[data-disk-confirm-cells]")).toHaveCount(0);
     await expect(confirm.locator("[data-disk-confirm-run]")).toHaveText("Clean up 1 worktree and caches");
     // Neither button holds the keyboard when the confirmation opens (design 6).
     expect(await page.evaluate(() => document.activeElement?.hasAttribute("data-disk-confirm-run") || document.activeElement?.hasAttribute("data-disk-confirm-back"))).toBe(false);

@@ -97,6 +97,11 @@ test("the Home row, the Projects | Agents strip and its Search icon, with no Add
     // (the desktop app draws it before Search: desktop/e2e/add-project.spec.ts).
     const add = page.locator("[data-sidebar-new-workspace]");
     await expect(add).toHaveCount(0);
+    // Neither the Overview nor the chord offers it: the chord opens nothing.
+    await expect(page.locator("[data-main-add-project]")).toHaveCount(0);
+    await page.keyboard.press("Alt+Shift+KeyN");
+    await page.keyboard.press(chord("new_workspace", "electron"));
+    await expect(page.locator("[data-add-project]")).toHaveCount(0);
 
     // B3, B5: the Agents tab swaps the list and leaves Search alone at the end; the Home row is Projects' and goes with it.
     await page.locator('[data-sidebar-mode="agents"]').click();

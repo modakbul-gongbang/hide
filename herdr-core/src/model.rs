@@ -109,6 +109,10 @@ pub struct Snapshot {
     /// inventory to close a hidden page when a pane closes its View remotely.
     #[serde(skip_serializing_if = "Vec::is_empty")]
     pub browser_views: Vec<BrowserViewInventoryRow>,
+    /// Positive browser control authority, including an area's empty state.
+    /// Losing a scope permanently revokes its desktop capabilities.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub browser_scopes: Vec<BrowserAreaScopeRow>,
     #[serde(skip)]
     pub browser_views_revision: Option<u64>,
     /// The Sessions of the Project a shell screen named, absent until one
@@ -241,7 +245,18 @@ pub struct WorkspaceViewSnapshot {
 pub struct BrowserViewInventoryRow {
     pub device_id: String,
     pub path: String,
+    pub area_id: String,
     pub view_id: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct BrowserAreaScopeRow {
+    pub device_id: String,
+    pub path: String,
+    pub area_id: String,
+    /// Stable while authority remains present; a regrant gets a new value
+    /// even when the shell never receives the intervening revocation.
+    pub incarnation: u64,
 }
 
 /// Agent tab identities only; pane contents remain in checkout.tabs.
@@ -3912,6 +3927,7 @@ impl Snapshot {
             recent_closed: RecentClosedSnapshot::default(),
             workspace_view: None,
             browser_views: Vec::new(),
+            browser_scopes: Vec::new(),
             browser_views_revision: None,
             project_sessions: None,
             session_search: None,
@@ -3976,6 +3992,7 @@ pub struct RestSections {
     pub recent_closed: RecentClosedSnapshot,
     pub workspace_view: Option<WorkspaceViewSnapshot>,
     pub browser_views: Vec<BrowserViewInventoryRow>,
+    pub browser_scopes: Vec<BrowserAreaScopeRow>,
     browser_views_revision: Option<u64>,
 }
 
@@ -4012,6 +4029,7 @@ impl RestSections {
             recent_closed: snapshot.recent_closed.clone(),
             workspace_view: snapshot.workspace_view.clone(),
             browser_views: snapshot.browser_views.clone(),
+            browser_scopes: snapshot.browser_scopes.clone(),
             browser_views_revision: snapshot.browser_views_revision,
         }
     }
@@ -4196,6 +4214,7 @@ pub struct RestWire<'a> {
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace_view: &'a Option<WorkspaceViewSnapshot>,
     pub browser_views: &'a [BrowserViewInventoryRow],
+    pub browser_scopes: &'a [BrowserAreaScopeRow],
 }
 
 impl<'a> RestWire<'a> {
@@ -4233,6 +4252,7 @@ impl<'a> RestWire<'a> {
             recent_closed: &rest.recent_closed,
             workspace_view: &rest.workspace_view,
             browser_views: &rest.browser_views,
+            browser_scopes: &rest.browser_scopes,
         }
     }
 }
