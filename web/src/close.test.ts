@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
-import { agentClosing, closeDecision, closeSheet, stopWorkOf, subtreeOf } from "./close";
+import { agentClosing, closeDecision, closeSheet, statusUnknownNotice, stopWorkCopy, stopWorkOf, subtreeOf, subtreeTitle } from "./close";
+import { subtreeSummaryWords } from "./components/subtree-list";
+import { createInterfaceI18n } from "./i18n/instance";
 import type { AgentRow, PaneRow } from "./snapshot";
 
 function pane(id: string, extra: Partial<PaneRow> = {}): PaneRow {
@@ -178,5 +180,23 @@ describe("closeSheet", () => {
     const target = [pane("p1", { requires_close_confirmation: true })];
     expect(closeSheet(target, [agent("p1")], [agent("p1")]).sheet).toBe("stop_work");
     expect(closeSheet(target, family(), family())).toMatchObject({ sheet: "subtree", subtree: { ids: ["p3", "p2", "p4"] } });
+  });
+});
+
+describe("the close sheet's words", () => {
+  it("states the consequence and the descendant count in English", async () => {
+    const { t } = await createInterfaceI18n("en");
+    expect(stopWorkCopy("tab", t)).toEqual({ title: "Close this tab?", consequence: "The listed panes stop in one close." });
+    expect(subtreeTitle("pane", 1, t)).toBe("Close this agent and 1 child?");
+    expect(subtreeTitle("tab", 3, t)).toBe("Close this tab and 3 children?");
+    expect(statusUnknownNotice("worker", t)).toBe("Activity status for worker is unknown. Check status before closing.");
+    expect(subtreeSummaryWords({ working: 1, waiting: 0, unread: 2, unknown: 1 }, t)).toBe("working 1 · unread result 2 · status unknown 1");
+  });
+
+  it("keeps the Korean wording the close sheet shipped with", async () => {
+    const { t } = await createInterfaceI18n("ko");
+    expect(subtreeTitle("pane", 2, t)).toBe("이 에이전트와 자식 2개를 닫을까요?");
+    expect(subtreeTitle("tab", 4, t)).toBe("이 탭과 자식 4개를 닫을까요?");
+    expect(subtreeSummaryWords({ working: 1, waiting: 1, unread: 1, unknown: 0 }, t)).toBe("진행 중 1 · 답 대기 1 · 확인 안 한 결과 1");
   });
 });

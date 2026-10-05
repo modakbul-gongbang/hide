@@ -5,6 +5,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { blobUrl } from "../fileBytes";
+import { useInterfaceTranslation } from "../i18n/client";
 import type { EditorDocumentSnapshot } from "../snapshot";
 import { useFileBytes, type FileBytesState } from "./useFileBytes";
 import { isVideoPath, videoMime } from "./video";
@@ -19,10 +20,11 @@ export function ViewerNotice({ reason, state }: { reason: string; state: string 
 }
 
 export function FileViewer({ document }: { document: EditorDocumentSnapshot }) {
+  const { t } = useInterfaceTranslation();
   if (isVideoPath(document.path)) return <VideoView path={document.path} />;
   if (document.document_kind === "image") return <ImageView path={document.path} />;
   if (document.document_kind === "pdf") return <PdfView path={document.path} />;
-  return <ViewerNotice state="binary" reason="This file is binary and cannot be shown here." />;
+  return <ViewerNotice state="binary" reason={t("documents.binary")} />;
 }
 
 function useBlob(state: FileBytesState, type: string): string | null {
@@ -40,10 +42,11 @@ function useBlob(state: FileBytesState, type: string): string | null {
 }
 
 function ImageView({ path }: { path: string }) {
+  const { t } = useInterfaceTranslation();
   const state = useFileBytes(path);
   const url = useBlob(state, "image/*");
-  if (state.status === "failed") return <ViewerNotice state="image-failed" reason={`Image unavailable: ${state.reason}`} />;
-  if (!url) return <ViewerNotice state="image-loading" reason="Loading image…" />;
+  if (state.status === "failed") return <ViewerNotice state="image-failed" reason={t("documents.imageUnavailable", { reason: state.reason })} />;
+  if (!url) return <ViewerNotice state="image-loading" reason={t("documents.imageLoading")} />;
   return (
     <div className="flex min-h-0 flex-1 items-center justify-center overflow-auto p-lg" data-viewer="image">
       <img src={url} alt={path} className="max-h-full max-w-full object-contain" />
@@ -52,12 +55,13 @@ function ImageView({ path }: { path: string }) {
 }
 
 function VideoView({ path }: { path: string }) {
+  const { t } = useInterfaceTranslation();
   const state = useFileBytes(path);
   const [playbackFailed, setPlaybackFailed] = useState(false);
   const url = useBlob(state, videoMime(path));
-  if (state.status === "failed") return <ViewerNotice state="video-failed" reason={`Video unavailable: ${state.reason}`} />;
-  if (playbackFailed) return <ViewerNotice state="video-codec" reason="This video cannot be played in the browser." />;
-  if (!url) return <ViewerNotice state="video-loading" reason="Loading video…" />;
+  if (state.status === "failed") return <ViewerNotice state="video-failed" reason={t("documents.videoUnavailable", { reason: state.reason })} />;
+  if (playbackFailed) return <ViewerNotice state="video-codec" reason={t("documents.videoUnsupported")} />;
+  if (!url) return <ViewerNotice state="video-loading" reason={t("documents.videoLoading")} />;
   return (
     <div className="flex min-h-0 flex-1 items-center justify-center p-lg" data-viewer="video">
       <video
@@ -71,9 +75,10 @@ function VideoView({ path }: { path: string }) {
 }
 
 function PdfView({ path }: { path: string }) {
+  const { t } = useInterfaceTranslation();
   const state = useFileBytes(path);
   const host = useRef<HTMLDivElement>(null);
-  const [failure, setFailure] = useState<string | null>(null);
+  const [renderFailed, setRenderFailed] = useState(false);
 
   useEffect(() => {
     const container = host.current;
@@ -108,7 +113,7 @@ function PdfView({ path }: { path: string }) {
           if (context) await page.render({ canvasContext: context, viewport, canvas }).promise;
         }
       } catch {
-        if (!cancelled) setFailure("This PDF could not be rendered.");
+        if (!cancelled) setRenderFailed(true);
       }
     };
     void render();
@@ -119,8 +124,8 @@ function PdfView({ path }: { path: string }) {
     };
   }, [state]);
 
-  if (state.status === "failed") return <ViewerNotice state="pdf-failed" reason={`PDF unavailable: ${state.reason}`} />;
-  if (failure) return <ViewerNotice state="pdf-render" reason={failure} />;
-  if (state.status !== "ready") return <ViewerNotice state="pdf-loading" reason="Loading PDF…" />;
+  if (state.status === "failed") return <ViewerNotice state="pdf-failed" reason={t("documents.pdfUnavailable", { reason: state.reason })} />;
+  if (renderFailed) return <ViewerNotice state="pdf-render" reason={t("documents.pdfRenderFailed")} />;
+  if (state.status !== "ready") return <ViewerNotice state="pdf-loading" reason={t("documents.pdfLoading")} />;
   return <div ref={host} className="min-h-0 flex-1 overflow-auto p-lg" data-viewer="pdf" />;
 }

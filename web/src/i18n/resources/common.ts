@@ -49,6 +49,11 @@ export const commonEnglish = {
   "common.language": "Language",
   "common.systemLanguage": "Use system language",
   "common.languageDescription": "A language you choose here applies to every connected window. Until then, each uses its system language.",
+  "common.entryActions": "{{name}} actions",
+  "common.now": "now",
+  "common.ageMinutes": "{{count}}m",
+  "common.ageHours": "{{count}}h",
+  "common.ageDays": "{{count}}d",
 } as const;
 
 const ko = {
@@ -100,6 +105,11 @@ const ko = {
   "common.language": "언어",
   "common.systemLanguage": "시스템 언어 사용",
   "common.languageDescription": "여기서 선택한 언어는 연결된 모든 창에 적용됩니다. 선택 전에는 각 기기의 시스템 언어를 사용합니다.",
+  "common.entryActions": "{{name}} 작업",
+  "common.now": "방금",
+  "common.ageMinutes": "{{count}}분",
+  "common.ageHours": "{{count}}시간",
+  "common.ageDays": "{{count}}일",
 } satisfies Catalog<typeof commonEnglish>;
 
 const zhCN = {
@@ -151,6 +161,11 @@ const zhCN = {
   "common.language": "语言",
   "common.systemLanguage": "使用系统语言",
   "common.languageDescription": "在此选择的语言会应用于所有已连接的窗口。选择前，各设备使用自己的系统语言。",
+  "common.entryActions": "{{name}} 操作",
+  "common.now": "刚刚",
+  "common.ageMinutes": "{{count}}分钟",
+  "common.ageHours": "{{count}}小时",
+  "common.ageDays": "{{count}}天",
 } satisfies Catalog<typeof commonEnglish>;
 
 const ja = {
@@ -202,6 +217,11 @@ const ja = {
   "common.language": "言語",
   "common.systemLanguage": "システムの言語を使用",
   "common.languageDescription": "ここで選択した言語は、接続されたすべてのウィンドウに適用されます。選択前は各デバイスのシステムの言語を使用します。",
+  "common.entryActions": "{{name}} の操作",
+  "common.now": "たった今",
+  "common.ageMinutes": "{{count}}分",
+  "common.ageHours": "{{count}}時間",
+  "common.ageDays": "{{count}}日",
 } satisfies Catalog<typeof commonEnglish>;
 
 export const commonCatalogs = { en: commonEnglish, ko, "zh-CN": zhCN, ja } satisfies Catalogs<typeof commonEnglish>;

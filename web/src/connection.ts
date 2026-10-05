@@ -1,3 +1,5 @@
+import type { TFunction } from "i18next";
+
 export type ConnectionState = "connecting" | "live" | "reconnecting" | "gone";
 
 export const BACKOFF_START_MS = 500;
@@ -12,15 +14,15 @@ export function connectionAfterHealthFails(fails: number): ConnectionState {
   return fails >= HEALTH_FAILS_TO_GONE ? "gone" : "reconnecting";
 }
 
-export function badgeText(state: ConnectionState, refused = false): string {
+export function badgeText(state: ConnectionState, refused: boolean, t: TFunction<"translation">): string {
   switch (state) {
     case "connecting":
-      return "connecting";
+      return t("shell.connection.connecting");
     case "live":
       return "";
     case "reconnecting":
-      return "reconnecting";
+      return t("shell.connection.reconnecting");
     case "gone":
-      return refused ? "연결 거부 - hide를 다시 실행하세요" : "gone - hide를 다시 실행하세요";
+      return refused ? t("shell.connection.refused") : t("shell.connection.gone");
   }
 }

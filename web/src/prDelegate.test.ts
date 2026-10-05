@@ -1,7 +1,11 @@
 // The first prompt an agent a pull request is handed to starts from.
 
 import { describe, expect, it } from "vitest";
+import { initializeInterfaceI18n } from "./i18n/instance";
 import { delegatePrompt } from "./prDelegate";
+
+const t = initializeInterfaceI18n("ko").getFixedT(null, "translation");
+const english = initializeInterfaceI18n("en").getFixedT(null, "translation");
 
 const pr = { number: 190, title: "Bump tokio-tungstenite", branch: "cargo/tokio-tungstenite-0.29.0" };
 
@@ -17,7 +21,7 @@ describe("the prompt a pull request is handed on with", () => {
           { author: "ana", body: "Split the reader.\nThen retry." },
           { author: null, body: "Rename it." },
         ],
-      }),
+      }, t),
     ).toBe(
       [
         "PR #190 (cargo/tokio-tungstenite-0.29.0)의 CI 실패와 변경 요청을 고쳐줘: Bump tokio-tungstenite",
@@ -34,8 +38,22 @@ describe("the prompt a pull request is handed on with", () => {
   });
 
   it("leaves out a section with nothing in it", () => {
-    expect(delegatePrompt(pr, { failed_checks: [], change_requests: [{ author: "bo", body: "  " }] })).toBe(
+    expect(delegatePrompt(pr, { failed_checks: [], change_requests: [{ author: "bo", body: "  " }] }, t)).toBe(
       "PR #190 (cargo/tokio-tungstenite-0.29.0)의 CI 실패와 변경 요청을 고쳐줘: Bump tokio-tungstenite",
+    );
+  });
+
+  it("is written in the interface language, with names and links as data", () => {
+    expect(delegatePrompt(pr, { failed_checks: [{ name: "verify", url: null }], change_requests: [{ author: null, body: "Rename it." }] }, english)).toBe(
+      [
+        "Fix the failed CI and change requests of PR #190 (cargo/tokio-tungstenite-0.29.0): Bump tokio-tungstenite",
+        "",
+        "Failed checks:",
+        "- verify",
+        "",
+        "Change requests:",
+        "- reviewer: Rename it.",
+      ].join("\n"),
     );
   });
 });

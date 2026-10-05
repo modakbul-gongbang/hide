@@ -2,8 +2,8 @@
 // Herdr and hided. Three flows:
 //
 // - a Workspace with no GitHub project: an empty ⌘K lists what is connected
-//   to the agent in front, a name finds an agent and Enter goes there, `에이전트
-//   시작…` is the one command left and opens the start panel, and nothing is
+//   to the agent in front, a name finds an agent and Enter goes there, `Start an
+//   agent…` is the one command left and opens the start panel, and nothing is
 //   asked of GitHub (B2, B4, B20-B22, B16, B27);
 // - a project a fake `gh` answers for: the issue, checkout, pull request and
 //   agent connected to the agent in front, `#273` finding the issue and the
@@ -41,7 +41,7 @@ async function focusAgent(page: Page, pane: string): Promise<void> {
   await expect(page.locator(`[data-pane-view="${pane}"]`)).toHaveAttribute("data-focused", "true");
 }
 
-test("⌘K lists what is connected to the agent in front, goes to an agent by name, keeps only 에이전트 시작…, and asks GitHub nothing", async ({ page }) => {
+test("⌘K lists what is connected to the agent in front, goes to an agent by name, keeps only Start an agent…, and asks GitHub nothing", async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
@@ -55,7 +55,7 @@ test("⌘K lists what is connected to the agent in front, goes to an agent by na
     await expect(page.locator("[data-pane-view]")).toHaveCount(2);
 
     // B2, B4: empty, the Related list is the checkout and the agent in front,
-    // marked `여기`; the other agent of the checkout is not in its lineage, so
+    // marked `Here`; the other agent of the checkout is not in its lineage, so
     // it is not listed. There is no command row.
     await focusAgent(page, two);
     await openSearch(page);
@@ -63,16 +63,16 @@ test("⌘K lists what is connected to the agent in front, goes to an agent by na
     await expect(page.locator('[data-palette="Search"] [cmdk-group-heading]')).toHaveText(["Related"]);
     await expect.poll(() => rowIds(page)).toEqual([expect.stringMatching(/^checkout:/), `agent:${two}`]);
     const here = page.locator(`[data-palette-row="agent:${two}"]`);
-    await expect(here.locator("[data-palette-here]")).toHaveText("여기");
+    await expect(here.locator("[data-palette-here]")).toHaveText("Here");
     await expect(page.locator(`[data-palette-row="agent:${one}"]`)).toHaveCount(0);
     await expect(page.locator('[data-palette-row^="command:"]')).toHaveCount(0);
 
-    // B21: Enter on `여기` goes nowhere; the detail says so and the palette stays.
+    // B21: Enter on `Here` goes nowhere; the detail says so and the palette stays.
     const focuses = sent.get("focus_pane") ?? 0;
     await here.hover();
     await expect(here).toHaveAttribute("aria-selected", "true");
     await page.keyboard.press("Enter");
-    await expect(page.locator("[data-palette-detail-pane]")).toContainText("지금 보고 있는 에이전트");
+    await expect(page.locator("[data-palette-detail-pane]")).toContainText("The agent you are viewing");
     await expect(input(page)).toBeVisible();
     expect(sent.get("focus_pane") ?? 0).toBe(focuses);
     await page.keyboard.press("Escape");
@@ -92,13 +92,13 @@ test("⌘K lists what is connected to the agent in front, goes to an agent by na
     await openSearch(page);
     await page.keyboard.type("Split right");
     await expect(input(page)).toHaveValue("Split right");
-    await expect(page.locator('[data-palette-state="no-match"]')).toHaveText("일치하는 항목 없음");
+    await expect(page.locator('[data-palette-state="no-match"]')).toHaveText("No matching items");
     await expect(page.locator('[data-palette-row^="command:"]')).toHaveCount(0);
     // B16: no GitHub project on this Mac, so no GitHub search row to offer.
     await expect(page.locator('[data-palette-row="github-search"]')).toHaveCount(0);
 
-    // B22: `에이전트 시작…` is the one command, and it opens the start panel.
-    await input(page).fill("에이전트 시작");
+    // B22: `Start an agent…` is the one command, and it opens the start panel.
+    await input(page).fill("Start an agent");
     await expect.poll(() => rowIds(page)).toEqual(["command:start-agent"]);
     await expect(page.locator('[data-palette-group="commands"]')).toBeVisible();
     await page.keyboard.press("Enter");
@@ -287,9 +287,9 @@ test("⌘K relates the agent in front to its issue and pull request, finds them 
     const before = searches(gh.log);
     await openSearch(page);
     await page.keyboard.type("zzz-old");
-    await expect(page.locator('[data-palette-state="no-match"]')).toHaveText("일치하는 항목 없음");
+    await expect(page.locator('[data-palette-state="no-match"]')).toHaveText("No matching items");
     const github = page.locator('[data-palette-row="github-search"]');
-    await expect(github).toHaveText(/GitHub에서 "zzz-old" 검색/);
+    await expect(github).toHaveText(/Search GitHub for "zzz-old"/);
     await expect(github).toHaveAttribute("data-github-state", "idle");
     expect(searches(gh.log)).toEqual(before);
     expect(sent.get("github_search") ?? 0).toBe(0);
@@ -321,21 +321,21 @@ test("⌘K relates the agent in front to its issue and pull request, finds them 
     await expect(input(page)).toHaveCount(0);
 
     // B18: a failed search says so on its row and a second pick runs it again;
-    // a search that finds nothing says `GitHub에도 없음`.
+    // a search that finds nothing says `No results on GitHub either`.
     await openSearch(page);
     await page.keyboard.type("will fail");
     await expect(github).toHaveAttribute("data-github-state", "idle");
     const beforeFail = searches(gh.log).prs;
     await page.keyboard.press("Enter");
     await expect(github).toHaveAttribute("data-github-state", "failed", { timeout: 30_000 });
-    await expect(github).toContainText("GitHub 검색 실패 · 다시 시도");
+    await expect(github).toContainText("GitHub search failed · retry");
     await page.keyboard.press("Enter");
     await expect.poll(() => searches(gh.log).prs).toBe(beforeFail + 2);
     await expect(github).toHaveAttribute("data-github-state", "failed", { timeout: 30_000 });
     await input(page).fill("nothing here");
     await page.keyboard.press("Enter");
     await expect(github).toHaveAttribute("data-github-state", "none", { timeout: 30_000 });
-    await expect(github).toContainText("GitHub에도 없음");
+    await expect(github).toContainText("No results on GitHub either");
     await page.keyboard.press("Escape");
   } finally {
     daemon?.stop();
@@ -365,7 +365,7 @@ test("⌘P then ⌘↵ opens the highlighted file beside the area in use, and �
     await page.keyboard.press(chord("open_file"));
     const files = page.locator('[data-palette="Open file"] [data-palette-input]');
     await expect(files).toBeFocused();
-    await expect(page.locator('[data-palette-hint="beside"]')).toHaveText(`${label(fieldChord("Enter", SYSTEM))} 옆에 열기`);
+    await expect(page.locator('[data-palette-hint="beside"]')).toHaveText(`${label(fieldChord("Enter", SYSTEM))} Open to the side`);
     await page.keyboard.type("first.txt");
     await expect(page.locator('[data-palette-row$="/first.txt"]')).toHaveAttribute("aria-selected", "true");
     await page.keyboard.press("Enter");

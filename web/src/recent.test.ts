@@ -148,14 +148,14 @@ describe("Recent Panels rows", () => {
     const rest = session("c-main", "t1");
     use(rest);
     const [one, two] = ["t1", "t2"].map((id) => panelItem(rest, recentEntries().find((entry) => !isScreenVisit(entry) && entry.id === id)!)!);
-    expect(one).toMatchObject({ title: "Fix the build", detail: "hide · main · Terminal", agent: { symbol: "●" } });
+    expect(one).toMatchObject({ title: "Fix the build", detail: { kind: "surface", place: "hide · main", surface: "herdr" }, agent: { symbol: "●" } });
     expect(two).toMatchObject({ title: "t2 label", agent: null });
   });
 
   it("collapses the place to the checkout when it shares the project's name, and names a display's type", () => {
     const rest = session("c-feature", "t3", [display("d1", "a.diff", "diff")]);
     use(rest, true);
-    expect(panelItem(rest, recentEntries()[0]!)).toMatchObject({ title: "a.diff", detail: "hide · Diff" });
+    expect(panelItem(rest, recentEntries()[0]!)).toMatchObject({ title: "a.diff", detail: { kind: "surface", place: "hide", surface: "diff" } });
   });
 });
 
@@ -190,13 +190,13 @@ describe("Recent Projects", () => {
     expect(recentProjectOrder(["w-notes", "w-hide", "w-new"])).toEqual(["w-hide", "w-notes", "w-new"]);
     expect(lastSurfaceOf("w-notes")?.id).toBe("d1");
     const row = projectItem(main.navigator!.workspaces![1]!, main);
-    expect(row).toMatchObject({ title: "notes", detail: "plan.md · notes", target: { kind: "surface", surface: { id: "d1", kind: "browser" } } });
+    expect(row).toMatchObject({ title: "notes", detail: { kind: "text", text: "plan.md · notes" }, target: { kind: "surface", surface: { id: "d1", kind: "browser" } } });
   });
 
   it("comes forward on its checkout when no surface of it was used", () => {
     const rest = session("c-main", "t1");
     const row = projectItem(rest.navigator!.workspaces![1]!, rest);
-    expect(row).toMatchObject({ target: { kind: "checkout", checkoutId: "c-notes" }, detail: "notes" });
+    expect(row).toMatchObject({ target: { kind: "checkout", checkoutId: "c-notes" }, detail: { kind: "text", text: "notes" } });
   });
 });
 

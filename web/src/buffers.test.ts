@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
+import type { TFunction } from "i18next";
+import { createInterfaceI18n } from "./i18n/instance";
 import {
   bufferDecision,
   bufferFor,
@@ -16,6 +18,11 @@ import {
 } from "./buffers";
 import { draftPlace } from "./DraftRecovery";
 import type { SnapshotRest } from "./snapshot";
+
+let t: TFunction<"translation">;
+beforeAll(async () => {
+  t = (await createInterfaceI18n("en")).t;
+});
 
 const HOST = "host-a";
 const KEY: BufferKey = { host: HOST, device: "local", root: "/repo", path: "/repo/a.ts" };
@@ -113,17 +120,17 @@ describe("draft recovery (B10-B12)", () => {
   });
 
   it("opens a draft only in its own checkout on its own device and host", () => {
-    expect(draftPlace(buffer(KEY, "x"), HOST, rest())).toEqual({ kind: "front" });
-    expect(draftPlace(buffer({ ...KEY, device: "studio" }, "x"), HOST, rest())).toMatchObject({ kind: "device", device: "studio" });
-    expect(draftPlace(buffer({ ...KEY, device: "studio" }, "x"), HOST, rest("studio"))).toEqual({ kind: "front" });
-    expect(draftPlace(buffer({ ...KEY, host: "host-b" }, "x"), HOST, rest())).toMatchObject({ kind: "none" });
-    expect(draftPlace(buffer({ ...KEY, root: "/elsewhere", path: "/elsewhere/a.ts" }, "x"), HOST, rest())).toMatchObject({ kind: "none" });
+    expect(draftPlace(buffer(KEY, "x"), HOST, rest(), t)).toEqual({ kind: "front" });
+    expect(draftPlace(buffer({ ...KEY, device: "studio" }, "x"), HOST, rest(), t)).toMatchObject({ kind: "device", device: "studio" });
+    expect(draftPlace(buffer({ ...KEY, device: "studio" }, "x"), HOST, rest("studio"), t)).toEqual({ kind: "front" });
+    expect(draftPlace(buffer({ ...KEY, host: "host-b" }, "x"), HOST, rest(), t)).toMatchObject({ kind: "none" });
+    expect(draftPlace(buffer({ ...KEY, root: "/elsewhere", path: "/elsewhere/a.ts" }, "x"), HOST, rest(), t)).toMatchObject({ kind: "none" });
   });
 
   it("offers an unverified draft only to this machine's own checkout at its root", () => {
-    expect(draftPlace(legacy("/repo", "/repo/a.ts"), HOST, rest())).toEqual({ kind: "front" });
-    expect(draftPlace(legacy("/repo", "/repo/a.ts"), HOST, rest("studio"))).toMatchObject({ kind: "device", device: "local" });
-    expect(draftPlace(legacy("", "/repo/a.ts"), HOST, rest())).toMatchObject({ kind: "none" });
+    expect(draftPlace(legacy("/repo", "/repo/a.ts"), HOST, rest(), t)).toEqual({ kind: "front" });
+    expect(draftPlace(legacy("/repo", "/repo/a.ts"), HOST, rest("studio"), t)).toMatchObject({ kind: "device", device: "local" });
+    expect(draftPlace(legacy("", "/repo/a.ts"), HOST, rest(), t)).toMatchObject({ kind: "none" });
   });
 
   it("reads a closing tab's stored draft only after its queued write settled", async () => {

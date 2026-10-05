@@ -64,6 +64,14 @@ export const overviewEnglish = {
   "overview.sessionsReadFailed": "Could not read session history · {{value}}",
   "overview.lastReadValue": "Last read value",
   "overview.justNow": "Just now",
+  "overview.availability.connectingHerdr": "Connecting to Herdr…",
+  "overview.availability.herdrState": "Herdr is {{state}}",
+  "overview.availability.agentCountsLater": "{{reason}}. Agent counts show once it answers; Hide keeps trying.",
+  "overview.availability.deviceState": "{{device}} is {{state}}",
+  "overview.availability.deviceStale": "{{device}} is not connected; showing what it last reported",
+  "overview.availability.readingProjects": "Reading projects…",
+  "overview.availability.projectsUnreadable": "Projects could not be read",
+  "overview.answerCount": "{{count}} to answer",
 } as const;
 
 const ko = {
@@ -130,6 +138,14 @@ const ko = {
   "overview.sessionsReadFailed": "세션 기록을 읽지 못함 · {{value}}",
   "overview.lastReadValue": "마지막으로 읽은 값",
   "overview.justNow": "방금",
+  "overview.availability.connectingHerdr": "Herdr에 연결하는 중…",
+  "overview.availability.herdrState": "Herdr 상태: {{state}}",
+  "overview.availability.agentCountsLater": "{{reason}}. 응답하면 에이전트 수가 표시되며, Hide가 계속 시도합니다.",
+  "overview.availability.deviceState": "{{device}}: {{state}}",
+  "overview.availability.deviceStale": "{{device}}에 연결되어 있지 않습니다. 마지막으로 보고한 내용을 표시합니다",
+  "overview.availability.readingProjects": "프로젝트를 읽는 중…",
+  "overview.availability.projectsUnreadable": "프로젝트를 읽지 못했습니다",
+  "overview.answerCount": "답할 것 {{count}}",
 } satisfies Catalog<typeof overviewEnglish>;
 
 const zhCN = {
@@ -196,6 +212,14 @@ const zhCN = {
   "overview.sessionsReadFailed": "未能读取会话记录 · {{value}}",
   "overview.lastReadValue": "最近读取的值",
   "overview.justNow": "刚刚",
+  "overview.availability.connectingHerdr": "正在连接 Herdr…",
+  "overview.availability.herdrState": "Herdr 状态：{{state}}",
+  "overview.availability.agentCountsLater": "{{reason}}。它响应后会显示智能体数量；Hide 会持续尝试。",
+  "overview.availability.deviceState": "{{device}}：{{state}}",
+  "overview.availability.deviceStale": "{{device}} 未连接；显示其最后一次报告的内容",
+  "overview.availability.readingProjects": "正在读取项目…",
+  "overview.availability.projectsUnreadable": "无法读取项目",
+  "overview.answerCount": "{{count}} 项待回复",
 } satisfies Catalog<typeof overviewEnglish>;
 
 const ja = {
@@ -262,6 +286,14 @@ const ja = {
   "overview.sessionsReadFailed": "セッション履歴を読み込めません · {{value}}",
   "overview.lastReadValue": "最後に読み込んだ値",
   "overview.justNow": "たった今",
+  "overview.availability.connectingHerdr": "Herdr に接続しています…",
+  "overview.availability.herdrState": "Herdr の状態: {{state}}",
+  "overview.availability.agentCountsLater": "{{reason}}。応答するとエージェント数が表示されます。Hide は再試行を続けます。",
+  "overview.availability.deviceState": "{{device}}: {{state}}",
+  "overview.availability.deviceStale": "{{device}} に接続されていません。最後に報告された内容を表示しています",
+  "overview.availability.readingProjects": "プロジェクトを読み込んでいます…",
+  "overview.availability.projectsUnreadable": "プロジェクトを読み込めませんでした",
+  "overview.answerCount": "返答待ち {{count}} 件",
 } satisfies Catalog<typeof overviewEnglish>;
 
 export const overviewCatalogs = { en: overviewEnglish, ko, "zh-CN": zhCN, ja } satisfies Catalogs<typeof overviewEnglish>;

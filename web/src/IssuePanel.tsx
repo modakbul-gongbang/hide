@@ -5,6 +5,7 @@ import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { Kbd } from "./components/ui/kbd";
 import { Hint } from "./components/ui/tooltip";
+import { useInterfaceTranslation } from "./i18n/client";
 import { useCachedDetail, useDetailSlot } from "./issueDetails";
 import { cn } from "./lib/utils";
 import { MarkdownText } from "./MarkdownText";
@@ -26,17 +27,18 @@ import { fieldLabel } from "./shortcutLabels";
 // reads again. A Local issue's title and body are edited in place; a GitHub
 // issue is edited on GitHub.
 
-/** 편집 on a card or a menu: the issue whose panel opens with its editor, and when it was asked, so a second ask is a new one. */
+/** Edit on a card or a menu: the issue whose panel opens with its editor, and when it was asked, so a second ask is a new one. */
 export type EditRequest = { key: string; at: number };
 
 /** How the panel reads the issue now: its answer, the last one while it reads again, or why it could not. */
 type Read = { detail: IssueDetail | null; reading: boolean; failure: string | null };
 
 function useRead(taskKey: string): Read {
+  const { t } = useInterfaceTranslation();
   const slot = useDetailSlot(taskKey);
   const cached = useCachedDetail(taskKey);
   if (slot?.phase === "ready") return { detail: slot, reading: false, failure: null };
-  if (slot?.phase === "failed") return { detail: cached, reading: false, failure: slot.message ?? "읽지 못함" };
+  if (slot?.phase === "failed") return { detail: cached, reading: false, failure: slot.message ?? t("issue.readFailed") };
   return { detail: cached, reading: slot?.phase === "reading", failure: null };
 }
 
@@ -52,14 +54,15 @@ export function IssuePanel({
   actions: Actions;
   handlers: BoardHandlers;
   focusedPaneId: string | null;
-  /** 편집 asked for an issue's editor; the panel opens it when that issue is this one. */
+  /** Edit asked for an issue's editor; the panel opens it when that issue is this one. */
   editRequest: EditRequest | null;
   onClose: () => void;
 }) {
+  const { t } = useInterfaceTranslation();
   const { task, owner } = card;
   const read = useRead(task.key);
   const [editing, setEditing] = useState(false);
-  // One read each time the panel opens on an issue (B15), and on 재시도 (B16).
+  // One read each time the panel opens on an issue (B15), and on Retry (B16).
   const readIssue = () => actions.requestIssueDetail(card.place.projectId, task.key);
   useEffect(() => {
     actions.requestIssueDetail(card.place.projectId, task.key);
@@ -89,7 +92,7 @@ export function IssuePanel({
       handlers.openCheckout(card);
     }
   };
-  const stage = STAGES.find((entry) => entry.stage === card.stage)?.label ?? card.stage;
+  const stage = t(STAGES.find((entry) => entry.stage === card.stage)!.labelKey);
   const github = task.source === "github";
   return (
     <aside
@@ -103,13 +106,13 @@ export function IssuePanel({
       <header className="flex min-w-0 items-center gap-xs text-caption text-muted-foreground">
         <TaskGlyph task={task} />
         <span className="font-mono">{task.id}</span>
-        <span>{owner.tasks?.source?.label ?? (github ? "GitHub" : "Local")}</span>
+        <span>{owner.tasks?.source?.label ?? (github ? "GitHub" : t("issueSettings.local"))}</span>
         {card.project ? <span className="truncate">{card.project}</span> : null}
         <span className="flex-1" />
         <span className={cn("font-medium", task.open ? "text-success" : "text-muted-foreground")} data-issue-state={task.open ? "open" : "closed"}>
-          {task.open ? "Open" : "Closed"}
+          {t(task.open ? "issue.state.open" : "issue.state.closed")}
         </span>
-        <Hint label="닫기" shortcut={<Kbd>Esc</Kbd>}>
+        <Hint label={t("common.close")} shortcut={<Kbd>Esc</Kbd>}>
           <Button variant="ghost" size="icon-sm" onClick={onClose} data-issue-panel-close="true">
             <XIcon aria-hidden="true" />
           </Button>
@@ -149,29 +152,30 @@ export function IssuePanel({
 
 /**
  * The action line (B11): the stage's first action and its key, the card's own
- * (시작 in the backlog, Workspace in progress, the pull request in review),
- * GitHub or 편집 beside it, and `⋯` at the end.
+ * (Start in the backlog, Workspace in progress, the pull request in review),
+ * GitHub or Edit beside it, and `⋯` at the end.
  */
 function PanelActions({ card, actions, handlers, onEdit }: { card: TaskCard; actions: Actions; handlers: BoardHandlers; onEdit: () => void }) {
+  const { t } = useInterfaceTranslation();
   const { task, owner } = card;
   return (
     <div className="flex items-center gap-xs" data-issue-panel-actions="true">
       {card.first === "start" ? (
-        <Hint label={START_HINT} shortcut={<Kbd>S</Kbd>}>
+        <Hint label={t(START_HINT)} shortcut={<Kbd>S</Kbd>}>
           <Button size="sm" onClick={() => handlers.startIssue(card)} data-issue-panel-start="true">
             <PlayIcon aria-hidden="true" />
-            시작
+            {t("common.start")}
           </Button>
         </Hint>
       ) : card.first === "workspace" ? (
-        <Hint label="Workspace 열기" shortcut={<Kbd>O</Kbd>}>
+        <Hint label={t("issue.openWorkspace")} shortcut={<Kbd>O</Kbd>}>
           <Button size="sm" onClick={() => handlers.openCheckout(card)} data-issue-panel-workspace="true">
             <SquareTerminalIcon aria-hidden="true" />
-            Workspace
+            {t("issue.workspace")}
           </Button>
         </Hint>
       ) : card.first === "pull_request" && card.pr ? (
-        <Hint label={`PR #${card.pr.number} GitHub에서 열기`}>
+        <Hint label={t("issue.openPr", { number: String(card.pr.number) })}>
           <Button size="sm" onClick={() => handlers.openGitHub(card.pr!.url, owner.device_id)} data-issue-panel-pr={card.pr.number}>
             <GitPullRequestIcon aria-hidden="true" />#{card.pr.number}
           </Button>
@@ -179,14 +183,14 @@ function PanelActions({ card, actions, handlers, onEdit }: { card: TaskCard; act
       ) : null}
       {card.first === "start" ? <Kbd>S</Kbd> : card.first === "workspace" ? <Kbd>O</Kbd> : null}
       {task.url ? (
-        <Hint label="GitHub에서 열기">
+        <Hint label={t("issue.openGitHub")}>
           <Button variant="ghost" size="icon-sm" onClick={() => handlers.openGitHub(task.url as string, owner.device_id)} data-issue-panel-github="true">
             <ExternalLinkIcon aria-hidden="true" />
           </Button>
         </Hint>
       ) : null}
       {card.editable ? (
-        <Hint label={EDIT_HINT}>
+        <Hint label={t(EDIT_HINT)}>
           <Button variant="ghost" size="icon-sm" onClick={onEdit} data-issue-panel-edit="true">
             <PencilIcon aria-hidden="true" />
           </Button>
@@ -221,27 +225,28 @@ function Skeleton({ data }: { data: string }) {
  * row, and a value still being read is a skeleton.
  */
 function Properties({ card, read, stage }: { card: TaskCard; read: Read; stage: string }) {
+  const { t, i18n } = useInterfaceTranslation();
   const { task } = card;
   const detail = read.detail;
   const github = task.source === "github";
   const pending = detail === null && read.reading;
   return (
     <dl className="grid grid-cols-[auto_minmax(0,1fr)] gap-x-lg gap-y-xs text-body" data-issue-properties="true">
-      <Row label="단계" data="stage">
+      <Row label={t("issue.properties.stage")} data="stage">
         {stage}
       </Row>
       {github && pending ? (
         <>
-          <Row label="라벨" data="labels">
+          <Row label={t("issue.properties.labels")} data="labels">
             <Skeleton data="labels" />
           </Row>
-          <Row label="작성" data="author">
+          <Row label={t("issue.properties.author")} data="author">
             <Skeleton data="author" />
           </Row>
         </>
       ) : null}
       {github && detail && detail.labels.length > 0 ? (
-        <Row label="라벨" data="labels">
+        <Row label={t("issue.properties.labels")} data="labels">
           <span className="flex flex-wrap items-center gap-sm">
             {detail.labels.map((label) => (
               <IssueLabelView key={label.name} label={label} />
@@ -250,27 +255,27 @@ function Properties({ card, read, stage }: { card: TaskCard; read: Read; stage: 
         </Row>
       ) : null}
       {github && detail?.author ? (
-        <Row label="작성" data="author">
-          {[detail.author, detail.created_at_unix_ms != null ? issueDate(detail.created_at_unix_ms) : null].filter(Boolean).join(" · ")}
+        <Row label={t("issue.properties.author")} data="author">
+          {[detail.author, detail.created_at_unix_ms != null ? issueDate(detail.created_at_unix_ms, i18n.language) : null].filter(Boolean).join(" · ")}
         </Row>
       ) : null}
       {github && detail && detail.assignees.length > 0 ? (
-        <Row label="담당" data="assignees">
+        <Row label={t("issue.properties.assignees")} data="assignees">
           {detail.assignees.join(", ")}
         </Row>
       ) : null}
       {!github && detail?.created_at_unix_ms != null ? (
-        <Row label="만듦" data="created">
-          {issueDate(detail.created_at_unix_ms)}
+        <Row label={t("issue.properties.created")} data="created">
+          {issueDate(detail.created_at_unix_ms, i18n.language)}
         </Row>
       ) : null}
       {card.updatedAt !== null ? (
-        <Row label="갱신" data="updated">
-          {issueDate(card.updatedAt)}
+        <Row label={t("issue.properties.updated")} data="updated">
+          {issueDate(card.updatedAt, i18n.language)}
         </Row>
       ) : null}
       {card.blockedBy.length > 0 ? (
-        <Row label="막힘" data="blocked">
+        <Row label={t("issue.properties.blocked")} data="blocked">
           <span className="text-warning">{card.blockedBy.map((blocker) => blocker.label).join(", ")}</span>
         </Row>
       ) : null}
@@ -279,28 +284,29 @@ function Properties({ card, read, stage }: { card: TaskCard; read: Read; stage: 
 }
 
 /**
- * `이 이슈로 한 일` (B13): the checkout line with its Workspace button, every
+ * `Work on this issue` (B13): the checkout line with its Workspace button, every
  * agent working there with a delegated one indented, and the pull request with
  * its title and the review GitHub asks for or its CI. With none of them the
  * section is not drawn.
  */
 function WorkDone({ card, handlers, focusedPaneId, actions }: { card: TaskCard; handlers: BoardHandlers; focusedPaneId: string | null; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const { checkout, owner } = card;
   const pr = checkout?.pull_request ?? null;
   if (!checkout && card.rows.length === 0) return null;
   const branch = checkout?.branch ?? checkout?.label ?? "";
   const Glyph = checkout && (checkout.is_primary === true || !checkout.is_worktree) ? HouseIcon : GitBranchIcon;
   return (
-    <section className="flex flex-col gap-xs" aria-label="이 이슈로 한 일" data-issue-work="true">
-      <h3 className="text-caption font-medium text-muted-foreground">이 이슈로 한 일</h3>
+    <section className="flex flex-col gap-xs" aria-label={t("issue.workDone")} data-issue-work="true">
+      <h3 className="text-caption font-medium text-muted-foreground">{t("issue.workDone")}</h3>
       {checkout ? (
         <div className="flex min-w-0 items-center gap-xs font-mono text-caption text-muted-foreground" data-issue-work-checkout={checkout.id}>
           <Glyph aria-hidden="true" className="size-(--size-icon-sm) shrink-0" />
           <span className="min-w-0 truncate">{branch}</span>
           {card.chip?.ahead != null ? <span>↑{card.chip.ahead}</span> : null}
-          {card.chip?.files != null ? <span className="text-warning">{card.chip.files} files</span> : null}
+          {card.chip?.files != null ? <span className="text-warning">{t("issue.changedFiles", { count: card.chip.files })}</span> : null}
           <span className="flex-1" />
-          <Hint label="Workspace 열기" shortcut={<Kbd>O</Kbd>}>
+          <Hint label={t("issue.openWorkspace")} shortcut={<Kbd>O</Kbd>}>
             <Button variant="ghost" size="icon-sm" onClick={() => handlers.openCheckout(card)} data-issue-work-workspace="true">
               <SquareTerminalIcon aria-hidden="true" />
             </Button>
@@ -327,19 +333,20 @@ function WorkDone({ card, handlers, focusedPaneId, actions }: { card: TaskCard; 
 
 /**
  * The body in Markdown (B14), a skeleton while it is first read, and when the
- * read fails one line of why with `재시도`, which reads this issue again
+ * read fails one line of why with `Retry`, which reads this issue again
  * (B16). A Local issue's body is edited by a click.
  */
 function Body({ card, read, onEdit, onRetry }: { card: TaskCard; read: Read; onEdit: () => void; onRetry: () => void }) {
+  const { t } = useInterfaceTranslation();
   const body = read.detail?.body ?? null;
   return (
-    <section className="flex flex-col gap-xs" aria-label="본문" data-issue-body={read.failure ? "failed" : body === null ? "reading" : "ready"}>
-      <h3 className="text-caption font-medium text-muted-foreground">{card.editable ? "본문 · 누르면 고침" : "본문"}</h3>
+    <section className="flex flex-col gap-xs" aria-label={t("issue.body")} data-issue-body={read.failure ? "failed" : body === null ? "reading" : "ready"}>
+      <h3 className="text-caption font-medium text-muted-foreground">{t(card.editable ? "issue.bodyEditable" : "issue.body")}</h3>
       {read.failure ? (
         <p className="flex items-center gap-sm text-caption text-muted-foreground" data-issue-body-failure="true">
           <span className="min-w-0 truncate">{read.failure}</span>
           <Button variant="secondary" size="sm" onClick={onRetry} data-issue-body-retry="true">
-            재시도
+            {t("common.retry")}
           </Button>
         </p>
       ) : body === null ? (
@@ -350,7 +357,7 @@ function Body({ card, read, onEdit, onRetry }: { card: TaskCard; read: Read; onE
         </span>
       ) : body.trim() === "" ? (
         <p className="text-caption text-muted-foreground" onClick={card.editable ? onEdit : undefined} data-issue-body-empty="true">
-          본문 없음
+          {t("issue.bodyEmpty")}
         </p>
       ) : (
         <div className={cn(card.editable && "cursor-text rounded-xs hover:bg-accent")} onClick={card.editable ? onEdit : undefined}>
@@ -363,17 +370,18 @@ function Body({ card, read, onEdit, onRetry }: { card: TaskCard; read: Read; onE
 
 /** A GitHub issue's comments (B14): how many, the latest three, and that writing is on GitHub. */
 function Comments({ detail }: { detail: IssueDetail }) {
+  const { t, i18n } = useInterfaceTranslation();
   const count = detail.comment_count ?? 0;
   return (
-    <section className="flex flex-col gap-sm" aria-label="댓글" data-issue-comments={count}>
-      <h3 className="text-caption font-medium text-muted-foreground">댓글 {count}</h3>
+    <section className="flex flex-col gap-sm" aria-label={t("issue.comments")} data-issue-comments={count}>
+      <h3 className="text-caption font-medium text-muted-foreground">{t("issue.commentCount", { count })}</h3>
       {detail.comments.map((comment, index) => (
         <article key={index} className="flex flex-col gap-xxs" data-issue-comment={index}>
-          <span className="text-caption text-muted-foreground">{[comment.author, comment.created_at_unix_ms != null ? issueDate(comment.created_at_unix_ms) : null].filter(Boolean).join(" · ")}</span>
+          <span className="text-caption text-muted-foreground">{[comment.author, comment.created_at_unix_ms != null ? issueDate(comment.created_at_unix_ms, i18n.language) : null].filter(Boolean).join(" · ")}</span>
           <p className="whitespace-pre-line break-words text-body text-foreground">{comment.body}</p>
         </article>
       ))}
-      <p className="text-caption text-muted-foreground">{count === 0 ? "댓글 없음 · 쓰기는 GitHub에서" : "쓰기는 GitHub에서"}</p>
+      <p className="text-caption text-muted-foreground">{t(count === 0 ? "issue.commentsEmpty" : "issue.writeCommentsOnGitHub")}</p>
     </section>
   );
 }
@@ -384,6 +392,7 @@ function Comments({ detail }: { detail: IssueDetail }) {
  * keeps the text and says why in place.
  */
 function LocalEditor({ card, body, actions, onCancel, onSaved }: { card: TaskCard; body: string; actions: Actions; onCancel: () => void; onSaved: () => void }) {
+  const { t } = useInterfaceTranslation();
   const [title, setTitle] = useState(card.title);
   const [text, setText] = useState(body);
   const [request, setRequest] = useState<string | null>(null);
@@ -410,14 +419,14 @@ function LocalEditor({ card, body, actions, onCancel, onSaved }: { card: TaskCar
     }
   };
   const saving = request !== null && answer === null;
-  const failure = answer?.phase === "failed" ? (answer.message ?? "저장하지 못함") : null;
+  const failure = answer?.phase === "failed" ? (answer.message ?? t("issue.saveFailed")) : null;
   return (
     <div className="flex flex-col gap-sm" onKeyDown={onKeyDown} data-issue-editor="true">
-      <Input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} aria-label="제목" className="text-title font-semibold" data-issue-editor-title="true" />
+      <Input autoFocus value={title} onChange={(event) => setTitle(event.target.value)} aria-label={t("issue.title")} className="text-title font-semibold" data-issue-editor-title="true" />
       <textarea
         value={text}
         onChange={(event) => setText(event.target.value)}
-        aria-label="본문"
+        aria-label={t("issue.body")}
         rows={10}
         className="w-full min-w-0 resize-y rounded-sm border border-input bg-background p-sm text-body text-foreground outline-none focus-visible:border-ring focus-visible:ring-1 focus-visible:ring-ring"
         data-issue-editor-body="true"
@@ -429,11 +438,11 @@ function LocalEditor({ card, body, actions, onCancel, onSaved }: { card: TaskCar
       ) : null}
       <div className="flex items-center gap-xs">
         <Button size="sm" onClick={save} disabled={saving} data-issue-editor-save="true">
-          저장
+          {t("common.save")}
           <Kbd>{fieldLabel("Enter")}</Kbd>
         </Button>
         <Button variant="ghost" size="sm" onClick={onCancel} data-issue-editor-cancel="true">
-          취소
+          {t("common.cancel")}
           <Kbd>Esc</Kbd>
         </Button>
       </div>

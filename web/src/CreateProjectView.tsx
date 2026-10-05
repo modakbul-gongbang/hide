@@ -16,8 +16,10 @@ import { Input } from "./components/ui/input";
 import { RegistrationStatus, useRegistration } from "./registration";
 import type { WorkspaceRegistration } from "./snapshot";
 import { useShellStore } from "./store";
+import { useInterfaceTranslation } from "./i18n/client";
 
 export function CreateProjectView({ actions, registrations, onBack }: { actions: Actions; registrations: readonly WorkspaceRegistration[]; onBack: () => void }) {
+  const { t } = useInterfaceTranslation();
   const [parent, setParent] = useState(() => defaultProjectParent(registrations));
   const [typed, setTyped] = useState("");
   const registration = useRegistration(registrations);
@@ -36,7 +38,7 @@ export function CreateProjectView({ actions, registrations, onBack }: { actions:
   }, [actions, parent, asked, failure]);
 
   const registered = target?.path ? alreadyRegistered(target.path, "local", registrations) : false;
-  const problem = nameProblem ?? (registered ? refusalText("already_registered") : target?.reason ? refusalText(target.reason) : null);
+  const problem = nameProblem ? t(nameProblem) : registered ? refusalText("already_registered", t) : target?.reason ? refusalText(target.reason, t) : null;
   const ready = name !== "" && problem === null && target?.path != null && !pending;
   const shownParent = target?.parent_label ?? parent;
   const shownPath = target?.parent_path ? projectPath(target.parent_path, name) : null;
@@ -66,14 +68,14 @@ export function CreateProjectView({ actions, registrations, onBack }: { actions:
       <DialogHeader>
         <Button type="button" variant="ghost" size="sm" className="-ml-sm mb-xs self-start" onClick={onBack} data-create-project-back="true">
           <ArrowLeftIcon />
-          Back
+          {t("common.back")}
         </Button>
-        <DialogTitle>Create a new project</DialogTitle>
-        <DialogDescription>Name it, and Hide makes the folder with its own Git repository and adds it.</DialogDescription>
+        <DialogTitle>{t("addProject.create.title")}</DialogTitle>
+        <DialogDescription>{t("addProject.create.description")}</DialogDescription>
       </DialogHeader>
       <DialogBody className="flex flex-col gap-md">
         <label className="block text-body text-subtle-foreground">
-          Name
+          {t("common.name")}
           <Input
             autoFocus
             mono
@@ -92,7 +94,7 @@ export function CreateProjectView({ actions, registrations, onBack }: { actions:
           type="button"
           disabled={pending}
           onClick={() => void choose()}
-          aria-label={`Git repository in ${shownParent}; choose another folder`}
+          aria-label={t("addProject.create.locationAria", { parent: shownParent })}
           data-create-project-location={target?.parent_path ?? parent}
           className="flex w-full items-center gap-md rounded-md border border-border bg-card px-md py-sm text-left outline-none transition-colors hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-(--opacity-disabled)"
         >
@@ -100,7 +102,7 @@ export function CreateProjectView({ actions, registrations, onBack }: { actions:
             <GitBranchIcon />
           </span>
           <span className="flex min-w-0 flex-1 flex-col">
-            <span className="truncate text-subhead font-medium text-foreground">Git repository in {shownParent}</span>
+            <span className="truncate text-subhead font-medium text-foreground">{t("addProject.create.location", { parent: shownParent })}</span>
             <span className="break-all font-mono text-caption text-muted-foreground" data-create-project-path={shownPath ?? ""}>
               {shownPath ?? " "}
             </span>
@@ -112,10 +114,10 @@ export function CreateProjectView({ actions, registrations, onBack }: { actions:
             {problem}
           </Note>
         ) : target?.leftover && name ? (
-          <Note data-create-project-leftover="true">An empty folder by this name is already there; the project is made in it.</Note>
+          <Note data-create-project-leftover="true">{t("addProject.create.leftover")}</Note>
         ) : null}
         <Button type="submit" disabled={!ready} className="w-full" data-create-project-submit="true">
-          Create project
+          {t("addProject.create.submit")}
         </Button>
         <RegistrationStatus registration={registration} />
       </DialogBody>

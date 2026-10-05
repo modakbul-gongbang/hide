@@ -2,6 +2,7 @@ import { ChevronDownIcon, ChevronRightIcon } from "lucide-react";
 import { memo, useRef } from "react";
 import { AgentMark } from "../AgentMark";
 import { agentClosing } from "../close";
+import { useInterfaceTranslation } from "../i18n/client";
 import { useShellStore } from "../store";
 import { branchChip, lineTone, markTone, rowAccessibleName, sidebarLine } from "../agentRow";
 import { cn } from "../lib/utils";
@@ -106,6 +107,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
   /** The row's right-click menu; the menu key or ⇧F10 on the focused row opens it too. */
   menu: AgentRowMenu;
 }) {
+  const { t } = useInterfaceTranslation();
   const main = useRef<HTMLButtonElement>(null);
   const closing = useShellStore((s) => agentClosing(s.rest?.status?.async_operations, agent.pane_id));
   const line = sidebarLine(agent);
@@ -119,7 +121,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
   return (
     <EntryContextMenu
       asChild
-      label={`${agent.identity_label} actions`}
+      label={t("common.entryActions", { name: agent.identity_label })}
       items={() => menu.items(agent)}
       onSelect={(id) => menu.onSelect(agent, id)}
       data-agent-menu={agent.pane_id}
@@ -138,7 +140,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
         <button
           ref={main}
           type="button"
-          aria-label={[rowAccessibleName(agent, device), closing ? "closing" : null, place].filter(Boolean).join(", ")}
+          aria-label={[rowAccessibleName(agent, device), closing ? t("agents.closingName") : null, place].filter(Boolean).join(", ")}
           aria-current={selected ? "true" : undefined}
           data-agent-open={agent.pane_id}
           className="absolute inset-0 rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
@@ -157,7 +159,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
           </span>
           {closing ? (
             <span aria-hidden="true" className="pointer-events-none shrink-0 text-caption text-muted-foreground" data-agent-closing="true">
-              closing…
+              {t("agents.closing")}
             </span>
           ) : null}
           {branch ? (
@@ -183,7 +185,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
           {foldable ? (
             <button
               type="button"
-              aria-label={folded ? `Show ${agent.identity_label}'s agents` : `Hide ${agent.identity_label}'s agents`}
+              aria-label={folded ? t("agents.showChildren", { name: agent.identity_label }) : t("agents.hideChildren", { name: agent.identity_label })}
               aria-expanded={!folded}
               data-agent-tree-toggle={agent.pane_id}
               className={cn(
@@ -211,9 +213,9 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
         {folded && foldedLineage ? (
           <span className="pointer-events-none flex min-w-0 flex-col" aria-hidden="true" data-checkout-lines={agent.pane_id}>
             {foldedLineage.lines.map((summary) => (
-              <span key={summary.key} className="flex min-h-(--size-badge-height) min-w-0 items-center gap-xs text-caption" data-checkout-line={summary.branch}>
+              <span key={summary.key} className="flex min-h-(--size-badge-height) min-w-0 items-center gap-xs text-caption" data-checkout-line={summary.branch ?? undefined}>
                 <StatusMark symbol={summary.symbol} className={markTone(summary.agent)} />
-                <span className="min-w-0 flex-1 truncate font-mono text-subtle-foreground">{summary.branch}</span>
+                <span className="min-w-0 flex-1 truncate font-mono text-subtle-foreground">{summary.branch ?? t("agents.checkoutUnnamed")}</span>
                 {summary.pullRequest !== null ? <span className="shrink-0 text-muted-foreground">#{summary.pullRequest}</span> : null}
                 {summary.device ? <DeviceChip label={summary.device} className="max-w-2/5" /> : null}
               </span>

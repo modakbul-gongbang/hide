@@ -4,6 +4,7 @@
 // a view draws the sentence and how the mark and badge are coloured, so the
 // sidebar and any other list of agents (the Overview) cannot disagree.
 
+import type { TFunction } from "i18next";
 import { chipTone } from "./lineage";
 import type { AgentRow, MarkCounts } from "./snapshot";
 
@@ -88,17 +89,27 @@ export function badgeParts(counts: BadgeCounts | undefined): BadgePart[] {
   return BADGE_ORDER.filter(({ state }) => (counts[state] ?? 0) > 0).map((part) => ({ ...part, count: counts[part.state] ?? 0 }));
 }
 
+/** The count of each marked state, in words. */
+const COUNT_WORDS: Record<keyof MarkCounts, (t: TFunction<"translation">, count: number) => string> = {
+  error: (t, count) => t("agents.count.error", { count }),
+  approval: (t, count) => t("agents.count.approval", { count }),
+  question: (t, count) => t("agents.count.question", { count }),
+  working: (t, count) => t("agents.count.working", { count }),
+  done: (t, count) => t("agents.count.done", { count }),
+  idle: (t, count) => t("agents.count.idle", { count }),
+};
+
 /** A status badge in words, for the accessible name of the row it sits on: `1 question, 2 idle`. */
-export function badgeWords(counts: BadgeCounts | undefined): string {
+export function badgeWords(counts: BadgeCounts | undefined, t: TFunction<"translation">): string {
   return badgeParts(counts)
-    .map((part) => `${part.count} ${part.state}`)
+    .map((part) => COUNT_WORDS[part.state](t, part.count))
     .join(", ");
 }
 
 /** The badge's accessible name: how many live descendants and what they are doing. */
-export function badgeLabel(counts: BadgeCounts | undefined, live: number): string {
-  const words = badgeWords(counts);
-  return `${live} live ${live === 1 ? "descendant" : "descendants"}${words ? `: ${words}` : ""}`;
+export function badgeLabel(counts: BadgeCounts | undefined, live: number, t: TFunction<"translation">): string {
+  const states = badgeWords(counts, t);
+  return states ? t("agents.liveDescendantStates", { count: live, states }) : t("agents.liveDescendants", { count: live });
 }
 
 /**

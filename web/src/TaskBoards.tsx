@@ -38,6 +38,9 @@ import { Popover, PopoverContent, PopoverTrigger } from "./components/ui/popover
 import { Switch } from "./components/ui/switch";
 import { ToggleGroup, ToggleGroupItem } from "./components/ui/toggle-group";
 import { Hint, Tooltip, TooltipContent, TooltipTrigger, useHintOpen } from "./components/ui/tooltip";
+import { useInterfaceTranslation } from "./i18n/client";
+import type { MessageKey } from "./i18n/catalogs";
+import { requireInterfaceLanguage } from "./i18n/locale";
 import { typing } from "./IssueDialogs";
 import { previewRead, useCachedDetail } from "./issueDetails";
 import { markdownPlainText } from "./markdownPlain";
@@ -49,6 +52,7 @@ import {
   buildDependencies,
   filterActive,
   issueDate,
+  readFailureText,
   stageCards,
   type BoardRow,
   type BoardScope,
@@ -102,23 +106,23 @@ export type BoardHandlers = {
   openPanel: (card: TaskCard) => void;
   /** The checkout chip and `O`: that checkout's Workspace. */
   openCheckout: (card: TaskCard) => void;
-  /** 시작 and `S`: the Start dialog for a backlog issue. */
+  /** Start and `S`: the Start dialog for a backlog issue. */
   startIssue: (card: TaskCard) => void;
-  /** 편집 on a Local issue: its panel, the title and body editable (D-41). */
+  /** Edit on a Local issue: its panel, the title and body editable (D-41). */
   editIssue: (card: TaskCard) => void;
   /** The New issue dialog, for the page's Project or its default one. */
   newIssue: () => void;
   /** A page on GitHub: the issue, a pull request (⌘-click, the GitHub control). */
   openGitHub: (url: string, deviceId: string) => void;
-  /** `이슈 없는 워크트리 N`: the Agents graph with its `에이전트 없는 워크트리` line open (B4). */
+  /** `N worktrees without an issue`: the Agents graph with its `Worktrees without agents` line open (B4). */
   showCheckouts: () => void;
-  /** A PR chip, or `이슈 없는 PR N` with no row: the pull request's row on its Project's PRs tab (PRD overview-lenses-prs B21). */
+  /** A PR chip, or `N PRs without an issue` with no row: the pull request's row on its Project's PRs tab (PRD overview-lenses-prs B21). */
   openPullRequestRow: (owner: Workspace, number: number | null) => void;
 };
 
-/** What 시작 and 편집 say on a card and in the panel (B7). */
-export const START_HINT = "이 이슈로 워크트리와 에이전트를 만든다. 이름은 AI가 제안";
-export const EDIT_HINT = "Local 이슈만. 제목 · 본문을 그 자리에서 고친다";
+/** What Start and Edit say on a card and in the panel (B7). */
+export const START_HINT: MessageKey = "board.startHint";
+export const EDIT_HINT: MessageKey = "board.editHint";
 
 /** The board's page state its cards read: the open panel's issue, and the agent in front. */
 export type BoardPage = { panel: string | null; focusedPaneId: string | null };
@@ -191,7 +195,8 @@ export function TasksView({
   // stage's column only while it holds a card or a line of work with no
   // issue. The tracks fill the page's width whatever the columns shown, so
   // a column keeps its width as stages come and go.
-  const columns = STAGES.map(({ stage, label }) => ({ stage, label, cards: stageCards(board, stage) })).filter(
+  const { t } = useInterfaceTranslation();
+  const columns = STAGES.map(({ stage, labelKey }) => ({ stage, label: t(labelKey), cards: stageCards(board, stage) })).filter(
     (column) =>
       column.stage === "backlog" ||
       column.cards.length > 0 ||
@@ -248,8 +253,8 @@ function foldNames(names: readonly string[]): string {
 
 /**
  * Backlog, In progress or Review. Past `COLUMN_LIMIT` the rest wait behind
- * `+N`; In progress ends in `이슈 없는 워크트리 N` and Review in `이슈 없는
- * PR N`, each only above zero (B4).
+ * `+N`; In progress ends in `N worktrees without an issue` and Review in
+ * `N PRs without an issue`, each only above zero (B4).
  */
 function StageColumn({
   stage,
@@ -272,6 +277,7 @@ function StageColumn({
   filtered: boolean;
   onClearFilter: () => void;
 }) {
+  const { t } = useInterfaceTranslation();
   const [all, setAll] = useState(false);
   const shown = all ? cards : cards.slice(0, COLUMN_LIMIT);
   const hidden = cards.length - shown.length;
@@ -282,8 +288,8 @@ function StageColumn({
       <ColumnHead
         action={
           backlog ? (
-            <Hint label="새 이슈" shortcut={<Kbd>C</Kbd>}>
-              <Button variant="ghost" size="icon-sm" aria-label="새 이슈" onClick={handlers.newIssue} data-backlog-new-issue="true">
+            <Hint label={t("issue.newTitle")} shortcut={<Kbd>C</Kbd>}>
+              <Button variant="ghost" size="icon-sm" aria-label={t("issue.newTitle")} onClick={handlers.newIssue} data-backlog-new-issue="true">
                 <PlusIcon aria-hidden="true" />
               </Button>
             </Hint>
@@ -300,8 +306,7 @@ function StageColumn({
       {backlog && cards.length === 0 ? filtered ? <NoMatch onClear={onClearFilter} /> : <EmptyBacklog board={board} onNew={handlers.newIssue} /> : null}
       {hidden > 0 ? (
         <FoldLine onClick={() => setAll(true)} data={{ "data-column-more": stage }}>
-          +{hidden}
-          {backlog ? " · 최근 갱신 순" : ""}
+          {backlog ? t("board.moreRecent", { count: hidden }) : `+${hidden}`}
         </FoldLine>
       ) : null}
       {stage === "working" ? <LooseWorktreesLine worktrees={board.loose.worktrees} onOpen={handlers.showCheckouts} /> : null}
@@ -310,31 +315,33 @@ function StageColumn({
   );
 }
 
-/** `이슈 없는 워크트리 N`: its popover says where it goes and names them; its click opens the Agents graph with that line open (B4). */
+/** `N worktrees without an issue`: its popover says where it goes and names them; its click opens the Agents graph with that line open (B4). */
 function LooseWorktreesLine({ worktrees, onOpen }: { worktrees: readonly LooseWorktree[]; onOpen: () => void }) {
+  const { t } = useInterfaceTranslation();
   if (worktrees.length === 0) return null;
   return (
-    <Hint label={`Agents 그래프에서 보기\n${foldNames(worktrees.map((value) => value.branch))}`}>
+    <Hint label={t("board.showAgents", { names: foldNames(worktrees.map((value) => value.branch)) })}>
       <FoldLine onClick={onOpen} data={{ "data-loose-worktrees": String(worktrees.length) }}>
-        이슈 없는 워크트리 {worktrees.length}
+        {t("board.looseWorktrees", { count: worktrees.length })}
       </FoldLine>
     </Hint>
   );
 }
 
 /**
- * `이슈 없는 PR N`: its popover names them and says where it goes; its
+ * `N PRs without an issue`: its popover names them and says where it goes; its
  * click opens the PRs tab, where each has an issue cell to link (PRD
  * overview-lenses-prs B21; on the Overview of every project, the first one's
  * Project).
  */
 function LoosePullRequestsLine({ pullRequests, handlers }: { pullRequests: readonly LoosePullRequest[]; handlers: BoardHandlers }) {
+  const { t } = useInterfaceTranslation();
   const first = pullRequests[0];
   if (!first) return null;
   return (
-    <Hint label={`PRs 탭에서 보기\n${foldNames(pullRequests.map((value) => `#${value.number}`))}`}>
+    <Hint label={t("board.showPrs", { names: foldNames(pullRequests.map((value) => `#${value.number}`)) })}>
       <FoldLine onClick={() => handlers.openPullRequestRow(first.owner, null)} data={{ "data-loose-prs": String(pullRequests.length) }}>
-        이슈 없는 PR {pullRequests.length}
+        {t("board.loosePrs", { count: pullRequests.length })}
       </FoldLine>
     </Hint>
   );
@@ -342,9 +349,10 @@ function LoosePullRequestsLine({ pullRequests, handlers }: { pullRequests: reado
 
 /** A source still reading, or one that could not be read, as one small mark beside the Backlog count (design 9, 13). */
 function BacklogSource({ board }: { board: TasksBoard }) {
+  const { t } = useInterfaceTranslation();
   if (board.source.failure) {
     return (
-      <Hint label={board.source.failure}>
+      <Hint label={readFailureText(board.source.failure, t)}>
         <span className="text-warning" tabIndex={0} data-backlog-source-failure="true">
           <TriangleAlertIcon aria-hidden="true" className="size-(--size-icon-sm)" />
         </span>
@@ -354,7 +362,7 @@ function BacklogSource({ board }: { board: TasksBoard }) {
   if (board.source.reading) {
     return (
       <span className="text-caption font-normal text-muted-foreground" data-backlog-reading="true">
-        읽는 중…
+        {t("board.reading")}
       </span>
     );
   }
@@ -363,12 +371,14 @@ function BacklogSource({ board }: { board: TasksBoard }) {
 
 /** An empty backlog: one quiet line and the way to add the first issue. */
 function EmptyBacklog({ board, onNew }: { board: TasksBoard; onNew: () => void }) {
+  const { t } = useInterfaceTranslation();
   if (board.source.reading) return null;
   return (
     <div className="flex flex-col items-start gap-xs rounded-md border border-dashed border-border p-sm text-caption text-muted-foreground" data-backlog-empty="true">
-      <p>열린 이슈가 없습니다</p>
+      <p>{t("board.empty")}</p>
       <Button variant="secondary" size="sm" onClick={onNew} data-backlog-empty-new="true">
-        <PlusIcon aria-hidden="true" />새 이슈
+        <PlusIcon aria-hidden="true" />
+        {t("issue.newTitle")}
       </Button>
     </div>
   );
@@ -376,11 +386,12 @@ function EmptyBacklog({ board, onNew }: { board: TasksBoard; onNew: () => void }
 
 /** A filter that keeps nothing: it says so and offers to clear it (design 9). */
 function NoMatch({ onClear }: { onClear: () => void }) {
+  const { t } = useInterfaceTranslation();
   return (
     <div className="flex flex-col items-start gap-xs rounded-md border border-dashed border-border p-sm text-caption text-muted-foreground" data-filter-empty="true">
-      <p>필터에 맞는 이슈 없음</p>
+      <p>{t("board.noMatch")}</p>
       <Button variant="secondary" size="sm" onClick={onClear} data-filter-clear="true">
-        필터 지우기
+        {t("board.clearFilter")}
       </Button>
     </div>
   );
@@ -411,6 +422,7 @@ function DoneColumn({
   actions: Actions;
   handlers: BoardHandlers;
 }) {
+  const { t, i18n } = useInterfaceTranslation();
   const [allNames, setAllNames] = useState(false);
   const perProject = useMemo(() => {
     const counts = new Map<string, { label: string; count: number }>();
@@ -456,7 +468,7 @@ function DoneColumn({
                 <span className="min-w-0 flex-1 truncate">{value.title}</span>
               </button>
               {value.pr ? (
-                <Hint label={[`PR #${value.pr.number} 머지`, value.mergedAt === null ? null : issueDate(value.mergedAt)].filter(Boolean).join(" · ")}>
+                <Hint label={[t("board.mergedPr", { number: String(value.pr.number) }), value.mergedAt === null ? null : issueDate(value.mergedAt, i18n.language)].filter(Boolean).join(" · ")}>
                   <span className="inline-flex shrink-0 items-center gap-xxs px-xs font-mono text-caption text-muted-foreground" tabIndex={0} data-done-pr={value.pr.number}>
                     <GitMergeIcon aria-hidden="true" className="size-(--size-icon-sm)" />
                     {value.pr.number}
@@ -478,18 +490,19 @@ function DoneColumn({
   );
 }
 
-/** `Board | List | Dependencies`, a mode of the Issues view rather than a tab: at the right end of the facts line (B21), and on All projects' tab row. */
+/** Board, List and Dependencies, a mode of the Issues view rather than a tab: at the right end of the facts line (B21), and on All projects' tab row. */
 export function TasksModeToggle({ mode, onChange }: { mode: TasksMode; onChange: (mode: TasksMode) => void }) {
+  const { t } = useInterfaceTranslation();
   return (
-    <ToggleGroup type="single" value={mode} onValueChange={(value) => value && onChange(value as TasksMode)} aria-label="Tasks mode" data-tasks-mode={mode}>
+    <ToggleGroup type="single" value={mode} onValueChange={(value) => value && onChange(value as TasksMode)} aria-label={t("board.mode.label")} data-tasks-mode={mode}>
       <ToggleGroupItem value="board" data-tasks-mode-item="board">
-        Board
+        {t("board.mode.board")}
       </ToggleGroupItem>
       <ToggleGroupItem value="list" data-tasks-mode-item="list">
-        List
+        {t("board.mode.list")}
       </ToggleGroupItem>
       <ToggleGroupItem value="dependencies" data-tasks-mode-item="dependencies">
-        Dependencies
+        {t("board.mode.dependencies")}
       </ToggleGroupItem>
     </ToggleGroup>
   );
@@ -501,10 +514,11 @@ export function TasksModeToggle({ mode, onChange }: { mode: TasksMode; onChange:
  * holds; it is page state and sends nothing.
  */
 export function IssueFilterControl({ filter, onChange }: { filter: IssueFilter; onChange: (filter: IssueFilter) => void }) {
+  const { t } = useInterfaceTranslation();
   const active = filterActive(filter);
   return (
     <Popover>
-      <Hint label={active ? "필터 켜짐" : "필터"}>
+      <Hint label={t(active ? "board.filterActive" : "board.filter")}>
         <PopoverTrigger asChild>
           <Button variant={active ? "secondary" : "ghost"} size="icon-sm" data-issue-filter={active ? "active" : "none"}>
             <ListFilterIcon aria-hidden="true" className={cn(active && "text-primary")} />
@@ -512,14 +526,14 @@ export function IssueFilterControl({ filter, onChange }: { filter: IssueFilter; 
         </PopoverTrigger>
       </Hint>
       <PopoverContent align="end" className="flex flex-col gap-sm" data-issue-filter-panel="true">
-        <Input autoFocus value={filter.query} placeholder="id 또는 제목" onChange={(event) => onChange({ ...filter, query: event.target.value })} data-issue-filter-query="true" />
+        <Input autoFocus value={filter.query} placeholder={t("board.filterQuery")} onChange={(event) => onChange({ ...filter, query: event.target.value })} data-issue-filter-query="true" />
         <label className="flex items-center justify-between gap-sm text-caption text-foreground">
-          내 차례만
+          {t("board.myTurnOnly")}
           <Switch checked={filter.turn} onCheckedChange={(turn) => onChange({ ...filter, turn })} data-issue-filter-turn="true" />
         </label>
         {active ? (
           <Button variant="ghost" size="sm" className="self-start" onClick={() => onChange({ query: "", turn: false })} data-issue-filter-reset="true">
-            필터 지우기
+            {t("board.clearFilter")}
           </Button>
         ) : null}
       </PopoverContent>
@@ -555,6 +569,7 @@ export function IssueLabelView({ label }: { label: IssueLabel }) {
  * Only the operator's turn is coloured; a done card is dimmed.
  */
 export function IssueCardView({ card, page, actions, handlers, graph }: { card: TaskCard; page: BoardPage; actions: Actions; handlers: BoardHandlers; graph?: { status: string | null } }) {
+  const { t } = useInterfaceTranslation();
   const { task, checkout, owner } = card;
   const focusedTask = useContext(FocusedTask);
   const cached = useCachedDetail(task.key);
@@ -563,7 +578,7 @@ export function IssueCardView({ card, page, actions, handlers, graph }: { card: 
   const blocked = card.blockedBy.length > 0;
   const dimmed = card.stage === "done" || (graph !== undefined && blocked);
   const chips = card.chip !== null || card.pr !== null;
-  const createdAge = relativeActivity(task.created_at_unix_ms, Date.now());
+  const createdAge = relativeActivity(task.created_at_unix_ms, Date.now(), t);
   const onKeyDown = (event: KeyboardEvent<HTMLElement>) => {
     if (event.metaKey || event.ctrlKey || event.altKey || typing(event.target)) return;
     const self = event.target === event.currentTarget;
@@ -632,11 +647,11 @@ export function IssueCardView({ card, page, actions, handlers, graph }: { card: 
         ) : null}
         <span className="flex-1" />
         {createdAge ? (
-          <span className="shrink-0 font-mono text-caption text-muted-foreground" data-issue-created-age="true" aria-label={`Created ${createdAge} ago`}>
+          <span className="shrink-0 font-mono text-caption text-muted-foreground" data-issue-created-age="true" aria-label={t("board.createdAgo", { age: createdAge })}>
             {createdAge}
           </span>
         ) : null}
-        {card.sourceFailure ? <SourceFailureMark text={card.sourceFailure} /> : null}
+        {card.sourceFailure ? <SourceFailureMark text={readFailureText(card.sourceFailure, t)} /> : null}
         {graph?.status ? (
           <span className="shrink-0 text-caption text-muted-foreground group-focus-within/card:hidden group-hover/card:hidden" data-card-status="true">
             {graph.status}
@@ -690,12 +705,13 @@ function SourceFailureMark({ text }: { text: string }) {
 
 /** The yellow lock and the ids of the issues that have to finish first; starting is still allowed (B5). */
 function BlockedLine({ card }: { card: TaskCard }) {
-  const names = card.blockedBy.map((blocker) => blocker.label).join(", ");
+  const { t } = useInterfaceTranslation();
+  const blocked = t("board.blockedBy", { issues: card.blockedBy.map((blocker) => blocker.label).join(", ") });
   return (
-    <Hint label={`먼저 끝나야 함: ${names}`}>
+    <Hint label={blocked}>
       <p className="flex w-fit min-w-0 items-center gap-xxs text-caption text-warning" data-blocked-by={card.blockedBy.map((blocker) => blocker.key).join(" ")} tabIndex={0}>
         <LockIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0" />
-        <span className="truncate">먼저 끝나야 함: {names}</span>
+        <span className="truncate">{blocked}</span>
       </p>
     </Hint>
   );
@@ -703,19 +719,20 @@ function BlockedLine({ card }: { card: TaskCard }) {
 
 /** Where the issue's work is (B2): the branch, `↑N`, and `N files` in warning; it opens that Workspace, its half-second card is the checkout card (B8, B9). */
 function CheckoutChipView({ card, handlers }: { card: TaskCard; handlers: BoardHandlers }) {
+  const { t } = useInterfaceTranslation();
   const { chip, checkout, owner } = card;
   if (!chip || !checkout) return null;
   const Glyph = chip.primary ? HouseIcon : GitBranchIcon;
   return (
     <CheckoutCardHint
-      card={laneCheckoutCard(owner, checkout, Date.now())}
+      card={laneCheckoutCard(owner, checkout, Date.now(), t)}
       description={`${chip.branch} · ${checkout.path}`}
       onOpenPullRequest={(url) => handlers.openGitHub(url, owner.device_id)}
       onOpenWorkspace={() => handlers.openCheckout(card)}
     >
       <button
         type="button"
-        aria-label={`Workspace ${chip.branch}`}
+        aria-label={t("board.workspaceName", { branch: chip.branch })}
         className="inline-flex min-w-0 max-w-full items-center gap-xxs rounded-xs outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
         data-card-checkout={checkout.id}
         onClick={(event) => {
@@ -728,7 +745,7 @@ function CheckoutChipView({ card, handlers }: { card: TaskCard; handlers: BoardH
         {chip.ahead !== null ? <span data-fact="ahead">↑{chip.ahead}</span> : null}
         {chip.files !== null ? (
           <span className="text-warning" data-fact="files">
-            {chip.files} files
+            {t("issue.changedFiles", { count: chip.files })}
           </span>
         ) : null}
       </button>
@@ -743,22 +760,23 @@ export const PR_TONE: Record<PrChip["tone"], string> = {
   closed: "text-pr-closed",
 };
 
-const CHECKS: Record<"passing" | "failed" | "pending", string> = {
-  passing: "CI 통과",
-  failed: "CI 실패",
-  pending: "CI 진행 중",
+export const CHECKS_LABEL: Record<"passing" | "failed" | "pending", MessageKey> = {
+  passing: "requests.checks.passing",
+  failed: "requests.checks.failed",
+  pending: "requests.checks.pending",
 };
 
-export const REVIEW: Record<NonNullable<PrChip["review"]>, { label: string; tone: string }> = {
-  review_required: { label: "리뷰 필요", tone: "text-muted-foreground" },
-  changes_requested: { label: "변경 요청", tone: "text-warning" },
-  approved: { label: "승인됨", tone: "text-success" },
+export const REVIEW: Record<NonNullable<PrChip["review"]>, { label: MessageKey; tone: string }> = {
+  review_required: { label: "board.review.required", tone: "text-muted-foreground" },
+  changes_requested: { label: "board.review.changes", tone: "text-warning" },
+  approved: { label: "board.review.approved", tone: "text-success" },
 };
 
 /** The CI mark once read: passing, failed or still running. */
-export function ChecksMark({ checks }: { checks: keyof typeof CHECKS }) {
+export function ChecksMark({ checks }: { checks: keyof typeof CHECKS_LABEL }) {
+  const { t } = useInterfaceTranslation();
   return (
-    <span role="img" aria-label={CHECKS[checks]} className={checks === "passing" ? "text-success" : checks === "failed" ? "text-destructive" : "text-muted-foreground"} data-pr-checks={checks}>
+    <span role="img" aria-label={t(CHECKS_LABEL[checks])} className={checks === "passing" ? "text-success" : checks === "failed" ? "text-destructive" : "text-muted-foreground"} data-pr-checks={checks}>
       {checks === "passing" ? <CheckIcon aria-hidden="true" className="size-(--size-icon-sm)" /> : checks === "failed" ? <XIcon aria-hidden="true" className="size-(--size-icon-sm)" /> : <StatusMark symbol="●" className="size-(--size-icon-sm)" />}
     </span>
   );
@@ -766,13 +784,14 @@ export function ChecksMark({ checks }: { checks: keyof typeof CHECKS }) {
 
 /** A review card's CI mark once read and the one word of the review GitHub asks for (B2). */
 export function ReviewMarks({ pr, review = true }: { pr: PrChip; review?: boolean }) {
+  const { t } = useInterfaceTranslation();
   const asked = review && pr.review ? REVIEW[pr.review] : null;
   return (
     <>
       {pr.checks ? <ChecksMark checks={pr.checks} /> : null}
       {asked ? (
         <span className={cn("font-sans", asked.tone)} data-pr-review={pr.review}>
-          {asked.label}
+          {t(asked.label)}
         </span>
       ) : null}
     </>
@@ -861,8 +880,9 @@ function IssueIdPreview({ card, detail, pinned, actions, handlers }: { card: Tas
 }
 
 function IssuePreviewBody({ card, detail }: { card: TaskCard; detail: IssueDetail | null }) {
+  const { t, i18n } = useInterfaceTranslation();
   const { task } = card;
-  const byline = [detail?.author ?? null, detail?.created_at_unix_ms != null ? issueDate(detail.created_at_unix_ms) : null, detail?.comment_count != null ? `댓글 ${detail.comment_count}` : null].filter(Boolean).join(" · ");
+  const byline = [detail?.author ?? null, detail?.created_at_unix_ms != null ? issueDate(detail.created_at_unix_ms, i18n.language) : null, detail?.comment_count != null ? t("issue.commentCount", { count: detail.comment_count }) : null].filter(Boolean).join(" · ");
   return (
     <div className="flex flex-col gap-xs">
       <span className="flex min-w-0 items-center gap-xs text-caption text-muted-foreground">
@@ -872,7 +892,7 @@ function IssuePreviewBody({ card, detail }: { card: TaskCard; detail: IssueDetai
           <IssueLabelView key={label.name} label={label} />
         ))}
         <span className="flex-1" />
-        <span className={task.open ? "text-success" : "text-muted-foreground"}>{task.open ? "Open" : "Closed"}</span>
+        <span className={task.open ? "text-success" : "text-muted-foreground"}>{t(task.open ? "issue.state.open" : "issue.state.closed")}</span>
       </span>
       <span className="line-clamp-2 text-body font-semibold text-foreground">{card.title}</span>
       {detail?.body ? (
@@ -887,28 +907,29 @@ function IssuePreviewBody({ card, detail }: { card: TaskCard; detail: IssueDetai
 
 /**
  * The card's buttons in the id line's reserved slot, shown under the pointer
- * or focus (B6): the backlog's `▷ 시작` and `S`, the Workspace icon and `O`
+ * or focus (B6): the backlog's `▷ Start` and `S`, the Workspace icon and `O`
  * in progress, the PR icon in review, a Local issue's edit icon, and `⋯`
- * with 시작, Workspace, GitHub, 편집 and a Local issue's close. Each has its
+ * with Start, Workspace, GitHub, Edit and a Local issue's close. Each has its
  * popover (B7, D-10).
  */
 function CardActions({ card, actions, handlers }: { card: TaskCard; actions: Actions; handlers: BoardHandlers }) {
+  const { t } = useInterfaceTranslation();
   const { owner } = card;
   const reveal = "invisible group-focus-within/card:visible group-hover/card:visible has-data-[state=open]:visible";
   const stop = (event: MouseEvent) => event.stopPropagation();
   return (
     <span className={cn("flex shrink-0 items-center gap-xxs", reveal)} data-card-actions="true" onClick={stop}>
       {card.first === "start" ? (
-        <Hint label={START_HINT} shortcut={<Kbd>S</Kbd>}>
+        <Hint label={t(START_HINT)} shortcut={<Kbd>S</Kbd>}>
           <Button variant="secondary" size="sm" onClick={() => handlers.startIssue(card)} data-card-start="true">
             <PlayIcon aria-hidden="true" />
-            시작
+            {t("common.start")}
           </Button>
         </Hint>
       ) : null}
       {card.first === "start" ? <Kbd>S</Kbd> : null}
       {card.first === "workspace" ? (
-        <Hint label="Workspace 열기" shortcut={<Kbd>O</Kbd>}>
+        <Hint label={t("issue.openWorkspace")} shortcut={<Kbd>O</Kbd>}>
           <Button variant="ghost" size="icon-sm" onClick={() => handlers.openCheckout(card)} data-card-workspace="true">
             <SquareTerminalIcon aria-hidden="true" />
           </Button>
@@ -916,14 +937,14 @@ function CardActions({ card, actions, handlers }: { card: TaskCard; actions: Act
       ) : null}
       {card.first === "workspace" ? <Kbd>O</Kbd> : null}
       {card.first === "pull_request" && card.pr ? (
-        <Hint label={`PR #${card.pr.number} GitHub에서 열기`}>
+        <Hint label={t("issue.openPr", { number: String(card.pr.number) })}>
           <Button variant="ghost" size="icon-sm" onClick={() => handlers.openGitHub(card.pr!.url, owner.device_id)} data-card-pr="true">
             <GitPullRequestIcon aria-hidden="true" />
           </Button>
         </Hint>
       ) : null}
       {card.editable ? (
-        <Hint label={EDIT_HINT}>
+        <Hint label={t(EDIT_HINT)}>
           <Button variant="ghost" size="icon-sm" onClick={() => handlers.editIssue(card)} data-card-edit="true">
             <PencilIcon aria-hidden="true" />
           </Button>
@@ -934,31 +955,32 @@ function CardActions({ card, actions, handlers }: { card: TaskCard; actions: Act
   );
 }
 
-/** `⋯` on a card or in its panel: 시작, Workspace, GitHub, 편집, and a Local issue's close or reopen. */
+/** `⋯` on a card or in its panel: Start, Workspace, GitHub, Edit, and a Local issue's close or reopen. */
 export function IssueMenu({ card, actions, handlers, trigger }: { card: TaskCard; actions: Actions; handlers: BoardHandlers; trigger: ReactNode }) {
+  const { t } = useInterfaceTranslation();
   const { task, checkout, owner } = card;
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
-        <Button variant="ghost" size="icon-sm" aria-label="이슈 동작" data-card-menu="true">
+        <Button variant="ghost" size="icon-sm" aria-label={t("board.issueActions")} data-card-menu="true">
           {trigger}
         </Button>
       </DropdownMenuTrigger>
       <DropdownMenuContent align="end">
-        {card.canStart ? <DropdownMenuItem onSelect={() => handlers.startIssue(card)}>시작</DropdownMenuItem> : null}
-        {checkout ? <DropdownMenuItem onSelect={() => handlers.openCheckout(card)}>Workspace</DropdownMenuItem> : null}
+        {card.canStart ? <DropdownMenuItem onSelect={() => handlers.startIssue(card)}>{t("common.start")}</DropdownMenuItem> : null}
+        {checkout ? <DropdownMenuItem onSelect={() => handlers.openCheckout(card)}>{t("issue.workspace")}</DropdownMenuItem> : null}
         {task.url ? (
           <DropdownMenuItem onSelect={() => handlers.openGitHub(task.url as string, owner.device_id)}>
             <ExternalLinkIcon aria-hidden="true" />
             GitHub
           </DropdownMenuItem>
         ) : null}
-        {card.editable ? <DropdownMenuItem onSelect={() => handlers.editIssue(card)}>편집</DropdownMenuItem> : null}
+        {card.editable ? <DropdownMenuItem onSelect={() => handlers.editIssue(card)}>{t("common.edit")}</DropdownMenuItem> : null}
         {card.editable ? (
           <>
             <DropdownMenuSeparator />
             <DropdownMenuItem onSelect={() => actions.setIssueOpen(task.key, !task.open)} data-card-issue-open={task.open ? "close" : "reopen"}>
-              {task.open ? "이슈 닫기" : "이슈 다시 열기"}
+              {t(task.open ? "board.closeIssue" : "board.reopenIssue")}
             </DropdownMenuItem>
           </>
         ) : null}
@@ -1004,6 +1026,7 @@ function GroupHead({ open, onToggle, label, count, data, children }: { open: boo
  * waiting on the operator starts unfolded.
  */
 export function TasksListView({ board, page, actions, handlers }: { board: TasksBoard; page: BoardPage; actions: Actions; handlers: BoardHandlers }) {
+  const { t } = useInterfaceTranslation();
   const order: Stage[] = ["working", "review", "backlog", "done"];
   const [closed, setClosed] = useState<Set<Stage>>(() => new Set(["done"]));
   const [backlogAll, setBacklogAll] = useState(false);
@@ -1011,7 +1034,7 @@ export function TasksListView({ board, page, actions, handlers }: { board: Tasks
   return (
     <div className="flex flex-col gap-md px-lg pb-xl" data-tasks-list="true">
       {order.map((stage) => {
-        const label = STAGES.find((entry) => entry.stage === stage)?.label ?? stage;
+        const label = t(STAGES.find((entry) => entry.stage === stage)!.labelKey);
         const cards = stageCards(board, stage);
         if (cards.length === 0 && stage !== "backlog") return null;
         const open = !closed.has(stage);
@@ -1020,7 +1043,7 @@ export function TasksListView({ board, page, actions, handlers }: { board: Tasks
           <section key={stage} aria-label={label} data-list-group={stage} className="flex flex-col">
             <GroupHead open={open} onToggle={() => setClosed((current) => toggled(current, stage))} label={label} count={cards.length} data={{ "data-list-group-toggle": stage }}>
               {stage === "backlog" ? <BacklogSource board={board} /> : null}
-              {stage === "backlog" && open && cards.length > 1 ? <span className="ml-auto text-caption font-normal text-muted-foreground">최근 갱신 순</span> : null}
+              {stage === "backlog" && open && cards.length > 1 ? <span className="ml-auto text-caption font-normal text-muted-foreground">{t("board.recentOrder")}</span> : null}
             </GroupHead>
             {open ? (
               <ul className="flex flex-col" role="list">
@@ -1029,7 +1052,7 @@ export function TasksListView({ board, page, actions, handlers }: { board: Tasks
                 ))}
                 {stage === "backlog" && cards.length === 0 && !board.source.reading ? (
                   <li className="px-xl py-xs text-caption text-muted-foreground" data-backlog-empty="true">
-                    열린 이슈가 없습니다
+                    {t("board.empty")}
                   </li>
                 ) : null}
                 {cards.length > shown.length ? (
@@ -1049,18 +1072,19 @@ export function TasksListView({ board, page, actions, handlers }: { board: Tasks
 }
 
 /** What a List row asks of the operator, as one small word: an agent's question, or a result not yet looked at. */
-function turnWord(card: TaskCard): string | null {
+function turnKind(card: TaskCard): "question" | "review" | null {
   if (!card.needsYou) return null;
-  return card.rows.some((row) => row.agent.group === "needs_you") ? "질문" : "확인";
+  return card.rows.some((row) => row.agent.group === "needs_you") ? "question" : "review";
 }
 
 function ListRow({ card, now, page, actions, handlers }: { card: TaskCard; now: number; page: BoardPage; actions: Actions; handlers: BoardHandlers }) {
+  const { t, i18n } = useInterfaceTranslation();
   const [open, setOpen] = useState(card.needsYou);
   const { task } = card;
-  const word = turnWord(card);
+  const turn = turnKind(card);
   const lead = card.shown[0]?.changed_at_unix_ms;
-  const age = lead != null ? formatElapsed(now - lead) : relativeActivity(card.updatedAt, now);
-  const createdAge = relativeActivity(task.created_at_unix_ms, now);
+  const age = lead != null ? formatElapsed(requireInterfaceLanguage(i18n.language), now - lead) : relativeActivity(card.updatedAt, now, t);
+  const createdAge = relativeActivity(task.created_at_unix_ms, now, t);
   const hasRows = card.rows.length > 0;
   const selected = page.panel === task.key;
   return (
@@ -1079,7 +1103,7 @@ function ListRow({ card, now, page, actions, handlers }: { card: TaskCard; now: 
       >
         <button
           type="button"
-          aria-label={open ? "에이전트 접기" : "에이전트 펼치기"}
+          aria-label={t(open ? "board.collapseAgents" : "board.expandAgents")}
           aria-expanded={hasRows ? open : undefined}
           disabled={!hasRows}
           onClick={(event) => {
@@ -1098,9 +1122,9 @@ function ListRow({ card, now, page, actions, handlers }: { card: TaskCard; now: 
         <span className="flex min-w-0 flex-1 items-center gap-xs">
           <span className="min-w-0 truncate text-body text-foreground">{card.title}</span>
           {card.project ? <span className="shrink-0 text-caption text-muted-foreground">{card.project}</span> : null}
-          {word ? (
-            <Badge variant="outline" className="shrink-0 border-warning text-warning" data-turn={word}>
-              {word}
+          {turn ? (
+            <Badge variant="outline" className="shrink-0 border-warning text-warning" data-turn={turn}>
+              {t(turn === "question" ? "board.turn.question" : "board.turn.review")}
             </Badge>
           ) : null}
         </span>
@@ -1120,7 +1144,7 @@ function ListRow({ card, now, page, actions, handlers }: { card: TaskCard; now: 
           ) : null}
           {card.chip ? <span className="max-w-(--home-collapsed-width) truncate">{card.chip.branch}</span> : null}
           {card.chip?.ahead != null ? <span>↑{card.chip.ahead}</span> : null}
-          {createdAge ? <span data-issue-created-age="true" aria-label={`Created ${createdAge} ago`}>{createdAge}</span> : null}
+          {createdAge ? <span data-issue-created-age="true" aria-label={t("board.createdAgo", { age: createdAge })}>{createdAge}</span> : null}
           {age ? <span className="min-w-(--size-control-compact) text-right">{age}</span> : null}
         </span>
       </div>
@@ -1143,28 +1167,29 @@ function ListRow({ card, now, page, actions, handlers }: { card: TaskCard; now: 
  * that grows or a window that narrows redraws them.
  */
 export function DependenciesView({ board, page, actions, handlers }: { board: TasksBoard; page: BoardPage; actions: Actions; handlers: BoardHandlers }) {
+  const { t } = useInterfaceTranslation();
   const graph = useMemo(() => buildDependencies(board), [board]);
   const draw = (value: TaskCard) => (
     <div key={value.id} className="w-(--home-column-width)" data-dependency-node={value.id}>
-      <IssueCardView card={value} page={page} actions={actions} handlers={handlers} graph={{ status: STAGES.find((row) => row.stage === value.stage)?.label ?? null }} />
+      <IssueCardView card={value} page={page} actions={actions} handlers={handlers} graph={{ status: t(STAGES.find((row) => row.stage === value.stage)!.labelKey) }} />
     </div>
   );
   return (
     <div className="flex w-fit min-w-full flex-col gap-lg px-lg pb-xl" data-tasks-dependencies="true">
       <p className="flex items-center gap-xs text-caption text-muted-foreground" data-dependency-legend="true">
         <ArrowRightIcon aria-hidden="true" className="size-(--size-icon) text-warning" />
-        선행 · 왼쪽 태스크가 끝나야 화살표가 향하는 태스크를 시작할 수 있음
+        {t("board.dependencies.legend")}
       </p>
       {graph.layers.length > 0 ? <DependencyGraphView graph={graph} draw={draw} /> : null}
       {graph.unrelated.length > 0 ? (
-        <section className="flex flex-col gap-sm" aria-label="관계 없는 태스크" data-dependency-unrelated="true">
-          {graph.layers.length > 0 ? <h2 className="text-subhead font-semibold text-subtle-foreground">관계 없는 태스크</h2> : null}
+        <section className="flex flex-col gap-sm" aria-label={t("board.dependencies.unrelated")} data-dependency-unrelated="true">
+          {graph.layers.length > 0 ? <h2 className="text-subhead font-semibold text-subtle-foreground">{t("board.dependencies.unrelated")}</h2> : null}
           <div className="flex flex-wrap items-start gap-md">{graph.unrelated.map(draw)}</div>
         </section>
       ) : null}
       {graph.layers.length === 0 && graph.unrelated.length === 0 ? (
         <p className="text-caption text-muted-foreground" data-dependency-empty="true">
-          의존 관계를 그릴 태스크가 없음
+          {t("board.dependencies.empty")}
         </p>
       ) : null}
     </div>

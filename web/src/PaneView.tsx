@@ -1,3 +1,4 @@
+import type { TFunction } from "i18next";
 import { CircleAlertIcon, EllipsisIcon, Maximize2Icon, MoonIcon, XIcon } from "lucide-react";
 import { memo, useEffect, useRef } from "react";
 import type { Actions } from "./actions";
@@ -9,6 +10,7 @@ import { Hint } from "./components/ui/tooltip";
 import { ChildChipRow, ReturnToParent, usePaneMenu, type TerminalMenuContext } from "./PaneRelations";
 import { chordLabel, commandLabel } from "./shortcutLabels";
 import { keySystem } from "./host";
+import { useInterfaceTranslation } from "./i18n/client";
 import { modChord, TERMINAL_COPY, TERMINAL_PASTE } from "./shortcuts";
 import { sleepCaption, wakingLine } from "./sleep";
 import type { AgentSleep, PaneRow, TerminalPane } from "./snapshot";
@@ -34,32 +36,32 @@ export function paneTitle(pane: PaneRow): string {
  * remote pane's caption only reports; the core reattaches it on the host's
  * next session update.
  */
-export function transportCaption(transport: TerminalPane | undefined, local = true, offline = false): { text: string; reconnects: boolean } | null {
+export function transportCaption(transport: TerminalPane | undefined, t: TFunction<"translation">, local = true, offline = false): { text: string; reconnects: boolean } | null {
   // With its host's connection down, a remote attach ends as `closing`; the
   // pane is not closing, its device is unreachable.
-  if (offline) return { text: "disconnected", reconnects: false };
+  if (offline) return { text: t("panes.transport.disconnected"), reconnects: false };
   // The core found the last wheel unmoved on a pane another client controls
   // (B3): said where the wheel went rather than dropped silently.
-  if (transport?.scroll_held_elsewhere) return { text: "scroll held by another client", reconnects: false };
+  if (transport?.scroll_held_elsewhere) return { text: t("panes.transport.scrollElsewhere"), reconnects: false };
   if (!transport || LIVE_STATES.has(transport.transport_state)) return null;
   if (!local) {
     const state = transport.transport_state;
-    return { text: state === "closing" ? "closing…" : state === "ended" || state === "unavailable" ? state : "starting…", reconnects: false };
+    return { text: state === "closing" ? t("panes.transport.closing") : state === "ended" ? t("panes.transport.remoteEnded") : state === "unavailable" ? t("panes.transport.remoteUnavailable") : t("panes.transport.starting"), reconnects: false };
   }
   switch (transport.transport_state) {
     case "released":
-      return { text: "released · click to attach", reconnects: true };
+      return { text: t("panes.transport.released"), reconnects: true };
     case "ended":
       return {
-        text: transport.exit_code == null ? "ended · click to restart" : `exited ${transport.exit_code} · click to restart`,
+        text: transport.exit_code == null ? t("panes.transport.ended") : t("panes.transport.exited", { exitCode: transport.exit_code }),
         reconnects: true,
       };
     case "unavailable":
-      return { text: "unavailable · click to retry", reconnects: true };
+      return { text: t("panes.transport.unavailable"), reconnects: true };
     case "closing":
-      return { text: "closing…", reconnects: false };
+      return { text: t("panes.transport.closing"), reconnects: false };
     default:
-      return { text: "starting…", reconnects: false };
+      return { text: t("panes.transport.starting"), reconnects: false };
   }
 }
 
@@ -81,6 +83,7 @@ function terminalMenuChords(): TerminalMenuContext["chords"] {
  * talking to, so the terminal stays hidden until the agent is back.
  */
 function SleepBody({ paneId, sleep, actions }: { paneId: string; sleep: AgentSleep; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const now = Date.now();
   return (
     <div
@@ -90,24 +93,24 @@ function SleepBody({ paneId, sleep, actions }: { paneId: string; sleep: AgentSle
       {sleep.state === "sleeping" ? (
         <>
           <MoonIcon className="size-(--size-icon-lg) text-muted-foreground" aria-hidden="true" />
-          <p className="text-subhead text-foreground">Sleeping</p>
+          <p className="text-subhead text-foreground">{t("panes.sleep.sleeping")}</p>
           {sleep.progress ? <p className="max-w-full truncate text-caption text-muted-foreground">{sleep.progress}</p> : null}
           <Button size="sm" className="mt-xs" data-agent-wake={paneId} onClick={() => actions.wakeAgent(paneId)}>
-            Wake agent
+            {t("panes.sleep.wake")}
           </Button>
         </>
       ) : sleep.state === "waking" ? (
         <>
           <MoonIcon className="size-(--size-icon-lg) text-muted-foreground" aria-hidden="true" />
           <p className="text-subhead text-foreground" role="status">
-            Waking…
+            {t("panes.sleep.waking")}
           </p>
-          <p className="text-caption text-muted-foreground">{wakingLine(sleep, now)}</p>
+          <p className="text-caption text-muted-foreground">{wakingLine(sleep, now, t)}</p>
         </>
       ) : (
         <>
           <CircleAlertIcon className="size-(--size-icon-lg) text-destructive" aria-hidden="true" />
-          <p className="text-subhead text-foreground">Couldn’t resume this conversation</p>
+          <p className="text-subhead text-foreground">{t("panes.sleep.resumeFailed")}</p>
           {sleep.reason ? (
             <p className="max-w-full text-caption text-muted-foreground" role="alert">
               {sleep.reason}
@@ -115,10 +118,10 @@ function SleepBody({ paneId, sleep, actions }: { paneId: string; sleep: AgentSle
           ) : null}
           <div className="mt-xs flex items-center gap-sm">
             <Button size="sm" variant="secondary" data-agent-wake-retry={paneId} onClick={() => actions.wakeAgent(paneId)}>
-              Retry
+              {t("common.retry")}
             </Button>
             <Button size="sm" variant="outline" data-agent-wake-fresh={paneId} onClick={() => actions.wakeAgent(paneId, true)}>
-              Start new session
+              {t("panes.sleep.newSession")}
             </Button>
           </div>
         </>
@@ -159,6 +162,7 @@ export const PaneView = memo(function PaneView({
   /** True while that device's connection is down. */
   offline?: boolean;
 }) {
+  const { t } = useInterfaceTranslation();
   const hostRef = useRef<HTMLDivElement>(null);
   const viewGeneration = useShellStore((s) => s.viewGeneration);
   const refusal = useShellStore((s) => s.attachmentRefusal);
@@ -239,9 +243,9 @@ export const PaneView = memo(function PaneView({
   const zoomChord = zoomed ? terminalMenuChords().zoom : "";
   const hidden = paneCount - 1;
 
-  const caption = transportCaption(transport, local, offline);
+  const caption = transportCaption(transport, t, local, offline);
   const sleep = local ? pane.sleep : undefined;
-  const sleepWords = sleep ? sleepCaption(sleep, Date.now()) : null;
+  const sleepWords = sleep ? sleepCaption(sleep, Date.now(), t) : null;
   return (
     <section
       className="group/pane relative flex h-full min-h-0 min-w-0 flex-col bg-background"
@@ -272,12 +276,12 @@ export const PaneView = memo(function PaneView({
         </span>
         </Hint>
         {zoomed ? (
-          <Hint label={`Unzoom pane${zoomChord ? ` (${zoomChord})` : ""}`}>
+          <Hint label={zoomChord ? t("panes.unzoomChord", { chord: zoomChord }) : t("panes.unzoom")}>
             <Button
               variant="ghost"
               size="sm"
               className="shrink-0 gap-xxs px-xs text-caption text-foreground hover:bg-popover"
-              aria-label={hidden > 0 ? `Unzoom pane (+${hidden} hidden)` : "Unzoom pane"}
+              aria-label={hidden > 0 ? t("panes.unzoomHidden", { count: hidden }) : t("panes.unzoom")}
               data-pane-zoom={hidden}
               onClick={() => {
                 actions.toggleZoom(paneId);
@@ -301,7 +305,7 @@ export const PaneView = memo(function PaneView({
         ) : (
           <span className="truncate text-muted-foreground">{pane.status_label}</span>
         )}
-        <Hint label={`Pane actions for ${title}`}>
+        <Hint label={t("panes.actions", { name: title })}>
           <Button
             variant="ghost"
             size="icon-sm"
@@ -322,7 +326,7 @@ export const PaneView = memo(function PaneView({
             <EllipsisIcon />
           </Button>
         </Hint>
-        <Hint label={`Close pane ${title}`}>
+        <Hint label={t("panes.close", { name: title })}>
           <Button variant="ghost" size="icon-sm" className="text-subtle-foreground hover:bg-popover hover:text-foreground" onClick={() => actions.closePane(paneId)}>
             <XIcon />
           </Button>
@@ -335,8 +339,8 @@ export const PaneView = memo(function PaneView({
         <div ref={hostRef} className="absolute inset-0" data-terminal-host={paneId} onContextMenu={openTerminalMenu} />
         {refusal?.pane_id === paneId ? (
           <div className="absolute inset-x-0 top-0 flex items-center gap-sm bg-card px-sm py-xxs text-caption text-destructive" data-pane-attachment-refusal="true">
-            <span className="min-w-0 flex-1 truncate">{refusalText(refusal.reason)}</span>
-            <Hint label="Dismiss">
+            <span className="min-w-0 flex-1 truncate">{refusalText(refusal.reason, t)}</span>
+            <Hint label={t("workspace.dismiss")}>
               <Button variant="ghost" size="icon-sm" className="text-muted-foreground" onClick={() => setRefusal(null)}>
                 <XIcon />
               </Button>

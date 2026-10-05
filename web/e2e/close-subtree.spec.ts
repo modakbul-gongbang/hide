@@ -137,9 +137,9 @@ test("the close sheet counts and brightens what needs the operator, stays live w
       }
       await page.locator(`[data-terminal-host="${target}"]`).click();
       await page.keyboard.press(chord("close_tab"));
-      await expect(summary).toHaveAttribute("data-subtree-summary", "진행 중 1 · 답 대기 1 · 확인 안 한 결과 1", { timeout: 3_000 });
+      await expect(summary).toHaveAttribute("data-subtree-summary", "working 1 · waiting for you 1 · unread result 1", { timeout: 3_000 });
     }).toPass({ timeout: 30_000, intervals: [500] });
-    await expect(sheet.getByRole("heading")).toHaveText("이 에이전트와 자식 4개를 닫을까요?");
+    await expect(sheet.getByRole("heading")).toHaveText("Close this agent and 4 children?");
     await expect(sheet.locator(`[data-subtree-row="${working}"]`)).toHaveAttribute("data-subtree-state", "working");
     await expect(sheet.locator(`[data-subtree-row="${asking}"]`)).toHaveAttribute("data-subtree-state", "waiting");
     await expect(sheet.locator(`[data-subtree-row="${finished}"]`)).toHaveAttribute("data-subtree-state", "unread");
@@ -160,10 +160,10 @@ test("the close sheet counts and brightens what needs the operator, stays live w
     // shows up, one that closes elsewhere drops out, and the title follows.
     const late = await spawnAgent(herdr, "late", target);
     await expect(sheet.locator(`[data-subtree-row="${late}"]`)).toBeVisible({ timeout: 30_000 });
-    await expect(sheet.getByRole("heading")).toHaveText("이 에이전트와 자식 5개를 닫을까요?");
+    await expect(sheet.getByRole("heading")).toHaveText("Close this agent and 5 children?");
     herdr.run(["pane", "close", quiet]);
     await expect(sheet.locator(`[data-subtree-row="${quiet}"]`)).toHaveCount(0, { timeout: 30_000 });
-    await expect(sheet.getByRole("heading")).toHaveText("이 에이전트와 자식 4개를 닫을까요?");
+    await expect(sheet.getByRole("heading")).toHaveText("Close this agent and 4 children?");
     expect(sent.get("close_tree") ?? 0).toBe(0);
 
     // Enter closes exactly what the sheet shows at the press.
@@ -208,13 +208,13 @@ test("the close sheet closes the whole subtree deepest first, and Close only kee
     await page.locator(`[data-terminal-host="${target}"]`).click();
     await page.keyboard.press(chord("close_tab"));
     await expect(sheet).toBeVisible();
-    await expect(sheet.getByRole("heading")).toHaveText("이 에이전트와 자식 2개를 닫을까요?");
+    await expect(sheet.getByRole("heading")).toHaveText("Close this agent and 2 children?");
     await expect(sheet.locator("[data-subtree-row]")).toHaveCount(3);
     await expect(sheet.locator("[data-subtree-row]").first()).toHaveAttribute("data-subtree-row", target);
     await expect(sheet.locator("[data-subtree-row]").nth(1)).toHaveAttribute("data-subtree-row", child);
     await expect(sheet.locator("[data-subtree-row]").nth(2)).toHaveAttribute("data-subtree-row", grandchild);
     // No sentence under the title: what Close only leaves is its button's tooltip and description.
-    await expect(sheet.locator("[data-subtree-close-only]")).toHaveAccessibleDescription("자식은 계속 실행되고 내 목록으로 올라옵니다.");
+    await expect(sheet.locator("[data-subtree-close-only]")).toHaveAccessibleDescription("Children keep running and move into your list.");
     // Enter's default is Close all (D-18).
     await expect(sheet.locator("[data-subtree-close-all]")).toBeFocused();
     await screenshot(page, "close-subtree-sheet");
@@ -242,7 +242,7 @@ test("the close sheet closes the whole subtree deepest first, and Close only kee
     // Close only closes just the target; its child becomes the operator's.
     await page.locator(`[data-terminal-host="${keeper}"]`).click();
     await page.keyboard.press(chord("close_tab"));
-    await expect(sheet.getByRole("heading")).toHaveText("이 에이전트와 자식 1개를 닫을까요?");
+    await expect(sheet.getByRole("heading")).toHaveText("Close this agent and 1 child?");
     await sheet.locator("[data-subtree-close-only]").click();
     await expect.poll(async () => (await livePanes(herdr)).has(keeper), { timeout: 20_000 }).toBe(false);
     expect((await livePanes(herdr)).has(kept)).toBe(true);
@@ -298,7 +298,7 @@ test("an open close sheet follows the snapshot: Stop-work tracks its pane, and a
     // A child spawned while it is open turns it into the subtree sheet in place.
     const child = await spawnAgent(herdr, "child", target);
     await expect(subtree.locator(`[data-subtree-row="${child}"]`)).toBeVisible({ timeout: 30_000 });
-    await expect(subtree.getByRole("heading")).toHaveText("이 에이전트와 자식 1개를 닫을까요?");
+    await expect(subtree.getByRole("heading")).toHaveText("Close this agent and 1 child?");
     // The keyboard stays on the sheet itself, not on the Enter default of the new one.
     await expect(subtree).toBeFocused();
 

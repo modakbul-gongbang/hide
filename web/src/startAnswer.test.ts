@@ -42,6 +42,10 @@ describe("the answer to one start request", () => {
     expect(startAnswer(rest(operation({ phase: "failed", message: "no tab" })), "mine")).toEqual({ phase: "failed", message: "no tab" });
   });
 
+  it("carries no message when the failed task has none", () => {
+    expect(startAnswer(rest(operation({ phase: "failed" })), "mine")).toEqual({ phase: "failed", message: null });
+  });
+
   it("makes ids in the core's format", () => {
     const id = startRequestId();
     expect(id).toMatch(/^[A-Za-z0-9_-]{1,64}$/);

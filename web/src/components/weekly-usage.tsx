@@ -9,6 +9,7 @@
 import { useEffect, useState } from "react";
 import type { Actions } from "../actions";
 import { AgentMark } from "../AgentMark";
+import { useInterfaceTranslation } from "../i18n/client";
 import type { ProviderUsage } from "../generated/hided-ws";
 import { cn } from "../lib/utils";
 import { useShellStore } from "../store";
@@ -49,6 +50,7 @@ export function useUsageWindowHint(actions: Actions) {
 }
 
 export function WeeklyUsage({ actions }: { actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const rows = useShellStore((s) => s.rest?.navigator?.provider_usage ?? NO_ROWS);
   const [open, setOpen] = useState(false);
   // The popover's hint lasts exactly as long as it is open, however it ends:
@@ -61,9 +63,9 @@ export function WeeklyUsage({ actions }: { actions: Actions }) {
   if (rows.length === 0) return null;
   return (
     <Popover open={open} onOpenChange={setOpen}>
-      <Hint label="Weekly usage">
+      <Hint label={t("shell.weeklyUsage")}>
         <PopoverTrigger
-          aria-label={usageSummary(rows)}
+          aria-label={usageSummary(rows, t)}
           data-usage-trigger="true"
           className="group/usage flex shrink-0 items-center gap-xs rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-ring"
         >
@@ -74,8 +76,8 @@ export function WeeklyUsage({ actions }: { actions: Actions }) {
       </Hint>
       <PopoverContent side="top" className="flex w-(--size-usage-popover) flex-col gap-md p-lg" data-usage-popover="true">
         <div className="flex items-baseline gap-sm">
-          <span className="min-w-0 flex-1 text-subhead font-semibold text-foreground">Weekly Usage</span>
-          <span className="shrink-0 font-mono text-micro font-semibold text-muted-foreground">7 days</span>
+          <span className="min-w-0 flex-1 text-subhead font-semibold text-foreground">{t("usage.popoverTitle")}</span>
+          <span className="shrink-0 font-mono text-micro font-semibold text-muted-foreground">{t("shell.days", { count: 7 })}</span>
         </div>
         <UsageRows rows={rows} />
       </PopoverContent>
@@ -145,6 +147,7 @@ function UsageLine({
   bucket: boolean;
   now: number;
 }) {
+  const { t } = useInterfaceTranslation();
   const percent = usagePercent(reading);
   const tone = usageTone(percent);
   // A line without a reading says why in place of its bar. A provider line
@@ -163,12 +166,12 @@ function UsageLine({
         <span className={cn("min-w-0 truncate font-medium text-subtle-foreground", bucket ? "text-caption" : "text-body")}>{label}</span>
         {reading.resets_at_unix_seconds === null ? null : (
           <span className="shrink-0 whitespace-nowrap font-mono text-micro text-muted-foreground" data-usage-reset="true">
-            · {resetCountdown(reading.resets_at_unix_seconds, now)}
+            · {resetCountdown(reading.resets_at_unix_seconds, now, t)}
           </span>
         )}
         <span className="flex-1" />
         <span className={cn("shrink-0 font-mono text-caption font-semibold", TEXT_TONE[tone])} data-usage-value="true">
-          {usageValueLabel(reading)}
+          {usageValueLabel(reading, t)}
         </span>
       </div>
       {percent === null ? null : (

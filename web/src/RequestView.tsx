@@ -9,6 +9,9 @@ import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
 import { holdsCommandKey, hostBridge } from "./host";
+import { useInterfaceTranslation } from "./i18n/client";
+import { requireInterfaceLanguage } from "./i18n/locale";
+import type { MessageKey } from "./i18n/catalogs";
 import { fieldLabel } from "./shortcutLabels";
 import { cn } from "./lib/utils";
 import { IssueChip, gitHubClick, type LensHandlers } from "./OverviewLenses";
@@ -37,7 +40,7 @@ import {
 } from "./requestList";
 import type { AgentPullRequest, AgentRow, PullRequest, SnapshotRest, Workspace } from "./snapshot";
 import { useShellStore } from "./store";
-import { ChecksMark, PR_TONE } from "./TaskBoards";
+import { CHECKS_LABEL, ChecksMark, PR_TONE } from "./TaskBoards";
 import { paneContext, pathLookups, probePaths, type FoundPath } from "./terminalLinkProvider";
 import type { RequestLens } from "./ui";
 
@@ -60,6 +63,7 @@ export type RequestViewProps = {
 };
 
 export const RequestView = memo(function RequestView({ rows, scope, lens, onLens, handlers, actions, onNewAgent }: RequestViewProps) {
+  const { t } = useInterfaceTranslation();
   const groups = useMemo(() => requestGroups(rows), [rows]);
   // While a window shows the view, the core re-reads running checks (D-32).
   // A hidden page is not showing it, and a reconnect is a new connection
@@ -79,11 +83,11 @@ export const RequestView = memo(function RequestView({ rows, scope, lens, onLens
   if (rows.length === 0) {
     return (
       <div className="flex flex-col items-center justify-center gap-sm p-xl text-center text-caption text-muted-foreground" data-requests-empty="true">
-        <p>실행 중인 에이전트가 없습니다</p>
+        <p>{t("requests.noAgents")}</p>
         {onNewAgent ? (
           <Button variant="secondary" onClick={onNewAgent} data-requests-new-agent="true">
             <SquareTerminalIcon aria-hidden="true" />
-            New agent
+            {t("requests.newAgent")}
           </Button>
         ) : null}
       </div>
@@ -100,13 +104,13 @@ export const RequestView = memo(function RequestView({ rows, scope, lens, onLens
     <div className="flex min-w-0 flex-col gap-md px-lg pb-xl" data-requests={scope} onKeyDown={moveFocus}>
       {nothingToDo ? (
         <p className="text-caption text-muted-foreground" data-requests-nothing="true">
-          할 일 없음
+          {t("requests.nothingToDo")}
         </p>
       ) : null}
       {groups.map((group) => {
         const folded = group.verb === "idle" && !lens.resting;
         return (
-          <section key={group.verb} className="flex min-w-0 flex-col" aria-label={`${group.label} ${group.rows.length}`} data-request-group={group.verb}>
+          <section key={group.verb} className="flex min-w-0 flex-col" aria-label={t("requests.group", { label: t(VERB_LABEL[group.verb]), count: group.rows.length })} data-request-group={group.verb}>
             <button
               type="button"
               aria-expanded={group.verb === "idle" ? !folded : undefined}
@@ -115,7 +119,7 @@ export const RequestView = memo(function RequestView({ rows, scope, lens, onLens
               className="flex min-w-0 items-center gap-xs rounded-xs py-xs text-left text-caption font-medium text-subtle-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
               onClick={() => (group.verb === "idle" ? onLens({ resting: !lens.resting }) : undefined)}
             >
-              <span>{`${group.label} ${group.rows.length}${folded ? " · 펼치기" : ""}`}</span>
+              <span>{t(folded ? "requests.expandGroup" : "requests.group", { label: t(VERB_LABEL[group.verb]), count: group.rows.length })}</span>
               {group.verb === "idle" ? folded ? <ChevronRightIcon aria-hidden="true" className="size-(--size-icon-sm)" /> : <ChevronDownIcon aria-hidden="true" className="size-(--size-icon-sm)" /> : null}
             </button>
             {folded ? null : (
@@ -203,10 +207,11 @@ const VERB_TONE: Partial<Record<RequestRow["verb"], string>> = {
  * ⌘Enter opens the agent's pane (B7).
  */
 function RequestRowView({ row, scope, open, full, onToggle, onFull, handlers, actions }: { row: RequestRow; scope: "project" | "all"; open: boolean; full: boolean; onToggle: () => void; onFull: () => void; handlers: LensHandlers; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const { agent, project, checkout, device } = row.lens;
   const block = agent.request;
   const result = resultLine(row);
-  const children = childrenSummary(row);
+  const children = childrenSummary(row, t);
   const pulls = block?.pull_requests ?? [];
   const shown = pullRequestChip(pulls);
   const issues = rowIssueChips(row, project);
@@ -218,7 +223,7 @@ function RequestRowView({ row, scope, open, full, onToggle, onFull, handlers, ac
       <div className="relative min-w-0">
         <button
           type="button"
-          aria-label={requestAccessibleName(row, result)}
+          aria-label={requestAccessibleName(row, result, t)}
           aria-expanded={open}
           data-request-focus="row"
           data-request-toggle={agent.pane_id}
@@ -243,7 +248,7 @@ function RequestRowView({ row, scope, open, full, onToggle, onFull, handlers, ac
             {children ? (
               <span className="shrink-0 font-mono text-caption text-muted-foreground" data-request-children={row.children.length}>
                 {children.text}
-                {children.asking > 0 ? <span className="text-warning"> · 질문 {children.asking}</span> : null}
+                {children.asking > 0 ? <span className="text-warning"> · {t("requests.asking", { count: children.asking })}</span> : null}
               </span>
             ) : null}
             {shown ? <RowPullRequestChip project={project} pull={shown.chip} more={shown.more} handlers={handlers} /> : null}
@@ -259,12 +264,12 @@ function RequestRowView({ row, scope, open, full, onToggle, onFull, handlers, ac
           {block?.request ? (
             <span className="flex min-w-0 items-center gap-xs text-caption" data-request-line={agent.pane_id}>
               <span className="shrink-0 text-subtle-foreground" data-request-sender={block.request.sender.kind}>
-                {senderWords(block.request.sender)} ›
+                {senderWords(block.request.sender, t)} ›
               </span>
-              <FittedLine text={requestLine(block.request.text, block.request.images)} />
+              <FittedLine text={requestLine(block.request.text, block.request.images, t)} />
               {block.later_by ? (
                 <Badge variant="secondary" className="shrink-0" data-request-later={block.later_by.kind}>
-                  이후 {senderWords(block.later_by)}
+                  {t("requests.laterSender", { sender: senderWords(block.later_by, t) })}
                 </Badge>
               ) : null}
             </span>
@@ -335,8 +340,6 @@ function measurer(font: string): (text: string) => number {
 
 // --- chips -------------------------------------------------------------------
 
-const CHECKS_WORDS = { passing: "CI 통과", failed: "CI 실패", pending: "CI 진행 중" } as const;
-
 /** The pull request's full facts where the project lists it, for the draft and review marks. */
 function projectPull(project: Workspace, pull: AgentPullRequest): PullRequest | null {
   return (project.pull_requests ?? []).find((known) => known.url === pull.url) ?? null;
@@ -355,13 +358,15 @@ function chipOf(project: Workspace, pull: AgentPullRequest): PrChip {
  * the tooltip (B41).
  */
 function RowPullRequestChip({ project, pull, more, handlers, historical = false }: { project: Workspace; pull: AgentPullRequest; more: number; handlers: LensHandlers; historical?: boolean }) {
+  const { t, i18n } = useInterfaceTranslation();
   const chip = chipOf(project, pull);
   const status = project.checkouts.find((checkout) => checkout.github)?.github ?? null;
   const stale = status !== null && (status.stale || (!status.available && status.unavailable_reason !== null));
-  const age = stale && status?.last_success_at_unix_ms != null ? `${ageWords(Date.now() - status.last_success_at_unix_ms)} 값` : null;
+  const age = stale && status?.last_success_at_unix_ms != null ? t("requests.staleValue", { age: ageWords(requireInterfaceLanguage(i18n.language), Date.now() - status.last_success_at_unix_ms, t) }) : null;
   const listed = projectPull(project, pull) !== null;
-  const words = [`PR #${pull.number}`, pull.title, chip.checks ? CHECKS_WORDS[chip.checks] : null, age].filter(Boolean).join(" · ");
-  const hint = [`PR #${pull.number}`, chip.checks ? CHECKS_WORDS[chip.checks] : null, age].filter(Boolean).join(" · ");
+  const checks = chip.checks ? t(CHECKS_LABEL[chip.checks]) : null;
+  const words = [`PR #${pull.number}`, pull.title, checks, age].filter(Boolean).join(" · ");
+  const hint = [`PR #${pull.number}`, checks, age].filter(Boolean).join(" · ");
   return (
     <Hint label={hint}>
       <button
@@ -380,7 +385,7 @@ function RowPullRequestChip({ project, pull, more, handlers, historical = false 
           else handlers.openGitHub(pull.url, project.device_id);
         }}
       >
-        {historical ? <span className="text-muted-foreground">예전 PR #{pull.number} {BADGE_WORDS[pull.badge]}</span> : <Badge variant="outline" className={PR_TONE[chip.tone]}>
+        {historical ? <span className="text-muted-foreground">{t("requests.historicalPr", { number: String(pull.number), status: t(BADGE_LABEL[pull.badge]) })}</span> : <Badge variant="outline" className={PR_TONE[chip.tone]}>
           <GitPullRequestIcon aria-hidden="true" />#{pull.number}
           {chip.checks ? <ChecksMark checks={chip.checks} /> : null}
         </Badge>}
@@ -392,8 +397,9 @@ function RowPullRequestChip({ project, pull, more, handlers, historical = false 
 
 /** Something to open from the agent's last words (D-39): a link by its short name, opened as a terminal link opens it (B49). */
 function OpenChip({ target, actions }: { target: ResolvedTarget; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   return (
-    <Hint label={`${target.label} 열기`}>
+    <Hint label={t("requests.openNamed", { name: target.label })}>
       <button
         type="button"
         data-request-open={target.key}
@@ -486,15 +492,16 @@ function useOpenTargets(agent: AgentRow, reply: string, pulls: readonly AgentPul
 
 // --- the expanded row ----------------------------------------------------------
 
-const BADGE_WORDS: Record<AgentPullRequest["badge"], string> = { merged: "머지됨", closed: "닫힘", review: "열림", open: "열림" };
+const BADGE_LABEL: Record<AgentPullRequest["badge"], MessageKey> = { merged: "requests.badge.merged", closed: "requests.badge.closed", review: "requests.badge.review", open: "requests.badge.open" };
 
 /**
  * Everything the folded row cut (B6, B13, B56): the full request (twenty
- * lines, then `전부 보기`), the agent's last words, every open target, every
+ * lines, then `Show all`), the agent's last words, every open target, every
  * pull request with its state and those settled before the request as
- * `예전 PR #N 머지됨`, the descendants with their verb and line, and Open.
+ * `Earlier PR #N Merged`, the descendants with their verb and line, and Open.
  */
 function RowDetail({ row, targets, full, onFull, onOpen, handlers, actions }: { row: RequestRow; targets: readonly ResolvedTarget[]; full: boolean; onFull: () => void; onOpen: () => void; handlers: LensHandlers; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const { agent, project } = row.lens;
   const block = agent.request;
   const request = block?.request ? fullRequest(block.request.text, full) : null;
@@ -507,14 +514,14 @@ function RowDetail({ row, targets, full, onFull, onOpen, handlers, actions }: { 
       </p>
       {request ? (
         <div className="flex min-w-0 flex-col gap-xxs">
-          <span className="text-subtle-foreground">{senderWords(block!.request!.sender)} ›</span>
+          <span className="text-subtle-foreground">{senderWords(block!.request!.sender, t)} ›</span>
           <p className="whitespace-pre-wrap break-words text-foreground" data-request-full={agent.pane_id}>
             {request.text}
-            {block!.request!.images > 0 ? `\n이미지 ${block!.request!.images}` : ""}
+            {block!.request!.images > 0 ? `\n${t("requests.images", { count: block!.request!.images })}` : ""}
           </p>
           {request.more ? (
             <button type="button" data-request-focus="chip" data-request-more={agent.pane_id} className="self-start rounded-xs text-subtle-foreground outline-none hover:underline focus-visible:ring-1 focus-visible:ring-ring" onClick={onFull}>
-              전부 보기
+              {t("requests.showAll")}
             </button>
           ) : null}
         </div>
@@ -524,9 +531,9 @@ function RowDetail({ row, targets, full, onFull, onOpen, handlers, actions }: { 
           {block.reply.text}
         </p>
       ) : null}
-      {verdictLine(block) ? (
+      {verdictLine(block, t) ? (
         <span className="min-w-0 break-words text-subtle-foreground" data-request-verdict={block!.end}>
-          {verdictLine(block)}
+          {verdictLine(block, t)}
         </span>
       ) : null}
       {targets.length > 0 ? (
@@ -545,7 +552,7 @@ function RowDetail({ row, targets, full, onFull, onOpen, handlers, actions }: { 
             <li key={pull.url} className="flex min-w-0 items-start gap-xs" data-request-pull={pull.number} data-live={pull.live ? "true" : undefined}>
               <RowPullRequestChip project={project} pull={pull} more={0} handlers={handlers} historical={!pull.live} />
               <span className="min-w-0 flex-1 break-words text-foreground">{pull.title}</span>
-              {pull.live ? <span className="shrink-0 text-muted-foreground">{BADGE_WORDS[pull.badge]}</span> : null}
+              {pull.live ? <span className="shrink-0 text-muted-foreground">{t(BADGE_LABEL[pull.badge])}</span> : null}
             </li>
           ))}
         </ul>
@@ -564,10 +571,10 @@ function RowDetail({ row, targets, full, onFull, onOpen, handlers, actions }: { 
               <StatusMark symbol={child.symbol} className={markTone(child)} />
               <AgentMark kind={child.agent_kind} />
               <span className="min-w-0 max-w-[40%] shrink-0 truncate text-foreground">{child.identity_label}</span>
-              <span className="shrink-0 text-subtle-foreground">{VERB_LABEL[child.request?.verb ?? (child.group === "working" ? "working" : "idle")]}</span>
+              <span className="shrink-0 text-subtle-foreground">{t(VERB_LABEL[child.request?.verb ?? (child.group === "working" ? "working" : "idle")])}</span>
               <span className="min-w-0 flex-1 truncate text-muted-foreground">{child.request?.line ?? child.request?.reply?.text.split("\n").at(-1) ?? ""}</span>
               <button type="button" data-request-focus="chip" data-request-child-open={child.pane_id} className="shrink-0 rounded-xs text-foreground outline-none hover:underline focus-visible:ring-1 focus-visible:ring-ring" onClick={() => handlers.openAgent(child.pane_id)}>
-                열기
+                {t("common.open")}
               </button>
             </li>
           ))}
@@ -576,7 +583,7 @@ function RowDetail({ row, targets, full, onFull, onOpen, handlers, actions }: { 
       <span className="flex items-center gap-sm">
         <Button variant="secondary" size="sm" onClick={onOpen} data-request-focus="chip" data-request-open-pane={agent.pane_id}>
           <SquareArrowOutUpRightIcon aria-hidden="true" />
-          패널 열기
+          {t("requests.openPanel")}
         </Button>
         <span className="text-muted-foreground">{fieldLabel("Enter")}</span>
       </span>

@@ -7,6 +7,7 @@
 // A value not read yet is null, never a zero (design 10).
 
 import type { BadgeCounts } from "./agentRow";
+import type { MessageKey } from "./i18n/catalogs";
 import { rowLine } from "./agentRow";
 import { cleanupOf, type AgentBucket, type Cleanup, type LensAgent } from "./overviewLens";
 import type { BoardProject } from "./projectBoard";
@@ -47,10 +48,10 @@ export type GraphGeometry = {
 /** The status chips (D-09): the operator's turn, working (a parent waiting on children included, D-35), resting. */
 export type StatusChip = "turn" | "working" | "resting";
 
-export const STATUS_CHIPS: readonly { chip: StatusChip; label: string }[] = [
-  { chip: "turn", label: "내 차례" },
-  { chip: "working", label: "일하는 중" },
-  { chip: "resting", label: "쉬는 중" },
+export const STATUS_CHIPS: readonly { chip: StatusChip; labelKey: MessageKey }[] = [
+  { chip: "turn", labelKey: "board.prGroup.turn" },
+  { chip: "working", labelKey: "requests.verb.working" },
+  { chip: "resting", labelKey: "requests.verb.idle" },
 ];
 
 /** What narrows the graph (D-36): any lit chip (OR), and the search and the device (AND with the chips). */
@@ -88,8 +89,12 @@ export function matchesFilter(value: LensAgent, filter: GraphFilter): boolean {
   return haystack.some((part) => part?.toLowerCase().includes(term));
 }
 
-/** The device filter's name for this machine; a remote device is named by its label. */
-export const THIS_DEVICE = "이 Mac";
+/**
+ * The device filter's value for this machine; a remote device is its label.
+ * A device label cannot hold a NUL, so this never names a remote device, and
+ * the words for it are the interface language's, written where it is drawn.
+ */
+export const THIS_DEVICE = "\u0000this-device";
 
 /** The devices a scope's agents run on, this machine first; the control stands only when there are two or more (B24). */
 export function graphDevices(agents: readonly LensAgent[]): string[] {
@@ -235,7 +240,7 @@ export type ProjectGraph = {
 
 export type GraphBoard = {
   sections: ProjectGraph[];
-  /** Nothing to draw and no filter to blame: `실행 중인 에이전트가 없습니다` (B31). */
+  /** Nothing to draw and no filter to blame: the no-agents line (B31). */
   empty: boolean;
   /** A filter is on and nothing matches (B28). */
   filterEmpty: boolean;
@@ -309,7 +314,7 @@ function projectGraph({ workspace, device }: BoardProject, members: LensAgent[],
     const candidate: Candidate = { checkout, primary, cleanup, members: kept ? own.filter((value) => kept.has(value.agent.pane_id)) : own, rank };
     candidates.set(checkout.id, candidate);
     if (filtering) {
-      // A filter draws every checkout that holds a kept row and folds nothing: a `쉬는 중` chip would otherwise show an empty graph.
+      // A filter draws every checkout that holds a kept row and folds nothing: a Resting chip would otherwise show an empty graph.
       if (candidate.members.length > 0) drawn.push(candidate);
       continue;
     }

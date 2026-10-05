@@ -5,29 +5,34 @@
 // act; a plain browser tab has no file manager to hand anything to, so it
 // offers no such item, and a path on another device is not on this computer.
 
-/** What a menu reads from the host for the item: its label, or null where the host has no file manager. */
-export type RevealHost = { label: string } | null;
+// The desktop host imports this module (through `host.ts`), so it names the
+// label by key and leaves the translating to the menu that draws it.
+import type { TFunction } from "i18next";
+import type { MessageKey } from "./i18n/catalogs";
 
-/** The item's label on the desktop host's OS (`process.platform`). */
-export function revealLabel(platform: string | null | undefined): string {
-  if (platform === "darwin") return "Reveal in Finder";
-  if (platform === "win32") return "Reveal in File Explorer";
-  if (platform === "linux") return "Open Containing Folder";
-  return "Show in File Manager";
+export type RevealLabelKey = Extract<MessageKey, "explorer.revealFinder" | "explorer.revealFileExplorer" | "explorer.revealFolder" | "explorer.revealFileManager">;
+
+/** What a menu reads from the host for the item: its label key, or null where the host has no file manager. */
+export type RevealHost = { label: RevealLabelKey } | null;
+
+/** The item's label key on the desktop host's OS (`process.platform`). */
+export function revealLabel(platform: string | null | undefined): RevealLabelKey {
+  if (platform === "darwin") return "explorer.revealFinder";
+  if (platform === "win32") return "explorer.revealFileExplorer";
+  if (platform === "linux") return "explorer.revealFolder";
+  return "explorer.revealFileManager";
 }
 
 /** The item as every menu draws it (`MenuEntry` in `components/entry-menu.tsx`, kept JSX-free for the desktop host's imports). */
 export type RevealExternalEntry = { id: "reveal_external"; label: string; unavailable: string | null; separated?: boolean };
-
-export const REVEAL_HERE_ONLY = "Only for files and folders on this computer.";
 
 /**
  * The item for a target on `device`, or none in a plain browser tab. A
  * target on another device, or one already known to be gone (`blocked`),
  * is listed disabled with its reason rather than hidden.
  */
-export function revealExternalEntry(host: RevealHost, device: string, blocked: string | null = null, separated = false): RevealExternalEntry[] {
+export function revealExternalEntry(host: RevealHost, device: string, t: TFunction<"translation">, blocked: string | null = null, separated = false): RevealExternalEntry[] {
   if (!host) return [];
-  const unavailable = device !== "local" ? REVEAL_HERE_ONLY : blocked;
-  return [{ id: "reveal_external", label: host.label, unavailable, ...(separated ? { separated } : {}) }];
+  const unavailable = device !== "local" ? t("explorer.revealHereOnly") : blocked;
+  return [{ id: "reveal_external", label: t(host.label), unavailable, ...(separated ? { separated } : {}) }];
 }

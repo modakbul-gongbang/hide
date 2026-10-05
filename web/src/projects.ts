@@ -4,7 +4,9 @@
 // inactive checkouts. The split only reads flags and groups the core set; no
 // age, merge or attention rule is repeated.
 
-import { AGENT_GROUPS, type ListedAgent } from "./navigation";
+import type { TFunction } from "i18next";
+import type { MessageKey } from "./i18n/catalogs";
+import { AGENT_GROUPS, agentGroupTitle, type ListedAgent } from "./navigation";
 import type { Checkout, InactiveProjectGroup, MarkCounts, PullRequest, RecentCheckout, Workspace } from "./snapshot";
 
 /** Return to this device's last usable checkout, then its primary, then row order. */
@@ -19,13 +21,10 @@ export function projectCheckout(workspace: Workspace, recent: readonly RecentChe
 }
 
 export type ProjectRow =
-  | { kind: "header"; title: string; count: number }
-  | { kind: "raised"; group: string; title: string; agents: ListedAgent[] }
+  | { kind: "header"; section: "pinned" | "recent"; count: number }
+  | { kind: "raised"; group: string; agents: ListedAgent[] }
   | { kind: "workspace"; workspace: Workspace; level: "root" | "child" }
   | { kind: "inactive_projects"; group: InactiveProjectGroup; count: number };
-
-export const PINNED_TITLE = "Pinned";
-export const RECENT_TITLE = "Projects · Recent activity";
 
 /** The group the Projects list raises above its tree (docs/status-model.md); Done and the rest are the Agents tab's. */
 const RAISED_GROUP = "needs_you";
@@ -44,20 +43,20 @@ export function projectRows(workspaces: Workspace[], groups: InactiveProjectGrou
   for (const workspace of home ? [...workspaces, home] : workspaces) {
     for (const checkout of workspace.checkouts) for (const tab of checkout.tabs) for (const pane of tab.panes) drawnPanes.add(pane.id);
   }
-  for (const { group, label } of AGENT_GROUPS) {
+  for (const { group } of AGENT_GROUPS) {
     if (group !== RAISED_GROUP) continue;
     const raised = listed.filter((row) => row.agent.group === group && drawnPanes.has(row.agent.pane_id));
     if (raised.length === 0) continue;
     const agents = raised.map((row) => (row.agent.lineage_collapsed === false ? { ...row, agent: { ...row.agent, lineage_collapsed: true } } : row));
-    rows.push({ kind: "raised", group, title: label, agents });
+    rows.push({ kind: "raised", group, agents });
   }
   const pinned = workspaces.filter((row) => row.pinned);
   const recent = workspaces.filter((row) => !row.pinned);
   if (pinned.length > 0) {
-    rows.push({ kind: "header", title: PINNED_TITLE, count: pinned.length });
+    rows.push({ kind: "header", section: "pinned", count: pinned.length });
     for (const workspace of pinned) rows.push({ kind: "workspace", workspace, level: "root" });
   }
-  rows.push({ kind: "header", title: RECENT_TITLE, count: recent.length });
+  rows.push({ kind: "header", section: "recent", count: recent.length });
   const byId = new Map(recent.map((row) => [row.id, row]));
   const deviceIds = [...new Set(recent.map((row) => row.device_id))];
   for (const deviceId of deviceIds) {
@@ -87,16 +86,37 @@ export function inactiveCheckouts(workspace: Workspace): Checkout[] {
   return workspace.inactive_checkouts.checkout_ids.map((id) => byId.get(id)).filter((row): row is Checkout => !!row);
 }
 
-/** "now" for the first minute, then m / h / d; a timestamp from the future is "now". */
-export function relativeActivity(unixMs: number | null | undefined, nowMs: number): string | null {
+type Age = { unit: "now" } | { unit: "minutes" | "hours" | "days"; count: number };
+
+/** The first minute is "now", then minutes, hours and days; a timestamp from the future is "now". */
+export function activityAge(unixMs: number | null | undefined, nowMs: number): Age | null {
   if (unixMs == null) return null;
   const seconds = (nowMs - unixMs) / 1000;
-  if (seconds < 60) return "now";
+  if (seconds < 60) return { unit: "now" };
   const minutes = Math.floor(seconds / 60);
-  if (minutes < 60) return `${minutes}m`;
+  if (minutes < 60) return { unit: "minutes", count: minutes };
   const hours = Math.floor(minutes / 60);
-  if (hours < 24) return `${hours}h`;
-  return `${Math.floor(hours / 24)}d`;
+  if (hours < 24) return { unit: "hours", count: hours };
+  return { unit: "days", count: Math.floor(hours / 24) };
+}
+
+export function ageText(age: Age, t: TFunction<"translation">): string {
+  switch (age.unit) {
+    case "now":
+      return t("common.now");
+    case "minutes":
+      return t("common.ageMinutes", { count: age.count });
+    case "hours":
+      return t("common.ageHours", { count: age.count });
+    case "days":
+      return t("common.ageDays", { count: age.count });
+  }
+}
+
+/** "now" for the first minute, then minutes, hours and days in the interface language; a timestamp from the future is "now". */
+export function relativeActivity(unixMs: number | null | undefined, nowMs: number, t: TFunction<"translation">): string | null {
+  const age = activityAge(unixMs, nowMs);
+  return age === null ? null : ageText(age, t);
 }
 
 /**
@@ -132,10 +152,10 @@ export function pullRequestKind(pr: PullRequest): PullRequestKind {
 }
 
 /** The word and tone of a review decision, on the badge of a pull request under review and on the card's Review row. */
-const REVIEW_WORD: Record<NonNullable<PullRequest["review"]>, { value: string; tone: string }> = {
-  approved: { value: "Approved", tone: "text-success" },
-  changes_requested: { value: "Changes requested", tone: "text-destructive" },
-  review_required: { value: "Review required", tone: "text-muted-foreground" },
+const REVIEW_WORD: Record<NonNullable<PullRequest["review"]>, { value: MessageKey; tone: string }> = {
+  approved: { value: "board.review.approved", tone: "text-success" },
+  changes_requested: { value: "board.review.changes", tone: "text-destructive" },
+  review_required: { value: "board.review.required", tone: "text-muted-foreground" },
 };
 
 /**
@@ -144,17 +164,17 @@ const REVIEW_WORD: Record<NonNullable<PullRequest["review"]>, { value: string; t
  * decision for one under review. A draft that is under review keeps the
  * decision as its badge and says `draft` beside it, in the draft color.
  */
-export function pullRequestBadge(pr: PullRequest): { label: string; color: string; draft: boolean } {
+export function pullRequestBadge(pr: PullRequest, t: TFunction<"translation">): { label: string; color: string; draft: boolean } {
   switch (pr.badge) {
     case "merged":
-      return { label: "Merged", color: "text-pr-merged", draft: false };
+      return { label: t("requests.badge.merged"), color: "text-pr-merged", draft: false };
     case "closed":
-      return { label: "Closed", color: "text-pr-closed", draft: false };
+      return { label: t("requests.badge.closed"), color: "text-pr-closed", draft: false };
     case "open":
-      return pr.is_draft ? { label: "Draft", color: "text-pr-draft", draft: false } : { label: "Open", color: "text-pr-open", draft: false };
+      return pr.is_draft ? { label: t("overview.draft"), color: "text-pr-draft", draft: false } : { label: t("requests.badge.open"), color: "text-pr-open", draft: false };
     case "review": {
       const word = REVIEW_WORD[pr.review ?? "review_required"];
-      return { label: word.value, color: word.tone, draft: pr.is_draft };
+      return { label: t(word.value), color: word.tone, draft: pr.is_draft };
     }
   }
 }
@@ -198,7 +218,7 @@ const LIFECYCLE_TONE: Record<Extract<CheckoutKind, `pr_${string}`>, string> = {
   pr_closed: "text-pr-closed",
 };
 
-export function checkoutPresentation(workspace: Workspace, checkout: Checkout, nowMs: number): CheckoutPresentation {
+export function checkoutPresentation(workspace: Workspace, checkout: Checkout, nowMs: number, t: TFunction<"translation">): CheckoutPresentation {
   const github = checkout.github;
   const pr = shownPullRequest(checkout);
   const primary = checkout.is_primary === true;
@@ -213,33 +233,34 @@ export function checkoutPresentation(workspace: Workspace, checkout: Checkout, n
       : "text-subtle-foreground";
   const gitLoading = !!workspace.is_git && !checkout.worktree;
   const commitSeconds = checkout.worktree?.last_commit_unix_seconds;
-  const age = checkout.exists && !gitLoading && commitSeconds != null ? relativeActivity(commitSeconds * 1000, nowMs) : null;
+  const age = checkout.exists && !gitLoading && commitSeconds != null ? relativeActivity(commitSeconds * 1000, nowMs, t) : null;
   const summary = checkout.agent_summary;
   const agentCount = summary ? summary.needs_you + summary.done + summary.working + summary.seen : 0;
 
   const lines: string[] = [];
   if (pr) {
-    let first = `#${pr.number} · ${pullRequestBadge(pr).label}`;
+    let first = `#${pr.number} · ${pullRequestBadge(pr, t).label}`;
     if (pr.title) first += ` · ${pr.title}`;
-    if (github?.stale && github.last_success_at_unix_ms != null) first += ` · Last known ${relativeActivity(github.last_success_at_unix_ms, nowMs)}`;
+    const lastKnown = github?.stale ? activityAge(github.last_success_at_unix_ms, nowMs) : null;
+    if (lastKnown) first += ` · ${t("card.lastKnown", { age: ageText(lastKnown, t) })}`;
     lines.push(first);
   }
   if (github?.unavailable_reason) lines.push(github.unavailable_reason);
   if (summary && agentCount > 0) {
     const counts = (
       [
-        ["Needs You", summary.needs_you],
-        ["Done", summary.done],
-        ["Working", summary.working],
-        ["Seen", summary.seen],
+        ["needs_you", summary.needs_you],
+        ["done", summary.done],
+        ["working", summary.working],
+        ["seen", summary.seen],
       ] as const
     )
       .filter(([, count]) => count > 0)
-      .map(([name, count]) => `${name}: ${count}`)
+      .map(([group, count]) => t("card.stateCount", { name: agentGroupTitle(group, t), count }))
       .join(" · ");
-    lines.push(summary.unknown > 0 ? `${counts} (${summary.unknown} Unknown)` : counts);
+    lines.push(summary.unknown > 0 ? t("card.countsWithUnknown", { counts, unknown: summary.unknown }) : counts);
   }
-  if (detached) lines.push(`Detached HEAD${checkout.worktree?.head_sha ? ` at ${checkout.worktree.head_sha}` : ""}`);
+  if (detached) lines.push(checkout.worktree?.head_sha ? t("card.detachedAt", { sha: checkout.worktree.head_sha }) : t("card.detached"));
   else if (checkout.branch) lines.push(checkout.branch);
   lines.push(checkout.path);
 
@@ -272,10 +293,10 @@ export type CheckoutCard = {
   rows: CheckoutCardRow[];
 };
 
-const CHECKS_WORD: Partial<Record<NonNullable<PullRequest["checks"]>, { value: string; tone: string }>> = {
-  passing: { value: "Passing", tone: "text-success" },
-  failed: { value: "Failed", tone: "text-destructive" },
-  pending: { value: "Pending", tone: "text-muted-foreground" },
+const CHECKS_WORD: Partial<Record<NonNullable<PullRequest["checks"]>, { value: MessageKey; tone: string }>> = {
+  passing: { value: "card.checkPassing", tone: "text-success" },
+  failed: { value: "card.checkFailed", tone: "text-destructive" },
+  pending: { value: "card.checkPending", tone: "text-muted-foreground" },
 };
 
 /**
@@ -285,27 +306,27 @@ const CHECKS_WORD: Partial<Record<NonNullable<PullRequest["checks"]>, { value: s
  * runs, Commit from the last commit's age once Git has been read, Path always.
  * A folder that is gone has only its Path under a danger header.
  */
-export function checkoutCard(workspace: Workspace, checkout: Checkout, nowMs: number): CheckoutCard {
+export function checkoutCard(workspace: Workspace, checkout: Checkout, nowMs: number, t: TFunction<"translation">): CheckoutCard {
   const rows: CheckoutCardRow[] = [];
   if (!checkout.exists) {
-    rows.push({ key: "path", label: "Path", value: checkout.path });
-    return { header: { kind: "missing", label: "Folder missing" }, rows };
+    rows.push({ key: "path", label: t("card.path"), value: checkout.path });
+    return { header: { kind: "missing", label: t("graph.folderMissing") }, rows };
   }
   const pr = shownPullRequest(checkout);
-  if (pr) rows.push(...pullRequestRows(pr));
+  if (pr) rows.push(...pullRequestRows(pr, t));
   const worktree = checkout.worktree;
   if (workspace.is_git && worktree) {
-    if (worktree.branch) rows.push({ key: "branch", label: "Branch", value: worktree.branch });
-    else rows.push({ key: "branch", label: "Branch", value: `Detached HEAD${worktree.head_sha ? ` at ${worktree.head_sha.slice(0, 7)}` : ""}` });
+    if (worktree.branch) rows.push({ key: "branch", label: t("card.branch"), value: worktree.branch });
+    else rows.push({ key: "branch", label: t("card.branch"), value: worktree.head_sha ? t("card.detachedAt", { sha: worktree.head_sha.slice(0, 7) }) : t("card.detached") });
   }
   const summary = checkout.agent_summary;
-  if (summary && summary.needs_you + summary.done + summary.working + summary.seen > 0) rows.push({ key: "agents", label: "Agents", marks: summary.marks });
+  if (summary && summary.needs_you + summary.done + summary.working + summary.seen > 0) rows.push({ key: "agents", label: t("overview.agents"), marks: summary.marks });
   const commitSeconds = worktree?.last_commit_unix_seconds;
-  const age = commitSeconds != null ? relativeActivity(commitSeconds * 1000, nowMs) : null;
-  if (age) rows.push({ key: "commit", label: "Commit", value: age === "now" ? "now" : `${age} ago` });
-  rows.push({ key: "path", label: "Path", value: checkout.path });
+  const age = activityAge(commitSeconds != null ? commitSeconds * 1000 : null, nowMs);
+  if (age) rows.push({ key: "commit", label: t("card.commit"), value: age.unit === "now" ? t("common.now") : t("card.ago", { age: ageText(age, t) }) });
+  rows.push({ key: "path", label: t("card.path"), value: checkout.path });
   return {
-    header: pr ? pullRequestHeader(pr) : null,
+    header: pr ? pullRequestHeader(pr, t) : null,
     rows,
   };
 }
@@ -315,22 +336,22 @@ export function checkoutCard(workspace: Workspace, checkout: Checkout, nowMs: nu
  * has no checkout here (PRD overview-lenses-prs B7): the same header and
  * Review and Checks rows the checkout card draws, and the branch.
  */
-export function pullRequestCard(pr: PullRequest): CheckoutCard {
-  const rows = pullRequestRows(pr);
-  if (pr.head_branch) rows.push({ key: "branch", label: "Branch", value: pr.head_branch });
-  return { header: pullRequestHeader(pr), rows };
+export function pullRequestCard(pr: PullRequest, t: TFunction<"translation">): CheckoutCard {
+  const rows = pullRequestRows(pr, t);
+  if (pr.head_branch) rows.push({ key: "branch", label: t("card.branch"), value: pr.head_branch });
+  return { header: pullRequestHeader(pr, t), rows };
 }
 
-function pullRequestHeader(pr: PullRequest): NonNullable<CheckoutCard["header"]> {
-  return { kind: "pull_request", badge: pullRequestBadge(pr), glyph: pullRequestKind(pr), number: pr.number, url: pr.url, title: pr.title };
+function pullRequestHeader(pr: PullRequest, t: TFunction<"translation">): NonNullable<CheckoutCard["header"]> {
+  return { kind: "pull_request", badge: pullRequestBadge(pr, t), glyph: pullRequestKind(pr), number: pr.number, url: pr.url, title: pr.title };
 }
 
 /** A pull request's Review and Checks rows, each once GitHub has answered it. */
-function pullRequestRows(pr: PullRequest): CheckoutCardRow[] {
+function pullRequestRows(pr: PullRequest, t: TFunction<"translation">): CheckoutCardRow[] {
   const rows: CheckoutCardRow[] = [];
-  if (pr.review) rows.push({ key: "review", label: "Review", ...REVIEW_WORD[pr.review] });
+  if (pr.review) rows.push({ key: "review", label: t("card.review"), value: t(REVIEW_WORD[pr.review].value), tone: REVIEW_WORD[pr.review].tone });
   const checks = pr.checks ? CHECKS_WORD[pr.checks] : undefined;
-  if (checks) rows.push({ key: "checks", label: "Checks", ...checks });
+  if (checks) rows.push({ key: "checks", label: t("card.checks"), value: t(checks.value), tone: checks.tone });
   return rows;
 }
 
@@ -340,8 +361,8 @@ export function distanceText(ahead: number, behind: number): string {
 }
 
 /** `1 file`, `N files`. */
-export function filesText(count: number): string {
-  return `${count} ${count === 1 ? "file" : "files"}`;
+export function filesText(count: number, t: TFunction<"translation">): string {
+  return t("card.files", { count });
 }
 
 /**
@@ -351,17 +372,17 @@ export function filesText(count: number): string {
  * changed, each only once Git has said so. Lines added and removed are not
  * in the snapshot, so the card does not draw them (design 10).
  */
-export function laneCheckoutCard(workspace: Workspace, checkout: Checkout, nowMs: number): CheckoutCard {
-  const card = checkoutCard(workspace, checkout, nowMs);
+export function laneCheckoutCard(workspace: Workspace, checkout: Checkout, nowMs: number, t: TFunction<"translation">): CheckoutCard {
+  const card = checkoutCard(workspace, checkout, nowMs, t);
   const worktree = checkout.worktree;
   if (!checkout.exists || !workspace.is_git || !worktree) return card;
   const extra: CheckoutCardRow[] = [];
   const ahead = checkout.ahead ?? 0;
   const behind = worktree.behind_upstream ?? 0;
   if (checkout.is_worktree && checkout.is_primary !== true && workspace.default_branch) {
-    extra.push({ key: "base", label: "Base", value: [workspace.default_branch, distanceText(ahead, behind)].filter(Boolean).join(" ") });
+    extra.push({ key: "base", label: t("card.base"), value: [workspace.default_branch, distanceText(ahead, behind)].filter(Boolean).join(" ") });
   }
-  extra.push({ key: "changes", label: "Changes", value: worktree.changed_file_count === 0 ? "Clean" : filesText(worktree.changed_file_count) });
+  extra.push({ key: "changes", label: t("card.changes"), value: worktree.changed_file_count === 0 ? t("card.clean") : filesText(worktree.changed_file_count, t) });
   const at = card.rows.findIndex((row) => row.key === "branch");
   const rows = [...card.rows];
   rows.splice(at < 0 ? 0 : at + 1, 0, ...extra);

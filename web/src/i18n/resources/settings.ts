@@ -53,7 +53,7 @@ export const settingsEnglish = {
   "settings.authentication": "Authentication",
   "settings.authenticationDescription": "Hide delegates authentication to Herdr, SSH and the agent CLIs on the daemon's machine. It has no credential, token or passphrase field.",
   "settings.theme": "Theme",
-  "settings.themeDescription": "System follows the operating system as it changes. Accent tints primary buttons, focus rings and the editor caret; agent status colors keep their meaning whatever the accent.",
+  "settings.themeDescription": "System follows macOS as it changes. Accent tints primary buttons, focus rings and the editor caret; agent status colors keep their meaning whatever the accent.",
   "settings.theme.system": "System",
   "settings.theme.light": "Light",
   "settings.theme.dark": "Dark",
@@ -79,7 +79,7 @@ export const settingsEnglish = {
   "settings.sleep.days": "{{days}} days",
   "settings.notRead": "Not read yet.",
   "settings.notChecked": "Not checked yet.",
-  "settings.chosen": "Chosen",
+  "settings.chosen": "chosen",
   "settings.agentClis": "Agent CLIs",
   "settings.agentClisDescription": "Asked on the daemon's machine while this tab is open: installed, signed in, or why not.",
   "settings.backgroundAi": "Background AI",
@@ -122,6 +122,11 @@ export const settingsEnglish = {
   "settings.shortcuts.toggleConversation": "Toggle Conversation",
   "settings.shortcuts.clear": "Clear",
   "settings.shortcuts.change": "Change",
+  "settings.unavailable": "unavailable",
+  "settings.defaultChoice": "default",
+  "settings.agentSummary": "Agent summaries",
+  "settings.agentSummaryDescription": "When off, agent titles and one-liners show the session's own text, without AI.",
+  "usage.popoverTitle": "Weekly Usage",
 } as const;
 
 const ko = {
@@ -246,6 +251,11 @@ const ko = {
   "settings.shortcuts.toggleConversation": "대화 표시 전환",
   "settings.shortcuts.clear": "해제",
   "settings.shortcuts.change": "변경",
+  "settings.unavailable": "사용할 수 없음",
+  "settings.defaultChoice": "기본값",
+  "settings.agentSummary": "에이전트 요약",
+  "settings.agentSummaryDescription": "꺼 두면 에이전트 제목과 한 줄이 AI 없이 세션 원문으로 보입니다.",
+  "usage.popoverTitle": "주간 사용량",
 } satisfies Catalog<typeof settingsEnglish>;
 
 const ja = {
@@ -370,6 +380,11 @@ const ja = {
   "settings.shortcuts.toggleConversation": "会話の表示を切り替える",
   "settings.shortcuts.clear": "解除",
   "settings.shortcuts.change": "変更",
+  "settings.unavailable": "利用不可",
+  "settings.defaultChoice": "デフォルト",
+  "settings.agentSummary": "エージェント要約",
+  "settings.agentSummaryDescription": "オフにすると、エージェントのタイトルと一行説明が AI を介さずセッションの原文で表示されます。",
+  "usage.popoverTitle": "週間使用量",
 } satisfies Catalog<typeof settingsEnglish>;
 
 const zhCN = {
@@ -494,6 +509,11 @@ const zhCN = {
   "settings.shortcuts.toggleConversation": "切换对话显示",
   "settings.shortcuts.clear": "清除",
   "settings.shortcuts.change": "更改",
+  "settings.unavailable": "不可用",
+  "settings.defaultChoice": "默认",
+  "settings.agentSummary": "智能体摘要",
+  "settings.agentSummaryDescription": "关闭后，智能体标题和单行摘要将不经 AI，直接显示会话原文。",
+  "usage.popoverTitle": "每周用量",
 } satisfies Catalog<typeof settingsEnglish>;
 
 export const settingsCatalogs = { en: settingsEnglish, ko, "zh-CN": zhCN, ja } satisfies Catalogs<typeof settingsEnglish>;

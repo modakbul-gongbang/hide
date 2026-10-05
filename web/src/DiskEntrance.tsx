@@ -1,10 +1,12 @@
 import { AlertTriangleIcon, HardDriveIcon } from "lucide-react";
+import { useInterfaceTranslation } from "./i18n/client";
 import { cn } from "./lib/utils";
 import { FACT } from "./MainScreen";
 import { LOW_FREE_BYTES, entranceBytes, layerLines, lowFree, reclaimable, type Filter } from "./diskCleanup";
 import { LAYER_DOT } from "./DiskCleanupSheet";
 import { Tooltip, TooltipContent, TooltipTrigger, useHintOpen } from "./components/ui/tooltip";
-import { formatBytes } from "./projectBoard";
+import { formatBytes } from "./i18n/format";
+import { requireInterfaceLanguage } from "./i18n/locale";
 import type { Workspace } from "./snapshot";
 import { useUiStore } from "./ui";
 
@@ -24,11 +26,13 @@ export function openDiskCleanup(workspaceId: string, filter: Filter) {
  * never states a total the system cannot produce (B6).
  */
 export function DiskFact({ workspace, bytes }: { workspace: Workspace; bytes: number }) {
+  const { t, i18n } = useInterfaceTranslation();
+  const language = requireInterfaceLanguage(i18n.language);
   const { open, onOpenChange, triggerProps } = useHintOpen();
-  const lines = layerLines(workspace);
+  const lines = layerLines(workspace, t);
   const local = !workspace.remote_target_id;
   const partial = entranceBytes(workspace)?.partial ?? false;
-  const size = `${partial ? "≥ " : ""}${formatBytes(bytes)}`;
+  const size = `${partial ? "≥ " : ""}${formatBytes(language, bytes)}`;
   const content = (
     <span className={cn(FACT, "rounded-xs")} data-stat="disk" data-disk-partial={partial || undefined}>
       <HardDriveIcon aria-hidden="true" className="size-(--size-icon)" />
@@ -43,7 +47,7 @@ export function DiskFact({ workspace, bytes }: { workspace: Workspace; bytes: nu
       <TooltipTrigger asChild {...triggerProps}>
         <button
           type="button"
-          aria-label={`디스크 ${size}, 정리 시트 열기`}
+          aria-label={t("cleanup.entrance", { size })}
           className={cn(FACT, "rounded-xs outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring")}
           data-stat="disk"
           data-disk-entrance="true"
@@ -56,10 +60,10 @@ export function DiskFact({ workspace, bytes }: { workspace: Workspace; bytes: nu
       </TooltipTrigger>
       <TooltipContent>
         <div className="flex flex-col gap-xxs" data-disk-tooltip="true">
-          <span>할당 {size} · 눌러서 정리</span>
+          <span>{t("cleanup.allocatedHint", { size })}</span>
           {partial ? (
             <span className="text-warning" data-disk-tooltip-partial="true">
-              일부 체크아웃은 크기를 재지 못해 잰 것만 합했다
+              {t("cleanup.partial")}
             </span>
           ) : null}
           {lines.map((line) => (
@@ -68,7 +72,7 @@ export function DiskFact({ workspace, bytes }: { workspace: Workspace; bytes: nu
                 <span aria-hidden="true" className={cn("size-(--size-status-mark) rounded-full", LAYER_DOT[line.key])} />
                 {line.label}
               </span>
-              <span className="font-mono">{formatBytes(line.bytes)}</span>
+              <span className="font-mono">{formatBytes(language, line.bytes)}</span>
             </span>
           ))}
         </div>
@@ -77,12 +81,14 @@ export function DiskFact({ workspace, bytes }: { workspace: Workspace; bytes: nu
   );
 }
 
-/** `여유 1.6 GB · 23 GB 비울 수 있음`, only once measured and under the limit (B2, D-20). */
+/** `Free 1.6 GB · 23 GB can be freed`, only once measured and under the limit (B2, D-20). */
 export function LowFreeFact({ workspace }: { workspace: Workspace }) {
+  const { t, i18n } = useInterfaceTranslation();
+  const language = requireInterfaceLanguage(i18n.language);
   const free = lowFree(workspace);
   if (free === null || workspace.remote_target_id) return null;
   const freeable = reclaimable(workspace);
-  const text = `여유 ${formatBytes(free)}${freeable > 0 ? ` · ${formatBytes(freeable)} 비울 수 있음` : ""}`;
+  const text = freeable > 0 ? t("cleanup.freeAndReclaimable", { free: formatBytes(language, free), reclaimable: formatBytes(language, freeable) }) : t("cleanup.free", { size: formatBytes(language, free) });
   return (
     <button
       type="button"

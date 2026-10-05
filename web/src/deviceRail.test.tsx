@@ -92,12 +92,12 @@ describe("a rail tile (quick device-rail-slack)", () => {
     expect(view({ tile: mini, selected: true })).not.toContain("data-rail-bar");
   });
 
-  it("dims a disconnected device's glyph with a cross, no mark, and reads 연결 안 됨 (B8)", () => {
+  it("dims a disconnected device's glyph with a cross, no mark, and reads Not connected (B8)", () => {
     // Counts a stale session still carries are not drawn.
     const html = view({ tile: off, connected: false, counts: { needs_you: 1, done: 1 } });
     expect(html).toContain("data-rail-off");
     expect(html).not.toContain("data-rail-badge");
     expect(html).toMatch(/opacity-\(--opacity-dimmed\)[^>]*data-rail-glyph|data-rail-glyph[^>]*opacity-\(--opacity-dimmed\)/);
-    expect(tile(html)).toContain('aria-label="연구실 빌드 서버 자동화 장비, 연결 안 됨"');
+    expect(tile(html)).toContain('aria-label="연구실 빌드 서버 자동화 장비, Not connected"');
   });
 });
