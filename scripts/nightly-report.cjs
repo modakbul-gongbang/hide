@@ -17,7 +17,7 @@ async function boundedList(list, parameters, subject) {
 
 module.exports = async function reportNightly({ github, context, results }) {
   if (context.ref !== "refs/heads/main") throw new Error("Nightly reporting requires main");
-  const failed = Object.entries(results).filter(([, value]) => value.result !== "success");
+  const failed = Object.entries(results).filter(([, value]) => value.result !== "success" && value.result !== "skipped");
   if (!failed.length) return { outcome: "no_failures" };
 
   const { owner, repo } = context.repo;

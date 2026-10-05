@@ -12,6 +12,12 @@
 # claims plan every lane; main's full run is the net under a lane a pull
 # request left out.
 #
+# A draft pull request runs the `plan` job only: the lanes wait for the pull
+# request to be marked ready for review, and `verify` is skipped meanwhile.
+# GitHub itself refuses to merge a draft, so the skipped check opens no way
+# around the gate; the ready-for-review run plans and checks every lane as
+# for any pull request.
+#
 # Each gate here has a local command in CONTRIBUTING.md under "CI gates".
 #
 # Runner placement is a capacity decision. This organization's plan runs five
@@ -40,6 +46,8 @@ name: verify
 
 on:
   pull_request:
+    # `ready_for_review` starts the run a draft skipped.
+    types: [opened, synchronize, reopened, ready_for_review]
   push:
     branches: [main]
 
@@ -71,7 +79,7 @@ jobs:
       - name: Choose the lanes this change needs
         id: plan
         # The crate graph comes from `cargo metadata`, which needs no build.
-        run: python3 scripts/ci-plan.py plan --event "$GITHUB_EVENT_NAME"
+        run: python3 scripts/ci-plan.py plan --event "$GITHUB_EVENT_NAME" --draft "${{ github.event.pull_request.draft || false }}"
 
   policy:
     name: policy checks
@@ -521,7 +529,7 @@ jobs:
   verify:
     name: verify
     needs: [plan, policy, rust, web-checks, desktop-checks, os-contract, windows-check, windows-e2e, web-e2e, web-e2e-platform, desktop-e2e]
-    if: always()
+    if: ${{ always() && github.event.pull_request.draft != true }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
     steps:

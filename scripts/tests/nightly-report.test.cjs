@@ -54,6 +54,13 @@ test("a green run has a distinct no-work outcome", async () => {
   assert.equal(f.issues.length, 0);
 });
 
+test("a lane a hand run left out is skipped and is not a failure", async () => {
+  const f = fixture();
+  f.results = { web: { result: "success" }, desktop: { result: "skipped" }, package: { result: "skipped" } };
+  assert.equal((await report(f)).outcome, "no_failures");
+  assert.equal(f.issues.length, 0);
+});
+
 test("wrong branch, incomplete run identity and API failures fail the caller", async () => {
   const f = fixture();
   await assert.rejects(report({ ...f, context: { ...f.context, ref: "refs/heads/topic" } }), /requires main/);

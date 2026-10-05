@@ -243,7 +243,11 @@ def changed_entries(base, head, root=ROOT):
     return list(zip(fields[:-1:2], fields[1:-1:2]))
 
 
-def plan(event, base, head, root=ROOT, crates=None):
+def plan(event, base, head, root=ROOT, crates=None, draft=False):
+    if draft:
+        # A draft is not a merge candidate: only this job runs, and marking
+        # the pull request ready for review starts the run that plans lanes.
+        return {"full": False, "lanes": [], "rust_packages": [], "reasons": {}, "draft": True}
     if crates is None:
         try:
             crates = cargo_crates(root)
@@ -292,6 +296,8 @@ def aggregate(needs):
 
 
 def summary(result):
+    if result.get("draft"):
+        return "A draft pull request plans no lane; marking it ready for review runs them.\n"
     lines = ["| Lane | Runs | Why |", "| --- | --- | --- |"]
     for lane in LANES:
         reasons = result["reasons"].get(lane, [])
@@ -310,11 +316,12 @@ def main():
     plan_parser.add_argument("--event", required=True)
     plan_parser.add_argument("--base", default="HEAD^1")
     plan_parser.add_argument("--head", default="HEAD")
+    plan_parser.add_argument("--draft", choices=("true", "false"), default="false", help="the pull request is a draft")
     sub.add_parser("aggregate", help="check toJSON(needs), read from NEEDS")
     args = parser.parse_args()
 
     if args.command == "plan":
-        result = plan(args.event, args.base, args.head)
+        result = plan(args.event, args.base, args.head, draft=args.draft == "true")
         print(json.dumps(result, indent=2))
         if os.environ.get("GITHUB_OUTPUT"):
             with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:

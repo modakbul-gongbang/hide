@@ -287,7 +287,9 @@ A planned lane that was skipped, failed or cancelled fails `verify`, so a wrong 
 | `herdr-core`, `hided`, `hide-platform`, `hide-herdr-client`, `hide-host`, `hide-kit`, `hide-agent-hooks` | also `os-contract`, `windows-e2e`, the macOS `@platform` lane and `desktop-e2e` |
 | `.github/`, `scripts/`, `contracts/` (the Herdr pin and schemas), shared e2e fixtures, any `package.json`, configuration or lockfile, the workspace `Cargo.toml`, a type change, and any path no row above claims | every lane |
 
-Every plan includes `policy`, whatever else it names.
+Every plan includes `policy`, whatever else it names, except a draft pull request's: it plans no lane and `verify` is skipped, and marking the pull request ready for review (`ready_for_review`) starts the run that plans them.
+GitHub does not merge a draft, so the skipped check is no way around the gate; keep `ready_for_review` in `pr.yml`'s `types`, because without it the draft's skipped `verify` would be the pull request's only check.
+A hand run of `nightly.yml` takes a `lane` (`all`, `linux`, `macos`, `windows`): one system's web and desktop suites, with `os contract` and `package` for `all` only; the schedule runs everything.
 A push to main plans every lane, and so does a plan that cannot be computed: a missing base, a checkout that is not the merge commit, a diff that does not parse, or a crate graph `cargo metadata` cannot read.
 Main's full run is the net under a pull request that left out a lane it needed; main's runs queue rather than cancel each other.
 When one does, fix the rule in `scripts/ci-plan.py` with a case in its test; a test that reads a file outside its own folder adds that file to `READERS`.

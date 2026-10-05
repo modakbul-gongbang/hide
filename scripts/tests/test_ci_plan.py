@@ -115,6 +115,18 @@ class Selection(unittest.TestCase):
         self.assertTrue(result["full"])
         self.assertIn("comparison unavailable", result["reasons"]["rust"][0])
 
+    def test_a_draft_plans_no_lane_and_ready_for_review_runs_them(self):
+        result = ci.plan("pull_request", "0" * 40, "HEAD", ROOT, draft=True)
+        self.assertEqual(result["lanes"], [])
+        self.assertEqual(result["rust_packages"], [])
+        self.assertIn("draft", ci.summary(result))
+        # Without the `ready_for_review` run the skipped `verify` of the last
+        # draft push would be the pull request's only check.
+        workflow = (ROOT / ".github/workflows/pr.yml").read_text()
+        self.assertRegex(workflow, r"types: \[[^\]]*\bready_for_review\b[^\]]*\]")
+        self.assertIn("github.event.pull_request.draft != true", workflow)
+        self.assertIn('--draft "${{ github.event.pull_request.draft || false }}"', workflow)
+
     def test_a_missing_crate_graph_runs_everything(self):
         with tempfile.TemporaryDirectory() as directory:
             result = ci.plan("pull_request", "HEAD^1", "HEAD", Path(directory))
