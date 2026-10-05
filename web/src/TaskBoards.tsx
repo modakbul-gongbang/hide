@@ -13,6 +13,7 @@ import {
   GitMergeIcon,
   GitPullRequestIcon,
   HouseIcon,
+  ListChecksIcon,
   ListFilterIcon,
   LockIcon,
   PencilIcon,
@@ -56,6 +57,7 @@ import {
   stageCards,
   type BoardRow,
   type BoardScope,
+  type CardSubIssues,
   type DependencyGraph,
   type IssueFilter,
   type LoosePullRequest,
@@ -663,6 +665,7 @@ export function IssueCardView({ card, page, actions, handlers, graph }: { card: 
         {card.title}
       </p>
       {blocked ? <BlockedLine card={card} /> : null}
+      {card.subIssues ? <SubIssuesLine subIssues={card.subIssues} /> : null}
       {chips ? (
         <div className="flex min-w-0 flex-wrap items-center gap-x-sm gap-y-xxs font-mono text-caption text-muted-foreground" data-card-chips="true">
           {card.chip && checkout ? <CheckoutChipView card={card} handlers={handlers} /> : null}
@@ -714,6 +717,17 @@ function BlockedLine({ card }: { card: TaskCard }) {
         <span className="truncate">{blocked}</span>
       </p>
     </Hint>
+  );
+}
+
+/** GitHub's own progress over the issue's sub-issues, `하위 3/5`, as it counts them. */
+function SubIssuesLine({ subIssues }: { subIssues: CardSubIssues }) {
+  const { t } = useInterfaceTranslation();
+  return (
+    <p className="flex w-fit min-w-0 items-center gap-xxs text-caption text-muted-foreground" data-sub-issues={`${subIssues.completed}/${subIssues.total}`}>
+      <ListChecksIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0" />
+      <span className="truncate">{t("board.subIssues", { completed: subIssues.completed, total: subIssues.total })}</span>
+    </p>
   );
 }
 
