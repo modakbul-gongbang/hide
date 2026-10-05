@@ -6,8 +6,9 @@
 step: a planned lane must have succeeded and an unplanned one must have been
 skipped, so a lane whose `if:` is wrong fails `verify` instead of passing it.
 
-A push to main, a comparison that cannot be computed, and a path no rule
-claims all plan every lane. docs/TESTING.md, "Which lanes a pull request
+A merge queue group plans from the paths between its base and its head. A
+push to main, a comparison that cannot be computed, and a path no rule claims
+all plan every lane. docs/TESTING.md, "Which lanes a pull request
 runs", owns the rules and the reasons for them.
 """
 import argparse
@@ -330,16 +331,20 @@ def plan(event, base, head, root=ROOT, crates=None, draft=False):
             # Without the crate graph no Rust change can be narrowed; the full
             # Rust lane runs the whole workspace and needs no package list.
             return select([], {}, root, f"crate graph unavailable: {error}")
-    if event != "pull_request":
+    if event not in ("pull_request", "merge_group"):
         return select([], crates, root, f"{event}: every lane runs on main")
     try:
-        # A pull request's checkout is the merge commit GitHub made; anything
-        # else would compare against a parent that is not the base.
-        parents = subprocess.check_output(
-            ["git", "rev-list", "--parents", "-n", "1", head], cwd=root, text=True, stderr=subprocess.PIPE
-        ).split()
-        if len(parents) != 3:
-            raise ValueError(f"{head} is not a merge commit")
+        if event == "pull_request":
+            # A pull request's checkout is the merge commit GitHub made;
+            # anything else would compare against a parent that is not the base.
+            parents = subprocess.check_output(
+                ["git", "rev-list", "--parents", "-n", "1", head], cwd=root, text=True, stderr=subprocess.PIPE
+            ).split()
+            if len(parents) != 3:
+                raise ValueError(f"{head} is not a merge commit")
+        # A merge queue group names its base (`merge_group.base_sha`), so the
+        # comparison needs no parent: base..head is every pull request queued
+        # up to and including this one, the tree main becomes.
         entries = changed_entries(base, head, root)
     except subprocess.CalledProcessError as error:
         detail = error.stderr.strip() if isinstance(error.stderr, str) else (error.stderr or b"").decode(errors="replace").strip()

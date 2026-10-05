@@ -295,6 +295,7 @@ Marking the pull request ready (`ready_for_review`) starts the run that plans an
 Keep `ready_for_review` in `pr.yml`'s `types`, and keep `verify` running on a draft; `scripts/tests/test_ci_plan.py` reads the workflow for both.
 A hand run of `nightly.yml` takes a `lane` (`all`, `linux`, `macos`, `windows`): one system's web and desktop suites, with `os contract` and `package` for `all` only; the schedule runs everything.
 A push to main plans every lane, and so does a plan that cannot be computed: a missing base, a checkout that is not the merge commit, a diff that does not parse, or a crate graph `cargo metadata` cannot read.
+A merge queue group (`merge_group`) plans from the paths between the main commit it starts from (`merge_group.base_sha`) and the group's commit, the tree main becomes, so a group queued behind others plans for their changes too; a base the `plan` job cannot fetch is a missing base.
 Main's full run is the net under a pull request that left out a lane it needed; main's runs queue rather than cancel each other.
 When one does, fix the rule in `scripts/ci-plan.py` with a case in its test; a test that reads a file outside its own folder adds that file to `READERS`.
 A path is narrower than every lane only by being named in `POLICY_ONLY` or `NAMED_LANES`, with its reader in a comment and a case in `NamedPaths`; a new or unknown path plans every lane until someone names it.
