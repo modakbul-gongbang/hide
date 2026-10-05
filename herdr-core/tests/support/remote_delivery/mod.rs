@@ -162,6 +162,43 @@ pub fn wait_for<T>(what: &str, mut observe: impl FnMut() -> Result<Option<T>>) -
     }
 }
 
+/// What the account's machine says when the helper never became ready: its
+/// processes, and the placed helper started by hand, so a hang and a crash
+/// read differently in the failure instead of both as one timeout.
+fn helper_diagnostics(remote: &Environment) -> String {
+    let mut report = String::from("private helper never became ready\n");
+    let mut processes = remote.command("/bin/ps");
+    processes.args(["-eo", "pid,ppid,stat,etime,args"]);
+    match capture(processes) {
+        Ok(answer) => {
+            let text = String::from_utf8_lossy(&answer.stdout);
+            let shown: String = text.chars().take(8192).collect();
+            report.push_str(&format!("processes:\n{shown}\n"));
+        }
+        Err(error) => report.push_str(&format!("processes unavailable: {error}\n")),
+    }
+    let versions = fs::read_dir(remote.home.join("helper"))
+        .into_iter()
+        .flatten()
+        .flatten()
+        .map(|entry| entry.path().join("hide-host-helper"));
+    for helper in versions.filter(|path| path.is_file()) {
+        let mut serve = remote.command(&helper);
+        serve.arg("serve");
+        match capture(serve) {
+            Ok(answer) => report.push_str(&format!(
+                "{} serve with no input: {:?} stdout {:?} stderr {:?}\n",
+                helper.display(),
+                answer.status,
+                String::from_utf8_lossy(&answer.stdout),
+                String::from_utf8_lossy(&answer.stderr)
+            )),
+            Err(error) => report.push_str(&format!("{} serve: {error}\n", helper.display())),
+        }
+    }
+    report
+}
+
 fn read(path: &Path) -> Result<Vec<u8>> {
     ensure!(
         fs::metadata(path)?.len() <= READ_CAP as u64,
@@ -579,7 +616,8 @@ impl Fixture {
                     })
                 })
                 .then_some(()))
-        })?;
+        })
+        .map_err(|error| error.context(helper_diagnostics(&fixture.remote.environment)))?;
         fixture.event("create_workspace", json!({"device_id":"remote","path":fixture.remote.environment.home.join("project"),"label":"Remote fixture","initialize_git":false}))?;
         wait_for("registered private remote checkout", || {
             let snapshot = fixture.snapshot()?;
