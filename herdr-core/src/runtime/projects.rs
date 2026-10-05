@@ -54,10 +54,11 @@ const SIGHTED_ASKED_LIMIT: usize = 64;
 
 /// A pull request address a session printed that set off a read, or waits to
 /// (`read_sighted_pull_requests`).
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct Sighted {
-    /// When the session printed it.
-    at_unix_ms: u64,
+    /// Until when it is recent enough to read for, on the clock the re-read
+    /// runs on.
+    fresh_until: std::time::Instant,
     /// The projects whose ask was unanswered when it was printed, each owed a
     /// read once that answer lands if the answer does not hold it.
     waiting: BTreeSet<String>,
@@ -65,10 +66,12 @@ pub(super) struct Sighted {
 
 /// What a sighting may do to one project now.
 enum SightedRead {
-    /// The project's last read answered and worked: read it again now.
+    /// The project's last read answered and worked, and nothing has asked
+    /// since: read it again now.
     Now,
-    /// An ask is unanswered (a read in flight, or the first not yet
-    /// answered): asking again would overtake it, so wait for its answer.
+    /// An ask is outstanding (a read in flight, the first not yet answered,
+    /// or an answer the clock has not taken yet): asking again would overtake
+    /// it, so wait for its answer.
     AfterAnswer,
     /// The last read failed; the project's own retry comes within five
     /// minutes and reads the pull request then.
@@ -1003,6 +1006,13 @@ impl Runtime {
         self.github_answered.retain(|path, _| known(path));
         self.github_read_generation.retain(|path, _| known(path));
         self.github_settled.retain(known);
+        // A sighting that grew old while its project's answer was owed (no
+        // window attached, no read) sets off nothing when the answer lands.
+        self.github_sighted
+            .retain(|_, kept| now <= kept.fresh_until);
+        for kept in self.github_sighted.values_mut() {
+            kept.waiting.retain(known);
+        }
         for path in paths {
             let before = self.github_clock.get(&path).copied();
             if let Some(failed) = self.github_answered.remove(&path) {
@@ -1059,19 +1069,22 @@ impl Runtime {
     pub(crate) fn read_sighted_pull_requests(
         &mut self,
         sighted: &[crate::labels::worker::SightedPullRequest],
-        now_unix_ms: u64,
+        (now, now_unix_ms): (std::time::Instant, u64),
     ) {
-        use crate::labels::worker::sighting_is_fresh;
         self.github_sighted
-            .retain(|_, kept| sighting_is_fresh(kept.at_unix_ms, now_unix_ms));
+            .retain(|_, kept| now <= kept.fresh_until);
         let candidates = self.sighted_candidates();
         let mut read = BTreeSet::new();
         for sighting in sighted {
             let address = (sighting.repository.clone(), sighting.number);
             // Every pull request read is keyed here by its address, so a
             // sighting it holds needs no read.
-            if !sighting_is_fresh(sighting.at_unix_ms, now_unix_ms)
-                || self.pull_request_times.contains_key(&address)
+            let Some(fresh_for) =
+                crate::labels::worker::sighting_fresh_for(sighting.at_unix_ms, now_unix_ms)
+            else {
+                continue;
+            };
+            if self.pull_request_times.contains_key(&address)
                 || self.github_sighted.contains_key(&address)
             {
                 continue;
@@ -1100,7 +1113,7 @@ impl Runtime {
                 continue;
             }
             let mut kept = Sighted {
-                at_unix_ms: sighting.at_unix_ms,
+                fresh_until: now + fresh_for,
                 waiting: BTreeSet::new(),
             };
             let mut now = Vec::new();
@@ -1192,7 +1205,14 @@ impl Runtime {
     }
 
     fn sighted_read(&self, path: &str) -> SightedRead {
+        // Whoever asked (the clock, a refresh, the request view, a sighting),
+        // an ask is outstanding while the generation asked for is not the one
+        // last answered, and until the clock takes an answer that landed.
+        let asked = self.github_generations.get(path).copied().unwrap_or(0);
+        let outstanding = self.github_read_generation.get(path) != Some(&asked)
+            || self.github_answered.contains_key(path);
         match self.github_clock.get(path) {
+            _ if outstanding => SightedRead::AfterAnswer,
             Some(GithubClock::Answered { failures: 0, .. })
                 if self.github_settled.contains(path) =>
             {
@@ -2838,6 +2858,9 @@ impl Runtime {
         }
         let times = pull_request_times(&github);
         if *self.pull_request_times != times {
+            // A sighted address the answer now holds needs no place kept.
+            self.github_sighted
+                .retain(|address, _| !times.contains_key(address));
             self.pull_request_times = std::sync::Arc::new(times);
             if let Some(services) = self.label_services.as_ref() {
                 services.wake_local();

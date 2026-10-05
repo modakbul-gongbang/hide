@@ -62,9 +62,13 @@ const SIGHTED_LIMIT: usize = 32;
 /// holds, which a read would only answer the same way.
 const SIGHTING_FRESH_MS: u64 = 15 * 60 * 1_000;
 
-/// Whether a sighting printed at `at_unix_ms` is recent enough to read for.
-pub(crate) fn sighting_is_fresh(at_unix_ms: u64, now_unix_ms: u64) -> bool {
-    at_unix_ms.saturating_add(SIGHTING_FRESH_MS) >= now_unix_ms
+/// How much longer a sighting printed at `at_unix_ms` is recent enough to read
+/// for, or `None` once it is not.
+pub(crate) fn sighting_fresh_for(at_unix_ms: u64, now_unix_ms: u64) -> Option<Duration> {
+    at_unix_ms
+        .saturating_add(SIGHTING_FRESH_MS)
+        .checked_sub(now_unix_ms)
+        .map(Duration::from_millis)
 }
 
 /// Why a read produced nothing.
@@ -445,7 +449,7 @@ impl LabelWorker {
             return;
         }
         for sighting in sightings {
-            if !sighting_is_fresh(sighting.at_unix_ms, now_unix_ms) {
+            if sighting_fresh_for(sighting.at_unix_ms, now_unix_ms).is_none() {
                 continue;
             }
             let repository = sighting.repository.to_ascii_lowercase();

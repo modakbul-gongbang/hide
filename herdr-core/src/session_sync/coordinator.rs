@@ -1094,11 +1094,11 @@ fn exchange_pull_requests(context: &SessionSyncContext, worker: &mut LabelWorker
         return false;
     }
     let sighted = worker.take_sighted();
-    let now_unix_ms = (!sighted.is_empty()).then(unix_now_ms);
+    let now = (!sighted.is_empty()).then(|| (Instant::now(), unix_now_ms()));
     let times = context.runtime.upgrade().and_then(|runtime| {
         runtime.lock().ok().map(|mut guard| {
-            if let Some(now_unix_ms) = now_unix_ms {
-                guard.read_sighted_pull_requests(&sighted, now_unix_ms);
+            if let Some(now) = now {
+                guard.read_sighted_pull_requests(&sighted, now);
             }
             guard.pull_request_times()
         })

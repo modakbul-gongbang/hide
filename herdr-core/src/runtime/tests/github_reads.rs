@@ -744,17 +744,18 @@ fn a_pull_request_a_session_just_printed_is_read_for_once_in_its_repository() {
         git_project("a", "/tmp/a", "main"),
         git_project("b", "/tmp/b", "main"),
     ];
+    let start = Instant::now();
     first_read(
         &mut runtime,
         vec![
             read_ok("/tmp/a", vec![pull_request_in("owner/a", 1)], 10),
             read_ok("/tmp/b", vec![pull_request_in("owner/b", 7)], 10),
         ],
-        Instant::now(),
+        start,
     );
     let before = generations(&runtime);
 
-    runtime.read_sighted_pull_requests(&[sighted("w9:p1", "owner/a", 2)], NOW_MS);
+    runtime.read_sighted_pull_requests(&[sighted("w9:p1", "owner/a", 2)], (start, NOW_MS));
     assert_eq!(
         generations(&runtime),
         vec![("/tmp/a".to_owned(), before[0].1 + 1), before[1].clone()],
@@ -772,7 +773,7 @@ fn a_pull_request_a_session_just_printed_is_read_for_once_in_its_repository() {
             sighted("w9:p1", "owner/b", 7),
             old,
         ],
-        NOW_MS,
+        (start, NOW_MS),
     );
     assert_eq!(
         generations(&runtime),
@@ -788,18 +789,19 @@ fn a_repositorys_first_pull_request_is_read_in_the_project_its_session_works_in(
         project_with_pane("c", "/tmp/c", "w1:p1"),
         project_with_pane("d", "/tmp/d", "w2:p1"),
     ];
+    let start = Instant::now();
     first_read(
         &mut runtime,
         vec![
             read_ok("/tmp/c", Vec::new(), 10),
             read_ok("/tmp/d", vec![pull_request_in("owner/d", 3)], 10),
         ],
-        Instant::now(),
+        start,
     );
     let before = generations(&runtime);
 
-    runtime.read_sighted_pull_requests(&[sighted("w1:p1", "owner/c", 1)], NOW_MS);
-    runtime.read_sighted_pull_requests(&[sighted("w2:p1", "owner/elsewhere", 4)], NOW_MS);
+    runtime.read_sighted_pull_requests(&[sighted("w1:p1", "owner/c", 1)], (start, NOW_MS));
+    runtime.read_sighted_pull_requests(&[sighted("w2:p1", "owner/elsewhere", 4)], (start, NOW_MS));
     assert_eq!(
         generations(&runtime),
         vec![("/tmp/c".to_owned(), before[0].1 + 1), before[1].clone()],
@@ -825,7 +827,7 @@ fn a_sighting_while_a_read_is_unanswered_waits_for_that_answer() {
             sighted("w2:p1", "owner/b", 1),
             sighted("w3:p1", "owner/c", 1),
         ],
-        NOW_MS,
+        (start, NOW_MS),
     );
     assert_eq!(
         generations(&runtime),
@@ -855,7 +857,7 @@ fn a_sighting_while_a_read_is_unanswered_waits_for_that_answer() {
         "read once more only where the answer that landed lacks the pull request"
     );
 
-    runtime.read_sighted_pull_requests(&[sighted("w3:p1", "owner/c", 2)], NOW_MS);
+    runtime.read_sighted_pull_requests(&[sighted("w3:p1", "owner/c", 2)], (start, NOW_MS));
     runtime.reread_stale_github(start + Duration::from_secs(20));
     assert_eq!(
         (
@@ -888,8 +890,8 @@ fn an_unowned_address_takes_no_place_and_one_past_the_limit_reads_nothing() {
     let unowned: Vec<SightedPullRequest> = (1..=70)
         .map(|number| sighted("w9:p9", "owner/elsewhere", number))
         .collect();
-    runtime.read_sighted_pull_requests(&unowned, NOW_MS);
-    runtime.read_sighted_pull_requests(&[sighted("w9:p9", "owner/b", 50)], NOW_MS);
+    runtime.read_sighted_pull_requests(&unowned, (start, NOW_MS));
+    runtime.read_sighted_pull_requests(&[sighted("w9:p9", "owner/b", 50)], (start, NOW_MS));
     assert_eq!(
         generation(&runtime, "/tmp/b"),
         before + 1,
@@ -899,9 +901,9 @@ fn an_unowned_address_takes_no_place_and_one_past_the_limit_reads_nothing() {
     let filling: Vec<SightedPullRequest> = (100..163)
         .map(|number| sighted("w9:p9", "owner/a", number))
         .collect();
-    runtime.read_sighted_pull_requests(&filling, NOW_MS);
+    runtime.read_sighted_pull_requests(&filling, (start, NOW_MS));
     let ((), records) = crate::diagnostics::capture(|| {
-        runtime.read_sighted_pull_requests(&[sighted("w9:p9", "owner/b", 51)], NOW_MS);
+        runtime.read_sighted_pull_requests(&[sighted("w9:p9", "owner/b", 51)], (start, NOW_MS));
     });
     assert!(
         records
@@ -923,4 +925,72 @@ fn an_unowned_address_takes_no_place_and_one_past_the_limit_reads_nothing() {
     );
     runtime.reread_stale_github(start + Duration::from_secs(1));
     assert_eq!(generation(&runtime, "/tmp/b"), before + 1);
+}
+
+#[test]
+fn a_sighting_that_grew_old_waiting_for_its_answer_reads_nothing() {
+    let mut runtime = runtime();
+    runtime.snapshot.navigator.workspaces = vec![project_with_pane("a", "/tmp/a", "w1:p1")];
+    let start = Instant::now();
+    runtime.reread_stale_github(start);
+    runtime.read_sighted_pull_requests(&[sighted("w1:p1", "owner/a", 1)], (start, NOW_MS));
+    let before = generation(&runtime, "/tmp/a");
+
+    // No window, so no read, until long after the sighting; then the first
+    // answer lands without the pull request.
+    runtime.ingest_github_answer(
+        GithubSnapshot {
+            projects: vec![read_ok("/tmp/a", Vec::new(), 10)],
+        },
+        true,
+    );
+    runtime.reread_stale_github(start + Duration::from_secs(16 * 60));
+    assert_eq!(generation(&runtime, "/tmp/a"), before);
+}
+
+#[test]
+fn a_sighting_does_not_overtake_any_ask_its_project_has_out() {
+    let mut runtime = runtime();
+    runtime.snapshot.navigator.workspaces = vec![git_project("a", "/tmp/a", "main")];
+    let start = Instant::now();
+    first_read(
+        &mut runtime,
+        vec![read_ok("/tmp/a", vec![pull_request_in("owner/a", 1)], 10)],
+        start,
+    );
+    runtime.refresh_pull_requests("/tmp/a");
+    let refreshed = generation(&runtime, "/tmp/a");
+
+    runtime.read_sighted_pull_requests(&[sighted("w9:p1", "owner/a", 2)], (start, NOW_MS));
+    assert_eq!(
+        generation(&runtime, "/tmp/a"),
+        refreshed,
+        "a refresh in flight"
+    );
+
+    runtime.ingest_github_answer(
+        GithubSnapshot {
+            projects: vec![read_ok("/tmp/a", vec![pull_request_in("owner/a", 1)], 20)],
+        },
+        true,
+    );
+    runtime.read_sighted_pull_requests(&[sighted("w9:p1", "owner/a", 3)], (start, NOW_MS));
+    assert_eq!(
+        generation(&runtime, "/tmp/a"),
+        refreshed,
+        "an answer the clock has not taken yet"
+    );
+
+    runtime.reread_stale_github(start + Duration::from_secs(1));
+    assert_eq!(
+        generation(&runtime, "/tmp/a"),
+        refreshed + 1,
+        "both waiting sightings are read for once, after that answer"
+    );
+    runtime.read_sighted_pull_requests(&[sighted("w9:p1", "owner/a", 4)], (start, NOW_MS));
+    assert_eq!(
+        generation(&runtime, "/tmp/a"),
+        refreshed + 1,
+        "a sighted ask still in flight"
+    );
 }
