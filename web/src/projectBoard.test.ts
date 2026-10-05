@@ -5,7 +5,7 @@
 
 import { describe, expect, it } from "vitest";
 import { initializeInterfaceI18n } from "./i18n/instance";
-import { allProjectsStats, buildDependencies, buildPullRequests, buildTasks, filterActive, filterBoard, issueDate, NO_FILTER, projectStats, readFailureText, shownAgents, stageCards, stageOf, type BoardProject } from "./projectBoard";
+import { allProjectsStats, boardLabels, buildDependencies, buildPullRequests, buildTasks, filterActive, filterBoard, issueDate, NO_FILTER, projectStats, readFailureText, shownAgents, stageCards, stageOf, type BoardProject } from "./projectBoard";
 import type { AgentRow, Checkout, PullRequest, Task, Workspace } from "./snapshot";
 
 const NOW = 1_800_000_000_000;
@@ -294,11 +294,46 @@ describe("the Issues filter", () => {
 
   it("keeps the issues whose id or title holds every word, and the operator's turn only when asked (B21)", () => {
     expect(filterBoard(board, NO_FILTER)).toBe(board);
-    expect(filterBoard(board, { query: "sigterm HIDED", turn: false }).cards.map((card) => card.task.id)).toEqual(["#192"]);
-    expect(filterBoard(board, { query: "#214", turn: false }).cards.map((card) => card.task.id)).toEqual(["#214"]);
-    expect(filterBoard(board, { query: "", turn: true }).cards.map((card) => card.task.id)).toEqual(["#192"]);
-    expect(filterBoard(board, { query: "nothing", turn: false }).cards).toEqual([]);
-    expect(filterActive({ query: "  ", turn: false })).toBe(false);
+    expect(filterBoard(board, { ...NO_FILTER, query: "sigterm HIDED" }).cards.map((card) => card.task.id)).toEqual(["#192"]);
+    expect(filterBoard(board, { ...NO_FILTER, query: "#214" }).cards.map((card) => card.task.id)).toEqual(["#214"]);
+    expect(filterBoard(board, { ...NO_FILTER, turn: true }).cards.map((card) => card.task.id)).toEqual(["#192"]);
+    expect(filterBoard(board, { ...NO_FILTER, query: "nothing" }).cards).toEqual([]);
+    expect(filterActive({ ...NO_FILTER, query: "  " })).toBe(false);
+  });
+
+  // GitHub's labels ride the task; a Local issue has none.
+  const bug = { name: "bug", color: "d73a4a" };
+  const ui = { name: "ui", color: null };
+  const labelled = buildTasks(
+    one(workspace([], { tasks: [{ ...task(1), labels: [bug] }, { ...task(2), labels: [ui, bug] }, { ...task(3), labels: [ui] }, task(4)] })),
+    "project",
+    NOW,
+  );
+  const ids = (filter: Parameters<typeof filterBoard>[1]) =>
+    filterBoard(labelled, filter)
+      .cards.map((card) => card.task.id)
+      .sort();
+
+  it("keeps a card that carries any picked label, and with the other kinds every kind has to match (B21)", () => {
+    expect(ids({ ...NO_FILTER, labels: ["bug"] })).toEqual(["#1", "#2"]);
+    expect(ids({ ...NO_FILTER, labels: ["bug", "ui"] })).toEqual(["#1", "#2", "#3"]);
+    expect(ids({ ...NO_FILTER, labels: ["ui"], query: "Task 3" })).toEqual(["#3"]);
+    // A picked label no card carries any more keeps nothing rather than everything.
+    expect(ids({ ...NO_FILTER, labels: ["gone"] })).toEqual([]);
+    expect(filterActive({ ...NO_FILTER, labels: ["bug"] })).toBe(true);
+  });
+
+  it("offers each label on the board once, in name order, with how many cards carry it, and a picked label no card carries with none", () => {
+    expect(boardLabels(labelled, [])).toEqual([
+      { label: bug, count: 2 },
+      { label: ui, count: 2 },
+    ]);
+    expect(boardLabels(labelled, ["gone", "ui"])).toEqual([
+      { label: bug, count: 2 },
+      { label: { name: "gone", color: null }, count: 0 },
+      { label: ui, count: 2 },
+    ]);
+    expect(boardLabels(board, [])).toEqual([]);
   });
 });
 

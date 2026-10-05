@@ -63,6 +63,7 @@ async function workspaceAt(herdr: HerdrFixture, cwd: string, task: string | null
 
 /**
  * A `gh` that is logged in and answers for `acme/repo`: three open issues,
+ * issues 2 and 3 listed with their labels as `gh issue list` prints them,
  * one pull request that closes issue 4 and one that closes none, so the core
  * reads them as the project's tasks the way it reads the real one's. Issue 2
  * reads with labels, an author, an assignee and four comments; issue 4's
@@ -72,9 +73,10 @@ async function workspaceAt(herdr: HerdrFixture, cwd: string, task: string | null
 function fakeGh(dir: string): string {
   const bin = path.join(dir, "gh-bin");
   fs.mkdirSync(bin, { recursive: true });
+  const label = (name: string, color: string) => ({ id: `LA_${name}`, name, description: "", color });
   const issues = JSON.stringify([
-    { number: 2, title: "태스크 출처 어댑터", url: "https://github.com/acme/repo/issues/2", state: "OPEN", projectItems: [], updatedAt: "2026-09-26T00:00:00Z", createdAt: "2026-09-20T00:00:00Z" },
-    { number: 3, title: "Graph 뷰", url: "https://github.com/acme/repo/issues/3", state: "OPEN", projectItems: [], updatedAt: "2026-09-25T00:00:00Z" },
+    { number: 2, title: "태스크 출처 어댑터", url: "https://github.com/acme/repo/issues/2", state: "OPEN", labels: [label("enhancement", "a2eeef"), label("ui", "not-hex")], projectItems: [], updatedAt: "2026-09-26T00:00:00Z", createdAt: "2026-09-20T00:00:00Z" },
+    { number: 3, title: "Graph 뷰", url: "https://github.com/acme/repo/issues/3", state: "OPEN", labels: [label("ui", "not-hex")], projectItems: [], updatedAt: "2026-09-25T00:00:00Z" },
     { number: 4, title: "리뷰 중인 이슈", url: "https://github.com/acme/repo/issues/4", state: "OPEN", projectItems: [], updatedAt: "2026-09-24T00:00:00Z" },
   ]);
   const pr = (number: number, branch: string, title: string, closes: number[], review: string | null) => ({
@@ -717,8 +719,8 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await expect(panel.locator("[data-issue-comment]")).toHaveCount(3);
     await expect(panel.locator("[data-issue-comment]").last()).toContainText("마지막 댓글");
     await expect(panel.locator("[data-issue-comments]")).toContainText("Write comments on GitHub");
-    // The read is cached, so the card shows the labels it brought (B1).
-    await expect(issueCard(2).locator("[data-card-labels] [data-issue-label]")).toHaveCount(2);
+    // A card's labels come with the list, so one no read has opened shows them too (B1).
+    await expect(issueCard(3).locator("[data-card-labels] [data-issue-label]")).toHaveText(["ui"]);
     for (const theme of ["dark", "light"] as const) {
       await chooseTheme(page, theme);
       await atRest(page);
@@ -819,15 +821,15 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await expect(overview.locator('[data-pr="12"] [data-pr-issue="none"]')).toBeVisible();
     await tile("issues").locator("[data-lens-tile-button]").click();
 
-    // The filter at the facts line's right end, beside the mode control
-    // (B21): words in the id or title keep the matching cards, and with none
-    // left the backlog says so with a way back.
+    // The filter at the facts line's right end (B21): a picked label and the words
+    // in the id or title both narrow the cards; with none left, a way back.
     const filter = overview.locator("[data-issues-controls] [data-issue-filter]");
     await expect(filter).toHaveAttribute("data-issue-filter", "none");
     await filter.click();
+    await page.locator('[data-issue-filter-label="ui"]').click();
+    await expect(overview.locator("[data-issue-card]")).toHaveCount(2);
     await page.locator("[data-issue-filter-query]").fill("graph");
-    await expect(overview.locator("[data-issue-card]")).toHaveCount(1);
-    await expect(issueCard(3)).toBeVisible();
+    await expect(overview.locator("[data-issue-card]")).toHaveText([/Graph 뷰/]);
     await page.locator("[data-issue-filter-query]").fill("없는 이슈");
     await expect(overview.locator("[data-issue-card]")).toHaveCount(0);
     await expect(column("backlog").locator("[data-filter-empty]")).toBeVisible();

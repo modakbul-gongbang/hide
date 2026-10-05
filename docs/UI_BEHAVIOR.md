@@ -606,7 +606,7 @@ A pull request with no issue is one line at the foot of 리뷰, `이슈 없는 P
 A line at zero is not drawn, and done work with no issue is not shown.
 완료 starts folded to one line per issue, the glyph, the id, the title and the number of the pull request that closed it, and resting on that number says `PR #N 머지 · 날짜`; a line opens the issue's panel, and the head unfolds the column into cards (on the Overview of every project, one line per project with its count).
 
-A card's head is the source glyph, the id and at most two labels (GitHub, once the issue has been read), then the title in at most two lines.
+A card's head is the source glyph, the id and at most two of the issue's labels in GitHub's colours, which come with the issue list so every card has them before any issue is read (a Local issue has none), then the title in at most two lines.
 A backlog card stops there, with a lock and the ids of the open issues it waits on in warning when it is blocked; starting it is never refused, only warned.
 An issue that has GitHub sub-issues carries one quiet line under its title, `하위 3/5` (`Sub-issues 3/5`, `子议题 3/5`, `サブ課題 3/5`), GitHub's own `completed` of `total` and never a count Hide made from the cards it holds; an issue with none, and every Local issue, has no such line.
 An in-progress card adds the checkout chip (the branch, `↑N`, `N files`) and the PR chip, and at most two agent rows, the ones that need the operator first, and `+N` for the rest; a review card adds the CI mark and the review GitHub asks for in one word.
@@ -640,9 +640,11 @@ Starting creates the worktree, writes the link into it, starts the agent with th
 
 The facts line's right end carries the filter and `Board | List | Dependencies` (on the Overview of every project, the right of its tab row).
 The filter keeps the cards whose id or title holds every word typed and, with `내 차례만`, only the ones waiting on the operator; the lines of work with no issue stay, and with no card left 백로그 says `필터에 맞는 이슈 없음` with `필터 지우기`.
+Under the words, `라벨` offers every label the board's cards carry, in name order with its dot and how many cards carry it; several can be picked, a card stays when it carries any picked one, a picked label is lit and a second press takes it off, and with no label on any card the choice is not drawn.
+The filter applies to Board, List and Dependencies alike, and `필터 지우기` clears the words, `내 차례만` and the labels together.
 A project's filter lives with its Overview's lens and comes back with it; the Overview of every project keeps its own while the page is open.
 The mode is a mode of the Issues view, not a tab; it belongs to the page, so the Overview of every project's Tasks and every entry into a project keep it.
-List draws the same cards one row each, grouped by stage with the moving work first (진행 중, 리뷰, 백로그, 완료 folded): the stage glyph, the id and title, a `질문` or `확인` badge on a row waiting on the operator, and on the right the agents' marks, the PR chip, the branch, `↑N` and the age; a row with agents unfolds them under it, one waiting on the operator starts unfolded, and a row's click opens the issue panel.
+List draws the same cards one row each, grouped by stage with the moving work first (진행 중, 리뷰, 백로그, 완료 folded): the stage glyph, the id and title, at most two labels as a card draws them, a `질문` or `확인` badge on a row waiting on the operator, and on the right the agents' marks, the PR chip, the branch, `↑N` and the age; a row with agents unfolds them under it, one waiting on the operator starts unfolded, and a row's click opens the issue panel.
 Dependencies draws the Board's cards left to right with a quiet stage word at each card's top right: an issue sits one column right of the longest chain of issues it waits on, and an arrow runs from the blocker's right middle to the blocked card's left middle; a card's click opens the issue panel.
 Arrows carry no label; one legend line above the graph says the left issue has to finish first.
 A blocked card is dimmed with its lock line, a done card is dimmed, and a card waiting on the operator keeps the Board's warning outline.
