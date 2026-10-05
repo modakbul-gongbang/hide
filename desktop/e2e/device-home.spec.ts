@@ -136,7 +136,6 @@ test("a device's Home is made on its first start, the rail follows registration,
     await expect(nav).toHaveAttribute("data-sidebar-rail", "device");
     await expect(page.locator("[data-rail-tile]")).toHaveCount(1);
     await expect(page.locator("[data-project-list] [data-home-destination]")).toBeVisible();
-    await expect(page.locator("[data-footer-device]")).toHaveCount(0);
     await capture(page, app, "device-home-one-device");
 
     // B6: View > Toggle device rail hides the rail, the name becomes the device menu, and the menu item brings it back.

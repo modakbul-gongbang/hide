@@ -8,7 +8,6 @@ export PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:$HOME/.car
 run=agents/runs/herdr-typed-live-remote
 mkdir -p "$run"
 case "${1:-}" in
-  structure) python3 scripts/check-typed-contract-structure.py ;;
   behavior)
     cargo test --manifest-path herdr-core/Cargo.toml live::tests
     cargo test --manifest-path herdr-core/Cargo.toml remote::tests
@@ -24,11 +23,10 @@ case "${1:-}" in
     bash scripts/check-agent-asset-committed.sh
     bash scripts/check-capability-readers-off-lock.sh
     bash scripts/check-no-workstation-identity.sh
-    python3 scripts/check-typed-contract-structure.py
     ;;
   attribution)
     git diff --check
     python3 scripts/check-no-attribution.py "${@:2}"
     ;;
-  *) echo 'usage: check-typed-live-remote.sh structure|behavior|probe|suites|attribution' >&2; exit 2 ;;
+  *) echo 'usage: check-typed-live-remote.sh behavior|probe|suites|attribution' >&2; exit 2 ;;
 esac

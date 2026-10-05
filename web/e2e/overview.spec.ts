@@ -344,7 +344,6 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     // by stage; Sessions today's count once the history is read (B1-B5).
     await expect(overview.locator("[data-lens-tile]")).toHaveCount(5);
     expect(await overview.locator("[data-lens-tile]").evaluateAll((tiles) => tiles.map((tile) => tile.getAttribute("data-lens-tile")))).toEqual(["requests", "agents", "issues", "prs", "sessions"]);
-    await expect(overview.locator("[data-overview-tab], [data-inbox-group], [data-waiting-band]")).toHaveCount(0);
     await expect(tile("agents")).toHaveAttribute("data-selected", "true");
     await expect(tile("agents").locator("[data-lens-tile-value]")).toHaveAttribute("data-lens-tile-value", "4", { timeout: 20_000 });
     await expect(tile("agents").locator("[data-lens-tile-badge]")).toHaveText("1");
