@@ -168,7 +168,7 @@ A piece that another open change is still building is marked as pending with the
 3. **Fix the order with a gate when two events race.**
    [The test decides the order](#the-test-decides-the-order) owns the rule; `focusGate` in `web/e2e/pane-focus-ordering.spec.ts` is the reference.
    It holds `pane.focus` only, and only while armed.
-   Pending: a change in progress (no pull request yet) generalizes it into a shared gate that can hold any Herdr method; once that merges, import the shared gate and do not write a second proxy.
+   Pending #438 (not merged): it generalizes it into a shared gate that can hold any Herdr method; once that merges, import the shared gate and do not write a second proxy.
 4. **Control UI timers with `page.clock`, not with a wait.**
    A timer the page owns (a toast timeout, a debounce, a hover delay) is advanced with `page.clock.install()` and `page.clock.fastForward()`.
    Why: waiting out a 3-second timer costs 3 seconds on every run and still races a slow runner.
@@ -223,7 +223,7 @@ The crate's own `AGENTS.md` says where the file goes; this section says how the 
 4. **Inject the clock; do not wait for it.**
    Code with a deadline, a backoff or an expiry takes the current time as an argument, and the test passes a time it chose: `usage.rs`'s `can_attempt(now)` is tested at `now + 89 s` and `now + 90 s` without sleeping.
    For async code, `tokio::time::pause()` with `tokio::time::advance()` moves the clock by hand; `herdr-core` does not enable tokio's `test-util` feature today, so enabling it for a crate is part of the pull request that first needs it.
-   `herdr-core/src` calls `Instant::now()` directly in many places; a change in progress (no pull request yet) injects the clock into the modules that have a deadline, and new code with a deadline takes the clock from the start.
+   `herdr-core/src` calls `Instant::now()` directly in many places; #434 (not merged) injects the clock into the modules that have a deadline, and new code with a deadline takes the clock from the start.
 5. **Never bound a test by a short wall-clock.**
    `clippy.toml` refuses `std::thread::sleep`; the sleeps that remain carry an `#[allow(clippy::disallowed_methods)]` with the reason: a bounded polling helper, a production wait, or a stand-in for a state that a tracking issue lists.
    A bound such as `assert!(started.elapsed() < Duration::from_millis(1850))` passes on an idle machine and fails on a loaded runner unless the bound is itself the product's deadline (`hide-platform/tests/process.rs` checks one); a bound that is only a guess at "fast enough" says nothing about the product.
