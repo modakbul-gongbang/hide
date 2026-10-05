@@ -43,6 +43,19 @@ function check(name, body) {
   }
 }
 
+const isAlive = (pid) => {
+  try { process.kill(pid, 0); return true; }
+  catch (error) { return error.code === "EPERM"; }
+};
+
+/** Waits for the daemons `pids` to have ended, at most ten seconds; a daemon still running then is a named failure. */
+async function daemonsEnded(pids) {
+  const deadline = Date.now() + 10_000;
+  while ([...pids].some(isAlive) && Date.now() < deadline) await delay(100);
+  const running = [...pids].filter(isAlive);
+  if (running.length > 0) throw new Error(`hided still running 10 seconds after hide stop (its files are in the scratch folder): pid ${running.join(", ")}`);
+}
+
 /** A program's stdout; a non-zero exit, a timeout or a spawn failure throws with its stderr. */
 const output = (file, args, env) => execFileSync(file, args, { env, encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 30_000 }).trim();
 
@@ -242,8 +255,12 @@ try {
   }
 
   let connected = null;
+  // Every daemon this run started: the scratch folder is removed only once
+  // none of them still runs, because a running one holds files in it.
+  const daemonPids = new Set();
   try {
     connected = hide(["connect"]);
+    if (connected.ok === true) daemonPids.add(connected.pid);
     check("hide connect starts the bundled daemon", () => {
       if (connected.ok !== true) throw new Error(JSON.stringify(connected));
       return `pid ${connected.pid}, port ${connected.port}`;
@@ -270,6 +287,7 @@ try {
     const beforeUpgrade = fs.statSync(log).size;
     const previous = connected;
     connected = hide(["connect"]);
+    if (connected.ok === true) daemonPids.add(connected.pid);
     check("a newer package replaces the running daemon", () => {
       if (connected.ok !== true || connected.pid === previous.pid) throw new Error("new package did not replace the old daemon");
       return "new daemon PID";
@@ -311,13 +329,19 @@ try {
       console.error(`hide stop failed: ${error instanceof Error ? error.message : String(error)}`);
       process.exitCode = 1;
     }
+    try {
+      await daemonsEnded(daemonPids);
+    } catch (error) {
+      console.error(error instanceof Error ? error.message : String(error));
+      process.exitCode = 1;
+    }
   }
 } catch (error) {
   console.error(error);
   process.exitCode = 1;
 } finally {
   try {
-    fs.rmSync(scratch, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+    fs.rmSync(scratch, { recursive: true, force: true });
   } catch (error) {
     console.error(`scratch cleanup failed: ${error instanceof Error ? error.message : String(error)}`);
     process.exitCode = 1;
