@@ -1475,14 +1475,19 @@ mod tests {
     fn one_claude_read_per_attempt_and_its_answer_lands_on_a_later_wake() {
         let calls = Arc::new(std::sync::atomic::AtomicU32::new(0));
         let counted = Arc::clone(&calls);
-        // The worker says when a call has begun, so the test waits for that
-        // rather than for a guess at how long a thread takes to be scheduled.
+        // The worker says when a call has begun and holds its answer until the
+        // test lets it go, so the order is the test's.
         let (began, hear_begin) = std::sync::mpsc::channel::<()>();
         let began = std::sync::Mutex::new(began);
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let held = std::sync::Mutex::new(held);
         let mut read = BackgroundRead::on_change(Duration::ZERO, move |_: &ClaudeUsageRequest| {
             counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
             began.lock().unwrap().send(()).unwrap();
-            std::thread::sleep(Duration::from_millis(20));
+            held.lock()
+                .unwrap()
+                .recv_timeout(Duration::from_secs(30))
+                .expect("the test lets the read answer");
             ClaudeUsageAnswer {
                 checked_at_unix_ms: 1,
                 outcome: Err(FetchFailure::schema("fixture")),
@@ -1490,14 +1495,18 @@ mod tests {
         });
         let one = ClaudeUsageRequest { attempt: 1 };
         assert!(read.poll(one.clone()).is_none());
-        // The limit only ends a worker that never answers.
+        hear_begin.recv_timeout(Duration::from_secs(30)).unwrap();
+        // A read in flight is not doubled by more wakes.
+        for _ in 0..20 {
+            assert!(read.poll(one.clone()).is_none());
+        }
+        release.send(()).unwrap();
+        // The answer lands on a wake after the worker finished; the limit only
+        // ends a worker that never answers.
         let hang_limit = Instant::now() + Duration::from_secs(30);
-        loop {
-            if read.poll(one.clone()).is_some() {
-                break;
-            }
+        while read.poll(one.clone()).is_none() {
             assert!(Instant::now() < hang_limit, "the first read never answered");
-            std::thread::sleep(Duration::from_millis(2));
+            std::thread::yield_now();
         }
         for _ in 0..20 {
             assert!(read.poll(one.clone()).is_none());
@@ -1505,7 +1514,7 @@ mod tests {
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
         assert!(read.poll(ClaudeUsageRequest { attempt: 2 }).is_none());
         hear_begin.recv_timeout(Duration::from_secs(30)).unwrap();
-        hear_begin.recv_timeout(Duration::from_secs(30)).unwrap();
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
+        release.send(()).unwrap();
     }
 }

@@ -5334,10 +5334,7 @@ mod tests {
         )
         .expect("worker starts");
 
-        assert!(
-            herdr.methods().is_empty(),
-            "pane control spawn waited for the socket receipt"
-        );
+        // Returning at all is the proof: Herdr is still holding its answer.
         // The worker still delivers the request; the spawn only stopped
         // waiting for its answer.
         release.send(()).unwrap();

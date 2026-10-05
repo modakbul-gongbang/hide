@@ -1008,15 +1008,29 @@ mod tests {
     }
 
     #[derive(Default)]
-    struct Recorder(Mutex<Vec<AiLogEvent>>);
+    struct Recorder(Mutex<Vec<AiLogEvent>>, Condvar);
 
     impl AiLogSink for Recorder {
         fn log(&self, event: AiLogEvent) {
             self.0.lock().unwrap().push(event);
+            self.1.notify_all();
         }
     }
 
     impl Recorder {
+        /// Blocks until `count` events named `name` were logged. The limit
+        /// only ends a wait on an event that never comes; it is not measured.
+        fn wait_for_events(&self, name: &str, count: usize) {
+            let logged = self.0.lock().unwrap();
+            let (_events, timeout) = self
+                .1
+                .wait_timeout_while(logged, Duration::from_secs(30), |events| {
+                    events.iter().filter(|e| e.event == name).count() < count
+                })
+                .unwrap();
+            assert!(!timeout.timed_out(), "{count} x {name} was never logged");
+        }
+
         fn events(&self, name: &str) -> Vec<AiLogEvent> {
             self.0
                 .lock()
@@ -1039,11 +1053,14 @@ mod tests {
             self.1.notify_all();
         }
 
+        /// The limit only ends a wait on a gate nobody opens; it is not measured.
         fn wait(&self) {
-            let mut open = self.0.lock().unwrap();
-            while !*open {
-                open = self.1.wait(open).unwrap();
-            }
+            let open = self.0.lock().unwrap();
+            let (_open, timeout) = self
+                .1
+                .wait_timeout_while(open, Duration::from_secs(30), |open| !*open)
+                .unwrap();
+            assert!(!timeout.timed_out(), "the gate was never opened");
         }
     }
 
@@ -1073,19 +1090,6 @@ mod tests {
                 value: json!({"summary": "shared"}),
                 usage: crate::AiUsage::default(),
             })
-        }
-    }
-
-    /// Waits for a state the router reaches. The limit only ends a wait on
-    /// something that never happens; it is not what the test measures.
-    fn wait_until(what: &str, mut ready: impl FnMut() -> bool) {
-        let hang_limit = std::time::Instant::now() + Duration::from_secs(30);
-        while !ready() {
-            assert!(
-                std::time::Instant::now() < hang_limit,
-                "never reached: {what}"
-            );
-            std::thread::sleep(Duration::from_millis(1));
         }
     }
 
@@ -1312,9 +1316,7 @@ mod tests {
         };
         // The joiner logs that it joined before it waits on the entry; only
         // then let the leader blow up.
-        wait_until("the joiner attached", || {
-            sink.events("ai.request.joined").len() == 1
-        });
+        sink.wait_for_events("ai.request.joined", 1);
         signal(&backend.release);
         assert!(leader.join().is_err(), "the leader's panic propagates");
         assert_eq!(
@@ -1465,9 +1467,7 @@ mod tests {
             })
             .collect();
         // The one call stays running until both duplicates have joined it.
-        wait_until("both duplicates joined", || {
-            sink.events("ai.request.joined").len() == 2
-        });
+        sink.wait_for_events("ai.request.joined", 2);
         held.release.open();
         for handle in handles {
             assert_eq!(handle.join().unwrap().value["summary"], "shared");
