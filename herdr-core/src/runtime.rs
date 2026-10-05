@@ -1254,6 +1254,11 @@ pub struct Runtime {
     /// confirmed.
     pending_pane_focus: Option<PendingViewFocus>,
     pane_focus_in_flight: Option<PendingPaneFocusControl>,
+    /// The one read of Herdr's own focus that decides whether an external
+    /// move in the session stream is followed. It runs off the lock while
+    /// the session itself is already ingested, so a slow Herdr delays only
+    /// the focus, never the topology that arrived with it.
+    pane_focus_readback: Option<PendingPaneFocusControl>,
     next_pane_focus_serial: u64,
     /// The tabs Herdr most recently reported active in their own workspaces.
     /// A pane layout remembers a focused pane even while its tab is hidden,
@@ -1750,6 +1755,7 @@ impl Runtime {
             herdr_tab_focus_seen: None,
             pending_pane_focus: None,
             pane_focus_in_flight: None,
+            pane_focus_readback: None,
             next_pane_focus_serial: 0,
             herdr_active_tab_ids: BTreeSet::new(),
             pet_unseen_observed: std::collections::BTreeMap::new(),

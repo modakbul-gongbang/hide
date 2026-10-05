@@ -1684,3 +1684,186 @@ mod worktree_observer_tests {
         assert_eq!(after["rest"]["git_worktrees_loading"], true);
     }
 }
+
+#[cfg(test)]
+mod focus_readback_order_tests {
+    use super::*;
+    use crate::fake_herdr::FakeHerdr;
+    use crate::model::CoreOptions;
+    use std::sync::mpsc::channel;
+
+    /// One tab, panes `p1..` side by side. `focused` is Herdr's own focus.
+    fn snapshot(panes: &[&str], focused: &str, zoomed: bool) -> Value {
+        let width = 120 / panes.len() as u32;
+        let pane_rows = |with_focus: bool| {
+            panes
+                .iter()
+                .enumerate()
+                .map(|(index, pane)| {
+                    json!({
+                        "pane_id": format!("w1:{pane}"),
+                        "focused": with_focus && *pane == focused,
+                        "rect": {"x": index as u32 * width, "y": 0, "width": width, "height": 60}
+                    })
+                })
+                .collect::<Vec<_>>()
+        };
+        // Each split divides the area its predecessor left, first pane off.
+        let splits = (1..panes.len())
+            .map(|index| {
+                let x = (index as u32 - 1) * width;
+                let remaining = 120 - x;
+                json!({
+                    "id": format!("split_{index}"),
+                    "direction": "right",
+                    "ratio": width as f32 / remaining as f32,
+                    "rect": {"x": x, "y": 0, "width": remaining, "height": 60}
+                })
+            })
+            .collect::<Vec<_>>();
+        json!({
+            "version": "0.8.2",
+            "protocol": hide_herdr_client::HERDR_PROTOCOL_REVISION,
+            "focused_pane_id": format!("w1:{focused}"),
+            "workspaces": [{
+                "workspace_id": "w1", "label": "fixture", "agent_status": "idle",
+                "focused": true, "number": 1, "pane_count": panes.len(), "tab_count": 1,
+                "active_tab_id": "w1:t1"
+            }],
+            "tabs": [{
+                "workspace_id": "w1", "tab_id": "w1:t1", "agent_status": "idle",
+                "focused": false, "number": 1, "pane_count": panes.len(), "label": "1"
+            }],
+            "panes": panes.iter().map(|pane| json!({
+                "workspace_id": "w1", "tab_id": "w1:t1", "pane_id": format!("w1:{pane}"),
+                "terminal_id": "fixture-terminal", "focused": false, "revision": 0,
+                "agent_status": "idle", "cwd": "/tmp/fixture"
+            })).collect::<Vec<_>>(),
+            "layouts": [{
+                "workspace_id": "w1", "tab_id": "w1:t1", "zoomed": zoomed,
+                "area": {"x": 0, "y": 0, "width": 120, "height": 60},
+                "focused_pane_id": format!("w1:{focused}"),
+                "panes": pane_rows(true),
+                "splits": splits
+            }],
+            "agents": []
+        })
+    }
+
+    fn runtime_with(first: &SessionReplica) -> Arc<Mutex<Runtime>> {
+        let options: CoreOptions = serde_json::from_value(json!({
+            "schema_version": crate::model::SCHEMA_VERSION,
+            "app_state_path": ""
+        }))
+        .expect("workerless core options");
+        let mut runtime = Runtime::new(
+            options,
+            crate::environment::EnvironmentReport {
+                statuses: Vec::new(),
+                home_path: None,
+                codex_home: None,
+            },
+        );
+        runtime.ingest_session(Ok(first.project()));
+        Arc::new(Mutex::new(runtime))
+    }
+
+    fn context_for(runtime: &Arc<Mutex<Runtime>>, herdr: &FakeHerdr) -> SessionSyncContext {
+        SessionSyncContext::local(&LiveContext {
+            socket_path: herdr.socket_path().to_path_buf(),
+            herdr_bin: None,
+            runtime: Arc::downgrade(runtime),
+            notifier: ChangeNotifier::noop(),
+            api_connector: Arc::new(herdr.connector()),
+        })
+    }
+
+    /// Herdr's answer to the focus readback: `pane.layout` waits for the test
+    /// to say go, after telling it the question has arrived.
+    fn holding_herdr(
+        focused: &'static str,
+    ) -> (
+        FakeHerdr,
+        std::sync::mpsc::Receiver<()>,
+        std::sync::mpsc::Sender<()>,
+    ) {
+        let (arrived, asked) = channel();
+        let (release, held) = channel::<()>();
+        let herdr = FakeHerdr::start("focus-readback-order", move |method, _| match method {
+            "pane.layout" => {
+                arrived.send(()).ok();
+                // A dropped sender (the test failed) frees the answer too.
+                held.recv().ok();
+                json!({"type": "pane_layout", "layout": {
+                    "workspace_id": "w1", "tab_id": "w1:t1", "zoomed": true,
+                    "area": {"x": 0, "y": 0, "width": 120, "height": 60},
+                    "focused_pane_id": format!("w1:{focused}"),
+                    "panes": [
+                        {"pane_id": "w1:p1", "focused": focused == "p1", "rect": {"x": 0, "y": 0, "width": 60, "height": 60}},
+                        {"pane_id": "w1:p2", "focused": focused == "p2", "rect": {"x": 60, "y": 0, "width": 60, "height": 60}}
+                    ],
+                    "splits": [{"id": "split_1", "direction": "right", "ratio": 0.5, "rect": {"x": 0, "y": 0, "width": 120, "height": 60}}]
+                }})
+            }
+            "workspace.get" => json!({
+                "type": "workspace_info",
+                "workspace": {"workspace_id": "w1", "number": 1, "label": "fixture", "focused": true, "pane_count": 2, "tab_count": 1, "active_tab_id": "w1:t1", "agent_status": "idle"}
+            }),
+            other => panic!("unexpected {other}"),
+        });
+        (herdr, asked, release)
+    }
+
+    fn view(runtime: &Arc<Mutex<Runtime>>) -> (Vec<String>, Option<String>, Option<String>) {
+        let guard = runtime.lock().expect("runtime lock is free during a readback");
+        let snapshot = guard.snapshot();
+        (
+            snapshot
+                .pane_layouts
+                .iter()
+                .flat_map(|layout| layout.pane_ids().into_iter().map(str::to_owned))
+                .collect(),
+            snapshot.focused.pane_id.clone(),
+            snapshot.zoomed.clone(),
+        )
+    }
+
+    #[test]
+    fn a_pane_close_is_ingested_while_herdr_still_holds_the_focus_readback() {
+        let first = SessionReplica::from_snapshot(&snapshot(&["p1", "p2", "p3"], "p1", false))
+            .expect("first snapshot");
+        let runtime = runtime_with(&first);
+        // The operator's pane p3 closed, and Herdr's focus moved to p2 by
+        // itself, which Hide may follow only after reading it back.
+        let mut closed = SessionReplica::from_snapshot(&snapshot(&["p1", "p2"], "p2", true))
+            .expect("closed snapshot");
+        let (herdr, asked, release) = holding_herdr("p2");
+        let context = context_for(&runtime, &herdr);
+
+        let publish = thread::spawn(move || {
+            publish_replica(&context, &mut closed, &mut None, &mut None, &mut None)
+        });
+        asked
+            .recv_timeout(Duration::from_secs(30))
+            .expect("the readback is asked");
+
+        // Herdr has not answered. The close is what the screen needs now.
+        let (panes, focused, zoomed) = view(&runtime);
+        assert_eq!(panes, ["w1:p1", "w1:p2"], "the close is ingested before Herdr answers the readback");
+        assert_eq!(focused.as_deref(), Some("w1:p1"), "focus is not guessed");
+        assert_eq!(zoomed, None);
+
+        release.send(()).expect("the readback is answered");
+        let deadline = Instant::now() + Duration::from_secs(30);
+        loop {
+            let (_, focused, zoomed) = view(&runtime);
+            if focused.as_deref() == Some("w1:p2") {
+                assert_eq!(zoomed.as_deref(), Some("w1:p2"));
+                break;
+            }
+            assert!(Instant::now() < deadline, "the confirmed focus is followed");
+            thread::yield_now();
+        }
+        assert!(publish.join().expect("publish does not panic"));
+    }
+}
