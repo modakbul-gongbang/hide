@@ -52,10 +52,6 @@
       "lines": 221,
       "expect": 72
     },
-    "s2.spec.ts::checkouts, tabs, splits, zoom, close and the sheet": {
-      "lines": 440,
-      "expect": 132
-    },
     "s6.spec.ts::Main, Overview and a Workspace with its columns, tools and delegated child": {
       "lines": 388,
       "expect": 150
