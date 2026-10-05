@@ -1,4 +1,6 @@
-import { beforeEach, describe, expect, it } from "vitest";
+import { beforeAll, beforeEach, describe, expect, it } from "vitest";
+import type { TFunction } from "i18next";
+import { createInterfaceI18n } from "./i18n/instance";
 import {
   configureAttachments,
   filesRefusal,
@@ -27,6 +29,13 @@ function decodeFrame(bytes: Uint8Array): { header: Record<string, unknown>; body
   const header = JSON.parse(new TextDecoder().decode(bytes.subarray(4, 4 + length)));
   return { header, body: bytes.subarray(4 + length) };
 }
+
+let en: TFunction<"translation">;
+let ko: TFunction<"translation">;
+beforeAll(async () => {
+  en = (await createInterfaceI18n("en")).t;
+  ko = (await createInterfaceI18n("ko")).t;
+});
 
 describe("attachment upload", () => {
   beforeEach(() => {
@@ -99,11 +108,16 @@ describe("attachment upload", () => {
   });
 
   it("turns a reason into one line", () => {
-    expect(refusalText("too_large")).toContain("20 MiB");
-    expect(refusalText("batch_too_large")).toContain("40 MiB");
-    expect(refusalText("too_many_files")).toContain("1 and 8");
-    expect(refusalText("staging_full")).toContain("staged");
-    expect(refusalText("size_mismatch")).toContain("changed");
-    expect(refusalText("wat")).toBe("The attachment was refused.");
+    expect(refusalText("too_large", en)).toContain("20 MiB");
+    expect(refusalText("batch_too_large", en)).toContain("40 MiB");
+    expect(refusalText("too_many_files", en)).toContain("1 and 8");
+    expect(refusalText("staging_full", en)).toContain("staged");
+    expect(refusalText("size_mismatch", en)).toContain("changed");
+    expect(refusalText("wat", en)).toBe("The attachment was refused.");
+  });
+
+  it("states the daemon's caps in the chosen language", () => {
+    expect(refusalText("too_large", ko)).toBe("파일 하나가 첨부 한도 20 MiB를 초과합니다.");
+    expect(refusalText("too_many_files", ko)).toBe("일반 파일을 1개에서 8개까지 선택하세요.");
   });
 });

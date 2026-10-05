@@ -1,6 +1,7 @@
 import { memo, useCallback, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { markTone } from "./agentRow";
+import { useInterfaceTranslation } from "./i18n/client";
 import { PaneView } from "./PaneView";
 import { contextAgents, frameStyle, type RemoteView } from "./remote";
 import { resizeStep } from "./resize";
@@ -48,6 +49,7 @@ function agentProps(agent: AgentRow | undefined) {
 }
 
 export function PaneCanvas({ actions, tab }: { actions: Actions; tab: Tab | null }) {
+  const { t } = useInterfaceTranslation();
   const checkout = useShellStore((s) => focusedCheckout(s.rest));
   const layout = useShellStore((s) => layoutForTab(s.rest, tab?.id ?? null));
   const transportRows = useShellStore((s) => s.rest?.terminal?.panes);
@@ -55,7 +57,7 @@ export function PaneCanvas({ actions, tab }: { actions: Actions; tab: Tab | null
   if (!checkout || !tab || !layout) {
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center text-caption text-muted-foreground" data-canvas="empty">
-        {checkout ? "no tab" : "no checkout"}
+        {checkout ? t("panes.canvas.noTab") : t("panes.canvas.noCheckout")}
       </div>
     );
   }
@@ -93,11 +95,12 @@ export function RemotePaneCanvas({
   const transportRows = useShellStore((s) => s.rest?.terminal?.panes ?? EMPTY_TRANSPORTS);
   const scales = useShellStore((s) => s.rest?.ui_state?.pane_text_scales ?? EMPTY_SCALES);
   const agents = useAgentsByPane();
+  const { t } = useInterfaceTranslation();
   const { tab, layout } = view;
   if (!tab || !layout) {
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center text-caption text-muted-foreground" data-canvas="empty">
-        {tab ? "The remote tab's layout has not arrived yet" : "no tab"}
+        {tab ? t("panes.canvas.remoteLayoutPending") : t("panes.canvas.noTab")}
       </div>
     );
   }
@@ -223,6 +226,7 @@ function SplitView({ node, ...props }: { node: Extract<LayoutNode, { type: "spli
  * nothing when the change falls outside the core's range (PRD S2 B6).
  */
 function Divider({ node, dispatch }: { node: Extract<LayoutNode, { type: "split" }>; dispatch: DispatchFn }) {
+  const { t } = useInterfaceTranslation();
   const vertical = node.direction === "right";
   const [travel, setTravel] = useState<number | null>(null);
   const origin = useRef(0);
@@ -280,7 +284,7 @@ function Divider({ node, dispatch }: { node: Extract<LayoutNode, { type: "split"
       <div
         role="separator"
         aria-orientation={vertical ? "vertical" : "horizontal"}
-        aria-label={vertical ? "Resize pane width" : "Resize pane height"}
+        aria-label={vertical ? t("panes.divider.width") : t("panes.divider.height")}
         data-divider={dividerPaneId(node.first)}
         className={`absolute z-20 ${vertical ? "cursor-col-resize" : "cursor-row-resize"}`}
         style={grab}

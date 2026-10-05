@@ -9,11 +9,15 @@ import type { ChangedFileStatus, ChangesSnapshot, DeviceHost } from "./snapshot"
 import type { DirectoryList } from "./store";
 import type { MenuEntry } from "./components/entry-menu";
 import { revealExternalEntry, type RevealHost } from "./revealExternal";
+import type { TFunction } from "i18next";
+import { translate } from "./i18n/client";
+import type { MessageKey } from "./i18n/catalogs";
 
 /** The one Git slot a row carries: a letter for a file, a dot for a folder. */
 export type ExplorerDecoration = {
   badge: string;
-  title: string;
+  /** The catalog key of the badge's tooltip and accessible name. */
+  title: MessageKey;
   status: ChangedFileStatus;
 };
 
@@ -42,14 +46,23 @@ const LETTERS: Record<ChangedFileStatus, string> = {
   conflict: "!",
 };
 
-const TITLES: Record<ChangedFileStatus, string> = {
-  modified: "Modified",
-  added: "Added",
-  deleted: "Deleted",
-  untracked: "Untracked",
-  renamed: "Renamed",
-  conflict: "Conflict",
-};
+const TITLES = {
+  modified: "history.status.modified",
+  added: "history.status.added",
+  deleted: "history.status.deleted",
+  untracked: "history.status.untracked",
+  renamed: "history.status.renamed",
+  conflict: "history.status.conflict",
+} as const satisfies Record<ChangedFileStatus, MessageKey>;
+
+const CONTAINS = {
+  modified: "explorer.contains.modified",
+  added: "explorer.contains.added",
+  deleted: "explorer.contains.deleted",
+  untracked: "explorer.contains.untracked",
+  renamed: "explorer.contains.renamed",
+  conflict: "explorer.contains.conflict",
+} as const satisfies Record<ChangedFileStatus, MessageKey>;
 
 /** Index order is risk order, lowest first; a folder shows its riskiest
  * descendant. */
@@ -95,10 +108,10 @@ function higherRisk(current: ChangedFileStatus | undefined, candidate: ChangedFi
  * latest one failed, which are never shown as current (PRD S5.5 B20, B22).
  * Nothing when the status is current.
  */
-export function explorerGitLine(changes: ChangesSnapshot | null): { state: "loading" | "unavailable" | "stale"; text: string } | null {
-  if (!changes) return { state: "loading", text: "Loading Git status" };
-  if (changes.unavailable_reason) return { state: "unavailable", text: `Git status unavailable: ${changes.unavailable_reason}` };
-  if (changes.stale_reason) return { state: "stale", text: `Git status may be out of date: ${changes.stale_reason}` };
+export function explorerGitLine(changes: ChangesSnapshot | null, t: TFunction<"translation">): { state: "loading" | "unavailable" | "stale"; text: string } | null {
+  if (!changes) return { state: "loading", text: t("explorer.gitLoading") };
+  if (changes.unavailable_reason) return { state: "unavailable", text: t("explorer.gitUnavailable", { reason: changes.unavailable_reason }) };
+  if (changes.stale_reason) return { state: "stale", text: t("explorer.gitStale", { reason: changes.stale_reason }) };
   return null;
 }
 
@@ -145,11 +158,7 @@ export function decorationFor(
   const status = isDirectory ? decorations.directories.get(relative) : decorations.files.get(relative);
   if (!status) return null;
   if (isDirectory) {
-    return {
-      badge: "●",
-      title: `Contains changed files; highest priority is ${TITLES[status].toLowerCase()}`,
-      status,
-    };
+    return { badge: "●", title: CONTAINS[status], status };
   }
   return { badge: LETTERS[status], title: TITLES[status], status };
 }
@@ -197,14 +206,14 @@ export function explorerRows({
 }
 
 /** The cell's tooltip. */
-export function rowTitle(row: ExplorerRow, rootPath: string): string {
+export function rowTitle(row: ExplorerRow, rootPath: string, t: TFunction<"translation">): string {
   const presented = relativeTo(row.path, rootPath);
-  return row.decoration ? `${presented} · ${row.decoration.title}` : presented;
+  return row.decoration ? t("explorer.rowTooltip", { path: presented, status: t(row.decoration.title) }) : presented;
 }
 
 /** The cell's accessibility label. */
-export function rowAccessibilityLabel(row: ExplorerRow): string {
-  return row.decoration ? `${row.name}, ${row.decoration.title}` : row.name;
+export function rowAccessibilityLabel(row: ExplorerRow, t: TFunction<"translation">): string {
+  return row.decoration ? t("explorer.rowLabel", { name: row.name, status: t(row.decoration.title) }) : row.name;
 }
 
 /** The disclosure mark a folder row draws; the sidebar already uses these. */
@@ -308,16 +317,16 @@ export function explorerMenuItems({ isDirectory, row, html, besideReason, reveal
 }): MenuEntry<ExplorerMenuId>[] {
   const items: MenuEntry<ExplorerMenuId>[] = [];
   if (isDirectory) {
-    items.push({ id: "new-file", label: "New File", unavailable: null });
-    items.push({ id: "new-folder", label: "New Folder", unavailable: null });
+    items.push({ id: "new-file", label: translate("explorer.newFile"), unavailable: null });
+    items.push({ id: "new-folder", label: translate("explorer.newFolder"), unavailable: null });
   } else if (row) {
-    items.push({ id: "open-beside", label: "Open to the side", unavailable: besideReason });
-    if (html) items.push({ id: "open-browser", label: "Open in Browser", unavailable: null });
+    items.push({ id: "open-beside", label: translate("history.openBeside"), unavailable: besideReason });
+    if (html) items.push({ id: "open-browser", label: translate("explorer.openBrowser"), unavailable: null });
   }
   if (!row) return items;
-  const external = revealExternalEntry(reveal, device, null, true);
+  const external = revealExternalEntry(reveal, device, translate, null, true);
   items.push(...external);
-  items.push({ id: "rename", label: "Rename", unavailable: null, ...(external.length ? { separated: true } : {}) });
-  items.push({ id: "trash", label: "Move to Trash", unavailable: null, separated: true, destructive: true });
+  items.push({ id: "rename", label: translate("common.rename"), unavailable: null, ...(external.length ? { separated: true } : {}) });
+  items.push({ id: "trash", label: translate("explorer.moveToTrash"), unavailable: null, separated: true, destructive: true });
   return items;
 }

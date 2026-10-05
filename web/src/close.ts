@@ -4,6 +4,7 @@
 // The decision is pure so the tab bar, the pane header and the shortcut
 // registry share it and a test can price each branch (PRD S2 B7).
 
+import type { TFunction } from "i18next";
 import type { AgentRow, AsyncOperation, PaneRow } from "./snapshot";
 
 export type CloseKind = "pane" | "tab";
@@ -32,10 +33,10 @@ export function closeDecision(panes: PaneRow[], agents: AgentRow[]): CloseDecisi
 }
 
 /** The Stop-work sheet's words, one line under the title, which stay as they are while it is open (B28, D-42). */
-export function stopWorkCopy(kind: CloseKind): { title: string; consequence: string } {
+export function stopWorkCopy(kind: CloseKind, t: TFunction<"translation">): { title: string; consequence: string } {
   return kind === "pane"
-    ? { title: "Stop the active pane?", consequence: "Its running process and the listed work stop." }
-    : { title: "Close this tab?", consequence: "The listed panes stop in one close." };
+    ? { title: t("shell.stopPaneTitle"), consequence: t("shell.stopPaneConsequence") }
+    : { title: t("shell.closeTabTitle"), consequence: t("shell.closeTabConsequence") };
 }
 
 /** A pane the Stop-work sheet lists: working or asking (`active`), unreadable, or quiet. */
@@ -65,8 +66,8 @@ export function stopWorkOf(panes: readonly PaneRow[], agents: readonly AgentRow[
 }
 
 /** The notice for an unknown activity status; `refresh_status` is the way out. */
-export function statusUnknownNotice(label: string): string {
-  return `Activity status for ${label} is unknown. Check status before closing.`;
+export function statusUnknownNotice(label: string, t: TFunction<"translation">): string {
+  return t("shell.activityUnknown", { label });
 }
 
 /**
@@ -177,8 +178,8 @@ export function closeSheet(panes: readonly PaneRow[], hostAgents: readonly Agent
 }
 
 /** The close sheet's title (D-17): how many descendants close with it. */
-export function subtreeTitle(kind: CloseKind, count: number): string {
-  return kind === "pane" ? `이 에이전트와 자식 ${count}개를 닫을까요?` : `이 탭과 자식 ${count}개를 닫을까요?`;
+export function subtreeTitle(kind: CloseKind, count: number, t: TFunction<"translation">): string {
+  return kind === "pane" ? t("shell.closeAgentChildren", { count }) : t("shell.closeTabChildren", { count });
 }
 
 /** The phases in which a close the core runs still names its pane. */

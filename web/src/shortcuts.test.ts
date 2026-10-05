@@ -127,9 +127,9 @@ describe("shortcut registry", () => {
     });
 
     it("refuses a pane chord bound onto a numbered one by that command's name", () => {
-      expect(bindingProblem("split_right", { code: "Digit3", meta: true }, REGISTRY, "electron", "mac")).toBe("⌘3 is already Select tab 3.");
+      expect(bindingProblem("split_right", { code: "Digit3", meta: true }, REGISTRY, "electron", "mac")).toEqual({ code: "conflict", chord: "⌘3", commandId: "select_tab_3" });
       expect(bindingProblem("split_right", { code: "Digit3", alt: true, meta: true }, REGISTRY, "electron", "mac")).toBeNull();
-      expect(effectiveRegistry({ split_right: "command+3" }, "electron", "mac").diagnostic).toContain("already Select tab 3");
+      expect(effectiveRegistry({ split_right: "command+3" }, "electron", "mac").diagnostic).toContain("conflict select_tab_3");
     });
 
     it("folds each family into one sheet row with its range, absent in a browser", () => {
@@ -233,10 +233,10 @@ describe("browser pane chord overrides (S5 B9, B10)", () => {
   });
 
   it("refuses a chord with no command modifier, a Chrome chord, and another command's chord", () => {
-    expect(bindingProblem("split_right", { code: "KeyR" }, REGISTRY, "browser", "mac")).toMatch(/Include/);
-    expect(bindingProblem("split_right", { code: "KeyR", shift: true }, REGISTRY, "browser", "mac")).toMatch(/Include/);
-    expect(bindingProblem("split_right", { code: "KeyW", meta: true }, REGISTRY, "browser", "mac")).toMatch(/Chrome/);
-    expect(bindingProblem("split_right", { code: "KeyT", alt: true }, REGISTRY, "browser", "mac")).toMatch(/already New tab/);
+    expect(bindingProblem("split_right", { code: "KeyR" }, REGISTRY, "browser", "mac")).toEqual({ code: "modifier", modifier: "browser_mac" });
+    expect(bindingProblem("split_right", { code: "KeyR", shift: true }, REGISTRY, "browser", "mac")).toEqual({ code: "modifier", modifier: "browser_mac" });
+    expect(bindingProblem("split_right", { code: "KeyW", meta: true }, REGISTRY, "browser", "mac")).toMatchObject({ code: "browser_reserved" });
+    expect(bindingProblem("split_right", { code: "KeyT", alt: true }, REGISTRY, "browser", "mac")).toMatchObject({ code: "conflict", commandId: "new_tab" });
     expect(bindingProblem("split_right", { code: "KeyD", meta: true }, REGISTRY, "browser", "mac")).toBeNull();
   });
 
@@ -306,7 +306,7 @@ describe("the desktop app's macOS pane chords (user decision 2026-09-26)", () =>
     expect(parseMacosChord("command+command+d")).toBeNull();
     expect(parseMacosChord("d")).toBeNull();
     expect(parseMacosChord("control+tab")).toEqual({ code: "Tab", ctrl: true });
-    expect(bindingProblem("recent_area_tab", { code: "Tab", meta: true }, REGISTRY, "electron", "mac")).toContain("kept by macOS");
+    expect(bindingProblem("recent_area_tab", { code: "Tab", meta: true }, REGISTRY, "electron", "mac")).toMatchObject({ code: "mac_reserved" });
     expect(serializeMacosChord({ code: "Enter", meta: true, shift: true, alt: true, ctrl: true })).toBe("command+control+option+shift+return");
     expect(serializeMacosChord({ code: "ArrowUp", meta: true })).toBeNull();
     expect(storedKey("text_larger", "electron")).toBe("increase_text_size");
@@ -336,10 +336,10 @@ describe("the desktop app's macOS pane chords (user decision 2026-09-26)", () =>
   });
 
   it("refuses a chord without ⌘ or a reserved one, and falls back to the defaults as a whole", () => {
-    expect(bindingProblem("split_right", { code: "KeyR", alt: true }, REGISTRY, "electron", "mac")).toMatch(/Include ⌘/);
-    expect(bindingProblem("split_right", { code: "KeyQ", meta: true }, REGISTRY, "electron", "mac")).toMatch(/kept by macOS/);
-    expect(bindingProblem("split_right", { code: "ArrowUp", meta: true }, REGISTRY, "electron", "mac")).toMatch(/Use one letter/);
-    expect(bindingProblem("split_right", { code: "KeyT", meta: true }, REGISTRY, "electron", "mac")).toMatch(/already New tab/);
+    expect(bindingProblem("split_right", { code: "KeyR", alt: true }, REGISTRY, "electron", "mac")).toEqual({ code: "modifier", modifier: "desktop_mac" });
+    expect(bindingProblem("split_right", { code: "KeyQ", meta: true }, REGISTRY, "electron", "mac")).toMatchObject({ code: "mac_reserved" });
+    expect(bindingProblem("split_right", { code: "ArrowUp", meta: true }, REGISTRY, "electron", "mac")).toEqual({ code: "native_key" });
+    expect(bindingProblem("split_right", { code: "KeyT", meta: true }, REGISTRY, "electron", "mac")).toMatchObject({ code: "conflict", commandId: "new_tab" });
     // A chord Chrome keeps is the desktop app's to use.
     expect(bindingProblem("close_pane", { code: "KeyW", meta: true, shift: true }, REGISTRY, "electron", "mac")).toBeNull();
     const unusable: Record<string, string>[] = [{ split_right: "command+t" }, { split_right: "option+r" }, { zoom: "command+z" }, { split_right: "command+x", split_down: "command+x" }];
@@ -480,22 +480,22 @@ describe("Windows and Linux (operator decision 2026-10-03)", () => {
   });
 
   it("refuses a desktop chord without Ctrl+Shift or Alt+Shift, one the system keeps, the Windows key, and a taken one", () => {
-    expect(bindingProblem("split_right", { code: "KeyR", ctrl: true }, pc, "electron", "pc")).toBe("Include Ctrl+Shift or Alt+Shift so typing in a terminal stays typing.");
-    expect(bindingProblem("split_right", { code: "KeyR", alt: true }, pc, "electron", "pc")).toMatch(/Include/);
+    expect(bindingProblem("split_right", { code: "KeyR", ctrl: true }, pc, "electron", "pc")).toEqual({ code: "modifier", modifier: "desktop_pc" });
+    expect(bindingProblem("split_right", { code: "KeyR", alt: true }, pc, "electron", "pc")).toMatchObject({ code: "modifier" });
     expect(bindingProblem("split_right", { code: "KeyR", alt: true, shift: true }, pc, "electron", "pc")).toBeNull();
     // Ctrl+Alt+Shift stands for no macOS chord, so a set holding it would be refused on a Mac.
-    expect(bindingProblem("split_right", { code: "KeyR", ctrl: true, alt: true, shift: true }, pc, "electron", "pc")).toMatch(/Include/);
-    expect(bindingProblem("split_right", { code: "KeyD", alt: true, shift: true }, pc, "electron", "pc")).toBe("Alt+Shift+D is already Split down.");
-    expect(bindingProblem("split_right", { code: "KeyT", alt: true, shift: true }, pc, "browser", "pc")).toBe("Alt+Shift+T is kept by Chrome or the system.");
-    expect(bindingProblem("recent_area_tab", { code: "Tab", alt: true }, pc, "electron", "pc")).toBe("Alt+Tab is kept by the system.");
-    expect(bindingProblem("split_right", { code: "KeyR", meta: true }, pc, "electron", "pc")).toMatch(/Windows or Super key/);
-    expect(bindingProblem("split_right", { code: "KeyT", ctrl: true, shift: true }, pc, "electron", "pc")).toBe("Ctrl+Shift+T is already New tab.");
+    expect(bindingProblem("split_right", { code: "KeyR", ctrl: true, alt: true, shift: true }, pc, "electron", "pc")).toMatchObject({ code: "modifier" });
+    expect(bindingProblem("split_right", { code: "KeyD", alt: true, shift: true }, pc, "electron", "pc")).toEqual({ code: "conflict", chord: "Alt+Shift+D", commandId: "split_down" });
+    expect(bindingProblem("split_right", { code: "KeyT", alt: true, shift: true }, pc, "browser", "pc")).toEqual({ code: "browser_reserved", chord: "Alt+Shift+T", macos: false });
+    expect(bindingProblem("recent_area_tab", { code: "Tab", alt: true }, pc, "electron", "pc")).toEqual({ code: "system_reserved", chord: "Alt+Tab" });
+    expect(bindingProblem("split_right", { code: "KeyR", meta: true }, pc, "electron", "pc")).toEqual({ code: "system_key" });
+    expect(bindingProblem("split_right", { code: "KeyT", ctrl: true, shift: true }, pc, "electron", "pc")).toEqual({ code: "conflict", chord: "Ctrl+Shift+T", commandId: "new_tab" });
     expect(bindingProblem("split_right", { code: "KeyR", ctrl: true, shift: true }, pc, "electron", "pc")).toBeNull();
-    expect(bindingProblem("split_right", { code: "KeyC", ctrl: true, shift: true }, pc, "electron", "pc")).toBe("Ctrl+Shift+C copies a terminal's selection.");
-    expect(bindingProblem("split_right", { code: "KeyV", ctrl: true, shift: true }, pc, "browser", "pc")).toBe("Ctrl+Shift+V pastes into a terminal.");
+    expect(bindingProblem("split_right", { code: "KeyC", ctrl: true, shift: true }, pc, "electron", "pc")).toEqual({ code: "terminal_copy", chord: "Ctrl+Shift+C" });
+    expect(bindingProblem("split_right", { code: "KeyV", ctrl: true, shift: true }, pc, "browser", "pc")).toEqual({ code: "terminal_paste", chord: "Ctrl+Shift+V" });
     expect(bindingProblem("recent_area_tab", { code: "KeyJ", ctrl: true }, pc, "electron", "pc")).toBeNull();
-    expect(bindingProblem("split_right", { code: "KeyT", ctrl: true }, pc, "browser", "pc")).toBe("Ctrl+T is kept by Chrome or the system.");
-    expect(bindingProblem("split_right", { code: "KeyR", shift: true }, pc, "browser", "pc")).toBe("Include Ctrl or Alt so typing in a terminal stays typing.");
+    expect(bindingProblem("split_right", { code: "KeyT", ctrl: true }, pc, "browser", "pc")).toEqual({ code: "browser_reserved", chord: "Ctrl+T", macos: false });
+    expect(bindingProblem("split_right", { code: "KeyR", shift: true }, pc, "browser", "pc")).toEqual({ code: "modifier", modifier: "browser_pc" });
   });
 
   it("writes chords in words joined with +, in Windows' order Ctrl, Alt, Shift", () => {

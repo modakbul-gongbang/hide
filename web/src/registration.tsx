@@ -7,6 +7,7 @@
 
 import { useEffect, useState } from "react";
 import { folderLabel, refusalText } from "./addProject";
+import { useInterfaceTranslation } from "./i18n/client";
 import { Status } from "./components/settings-rows";
 import type { WorkspaceRegistration } from "./snapshot";
 import { useShellStore } from "./store";
@@ -37,6 +38,7 @@ export type Registration = {
 };
 
 export function useRegistration(registrations: readonly WorkspaceRegistration[]): Registration {
+  const { t } = useInterfaceTranslation();
   const pathRefusal = useShellStore((s) => s.pathRefusal);
   const [sent, setSent] = useState<Sent | null>(null);
   const [shellRefusal, setShellRefusal] = useState<{ path: string; reason: string } | null>(null);
@@ -45,9 +47,9 @@ export function useRegistration(registrations: readonly WorkspaceRegistration[])
 
   const hidedReason = sent && pathRefusal?.kind === "create_workspace" && pathRefusal.path === sent.path ? pathRefusal.reason : null;
   const shown = shellRefusal
-    ? { ...shellRefusal, text: refusalText(shellRefusal.reason) }
+    ? { ...shellRefusal, text: refusalText(shellRefusal.reason, t) }
     : sent && hidedReason
-      ? { path: sent.path, reason: hidedReason, text: refusalText(hidedReason) }
+      ? { path: sent.path, reason: hidedReason, text: refusalText(hidedReason, t) }
       : sent && coreError
         ? { path: sent.path, reason: "core", text: coreError }
         : null;
@@ -80,12 +82,13 @@ export function useRegistration(registrations: readonly WorkspaceRegistration[])
 
 /** `Adding <folder>…` while a registration is pending, then the refusal naming the folder. */
 export function RegistrationStatus({ registration }: { registration: Registration }) {
+  const { t } = useInterfaceTranslation();
   const { sent, shown, pending } = registration;
   return (
     <>
       {pending && sent ? (
         <Status tone="pending" data-registration-pending="true">
-          Adding {folderLabel(sent.path)}…
+          {t("registration.adding", { folder: folderLabel(sent.path) })}
         </Status>
       ) : null}
       {shown ? (

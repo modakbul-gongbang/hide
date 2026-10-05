@@ -6,8 +6,11 @@
 // menu offers, and what a narrow window shows. They take values and return
 // values, so every rule is testable without a page; nothing here dispatches.
 
+import type { TFunction } from "i18next";
 import type { ViewDisplaySnapshot, ViewLayoutSnapshot, ViewNode } from "./snapshot";
 import { revealExternalEntry, type RevealHost } from "./revealExternal";
+import { translate } from "./i18n/client";
+import type { MessageKey } from "./i18n/catalogs";
 
 /** The order a display's menu offers directions in. */
 const MENU_EDGES: readonly Edge[] = ["right", "left", "up", "down"];
@@ -59,7 +62,7 @@ export function displaysOfDocument(root: ViewNode, tabId: string): ViewDisplaySn
 import {
   areasOf, locateDisplay, neighbourArea,
   splitEligibility as areaSplitEligibility, dropTarget as areaDropTarget,
-  resizeTarget as areaResizeTarget, roomToSplit, type AreaWords,
+  resizeTarget as areaResizeTarget, roomToSplit, areaSentence, splitLabel, moveLabel, type AreaWords,
   type LocatedItem, type Edge, type LayoutSizes,
   type Geometry, type DropTarget, type Eligibility,
 } from "./areaLayout";
@@ -71,9 +74,7 @@ export {
 } from "./areaLayout";
 export type { Rect, Point, Edge, LayoutSizes, Geometry, AreaBox, DividerBox, TabSlot, DropTarget, Eligibility } from "./areaLayout";
 export type LocatedDisplay = LocatedItem<ViewDisplaySnapshot>;
-export const VIEW_WORDS: AreaWords = { item: "view", area: "view area", plural: "View areas" };
-const EDGE_NAME: Record<Edge, string> = { right: "right", left: "left", up: "up", down: "down" };
-const NARROW = "This view area is too narrow to split.";
+export const VIEW_WORDS: AreaWords = { kind: "view" };
 const refuse = (reason: string): Eligibility => ({ ok: false, reason });
 
 export function splitEligibility(layout: ViewLayoutSnapshot, geometry: Geometry, sizes: LayoutSizes, displayId: string, areaId: string, edge: Edge): Eligibility {
@@ -106,7 +107,7 @@ export function besideUnavailable(
   if (!only || only.displays.length === 0) return null;
   const room = roomToSplit(layout, drawn.geometry, drawn.sizes, only.id, "right", VIEW_WORDS);
   if (room.ok) return null;
-  return room.reason === NARROW ? "This view area is too narrow to open a second view beside it." : room.reason;
+  return room.reason === areaSentence(VIEW_WORDS, "tooNarrow") ? translate("documents.view.besideTooNarrow") : room.reason;
 }
 
 // --- a display's menu --------------------------------------------------------
@@ -126,23 +127,23 @@ export type ViewMenuId =
 export type ViewMenuEntry = { id: ViewMenuId; label: string; unavailable: string | null; separated?: boolean };
 
 /** The menu's items in docs/UI_BEHAVIOR.md's order, with its fixed labels. */
-const MENU_ITEMS: readonly { id: ViewMenuId; label: string }[] = [
-  { id: "keep_open", label: "Keep open" },
-  ...MENU_EDGES.map((edge) => ({ id: `split_${edge}` as const, label: `Split ${EDGE_NAME[edge]}` })),
-  ...MENU_EDGES.map((edge) => ({ id: `move_${edge}` as const, label: `Move ${EDGE_NAME[edge]}` })),
-  { id: "copy_path", label: "Copy path" },
-  { id: "select_in_tree", label: "Select in File Tree" },
+const MENU_ITEMS: readonly { id: ViewMenuId; label: () => string }[] = [
+  { id: "keep_open", label: () => translate("documents.view.keepOpen") },
+  ...MENU_EDGES.map((edge) => ({ id: `split_${edge}` as const, label: () => splitLabel(edge) })),
+  ...MENU_EDGES.map((edge) => ({ id: `move_${edge}` as const, label: () => moveLabel(edge) })),
+  { id: "copy_path", label: () => translate("workspace.menu.copyPath") },
+  { id: "select_in_tree", label: () => translate("documents.view.selectInTree") },
   // Labelled by the host's OS (`revealLabel`).
-  { id: "reveal_external", label: "" },
-  { id: "close_view", label: "Close view" },
+  { id: "reveal_external", label: () => "" },
+  { id: "close_view", label: () => translate("documents.view.closeView") },
 ];
 
-const NO_AREA: Record<Edge, string> = {
-  right: "There is no view area to the right.",
-  left: "There is no view area to the left.",
-  up: "There is no view area above.",
-  down: "There is no view area below.",
-};
+const NO_AREA = {
+  right: "documents.view.noAreaRight",
+  left: "documents.view.noAreaLeft",
+  up: "documents.view.noAreaUp",
+  down: "documents.view.noAreaDown",
+} as const satisfies Record<Edge, MessageKey>;
 
 /**
  * Every command of a display's menu with the reason it cannot run now, or
@@ -159,30 +160,31 @@ function displayCommands(
   external: ExternalReveal,
 ): (ViewMenuEntry & { hidden: boolean })[] {
   const { area, display } = located;
-  return MENU_ITEMS.map(({ id, label }) => {
+  return MENU_ITEMS.map(({ id, label: labelOf }) => {
+    const label = labelOf();
     if (id === "reveal_external") {
       // A page is not a file of the checkout.
-      const [entry] = display.kind === "browser" ? [] : revealExternalEntry(external.host, external.device, revealBlocked(display));
+      const [entry] = display.kind === "browser" ? [] : revealExternalEntry(external.host, external.device, translate, revealBlocked(display));
       return entry ? { ...entry, hidden: false } : { id, label, unavailable: null, hidden: true };
     }
     const edge = menuEdge(id);
     let unavailable: string | null = null;
     let hidden = false;
     if (id === "keep_open") {
-      unavailable = display.preview ? null : "This view is already kept open.";
+      unavailable = display.preview ? null : translate("documents.view.alreadyKept");
       hidden = !display.preview;
     } else if (edge && id.startsWith("split_")) {
-      const eligibility = drawn ? splitEligibility(layout, drawn.geometry, drawn.sizes, display.id, area.id, edge) : refuse("The View areas are not on screen.");
+      const eligibility = drawn ? splitEligibility(layout, drawn.geometry, drawn.sizes, display.id, area.id, edge) : refuse(translate("documents.view.notOnScreen"));
       unavailable = eligibility.ok ? null : eligibility.reason;
     } else if (edge) {
-      unavailable = neighbourArea(layout.root, area.id, edge) ? null : NO_AREA[edge];
+      unavailable = neighbourArea(layout.root, area.id, edge) ? null : translate(NO_AREA[edge]);
       hidden = unavailable !== null;
     } else if (id === "select_in_tree") {
       unavailable = revealBlocked(display);
       // A page is not a file of the checkout.
       hidden = display.kind === "browser";
     }
-    const named = id === "copy_path" && display.kind === "browser" ? "Copy address" : label;
+    const named = id === "copy_path" && display.kind === "browser" ? translate("documents.view.copyAddress") : label;
     return { id, label: named, unavailable, hidden, separated: id === "copy_path" || id === "close_view" };
   });
 }
@@ -213,8 +215,8 @@ export function placeKey(workspace: string, display: Pick<ViewDisplaySnapshot, "
 }
 
 function revealBlocked(display: ViewDisplaySnapshot): string | null {
-  if (display.state === "unavailable") return "The file is unavailable";
-  if (display.state === "waiting") return display.reason ?? "The file cannot be read yet";
+  if (display.state === "unavailable") return translate("documents.view.fileUnavailable");
+  if (display.state === "waiting") return display.reason ?? translate("documents.view.fileWaiting");
   return null;
 }
 
@@ -225,22 +227,21 @@ export function menuEdge(id: ViewMenuId): Edge | null {
 }
 
 /** What a display is, for its tooltip and accessible name (B21): kind, full path and state. */
-export function displayIdentity(display: ViewDisplaySnapshot): string {
-  if (display.kind === "browser" && !display.url) return "New tab";
-  if (display.kind === "browser") return `Page: ${display.title ? `${display.title} · ` : ""}${display.url ?? ""}`;
-  const kind = display.kind === "diff" ? `${display.committed ? "Branch" : "Working"} diff` : "File";
-  const reason = display.reason ? `: ${display.reason}` : "";
+export function displayIdentity(display: ViewDisplaySnapshot, t: TFunction<"translation">): string {
+  if (display.kind === "browser" && !display.url) return t("panes.area.newTab");
+  if (display.kind === "browser") return t("documents.view.identityPage", { target: `${display.title ? `${display.title} · ` : ""}${display.url ?? ""}` });
+  const kind = display.kind === "diff" ? (display.committed ? t("documents.view.kindBranchDiff") : t("documents.view.kindWorkingDiff")) : t("documents.view.kindFile");
   const state =
     display.state === "unavailable"
-      ? ` · Unavailable${reason}`
+      ? ` · ${display.reason ? t("documents.view.stateUnavailableReason", { reason: display.reason }) : t("documents.view.stateUnavailable")}`
       : display.state === "waiting"
-        ? ` · Waiting${reason}`
+        ? ` · ${display.reason ? t("documents.view.stateWaitingReason", { reason: display.reason }) : t("documents.view.stateWaiting")}`
         : display.state === "opening"
-          ? " · Opening"
+          ? ` · ${t("documents.view.stateOpening")}`
           : display.preview
-            ? " · Preview"
+            ? ` · ${t("documents.view.statePreview")}`
             : "";
-  return `${kind}: ${display.path}${state}`;
+  return `${t("documents.view.identity", { kind, path: display.path })}${state}`;
 }
 
 // --- area commands -------------------------------------------------------------
@@ -258,7 +259,7 @@ export type ViewAreaStep = "focus_next" | "focus_previous" | "grow" | "shrink";
  * core's own range limits it.
  */
 export function viewAreaStepUnavailable(layout: ViewLayoutSnapshot, drawn: { geometry: Geometry } | null, step: ViewAreaStep): string | null {
-  if (step === "focus_next" || step === "focus_previous") return areasOf(layout.root).length < 2 ? "There is only one view area." : null;
+  if (step === "focus_next" || step === "focus_previous") return areasOf(layout.root).length < 2 ? areaSentence(VIEW_WORDS, "onlyOne") : null;
   const target = resizeTarget(layout, drawn?.geometry ?? null, step === "grow");
   return "reason" in target ? target.reason : null;
 }

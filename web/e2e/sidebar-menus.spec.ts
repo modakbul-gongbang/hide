@@ -107,19 +107,19 @@ test("the sidebar's row menus: pin an unregistered project, open a tab, move the
     const main = project.locator("[data-checkout-row]").filter({ has: page.locator('[data-checkout][aria-label^="main"]') });
     const feature = project.locator("[data-checkout-row]").filter({ has: page.locator(`[data-checkout][aria-label^="${BRANCH}"]`) });
     await expect(feature).toBeVisible({ timeout: 30_000 });
-    await expect(page.locator('[data-section="Pinned"]')).toHaveCount(0);
+    await expect(page.locator('[data-section="pinned"]')).toHaveCount(0);
 
     // B1, B3: the project row's menu, in the board's order. A browser tab has
     // no OS file manager, so its reveal is absent; a row Herdr shows without a
     // registration still offers Pin and Remove project….
     let menu = await openMenu(page, projectRow, "repo actions");
-    expect(await menuLines(menu)).toEqual(["Open Overview", "New worktree…", `New tab in main ${commandLabel("new_tab")}`, "─", "Copy path", "─", "Pin", "Remove project…"]);
+    expect(await menuLines(menu)).toEqual(["New worktree…", `New tab in main ${commandLabel("new_tab")}`, "─", "Copy path", "─", "Pin", "Remove project…"]);
     await screenshot(page, "sidebar-menus-project-dark");
     await menu.locator('[data-menu-item="pin"]').click();
     await expect(menu).toHaveCount(0);
 
     // Pin registered the row and pinned it: it now stands under Pinned, once.
-    await expect(page.locator('[data-section="Pinned"]')).toHaveText(/Pinned · 1/);
+    await expect(page.locator('[data-section="pinned"]')).toHaveText(/Pinned · 1/);
     await expect(page.locator("[data-project-row]", { hasText: /^repo/ })).toHaveCount(1);
     menu = await openMenu(page, projectRow, "repo actions");
     await expect(menu.locator('[data-menu-item="unpin"]')).toHaveText(/Unpin/);

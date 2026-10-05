@@ -19,8 +19,8 @@ function bundle(selected: InterfaceLanguage): Formats {
   const unit = (name: "second" | "minute" | "hour" | "day") => new Intl.NumberFormat(language, { style: "unit", unit: name, unitDisplay: "narrow" });
   const next: Formats = {
     number: new Intl.NumberFormat(language),
-    integer: new Intl.NumberFormat(language, { maximumFractionDigits: 0 }),
-    decimal: new Intl.NumberFormat(language, { minimumFractionDigits: 1, maximumFractionDigits: 1 }),
+    integer: new Intl.NumberFormat(language, { maximumFractionDigits: 0, useGrouping: false }),
+    decimal: new Intl.NumberFormat(language, { minimumFractionDigits: 1, maximumFractionDigits: 1, useGrouping: false }),
     percent: new Intl.NumberFormat(language, { style: "percent", maximumFractionDigits: 0 }),
     relative: new Intl.RelativeTimeFormat(language, { style: "short", numeric: "auto" }),
     units: { second: unit("second"), minute: unit("minute"), hour: unit("hour"), day: unit("day") },
@@ -61,7 +61,7 @@ export function formatRelativeTime(language: InterfaceLanguage, value: number, u
   return bundle(language).relative.format(finite(value), unit);
 }
 
-/** Preserve the product's binary scaling and familiar unit abbreviations. */
+/** Preserve the product's binary scaling and familiar unit abbreviations; a size never carries a group separator, so `1008 KB` reads the same in every language. */
 export function formatBytes(language: InterfaceLanguage, bytes: number): string {
   const selected = bundle(language);
   finite(bytes);

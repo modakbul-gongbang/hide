@@ -24,6 +24,8 @@ import {
 } from "./sessions";
 import type { SessionSearchHit, ArchiveEvent, ProjectSessionDetail, SessionRow, Workspace } from "./snapshot";
 import { useShellStore } from "./store";
+import { useInterfaceTranslation } from "./i18n/client";
+import { requireInterfaceLanguage } from "./i18n/locale";
 
 // A Project's Sessions tab (PRD S8 B1-B9, D-08): the session history of
 // every Workspace the Project has, newest first, narrowed by provider and
@@ -36,6 +38,7 @@ import { useShellStore } from "./store";
 const NO_CONTENT_HITS: SessionSearchHit[] = [];
 
 export function ProjectSessions({ workspace, actions }: { workspace: Workspace; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const contentSearch = useShellStore((s) => s.sessionSearch);
   const sessions = useShellStore((s) => s.projectSessions);
   const live = useShellStore((s) => s.connection === "live");
@@ -87,9 +90,9 @@ export function ProjectSessions({ workspace, actions }: { workspace: Workspace; 
   const total = named === "ours" ? (sessions?.rows.length ?? 0) : 0;
 
   return (
-    <section className="flex min-h-0 flex-1" aria-label={`Sessions of ${workspace.label}`} data-sessions-screen={workspace.id}>
+    <section className="flex min-h-0 flex-1" aria-label={t("sessions.project", { project: workspace.label })} data-sessions-screen={workspace.id}>
       <section
-        aria-label="Session history"
+        aria-label={t("sessions.history")}
         className="flex min-h-0 min-w-[var(--size-panel-min)] shrink basis-[var(--size-panel-ideal)] flex-col border-r border-border bg-sidebar"
         data-sessions-list={list.kind}
       >
@@ -104,15 +107,15 @@ export function ProjectSessions({ workspace, actions }: { workspace: Workspace; 
           onQuery={setQuery}
         />
         {named === "ours" && !sessions?.unavailable_reason ? <div className="flex flex-col gap-xs border-b border-border px-sm py-xs text-micro text-muted-foreground">
-          <p role="status" data-content-search-status="true">{search?.control_failure ?? search?.failure ?? (search?.policy_loaded && search.days === 0 ? "Content search is off. Metadata search remains available." : search?.indexing ? `Indexing conversations · ${search.indexed}/${search.total}` : !search || search.loading || (query.trim() && (search.query !== query.trim() || search.provider !== provider)) ? "Searching conversations…" : "Search titles and conversation contents")}{search?.page.stale ? " · Changed sources waiting for refresh" : ""}{search?.page.limited ? " · Results limited" : ""}</p>
-          <div className="flex flex-wrap items-center gap-xs">Copied history
+          <p role="status" data-content-search-status="true">{search?.control_failure ?? search?.failure ?? (search?.policy_loaded && search.days === 0 ? t("sessions.contentOff") : search?.indexing ? t("sessions.indexing", { indexed: search.indexed, total: search.total }) : !search || search.loading || (query.trim() && (search.query !== query.trim() || search.provider !== provider)) ? t("sessions.searching") : t("sessions.searchHint"))}{search?.page.stale ? ` · ${t("sessions.sourcesWaiting")}` : ""}{search?.page.limited ? ` · ${t("sessions.resultsLimited")}` : ""}</p>
+          <div className="flex flex-wrap items-center gap-xs">{t("sessions.copiedHistory")}
             <Select disabled={!search?.policy_loaded} value={String(search?.policy_loaded ? search.days : 90)} onValueChange={(value) => actions.searchProjectSessions(project.id, project.deviceId, query, { days: Number(value), provider })}>
-              <SelectTrigger size="sm" aria-label="Search index retention" className="w-auto text-caption"><SelectValue /></SelectTrigger>
-              <SelectContent>{[0, 30, 90, 365].map((days) => <SelectItem key={days} value={String(days)}>{days === 0 ? "Off" : `${days} days`}</SelectItem>)}</SelectContent>
+              <SelectTrigger size="sm" aria-label={t("sessions.retention")} className="w-auto text-caption"><SelectValue /></SelectTrigger>
+              <SelectContent>{[0, 30, 90, 365].map((days) => <SelectItem key={days} value={String(days)}>{days === 0 ? t("common.off") : t("sessions.days", { count: days })}</SelectItem>)}</SelectContent>
             </Select>
-            <Button variant="ghost" onClick={() => actions.searchProjectSessions(project.id, project.deviceId, query, { clear: true, provider })}>Rebuild index</Button>
+            <Button variant="ghost" onClick={() => actions.searchProjectSessions(project.id, project.deviceId, query, { clear: true, provider })}>{t("sessions.rebuildIndex")}</Button>
           </div>
-          <p>Local copy only. Off clears this Project’s copy; originals stay intact.</p>
+          <p>{t("sessions.copyOnly")}</p>
         </div> : null}
         <HistoryList
           matches={matches}
@@ -125,7 +128,7 @@ export function ProjectSessions({ workspace, actions }: { workspace: Workspace; 
           onShowHere={retry}
         />
       </section>
-      <section aria-label="Session" className="flex min-h-0 min-w-[var(--size-workspace-area-min)] flex-1 flex-col" data-session-detail={detail.kind}>
+      <section aria-label={t("sessions.session")} className="flex min-h-0 min-w-[var(--size-workspace-area-min)] flex-1 flex-col" data-session-detail={detail.kind}>
         <SessionDetail jump={jump} state={detail} rows={named === "ours" ? (sessions?.rows ?? []) : []} choosable={list.kind === "rows"} workspace={workspace} onRetry={retry} />
       </section>
     </section>
@@ -151,6 +154,7 @@ function HistoryControls({
   onProvider: (provider: ProviderFilter) => void;
   onQuery: (query: string) => void;
 }) {
+  const { t } = useInterfaceTranslation();
   // ToggleGroup's own roving focus only moves the arrows; it never selects on
   // its own. A one-Tab-stop filter picks the neighbouring provider on the
   // same keystroke that moves to it (B9), so this still selects explicitly
@@ -185,7 +189,7 @@ function HistoryControls({
     <div className="flex shrink-0 flex-col gap-sm border-b border-border p-sm">
       <ToggleGroup
         type="single"
-        aria-label="Provider"
+        aria-label={t("sessions.provider")}
         className="w-full"
         value={provider}
         onValueChange={(next) => {
@@ -200,7 +204,7 @@ function HistoryControls({
       >
         {PROVIDER_FILTERS.map((choice) => (
           <ToggleGroupItem key={choice.id} value={choice.id} data-provider-choice={choice.id} className="min-w-0 flex-1 truncate">
-            {choice.label}
+            {choice.name ?? t("cleanup.filter.all")}
           </ToggleGroupItem>
         ))}
       </ToggleGroup>
@@ -208,8 +212,8 @@ function HistoryControls({
         type="search"
         mono={false}
         value={query}
-        placeholder="Search sessions"
-        aria-label="Search sessions"
+        placeholder={t("sessions.search")}
+        aria-label={t("sessions.search")}
         className="w-full"
         data-sessions-search="true"
         onChange={(event) => onQuery(event.target.value)}
@@ -217,8 +221,8 @@ function HistoryControls({
       />
       {total > 0 ? (
         <p className="flex items-center gap-xs text-micro text-muted-foreground" data-sessions-count={filtering ? `${shown}/${total}` : String(total)}>
-          <span>{filtering ? `${shown} of ${total} sessions` : `${total} ${total === 1 ? "session" : "sessions"}`}</span>
-          {reading ? <span role="status">Reading…</span> : null}
+          <span>{filtering ? t("sessions.filtered", { shown, count: total }) : t("sessions.count", { count: total })}</span>
+          {reading ? <span role="status">{t("board.reading")}</span> : null}
         </p>
       ) : null}
     </div>
@@ -274,26 +278,27 @@ const HistoryList = memo(function HistoryList({
 });
 
 function ListNotice({ state, onRetry, onClearFilters, onShowHere }: { state: Exclude<ListState, { kind: "rows" }>; onRetry: () => void; onClearFilters: () => void; onShowHere: () => void }) {
+  const { t } = useInterfaceTranslation();
   switch (state.kind) {
     case "loading":
       return (
         <p role="status">
-          <Status tone="pending">Loading sessions…</Status>
+          <Status tone="pending">{t("sessions.loading")}</Status>
         </p>
       );
     case "empty":
-      return <Status tone="muted">No sessions yet</Status>;
+      return <Status tone="muted">{t("sessions.empty")}</Status>;
     case "content_unavailable":
-      return <><Status tone="muted">{state.stale ? "Content results waiting for refresh" : "Conversation search unavailable"}</Status><p>Metadata has no matches. Conversation results could not be confirmed.</p><div><Button variant="secondary" onClick={onRetry}>Retry</Button></div></>;
+      return <><Status tone="muted">{state.stale ? t("sessions.contentStale") : t("sessions.contentUnavailable")}</Status><p>{t("sessions.noConfirmedContent")}</p><div><Button variant="secondary" onClick={onRetry}>{t("common.retry")}</Button></div></>;
     case "content_pending":
-      return <p role="status"><Status tone="pending">{state.indexing ? "No matches in indexed conversations yet. Indexing continues…" : "Searching conversation contents…"}</Status></p>;
+      return <p role="status"><Status tone="pending">{state.indexing ? t("sessions.indexContinues") : t("sessions.searchingContent")}</Status></p>;
     case "no_match":
       return (
         <>
-          <Status tone="muted">No matching sessions</Status>
+          <Status tone="muted">{t("sessions.noMatch")}</Status>
           <div>
             <Button variant="secondary" onClick={onClearFilters} data-sessions-clear="true">
-              Clear filters
+              {t("sessions.clearFilters")}
             </Button>
           </div>
         </>
@@ -301,11 +306,11 @@ function ListNotice({ state, onRetry, onClearFilters, onShowHere }: { state: Exc
     case "failed":
       return (
         <div role="alert" className="flex flex-col gap-sm">
-          <Status tone="error">Sessions could not be read</Status>
+          <Status tone="error">{t("sessions.readFailed")}</Status>
           <p className="break-words text-caption text-subtle-foreground">{state.reason}</p>
           <div>
             <Button variant="secondary" onClick={onRetry} data-sessions-retry="list">
-              Retry
+              {t("common.retry")}
             </Button>
           </div>
         </div>
@@ -313,17 +318,17 @@ function ListNotice({ state, onRetry, onClearFilters, onShowHere }: { state: Exc
     case "unavailable":
       return (
         <div role="status" className="flex flex-col gap-sm" data-sessions-unavailable="true">
-          <Status tone="warn">Sessions unavailable</Status>
+          <Status tone="warn">{t("sessions.unavailable")}</Status>
           <p className="break-words text-caption text-subtle-foreground">{state.reason}</p>
         </div>
       );
     case "replaced":
       return (
         <div role="status" className="flex flex-col gap-sm">
-          <Status tone="muted">Another window is showing another project's sessions.</Status>
+          <Status tone="muted">{t("sessions.replaced")}</Status>
           <div>
             <Button variant="secondary" onClick={onShowHere} data-sessions-show-here="true">
-              Show this project's sessions
+              {t("sessions.showHere")}
             </Button>
           </div>
         </div>
@@ -350,18 +355,20 @@ function SessionRowItem({
   onRetry: () => void;
   onKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => void;
 }) {
+  const { t, i18n } = useInterfaceTranslation();
+  const language = requireInterfaceLanguage(i18n.language);
   const title = sessionTitle(row);
   const checkout = sessionCheckout(row, workspace);
-  const time = sessionTime(row.updated_at_unix_ms);
+  const time = sessionTime(row.updated_at_unix_ms, language);
   const unavailable = row.unavailable_reason;
   return (
     <li className={`rounded-sm ${selected ? "bg-secondary" : ""}`} data-session={row.id} data-session-available={unavailable ? "false" : "true"}>
-      <Hint label={`${title ?? "Untitled session"} · ${checkout.path}`} reveals>
+      <Hint label={`${title ?? t("sessions.untitled")} · ${checkout.path}`} reveals>
       <button
         type="button"
         tabIndex={focusable ? 0 : -1}
         aria-current={selected ? "true" : undefined}
-        aria-label={sessionAccessibleName(row, checkout.label, time)}
+        aria-label={sessionAccessibleName(row, checkout.label, time, t)}
         data-session-row={row.id}
         className="flex w-full flex-col gap-xxs rounded-sm px-sm py-xs text-left outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring"
         onClick={() => onOpen(row)}
@@ -371,11 +378,11 @@ function SessionRowItem({
           <AgentMark kind={row.provider} />
           <span className={unavailable ? "text-muted-foreground" : "text-subtle-foreground"}>{row.provider_label}</span>
           {time ? <span className="text-muted-foreground">{time}</span> : null}
-          {unavailable ? <span className="ml-auto shrink-0 text-warning">! unavailable</span> : null}
+          {unavailable ? <span className="ml-auto shrink-0 text-warning">{t("sessions.rowUnavailable")}</span> : null}
         </span>
-        <span className={`line-clamp-2 break-words break-keep text-body ${unavailable ? "text-muted-foreground" : title ? "text-foreground" : "italic text-muted-foreground"}`}>{title ?? "Untitled session"}</span>
+        <span className={`line-clamp-2 break-words break-keep text-body ${unavailable ? "text-muted-foreground" : title ? "text-foreground" : "italic text-muted-foreground"}`}>{title ?? t("sessions.untitled")}</span>
         <span className={`truncate text-micro ${unavailable ? "text-muted-foreground" : "text-subtle-foreground"}`}>{checkout.label}</span>
-        {match ? <span className="flex flex-col gap-xxs text-caption" data-content-match={match.source_offset}><span className="text-micro text-muted-foreground">{match.role === "user" ? "Human" : "Assistant"} · {sessionTime(match.at_unix_ms)}</span><span className="line-clamp-3 whitespace-pre-wrap break-words text-subtle-foreground">{match.snippet}</span></span> : null}
+        {match ? <span className="flex flex-col gap-xxs text-caption" data-content-match={match.source_offset}><span className="text-micro text-muted-foreground">{match.role === "user" ? t("sessions.human") : t("sessions.assistant")} · {sessionTime(match.at_unix_ms, language)}</span><span className="line-clamp-3 whitespace-pre-wrap break-words text-subtle-foreground">{match.snippet}</span></span> : null}
       </button>
       </Hint>
       {unavailable ? (
@@ -385,7 +392,7 @@ function SessionRowItem({
           </p>
           <div className="flex flex-wrap items-center gap-xs">
             <Button variant="ghost" onClick={onRetry} data-session-retry={row.id}>
-              Retry
+              {t("common.retry")}
             </Button>
             <CopySource locator={row.locator} id={row.id} />
           </div>
@@ -397,6 +404,7 @@ function SessionRowItem({
 
 /** Copies the session's actual provider file path; says so, or why it could not. */
 function CopySource({ locator, id }: { locator: string; id: string }) {
+  const { t } = useInterfaceTranslation();
   const [copied, setCopied] = useState<"copied" | "failed" | null>(null);
   useEffect(() => {
     if (!copied) return undefined;
@@ -418,12 +426,12 @@ function CopySource({ locator, id }: { locator: string; id: string }) {
     <>
       <Hint label={locator}>
         <Button variant="ghost" onClick={copy} data-session-copy={id}>
-          Copy source location
+          {t("sessions.copySource")}
         </Button>
       </Hint>
       {copied ? (
         <span role="status" className={`text-caption ${copied === "copied" ? "text-success" : "text-warning"}`}>
-          {copied === "copied" ? "Copied" : "Could not copy"}
+          {copied === "copied" ? t("common.copied") : t("sessions.copyFailed")}
         </span>
       ) : null}
     </>
@@ -446,6 +454,7 @@ function SessionDetail({
   workspace: Workspace;
   onRetry: () => void;
 }) {
+  const { t } = useInterfaceTranslation();
   const body = useRef<HTMLOListElement>(null);
   const appliedJump = useRef<typeof jump>(null);
   const archive = state.kind === "open" ? state.archive : null;
@@ -458,7 +467,7 @@ function SessionDetail({
     appliedJump.current = jump;
   }, [archive, sessionId, jump]);
   if (state.kind === "none") {
-    return choosable ? <p className="m-auto p-lg text-caption text-muted-foreground">Choose a session to read it here.</p> : null;
+    return choosable ? <p className="m-auto p-lg text-caption text-muted-foreground">{t("sessions.choose")}</p> : null;
   }
   const row = rows.find((candidate) => candidate.id === state.detail.session_id) ?? null;
   if (state.kind === "loading") {
@@ -466,7 +475,7 @@ function SessionDetail({
       <>
         {row ? <DetailHeader detail={state.detail} row={row} workspace={workspace} reading /> : null}
         <p role="status" className="p-lg">
-          <Status tone="pending">Reading session…</Status>
+          <Status tone="pending">{t("sessions.reading")}</Status>
         </p>
       </>
     );
@@ -476,11 +485,11 @@ function SessionDetail({
       <>
         {row ? <DetailHeader detail={state.detail} row={row} workspace={workspace} /> : null}
         <div role="alert" className="flex flex-col gap-sm p-lg" data-session-failure={state.detail.session_id}>
-          <Status tone="warn">This session cannot be opened</Status>
+          <Status tone="warn">{t("sessions.openFailed")}</Status>
           <p className="break-words text-caption text-subtle-foreground">{state.reason}</p>
           <div>
             <Button variant="secondary" onClick={onRetry} data-session-detail-retry="true">
-              Retry
+              {t("common.retry")}
             </Button>
           </div>
         </div>
@@ -492,17 +501,17 @@ function SessionDetail({
     <>
       {row ? <DetailHeader detail={state.detail} row={row} workspace={workspace} reading={state.detail.loading} /> : null}
       {turns.length === 0 ? (
-        <p className="p-lg text-caption text-muted-foreground">This session has no readable request or answer.</p>
+        <p className="p-lg text-caption text-muted-foreground">{t("sessions.noReadableTurns")}</p>
       ) : (
         <ol
           ref={body}
           tabIndex={0}
           className="flex min-h-0 flex-1 flex-col gap-md overflow-auto p-md outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
-          aria-label="Conversation"
+          aria-label={t("common.conversation")}
           data-session-turns={turns.length}
         >
           {turns.map((turn, index) => (
-            <Turn key={index} matched={jump?.session === state.detail.session_id && jump.offset === turn.source_offset} turn={turn} provider={state.archive.provider ?? row?.provider_label ?? "Agent"} />
+            <Turn key={index} matched={jump?.session === state.detail.session_id && jump.offset === turn.source_offset} turn={turn} provider={state.archive.provider ?? row?.provider_label ?? t("common.agent")} />
           ))}
         </ol>
       )}
@@ -512,9 +521,10 @@ function SessionDetail({
 
 /** The open session as its row names it: provider, checkout, time, the file to copy, and its request as the title. */
 function DetailHeader({ detail, row, workspace, reading = false }: { detail: ProjectSessionDetail; row: SessionRow; workspace: Workspace; reading?: boolean }) {
+  const { t, i18n } = useInterfaceTranslation();
   const title = sessionTitle(row);
   const checkout = sessionCheckout(row, workspace);
-  const time = sessionTime(row.updated_at_unix_ms);
+  const time = sessionTime(row.updated_at_unix_ms, requireInterfaceLanguage(i18n.language));
   return (
     <header className="flex shrink-0 flex-col gap-xxs border-b border-border bg-card px-md py-sm" data-session-header={detail.session_id}>
       <div className="flex flex-wrap items-center gap-x-xs gap-y-xxs text-micro text-subtle-foreground">
@@ -529,25 +539,26 @@ function DetailHeader({ detail, row, workspace, reading = false }: { detail: Pro
           {time ? <span className="shrink-0 text-muted-foreground">{time}</span> : null}
           {reading ? (
             <span role="status" className="shrink-0 text-muted-foreground">
-              Reading…
+              {t("board.reading")}
             </span>
           ) : null}
         </span>
         <CopySource key={detail.session_id} locator={detail.locator || row.locator} id="detail" />
       </div>
-      <h2 className={`break-words break-keep text-subhead font-semibold ${title ? "text-foreground" : "italic text-muted-foreground"}`}>{title ?? "Untitled session"}</h2>
+      <h2 className={`break-words break-keep text-subhead font-semibold ${title ? "text-foreground" : "italic text-muted-foreground"}`}>{title ?? t("sessions.untitled")}</h2>
     </header>
   );
 }
 
 function Turn({ turn, provider, matched }: { turn: ArchiveEvent; provider: string; matched: boolean }) {
+  const { t, i18n } = useInterfaceTranslation();
   const person = turn.role === "user";
   const interrupted = turn.kind === "interrupted";
-  const time = sessionTime(turn.at_unix_ms);
+  const time = sessionTime(turn.at_unix_ms, requireInterfaceLanguage(i18n.language));
   return (
     <li className={`flex flex-col gap-xxs ${person ? "rounded-sm bg-card px-sm py-xs" : "px-sm"}`} data-turn={turn.role} data-source-offset={turn.source_offset} data-search-match={matched || undefined} style={matched ? { outline: "var(--size-hairline) solid var(--ring)", borderRadius: "var(--radius-sm)" } : undefined}>
       <span className="flex items-baseline gap-xs text-micro text-muted-foreground">
-        <span className="text-subtle-foreground">{person ? "Request" : provider}</span>
+        <span className="text-subtle-foreground">{person ? t("sessions.request") : provider}</span>
         {time ? <span>{time}</span> : null}
       </span>
       <p className={`whitespace-pre-wrap break-words break-keep text-body ${interrupted ? "italic text-muted-foreground" : "text-foreground"}`}>{turn.text}</p>

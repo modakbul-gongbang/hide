@@ -524,7 +524,7 @@ test("Needs You is raised above Pinned and stays in its tree, whatever is folded
     const project = page.locator("[data-project]").filter({ has: page.locator("[data-project-row]", { hasText: /^raised/ }) });
     await project.locator("[data-project-row]").click({ button: "right" });
     await page.getByRole("menuitem", { name: "Pin", exact: true }).click();
-    const pinned = page.locator('[data-section="Pinned"]');
+    const pinned = page.locator('[data-section="pinned"]');
     await expect(pinned).toBeVisible();
     // Nothing needs the operator yet: no raised section is drawn.
     await expect(page.locator("[data-raised-group]")).toHaveCount(0);
@@ -535,7 +535,7 @@ test("Needs You is raised above Pinned and stays in its tree, whatever is folded
     const needsYou = page.locator('[data-raised-group="needs_you"]');
     const done = page.locator('[data-raised-group="done"]');
     await expect(needsYou.locator(`[data-pane="${asking}"]`)).toBeVisible({ timeout: 20_000 });
-    await expect(needsYou.locator('[data-section="Needs You"]')).toHaveText("Needs You · 1");
+    await expect(needsYou.locator('[data-section="needs_you"]')).toHaveText("Needs You · 1");
     // Done is not raised: the finished agent is in the Agents tab and its checkout's tree.
     await expect(done).toHaveCount(0);
     // Needs You, then Pinned, at the top of the list.

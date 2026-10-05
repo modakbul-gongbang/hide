@@ -341,6 +341,9 @@ pub struct WorktreeTaskRequest {
 pub struct WorktreeTaskOutcome {
     pub path: String,
     pub pane_id: String,
+    /// The tab Hide opened in an existing checkout, so the runtime places it
+    /// under `path` rather than under its pane's birth cwd.
+    pub created_tab_id: Option<String>,
     /// Worktree creation succeeded even when its optional purpose did not.
     /// The runtime records this as a diagnostic without turning the finished
     /// creation into a failed operation.
@@ -1224,6 +1227,7 @@ fn create_checkout_tab(
     Ok(WorktreeTaskOutcome {
         path: request.checkout_path.clone(),
         pane_id: tab.pane_id,
+        created_tab_id: Some(tab.tab_id),
         purpose_error: None,
         unconfirmed_purpose_token: None,
         issue_error: None,
@@ -1338,6 +1342,7 @@ fn create_worktree_observing_purpose(
         return Ok(WorktreeTaskOutcome {
             path: created.path,
             pane_id: created.pane_id,
+            created_tab_id: None,
             issue_error,
             purpose_error: purpose_failure
                 .as_ref()

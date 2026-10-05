@@ -1,7 +1,7 @@
 # Testing
 
 This guide answers the question asked while a test is being written: which test to write, how to build its fixture, and how to keep it from becoming flaky.
-It owns the layer choice, fixture construction, the writing rules that keep a test deterministic, the flaky policy, and the review checklist for a pull request that adds or changes a test.
+It owns the layer choice, fixture construction, the writing rules that keep a test deterministic, the order of work for a Playwright e2e test and a Rust test, the flaky policy, and the review checklist for a pull request that adds or changes a test.
 Running a check is not here: [VERIFICATION.md](VERIFICATION.md) owns which check proves a claim, the traps before an e2e run, native QA and device checks, and [CONTRIBUTING.md](../CONTRIBUTING.md#ci-gates) lists the gates.
 Runtime isolation and its variables live in [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md#3-isolate-runtime-state-before-making-fixtures).
 Where a test file goes inside a crate or package is in that directory's `AGENTS.md`.
@@ -18,7 +18,8 @@ It earns its place when a plausible bug would make it fail and a change that kee
 - Exercise private helpers through the owning module's stable behavior whenever that boundary can express the case; a helper exported only so a test can reach it means the test is on the wrong boundary.
 - Cover the unavailable, malformed and refused states alongside the successful one when the type can produce them, and the first value on each side of a rule's boundary.
 - A test double stands in only for a boundary this repository does not own and implements the same trait or interface as production.
-  Herdr is not faked: integration tests and e2e specs run the pinned binary as a private server, and a test that needs to control Herdr's timing does it at the socket (see [The test decides the order](#the-test-decides-the-order)).
+  Integration tests and e2e specs do not fake Herdr: they run the pinned binary as a private server, and a test that needs to control Herdr's timing does it at the socket (see [The test decides the order](#the-test-decides-the-order)).
+  A core or runtime test that decides what Herdr answers uses `FakeHerdr` (`herdr-core/src/fake_herdr.rs`), which checks every answer against the pinned schema.
 - Change an expectation or fixture only when the requirement changed or the test misrepresented an unchanged requirement, and say which.
   Copying the new implementation's result into the expectation is not a reason.
 - Before trusting a new test, predict which assertion fails for a realistic planted defect (a moved boundary, a dropped condition, a failure handled as success), make the change, and confirm the prediction; a test that stays green is thin.
@@ -140,6 +141,99 @@ The Windows fixture boundaries also preserve these requirements:
 - Release every process a fixture started on every exit path, including a failed start: register it with `ownUntilWorkerExit` before the first step that can throw.
 - Delete a fixture's root only after every process that used it has confirmed exit; when exit cannot be confirmed, keep the root and name it in the error, as `desktop/e2e/fixture.ts` does.
   `desktop/e2e/fixture.ts`'s `AggregateError` is the reference for reporting several cleanup failures at once.
+
+## Writing a Playwright e2e test
+
+The rules above say what a test may assume; this section is the order of work for a new `web/e2e` or `desktop/e2e` spec, with the file to copy at each step.
+Nothing here is new policy.
+A piece that another open change is still building is marked as pending with the change that owns it, and the guide is aligned when that change merges.
+
+1. **Start from the fixture, one stack per test.**
+   `web/e2e/herdr-fixture.ts` starts a private Herdr and `web/e2e/hided-fixture.ts` a private `hided`; `desktop/e2e/fixture.ts` takes a started Herdr fixture and gives the packaged window its own `HOME` and `hided` state.
+   Why: a test that shares a server with another inherits its panes, focus and timers, and its failure cannot be read alone.
+   The config runs one worker (`web/playwright.config.ts`) so a timing assertion does not compete with a neighbour for cores; CI deals tests out across runners with `--shard`.
+2. **Wait for a product signal, never for time.**
+   The signals a spec waits on, in order of preference:
+   - A DOM state the product exports as a data attribute: `data-pane-view` and `data-focused` for pane focus, `data-checkout-kind` for a checkout row, `data-tab`, `data-sidebar-mode`.
+     `expect(panes[0]).toHaveAttribute("data-focused", "true")` in `web/e2e/pane-focus-ordering.spec.ts` is the shape.
+   - A diagnostic `kind`, read from the snapshot frames the page receives (`observeDiagnostics` in the same file; `recordWire` in `web/e2e/s7.spec.ts`).
+     Wait for `pane.focus.followed`, not for "a moment after the click".
+   - What the fixture can read from the real systems: the bytes in a pane's input log, a Herdr answer, a file the core wrote.
+   If the product has no signal for the readiness the next step needs, add one to the product (a data attribute, a diagnostic) in the same pull request.
+   A signal added for a test is still a product contract: it is an attribute or a diagnostic, not a banner ([UI_BEHAVIOR.md](UI_BEHAVIOR.md)).
+3. **Fix the order with a gate when two events race.**
+   [The test decides the order](#the-test-decides-the-order) owns the rule; `focusGate` in `web/e2e/pane-focus-ordering.spec.ts` is the reference.
+   It holds `pane.focus` only, and only while armed.
+   Pending: a change in progress (no pull request yet) generalizes it into a shared gate that can hold any Herdr method; once that merges, import the shared gate and do not write a second proxy.
+4. **Control UI timers with `page.clock`, not with a wait.**
+   A timer the page owns (a toast timeout, a debounce, a hover delay) is advanced with `page.clock.install()` and `page.clock.fastForward()`.
+   Why: waiting out a 3-second timer costs 3 seconds on every run and still races a slow runner.
+   `page.clock` also controls the shell's own timers (reconnect, debounces), so install it only in a test that is about a timer, and advance it by the amount the timer needs.
+   No spec uses it yet, so the first one that does becomes the reference and is named here.
+   The timers of `hided` and the core are not the page's; those are injected in Rust (see [Writing a Rust test](#writing-a-rust-test)).
+5. **Keep the size of a test bounded.**
+   One representative journey per user-visible flow, and one small spec per independent contract.
+   Most quarantined tests are long journeys that join several contracts (`agent-tab-groups.spec.ts`, `s7.spec.ts`, `sidebar-menus.spec.ts`), and quarantine is per test, so one shaky step takes every contract in it out of the required lane; split a test so the part that shakes can be fixed alone.
+   Splitting costs a stack start per spec, so say in the pull request what the split bought.
+   A numeric limit on lines and `expect` calls per test is being added as a lint; this step names the numbers when it lands, and until then the reviewer checks the shape.
+6. **Turn off the renderer a spec does not test.**
+   Headless Chromium composites in software, so each frame of xterm's WebGL canvas is read back synchronously on the page's main thread, 250 to 500 ms at a time.
+   A spec that holds a product deadline and does not test the terminal renderer launches Chromium with `test.use({ launchOptions: { args: ["--disable-webgl"] } })`, so the shell uses xterm's DOM renderer, its existing fallback; `web/e2e/pane-focus-ordering.spec.ts` is the reference, and [Wait for state, not time](#wait-for-state-not-time) has the measurement.
+   Pending #429 (not merged): it sets this once in `web/playwright.config.ts` for every web e2e and removes the per-spec setting; a spec that tests the renderer keeps WebGL on and says why.
+   Do not raise a timeout to cover the stall.
+7. **Restart through `daemon.restart()`, and leave the old page first.**
+   `daemon.restart()` in `web/e2e/hided-fixture.ts` stops `hided` and starts it again on the same state folder and port, as a real restart does, and takes an optional callback to edit the state folder before the start; `web/e2e/sidebar-pr-start.spec.ts` restarts three times in one test.
+   A navigation that only changes the hash does not remount the connection, so the old page keeps its old token and socket and races the new one.
+   Go through `about:blank` before opening the new origin and token, as `openSettings` in `web/e2e/interface-language.spec.ts` does, and keep that step in one helper per spec.
+   Why: the old page and the new token reconnect at the same time and either can win.
+   Several specs still repeat the step by hand, and `sidebar-pr-start.spec.ts`'s `attach` is one that does not cross `about:blank`; they move to a helper as they are touched.
+8. **Put a system difference in one fixture helper.**
+   See [Operating-system differences belong to one fixture helper](#operating-system-differences-belong-to-one-fixture-helper); native home variables, executable names, the tool path, the compiler and the no-op opener live in `web/e2e/platform-fixture.ts`, not in a `process.platform` branch in a spec.
+   The endpoint helper (`focusGate` spells the Windows pipe itself in `web/e2e/pane-focus-ordering.spec.ts`) is not there yet; add it to `platform-fixture.ts` when a second spec needs it.
+9. **A retry is a label, not a fix.**
+   Pending #419 (not merged): CI will run Playwright with `retries: 1` so that a test that fails and then passes is reported as `flaky` instead of failing the run; two failures still fail the lane.
+   That is a classification for the issue that tracks the test, with a seven-day expiry to fix or delete it.
+   It is never a reason to loosen a wait.
+   The rule is in [Flaky tests](#flaky-tests); until #419 merges, retries are off and `@flaky` is the policy there.
+
+## Writing a Rust test
+
+Pick the layer first with [the table above](#choose-what-to-test-and-where), then follow the rules below.
+The crate's own `AGENTS.md` says where the file goes; this section says how the test is built.
+
+1. **Unit test the decision, runtime-test the rule that crosses components.**
+   A function that takes values and returns a result is tested beside its module (`usage.rs`'s `can_attempt` and `record_failure`).
+   A rule that depends on what Herdr said and in what order is tested through the runtime: dispatch an event, feed a session payload, read the snapshot (`herdr-core/src/runtime/tests/session_navigation.rs`, for example `view_authority_an_external_tab_focus_is_followed_and_reported` and `view_authority_a_refused_tab_focus_keeps_the_tab_and_reports_it`).
+   Why: the unit test cannot see a pending request being superseded, and an e2e spec sees it only when the scheduler happens to produce it.
+2. **Decide Herdr's answers with `FakeHerdr`.**
+   `herdr-core/src/fake_herdr.rs` is the one fake Herdr socket: the test supplies a responder by method, the fake checks each answer against the pinned schema, and `methods()`, `calls()` and `wait_for_requests` read what the core asked.
+   Why: fifteen hand-written listeners used to differ in a socket detail, and the one that differed failed under load for weeks.
+   Use it for a rule the core owns; use the pinned binary as a private server when the claim is about Herdr's own behavior (see [Choose what to test and where](#choose-what-to-test-and-where)).
+3. **Let the test order Herdr's events.**
+   Feed the session payloads and events in the order the rule needs, and assert what is published after each: the answer arrives before the next dispatch, after it, or never.
+   `last_pane_close_waits_for_the_authoritative_fallback_tab_focus` in `herdr-core/src/session_sync/tests.rs` applies `pane_closed`, `workspace_focused` and `tab_focused` one at a time and asserts that nothing is published until the authoritative tab focus arrives.
+   A rule about order lives here, where it is deterministic, and the e2e spec keeps one journey that proves the pieces are connected.
+4. **Inject the clock; do not wait for it.**
+   Code with a deadline, a backoff or an expiry takes the current time as an argument, and the test passes a time it chose: `usage.rs`'s `can_attempt(now)` is tested at `now + 89 s` and `now + 90 s` without sleeping.
+   For async code, `tokio::time::pause()` with `tokio::time::advance()` moves the clock by hand; `herdr-core` does not enable tokio's `test-util` feature today, so enabling it for a crate is part of the pull request that first needs it.
+   `herdr-core/src` calls `Instant::now()` directly in many places; a change in progress (no pull request yet) injects the clock into the modules that have a deadline, and new code with a deadline takes the clock from the start.
+5. **Never bound a test by a short wall-clock.**
+   A bound such as `assert!(started.elapsed() < Duration::from_millis(1850))` passes on an idle machine and fails on a loaded runner unless the bound is itself the product's deadline (`hide-platform/tests/process.rs` checks one); a bound that is only a guess at "fast enough" says nothing about the product.
+   Assert the counted result (how many requests, how many attempts, which one won) or observe the event, with a generous deadline that is only a hang guard.
+   A `thread::sleep` that stands in for a state is the same mistake in the other direction: the test waits a time chosen by a person, not the state the next line needs.
+   A sleep that is the subject of the test, such as a fake peer that answers late, is the exception and says so in a comment.
+6. **Poll the state, once, with a named condition.**
+   When a test must wait for another thread, use the module's helper that names what it waits for (`wait_for` in `herdr-core/src/runtime/tests/home.rs`, `wait_for` in `herdr-core/tests/support/remote_delivery/mod.rs`) rather than a new loop with a sleep.
+   The helper fails with the name of the thing it waited for, so a hang is readable.
+7. **Own and remove what the test starts.**
+   Put a child process, a thread, a socket or a temp folder behind a value that cleans up on `Drop`, as `FakeHerdr` does: it wakes its accept loop, joins the thread, and re-raises a panic from the responder on the test thread.
+   Use a private folder per test and never a fixed name in `/tmp`.
+   Why: a leaked process or file is inherited by the next test and by the next run.
+8. **Retries are a classification.**
+   Pending #419: CI will run the Rust suite with `cargo-nextest --retries 1`, so a test that fails once and then passes is reported as flaky and recorded in an issue with an expiry; two failures fail the lane.
+   `nextest` does not run doc tests, so those stay on `cargo test`.
+   This is part of #419 and is not merged; until then the Rust suite has no retry and an OS-contract test is quarantined with `ignore` as described in [Flaky tests](#flaky-tests).
+   The rule against raising a deadline to pass is unchanged.
 
 ## Which lanes a pull request runs
 

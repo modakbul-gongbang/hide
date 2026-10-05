@@ -5,7 +5,10 @@
 // has no session to show. Nothing here is counted that the snapshot does not
 // carry, and a device that cannot answer says so instead of showing zeros.
 
+import type { TFunction } from "i18next";
 import { sectionCount, sectionTree, directChildren, type TreeRow } from "./agentRow";
+import type { MessageKey } from "./i18n/catalogs";
+import { translate } from "./i18n/client";
 import type { BoardProject } from "./projectBoard";
 import { folderCheckout } from "./projects";
 import { projectsOf } from "./remote";
@@ -14,12 +17,18 @@ import { catalogWorkspaces, focusedRemoteDevice, frontCheckout, type AgentRow, t
 import { entryLens, useUiStore, type OverviewLens } from "./ui";
 
 export type AgentGroup = "needs_you" | "done" | "working" | "seen";
-export const AGENT_GROUPS: readonly { group: AgentGroup; label: string }[] = [
-  { group: "needs_you", label: "Needs You" },
-  { group: "done", label: "Done" },
-  { group: "working", label: "Working" },
-  { group: "seen", label: "Seen" },
+export const AGENT_GROUPS: readonly { group: AgentGroup; label: MessageKey }[] = [
+  { group: "needs_you", label: "agents.group.needs_you" },
+  { group: "done", label: "agents.group.done" },
+  { group: "working", label: "agents.group.working" },
+  { group: "seen", label: "agents.group.seen" },
 ];
+
+/** A group's heading; a group the core names that this list does not know is shown under its own wire name. */
+export function agentGroupTitle(group: string, t: TFunction<"translation">): string {
+  const known = AGENT_GROUPS.find((row) => row.group === group);
+  return known ? t(known.label) : group.replace(/_/g, " ");
+}
 
 export type GroupCounts = Record<AgentGroup, number>;
 
@@ -81,7 +90,7 @@ export function groupCounts(agents: AgentRow[]): GroupCounts {
   return counts;
 }
 
-export type AgentSection = { group: string; label: string; agents: AgentRow[] };
+export type AgentSection = { group: string; agents: AgentRow[] };
 
 /**
  * The Agents explorer's sections (S6 B13): every current agent under Needs
@@ -91,12 +100,12 @@ export type AgentSection = { group: string; label: string; agents: AgentRow[] };
  */
 export function agentSections(agents: AgentRow[]): AgentSection[] {
   const known = new Set<string>(AGENT_GROUPS.map((row) => row.group));
-  const sections: AgentSection[] = AGENT_GROUPS.map(({ group, label }) => ({ group, label, agents: agents.filter((agent) => agent.group === group) }));
+  const sections: AgentSection[] = AGENT_GROUPS.map(({ group }) => ({ group, agents: agents.filter((agent) => agent.group === group) }));
   for (const agent of agents) {
     if (known.has(agent.group)) continue;
     let section = sections.find((row) => row.group === agent.group);
     if (!section) {
-      section = { group: agent.group, label: agent.group.replace(/_/g, " "), agents: [] };
+      section = { group: agent.group, agents: [] };
       sections.push(section);
     }
     section.agents.push(agent);
@@ -116,7 +125,7 @@ export type ListedAgent = { agent: AgentRow; device: string | null };
 export function allAgents(remote: RemoteStatus[] | undefined, devices: Device[] | undefined, localAgents: AgentRow[]): ListedAgent[] {
   const local = devices?.find((row) => row.kind !== "remote");
   const listed: ListedAgent[] = localAgents.map((agent) => ({
-    agent: { ...agent, device_id: local?.id ?? "local", device_label: local?.label ?? "This Mac" },
+    agent: { ...agent, device_id: local?.id ?? "local", device_label: local?.label ?? translate("common.thisMac") },
     device: null,
   }));
   for (const status of remote ?? []) {
@@ -170,7 +179,7 @@ export function checkoutPlaces(workspaces: Workspace[]): Map<string, string> {
   for (const workspace of workspaces) {
     const folder = folderCheckout(workspace) !== null;
     for (const checkout of workspace.checkouts) {
-      const place = workspace.is_home ? "Home" : folder ? workspace.label : `${workspace.label} › ${checkout.branch ?? checkout.label}`;
+      const place = workspace.is_home ? translate("common.home") : folder ? workspace.label : `${workspace.label} › ${checkout.branch ?? checkout.label}`;
       for (const tab of checkout.tabs) for (const pane of tab.panes) if (!places.has(pane.id)) places.set(pane.id, place);
     }
   }
@@ -209,23 +218,23 @@ function descendantsIn(agent: AgentRow, byPane: Map<string, AgentRow>): number {
 function localAvailability(rest: SnapshotRest | null): DeviceAvailability {
   const herdr = rest?.status?.herdr;
   if (!herdr?.state || herdr.state === "connected") return { state: "ready" };
-  if (herdr.state === "not_connected") return { state: "loading", text: "Connecting to Herdr…" };
-  const reason = herdr.message ?? `Herdr is ${herdr.state.replace(/_/g, " ")}`;
-  return { state: "unavailable", text: `${reason}. Agent counts show once it answers; Hide keeps trying.`, retry: null };
+  if (herdr.state === "not_connected") return { state: "loading", text: translate("overview.availability.connectingHerdr") };
+  const reason = herdr.message ?? translate("overview.availability.herdrState", { state: herdr.state.replace(/_/g, " ") });
+  return { state: "unavailable", text: translate("overview.availability.agentCountsLater", { reason }), retry: null };
 }
 
 function deviceAvailability(device: Device, status: RemoteStatus | undefined): DeviceAvailability {
   if (device.kind !== "remote") return { state: "ready" };
-  if (!status || status.state === "not_connected") return { state: "loading", text: "Connecting…" };
+  if (!status || status.state === "not_connected") return { state: "loading", text: translate("devices.state.connecting") };
   if (status.state !== "connected" && status.state !== "stale") {
-    return { state: "unavailable", text: status.message ?? `${device.label} is ${status.state.replace(/_/g, " ")}`, retry: status.state === "disabled" ? null : "connect" };
+    return { state: "unavailable", text: status.message ?? translate("overview.availability.deviceState", { device: device.label, state: status.state.replace(/_/g, " ") }), retry: status.state === "disabled" ? null : "connect" };
   }
   if (status.state === "stale") {
-    return { state: "unavailable", text: status.message ?? `${device.label} is not connected; showing what it last reported`, retry: "connect" };
+    return { state: "unavailable", text: status.message ?? translate("overview.availability.deviceStale", { device: device.label }), retry: "connect" };
   }
   const catalog = status.catalog;
-  if (catalog?.state === "resolving") return { state: "loading", text: "Reading projects…" };
-  if (catalog?.state === "unavailable") return { state: "unavailable", text: catalog.message ?? "Projects could not be read", retry: "helper" };
+  if (catalog?.state === "resolving") return { state: "loading", text: translate("overview.availability.readingProjects") };
+  if (catalog?.state === "unavailable") return { state: "unavailable", text: catalog.message ?? translate("overview.availability.projectsUnreadable"), retry: "helper" };
   return { state: "ready" };
 }
 
@@ -361,7 +370,7 @@ export function overviewProject(rest: SnapshotRest | null, localAgents: AgentRow
     const workspace = status.session?.workspaces.find((row) => row.id === projectId);
     if (workspace) {
       const device = rest?.navigator?.devices?.find((row) => row.id === status.target_id) ?? null;
-      const availability = device ? deviceAvailability(device, status) : { state: "loading" as const, text: "Connecting…" };
+      const availability = device ? deviceAvailability(device, status) : { state: "loading" as const, text: translate("devices.state.connecting") };
       return {
         workspace,
         deviceAgents: status.session?.agents ?? [],
@@ -441,7 +450,7 @@ export function openingProgress(rest: SnapshotRest | null, opening: Opening): "l
  * devices.
  */
 export type AgentTree = {
-  sections: { group: string; label: string; rows: TreeRow[]; count: number }[];
+  sections: { group: string; rows: TreeRow[]; count: number }[];
   children: (device: string | null, agent: AgentRow) => AgentRow[];
 };
 
@@ -461,7 +470,7 @@ export function agentTree(listed: ListedAgent[]): AgentTree {
     .map((section) => {
       const roots = section.agents.filter((agent) => !agent.delegated);
       const rows = sectionTree(roots.map((agent) => ({ agent, device: deviceOf.get(agent) ?? null })), lookup, descendantsOf);
-      return { group: section.group, label: section.label, rows, count: sectionCount(rows) };
+      return { group: section.group, rows, count: sectionCount(rows) };
     })
     .filter((section) => section.rows.length > 0);
   return {

@@ -7,6 +7,7 @@ import { syntaxTree } from "@codemirror/language";
 import type { EditorState, Extension, Range } from "@codemirror/state";
 import { Decoration, EditorView, WidgetType, type DecorationSet, type PluginValue, type ViewUpdate } from "@codemirror/view";
 import { ViewPlugin } from "@codemirror/view";
+import { translate } from "../i18n/client";
 import { markdownLivePlan, MARKDOWN_LIVE_BYTE_LIMIT } from "./markdownLive";
 
 class BulletWidget extends WidgetType {
@@ -40,7 +41,7 @@ class CheckboxWidget extends WidgetType {
     input.type = "checkbox";
     input.checked = this.checked;
     input.className = "cm-md-checkbox";
-    input.setAttribute("aria-label", this.checked ? "Completed task" : "Open task");
+    input.setAttribute("aria-label", translate(this.checked ? "documents.completedTask" : "documents.openTask"));
     input.addEventListener("mousedown", (event) => event.preventDefault());
     input.addEventListener("click", (event) => {
       event.preventDefault();

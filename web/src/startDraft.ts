@@ -6,6 +6,15 @@
 // every open reads what is in front again (D-19).
 
 import { create } from "zustand";
+import type { MessageKey } from "./i18n/catalogs";
+
+/** Why a start did not go: the core's own sentence, shown as sent, or a catalog key the panel words in the operator's language. */
+export type StartFailure = { message: string } | { key: MessageKey };
+
+/** The core's reason when it sent one, else the plain "did not start". */
+export function startFailure(message: string | null | undefined): StartFailure {
+  return message ? { message } : { key: "workspace.agentNotStarted" };
+}
 
 type StartPanelState = {
   isOpen: boolean;
@@ -17,7 +26,7 @@ type StartPanelState = {
   /** The id of the request whose answer the panel waits for. */
   request: string | null;
   /** Why the last start did not go, shown inside the panel. */
-  failure: string | null;
+  failure: StartFailure | null;
   /** The text the request in flight carries. */
   sent: string;
   /** A start whose tab is open but whose agent has not answered yet, with its text. */
@@ -27,11 +36,11 @@ type StartPanelState = {
   setText: (text: string) => void;
   setTarget: (key: string) => void;
   begin: (requestId: string) => void;
-  fail: (message: string) => void;
+  fail: (failure: StartFailure) => void;
   /** The start went: the text is spent and the panel is done; `taskId` names an agent still starting. */
   finish: (taskId: number | null) => void;
   /** The spent start's agent did not start: its text comes back unless a new draft took its place. */
-  restore: (message: string) => void;
+  restore: (failure: StartFailure) => void;
   /** The spent start's agent answered; its text is no longer kept. */
   settle: () => void;
 };

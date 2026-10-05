@@ -2,6 +2,7 @@ import { ArrowUpRightIcon } from "lucide-react";
 import type { MouseEvent, ReactNode } from "react";
 import { badgeParts } from "../agentRow";
 import { holdsCommandKey } from "../host";
+import { useInterfaceTranslation } from "../i18n/client";
 import { cn } from "../lib/utils";
 import { cardSingleValue, type CheckoutCard } from "../projects";
 import { CHECKOUT_KIND_ICON } from "./checkout-icon";
@@ -43,10 +44,11 @@ export function CheckoutCardHint({
   onOpenPullRequest: (url: string, external: boolean) => void;
   /** Where the card was opened from goes to the checkout's Workspace; the card then offers `↵ Workspace`, the same move (PRD overview-lenses-tiles-agents B16). */
   onOpenWorkspace?: () => void;
-  /** The pull request's row on its Project's PRs tab; the header then offers `PRs 탭에서 보기` (PRD overview-lenses-prs B21). */
+  /** The pull request's row on its Project's PRs tab; the header then offers `View on the PRs tab` (PRD overview-lenses-prs B21). */
   onShowPullRequestRow?: (number: number) => void;
   children: ReactNode;
 }) {
+  const { t } = useInterfaceTranslation();
   const { open, onOpenChange, triggerProps } = useHintOpen();
   const single = onOpenWorkspace ? null : cardSingleValue(card);
   if (single !== null) return <Hint label={single}>{children}</Hint>;
@@ -66,7 +68,7 @@ export function CheckoutCardHint({
         <div className="flex flex-col gap-sm">
           {header?.kind === "pull_request" ? <PullRequestHeader header={header} onOpen={onOpenPullRequest} /> : null}
           {header?.kind === "pull_request" && onShowPullRequestRow ? (
-            <Hint label="이 PR의 이슈와 에이전트 계보">
+            <Hint label={t("board.prLineage")}>
               <button
                 type="button"
                 data-checkout-card-prs-tab={header.number}
@@ -76,7 +78,7 @@ export function CheckoutCardHint({
                   onShowPullRequestRow(header.number);
                 }}
               >
-                PRs 탭에서 보기
+                {t("board.showOnPrsTab")}
               </button>
             </Hint>
           ) : null}
@@ -95,7 +97,7 @@ export function CheckoutCardHint({
                 onOpenWorkspace();
               }}
             >
-              ↵ Workspace
+              {t("graph.workspaceHint")}
             </button>
           ) : null}
           {header?.kind === "pull_request" ? <div className="border-t border-border" /> : null}
@@ -117,6 +119,7 @@ function PullRequestHeader({
   header: Extract<NonNullable<CheckoutCard["header"]>, { kind: "pull_request" }>;
   onOpen: (url: string, external: boolean) => void;
 }) {
+  const { t } = useInterfaceTranslation();
   // The same shape the sidebar row's glyph draws for this pull request.
   const Icon = CHECKOUT_KIND_ICON[header.glyph];
   return (
@@ -128,7 +131,7 @@ function PullRequestHeader({
         </Badge>
         {header.badge.draft ? (
           <span className="text-caption text-pr-draft" data-checkout-card-draft="true">
-            Draft
+            {t("overview.draft")}
           </span>
         ) : null}
         <span className="font-mono text-caption text-muted-foreground">#{header.number}</span>
@@ -142,7 +145,7 @@ function PullRequestHeader({
             onOpen(header.url, pullRequestOpenExternal(event));
           }}
         >
-          Open PR
+          {t("board.openPr")}
           <ArrowUpRightIcon aria-hidden="true" className="size-(--size-icon-sm)" />
         </button>
       </div>

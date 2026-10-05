@@ -33,13 +33,16 @@ Missing keys and missing interpolation values fail explicitly; English is a loca
 
 ## Current integration coverage
 
-The first integration covers Settings navigation and General labels, the language selector, sidebar header navigation, and Home navigation, project facts and project-list empty states.
-Shared Overview page and modal navigation, its toolbar tooltip and attention count, the sidebar tabs and Overview row, and the three Overview navigation command labels in Settings and the shortcut sheet also follow the confirmed language.
+The web shell renders every product-owned sentence of its main screens from the catalogs.
+That covers Settings (every tab), the sidebar rows, menus and close sheets, the shared Overview and its request view, Agents graph, Issues board and PRs view, the Workspace toolbar, tab bars and pane chrome, the editor and file views, the Explorer and History, browser displays, the palettes, the start panel, the add-project and workspace dialogs, Project Sessions, disk cleanup and the device rail.
 Shortcut keycaps retain their host-specific chord glyphs in every language.
-The catalogs also contain translations for the remaining surfaces, but their presence does not mean those surfaces render translated text.
-Remaining #339 work includes other Settings bodies and their presentation helpers, sidebar rows and menus, boards and requests, Workspace and pane chrome, editor and file views, dialogs and errors, phone screens and push notifications, and native host menus and connection screens.
+Text that a helper composes outside a render uses the `translate` function of `client.tsx`, which reads the confirmed language at call time; a helper that renders inside React takes the component's `t`.
+A module the desktop host imports (`host.ts` and everything it reaches) stays free of the translator and names a label by key, as `revealExternal.ts` does.
+Where `UI_BEHAVIOR.md` quotes shipped Korean wording (`요청`, `정리`, `맡기기`), that is the Korean catalog text; English and the other languages read their own catalog entries.
+Sentences the core sends as data (a `reason`, `message` or `status_label` in a snapshot) are not translated by the client; they remain a boundary until the core sends codes the catalogs can name.
+Remaining #339 work: phone screens and push notifications, and native host menus and connection screens.
 Native or closed-window consumers may retain only the last core-confirmed explicit choice; they must resolve an unset choice on their own host.
-The issue remains open until these integrations and four-language native evidence are complete.
+The issue stays open until those integrations and four-language native evidence are complete.
 
 ## Verification owners
 

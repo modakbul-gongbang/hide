@@ -123,7 +123,7 @@ test("Command W on an agent that spawned others asks once and closes the subtree
     await page.locator(`[data-terminal-host="${target}"]`).click();
     await page.keyboard.press("Meta+KeyW");
     const sheet = page.locator("[data-confirm-subtree]");
-    await expect(sheet.getByRole("heading")).toHaveText("이 에이전트와 자식 2개를 닫을까요?");
+    await expect(sheet.getByRole("heading")).toHaveText("Close this agent and 2 children?");
     await expect(sheet.locator("[data-subtree-row]")).toHaveCount(3);
     await expect(sheet.locator("[data-subtree-close-all]")).toBeFocused();
     capture("native-close-subtree-sheet");

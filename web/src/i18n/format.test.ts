@@ -13,6 +13,7 @@ describe("localized display values", () => {
       expect(formatBytes(language, 0)).toBe("0 B");
       expect(formatBytes(language, 1024)).toBe(`${new Intl.NumberFormat(language, { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(1)} KB`);
       expect(formatBytes(language, 12 * 1024 ** 2)).toBe("12 MB");
+      expect(formatBytes(language, 1008 * 1024)).toBe("1008 KB");
       expect(formatGigabytes(language, 12 * 1024 ** 3)).toBe(`${new Intl.NumberFormat(language, { minimumFractionDigits: 1, maximumFractionDigits: 1 }).format(12)} GB`);
     });
   }

@@ -12,6 +12,9 @@ import type { PaneRow, SnapshotRest, Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { copySelection, pasteClipboard, selectAllText } from "./terminals";
 import { useUiStore } from "./ui";
+import type { TFunction } from "i18next";
+import { translate, useInterfaceTranslation } from "./i18n/client";
+import { splitLabel } from "./areaLayout";
 
 // The delegation tree where the operator works (PRD S6 D-07, B14-B16): a
 // child pane's header returns to its parent, a parent's header lists every
@@ -27,10 +30,11 @@ import { useUiStore } from "./ui";
  * tooltip and accessible name.
  */
 export function ReturnToParent({ pane, actions }: { pane: PaneRow; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const parent = parentStep(pane);
   const pending = useRelationPending(pane.id, parent?.pane_id ?? null);
   if (!parent) return null;
-  const label = `Return to parent ${parent.label}`;
+  const label = t("panes.relation.return", { name: parent.label });
   return (
     <Hint label={label}>
       <Button
@@ -55,23 +59,24 @@ export function ReturnToParent({ pane, actions }: { pane: PaneRow; actions: Acti
  * no row at all.
  */
 export function ChildChipRow({ pane, actions }: { pane: PaneRow; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const chips = directChildren(pane);
   const rest = useShellStore((s) => s.rest);
-  const parentLocation = paneLocation(rest, pane.id);
+  const parentLocation = paneLocation(rest, pane.id, t);
   const relation = useUiStore((s) => s.relation);
   const outcome = useShellStore((s) => s.rest?.status?.pane_focus_request);
   if (chips.length === 0) return null;
-  const state = relation?.sourcePaneId === pane.id ? relationState(relation, outcome) : null;
+  const state = relation?.sourcePaneId === pane.id ? relationState(relation, outcome, t) : null;
   return (
     <div
       className="flex h-[var(--size-pane-child-row)] shrink-0 items-center gap-xxs overflow-x-auto overflow-y-hidden whitespace-nowrap bg-card px-sm text-caption"
       role="group"
-      aria-label={`Children of ${pane.identity_label ?? pane.id}`}
+      aria-label={t("panes.relation.children", { name: pane.identity_label ?? pane.id })}
       data-pane-children={pane.id}
     >
       {chips.map((chip) => {
         const pending = state?.phase === "pending" && relation?.targetPaneId === chip.pane_id;
-        const childLocation = paneLocation(rest, chip.pane_id);
+        const childLocation = paneLocation(rest, chip.pane_id, t);
         const label = childLocation?.checkout !== parentLocation?.checkout && chip.checkout_label ? chip.checkout_label : chip.label;
         const device = childLocation && childLocation.deviceId !== parentLocation?.deviceId ? childLocation.deviceLabel : null;
         const title = chipTitle({ ...chip, label });
@@ -82,7 +87,7 @@ export function ChildChipRow({ pane, actions }: { pane: PaneRow; actions: Action
             className={`flex max-w-[var(--size-pane-child-chip-max)] shrink-0 items-center gap-xxs rounded-xs border border-border px-xxs outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring ${
               chip.delegated ? "text-subtle-foreground" : "text-foreground"
             }`}
-            aria-label={`Open child ${title}`}
+            aria-label={t("panes.relation.openChild", { name: title })}
             aria-busy={pending}
             data-child-chip={chip.pane_id}
             data-pending={pending ? "true" : "false"}
@@ -102,7 +107,7 @@ export function ChildChipRow({ pane, actions }: { pane: PaneRow; actions: Action
   );
 }
 
-function paneLocation(rest: SnapshotRest | null, paneId: string): { checkout: string; deviceId: string; deviceLabel: string } | null {
+function paneLocation(rest: SnapshotRest | null, paneId: string, t: TFunction<"translation">): { checkout: string; deviceId: string; deviceLabel: string } | null {
   const workspaces: Workspace[] = [
     ...(rest?.navigator?.workspaces ?? []),
     ...(rest?.status?.remote ?? []).filter((status) => status.state === "connected").flatMap((status) => status.session?.workspaces ?? []),
@@ -110,7 +115,7 @@ function paneLocation(rest: SnapshotRest | null, paneId: string): { checkout: st
   for (const workspace of workspaces) {
     for (const checkout of workspace.checkouts) {
       if (!checkout.tabs.some((tab) => tab.panes.some((candidate) => candidate.id === paneId))) continue;
-      const deviceLabel = rest?.navigator?.devices?.find((device) => device.id === workspace.device_id)?.label ?? (workspace.device_id === "local" ? "This Mac" : workspace.device_id);
+      const deviceLabel = rest?.navigator?.devices?.find((device) => device.id === workspace.device_id)?.label ?? (workspace.device_id === "local" ? t("common.thisMac") : workspace.device_id);
       return { checkout: checkout.id, deviceId: workspace.device_id, deviceLabel };
     }
   }
@@ -125,17 +130,18 @@ function paneLocation(rest: SnapshotRest | null, paneId: string): { checkout: st
  * no longer on screen when the answer comes.
  */
 export function RelationStatus({ actions }: { actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const relation = useUiStore((s) => s.relation);
   const outcome = useShellStore((s) => s.rest?.status?.pane_focus_request);
   if (!relation) return null;
-  const state = relationState(relation, outcome);
+  const state = relationState(relation, outcome, t);
   if (!state) return null;
   if (state.phase === "pending") {
     return (
       <div className="flex shrink-0 items-center gap-sm bg-card px-sm py-xxs text-caption text-muted-foreground" role="status" data-relation-status="pending">
-        <span className="min-w-0 flex-1 truncate">Opening {relation.label}…</span>
+        <span className="min-w-0 flex-1 truncate">{t("panes.relation.opening", { name: relation.label })}</span>
         <Button variant="ghost" size="sm" className="h-auto shrink-0 px-none text-muted-foreground hover:bg-transparent hover:text-foreground" data-relation-dismiss="true" onClick={() => actions.dismissRelation()}>
-          Dismiss
+          {t("workspace.dismiss")}
         </Button>
       </div>
     );
@@ -149,11 +155,11 @@ export function RelationStatus({ actions }: { actions: Actions }) {
       </Hint>
       {state.retryable ? (
         <Button variant="ghost" size="sm" className="h-auto shrink-0 px-none text-subtle-foreground hover:bg-transparent hover:text-foreground" data-relation-retry="true" onClick={() => actions.retryRelation()}>
-          Retry
+          {t("common.retry")}
         </Button>
       ) : null}
       <Button variant="ghost" size="sm" className="h-auto shrink-0 px-none text-muted-foreground hover:bg-transparent hover:text-foreground" data-relation-dismiss="true" onClick={() => actions.dismissRelation()}>
-        Dismiss
+        {t("workspace.dismiss")}
       </Button>
     </div>
   );
@@ -178,10 +184,10 @@ type PaneMenuId =
  * the menu moves no focus and marks nothing read.
  */
 export function paneMenuItems(pane: PaneRow, title: string): MenuEntry<PaneMenuId>[] {
-  const relationLabel = { parent: "Open parent", sibling: "Open sibling", child: "Open child" } as const;
+  const relationLabel = { parent: "panes.relation.parent", sibling: "panes.relation.sibling", child: "panes.relation.child" } as const;
   const items: MenuEntry<PaneMenuId>[] = relationEntries(pane).map((entry) => ({
     id: `open:${entry.paneId}` as const,
-    label: `${relationLabel[entry.relation]}: ${entry.label}`,
+    label: translate(relationLabel[entry.relation], { name: entry.label }),
     unavailable: null,
   }));
   // Sleep agent (PRD agent-sleep B15): offered on a local agent pane that is
@@ -189,13 +195,13 @@ export function paneMenuItems(pane: PaneRow, title: string): MenuEntry<PaneMenuI
   if (pane.sleep_action) {
     items.push({
       id: "sleep_agent",
-      label: "Sleep agent",
-      unavailable: pane.sleep_action.available ? null : (pane.sleep_action.reason ?? "This agent cannot sleep now"),
+      label: translate("panes.menu.sleep"),
+      unavailable: pane.sleep_action.available ? null : (pane.sleep_action.reason ?? translate("panes.menu.sleepUnavailable")),
       separated: items.length > 0,
     });
   }
-  items.push({ id: "copy_name", label: "Copy pane name", unavailable: null, separated: items.length > 0 && !pane.sleep_action });
-  items.push({ id: "close_pane", label: `Close pane ${title}`, unavailable: null, separated: true });
+  items.push({ id: "copy_name", label: translate("panes.menu.copyName"), unavailable: null, separated: items.length > 0 && !pane.sleep_action });
+  items.push({ id: "close_pane", label: translate("panes.close", { name: title }), unavailable: null, separated: true });
   return items;
 }
 
@@ -217,17 +223,17 @@ export type TerminalMenuContext = {
 export function terminalMenuItems(pane: PaneRow, title: string, context: TerminalMenuContext): MenuEntry<PaneMenuId>[] {
   const { chords } = context;
   const items: MenuEntry<PaneMenuId>[] = [];
-  if (context.selection) items.push({ id: "copy", label: "Copy", unavailable: null, shortcut: chords.copy });
+  if (context.selection) items.push({ id: "copy", label: translate("common.copy"), unavailable: null, shortcut: chords.copy });
   items.push(
-    { id: "paste", label: "Paste", unavailable: null, shortcut: chords.paste },
-    { id: "select_all", label: "Select all", unavailable: null },
-    { id: "find", label: "Find", unavailable: null, shortcut: chords.find },
-    { id: "split_right", label: "Split right", unavailable: null, separated: true, shortcut: chords.splitRight },
-    { id: "split_down", label: "Split down", unavailable: null, shortcut: chords.splitDown },
+    { id: "paste", label: translate("panes.menu.paste"), unavailable: null, shortcut: chords.paste },
+    { id: "select_all", label: translate("panes.menu.selectAll"), unavailable: null },
+    { id: "find", label: translate("panes.menu.find"), unavailable: null, shortcut: chords.find },
+    { id: "split_right", label: splitLabel("right"), unavailable: null, separated: true, shortcut: chords.splitRight },
+    { id: "split_down", label: splitLabel("down"), unavailable: null, shortcut: chords.splitDown },
     {
       id: "toggle_zoom",
-      label: context.zoomed ? "Unzoom pane" : "Zoom pane",
-      unavailable: context.zoomed || context.paneCount > 1 ? null : "This pane is the only one in its tab",
+      label: context.zoomed ? translate("panes.unzoom") : translate("panes.menu.zoom"),
+      unavailable: context.zoomed || context.paneCount > 1 ? null : translate("panes.menu.onlyPane"),
       shortcut: chords.zoom,
     },
   );
@@ -239,6 +245,7 @@ type MenuOpen = { x: number; y: number; items: MenuEntry<PaneMenuId>[] };
 
 
 export function usePaneMenu(pane: PaneRow, title: string, actions: Actions) {
+  const { t } = useInterfaceTranslation();
   const [open, setOpen] = useState<MenuOpen | null>(null);
   const select = (id: PaneMenuId) => {
     switch (id) {
@@ -270,7 +277,7 @@ export function usePaneMenu(pane: PaneRow, title: string, actions: Actions) {
     const target = relationEntries(pane).find((entry) => `open:${entry.paneId}` === id);
     if (target) actions.followRelation(pane.id, target.paneId, target.label);
   };
-  const menu = <EntryPointMenu label={`Pane ${title}`} items={open?.items ?? []} onSelect={select} at={open} onClose={() => setOpen(null)} />;
+  const menu = <EntryPointMenu label={t("panes.menu.aria", { name: title })} items={open?.items ?? []} onSelect={select} at={open} onClose={() => setOpen(null)} />;
   return {
     menu,
     open: open !== null,
@@ -280,8 +287,9 @@ export function usePaneMenu(pane: PaneRow, title: string, actions: Actions) {
 }
 
 function useRelationPending(sourcePaneId: string, targetPaneId: string | null): boolean {
+  const { t } = useInterfaceTranslation();
   const relation = useUiStore((s) => s.relation);
   const outcome = useShellStore((s) => s.rest?.status?.pane_focus_request);
   if (!targetPaneId || relation?.sourcePaneId !== sourcePaneId || relation.targetPaneId !== targetPaneId) return false;
-  return relationState(relation, outcome)?.phase === "pending";
+  return relationState(relation, outcome, t)?.phase === "pending";
 }

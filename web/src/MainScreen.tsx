@@ -120,7 +120,7 @@ export function MainScreen({ actions }: { actions: Actions }) {
   };
   // The Agents tab keeps the count of agents whose turn it is, the Agents tile's badge;
   // the 요청 tab the rows to answer, the 요청 tile's.
-  const waiting = agentsTile(lensAgents, { state: "ready" }).badge?.count ?? 0;
+  const waiting = agentsTile(lensAgents, { state: "ready" }, t).badge?.count ?? 0;
   const answering = rows.filter((row) => row.verb === "answer").length;
   const lensActions = useMemo(() => lensHandlers(actions, {
     openIssue: (_owner, task) => {
@@ -174,12 +174,12 @@ export function MainScreen({ actions }: { actions: Actions }) {
               <TabsTrigger key={choice.view} value={choice.view} data-main-tab={choice.view}>
                 {t(choice.label)}
                 {choice.view === "requests" && answering > 0 ? (
-                  <span className="text-caption text-warning" data-requests-answer={answering} aria-label={`답할 것 ${answering}`}>
+                  <span className="text-caption text-warning" data-requests-answer={answering} aria-label={t("overview.answerCount", { count: answering })}>
                     {answering}
                   </span>
                 ) : null}
                 {choice.view === "agents" && waiting > 0 ? (
-                  <span className="text-caption text-warning" data-agents-waiting={waiting} aria-label={`${waiting}개가 내 차례`}>
+                  <span className="text-caption text-warning" data-agents-waiting={waiting} aria-label={t("overview.myTurnCount", { count: waiting })}>
                     {waiting}
                   </span>
                 ) : null}
@@ -334,7 +334,7 @@ export function OpeningStatus({ actions }: { actions: Actions }) {
     <div role="alert" className="mx-md mt-sm flex shrink-0 items-center gap-sm rounded-sm bg-card px-sm py-xs text-caption text-warning" data-opening="failed">
       <span className="min-w-0 flex-1 break-words">{t("overview.notOpened", { reason: opening.failure })}</span>
       <Button variant="secondary" onClick={() => actions.dismissOpening()} data-opening-dismiss="true">
-        Dismiss
+        {t("workspace.dismiss")}
       </Button>
     </div>
   );
@@ -396,9 +396,9 @@ function Counts({ counts }: { counts: GroupCounts | null }) {
     <span className="flex w-[var(--size-recent-location-max)] shrink-0 justify-end gap-sm text-caption" data-agent-counts={shown.map(({ group }) => `${group}:${counts[group]}`).join(" ")}>
       {shown.length === 0 ? <span className="text-muted-foreground">{t("overview.noAgents")}</span> : null}
       {shown.map(({ group, label }) => (
-        <Hint key={group} label={`${counts[group]} ${label}`} reveals>
+        <Hint key={group} label={`${counts[group]} ${t(label)}`} reveals>
         <span className={group === "needs_you" ? "text-warning" : group === "done" ? "text-success" : group === "working" ? "text-agent-working" : "text-muted-foreground"}>
-          {counts[group]} {label}
+          {counts[group]} {t(label)}
         </span>
         </Hint>
       ))}

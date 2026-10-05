@@ -18,6 +18,7 @@ import {
   matchesFilter,
   NO_GRAPH_FILTER,
   routePoints,
+  THIS_DEVICE,
   type GraphBoard,
   type GraphFilter,
   type GraphGeometry,
@@ -278,7 +279,7 @@ describe("folds", () => {
     const all = graph(one(quiet, [agent("m")]), { scope: "all" });
     expect(all.sections[0]!.boxes).toEqual([]);
     expect(all.sections[0]!.folds.map((fold) => fold.kind)).toEqual(["resting"]);
-    // A project with no agent is a head-only primary box on one project and an `에이전트 없는 워크트리` line on All.
+    // A project with no agent is a head-only primary box on one project and a `Worktrees without agents` line on All.
     const bare = workspace([checkout("main", { primary: true })]);
     expect(only(graph(one(bare, []))).boxes).toHaveLength(1);
     expect(graph(one(bare, []), { scope: "all" }).sections[0]!.folds.map((fold) => fold.kind)).toEqual(["empty"]);
@@ -330,7 +331,7 @@ describe("the filter", () => {
     expect(matchesFilter(found, { chips: [], query: "링크", device: null })).toBe(true);
     expect(matchesFilter(found, { chips: ["working"], query: "272", device: null })).toBe(false);
     expect(matchesFilter(found, { chips: ["turn"], query: "272", device: "mini" })).toBe(false);
-    expect(matchesFilter(found, { chips: ["turn"], query: "272", device: "이 Mac" })).toBe(true);
+    expect(matchesFilter(found, { chips: ["turn"], query: "272", device: THIS_DEVICE })).toBe(true);
   });
 
   it("hides what does not match, keeps the parent chain faded so lines stay unbroken, and folds nothing (B27)", () => {
@@ -358,9 +359,9 @@ describe("the filter", () => {
 
   it("names the devices of the scope, this machine first, so the control stands only with two or more (B24)", () => {
     const rows = scopeAgents([{ workspace: project(), agents: agents(), device: null }]);
-    expect(graphDevices(rows)).toEqual(["이 Mac"]);
+    expect(graphDevices(rows)).toEqual([THIS_DEVICE]);
     const remote = scopeAgents([{ workspace: project(), agents: agents(), device: "mini" }]);
-    expect(graphDevices([...rows, ...remote])).toEqual(["이 Mac", "mini"]);
+    expect(graphDevices([...rows, ...remote])).toEqual([THIS_DEVICE, "mini"]);
   });
 });
 

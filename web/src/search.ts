@@ -6,25 +6,27 @@
 
 import { checkoutPlaces } from "./navigation";
 import { deviceConnected, frontDeviceId, localDeviceId } from "./devices";
+import type { TFunction } from "i18next";
+import type { MessageKey } from "./i18n/catalogs";
 import { projectsOf } from "./remote";
 import type { AgentRow, Checkout, Device, GithubSearchResult, PullRequest, SnapshotRest, Task, Workspace } from "./snapshot";
 
-/** The header an entry is drawn under: one per kind of thing. */
-export type SearchGroup = { id: string; label: string };
+/** The header an entry is drawn under: one per kind of thing; `label` is the catalog key the palette translates where it draws the header. */
+export type SearchGroup = { id: string; label: MessageKey };
 
-const ISSUES_GROUP: SearchGroup = { id: "issues", label: "Issues" };
-const PULL_REQUESTS_GROUP: SearchGroup = { id: "pull-requests", label: "Pull requests" };
-const AGENTS_GROUP: SearchGroup = { id: "agents", label: "Agents" };
-const PROJECTS_GROUP: SearchGroup = { id: "projects", label: "Projects" };
-const CHECKOUTS_GROUP: SearchGroup = { id: "checkouts", label: "Checkouts" };
-const DEVICES_GROUP: SearchGroup = { id: "devices", label: "Devices" };
+const ISSUES_GROUP: SearchGroup = { id: "issues", label: "overview.issues" };
+const PULL_REQUESTS_GROUP: SearchGroup = { id: "pull-requests", label: "search.group.pullRequests" };
+const AGENTS_GROUP: SearchGroup = { id: "agents", label: "overview.agents" };
+const PROJECTS_GROUP: SearchGroup = { id: "projects", label: "overview.projects" };
+const CHECKOUTS_GROUP: SearchGroup = { id: "checkouts", label: "search.group.checkouts" };
+const DEVICES_GROUP: SearchGroup = { id: "devices", label: "search.group.devices" };
 /** The one command ⌘K keeps. */
-const COMMANDS_GROUP: SearchGroup = { id: "commands", label: "Commands" };
-export const GITHUB_GROUP: SearchGroup = { id: "github", label: "GitHub" };
+const COMMANDS_GROUP: SearchGroup = { id: "commands", label: "search.group.commands" };
+export const GITHUB_GROUP: SearchGroup = { id: "github", label: "search.group.github" };
 /** The Related list's own header; an entry in it keeps its kind's group for search. */
-export const RELATED_GROUP: SearchGroup = { id: "related", label: "Related" };
+export const RELATED_GROUP: SearchGroup = { id: "related", label: "search.group.related" };
 /** The empty query's second header: the checkouts last brought to the front (PRD cmdk-recent). */
-export const RECENT_GROUP: SearchGroup = { id: "recent", label: "Recent" };
+export const RECENT_GROUP: SearchGroup = { id: "recent", label: "search.group.recent" };
 /** How many Recent rows ⌘K shows; the core keeps ten so the exclusions still leave five. */
 export const RECENT_SHOWN = 5;
 
@@ -103,15 +105,17 @@ export function fuzzyScore(candidate: string, query: string): number | null {
   return score;
 }
 
-/** `에이전트 시작…` opens the start panel on every screen, and is how a browser tab reaches it, where ⌘N is the browser's (PRD home-device-rail D-21). */
-const START_AGENT_ENTRY: SearchEntry = {
-  id: "command:start-agent",
-  title: "에이전트 시작…",
-  subtitle: "Start an agent",
-  kind: "command",
-  group: COMMANDS_GROUP,
-  command: "start_agent",
-};
+/** `Start an agent…` opens the start panel on every screen, and is how a browser tab reaches it, where ⌘N is the browser's (PRD home-device-rail D-21). */
+function startAgentEntry(t: TFunction<"translation">): SearchEntry {
+  return {
+    id: "command:start-agent",
+    title: t("search.startAgent"),
+    subtitle: t("search.startAgentSubtitle"),
+    kind: "command",
+    group: COMMANDS_GROUP,
+    command: "start_agent",
+  };
+}
 
 const THIS_MAC = { id: "local", label: "This Mac", kind: "local" } as Device;
 
@@ -249,24 +253,26 @@ export function recentEntries(rest: SnapshotRest | null, shown: ReadonlySet<stri
   return entries;
 }
 
-const CI_STATUS: Partial<Record<NonNullable<PullRequest["checks"]>, EntryStatus>> = {
-  pending: { tone: "pending", label: "CI 진행 중" },
-  failed: { tone: "failed", label: "CI 실패" },
-  passing: { tone: "done", label: "CI 통과" },
+const CI_STATUS: Partial<Record<NonNullable<PullRequest["checks"]>, { tone: Tone; label: MessageKey }>> = {
+  pending: { tone: "pending", label: "requests.checks.pending" },
+  failed: { tone: "failed", label: "requests.checks.failed" },
+  passing: { tone: "done", label: "requests.checks.passing" },
 };
 
-const PR_STATE: Record<PullRequest["badge"], { tone: Tone; label: string }> = {
-  open: { tone: "open", label: "Open" },
-  review: { tone: "open", label: "Open" },
-  merged: { tone: "merged", label: "Merged" },
-  closed: { tone: "closed", label: "Closed" },
+const PR_STATE: Record<PullRequest["badge"], { tone: Tone; label: MessageKey }> = {
+  open: { tone: "open", label: "requests.badge.open" },
+  review: { tone: "open", label: "requests.badge.open" },
+  merged: { tone: "merged", label: "requests.badge.merged" },
+  closed: { tone: "closed", label: "requests.badge.closed" },
 };
 
-export function pullRequestEntry(scope: SearchDevice, workspace: Workspace, pr: PullRequest, front: string): SearchEntry {
+export function pullRequestEntry(scope: SearchDevice, workspace: Workspace, pr: PullRequest, front: string, t: TFunction<"translation">): SearchEntry {
+  const state = t(PR_STATE[pr.badge].label);
+  const checks = pr.checks ? CI_STATUS[pr.checks] : undefined;
   return {
     id: `pr:${workspace.id}:${pr.number}`,
     title: `#${pr.number} ${pr.title}`,
-    subtitle: ["PR", PR_STATE[pr.badge].label, pr.head_branch].filter(Boolean).join(" · "),
+    subtitle: pr.head_branch ? t("search.prBranchSubtitle", { state, branch: pr.head_branch }) : t("search.prSubtitle", { state }),
     kind: "pr",
     group: PULL_REQUESTS_GROUP,
     workspaceId: workspace.id,
@@ -276,16 +282,16 @@ export function pullRequestEntry(scope: SearchDevice, workspace: Workspace, pr: 
     url: pr.url,
     workspace,
     pr,
-    status: PR_STATE[pr.badge],
-    ci: pr.checks ? CI_STATUS[pr.checks] : undefined,
+    status: { tone: PR_STATE[pr.badge].tone, label: state },
+    ci: checks ? { tone: checks.tone, label: t(checks.label) } : undefined,
   };
 }
 
-export function issueEntry(scope: SearchDevice, workspace: Workspace, task: Task, front: string): SearchEntry {
+export function issueEntry(scope: SearchDevice, workspace: Workspace, task: Task, front: string, t: TFunction<"translation">): SearchEntry {
   return {
     id: `issue:${task.key}`,
     title: `${task.id ? `${task.id} ` : ""}${task.title}`,
-    subtitle: `Issue · ${workspace.label}`,
+    subtitle: t("search.issueProject", { project: workspace.label }),
     kind: "issue",
     group: ISSUES_GROUP,
     workspaceId: workspace.id,
@@ -296,7 +302,7 @@ export function issueEntry(scope: SearchDevice, workspace: Workspace, task: Task
     url: task.url,
     workspace,
     task,
-    status: task.open ? { tone: "open", label: "Open" } : { tone: "muted", label: "Closed" },
+    status: task.open ? { tone: "open", label: t("issue.state.open") } : { tone: "muted", label: t("issue.state.closed") },
   };
 }
 
@@ -307,14 +313,16 @@ function taskNumber(task: Task): number | undefined {
 }
 
 /** A GitHub search result as a row: opened on GitHub, whichever project it came from. */
-function githubEntry(result: GithubSearchResult): SearchEntry {
+function githubEntry(result: GithubSearchResult, t: TFunction<"translation">): SearchEntry {
   const pr = result.kind === "pr";
   const state = result.state;
-  const status: EntryStatus = state === "open" ? { tone: "open", label: result.is_draft ? "Draft" : "Open" } : state === "merged" ? { tone: "merged", label: "Merged" } : { tone: "closed", label: "Closed" };
+  const open = pr ? t("requests.badge.open") : t("issue.state.open");
+  const closed = pr ? t("requests.badge.closed") : t("issue.state.closed");
+  const status: EntryStatus = state === "open" ? { tone: "open", label: result.is_draft ? t("overview.draft") : open } : state === "merged" ? { tone: "merged", label: t("requests.badge.merged") } : { tone: "closed", label: closed };
   return {
     id: `github:${result.kind}:${result.repository}#${result.number}`,
     title: `#${result.number} ${result.title}`,
-    subtitle: [pr ? "PR" : "Issue", result.repository, status.label].join(" · "),
+    subtitle: t(pr ? "search.githubPrSubtitle" : "search.githubIssueSubtitle", { repository: result.repository, state: status.label }),
     kind: pr ? "pr" : "issue",
     group: GITHUB_GROUP,
     number: result.number,
@@ -330,9 +338,9 @@ function githubEntry(result: GithubSearchResult): SearchEntry {
  * whose GitHub address a held issue or pull request has is that row, so it
  * shows once (PRD B17).
  */
-export function githubEntries(results: readonly GithubSearchResult[], held: readonly SearchEntry[]): SearchEntry[] {
+export function githubEntries(results: readonly GithubSearchResult[], held: readonly SearchEntry[], t: TFunction<"translation">): SearchEntry[] {
   const known = new Set(held.map((entry) => entry.url).filter((url): url is string => Boolean(url)));
-  return results.filter((result) => !known.has(result.url)).map(githubEntry);
+  return results.filter((result) => !known.has(result.url)).map((result) => githubEntry(result, t));
 }
 
 /**
@@ -342,9 +350,9 @@ export function githubEntries(results: readonly GithubSearchResult[], held: read
  * issues and pull requests the core already holds (PRD cmdk-navigation D-12,
  * D-14). A row not on the device in front carries that device's chip.
  */
-export function searchEntries(rest: SnapshotRest | null): SearchEntry[] {
+export function searchEntries(rest: SnapshotRest | null, t: TFunction<"translation">): SearchEntry[] {
   if (!rest) return [];
-  const entries: SearchEntry[] = [START_AGENT_ENTRY];
+  const entries: SearchEntry[] = [startAgentEntry(t)];
   const front = frontDeviceId(rest);
   const devices = searchDevices(rest);
   for (const scope of devices) {
@@ -358,9 +366,9 @@ export function searchEntries(rest: SnapshotRest | null): SearchEntry[] {
       for (const pr of [...(workspace.pull_requests ?? []), ...workspace.checkouts.flatMap((checkout) => (checkout.pull_request ? [checkout.pull_request] : []))]) {
         if (seen.has(pr.number)) continue;
         seen.add(pr.number);
-        entries.push(pullRequestEntry(scope, workspace, pr, front));
+        entries.push(pullRequestEntry(scope, workspace, pr, front, t));
       }
-      for (const task of workspace.tasks?.tasks ?? []) entries.push(issueEntry(scope, workspace, task, front));
+      for (const task of workspace.tasks?.tasks ?? []) entries.push(issueEntry(scope, workspace, task, front, t));
     }
   }
   // With this Mac alone there is no device to move to, so no device rows.
@@ -368,7 +376,7 @@ export function searchEntries(rest: SnapshotRest | null): SearchEntry[] {
     entries.push({
       id: `device:${device.id}`,
       title: device.label,
-      subtitle: device.kind === "remote" ? "Remote device" : "This device",
+      subtitle: device.kind === "remote" ? t("search.remoteDevice") : t("common.thisDevice"),
       kind: "device",
       group: DEVICES_GROUP,
       deviceId: device.id,

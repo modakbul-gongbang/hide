@@ -2,6 +2,7 @@ import { ArrowDownIcon, FolderGit2Icon, GitMergeIcon, HardDriveIcon, PlusIcon, R
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Actions } from "./actions";
 import { useInterfaceTranslation } from "./i18n/client";
+import { requireInterfaceLanguage } from "./i18n/locale";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
 import { Kbd } from "./components/ui/kbd";
@@ -30,7 +31,7 @@ import { toggledFold, useUiStore, type OverviewLens } from "./ui";
 // issue-first rework and overview-lenses-tiles-agents): the Project scope the
 // shared Overview's scope tab opens. Under its title sits repository
 // facts with the chosen tile's mode control at its right end, then the lens
-// tiles, 요청, Agents, Issues, PRs and Sessions, where the tab row was. Every
+// tiles, Requests, Agents, Issues, PRs and Sessions, where the tab row was. Every
 // way in opens the request view (overview-request-view D-05), with the box in
 // front kept for the Agents graph; the lens rides
 // on the screen, so only Recent Panels brings back one as it was left
@@ -38,7 +39,7 @@ import { toggledFold, useUiStore, type OverviewLens } from "./ui";
 // the boards are `TaskBoards.tsx`'s and the lenses `OverviewLenses.tsx`'s.
 
 export function ProjectOverview({ projectId, lens, actions }: { projectId: string; lens: OverviewLens; actions: Actions }) {
-  const { t } = useInterfaceTranslation();
+  const { t, i18n } = useInterfaceTranslation();
   const rest = useShellStore((s) => s.rest);
   const agents = useShellStore((s) => s.agents);
   const focusedPaneId = useShellStore((s) => s.focusedPaneId);
@@ -68,9 +69,9 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
   const tiles = useMemo(
     () =>
       tasks && workspace && found && pullRequests
-        ? [requestsTile(rows, found.availability), agentsTile(lensAgents, found.availability), issuesTile(tasks, Date.now(), lastIssueRead(workspace)), prsTile(pullRequests), sessionsTile(sessions, workspace.id, Date.now())]
+        ? [requestsTile(rows, found.availability, t), agentsTile(lensAgents, found.availability, t), issuesTile(tasks, Date.now(), lastIssueRead(workspace), requireInterfaceLanguage(i18n.language), t), prsTile(pullRequests, t), sessionsTile(sessions, workspace.id, Date.now(), t)]
         : [],
-    [tasks, workspace, found, rows, lensAgents, sessions, pullRequests],
+    [tasks, workspace, found, rows, lensAgents, sessions, pullRequests, t, i18n.language],
   );
   // A local Git project's Git facts and pull requests are read whenever this
   // screen opens. The previous answer stays visible during the worker reads.
@@ -115,13 +116,13 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
   const openCheckout = (card: TaskCard) => {
     if (card.checkout) actions.openWorkspace(project.device_id, card.checkout.workspace_id, card.checkout.id);
   };
-  // `N merged → 정리` opens the disk cleanup sheet on what is finished (PRD disk-layers B3).
+  // `N merged → Clean up` opens the disk cleanup sheet on what is finished (PRD disk-layers B3).
   const showCleanup = () => openDiskCleanup(project.id, "done");
   const page: IssuesPage = {
     openCheckout,
     startIssue: (card) => useUiStore.getState().setWorkspaceDialog({ kind: "start_issue", workspaceId: card.place.projectId, taskKey: card.task.key }),
     newIssue,
-    // `이슈 없는 워크트리 N` opens the graph with its `에이전트 없는 워크트리` line unfolded (agents-graph-view B23).
+    // `N worktrees without an issue` opens the graph with its `Worktrees without agents` line unfolded (agents-graph-view B23).
     showCheckouts: () => setLens({ tab: "agents", panel: null, folds: lens.folds.includes(foldId("empty", project.id)) ? lens.folds : [...lens.folds, foldId("empty", project.id)] }),
   };
   // An issue chip opens the Issues tile at its card with the issue's panel open.
@@ -134,7 +135,7 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
   return (
     <section
       className={cn("flex min-h-0 min-w-0 flex-1 flex-col bg-background", !sessionsView && !split && "overflow-y-auto")}
-      aria-label={`Project ${project.label}`}
+      aria-label={t("overview.projectName", { project: project.label })}
       data-overview-screen={project.id}
       data-overview-state={state}
       data-overview-view={view}
@@ -156,12 +157,12 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
           <span className="flex-1" />
           <Button variant="ghost" onClick={newAgent} disabled={!project.is_git && project.checkouts.length === 0} data-overview-new-agent="true">
             <SquareTerminalIcon aria-hidden="true" />
-            New agent
+            {t("requests.newAgent")}
           </Button>
           {canIssue ? (
             <Button onClick={newIssue} data-overview-new-issue="true">
               <PlusIcon aria-hidden="true" />
-              새 이슈
+              {t("issue.newTitle")}
               <Kbd>C</Kbd>
             </Button>
           ) : null}
@@ -244,18 +245,19 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
  * are the tiles'.
  */
 function Stats({ workspace, stats, refreshing, onMerged }: { workspace: Workspace; stats: BoardStats; refreshing: boolean; onMerged: () => void }) {
+  const { t } = useInterfaceTranslation();
   if (!workspace.is_git) return <span />;
   return (
     <div className={FACTS_LINE} data-overview-stats="true">
-      <span className={cn("inline-flex size-(--size-icon) items-center justify-center text-muted-foreground", !refreshing && "invisible")} role={refreshing ? "status" : undefined} aria-label={refreshing ? "Refreshing Git facts and pull requests" : undefined} data-overview-refreshing={refreshing ? "true" : undefined}>
+      <span className={cn("inline-flex size-(--size-icon) items-center justify-center text-muted-foreground", !refreshing && "invisible")} role={refreshing ? "status" : undefined} aria-label={refreshing ? t("overview.refreshingGit") : undefined} data-overview-refreshing={refreshing ? "true" : undefined}>
         <RefreshCwIcon aria-hidden="true" className={cn("size-(--size-icon-sm)", refreshing && "animate-spin")} />
       </span>
       <span className={FACT} data-stat="worktrees">
         <FolderGit2Icon aria-hidden="true" className="size-(--size-icon)" />
-        {stats.worktrees} {stats.worktrees === 1 ? "worktree" : "worktrees"}
+        {t("overview.worktrees", { count: stats.worktrees })}
       </span>
       {stats.disk === "measuring" ? (
-        <Hint label="Measuring allocated disk…">
+        <Hint label={t("overview.measuringDisk")}>
           <span className={cn(FACT, "text-muted-foreground")} data-stat="disk" data-disk-measuring="true">
             <HardDriveIcon aria-hidden="true" className="size-(--size-icon)" />… GB
           </span>
@@ -267,14 +269,14 @@ function Stats({ workspace, stats, refreshing, onMerged }: { workspace: Workspac
       {stats.behind ? (
         <span className={cn(FACT, "text-warning")} data-stat="behind">
           <ArrowDownIcon aria-hidden="true" className="size-(--size-icon)" />
-          {stats.behind.branch} ↓{stats.behind.count} behind origin
+          {t("overview.behindOrigin", { branch: stats.behind.branch, count: stats.behind.count })}
         </span>
       ) : null}
       {stats.merged > 0 ? (
-        <Hint label="머지된 워크트리를 디스크 정리에서 보기">
+        <Hint label={t("overview.showMergedCleanup")}>
           <button type="button" className={cn(FACT, "rounded-xs text-pr-merged outline-none hover:underline focus-visible:ring-1 focus-visible:ring-ring")} data-stat="merged" onClick={onMerged}>
             <GitMergeIcon aria-hidden="true" className="size-(--size-icon)" />
-            {stats.merged} merged → 정리
+            {t("overview.mergedCleanup", { count: stats.merged })}
           </button>
         </Hint>
       ) : null}

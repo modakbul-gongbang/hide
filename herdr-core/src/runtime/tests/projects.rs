@@ -1966,6 +1966,7 @@ fn branch_migration_receipt_preserves_core_focus() {
         Ok(live::WorktreeTaskOutcome {
             path: "/fixture/worktree".into(),
             pane_id: "new:pane".into(),
+            created_tab_id: None,
             purpose_error: None,
             unconfirmed_purpose_token: None,
             issue_error: None,
@@ -2029,6 +2030,7 @@ fn created_worktree_starts_collapsed_and_keeps_purpose_failure_non_blocking() {
         Ok(live::WorktreeTaskOutcome {
             path: path.to_owned(),
             pane_id: "w-created:p1".to_owned(),
+            created_tab_id: None,
             purpose_error: Some("injected purpose mirror failure".to_owned()),
             unconfirmed_purpose_token: Some("Unconfirmed creation purpose".to_owned()),
             issue_error: None,
@@ -3027,6 +3029,7 @@ fn a_task_agent_start_reports_apart_from_the_creation_it_follows() {
         Ok(live::WorktreeTaskOutcome {
             path: "/tmp/hide-agent-task".into(),
             pane_id: "w1:p9".into(),
+            created_tab_id: None,
             purpose_error: None,
             unconfirmed_purpose_token: None,
             issue_error: None,

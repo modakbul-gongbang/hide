@@ -552,6 +552,7 @@ fn a_task_prompt_is_handed_to_its_agent_start_and_kept_for_a_retry() {
         Ok(live::WorktreeTaskOutcome {
             path: "/tmp/hide-prompt".into(),
             pane_id: "w1:p9".into(),
+            created_tab_id: None,
             purpose_error: None,
             unconfirmed_purpose_token: None,
             issue_error: None,
