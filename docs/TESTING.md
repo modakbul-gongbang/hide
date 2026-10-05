@@ -155,7 +155,7 @@ A planned lane that was skipped, failed or cancelled fails `verify`, so a wrong 
 | `desktop/src`, `desktop/static`, a `desktop/e2e` spec | `desktop-checks` and `desktop-e2e`; `desktop/src/main` also runs `windows-check`, where the main process's unit suite runs on Windows |
 | A Rust crate | `rust` over the crate and every crate that depends on it (from `cargo metadata`), `windows-check`, which compiles every crate for Windows, and the Linux `web-e2e`, since every crate reaches `hided` |
 | `herdr-core`, `hided`, `hide-platform`, `hide-herdr-client`, `hide-host`, `hide-kit`, `hide-agent-hooks` | also `os-contract`, `windows-e2e`, the macOS `@platform` lane and `desktop-e2e` |
-| `.github/`, `scripts/`, `contracts/` (the Herdr pin and schemas), `plugins/`, shared e2e fixtures, any `package.json`, configuration or lockfile, the workspace `Cargo.toml`, a type change, and any path no row above claims | every lane |
+| `.github/`, `scripts/`, `contracts/` (the Herdr pin and schemas), shared e2e fixtures, any `package.json`, configuration or lockfile, the workspace `Cargo.toml`, a type change, and any path no row above claims | every lane |
 
 Every plan includes `policy`, whatever else it names.
 A push to main plans every lane, and so does a plan that cannot be computed: a missing base, a checkout that is not the merge commit, a diff that does not parse, or a crate graph `cargo metadata` cannot read.
