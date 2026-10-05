@@ -490,8 +490,10 @@ function startAgentAtShell(env: NodeJS.ProcessEnv, bin: string, root: string, ar
       try {
         return herdr(env, bin, args);
       } catch (error) {
-        if (!String((error as { stdout?: unknown }).stdout ?? error).includes("agent_pane_busy")) throw error;
-        seen = `${seen}; busy answer: ${String((error as { stdout?: unknown }).stdout ?? error).trim()}`;
+        // Herdr prints a refusal on stderr; stdout is empty.
+        const refusal = String((error as { stderr?: unknown }).stderr ?? error);
+        if (!refusal.includes("agent_pane_busy")) throw error;
+        seen = `${seen}; busy answer: ${refusal.trim()}`;
       }
     }
     if (Date.now() >= deadline) {
