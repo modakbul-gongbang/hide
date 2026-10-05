@@ -6,7 +6,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { isolate, launch, type Isolated } from "./fixture";
-import { forgetCompiledFixtures } from "../../web/e2e/platform-fixture";
+import { endWindowsProcesses, forgetCompiledFixtures } from "../../web/e2e/platform-fixture";
 
 type Guard = (fixtures: Record<string, never>, use: () => Promise<void>, info: { tags: string[] }) => Promise<void>;
 const boundary = vi.hoisted(() => ({ launch: vi.fn(), guard: null as Guard | null }));
@@ -42,6 +42,22 @@ vi.mock("node:child_process", async (original) => ({
   }),
 }));
 
+// Ending the processes that run from a root is a Windows PowerShell call; this
+// test starts none, so the boundary is the call itself: which processes
+// (none owned beyond those under the folder) and which folder, while it exists.
+vi.mock("../../web/e2e/platform-fixture", async (original) => ({
+  ...await original<typeof import("../../web/e2e/platform-fixture")>(),
+  endWindowsProcesses: vi.fn((owned: unknown[], folder: string) => {
+    if (owned.length !== 0 || !fs.existsSync(folder)) throw new Error(`unexpected endWindowsProcesses(${JSON.stringify(owned)}, ${folder})`);
+  }),
+}));
+
+/** The root is cleaned by ending what runs from it first on Windows, and by nothing else elsewhere. */
+function expectRootEnded(run: Isolated): void {
+  if (process.platform === "win32") expect(endWindowsProcesses).toHaveBeenCalledWith([], run.root);
+  else expect(endWindowsProcesses).not.toHaveBeenCalled();
+}
+
 let root: string;
 let runs: Isolated[];
 let children: ChildProcess[];
@@ -51,6 +67,7 @@ beforeEach(() => {
   boundary.launch.mockReset();
   vi.mocked(execFileSync).mockClear();
   vi.mocked(spawnSync).mockClear();
+  vi.mocked(endWindowsProcesses).mockClear();
   runs = [];
   children = [];
 });
@@ -100,6 +117,8 @@ test("rejected close preserves only the live candidate's home and permits recove
     await launch(other.env);
   });
   expect(live.exitCode).toBeNull();
+  // The live candidate's home is preserved, so nothing is ended or removed for it.
+  expect(endWindowsProcesses).not.toHaveBeenCalledWith([], run.root);
   expect(error?.errors).toContain(closeFailure);
   expect(fs.existsSync(run.env.HOME!)).toBe(true);
   expect(fs.existsSync(other.root)).toBe(false);
@@ -121,6 +140,7 @@ test("a rejected close after confirmed candidate exit still cleans home and repo
   const error = await teardown(async () => { await launch(run.env); });
   expect(error?.errors).toEqual([closeFailure]);
   expect(fs.existsSync(run.root)).toBe(false);
+  expectRootEnded(run);
 });
 
 test("a successful close must confirm exit before home deletion", async () => {
