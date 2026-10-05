@@ -1,7 +1,8 @@
 // A sidebar row's pull request with no screen asking (issue #391): on an
 // isolated pinned Herdr and hided with a fake `gh` that knows one pull request
 // in each of three repositories. The first daemon only chooses a Workspace, so
-// the next start opens on it with the right panel on Explorer: no Overview, no
+// the next start opens on it with the right panel on Explorer and the merged
+// pull request's Inactive fold already open: no Overview, no
 // project Overview and no palette ever opens, and each page's wire carries no
 // `github_request` and no `overview_refresh` (the wire it does carry is the
 // terminal and the usage hint). Both rows still draw their lifecycle from the
@@ -21,6 +22,7 @@ import path from "node:path";
 import { startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { fixtureProgram } from "./platform-fixture";
+import { toPage } from "../../desktop/src/main/wirePath";
 import { countSent, enterWorkspace } from "./wire";
 
 test.describe.configure({ timeout: 180_000 });
@@ -109,7 +111,7 @@ function repositoryWithWorktree(herdr: HerdrFixture, name: string, branch: strin
   return execFileSync("git", ["rev-parse", "HEAD"], { cwd: worktree, encoding: "utf8" }).trim();
 }
 
-test("the sidebar draws every project's pull request with no screen asking, and a restart keeps them as stale", { tag: "@flaky", annotation: { type: "issue", description: "https://github.com/modakbul-gongbang/hide/issues/417" } }, async ({ page }) => {
+test("the sidebar draws every project's pull request with no screen asking, and a restart keeps them as stale", async ({ page }) => {
   await page.setViewportSize({ width: 1400, height: 900 });
   const herdr = await startHerdr();
   let daemon = null as Daemon | null;
@@ -136,11 +138,15 @@ test("the sidebar draws every project's pull request with no screen asking, and 
       await page.locator('[data-sidebar-mode="projects"]').click();
       return sent;
     };
-    /** A merged pull request's checkout is settled, so its row sits in the project's Inactive fold; open it once, the core keeps it open. */
+    /**
+     * A merged pull request's checkout is settled, so its row sits in the project's Inactive fold. The fold is
+     * seeded open in the state the first start reads, not clicked open: a click is a toggle sent from a page that
+     * has read `aria-expanded` and waits for the core to answer, which says nothing about the pull request glyph
+     * this flow proves. That the click sends the toggle is owned by `web/src/inactiveFold.test.tsx`, and what the
+     * core does with it by the core test in `herdr-core/src/runtime/tests/projects.rs`.
+     */
     const mergedGlyph = async () => {
-      const fold = page.locator('[data-inactive-checkouts$="/charlie"]');
-      await expect(fold).toBeVisible({ timeout: 30_000 });
-      if ((await fold.getAttribute("aria-expanded")) !== "true") await fold.click();
+      await expect(page.locator('[data-inactive-checkouts$="/charlie"]')).toHaveAttribute("aria-expanded", "true", { timeout: 30_000 });
       return glyph(43);
     };
     const nothingAsked = (sent: Map<string, number>) => {
@@ -152,7 +158,7 @@ test("the sidebar draws every project's pull request with no screen asking, and 
     daemon = await daemon.restart((stateDir) => {
       const file = path.join(stateDir, "core-state.json");
       const state = JSON.parse(fs.readFileSync(file, "utf8")) as Record<string, unknown>;
-      fs.writeFileSync(file, JSON.stringify({ ...state, right_panel_visible: true, right_panel_section: "explorer" }));
+      fs.writeFileSync(file, JSON.stringify({ ...state, right_panel_visible: true, right_panel_section: "explorer", expanded_inactive_checkout_project_paths: [toPage(path.join(herdr.root, "charlie"))] }));
     });
     let sent = await attach(daemon);
     await expect(row("feature/alpha")).toHaveAttribute("data-checkout-kind", "pr_open", { timeout: 30_000 });

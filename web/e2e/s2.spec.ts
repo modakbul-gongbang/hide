@@ -130,12 +130,21 @@ async function startFlow(page: Page): Promise<Flow> {
  */
 async function splitShell(page: Page, flow: Flow): Promise<string> {
   await expect.poll(() => screen(page), { timeout: 15_000 }).toContain("claude");
+  const focusedPane = () => page.evaluate(() => window.__hideProbe?.paneId() ?? null);
+  const paneIds = () => page.locator("[data-pane-view]").evaluateAll((views) => views.map((view) => view.getAttribute("data-pane-view")!));
+  const before = await paneIds();
   await page.keyboard.press(chord("split_right"));
   await expect(page.locator("[data-pane-view]")).toHaveCount(3);
   await expect.poll(() => flow.sent.get("create_pane")).toBe(1);
-  const shellPane = page.locator('[data-pane-view][data-focused="true"]');
+  // The split's new pane is the one the grid gained.
+  const created = (await paneIds()).filter((id) => !before.includes(id));
+  expect(created).toHaveLength(1);
+  const shellPaneId = created[0];
+  // The core publishes that pane's layout first and follows Herdr's focus onto
+  // it in the update after, so wait for exactly that pane to hold the focus.
+  await expect.poll(focusedPane).toBe(shellPaneId);
+  const shellPane = page.locator(`[data-pane-view="${shellPaneId}"]`);
   await expect(shellPane).toHaveAttribute("data-transport", /connected|controlling|idle/, { timeout: 15_000 });
-  const shellPaneId = (await shellPane.getAttribute("data-pane-view"))!;
   await expect.poll(() => screen(page), { timeout: 15_000 }).toContain("fixture %");
   // Herdr confirms a focus later than the core moves it; the next focus_pane
   // must not go out before Herdr has named the shell.
