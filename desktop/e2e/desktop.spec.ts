@@ -63,7 +63,7 @@ test("attach: the app starts hided, shows the shell, and runs the native chords 
       bridge: Object.keys(window.hideHost ?? {}).sort(),
       kind: window.hideHost?.kind,
     })),
-  ).toEqual({ require: "undefined", process: "undefined", bridge: ["browser", "kind", "onCommand", "openPath", "pickFolder", "platform", "probePaths", "reportBindings", "revealPath"], kind: "electron" });
+  ).toEqual({ require: "undefined", process: "undefined", bridge: ["browser", "kind", "onCommand", "openPath", "pickFolder", "platform", "probePaths", "reportBindings", "reportLanguage", "revealPath"], kind: "electron" });
 
   // B9: ⌘T is one create_tab here; the browser's ⌥T is not a chord in the app.
   const tabs = await page.locator("[role=tab]").count();

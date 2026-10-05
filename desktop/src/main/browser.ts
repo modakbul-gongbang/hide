@@ -18,6 +18,7 @@
 
 import { app, BrowserWindow, dialog, ipcMain, Menu, screen, session, shell, WebContentsView, type BrowserWindowConstructorOptions, type Input, type IpcMainEvent, type IpcMainInvokeEvent, type MenuItem, type Session, type WebContents, type WindowOpenHandlerResponse } from "electron";
 import path from "node:path";
+import type { TFunction } from "i18next";
 import { pathToFileURL } from "node:url";
 import type { BrowserHostEvent, BrowserPageState, BrowserPlacement } from "../../../web/src/host";
 import { hostChord, isCycleCommand, keySystemOf, matchHost, releaseModifier, systemRegistry, type Command, type CommandId } from "../../../web/src/shortcuts";
@@ -88,6 +89,8 @@ export class BrowserViews {
     private readonly release: (workspace: string, id: string, load: number) => void,
     /** Shows a popup window the way the host shows its own, so a test run never activates the app. */
     private readonly present: (window: BrowserWindow, focus: boolean) => void,
+    /** The host's translator in the language in effect now; asked for at each use, since the language can change while a page is open. */
+    private readonly words: () => TFunction<"translation">,
   ) {
     ipcMain.on(BROWSER_CYCLE_END_CHANNEL, (event, cycleId: unknown) => {
       if (!this.trusted(event)) return this.log.event("browser.ipc_refused", { channel: "cycle_end" });
@@ -307,7 +310,7 @@ export class BrowserViews {
   private load(page: Page, url: string): void {
     if (!loadable(url)) {
       this.log.event("browser.load_refused", { protocol: protocolOf(url) });
-      this.update(page, { failure: "This address cannot be shown here" });
+      this.update(page, { failure: this.words()("native.browser.addressRefused") });
       return;
     }
     const stamp = page.applied;
@@ -324,7 +327,7 @@ export class BrowserViews {
     }).catch((error: unknown) => {
       if (this.pages.get(page.key) !== page || page.applied !== stamp) return;
       this.log.event("browser.route_failed", { detail: String(error) });
-      this.update(page, { url, loading: false, failure: `Page route unavailable: ${String(error)}` });
+      this.update(page, { url, loading: false, failure: this.words()("native.browser.routeUnavailable") });
     });
   }
 
@@ -354,12 +357,13 @@ export class BrowserViews {
     contents.on("page-title-updated", (_event, title) => this.update(page, { title }));
     contents.on("did-fail-load", (_event, code, description, url, isMainFrame) => {
       if (!isMainFrame || code === ERR_ABORTED) return;
-      this.update(page, { url: this.sourceAddress(page, url), loading: false, failure: description || `Load failed (${code})` });
+      this.log.event("browser.load_failed", { code, description });
+      this.update(page, { url: this.sourceAddress(page, url), loading: false, failure: this.words()("native.browser.loadFailed", { code }) });
     });
     contents.on("render-process-gone", (_event, details) => {
       if (this.cycleInput?.page === page) this.cancelCycle();
       this.log.event("browser.page_gone", { reason: details.reason });
-      this.update(page, { loading: false, failure: `The page stopped (${details.reason})` });
+      this.update(page, { loading: false, failure: this.words()("native.browser.stopped") });
     });
     contents.on("focus", () => {
       if (page.visible) this.emit({ kind: "focus", workspace: page.workspace, id: page.id });
@@ -502,6 +506,7 @@ export class BrowserViews {
     if (this.asking) return refuse("asking");
     const sheet = BrowserWindow.fromWebContents(contents) ?? this.window;
     if (!sheet || sheet.isDestroyed()) return refuse("no_window");
+    const t = this.words();
     const question = Symbol("app link");
     this.asking = question;
     // A popup that closes under its question never answers it; its window closing does.
@@ -509,9 +514,9 @@ export class BrowserViews {
     sheet.once("closed", release);
     const options = {
       type: "question" as const,
-      message: `Open ${name}?`,
-      detail: `${requester(requestingUrl ?? this.sourceAddress(page, contents.getURL()))} wants to open this link in ${name}.\n\n${shorten(url)}`,
-      buttons: [`Open ${name}`, "Cancel"],
+      message: t("native.browser.openApp", { name }),
+      detail: t("native.browser.appLinkDetail", { origin: requester(requestingUrl ?? this.sourceAddress(page, contents.getURL()), t), name, url: shorten(url) }),
+      buttons: [t("native.browser.openAppButton", { name }), t("common.cancel")],
       defaultId: 1,
       cancelId: 1,
       noLink: true,
@@ -648,12 +653,12 @@ function shorten(url: string): string {
 }
 
 /** Who is asking, as the origin the operator would recognize, or a page with none. */
-function requester(url: string): string {
+function requester(url: string, t: TFunction<"translation">): string {
   try {
     const origin = new URL(url).origin;
     if (origin !== "null") return origin;
   } catch { /* falls through */ }
-  return "This page";
+  return t("native.browser.thisPage");
 }
 
 function protocolOf(url: string): string {
