@@ -298,7 +298,9 @@ export async function shellPage(app: ElectronApplication): Promise<Page> {
  * waits for the window's `focus` event, and only then focuses the shell and
  * the page: a page already holding native focus announces nothing when
  * focused again, so the shell takes it first and the page enters as an
- * operator's click would. Throws when the page does not take it.
+ * operator's click would. Throws when the page does not take it. The caller
+ * waits for the host to show the page first: a page focused while its view
+ * is hidden does not keep the keyboard once shown.
  */
 export async function focusPage(app: ElectronApplication, page: { url: string } | { title: string }): Promise<void> {
   await app.evaluate(async ({ app: electron, BrowserWindow }, page) => {
