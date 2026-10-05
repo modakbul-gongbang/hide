@@ -5,6 +5,9 @@
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 
+use self::generated::{
+    error_response as err, event as ev, request as req, success_response as res,
+};
 use crate::live::SessionFetchError;
 use crate::model::PaneLayoutDirection;
 use crate::recent_closed::{ClosedLayout, ClosedLayoutNode, ClosedSplitDirection};
@@ -17,9 +20,33 @@ use crate::sidebar::{
     SessionLayoutSplitPayload,
 };
 use hide_herdr_client::HERDR_PROTOCOL_REVISION;
-use hide_herdr_client::wire::{
-    error_response as err, event as ev, request as req, success_response as res,
-};
+
+/// The types generated from the pinned contract (`build.rs`). The module is
+/// private, so this file is the only place in the crate that can name them:
+/// anything else that imports one fails to compile.
+#[allow(
+    dead_code,
+    clippy::derivable_impls,
+    clippy::enum_variant_names,
+    clippy::large_enum_variant
+)]
+mod generated {
+    pub mod request {
+        include!(concat!(env!("OUT_DIR"), "/herdr_request.rs"));
+    }
+    pub mod success_response {
+        include!(concat!(env!("OUT_DIR"), "/herdr_success_response.rs"));
+    }
+    pub mod event {
+        include!(concat!(env!("OUT_DIR"), "/herdr_event.rs"));
+    }
+    pub mod subscription_event {
+        include!(concat!(env!("OUT_DIR"), "/herdr_subscription_event.rs"));
+    }
+    pub mod error_response {
+        include!(concat!(env!("OUT_DIR"), "/herdr_error_response.rs"));
+    }
+}
 
 pub(crate) fn protocol_mismatch(
     received_protocol: u64,
@@ -1608,6 +1635,89 @@ pub(crate) fn pane_text(value: Value) -> Result<crate::live::PaneText, String> {
         _ => Err("pane.read returned no read section".into()),
     }
 }
+/// The `events.subscribe` parameter object for the given filter kinds, checked
+/// against the contract. A kind the pinned schema does not know, or one that
+/// needs a pane id, is refused here rather than by Herdr.
+pub(crate) fn subscription_params(kinds: &[&str]) -> Result<Value, String> {
+    let subscriptions = kinds
+        .iter()
+        .map(|kind| {
+            serde_json::from_value::<req::Subscription>(json!({"type": kind}))
+                .map_err(|error| format!("invalid event subscription: {error}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    params(req::EventsSubscribeParams { subscriptions })
+}
+
+// What `hided`'s phone routes need from Herdr: the only items of this module
+// that are public, and the way a crate other than this one reaches the
+// generated types. Each takes and returns plain values.
+
+/// The recent rows of one pane, with escape sequences kept.
+pub fn pane_rows_params(pane_id: &str, lines: u32) -> Result<Value, String> {
+    params(req::PaneReadParams {
+        pane_id: pane_id.into(),
+        source: req::ReadSource::Recent,
+        lines: Some(lines),
+        format: req::ReadFormat::Ansi,
+        strip_ansi: false,
+    })
+}
+
+/// A `pane.read` answer, as the rows and whether Herdr cut them.
+pub fn pane_rows(value: Value) -> Result<(String, bool), String> {
+    pane_text(value).map(|read| (read.text, read.truncated))
+}
+
+/// A reply typed into a pane and submitted with Enter.
+pub fn pane_reply_params(pane_id: &str, text: &str) -> Result<Value, String> {
+    delivery_input_params(pane_id, text)
+}
+
+/// One Herdr key-combo string sent to a pane.
+pub fn pane_key_params(pane_id: &str, key: &str) -> Result<Value, String> {
+    params(req::PaneSendInputParams {
+        pane_id: pane_id.into(),
+        text: None,
+        keys: vec![key.into()],
+    })
+}
+
+/// How a pane's agent session is named: by id, or by the path of its file.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum PaneSessionKind {
+    Id,
+    Path,
+}
+
+/// The session Herdr reports for a pane's agent.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct PaneSession {
+    pub agent: String,
+    pub kind: PaneSessionKind,
+    pub value: String,
+}
+
+/// A `pane.get` answer, as the pane's folder and its agent session if any.
+pub fn pane_session(value: Value) -> Result<(Option<String>, Option<PaneSession>), String> {
+    let result: res::ResponseResult = serde_json::from_value(value)
+        .map_err(|error| format!("pane.get response is malformed: {error}"))?;
+    match result {
+        res::ResponseResult::PaneInfo { pane } => Ok((
+            pane.cwd,
+            pane.agent_session.map(|session| PaneSession {
+                agent: session.agent,
+                kind: match session.kind {
+                    res::AgentSessionRefKind::Id => PaneSessionKind::Id,
+                    res::AgentSessionRefKind::Path => PaneSessionKind::Path,
+                },
+                value: session.value,
+            }),
+        )),
+        _ => Err("pane.get returned no pane".into()),
+    }
+}
+
 pub(crate) fn live_session_response(
     value: Value,
 ) -> Result<crate::sidebar::SessionSnapshotPayload, SessionFetchError> {
@@ -2109,10 +2219,11 @@ mod tests {
     #[test]
     fn generated_subscriptions_keep_the_filter_shape() {
         assert_eq!(
-            hide_herdr_client::subscription_params(&["workspace.created", "pane.focused"]).unwrap(),
+            subscription_params(&["workspace.created", "pane.focused"]).unwrap(),
             json!({"subscriptions": [{"type": "workspace.created"}, {"type": "pane.focused"}]})
         );
-        assert!(hide_herdr_client::subscription_params(&["not.a.subscription"]).is_err());
+        assert!(subscription_params(&["not.a.subscription"]).is_err());
+        assert!(subscription_params(&["pane.agent_status_changed"]).is_err());
     }
 
     #[test]
