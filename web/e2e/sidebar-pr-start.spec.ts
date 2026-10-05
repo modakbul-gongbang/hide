@@ -105,7 +105,7 @@ function repositoryWithWorktree(herdr: HerdrFixture, name: string, branch: strin
   return execFileSync("git", ["rev-parse", "HEAD"], { cwd: worktree, encoding: "utf8" }).trim();
 }
 
-test("the sidebar draws every project's pull request with no screen asking, and a restart keeps them as stale", async ({ page }) => {
+test("the sidebar draws every project's pull request with no screen asking, and a restart keeps them as stale", { tag: "@flaky", annotation: { type: "issue", description: "https://github.com/modakbul-gongbang/hide/issues/417" } }, async ({ page }) => {
   await page.setViewportSize({ width: 1400, height: 900 });
   const herdr = await startHerdr();
   let daemon = null as Daemon | null;
