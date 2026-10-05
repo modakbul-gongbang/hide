@@ -971,8 +971,17 @@ export function createActions(send: DispatchFn) {
     },
 
     /** Reinstall on a machine's row repairs every part that needs it; a hook row names its one part. */
-    reinstallKit(deviceId: string, components?: KitComponentId[]) {
-      dispatch({ schema_version: 2, kind: "kit_reinstall", payload: components ? { device_id: deviceId, components } : { device_id: deviceId } });
+    reinstallKit(deviceId: string, components?: KitComponentId[], agents?: string[]) {
+      dispatch({
+        schema_version: 2,
+        kind: "kit_reinstall",
+        payload: { device_id: deviceId, ...(components ? { components } : {}), ...(agents ? { agents } : {}) },
+      });
+    },
+
+    /** An agent's switch on its machine's row (agent adapters): its skill and hook go in or come out. */
+    setKitAgent(deviceId: string, agent: string, enabled: boolean) {
+      dispatch({ schema_version: 2, kind: "kit_agent_set", payload: { device_id: deviceId, agent, enabled } });
     },
 
     /** A switchable kit part's switch on its machine's row (PRD overview-request-view D-24). */

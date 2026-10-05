@@ -14,7 +14,10 @@ import {
   kitRemovalLine as kitRemovalLineIn,
   herdrLine as herdrLineIn,
   hostLine as hostLineIn,
-  kitHookMachines,
+  kitAgentLine as kitAgentLineIn,
+  kitAgentMachines,
+  kitAgentNeedsReinstall,
+  kitAgentSwitch,
   kitPartLine as kitPartLineIn,
   kitPartNeedsReinstall,
   kitPartSwitch,
@@ -28,7 +31,7 @@ import {
   usableFontSize,
   unstoredDeviceDrafts,
 } from "./settings";
-import type { AiProvider, Device, DeviceHost, KitComponent, RemoteStatus } from "./snapshot";
+import type { AiProvider, Device, DeviceHost, KitAgent, KitComponent, RemoteStatus } from "./snapshot";
 
 // The English strings are what the sheet shipped with; the rules read the same under them.
 const t = initializeInterfaceI18n("en").getFixedT(null, "translation");
@@ -43,6 +46,7 @@ const kitRemovalLine = (device: Device) => kitRemovalLineIn(device, t);
 const herdrLine = (herdr: Parameters<typeof herdrLineIn>[0]) => herdrLineIn(herdr, t);
 const hostLine = (host: DeviceHost | undefined) => hostLineIn(host, t);
 const kitPartLine = (part: KitComponent) => kitPartLineIn(part, t);
+const kitAgentLine = (agent: KitAgent) => kitAgentLineIn(agent, t);
 const socketProblem = (path: string) => socketProblemIn(path, t);
 
 const device = (patch: Partial<Device>): Device => ({
@@ -250,7 +254,9 @@ describe("unstoredDeviceDrafts (S5.5 B26, B44)", () => {
 
 describe("the install kit rows (PRD device-parity B7, B8, B27)", () => {
   const part = (id: KitComponent["id"], state: KitComponent["state"]): KitComponent => ({ id, label: id, state, reason: null, location: null });
-  const kit = (components: KitComponent[], unavailable: string | null = null) => ({ unavailable, busy: false, components, offers_reinstall: false, shares_account_with: null });
+  const kit = (components: KitComponent[], unavailable: string | null = null, agents: KitAgent[] = []) => ({ unavailable, busy: false, components, agents, offers_reinstall: false, shares_account_with: null });
+  const piece = (state: KitComponent["state"], reason: string | null = null) => ({ state, reason, location: null });
+  const agent = (id: string, patch: Partial<KitAgent> = {}): KitAgent => ({ id, label: id, availability: "available", enabled: true, skill: piece("installed"), hook: null, doc_url: "https://example.test", ...patch });
 
   it("offers Reinstall only for a part a reinstall would change", () => {
     const offered = (["installed", "outdated", "not_installed", "removed", "failed", "absent", "off"] as const).filter((state) => kitPartNeedsReinstall(part("cli", state)));
@@ -268,15 +274,32 @@ describe("the install kit rows (PRD device-parity B7, B8, B27)", () => {
     expect(kitPartLine(part("codex_per_pane", "off"))).toEqual({ text: "Off", tone: "muted" });
   });
 
-  it("lists This Mac first and then each device, with only their hook parts", () => {
-    const local = device({ id: "local", label: "mini", kind: "local", state: "ready", ssh_alias: null, kit: kit([part("cli", "installed"), part("claude_code_hook", "installed"), part("codex_hook", "absent")]) });
+  it("lists This Mac first and then each device, with the agents that are set up and the labels of the rest", () => {
+    const set = [agent("codex", { hook: piece("installed") }), agent("gemini-cli", { enabled: false, skill: piece("off") }), agent("cursor", { availability: "not_installed", enabled: false, skill: piece("off") })];
+    const local = device({ id: "local", label: "mini", kind: "local", state: "ready", ssh_alias: null, kit: kit([part("cli", "installed")], null, set) });
     const studio = device({ kit: kit([], "Allow the helper to install Hide on Studio") });
     const unchecked = device({ id: "box", label: "Box" });
-    const machines = kitHookMachines([local, studio, unchecked]);
+    const machines = kitAgentMachines([local, studio, unchecked]);
     expect(machines.map((machine) => machine.device.id)).toEqual(["local", "studio", "box"]);
-    expect(machines[0]?.parts.map((row) => row.id)).toEqual(["claude_code_hook", "codex_hook"]);
-    expect(machines[1]).toMatchObject({ parts: [], unavailable: "Allow the helper to install Hide on Studio" });
-    expect(machines[2]).toMatchObject({ parts: [], unavailable: null });
+    expect(machines[0]?.setUp.map((row) => row.id)).toEqual(["codex", "gemini-cli"]);
+    expect(machines[0]?.others).toEqual(["cursor"]);
+    expect(machines[1]).toMatchObject({ setUp: [], others: [], unavailable: "Allow the helper to install Hide on Studio" });
+    expect(machines[2]).toMatchObject({ setUp: [], unavailable: null });
+  });
+
+  it("words an agent by its switch and its worst piece, and switches only what can be switched (issue #517)", () => {
+    expect(kitAgentLine(agent("a", { enabled: false, skill: piece("off") }))).toEqual({ text: "Off", tone: "muted", reason: null });
+    expect(kitAgentLine(agent("a"))).toEqual({ text: "Installed", tone: "ok", reason: null });
+    expect(kitAgentLine(agent("a", { hook: piece("failed", "needs 3.0.0") }))).toEqual({ text: "Failed", tone: "error", reason: "needs 3.0.0" });
+    expect(kitAgentLine(agent("a", { skill: piece("removed"), hook: piece("outdated") })).text).toBe("Removed");
+    expect(kitAgentSwitch(agent("a"))).toEqual({ on: true });
+    expect(kitAgentSwitch(agent("a", { enabled: false }))).toEqual({ on: false });
+    expect(kitAgentSwitch(agent("a", { availability: "not_installed", enabled: false }))).toBeNull();
+    // An agent that is on keeps its switch even where it can no longer be set up.
+    expect(kitAgentSwitch(agent("a", { availability: "not_installed" }))).toEqual({ on: true });
+    expect(kitAgentNeedsReinstall(agent("a", { hook: piece("removed") }))).toBe(true);
+    expect(kitAgentNeedsReinstall(agent("a", { enabled: false, skill: piece("removed") }))).toBe(false);
+    expect(kitAgentNeedsReinstall(agent("a"))).toBe(false);
   });
 
   it("says in one line what removing a device takes off it and what stays (B22, B24)", () => {
@@ -299,7 +322,7 @@ describe("in Korean", () => {
     expect(SLEEP_AFTER_CHOICES.map((choice) => sleepAfterLabel(choice, korean))).toEqual(["절전 안 함", "12시간", "24시간", "3일"]);
     expect(shownIn(undefined, korean)).toBe("사용할 수 없음");
     expect(shownIn("/state", korean)).toBe("/state");
-    expect(kitPartLineIn({ id: "cli", label: "cli", state: "installed", reason: null, location: null }, korean).text).toBe("설치됨");
+    expect(kitPartLineIn({ state: "installed" }, korean).text).toBe("설치됨");
   });
 });
 
