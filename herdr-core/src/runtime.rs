@@ -11,6 +11,7 @@ mod agent_sleep;
 mod agents;
 mod attachments;
 mod clone;
+mod control_lane;
 pub(crate) mod delivery;
 mod device_catalog;
 mod devices;
@@ -45,6 +46,8 @@ pub use snapshot_delta::serialize_snapshot_delta;
 
 use agent_areas::AgentLayoutPayload;
 use agent_sleep::{AgentSleepSetPayload, AgentWakePayload};
+use control_lane::ControlLane;
+pub(crate) use control_lane::LaneStart;
 use events::*;
 use operations::*;
 use view_areas::{BrowserOpenPayload, BrowserStatePayload, ViewLayoutPayload};
@@ -249,7 +252,7 @@ struct PendingTabMove {
 /// The Herdr that carries a tab move: this machine's, or the device whose
 /// checkout the moved tab is in.
 enum TabMoveCarrier {
-    Local(LiveContext),
+    Local,
     Device(RemoteControlContext),
 }
 
@@ -389,6 +392,10 @@ struct PendingViewFocus {
     request_id: Option<String>,
     /// Local pane controls settle by operation identity, never by target alone.
     pane_control_serial: Option<u64>,
+    /// Whether the request has left for Herdr. A request still waiting its
+    /// turn on the control lane cannot be answered, so replacing it leaves no
+    /// late answer to explain, and its wait does not run out.
+    sent: bool,
     requested_at_unix_ms: u64,
 }
 
@@ -399,8 +406,16 @@ impl PendingViewFocus {
             target_id: target_id.into(),
             request_id: None,
             pane_control_serial: None,
+            sent: false,
             requested_at_unix_ms: unix_milliseconds(),
         }
+    }
+
+    /// A request whose control has already been sent: a tab Hide created is
+    /// focused by Herdr as part of the creation itself.
+    fn already_sent(mut self) -> Self {
+        self.sent = true;
+        self
     }
 
     fn pane_request(target_id: impl Into<String>, request_id: String) -> Self {
@@ -409,12 +424,15 @@ impl PendingViewFocus {
             target_id: target_id.into(),
             request_id: Some(request_id),
             pane_control_serial: None,
+            sent: false,
             requested_at_unix_ms: unix_milliseconds(),
         }
     }
 
     fn expired_at(&self, now_unix_ms: u64) -> bool {
-        now_unix_ms.saturating_sub(self.requested_at_unix_ms) >= VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS
+        self.sent
+            && now_unix_ms.saturating_sub(self.requested_at_unix_ms)
+                >= VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS
     }
 }
 
@@ -1260,6 +1278,11 @@ pub struct Runtime {
     /// the focus, never the topology that arrived with it.
     pane_focus_readback: Option<PendingPaneFocusControl>,
     next_pane_focus_serial: u64,
+    /// The one ordered lane the local tab and pane focus controls travel on.
+    control_lane: ControlLane,
+    /// The lane serial of the newest focus the operator asked for. A tab Hide
+    /// creates takes the screen only when no focus was asked for after it.
+    last_view_intent_serial: u64,
     /// The tabs Herdr most recently reported active in their own workspaces.
     /// A pane layout remembers a focused pane even while its tab is hidden,
     /// so the layout alone cannot confirm a pane-focus request.
@@ -1756,6 +1779,8 @@ impl Runtime {
             pending_pane_focus: None,
             pane_focus_in_flight: None,
             pane_focus_readback: None,
+            control_lane: ControlLane::default(),
+            last_view_intent_serial: 0,
             next_pane_focus_serial: 0,
             herdr_active_tab_ids: BTreeSet::new(),
             pet_unseen_observed: std::collections::BTreeMap::new(),

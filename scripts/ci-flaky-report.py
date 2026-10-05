@@ -128,9 +128,12 @@ def comment(test, system, facts, expired):
 
 
 def gh(args, body=None):
-    done = subprocess.run(
-        ["gh", "api", *args], input=None if body is None else json.dumps(body), capture_output=True, text=True,
-    )
+    try:
+        done = subprocess.run(
+            ["gh", "api", *args], input=None if body is None else json.dumps(body), capture_output=True, text=True,
+        )
+    except OSError as error:
+        raise RuntimeError(f"gh could not run: {error}") from error
     if done.returncode:
         raise RuntimeError(f"gh api {' '.join(args)}: {done.stderr.strip()}")
     return json.loads(done.stdout) if done.stdout.strip() else None
@@ -149,21 +152,31 @@ def report(tests, system, env, call=gh, today=None):
     if len(tests) > MAX_PER_RUN:
         print(f"::warning::{len(tests)} flaky tests in one run; filing the first {MAX_PER_RUN}")
     issues = open_issues(repo, call)
+    lines = [f"### Flaky tests ({system})", ""]
     for test in tests[:MAX_PER_RUN]:
         issue = next((item for item in issues if tracks(item, test)), None)
         if issue is None:
             created = call([f"repos/{repo}/issues", "--input", "-"], new_issue(test, system, facts, today))
             issues.append({**created, "body": created.get("body") or new_issue(test, system, facts, today)["body"]})
             print(f"filed {created['html_url']} for {test['name']}")
+            lines.append(f"- filed {created['html_url']}: {label_of(test)}")
             continue
         number = issue["number"]
         comments = call([f"repos/{repo}/issues/{number}/comments?per_page=100"])
+        lines.append(f"- #{number}: {label_of(test)}")
         if any(facts["marker"] in (item.get("body") or "") for item in comments):
             continue
         match = re.search(r"^- Expires: (\d{4}-\d\d-\d\d)", issue.get("body") or "", re.M)
         expired = bool(match) and date.fromisoformat(match.group(1)) < today
         call([f"repos/{repo}/issues/{number}/comments", "--input", "-"], {"body": comment(test, system, facts, expired)})
         print(f"added the run to #{number} for {test['name']}")
+    summary(lines)
+
+
+def summary(lines):
+    if os.environ.get("GITHUB_STEP_SUMMARY"):
+        with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as output:
+            output.write("\n".join(lines) + "\n")
 
 
 def main(argv=None):
@@ -171,21 +184,29 @@ def main(argv=None):
     parser.add_argument("--suite", required=True, choices=("web", "desktop", "rust"))
     source = parser.add_mutually_exclusive_group(required=True)
     source.add_argument("--playwright", type=Path, help="a Playwright JSON report")
-    source.add_argument("--junit", type=Path, help="a cargo-nextest JUnit report")
+    source.add_argument("--junit", type=Path, nargs="+", help="cargo-nextest JUnit reports (a lane writes one per nextest run)")
     parser.add_argument("--system", default=os.environ.get("RUNNER_OS", "unknown"))
     args = parser.parse_args(argv)
-    path = args.playwright or args.junit
-    if not path.is_file():
-        print(f"no report at {path}; nothing to file")
+    paths = [args.playwright] if args.playwright else args.junit
+    paths = [path for path in paths if path.is_file()]
+    if not paths:
+        print("no report; nothing to file")
         return 0
-    tests = playwright_flaky(json.loads(path.read_text(encoding="utf-8")), args.suite) if args.playwright else nextest_flaky(ET.parse(path).getroot())
+    if args.playwright:
+        tests = playwright_flaky(json.loads(paths[0].read_text(encoding="utf-8")), args.suite)
+    else:
+        tests = [test for path in paths for test in nextest_flaky(ET.parse(path).getroot())]
     if not tests:
         print("no flaky test in this run")
         return 0
     try:
         report(tests, args.system, os.environ)
     except (RuntimeError, KeyError, ValueError) as error:
+        # The lane has passed and stays passed, so the unfiled tests go where a
+        # reader of the run sees them: the annotation and the job summary.
         print(f"::warning::the flaky report failed, so {len(tests)} flaky test(s) are not filed: {error}")
+        summary(["### Flaky tests that were not filed", "", f"Filing failed: {error}", ""]
+                + [f"- {label_of(test)} ({args.system})" for test in tests])
         return 1
     return 0
 

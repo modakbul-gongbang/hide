@@ -4,6 +4,7 @@ import fs from "node:fs";
 import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { enterWorkspace, screenshot, showExplorer } from "./wire";
+import { toPage } from "../../desktop/src/main/wirePath";
 
 test.describe.configure({ timeout: 180_000 });
 
@@ -163,7 +164,7 @@ test("File View tabs use the same shrinking strip and transfer the longest title
     await enterWorkspace(page, "fixture");
     await showExplorer(page);
     const tabs = page.locator("[data-view-tab-bar] [role=tab]");
-    for (const name of names) await page.locator(`[data-explorer-row="${root}/${name}"]`).dblclick();
+    for (const name of names) await page.locator(`[data-explorer-row="${toPage(root)}/${name}"]`).dblclick();
     await expect(tabs).toHaveCount(names.length);
     const stages = new Set<Fit>();
     for (const width of [2400, 2200, 2000, 1900, 1800, 1700, 1600, 1500, 1400, 1300, 1200]) {

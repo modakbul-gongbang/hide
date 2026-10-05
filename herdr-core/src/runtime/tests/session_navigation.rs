@@ -570,7 +570,7 @@ pub(super) fn finish_running_pane_focus(runtime: &mut Runtime, result: Result<()
             layout
         })
         .map_err(|message| live::ControlFailure::Definite(message.to_owned()));
-    runtime.ingest_pane_focus_completion(control, result, 8);
+    runtime.complete_lane_pane_focus(control, result, 8);
 }
 
 /// PRD B24. A relationship Open is completed only by the outcome carrying
@@ -1076,8 +1076,22 @@ fn view_authority_a_superseded_switch_stops_claiming_its_tab_when_capped_expired
             .collect::<Vec<_>>()
     };
 
-    for tab in &tabs[..=SUPERSEDED_TAB_FOCUS_LIMIT + 1] {
+    // Each request is sent before the next replaces it, which is what leaves
+    // an answer of its own on its way.
+    for (index, tab) in tabs[..=SUPERSEDED_TAB_FOCUS_LIMIT + 1].iter().enumerate() {
         assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, tab)));
+        if index > 0 {
+            runtime.complete_lane_tab(
+                RemoteControlAction::FocusTab {
+                    tab_id: tabs[index - 1].to_owned(),
+                },
+                Ok(RemoteControlOutcome::Acknowledged {
+                    created_tab_id: None,
+                    created_pane_id: None,
+                }),
+                3,
+            );
+        }
     }
     assert_eq!(superseded(&runtime).len(), SUPERSEDED_TAB_FOCUS_LIMIT);
     assert!(!superseded(&runtime).contains(&"w-order:t1".to_owned()));
@@ -1829,11 +1843,11 @@ fn superseded_same_pane_focus_failure_cannot_fail_a_newer_correlated_request() {
     assert_eq!(request.request_id, "latest");
     assert_eq!(request.phase, "pending");
     assert!(runtime.snapshot().status.last_error.is_none());
-    assert!(
-        !runtime
-            .ingest_pane_focus_completion(first, Err("late duplicate".to_owned().into()), 9)
-            .0
-    );
+    assert!(!runtime.ingest_pane_focus_completion(
+        first,
+        Err("late duplicate".to_owned().into()),
+        9
+    ));
     finish_running_pane_focus(&mut runtime, Ok(()));
     assert_eq!(
         runtime
@@ -1855,7 +1869,7 @@ fn unknown_pane_focus_ends_the_automatic_burst_without_claiming_success() {
     runtime.dispatch_json(&operator_focus_event("w1:p2"));
     let first = runtime.pane_focus_in_flight.clone().unwrap();
     runtime.dispatch_json(&correlated_pane_focus_event("w1:p1", "latest"));
-    let (changed, successor) = runtime.ingest_pane_focus_completion(
+    let (changed, successor) = runtime.complete_lane_pane_focus(
         first,
         Err(live::ControlFailure::Ambiguous(
             "pane.focus result is unknown: response timed out".into(),
@@ -2457,18 +2471,24 @@ fn tab_strip_reorder_a_refused_drag_can_simply_be_dragged_again() {
         1
     ));
     let generation = runtime.pending_tab_move[&checkout_id].generation;
-    assert!(runtime.ingest_local_control_result(
-        RemoteControlAction::MoveTab {
-            checkout_id: checkout_id.clone(),
-            tab_id: "w-order:t1".to_owned(),
-            insert_index: 2,
-            expected_order: vec!["w-order:t2".to_owned(), "w-order:t1".to_owned()],
-            generation,
-            connection_generation: 0,
-        },
-        Err("tab.move failed: tab_not_found: tab w-order:t1 not found".to_owned()),
-        4,
-    ));
+    assert!(
+        runtime
+            .complete_lane_tab(
+                RemoteControlAction::MoveTab {
+                    checkout_id: checkout_id.clone(),
+                    tab_id: "w-order:t1".to_owned(),
+                    insert_index: 2,
+                    expected_order: vec!["w-order:t2".to_owned(), "w-order:t1".to_owned()],
+                    generation,
+                    connection_generation: 0,
+                },
+                Err(live::ControlFailure::Definite(
+                    "tab.move failed: tab_not_found: tab w-order:t1 not found".to_owned()
+                )),
+                4,
+            )
+            .0
+    );
     assert_eq!(strip_ids(&runtime, &checkout_id), before);
     assert!(runtime.pending_tab_move.is_empty());
     assert_eq!(

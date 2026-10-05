@@ -10,6 +10,7 @@ import { startHerdr } from "./herdr-fixture";
 import { startHided } from "./hided-fixture";
 import { countSent, registerFolder, screenshot, showExplorer, showTool } from "./wire";
 import { chord } from "./chords";
+import { toPage } from "../../desktop/src/main/wirePath";
 
 test.describe.configure({ timeout: 90_000 });
 
@@ -72,7 +73,7 @@ test("History opens a scoped patch, then updates after editing the original file
     await expect(page.locator('[data-tool="changes"]')).toBeVisible();
     await showExplorer(page);
 
-    const fileRow = page.locator(`[data-explorer-row="${file}"]`);
+    const fileRow = page.locator(`[data-explorer-row="${toPage(file)}"]`);
     await expect(fileRow).toBeVisible();
     await fileRow.click();
     const content = page.locator('[data-editor-codemirror] .cm-content');
@@ -134,7 +135,7 @@ test("registered subfolder History opens inside patches and hides sibling change
     await project.locator("[data-checkout]").first().click();
     await showTool(page, "changes");
     const history = page.locator('[data-history-root]');
-    await expect(history).toHaveAttribute("data-history-root", registered);
+    await expect(history).toHaveAttribute("data-history-root", toPage(registered));
     await expect(page.locator('[data-history-path="inside.txt"]')).toBeVisible();
     await expect(page.locator('[data-history-path="branch.txt"]')).toBeVisible();
     await expect(page.locator('[data-history-path="outside.txt"]')).toHaveCount(0);

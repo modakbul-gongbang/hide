@@ -1,119 +1,12 @@
 import { expect, test, type CDPSession, type Page } from "@playwright/test";
 import fs from "node:fs";
-import net from "node:net";
-import path from "node:path";
-import { herdrHasFocus, startHerdr, type HerdrFixture } from "./herdr-fixture";
+import { herdrGate } from "./herdr-gate";
+import { herdrHasFocus, startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { localEndpoint } from "./platform-fixture";
 import { enterWorkspace, screenshot } from "./wire";
 
-/** Holds one request at the real socket boundary, released by the test's
- * completed user-click burst. Every response still comes from pinned Herdr. */
-async function focusGate(herdr: HerdrFixture) {
-  const socket = path.join(herdr.root, "focus.sock");
-  const clientSocket = socket.replace(/\.sock$/, "-client.sock");
-  const peers = new Set<net.Socket>();
-  const requests: string[] = [];
-  let armed = false;
-  let active = 0;
-  let maximum = 0;
-  let release: (() => Promise<void>) | undefined;
-  let held: (() => void) | undefined;
-  const server = net.createServer((client) => {
-    peers.add(client);
-    client.on("close", () => peers.delete(client));
-    client.on("error", () => client.destroy());
-    let buffer = Buffer.alloc(0);
-    const first = (chunk: Buffer) => {
-      buffer = Buffer.concat([buffer, chunk]);
-      const end = buffer.indexOf(10);
-      if (end < 0) return;
-      client.off("data", first);
-      const request = JSON.parse(buffer.subarray(0, end).toString()) as {
-        method: string; params: { pane_id?: string };
-      };
-      const focus = request.method === "pane.focus";
-      if (focus) {
-        requests.push(request.params.pane_id!);
-        maximum = Math.max(maximum, ++active);
-      }
-      const forward = (received?: () => void, failed?: (error: Error) => void) => {
-        const upstream = net.connect(localEndpoint(herdr.socket), () => upstream.write(buffer));
-        peers.add(upstream);
-        upstream.on("close", () => peers.delete(upstream));
-        upstream.on("error", (error) => { client.destroy(); failed?.(error); });
-        client.on("close", () => upstream.destroy());
-        upstream.once("data", () => {
-          if (focus) active -= 1;
-          received?.();
-          if (client.destroyed) upstream.destroy();
-        });
-        if (!client.destroyed) client.pipe(upstream).pipe(client);
-      };
-      if (focus && armed) {
-        armed = false;
-        release = () => new Promise<void>((resolve, reject) => forward(resolve, reject));
-        held?.();
-      } else forward();
-    };
-    client.on("data", first);
-  });
-  server.maxConnections = 64;
-  const listeners = [server];
-  const markers: string[] = [];
-  const listen = (listener: net.Server, address: string) => new Promise<void>((resolve, reject) => {
-    listener.once("error", reject);
-    listener.listen(localEndpoint(address), resolve);
-  });
-  const stop = async () => {
-    for (const peer of peers) peer.destroy();
-    await Promise.all(listeners.map((listener) => new Promise<void>((resolve) => listener.close(() => resolve()))));
-    for (const marker of markers) fs.rmSync(marker, { force: true });
-  };
-  try {
-    // Herdr's terminal CLI uses the separate client socket, not JSON control.
-    if (process.platform === "win32") {
-      // HERDR_SOCKET_PATH takes precedence over a client-only override.
-      // Forward the CLI's derived endpoint as bytes, without JSON gating.
-      const clientServer = net.createServer((client) => {
-        const upstream = net.connect(localEndpoint(herdr.socket.replace(/\.sock$/, "-client.sock")));
-        for (const peer of [client, upstream]) {
-          peers.add(peer);
-          peer.on("close", () => { peers.delete(peer); client.destroy(); upstream.destroy(); });
-          peer.on("error", () => { client.destroy(); upstream.destroy(); });
-        }
-        client.pipe(upstream).pipe(client);
-      });
-      clientServer.maxConnections = 64;
-      listeners.push(clientServer);
-      await listen(clientServer, clientSocket);
-    } else {
-      fs.symlinkSync(herdr.socket.replace(/\.sock$/, "-client.sock"), clientSocket);
-    }
-    await listen(server, socket);
-    if (process.platform === "win32") {
-      // The core checks these marker paths before connecting to the pipes.
-      for (const marker of [socket, clientSocket]) {
-        fs.writeFileSync(marker, `${process.pid}:${Date.now()}`, { flag: "wx" });
-        markers.push(marker);
-      }
-    }
-  } catch (error) {
-    await stop();
-    throw error;
-  }
-  return {
-    socket, requests,
-    maximum: () => maximum,
-    arm: () => {
-      armed = true;
-      requests.length = 0;
-      return new Promise<void>((resolve) => { held = resolve; });
-    },
-    release: async () => { const forward = release; release = undefined; await forward?.(); },
-    stop,
-  };
-}
+/** The pane ids Herdr was asked to focus since the gate was armed, in order. */
+const focused = (gate: Awaited<ReturnType<typeof herdrGate>>) => gate.params("pane.focus").map((params) => params.pane_id);
 
 type Diagnostic = { kind: string; message: string; occurred_at: number };
 
@@ -189,10 +82,10 @@ test("rapid pane clicks coalesce behind one request and leave keys on the last p
   const mark = (stage: string) => { stages.push({ stage, at: Date.now() }); };
   let firstFocusAt: number | undefined;
   let mouseSession: CDPSession | undefined;
-  let gate: Awaited<ReturnType<typeof focusGate>> | undefined;
+  let gate: Awaited<ReturnType<typeof herdrGate>> | undefined;
   let daemon: Daemon | undefined;
   try {
-    gate = await focusGate(herdr);
+    gate = await herdrGate(herdr);
     daemon = await startHided({ ...herdr, socket: gate.socket }, "focus-ordering");
     const diagnostics = observeDiagnostics(page);
     await page.goto(`${daemon.origin}/?probe=1#token=${daemon.token}`);
@@ -252,7 +145,7 @@ test("rapid pane clicks coalesce behind one request and leave keys on the last p
     };
 
     mark("gate.arm");
-    const held = gate.arm();
+    const held = gate.arm("pane.focus");
     mark("first.click.before");
     await click(1);
     mark("first.click.after");
@@ -277,7 +170,7 @@ test("rapid pane clicks coalesce behind one request and leave keys on the last p
     mark("burst.accepted.after");
     expect(requested().at(-1)?.message).toBe(`Focusing pane ${first}`);
     expect(diagnostics().some((entry) => entry.kind === "pane.focus.unknown")).toBe(false);
-    expect(gate.requests).toEqual([second]);
+    expect(focused(gate)).toEqual([second]);
     mark("focused.attribute.before");
     await expect(panes[0]).toHaveAttribute("data-focused", "true");
     mark("focused.attribute.after");
@@ -291,8 +184,8 @@ test("rapid pane clicks coalesce behind one request and leave keys on the last p
     await mouse.detach();
     mouseSession = undefined;
     mark("cdp.detach.after");
-    expect(gate.requests).toEqual([second, first]);
-    expect(gate.maximum()).toBe(1);
+    expect(focused(gate)).toEqual([second, first]);
+    expect(gate.maximum("pane.focus")).toBe(1);
     expect(herdrHasFocus(herdr, first)).toBe(true);
 
     // The same rapid clicks without a held request prove the ordinary path.
@@ -305,7 +198,7 @@ test("rapid pane clicks coalesce behind one request and leave keys on the last p
     await page.keyboard.type(marker);
     await expect.poll(() => fs.readFileSync(herdr.inputLogs[0], "utf8")).toContain(marker);
     expect(fs.readFileSync(herdr.inputLogs[1], "utf8")).not.toContain(marker);
-    expect(gate.maximum()).toBe(1);
+    expect(gate.maximum("pane.focus")).toBe(1);
     await screenshot(page, "pane-focus-ordering-last-click");
 
     // With the local burst confirmed, a real external Herdr focus is followed.
@@ -333,10 +226,10 @@ test("rapid pane clicks coalesce behind one request and leave keys on the last p
 test("an unknown focus result ends the burst before a delayed mutation is released", { tag: "@platform" }, async ({ page }) => {
   const herdr = await startHerdr();
   const focusFrames = observeFocusFrames(page);
-  let gate: Awaited<ReturnType<typeof focusGate>> | undefined;
+  let gate: Awaited<ReturnType<typeof herdrGate>> | undefined;
   let daemon: Daemon | undefined;
   try {
-    gate = await focusGate(herdr);
+    gate = await herdrGate(herdr);
     daemon = await startHided({ ...herdr, socket: gate.socket }, "focus-unknown");
     const diagnostics = observeDiagnostics(page);
     await page.goto(`${daemon.origin}/?probe=1#token=${daemon.token}`);
@@ -350,7 +243,7 @@ test("an unknown focus result ends the burst before a delayed mutation is releas
       const box = boxes[index]!;
       await page.mouse.click(box.x + 100, box.y + 100);
     };
-    const held = gate.arm();
+    const held = gate.arm("pane.focus");
     const started = Date.now();
     await click(1);
     await held;
@@ -360,7 +253,7 @@ test("an unknown focus result ends the burst before a delayed mutation is releas
     // Hold until the actual existing five-second transport budget reports
     // unknown, rather than releasing after an arbitrary delay.
     await expect.poll(() => diagnostics().some((entry) => entry.kind === "pane.focus.unknown"), { timeout: 10_000 }).toBe(true);
-    expect(gate.requests).toEqual([delayed]);
+    expect(focused(gate)).toEqual([delayed]);
     expect(diagnostics().some((entry) => entry.kind === "pane.focus" && entry.occurred_at >= started)).toBe(false);
     expect(herdrHasFocus(herdr, last)).toBe(true);
     await expect(panes[0]).toHaveAttribute("data-focused", "true");
@@ -371,8 +264,8 @@ test("an unknown focus result ends the burst before a delayed mutation is releas
     await expect.poll(() => herdrHasFocus(herdr, delayed)).toBe(true);
     await expect(panes[1]).toHaveAttribute("data-focused", "true");
     await expect.poll(() => diagnostics().some((entry) => entry.kind === "pane.focus.followed" && entry.occurred_at >= started)).toBe(true);
-    expect(gate.requests).toEqual([delayed]);
-    expect(gate.maximum()).toBe(1);
+    expect(focused(gate)).toEqual([delayed]);
+    expect(gate.maximum("pane.focus")).toBe(1);
     await screenshot(page, "pane-focus-unknown-late-effect");
 
     // A later explicit user selection starts a fresh, confirmed burst.
@@ -382,7 +275,7 @@ test("an unknown focus result ends the burst before a delayed mutation is releas
       && entry.message.startsWith(`Pane ${last} focus confirmed`) && entry.occurred_at >= retryAt)).toBe(true);
     await expect.poll(() => herdrHasFocus(herdr, last)).toBe(true);
     await expect(panes[0]).toHaveAttribute("data-focused", "true");
-    expect(gate.requests).toEqual([delayed, last]);
+    expect(focused(gate)).toEqual([delayed, last]);
   } finally {
     daemon?.stop();
     await gate?.stop();

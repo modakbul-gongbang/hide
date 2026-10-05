@@ -2,9 +2,11 @@ import { expect, test } from "@playwright/test";
 import { spawnSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { startHerdr, type HerdrFixture } from "./herdr-fixture";
+import { fixtureExecutable } from "./platform-fixture";
+import { runInPane, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { enterWorkspace } from "./wire";
+import { toPage } from "../../desktop/src/main/wirePath";
 
 test.describe.configure({ timeout: 90_000 });
 
@@ -20,24 +22,11 @@ type CliAnswer = {
   };
 };
 
-function quote(value: string): string {
-  return `'${value.replaceAll("'", "'\\''")}'`;
-}
-
 async function fromPane(herdr: HerdrFixture, daemon: Daemon, args: string[], sequence: number, expectedStatus = 0): Promise<CliAnswer> {
-  const answer = path.join(herdr.root, `cli-${sequence}.json`);
-  const status = path.join(herdr.root, `cli-${sequence}.status`);
-  const error = path.join(herdr.root, `cli-${sequence}.err`);
-  const hide = path.resolve("..", "target", "debug", "hide");
-  const command = `HIDE_STATE_DIR=${quote(daemon.stateDir)} ${[hide, ...args].map(quote).join(" ")} > ${quote(answer)} 2> ${quote(error)}; printf '%s' "$?" > ${quote(status)}\n`;
-  const sent = spawnSync(herdr.bin, ["pane", "send-text", herdr.panes[0], command], {
-    env: herdr.env,
-    encoding: "utf8",
-    timeout: 10_000,
-  });
-  expect(sent.status, sent.stderr).toBe(0);
-  await expect.poll(() => fs.existsSync(status) ? fs.readFileSync(status, "utf8") : null, { timeout: 20_000 }).toBe(String(expectedStatus));
-  return JSON.parse(fs.readFileSync(answer, "utf8")) as CliAnswer;
+  const hide = path.resolve("..", "target", "debug", fixtureExecutable("hide"));
+  const ran = await runInPane(herdr, herdr.panes[0], `cli-${sequence}`, { env: { HIDE_STATE_DIR: daemon.stateDir }, argv: [hide, ...args], stdout: true });
+  expect(ran.status, ran.stderr).toBe(expectedStatus);
+  return JSON.parse(ran.stdout) as CliAnswer;
 }
 
 test("pane CLI opens its own file and diff while another Workspace remains in front", async ({ page }) => {
@@ -46,11 +35,12 @@ test("pane CLI opens its own file and diff while another Workspace remains in fr
   let daemon: Daemon | null = null;
   try {
     const first = path.join(herdr.root, "fixture");
-    const checkout = fs.realpathSync(first);
+    // The CLI answers in the wire spelling (`/` between names).
+    const checkout = toPage(fs.realpathSync(first));
     const file = path.join(first, "보고서.md");
     const changed = path.join(first, "changed.txt");
-    const expectedFile = path.join(checkout, "보고서.md");
-    const expectedChanged = path.join(checkout, "changed.txt");
+    const expectedFile = `${checkout}/보고서.md`;
+    const expectedChanged = `${checkout}/changed.txt`;
     fs.writeFileSync(file, "한글 report\n");
     fs.writeFileSync(changed, "baseline\n");
     const git = (args: string[]) => {
