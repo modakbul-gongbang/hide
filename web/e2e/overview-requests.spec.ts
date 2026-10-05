@@ -96,6 +96,9 @@ async function atRest(page: Page): Promise<void> {
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
 }
 
+/** Every message the page has sent, whatever its kind. */
+const sentTotal = (sent: Map<string, number>) => [...sent.values()].reduce((sum, count) => sum + count, 0);
+
 test("the request view: what each agent was asked, what came of it, and what is the operator's", async ({ page }) => {
   await page.setViewportSize({ width: 1600, height: 1000 });
   const herdr = await startHerdr();
@@ -232,11 +235,10 @@ test("the request view: what each agent was asked, what came of it, and what is 
 
     // Nothing changes, nothing is sent (B30).
     await atRest(page);
-    const total = () => [...sent.values()].reduce((sum, count) => sum + count, 0);
-    await unchangedForFrames(page, total);
-    const quiet = total();
+    await unchangedForFrames(page, () => sentTotal(sent));
+    const quiet = sentTotal(sent);
     await quietFor(page, 3_000, "still nothing is sent after the longer window (B30)");
-    expect([...sent.values()].reduce((sum, count) => sum + count, 0)).toBe(quiet);
+    expect(sentTotal(sent)).toBe(quiet);
 
     // The keyboard (B8): the arrows step through heads, rows and chips in
     // order, Home and End go to the ends, and ⌘Enter opens the pane (B7).
