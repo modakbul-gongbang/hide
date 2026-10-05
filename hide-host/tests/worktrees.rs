@@ -288,6 +288,20 @@ fn wait_for_empty_trash(root: &Path) {
     }
 }
 
+/// Waits until a sweep's thread has deleted `entry`.
+#[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
+fn wait_until_deleted(entry: &Path) {
+    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
+    while std::fs::symlink_metadata(entry).is_ok() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "{} stayed",
+            entry.display()
+        );
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    }
+}
+
 /// A build folder is not Git's to delete in place: the removal answers once
 /// the folder is gone from its path and Git no longer registers it, and the
 /// files themselves are deleted from the repository's trash afterwards.
@@ -333,7 +347,7 @@ fn a_refused_removal_leaves_the_folder_in_place() {
 /// the registration leaves an entry Git still registers: a sweep keeps it,
 /// and retrying the removal drops the registration and then deletes it, once.
 #[test]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
+#[allow(clippy::disallowed_methods)] // a window in which the kept entry must not be deleted: no state reports an event that has not happened
 fn an_entry_left_before_git_dropped_the_registration_is_kept_until_a_retry_removes_it() {
     let (_directory, root, linked) = linked_worktree(10);
     let trash = root.join(".git").join(hide_host::worktrees::TRASH);
@@ -341,6 +355,8 @@ fn an_entry_left_before_git_dropped_the_registration_is_kept_until_a_retry_remov
     let entry = trash.join("1-1-linked");
     std::fs::rename(&linked, &entry).unwrap();
 
+    // The sweep decides what to delete before it returns and deletes each
+    // entry on its own thread, so the window covers only that deletion.
     hide_host::worktrees::sweep_trash(&trash);
     std::thread::sleep(std::time::Duration::from_millis(200));
     assert!(entry.join("target").exists());
@@ -358,7 +374,7 @@ fn an_entry_left_before_git_dropped_the_registration_is_kept_until_a_retry_remov
 /// folder: a stray entry keeps its files, and a trash that is a link leads
 /// nowhere.
 #[test]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
+#[allow(clippy::disallowed_methods)] // a window in which a linked trash must not be followed: no state reports an event that has not happened
 fn a_sweep_keeps_names_no_removal_made_and_never_follows_a_linked_trash() {
     let (directory, root, _linked) = linked_worktree(10);
     let common = root.join(".git");
@@ -371,11 +387,7 @@ fn a_sweep_keeps_names_no_removal_made_and_never_follows_a_linked_trash() {
     let ours = trash.join("1-2-gone");
     std::fs::create_dir_all(&ours).unwrap();
     hide_host::worktrees::sweep_trash(&trash);
-    let deadline = std::time::Instant::now() + std::time::Duration::from_secs(30);
-    while ours.exists() {
-        assert!(std::time::Instant::now() < deadline, "the entry stayed");
-        std::thread::sleep(std::time::Duration::from_millis(20));
-    }
+    wait_until_deleted(&ours);
     for stray in ["notes", "12-abc-x", "-1-x", "1-2-"] {
         assert!(trash.join(stray).join("keep").exists(), "{stray} was swept");
     }
@@ -386,6 +398,8 @@ fn a_sweep_keeps_names_no_removal_made_and_never_follows_a_linked_trash() {
     std::fs::create_dir_all(&victim).unwrap();
     std::fs::write(victim.join("keep"), "x").unwrap();
     hide_platform::fs::link::create_link(&elsewhere, &trash).unwrap();
+    // The sweep decides what to delete before it returns, so the window
+    // covers only a deletion it would have started.
     hide_host::worktrees::sweep_trash(&trash);
     std::thread::sleep(std::time::Duration::from_millis(300));
     assert!(victim.join("keep").exists(), "a linked trash was followed");
