@@ -13,8 +13,7 @@
 
 use hide_host::index::Walked;
 use std::collections::HashMap;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 /// Matches the palette shows.
 pub const RESULT_LIMIT: usize = 80;
@@ -90,9 +89,52 @@ pub enum IndexAnswer {
 /// One index: a device and a root path on it.
 type IndexKey = (String, String);
 
+/// Where one index stands. A walk's end and its result are one change under
+/// one lock: a query never sees a finished walk that is still building, which
+/// would answer `Indexing` and start nothing.
+enum State {
+    /// Never walked, or a failure already answered: the next query walks.
+    Empty,
+    Walking,
+    Walked(Arc<Walked>),
+    Failed(String),
+}
+
 struct Entry {
-    data: Mutex<Option<Result<Arc<Walked>, String>>>,
-    building: AtomicBool,
+    state: Mutex<State>,
+}
+
+impl Entry {
+    fn state(&self) -> MutexGuard<'_, State> {
+        self.state
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+/// The one walk an entry is `Walking` for. Its result is stored with
+/// `finish`; a walk that panics, or a thread that never started, drops it
+/// unfinished, which leaves the entry `Empty` so the next query walks again
+/// instead of answering `Indexing` forever.
+struct Walk(Option<Arc<Entry>>);
+
+impl Walk {
+    fn finish(mut self, result: Result<Walked, String>) {
+        if let Some(entry) = self.0.take() {
+            *entry.state() = match result {
+                Ok(walked) => State::Walked(Arc::new(walked)),
+                Err(message) => State::Failed(message),
+            };
+        }
+    }
+}
+
+impl Drop for Walk {
+    fn drop(&mut self) {
+        if let Some(entry) = self.0.take() {
+            *entry.state() = State::Empty;
+        }
+    }
 }
 
 /// The daemon's index cache: one lazy index per checkout root of each device,
@@ -139,60 +181,45 @@ impl IndexService {
                     .entry((device.to_owned(), root.to_owned()))
                     .or_insert_with(|| {
                         Arc::new(Entry {
-                            data: Mutex::new(None),
-                            building: AtomicBool::new(false),
+                            state: Mutex::new(State::Empty),
                         })
                     }),
             )
         };
-        let ready = {
-            let mut data = entry
-                .data
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner());
-            match data.as_ref() {
-                Some(Err(_)) => data.take(),
-                other => other.cloned(),
-            }
-        };
-        match ready {
-            Some(Ok(data)) => IndexAnswer::Ready {
-                entries: rank(&data.paths, query, RESULT_LIMIT)
-                    .into_iter()
-                    .map(|(path, _)| path)
-                    .collect(),
-                truncated: data.truncated,
-            },
-            Some(Err(message)) => IndexAnswer::Failed(message),
-            None => {
-                if !entry.building.swap(true, Ordering::SeqCst) {
-                    let target = Arc::clone(&entry);
-                    // The guard clears the flag on every exit, including a
-                    // panic in the walk: otherwise the index would answer
-                    // `indexing` forever and the palette would poll with
-                    // nothing to show.
-                    struct Building(Arc<Entry>);
-                    impl Drop for Building {
-                        fn drop(&mut self) {
-                            self.0.building.store(false, Ordering::SeqCst);
-                        }
-                    }
-                    let guard = Building(Arc::clone(&entry));
-                    // A thread that never started drops the guard here, which
-                    // clears the flag too.
+        let walked = {
+            let mut state = entry.state();
+            // Taken out and put back unless the answer moves it on: a failure
+            // is answered once and leaves the entry `Empty`.
+            match std::mem::replace(&mut *state, State::Empty) {
+                State::Walked(walked) => {
+                    *state = State::Walked(Arc::clone(&walked));
+                    walked
+                }
+                State::Walking => {
+                    *state = State::Walking;
+                    return IndexAnswer::Indexing;
+                }
+                State::Failed(message) => return IndexAnswer::Failed(message),
+                State::Empty => {
+                    *state = State::Walking;
+                    drop(state);
+                    let walk_of_entry = Walk(Some(Arc::clone(&entry)));
                     let _ = std::thread::Builder::new()
                         .name("hided-index".to_owned())
                         .spawn(move || {
-                            let _guard = guard;
-                            let data = walk().map(Arc::new);
-                            *target
-                                .data
-                                .lock()
-                                .unwrap_or_else(|poisoned| poisoned.into_inner()) = Some(data);
+                            let result = walk();
+                            walk_of_entry.finish(result);
                         });
+                    return IndexAnswer::Indexing;
                 }
-                IndexAnswer::Indexing
             }
+        };
+        IndexAnswer::Ready {
+            entries: rank(&walked.paths, query, RESULT_LIMIT)
+                .into_iter()
+                .map(|(path, _)| path)
+                .collect(),
+            truncated: walked.truncated,
         }
     }
 }
@@ -240,6 +267,38 @@ mod tests {
             }),
         );
         assert!(matches!(again, IndexAnswer::Ready { entries, .. } if entries == ["a.txt"]));
+    }
+
+    #[test]
+    #[allow(clippy::disallowed_methods)] // polls the index state, bounded by a deadline
+    fn a_walk_that_panics_leaves_the_index_to_walk_again() {
+        let service = IndexService::new();
+        assert!(matches!(
+            service.query("device", "/root", "", || panic!("the walker crashed")),
+            IndexAnswer::Indexing
+        ));
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        loop {
+            let answer = service.query("device", "/root", "", || {
+                Ok(Walked {
+                    paths: vec!["a.txt".to_owned()],
+                    truncated: false,
+                })
+            });
+            if let IndexAnswer::Ready { entries, .. } = answer {
+                assert_eq!(entries, ["a.txt"]);
+                return;
+            }
+            assert!(
+                matches!(answer, IndexAnswer::Indexing),
+                "a crashed walk is not a failure to report"
+            );
+            assert!(
+                std::time::Instant::now() < deadline,
+                "the index never walked again"
+            );
+            std::thread::sleep(std::time::Duration::from_millis(5));
+        }
     }
 
     #[test]
