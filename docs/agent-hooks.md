@@ -124,7 +124,7 @@ The Settings screen learns of it because the coordinator re-reads the diagnosis 
 
 Claude Code and Codex are the agents the kit has always had a hook for.
 Every other agent Hide knows is one row of `hide-kit/src/agents.rs` (`ADAPTERS`), and one switch per agent per machine turns its pieces on and off, in Settings, Agents and in each device's row.
-A row carries the agent's detection (a program on the login `PATH` or the usual install folders, or a folder it creates under the home), the folder it reads skills from and the systems the documentation confirms that folder on, whether Hide writes a hook for it, the oldest version whose documentation has that hook, and the official page the row's answers come from (`doc_url`).
+A row carries the agent's detection (a program on the login `PATH` or the usual install folders, or a folder it creates under the home; the names `goose`, `amp`, `droid`, `copilot` and `kilo` are other programs too, so those agents are detected by their folder alone), the folder it reads skills from and the systems the documentation confirms that folder on, whether Hide writes a hook for it, the oldest version whose documentation has that hook, and the official page the row's answers come from (`doc_url`).
 A test fails a row with no `https` `doc_url`, so a claim in the table below always has a page behind it.
 
 Two pieces are written per agent, and nothing else:
@@ -133,7 +133,9 @@ Two pieces are written per agent, and nothing else:
   It is a few lines that point at `hide browser help`, so it stays right as the CLI's guide changes.
   Its folder is `~/.agents/skills` for the agents that read it, `~/.claude/skills` for Claude Code (which documents that it does not read the shared folder), and the agent's own folder for Kiro, Qwen Code and Cline.
   A shared folder is written while any agent that reads it is on and set up, and it is removed only when none is.
-  A file with no `hide-skill@<version>` marker is never replaced or removed, and the agent's row says a skill that Hide did not write is already there.
+  A file is Hide's only when its marker line, `<!-- hide-skill@<version>: ... -->`, is the first line after the front matter; a file that merely mentions `hide-skill@` is never replaced or removed, and the agent's row says a skill that Hide did not write is already there.
+  A stub with Hide's marker over text that is not Hide's was edited by the operator: no pass rewrites it and a switch-off leaves it, the row reads Outdated with that reason, and only Reinstall puts Hide's text back.
+  A stub of an older marker version is Hide's own and is replaced by the next pass.
   An agent's own folder (`~/.claude`, `~/.kiro`, `~/.qwen`, `~/.cline`) is never created for the stub: its presence is how the kit judges the agent, so a pass that made it would change what the next pass finds.
 - The guidance hook, for the agents below marked as done.
   It is one `SessionStart` entry, in the agent's own format, whose command is `hide-agent-hooks hook --runtime <agent id> --event SessionStart`.
@@ -145,6 +147,8 @@ Two pieces are written per agent, and nothing else:
 Gemini CLI, Qwen Code, Factory Droid, Copilot CLI and Kiro each keep their entry the way their documentation shapes it.
 Gemini and Qwen take an entry in `~/.gemini/settings.json` and `~/.qwen/settings.json`.
 Factory Droid takes `~/.factory/hooks.json`, or the `hooks` key of `~/.factory/settings.json` when that file already has hooks, because creating `hooks.json` beside them would shadow them.
+A removal that leaves `hooks.json` with nothing in it deletes the file, since an empty one would still shadow hooks the operator later keeps in `settings.json`; a `hooks.json` the operator created empty and Hide then wrote into goes the same way.
+A removal takes Hide's hook out of whatever group holds it and drops the group only when no hook is left, so another tool's hook that shares a group with Hide's (`{"matcher": "*", "hooks": [Hide's, theirs]}`) stays.
 Copilot CLI and Kiro read a folder of hook files, so Hide owns one whole file, `~/.copilot/hooks/hide-guidance.json` and `~/.kiro/hooks/hide-guidance.json`, and deletes it when only Hide's scaffolding is left.
 Another tool's entries are counted before and after and survive, and a file that does not parse is left untouched and reported.
 Kiro's hook needs CLI 3.0, so a Kiro whose version cannot be read, or is older, gets the skill and not the hook, and its row says why.
@@ -247,6 +251,9 @@ The write itself runs off `Mutex<Runtime>` (on the kit worker for this Mac, on t
 Settings shows each machine's hook parts under Agents and its whole kit under Devices, This Mac first and then each device.
 Reinstall, the `kit_reinstall` event, is offered only where a part is outdated, not installed, removed or failed, repairs only those parts, and leaves the ones in place untouched (B8); pressing it twice is one install.
 Project Memory's "update hooks" sends the same Reinstall for this Mac's hook parts.
+Reinstall repairs what is on: the hook part of an agent that is switched off reads Off whatever its file says, the machine row does not offer Reinstall for it, and a pane of that agent says its hook is switched off in Settings, Agents (`hooks_switched_off`), not that it was never installed.
+A switch pressed while an earlier press for the same agent is still queued replaces it, so the latest press is what the machine ends up with.
+The kit looks for the agents once per pass, and asks a CLI for its version once per version of its file, so Settings re-reading the kit every few seconds runs no subprocess.
 
 Removal does not need the helper, and must not: it reads the configuration file and takes out the entries carrying Hide's marker, and nothing else.
 Removing a device from Hide does that on the device while its helper is connected (D-16); the operator removes a hook on their own machine by editing the file, and the kit then leaves it removed.

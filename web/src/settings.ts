@@ -333,7 +333,10 @@ export function kitAgentLine(agent: KitAgent, t: Translate): { text: string; ton
   }
   const piece = agentWorstPiece(agent);
   const line = kitPartLine(piece, t);
-  return { ...line, reason: piece.state === "installed" ? null : piece.reason };
+  // A hook that cannot be written here (Kiro below 3.0, a version Hide cannot
+  // read) is no repair, so the skill's "Installed" stands, with the hook's reason beside it.
+  const hookNote = agent.hook?.state === "absent" ? agent.hook.reason : null;
+  return { ...line, reason: piece.state === "installed" ? hookNote : piece.reason };
 }
 
 /**
