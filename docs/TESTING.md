@@ -60,9 +60,10 @@ A second cost was the page's own rendering: headless Chromium composites in soft
 A local trace of the held window showed long tasks of 250 to 500 ms, most of them in `GLES2::ReadPixels`, which delayed both the clicks and the snapshot frames the test observes.
 On the failing macOS run, the stage timings and the hided log showed the first diagnostic taking 2.5 seconds to reach the page and the forty clicks another 2.3 seconds, so the held request hit its deadline before the test could release it.
 `web/playwright.config.ts` now launches every web e2e Chromium with `--disable-webgl`, so the shell uses xterm's DOM renderer, its existing fallback, and the held window stays near 0.2 seconds.
-No web spec tests the terminal renderer; the probe reads the parsed buffer, not the canvas.
-A spec that needs the WebGL renderer sets its own `launchOptions` and says why.
-The desktop suite is not covered: Electron has its own GPU path.
+No web spec tests the terminal renderer; the probe reads the parsed buffer, not the canvas, and a web spec asserts terminal content through the probe, never through DOM text.
+A spec file that needs the WebGL renderer sets `test.use({ launchOptions })` at file top level, which replaces the config's `launchOptions` rather than adding to it, and says why.
+The desktop suite is not covered: Electron has its own GPU path, and it is now the only suite that runs the WebGL renderer.
+Terminal pixels in a web e2e screenshot come from the DOM renderer, so a claim about how the terminal looks comes from the desktop app.
 
 ## The test decides the order
 
