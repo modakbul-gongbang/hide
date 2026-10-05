@@ -46,7 +46,41 @@ export type HerdrFixture = {
   /** Runs a pinned-herdr CLI command against the private server and parses its JSON. */
   run: (args: string[]) => unknown;
   stop: () => void;
+  /**
+   * Runs `cleanup` once the server has stopped and its panes' processes are
+   * gone, or now when that is already so. A folder a pane's shell started in
+   * cannot be deleted before then on Windows.
+   */
+  afterStop: (cleanup: () => void) => void;
 };
+
+// Prints how many processes have `argv[1]` as their parent (exit 2 when that
+// process is not running). One native call answers what a PowerShell CIM query
+// answered, without a PowerShell start that a loaded runner can stretch past
+// the setup deadline.
+const CHILDREN_SOURCE = `#include <windows.h>
+#include <tlhelp32.h>
+#include <stdio.h>
+#include <stdlib.h>
+
+int main(int argc, char **argv) {
+  if (argc != 2) return 64;
+  DWORD parent = (DWORD)strtoul(argv[1], NULL, 10);
+  HANDLE snapshot = CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0);
+  if (snapshot == INVALID_HANDLE_VALUE) return 1;
+  PROCESSENTRY32 entry;
+  entry.dwSize = sizeof entry;
+  int running = 0, children = 0;
+  for (BOOL more = Process32First(snapshot, &entry); more; more = Process32Next(snapshot, &entry)) {
+    if (entry.th32ProcessID == parent) running = 1;
+    if (entry.th32ParentProcessID == parent) children++;
+  }
+  CloseHandle(snapshot);
+  if (!running) return 2;
+  printf("%d\\n", children);
+  return 0;
+}
+`;
 
 const SHIM_SOURCE = `#include <fcntl.h>
 #include <stdio.h>
@@ -522,10 +556,12 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
   let fixturePath: string;
   try {
     env = isolatedEnv(root, socket);
-    fs.writeFileSync(path.join(root, "shim.c"), SHIM_SOURCE);
     const shim = path.join(root, "bin", fixtureExecutable("claude"));
-    compileFixtureC(path.join(root, "shim.c"), shim);
-    if (process.platform === "win32") fs.copyFileSync(shim, path.join(root, "bin", fixtureExecutable("hide-open")));
+    compileFixtureC(SHIM_SOURCE, shim);
+    if (process.platform === "win32") {
+      fs.copyFileSync(shim, path.join(root, "bin", fixtureExecutable("hide-open")));
+      compileFixtureC(CHILDREN_SOURCE, path.join(root, "bin", "hide-children.exe"));
+    }
     // Keep host-installed providers out while retaining system tools.
     fixturePath = fixtureToolPath(path.join(root, "bin"));
   } catch (error) {
@@ -540,6 +576,8 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
   fs.closeSync(log);
   let spawnFailed: Error | null = null;
   server.once("error", (error) => { spawnFailed = error; });
+  let stopped = false;
+  const afterStop: (() => void)[] = [];
   const { stop } = ownUntilWorkerExit(() => {
     // On Windows a pane's processes can outlive the server and keep the
     // root locked. Listed while the server still runs (so its pid is its
@@ -578,6 +616,8 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
     }
     if (failure !== undefined) throw failure;
     fs.rmSync(root, { recursive: true, force: true });
+    stopped = true;
+    for (const cleanup of afterStop.splice(0)) cleanup();
   });
   try {
     await waitFor(() => {
@@ -655,17 +695,19 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
         if (!Number.isSafeInteger(shell) || !shell || shell <= 1) throw new Error(`fixture shell PID is unavailable in pane ${pane}`);
         const remaining = deadline - Date.now();
         if (remaining <= 0) throw new Error(`timed out waiting for shell children in pane ${pane}`);
-        execFileSync("powershell.exe", ["-NoLogo", "-NoProfile", "-NonInteractive", "-Command", `
-          $ErrorActionPreference = 'Stop'
-          $fixtureUntil = [DateTime]::UtcNow.AddMilliseconds(${remaining})
-          do {
-            $fixtureProcesses = @(Get-CimInstance -ClassName Win32_Process -Filter 'ProcessId = ${shell} OR ParentProcessId = ${shell}' -Property ProcessId, ParentProcessId)
-            if (@($fixtureProcesses | Where-Object { $_.ProcessId -eq ${shell} }).Count -ne 1) { throw 'fixture shell exited before agent start' }
-            if (@($fixtureProcesses | Where-Object { $_.ParentProcessId -eq ${shell} }).Count -eq 0) { exit 0 }
-            Start-Sleep -Milliseconds 100
-          } while ([DateTime]::UtcNow -lt $fixtureUntil)
-          throw 'fixture shell still has child processes before agent start'
-        `], { env, encoding: "utf8", timeout: remaining, maxBuffer: 64 * 1024, windowsHide: true });
+        let children = "";
+        await waitFor(
+          () => {
+            const counted = spawnSync(path.join(root, "bin", "hide-children.exe"), [String(shell)], { encoding: "utf8", timeout: 10_000, windowsHide: true });
+            if (counted.status === 2) throw new Error("fixture shell exited before agent start");
+            if (counted.status !== 0) throw new Error(`hide-children exited ${counted.status}: ${counted.stderr.trim()}`);
+            children = counted.stdout.trim();
+            return children === "0";
+          },
+          `the shell in pane ${pane} to have no child processes before agent start`,
+          remaining,
+          () => `${children} children`,
+        );
       }
       if (agents) herdr(env, bin, ["agent", "start", name, "--kind", "claude", "--pane", pane]);
     }
@@ -700,6 +742,10 @@ export async function startHerdr({ agents = true }: { agents?: boolean } = {}): 
         return result;
       },
       stop,
+      afterStop: (cleanup) => {
+        if (stopped) cleanup();
+        else afterStop.push(cleanup);
+      },
     };
   } catch (error) {
     throw afterCleanup(error, stop);

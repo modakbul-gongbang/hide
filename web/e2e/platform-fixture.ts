@@ -2,19 +2,61 @@
 // contract is hide-platform::host; Herdr accepts a filesystem socket path
 // on every OS and maps that path to a named pipe on Windows.
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
 
 export const fixtureExecutable = (name: string): string => `${name}${process.platform === "win32" ? ".exe" : ""}`;
 
-/** A fixture compiler is an owned, bounded child, separate from test deadlines. */
+const compiledByWorker = new Map<string, string>();
+let compileDir: string | undefined;
+
+/**
+ * Writes the executable `source` compiles to at `executable`. A worker
+ * compiles each distinct source once, into a directory it removes at exit,
+ * and copies the result: every test starts its own Herdr, and compiling the
+ * same shim for each one is what exceeded the compiler's process bound on a
+ * loaded Windows runner. The compiler is an owned, bounded child, separate
+ * from test deadlines.
+ */
 export function compileFixtureC(source: string, executable: string): void {
-  const compiler = process.platform === "win32" ? "clang.exe" : "cc";
-  try {
-    execFileSync(compiler, ["-O1", "-o", executable, source], { timeout: 20_000 });
-  } catch (error) {
-    throw new Error(`fixture C compiler ${compiler} failed (20 second process bound); the runner needs its native C toolchain: ${String(error)}`, { cause: error });
+  let built = compiledByWorker.get(source);
+  if (built === undefined) {
+    if (compileDir === undefined) {
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hide-e2e-cc-"));
+      process.once("exit", () => fs.rmSync(dir, { recursive: true, force: true }));
+      compileDir = dir;
+    }
+    const base = path.join(compileDir, String(compiledByWorker.size));
+    const compiler = process.platform === "win32" ? "clang.exe" : "cc";
+    fs.writeFileSync(`${base}.c`, source);
+    built = `${base}${fixtureExecutable("")}`;
+    try {
+      execFileSync(compiler, ["-O1", "-o", built, `${base}.c`], { timeout: 20_000 });
+    } catch (error) {
+      throw new Error(`fixture C compiler ${compiler} failed (20 second process bound); the runner needs its native C toolchain: ${String(error)}`, { cause: error });
+    }
+    compiledByWorker.set(source, built);
   }
+  fs.copyFileSync(built, executable);
+}
+
+/**
+ * Where a client reaches the local stream Herdr names by `socket`: the path
+ * itself on Unix, the pipe `\\.\pipe\<path>` on Windows (hide-platform's
+ * `ipc` makes the same mapping, so a fixture standing in front of Herdr
+ * listens and connects there).
+ */
+export const localEndpoint = (socket: string): string => (process.platform === "win32" ? `\\\\.\\pipe\\${socket}` : socket);
+
+/** What the system says a running process has used: cumulative CPU seconds and resident memory. */
+export function processUsage(pid: number): { cpuSeconds: number; rssKiB: number } {
+  if (process.platform === "win32") {
+    const [cpu, bytes] = powershell(`$p = Get-Process -Id ${pid}; "$($p.TotalProcessorTime.TotalSeconds) $($p.WorkingSet64)"`).trim().split(" ");
+    return { cpuSeconds: Number(cpu), rssKiB: Number(bytes) / 1024 };
+  }
+  const [time, rss] = execFileSync("ps", ["-p", String(pid), "-o", "time=,rss="], { encoding: "utf8" }).trim().split(/\s+/);
+  return { cpuSeconds: time!.split(":").map(Number).reduce((sum, part) => sum * 60 + part, 0), rssKiB: Number(rss) };
 }
 
 /** Windows environment keys are case-insensitive, including Path/PATH. */
@@ -63,9 +105,7 @@ export function fixtureOpenCommand(root?: string, privateRoot?: string): string 
   // same native no-op without falling back to an account's GUI opener.
   if (!root) {
     fs.mkdirSync(path.dirname(command), { recursive: true });
-    const source = path.join(privateRoot!, "hide-open.c");
-    fs.writeFileSync(source, "int main(void) { return 0; }\n");
-    compileFixtureC(source, command);
+    compileFixtureC("int main(void) { return 0; }\n", command);
   }
   if (!fs.existsSync(command)) throw new Error(`Windows fixture opener is missing: ${command}`);
   return command;

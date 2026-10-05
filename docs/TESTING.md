@@ -93,12 +93,13 @@ When the behavior depends on the order of two events, the test fixes that order;
   The fixture uses `/bin/zsh` with its private `.zshrc` on Unix and the native `ComSpec` cmd shell with a controlled `PROMPT` on Windows.
   A missing native shell fails fixture setup before starting the server.
   Before each initial agent start, the fixture waits for the prompt and the shell to hold the foreground within the existing ten-second setup bound.
-  On Windows, the pinned Herdr can report the shell as foreground while a non-agent child remains, so one bounded, noninteractive PowerShell read also waits for that shell to have no children; a missing shell or failed read fails setup.
+  On Windows, the pinned Herdr can report the shell as foreground while a non-agent child remains, so the fixture also waits, within the same bound, for that shell to have no children, counted by the compiled `hide-children.exe` (a PowerShell start under load outlasted the bound); a missing shell or failed count fails setup.
   The fixture sends each `agent.start` once and retains the original input and PTY-log assertions.
 - Use `fixtureHomeEnv` from `web/e2e/platform-fixture.ts` to move `HOME`, provider config homes and, on Windows, `USERPROFILE`, `APPDATA` and `LOCALAPPDATA` together into the private fixture.
   The fixtures run a compiled `claude` shim instead, which proves the pipeline and not an agent or physical IME.
   On Windows the interactive shim writes its readiness line after console setup; provider/auth replies return before that line, and input logs record only received input.
   The native compiler is `cc` on Unix and `clang.exe` on Windows; its owned child has a 20-second bound and a compiler failure fails setup.
+  A worker compiles each distinct source once and copies the result into every test's private root, because compiling the same shim per test is what exceeded that bound; `compileFixtureC` takes the source text.
   The private Herdr server, panes and `hided` use `fixturePath`: the shim directory followed by system-tool directories, including `/usr/sbin` for `lsof` on Unix and native Windows and Git directories on Windows.
   `fixtureExecutable` supplies native `.exe` names and `fixtureToolPath` uses the native path delimiter while refusing missing or non-absolute Windows system-root or program-files values.
   Catalog discovery probes every provider, so appending the host's `PATH` also reaches its installed CLIs even when the test selects Claude.
@@ -119,10 +120,13 @@ Put new operating-system differences in that shared boundary rather than repeati
 The Windows fixture boundaries also preserve these requirements:
 
 - An endpoint is a named pipe on Windows: a fixture that would use the socket path `P` on Unix uses `\\.\pipe\P`, because listening on a Unix socket path there fails with `EACCES`.
+  `localEndpoint` in `web/e2e/platform-fixture.ts` spells it for both a listener and a client.
 - A key the core derives from a path is computed from the wire spelling the core uses (`/` between names, `hide-platform`'s `path`), never from the native spelling.
   `web/e2e/s2.spec.ts` hashes the checkout folder to find its owner workspace; hashed in the Windows spelling, the key named a different workspace than the one the core chose, and the new tab the test expected appeared elsewhere.
 - A program just copied or just exited can still be locked on Windows, so deleting it can fail with `EBUSY`.
   Confirm the process that ran it has exited before removing it; a deletion retry is not that confirmation.
+- A folder a pane's shell started in is locked until Herdr's server and its panes' processes are gone.
+  The `hided` fixture's directory holds the home those panes start in, so `Herdr`'s `afterStop` removes it, after those processes, whichever of the two a test stops first.
 
 ### Cleanup never hides the first failure
 
