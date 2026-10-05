@@ -501,6 +501,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/ci-flaky-report.py --suite rust --junit target/nextest/ci/junit*.xml
+      - name: Keep the lane's run directory
+        # The daemon's and both Herdr servers' logs behind a failed run, without
+        # the staged binaries and the fixture's SSH keys.
+        if: ${{ failure() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: hide-remote-mailbox-logs
+          path: |
+            agents/runs/rd-*
+            !agents/runs/rd-*/cli/**
+            !agents/runs/rd-*/*/home/.ssh/**
+          if-no-files-found: ignore
 
   # The OS contract's Linux and Windows legs (see os-contract.yml). Its macOS
   # leg runs in `desktop-e2e` below, on the runner that job already holds.
