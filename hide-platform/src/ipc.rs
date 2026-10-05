@@ -350,6 +350,9 @@ pub fn is_endpoint(path: &Path) -> io::Result<bool> {
 /// held lock means a live listener and a free one means none.
 struct Presence {
     path: PathBuf,
+    /// The file this presence locked, which `drop` removes only while it is
+    /// still the one at `path`.
+    id: crate::fs::identity::FileId,
     _lock: crate::fs::lock::Lock,
 }
 
@@ -359,24 +362,41 @@ impl Presence {
     /// path without pause, which is reported rather than waited out.
     const REOPENS: usize = 8;
 
-    /// `AddrInUse` while another listener holds the lock.
+    /// `AddrInUse` while another listener holds the lock. The lock file is
+    /// the account's own private regular file, opened as itself: a link, a
+    /// file of another account or one with a second name is refused rather
+    /// than followed or locked, as it may sit in a folder others can write.
     fn claim(endpoint: &Path) -> io::Result<Self> {
         use crate::fs::identity::{file_id_nofollow, file_id_of};
         use crate::fs::lock::{Mode, Waited, lock_file};
+        use crate::fs::private::open_own_file;
 
         let mut name = endpoint.as_os_str().to_owned();
         name.push(".lock");
         let path = PathBuf::from(name);
         for _ in 0..Self::REOPENS {
-            let file = open_presence_file(&path)?;
-            let opened = file_id_of(&file)?;
-            match lock_file(file, Mode::Exclusive, Duration::ZERO, &|| false)? {
+            let file = open_own_file(&path, true).map_err(|error| at(&path, error))?;
+            let opened = file_id_of(&file).map_err(|error| at(&path, error))?;
+            match lock_file(file, Mode::Exclusive, Duration::ZERO, &|| false)
+                .map_err(|error| at(&path, error))?
+            {
                 Waited::Locked(lock) => {
                     // A listener that ended removed its file while it still
                     // held the lock, so a file opened just before that is no
                     // longer the one at the path; locking it excludes no one.
-                    if file_id_nofollow(&path).is_ok_and(|current| current == opened) {
-                        return Ok(Self { path, _lock: lock });
+                    // Only "not there" means that: any other answer is a
+                    // failure of this claim.
+                    match file_id_nofollow(&path) {
+                        Ok(current) if current == opened => {
+                            return Ok(Self {
+                                path,
+                                id: opened,
+                                _lock: lock,
+                            });
+                        }
+                        Ok(_) => {}
+                        Err(error) if error.kind() == io::ErrorKind::NotFound => {}
+                        Err(error) => return Err(at(&path, error)),
                     }
                 }
                 Waited::TimedOut | Waited::Cancelled => return Err(already_answers(endpoint)),
@@ -392,20 +412,23 @@ impl Presence {
 impl Drop for Presence {
     fn drop(&mut self) {
         // Removed while the lock is still held, which is what `claim`'s
-        // identity check relies on; the lock is released as the field drops.
-        let _ = fs::remove_file(&self.path);
+        // identity check relies on, and only while the file at the path is
+        // still the one locked: a file put there since (a cleaner ran, a
+        // later bind made its own) is another listener's lock to keep. The
+        // lock is released as the field drops.
+        let still_ours = crate::fs::identity::file_id_nofollow(&self.path)
+            .is_ok_and(|current| current == self.id);
+        if still_ours {
+            let _ = fs::remove_file(&self.path);
+        }
     }
 }
 
-fn open_presence_file(path: &Path) -> io::Result<fs::File> {
-    let mut options = fs::OpenOptions::new();
-    options.read(true).write(true).create(true).truncate(false);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
-    }
-    options.open(path)
+/// `error` with the file it concerns, same kind: a lock that cannot be taken
+/// (no `flock` on the filesystem, a name too long once `.lock` is added) must
+/// say which file.
+fn at(path: &Path, error: io::Error) -> io::Error {
+    io::Error::new(error.kind(), format!("{}: {error}", path.display()))
 }
 
 /// Removes what a dead listener left at `path`, and refuses a live one.
@@ -413,8 +436,12 @@ fn open_presence_file(path: &Path) -> io::Result<fs::File> {
 /// Only what a listener leaves is removed: a socket on Unix, the marker file
 /// on Windows. Anything else at the path is the caller's, and `bind` fails
 /// rather than delete it. The caller holds the path's [`Presence`], so no
-/// listener of this build is alive; the connect that follows still refuses a
-/// listener of a build that took no lock.
+/// listener of this build is alive.
+///
+/// The connect that follows is a transition path for a listener of a build
+/// that bound without the lock, which `Presence` cannot see. Remove it, and
+/// the `ConnectionRefused` reading it leans on (the #403 hole), once no
+/// supported build binds without the lock.
 fn clear_leftover(path: &Path) -> io::Result<()> {
     let Ok(metadata) = fs::symlink_metadata(path) else {
         return Ok(());
