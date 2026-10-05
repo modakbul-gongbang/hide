@@ -933,7 +933,11 @@ impl Mobile {
                     pane_id: notice.actor.pane_id.clone(),
                 },
                 title: notice.title.clone(),
-                body: notice.body.clone(),
+                // A delivery notice asks the operator to look; its sentence
+                // is the core's own text, carried untranslated where a
+                // place would go.
+                state: push::NoticeState::NeedsYou,
+                place: notice.body.clone(),
             },
             &BTreeSet::new(),
         );

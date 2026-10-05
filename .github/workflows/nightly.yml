@@ -67,6 +67,9 @@ jobs:
   os-contract:
     name: os contract
     uses: ./.github/workflows/os-contract.yml
+    permissions:
+      contents: read
+      issues: write
 
   desktop-e2e:
     name: desktop e2e (${{ matrix.system }} full)
@@ -147,15 +150,9 @@ jobs:
         env:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
         run: |
-          bash scripts/verify-cargo.sh test-scoped -p hide-platform -p hide-herdr-client
-          bash scripts/verify-cargo.sh test-scoped -p hide-herdr-client --test real_herdr -- --ignored --nocapture
-      - name: OS contract tests quarantined on macOS (does not block)
-        # A Rust test ignored for an issue runs here and cannot turn the
-        # nightly red; the pull request lanes run it the same way.
-        if: runner.os == 'macOS'
-        continue-on-error: true
-        timeout-minutes: 10
-        run: bash scripts/verify-cargo.sh test-scoped -p hide-platform -- --ignored
+          bash scripts/install-nextest.sh
+          bash scripts/verify-cargo.sh nextest --profile ci -p hide-platform -p hide-herdr-client
+          bash scripts/verify-cargo.sh nextest --profile ci -p hide-herdr-client --test real_herdr --run-ignored only --no-capture
       - name: Whole desktop suite
         timeout-minutes: 20
         env:
@@ -174,7 +171,11 @@ jobs:
         timeout-minutes: 5
         env:
           GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/ci-flaky-report.py --suite desktop --playwright desktop/e2e-report.json
+        run: |
+          status=0
+          python3 scripts/ci-flaky-report.py --suite desktop --playwright desktop/e2e-report.json || status=$?
+          python3 scripts/ci-flaky-report.py --suite rust --junit target/nextest/ci/junit*.xml || status=$?
+          exit "$status"
       - name: Keep the failed desktop run
         if: failure()
         uses: actions/upload-artifact@v7

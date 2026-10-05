@@ -570,7 +570,7 @@ pub(super) fn finish_running_pane_focus(runtime: &mut Runtime, result: Result<()
             layout
         })
         .map_err(|message| live::ControlFailure::Definite(message.to_owned()));
-    runtime.ingest_pane_focus_completion(control, result, 8);
+    runtime.complete_lane_pane_focus(control, result, 8);
 }
 
 /// PRD B24. A relationship Open is completed only by the outcome carrying
@@ -1076,8 +1076,22 @@ fn view_authority_a_superseded_switch_stops_claiming_its_tab_when_capped_expired
             .collect::<Vec<_>>()
     };
 
-    for tab in &tabs[..=SUPERSEDED_TAB_FOCUS_LIMIT + 1] {
+    // Each request is sent before the next replaces it, which is what leaves
+    // an answer of its own on its way.
+    for (index, tab) in tabs[..=SUPERSEDED_TAB_FOCUS_LIMIT + 1].iter().enumerate() {
         assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, tab)));
+        if index > 0 {
+            runtime.complete_lane_tab(
+                RemoteControlAction::FocusTab {
+                    tab_id: tabs[index - 1].to_owned(),
+                },
+                Ok(RemoteControlOutcome::Acknowledged {
+                    created_tab_id: None,
+                    created_pane_id: None,
+                }),
+                3,
+            );
+        }
     }
     assert_eq!(superseded(&runtime).len(), SUPERSEDED_TAB_FOCUS_LIMIT);
     assert!(!superseded(&runtime).contains(&"w-order:t1".to_owned()));
@@ -1655,8 +1669,12 @@ fn pane_focus_rejects_a_stale_stream_after_confirmation_and_follows_a_verified_e
     finish_running_pane_focus(&mut runtime, Ok(()));
 
     let stale = finished_tab_payload(&panes, "w1:p1");
-    let identity = runtime.pane_focus_readback_target(&stale).unwrap();
-    runtime.ingest_session_with_focus_readback(Ok(stale.clone()), None, Some((identity, false)));
+    let (_, identity) = runtime.ingest_session_awaiting_focus_readback(Ok(stale.clone()), None);
+    let identity = identity.unwrap();
+    // The update is ingested at once and Herdr's differing focus waits.
+    assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p2"));
+    let (_, next) = runtime.finish_pane_focus_readback(identity, false);
+    assert!(next.is_none());
     assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p2"));
     assert_eq!(
         runtime.snapshot().terminal.pane_id.as_deref(),
@@ -1664,11 +1682,12 @@ fn pane_focus_rejects_a_stale_stream_after_confirmation_and_follows_a_verified_e
     );
     assert_eq!(diagnostic_count(&runtime, "pane.focus.followed"), 0);
     assert!(runtime.pending_pane_focus.is_none());
+    assert!(runtime.pane_focus_readback.is_none());
 
     // The same proposed move becomes external authority when Herdr's fresh
     // layout and active tab really agree, without any new operator request.
-    let identity = runtime.pane_focus_readback_target(&stale).unwrap();
-    runtime.ingest_session_with_focus_readback(Ok(stale), None, Some((identity, true)));
+    let (_, identity) = runtime.ingest_session_awaiting_focus_readback(Ok(stale), None);
+    runtime.finish_pane_focus_readback(identity.unwrap(), true);
     assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p1"));
     assert_eq!(
         runtime.snapshot().terminal.pane_id.as_deref(),
@@ -1686,7 +1705,8 @@ fn pane_focus_readback_cannot_outlive_a_new_selection_or_connection() {
         runtime.dispatch_json(&operator_focus_event("w1:p2"));
         finish_running_pane_focus(&mut runtime, Ok(()));
         let stale = finished_tab_payload(&panes, "w1:p1");
-        let identity = runtime.pane_focus_readback_target(&stale).unwrap();
+        let (_, identity) = runtime.ingest_session_awaiting_focus_readback(Ok(stale), None);
+        let identity = identity.unwrap();
         let expected = if reconnect {
             runtime.set_live(runtime.live.as_ref().unwrap().clone());
             "w1:p2"
@@ -1696,13 +1716,70 @@ fn pane_focus_readback_cannot_outlive_a_new_selection_or_connection() {
             "w1:p3"
         };
 
-        runtime.ingest_session_with_focus_readback(Ok(stale), None, Some((identity, true)));
+        // The old answer moves nothing. A read handed on instead is for the
+        // current selection and connection, and Herdr's answer to that one
+        // is the one that counts.
+        let (_, next) = runtime.finish_pane_focus_readback(identity.clone(), true);
         assert_eq!(
             runtime.snapshot().focused.pane_id.as_deref(),
             Some(expected)
         );
         assert_eq!(diagnostic_count(&runtime, "pane.focus.followed"), 0);
+        if let Some(next) = next {
+            assert_ne!(next, identity);
+            runtime.finish_pane_focus_readback(next, false);
+        }
+        assert!(runtime.pane_focus_readback.is_none());
     }
+}
+
+/// Two tabs: `t1` holds three panes side by side, `t2` one.
+fn two_tab_focus_payload(t1_focused: &str) -> SessionSnapshotPayload {
+    let pane_rect = |pane_id: &str, x: u32, width: u32| serde_json::json!({"pane_id": pane_id, "rect": {"x": x, "y": 0, "width": width, "height": 24}});
+    crate::sidebar::owned_label_fixture(serde_json::json!({
+        "agents": [],
+        "tabs": [
+            {"workspace_id": "w1", "tab_id": "t1", "label": ""},
+            {"workspace_id": "w1", "tab_id": "t2", "label": ""}
+        ],
+        "layouts": [{
+            "workspace_id": "w1", "tab_id": "t1", "zoomed": false,
+            "area": {"x": 0, "y": 0, "width": 90, "height": 24},
+            "focused_pane_id": t1_focused,
+            "panes": [pane_rect("w1:p1", 0, 30), pane_rect("w1:p2", 30, 30), pane_rect("w1:p3", 60, 30)],
+            "splits": [
+                {"direction": "right", "ratio": 0.333_333_34,
+                 "rect": {"x": 0, "y": 0, "width": 90, "height": 24}},
+                {"direction": "right", "ratio": 0.5,
+                 "rect": {"x": 30, "y": 0, "width": 60, "height": 24}}
+            ]
+        }, {
+            "workspace_id": "w1", "tab_id": "t2", "zoomed": false,
+            "area": {"x": 0, "y": 0, "width": 90, "height": 24},
+            "focused_pane_id": "w1:p4",
+            "panes": [pane_rect("w1:p4", 0, 90)],
+            "splits": []
+        }]
+    }))
+    .expect("session payload")
+}
+
+#[test]
+fn a_pane_focus_readback_for_another_tab_cannot_pull_focus_back() {
+    let mut runtime = live_runtime();
+    runtime.ingest_session(Ok(two_tab_focus_payload("w1:p1")));
+    // Herdr's stream moves tab t1's focus while Hide has p1 selected.
+    let (_, identity) =
+        runtime.ingest_session_awaiting_focus_readback(Ok(two_tab_focus_payload("w1:p2")), None);
+    let identity = identity.unwrap();
+    // The operator selects the pane of the other tab during the read.
+    runtime.dispatch_json(&operator_focus_event("w1:p4"));
+    finish_running_pane_focus(&mut runtime, Ok(()));
+    assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p4"));
+
+    runtime.finish_pane_focus_readback(identity, true);
+    assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p4"));
+    assert_eq!(diagnostic_count(&runtime, "pane.focus.followed"), 0);
 }
 
 #[test]
@@ -1712,12 +1789,39 @@ fn pane_focus_completion_during_session_read_does_not_authorize_an_unchecked_str
     runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
     runtime.dispatch_json(&operator_focus_event("w1:p2"));
     let stale = finished_tab_payload(&panes, "w1:p1");
-    assert!(runtime.pane_focus_readback_target(&stale).is_none());
+    let (_, readback) = runtime.ingest_session_awaiting_focus_readback(Ok(stale), None);
+    assert!(readback.is_none());
     finish_running_pane_focus(&mut runtime, Ok(()));
 
-    runtime.ingest_session_with_focus_readback(Ok(stale), None, None);
     assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p2"));
     assert_eq!(diagnostic_count(&runtime, "pane.focus.followed"), 0);
+}
+
+#[test]
+fn only_one_pane_focus_readback_is_outstanding_and_a_superseded_one_hands_on() {
+    let mut runtime = live_runtime();
+    let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6020)];
+    runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
+
+    let (_, first) = runtime
+        .ingest_session_awaiting_focus_readback(Ok(finished_tab_payload(&panes, "w1:p2")), None);
+    let first = first.unwrap();
+    assert_eq!(first.target_id, "w1:p2");
+    // Herdr moved again while the first read is out: no second read starts.
+    let (_, second) = runtime
+        .ingest_session_awaiting_focus_readback(Ok(finished_tab_payload(&panes, "w1:p3")), None);
+    assert!(second.is_none());
+    assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p1"));
+
+    // The answer is for a focus the layout no longer shows, so it covers
+    // nothing and the worker is handed the one the layout does show.
+    let (_, next) = runtime.finish_pane_focus_readback(first, true);
+    assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p1"));
+    let next = next.unwrap();
+    assert_eq!(next.target_id, "w1:p3");
+    runtime.finish_pane_focus_readback(next, true);
+    assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p3"));
+    assert!(runtime.pane_focus_readback.is_none());
 }
 
 #[test]
@@ -1739,11 +1843,11 @@ fn superseded_same_pane_focus_failure_cannot_fail_a_newer_correlated_request() {
     assert_eq!(request.request_id, "latest");
     assert_eq!(request.phase, "pending");
     assert!(runtime.snapshot().status.last_error.is_none());
-    assert!(
-        !runtime
-            .ingest_pane_focus_completion(first, Err("late duplicate".to_owned().into()), 9)
-            .0
-    );
+    assert!(!runtime.ingest_pane_focus_completion(
+        first,
+        Err("late duplicate".to_owned().into()),
+        9
+    ));
     finish_running_pane_focus(&mut runtime, Ok(()));
     assert_eq!(
         runtime
@@ -1765,7 +1869,7 @@ fn unknown_pane_focus_ends_the_automatic_burst_without_claiming_success() {
     runtime.dispatch_json(&operator_focus_event("w1:p2"));
     let first = runtime.pane_focus_in_flight.clone().unwrap();
     runtime.dispatch_json(&correlated_pane_focus_event("w1:p1", "latest"));
-    let (changed, successor) = runtime.ingest_pane_focus_completion(
+    let (changed, successor) = runtime.complete_lane_pane_focus(
         first,
         Err(live::ControlFailure::Ambiguous(
             "pane.focus result is unknown: response timed out".into(),
@@ -2367,18 +2471,24 @@ fn tab_strip_reorder_a_refused_drag_can_simply_be_dragged_again() {
         1
     ));
     let generation = runtime.pending_tab_move[&checkout_id].generation;
-    assert!(runtime.ingest_local_control_result(
-        RemoteControlAction::MoveTab {
-            checkout_id: checkout_id.clone(),
-            tab_id: "w-order:t1".to_owned(),
-            insert_index: 2,
-            expected_order: vec!["w-order:t2".to_owned(), "w-order:t1".to_owned()],
-            generation,
-            connection_generation: 0,
-        },
-        Err("tab.move failed: tab_not_found: tab w-order:t1 not found".to_owned()),
-        4,
-    ));
+    assert!(
+        runtime
+            .complete_lane_tab(
+                RemoteControlAction::MoveTab {
+                    checkout_id: checkout_id.clone(),
+                    tab_id: "w-order:t1".to_owned(),
+                    insert_index: 2,
+                    expected_order: vec!["w-order:t2".to_owned(), "w-order:t1".to_owned()],
+                    generation,
+                    connection_generation: 0,
+                },
+                Err(live::ControlFailure::Definite(
+                    "tab.move failed: tab_not_found: tab w-order:t1 not found".to_owned()
+                )),
+                4,
+            )
+            .0
+    );
     assert_eq!(strip_ids(&runtime, &checkout_id), before);
     assert!(runtime.pending_tab_move.is_empty());
     assert_eq!(

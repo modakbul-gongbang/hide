@@ -22,6 +22,7 @@ import os from "node:os";
 import path from "node:path";
 import { elsewhereTab, finishFixtureTurn, labelAgent, labelMarker, setFixtureLifecycle, setFixtureSession, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
+import { endWindowsProcesses, fixtureExecutable, fixtureProgram } from "./platform-fixture";
 import { screenshot } from "./wire";
 import { chord } from "./chords";
 
@@ -32,25 +33,31 @@ const DNS = "mac.tailnet-name.ts.net";
 /** A `tailscale` CLI whose answers the test writes; it records every call. */
 class FakeTailscale {
   readonly dir = fs.mkdtempSync(path.join(os.tmpdir(), "hide-ts-"));
-  readonly bin = path.join(this.dir, "tailscale");
+  readonly bin = path.join(this.dir, fixtureExecutable("tailscale"));
 
   install(): void {
-    const script = `#!/bin/sh
-S='${this.dir}'
-echo "$*" >> "$S/calls.log"
-case "$1" in
-  status) cat "$S/status.json" ;;
-  serve)
-    shift
-    if [ "$1" = status ]; then cat "$S/serve.json" 2>/dev/null || echo '{}'; exit 0; fi
-    last=""; for a in "$@"; do last="$a"; done
-    if [ "$last" = off ]; then echo '{}' > "$S/serve.json"; exit 0; fi
-    printf '{"TCP":{"443":{"HTTPS":true}},"Web":{"${DNS}:443":{"Handlers":{"/":{"Proxy":"%s"}}}}}' "$last" > "$S/serve.json"
-    ;;
-  *) exit 2 ;;
-esac
-`;
-    fs.writeFileSync(this.bin, script, { mode: 0o755 });
+    fixtureProgram(
+      this.dir,
+      "tailscale",
+      `const fs = require("fs");
+const path = require("path");
+const file = (name) => path.join(${JSON.stringify(this.dir)}, name);
+const args = process.argv.slice(2);
+fs.appendFileSync(file("calls.log"), args.join(" ") + "\\n");
+if (args[0] === "status") { process.stdout.write(fs.readFileSync(file("status.json"), "utf8")); process.exit(0); }
+if (args[0] === "serve") {
+  const rest = args.slice(1);
+  if (rest[0] === "status") {
+    process.stdout.write(fs.existsSync(file("serve.json")) ? fs.readFileSync(file("serve.json"), "utf8") : "{}\\n");
+    process.exit(0);
+  }
+  const last = rest[rest.length - 1];
+  fs.writeFileSync(file("serve.json"), last === "off" ? "{}\\n" : '{"TCP":{"443":{"HTTPS":true}},"Web":{"${DNS}:443":{"Handlers":{"/":{"Proxy":"' + last + '"}}}}}');
+  process.exit(0);
+}
+process.exit(2);
+`,
+    );
   }
 
   status(value: unknown): void {
@@ -87,11 +94,13 @@ esac
   }
 
   remove(): void {
+    // Windows keeps a running fake's executable locked; end what runs from this folder first.
+    if (process.platform === "win32") endWindowsProcesses([], this.dir);
     fs.rmSync(this.dir, { recursive: true, force: true });
   }
 }
 
-type Push = { authorization: string; payload: { title: string; body: string; tag: string; device_id: string; pane_id: string; clear: string[] } };
+type Push = { authorization: string; payload: { title: string; state: "needs_you" | "done"; place: string; tag: string; device_id: string; pane_id: string; clear: string[] } };
 
 /** A push service on loopback that decrypts RFC 8291 aes128gcm with the phone's own keys. */
 async function pushService() {
@@ -142,9 +151,10 @@ async function pushService() {
 /**
  * An iPhone-sized touch page. Chromium has no push service of its own here,
  * so the page's PushManager hands out the loopback endpoint's subscription
- * and the permission answer is "granted" once asked.
+ * and the permission answer is "granted" once asked. The phone's own language
+ * is English unless a test asks for another.
  */
-async function phoneContext(browser: Browser, push?: { endpoint: string; p256dh: string; auth: string }): Promise<BrowserContext> {
+async function phoneContext(browser: Browser, push?: { endpoint: string; p256dh: string; auth: string }, locale = "en-US"): Promise<BrowserContext> {
   const iphone = devices["iPhone 13"];
   const context = await browser.newContext({
     viewport: iphone.viewport,
@@ -153,7 +163,7 @@ async function phoneContext(browser: Browser, push?: { endpoint: string; p256dh:
     isMobile: true,
     hasTouch: true,
     colorScheme: "dark",
-    locale: "ko-KR",
+    locale,
   });
   if (push) {
     await context.addInitScript((subscription) => {
@@ -318,7 +328,7 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     await page.locator('[data-mobile-new-code="true"]').click();
     await expect.poll(async () => pairingUrl(page, daemon as Daemon)).not.toBe(firstUrl);
     const pairUrl = await pairingUrl(page, daemon);
-    const stale = await (await phoneContext(browser)).newPage();
+    const stale = await (await phoneContext(browser, undefined, "ko-KR")).newPage();
     contexts.push(stale.context());
     await stale.goto(firstUrl);
     await stale.locator('[data-phone-pair="true"]').tap();
@@ -328,15 +338,15 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     await ask(herdr, one, "배포 전에 테스트를 다시 돌릴까요?");
     await work(herdr, two);
 
-    // B11: the QR opens the pairing page; 연결 lands on the list and the Mac lists the phone.
+    // B11: the QR opens the pairing page; Connect lands on the list and the Mac lists the phone.
     const phoneContextOne = await phoneContext(browser, push);
     contexts.push(phoneContextOne);
     const phone = await phoneContextOne.newPage();
     const frames: string[] = [];
     phone.on("websocket", (socket) => socket.on("framereceived", (frame) => frames.push(String(frame.payload))));
     await phone.goto(pairUrl);
-    await expect(phone.getByRole("heading", { name: "mac와 연결" })).toBeVisible();
-    await expect(phone.getByText("코드는 5분 안에 만료돼요. 만료되면 맥에서 QR을 다시 여세요.")).toBeVisible();
+    await expect(phone.getByRole("heading", { name: "Connect to mac" })).toBeVisible();
+    await expect(phone.getByText("The code expires in 5 minutes. If it expires, reopen the QR code on your Mac.")).toBeVisible();
     await screenshot(phone, "mobile-phone-pair");
     await phone.locator('[data-phone-pair="true"]').tap();
     await expect(phone.locator('[data-phone-connected="true"]')).toBeVisible({ timeout: 20_000 });
@@ -362,8 +372,8 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     await expect(phone.locator('[data-phone-group="needs_you"]').locator(`[data-phone-agent$="|${one}"]`)).toBeVisible({ timeout: 20_000 });
     await expect(oneRow.locator("[data-phone-line]")).toHaveText("배포 전에 테스트를 다시 돌릴까요?");
     await expect(phone.locator('[data-phone-group="working"]').locator(`[data-phone-agent$="|${two}"]`)).toBeVisible();
-    await expect(phone.locator("[data-phone-group] h2").first()).toContainText("내 확인 대기");
-    // B21: live; two asks and joins one under 내 확인 대기 without a reload.
+    await expect(phone.locator("[data-phone-group] h2").first()).toContainText("Needs your attention");
+    // B21: live; two asks and joins one under Needs your attention without a reload.
     await ask(herdr, two, "어느 브랜치에 올릴까요?");
     await expect(phone.locator('[data-phone-group="needs_you"] [data-phone-group-count]')).toHaveText("2", { timeout: 20_000 });
     // B41: an idle list sends nothing; the phone hears only changes.
@@ -426,9 +436,9 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     });
     await screenshot(phone, "mobile-phone-conversation");
 
-    // 터미널: the pane's recent rows.
+    // Terminal: the pane's recent rows.
     await phone.locator('[data-phone-view="terminal"]').tap();
-    const rows = phone.locator('[aria-label="터미널 최근 출력"]');
+    const rows = phone.locator('[aria-label="Recent terminal output"]');
     await expect(rows).toContainText("line 260", { timeout: 20_000 });
     await expect(rows).not.toContainText("line 001");
     const scrollback = phone.locator("[data-phone-scrollback]");
@@ -438,15 +448,15 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     expect(await scrollback.evaluate((element) => element.scrollWidth - element.clientWidth)).toBeLessThanOrEqual(0);
     expect(await phone.evaluate(() => document.documentElement.scrollWidth - window.innerWidth)).toBeLessThanOrEqual(0);
     // B25: pulling to the top brings the older rows, up to what the pane holds.
-    await expect(phone.getByText("위로 당기면 더 불러와요")).toBeVisible();
+    await expect(phone.getByText("Pull up to load more")).toBeVisible();
     await scrollback.evaluate((element) => {
       element.scrollTop = 0;
     });
     await expect(rows).toContainText("line 001", { timeout: 20_000 });
     await expect(scrollback).toHaveAttribute("data-phone-scrollback", "400");
-    await expect(phone.getByText("위로 당기면 더 불러와요")).toHaveCount(0);
+    await expect(phone.getByText("Pull up to load more")).toHaveCount(0);
     await expect(rows).toContainText("fixture %");
-    for (const name of ["Enter", "Escape", "위 화살표", "아래 화살표", "Ctrl-C"]) await expect(phone.getByRole("button", { name, exact: true })).toBeVisible();
+    for (const name of ["Enter", "Escape", "Up arrow", "Down arrow", "Ctrl-C"]) await expect(phone.getByRole("button", { name, exact: true })).toBeVisible();
     // B38: fingers fit every control.
     for (const control of [phone.locator('[data-phone-key="enter"]'), phone.locator('[data-phone-send="true"]'), phone.locator('[data-phone-reply="true"]')]) {
       const box = await control.boundingBox();
@@ -462,7 +472,7 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     // B27: exactly once.
     expect(fs.readFileSync(herdr.inputLogs[0], "utf8").split("yes please").length - 1).toBe(1);
     // B25: the echoed reply reaches the scrollback on its own.
-    await expect(phone.locator('[aria-label="터미널 최근 출력"]')).toContainText("yes please", { timeout: 20_000 });
+    await expect(phone.locator('[aria-label="Recent terminal output"]')).toContainText("yes please", { timeout: 20_000 });
     // B26: one key each.
     const logLength = fs.readFileSync(herdr.inputLogs[0], "utf8").length;
     await phone.locator('[data-phone-key="escape"]').tap();
@@ -472,7 +482,7 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     await expect.poll(() => ["\u001b\u001b[A", "\u001b\u001bOA"].includes(fs.readFileSync(herdr.inputLogs[0], "utf8").slice(logLength))).toBe(true);
     // B27: a reply over the limit is named before it is sent.
     await phone.locator('[data-phone-reply="true"]').fill("x".repeat(2001));
-    await expect(phone.locator('[data-phone-input-error="true"]')).toContainText("2,000자까지");
+    await expect(phone.locator('[data-phone-input-error="true"]')).toContainText("up to 2,000 characters");
     await expect(phone.locator('[data-phone-send="true"]')).toBeDisabled();
     await phone.locator('[data-phone-reply="true"]').fill("");
     await scrollback.evaluate((element) => {
@@ -480,7 +490,7 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     });
     await screenshot(phone, "mobile-phone-detail");
 
-    // B30: with push on, the list offers 알림 켜기; allowing it registers the subscription.
+    // B30: with push on, the list offers Turn on notifications; allowing it registers the subscription.
     await page.locator('[data-push-choice="always"]').click();
     await phone.locator('[data-phone-back="true"]').tap();
     const enable = phone.locator('[data-phone-notifications="enable"]');
@@ -489,12 +499,12 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     await expect(enable).toHaveCount(0, { timeout: 20_000 });
     await expect(page.locator("[data-mobile-phone-line]")).toHaveText("Just now · Receiving notifications");
 
-    // B31, B33 (항상): two finishes; one notification for it, with no terminal content.
+    // B31, B33 (always): two finishes; one notification for it, with no terminal content.
     await finish(two);
     await expect.poll(() => push.received.length, { timeout: 20_000 }).toBe(1);
     const done = push.received[0]!;
     expect(done.payload.title).toBe("Agent two");
-    expect(done.payload.body).toMatch(/^끝 · /);
+    expect(done.payload.state).toBe("done");
     expect(done.payload.tag).toBe(`${done.payload.device_id}|${two}`);
     expect(done.payload.pane_id).toBe(two);
     expect(JSON.stringify(done.payload)).not.toContain("fixture %");
@@ -511,7 +521,7 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     await expect.poll(() => coreLog(daemon as Daemon)).toContain('"reason":"viewing"');
     await phone.locator('[data-phone-back="true"]').tap();
 
-    // B33 (끔): nothing.
+    // B33 (off): nothing.
     await page.locator('[data-push-choice="off"]').click();
     await work(herdr, two);
     await expect.poll(() => groupOf(frames, two)).toBe("working");
@@ -519,7 +529,7 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     await expect.poll(() => groupOf(frames, two)).toBe("needs_you");
     await noPushFor(push.received, 1);
 
-    // B33 (앱이 닫혀 있을 때만): nothing while the desktop is connected. The
+    // B33 (only while the app is closed): nothing while the desktop is connected. The
     // desktop then reads two, which clears its notification (B34).
     await page.locator('[data-push-choice="app_closed"]').click();
     await work(herdr, two);
@@ -540,7 +550,7 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     await expect.poll(() => push.received.length, { timeout: 20_000 }).toBe(2);
     const closed = push.received[1]!;
     expect(closed.payload.title).toBe("Agent one");
-    expect(closed.payload.body).toMatch(/^내 확인 대기 · /);
+    expect(closed.payload.state).toBe("needs_you");
     expect(closed.payload.clear).toContain(`${closed.payload.device_id}|${two}`);
 
     // B28: the pane closes under an open detail; the reply bar goes inert.
@@ -548,7 +558,7 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     await phone.locator('[data-phone-view="terminal"]').tap();
     await expect(phone.locator("[data-phone-scrollback]")).toBeVisible({ timeout: 20_000 });
     execFileSync(herdr.bin, ["pane", "close", two], { env: herdr.env, timeout: 30_000 });
-    await expect(phone.locator('[data-phone-rows-state="gone"]')).toHaveText("이 pane은 더 이상 열려 있지 않아요.", { timeout: 20_000 });
+    await expect(phone.locator('[data-phone-rows-state="gone"]')).toHaveText("This pane is no longer open.", { timeout: 20_000 });
     await expect(phone.locator('[data-phone-reply="true"]')).toBeDisabled();
     await screenshot(phone, "mobile-phone-gone");
     await phone.locator('[data-phone-back="true"]').tap();
@@ -558,7 +568,7 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     await openMobileSettings(desk, daemon);
     await desk.locator("[data-mobile-revoke]").click();
     await expect(desk.locator("[data-mobile-phone]")).toHaveCount(0);
-    await expect(phone.locator('[data-phone-guidance="revoked"]')).toHaveText("이 폰의 연결이 해지됐어요. 맥에서 QR을 다시 여세요.", { timeout: 20_000 });
+    await expect(phone.locator('[data-phone-guidance="revoked"]')).toHaveText("This phone's connection was revoked. Reopen the QR code on your Mac.", { timeout: 20_000 });
     await expect.poll(() => phone.evaluate(() => (window as unknown as { __push: { unsubscribed: number } }).__push.unsubscribed)).toBe(1);
     const phones = JSON.parse(fs.readFileSync(path.join(daemon.stateDir, "phones.json"), "utf8")) as { phones: unknown[] };
     expect(phones.phones).toHaveLength(0);
@@ -606,8 +616,28 @@ test("an empty list, the unreachable line, the phone limit and the seven-day rev
     await phone.locator('[data-phone-pair="true"]').tap();
 
     // B22: no agents, one line.
-    await expect(phone.locator('[data-phone-empty="true"]')).toHaveText("실행 중인 에이전트가 없어요", { timeout: 20_000 });
+    await expect(phone.locator('[data-phone-empty="true"]')).toHaveText("No agents are running", { timeout: 20_000 });
     await screenshot(phone, "mobile-phone-empty");
+    // The core's explicit language reaches the phone and gives way to the phone's own once unset.
+    await page.locator('[data-settings-tab="general"]').click();
+    await page.locator("[data-interface-language]").click();
+    await page.locator('[data-language-option="ko"]').click();
+    await expect(phone.locator("[data-phone-empty]")).toHaveText("실행 중인 에이전트가 없어요", { timeout: 20_000 });
+    await expect(phone.locator("html")).toHaveAttribute("lang", "ko");
+    // The page gave the service worker the words a notification starts with, in that language, kept for a closed app.
+    await expect
+      .poll(() =>
+        phone.evaluate(async () => {
+          const hit = await (await caches.open("hide-phone-words")).match("/m/words.json");
+          return hit ? ((await hit.json()) as unknown) : null;
+        }),
+      )
+      .toEqual({ needs_you: "내 확인 대기", done: "끝" });
+    await page.locator("[data-interface-language]").click();
+    await page.locator('[data-language-option="system"]').click();
+    await expect(phone.locator("[data-phone-empty]")).toHaveText("No agents are running", { timeout: 20_000 });
+    await expect(phone.locator("html")).toHaveAttribute("lang", "en");
+    await page.locator('[data-settings-tab="mobile"]').click();
     // B38: the phone's own light or dark setting decides the theme.
     await expect(phone.locator("html")).toHaveClass(/dark/);
     await phone.emulateMedia({ colorScheme: "light" });
@@ -618,7 +648,7 @@ test("an empty list, the unreachable line, the phone limit and the seven-day rev
     // B23, B8: the daemon goes away; the list dims under the unreachable line,
     // and the phone comes back on its own with the same credential.
     daemon = await daemon.restart(async () => {
-      await expect(phone.locator('[data-phone-unreachable="true"]')).toContainText("연결 안 됨 · 맥의 hide가 꺼져 있거나 폰의 Tailscale이 꺼져 있어요. 다시 시도 중", { timeout: 20_000 });
+      await expect(phone.locator('[data-phone-unreachable="true"]')).toContainText("Not connected · hide on your Mac or Tailscale on your phone is off. Retrying", { timeout: 20_000 });
       await screenshot(phone, "mobile-phone-unreachable");
     });
     await expect(phone.locator('[data-phone-connected="true"]')).toBeVisible({ timeout: 30_000 });
@@ -661,7 +691,7 @@ test("an empty list, the unreachable line, the phone limit and the seven-day rev
     contexts.push(fifth.context());
     await fifth.goto(await pairingUrl(page, daemon));
     await fifth.locator('[data-phone-pair="true"]').tap();
-    await expect(fifth.locator('[data-phone-guidance="phone_limit"]')).toHaveText("폰은 4대까지 연결할 수 있어요. 맥의 설정 > Mobile에서 하나를 해지하세요.", { timeout: 20_000 });
+    await expect(fifth.locator('[data-phone-guidance="phone_limit"]')).toHaveText("You can connect up to 4 phones. Revoke one in Settings > Mobile on your Mac.", { timeout: 20_000 });
     await screenshot(page, "mobile-settings-ready");
 
     // B16: a phone away for eight days is revoked at start and told so when it opens.
@@ -676,7 +706,7 @@ test("an empty list, the unreachable line, the phone limit and the seven-day rev
       fs.writeFileSync(file, JSON.stringify(current));
     });
     await phoneContextA.setOffline(false);
-    await expect(phone.locator('[data-phone-guidance="revoked"]')).toHaveText("이 폰의 연결이 해지됐어요. 맥에서 QR을 다시 여세요.", { timeout: 30_000 });
+    await expect(phone.locator('[data-phone-guidance="revoked"]')).toHaveText("This phone's connection was revoked. Reopen the QR code on your Mac.", { timeout: 30_000 });
     await openMobileSettings(page, daemon);
     await expect(page.getByText("Connected phones · 3 / 4")).toBeVisible({ timeout: 20_000 });
   } finally {

@@ -16,6 +16,7 @@ import http from "node:http";
 import path from "node:path";
 import { labelAgent, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
+import { fixtureProgram } from "./platform-fixture";
 import { countSent, rest, rowGeometry, screenshot } from "./wire";
 import { chord } from "./chords";
 import { animationsFinished, quietFor } from "./wait";
@@ -49,18 +50,16 @@ function fakeGh(dir: string, url: string): string {
       closingIssuesReferences: [],
     },
   ]);
-  fs.writeFileSync(
-    path.join(bin, "gh"),
-    `#!/bin/sh
-case "$1 $2" in
-  "auth status") exit 0 ;;
-  "pr list") echo '${pulls}' ;;
-  "repo view") echo '{"nameWithOwner":"acme/repo"}' ;;
-  "issue list") echo '[]' ;;
-  *) echo "unsupported: $*" >&2; exit 1 ;;
-esac
+  fixtureProgram(
+    bin,
+    "gh",
+    `const key = process.argv.slice(2, 4).join(" ");
+const answers = { "pr list": ${JSON.stringify(pulls)}, "repo view": '{"nameWithOwner":"acme/repo"}', "issue list": "[]" };
+if (key === "auth status") process.exit(0);
+if (key in answers) { console.log(answers[key]); process.exit(0); }
+console.error("unsupported: " + process.argv.slice(2).join(" "));
+process.exit(1);
 `,
-    { mode: 0o755 },
   );
   return bin;
 }
@@ -119,7 +118,7 @@ test("a checkout's pull request: the glyph opens it, the row's card describes it
     await workspaceAt(herdr, repo, "메인 체크아웃 정리");
     await workspaceAt(herdr, worktree, "PR 카드 구현");
 
-    daemon = await startHided(herdr, "checkout-pr", undefined, { PATH: `${fakeGh(herdr.root, url)}:${herdr.fixturePath}` });
+    daemon = await startHided(herdr, "checkout-pr", undefined, { PATH: `${fakeGh(herdr.root, url)}${path.delimiter}${herdr.fixturePath}` });
     const sent = countSent(page);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await expect(page.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });

@@ -11,9 +11,9 @@ impl Runtime {
         control: PendingPaneFocusControl,
         result: Result<PaneLayoutSnapshot, live::ControlFailure>,
         elapsed_ms: u128,
-    ) -> (bool, Option<(LiveContext, PendingPaneFocusControl)>) {
+    ) -> bool {
         if self.pane_focus_in_flight.as_ref() != Some(&control) {
-            return (false, None);
+            return false;
         }
         self.pane_focus_in_flight = None;
         let current_connection = control.live_generation == self.live_generation;
@@ -67,7 +67,7 @@ impl Runtime {
             } else {
                 self.push_diagnostic("pane.focus.unknown", error.message());
             }
-            return (true, None);
+            return true;
         }
         if latest {
             let pending = self.pending_pane_focus.take().expect("latest focus intent");
@@ -129,7 +129,12 @@ impl Runtime {
                 ),
             );
         }
-        (true, self.begin_pane_focus_control())
+        // A newer intent is still waiting, so it takes the next turn on the
+        // lane, on whatever connection is current by then.
+        if self.pending_pane_focus.is_some() {
+            let _ = self.submit_pane_focus_turn();
+        }
+        true
     }
 
     pub(super) fn reconcile_remote_terminal_panes(

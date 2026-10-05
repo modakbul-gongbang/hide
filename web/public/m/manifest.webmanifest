@@ -1,7 +1,6 @@
 {
   "name": "hide",
   "short_name": "hide",
-  "description": "이 맥의 hide 에이전트를 보고 답합니다.",
   "scope": "/m/",
   "display": "standalone",
   "background_color": "#101112",

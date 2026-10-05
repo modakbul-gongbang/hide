@@ -806,8 +806,7 @@ impl Runtime {
             None => self
                 .live
                 .as_ref()
-                .cloned()
-                .map(|context| (TabMoveCarrier::Local(context), self.live_generation))
+                .map(|_| (TabMoveCarrier::Local, self.live_generation))
                 .ok_or_else(|| "Moving a Herdr tab requires a live Herdr connection".to_owned()),
             Some(target) => self.device_tab_move_carrier(target),
         };
@@ -838,7 +837,10 @@ impl Runtime {
                 phase: "transmitting".to_owned(),
                 stage: "request".to_owned(),
                 started_at_unix_ms: now,
-                deadline_at_unix_ms: Some(now.saturating_add(CLOSE_STAGE_TIMEOUT_MS)),
+                // A move on this machine waits its turn on the control lane,
+                // so its five seconds start when it leaves (`start_job`).
+                deadline_at_unix_ms: (!matches!(carrier, TabMoveCarrier::Local))
+                    .then(|| now.saturating_add(CLOSE_STAGE_TIMEOUT_MS)),
                 message: Some("Waiting for Herdr to confirm the tab order".to_owned()),
                 retryable: false,
             },
@@ -884,7 +886,7 @@ impl Runtime {
             connection_generation,
         };
         let spawned = match carrier {
-            TabMoveCarrier::Local(context) => live::spawn_local_control(context, action),
+            TabMoveCarrier::Local => self.submit_local_control(action),
             TabMoveCarrier::Device(context) => live::spawn_remote_control(
                 context,
                 format!("tab.move:{}:{generation}", payload.checkout_id),
@@ -1936,20 +1938,42 @@ impl Runtime {
         self.ingest_session_with_focus_check(fetched, precomputed, SessionFocusCheck::Unchecked)
     }
 
-    /// Identify only an external move within the selected pane's layout.
-    /// Missing panes and tab arrivals keep their existing topology handling.
-    pub(crate) fn pane_focus_readback_target(
-        &self,
-        payload: &SessionSnapshotPayload,
-    ) -> Option<PendingPaneFocusControl> {
+    /// Ingests a session update whose focus is Herdr's own stream's, and
+    /// says whether a read of Herdr's focus has to follow.
+    ///
+    /// The stream has no ordering cursor, so a focus that differs from the
+    /// selected pane is not authority until a fresh read agrees. That read
+    /// waits on Herdr, so it never gates this update: the layout, the panes
+    /// and every other part of the update are taken now, and the differing
+    /// focus (and the zoom of the pane it names) stays Hide's until
+    /// [`Self::finish_pane_focus_readback`] hears the answer. At most one
+    /// read is outstanding.
+    pub(crate) fn ingest_session_awaiting_focus_readback(
+        &mut self,
+        fetched: Result<SessionSnapshotPayload, SessionFetchError>,
+        precomputed: Option<session_sync::PrecomputedCatalog>,
+    ) -> (bool, Option<PendingPaneFocusControl>) {
+        let changed = self.ingest_session_with_focus_check(
+            fetched,
+            precomputed,
+            SessionFocusCheck::Readback(None),
+        );
+        (changed, self.begin_pane_focus_readback())
+    }
+
+    /// An external move within the selected pane's tab, as the stored layout
+    /// shows it. Missing panes and tab arrivals keep their existing topology
+    /// handling.
+    fn pane_focus_readback_target(&self) -> Option<PendingPaneFocusControl> {
         if self.pending_pane_focus.is_some() || self.pane_focus_in_flight.is_some() {
             return None;
         }
         let selected = self.snapshot.focused.pane_id.as_deref()?;
-        let layout = payload
-            .layouts
+        let layout = self
+            .snapshot
+            .pane_layouts
             .iter()
-            .find(|layout| layout.panes.iter().any(|pane| pane.pane_id == selected))?;
+            .find(|layout| layout.pane_ids().contains(&selected))?;
         (layout.focused_pane_id != selected).then(|| PendingPaneFocusControl {
             serial: self.next_pane_focus_serial,
             target_id: layout.focused_pane_id.clone(),
@@ -1957,17 +1981,77 @@ impl Runtime {
         })
     }
 
-    pub(crate) fn ingest_session_with_focus_readback(
+    /// Takes the one readback slot for the move the stored layouts show.
+    fn begin_pane_focus_readback(&mut self) -> Option<PendingPaneFocusControl> {
+        if self.pane_focus_readback.is_some() {
+            return None;
+        }
+        let identity = self.pane_focus_readback_target()?;
+        self.pane_focus_readback = Some(identity.clone());
+        Some(identity)
+    }
+
+    #[cfg(test)]
+    pub(crate) fn pane_focus_readback_is_outstanding(&self) -> bool {
+        self.pane_focus_readback.is_some()
+    }
+
+    /// Frees the readback slot for a worker that ended without an answer.
+    pub(crate) fn abandon_pane_focus_readback(&mut self) {
+        self.pane_focus_readback = None;
+    }
+
+    /// Settles the readback for `identity` and returns whether the snapshot
+    /// changed, with the next readback when the stored layouts still show a
+    /// move this answer did not cover.
+    ///
+    /// A confirmed answer applies the layout the session already stored,
+    /// now with its focus and zoom. The identity is checked again there:
+    /// a newer selection, a pending focus request or another connection
+    /// leaves the answer without authority. An unconfirmed answer changes
+    /// nothing and is not asked again until the next session update.
+    pub(crate) fn finish_pane_focus_readback(
         &mut self,
-        fetched: Result<SessionSnapshotPayload, SessionFetchError>,
-        precomputed: Option<session_sync::PrecomputedCatalog>,
-        readback: Option<(PendingPaneFocusControl, bool)>,
-    ) -> bool {
-        self.ingest_session_with_focus_check(
-            fetched,
-            precomputed,
-            SessionFocusCheck::Readback(readback),
-        )
+        identity: PendingPaneFocusControl,
+        confirmed: bool,
+    ) -> (bool, Option<PendingPaneFocusControl>) {
+        self.pane_focus_readback = None;
+        let stored = self
+            .snapshot
+            .pane_layouts
+            .iter()
+            .find(|layout| layout.focused_pane_id == identity.target_id)
+            .cloned();
+        let mut changed = false;
+        // The move must still be the one the selected pane's layout shows:
+        // the apply below rechecks the identity only inside that layout, so
+        // an answer for another tab than the selected one has no authority.
+        if confirmed
+            && self.pane_focus_readback_target().as_ref() == Some(&identity)
+            && let Some(layout) = stored.clone()
+        {
+            changed |= self.apply_pane_layout_with_focus_check(
+                layout,
+                false,
+                SessionFocusCheck::Readback(Some((identity.clone(), true))),
+            );
+            changed |= self.settle_selection_projection();
+            changed |= self.refresh_browser_inventory_scope();
+        }
+        let next = if confirmed || stored.is_none() {
+            self.begin_pane_focus_readback()
+        } else {
+            None
+        };
+        (changed, next)
+    }
+
+    /// What follows a change of the selected pane: the worktree rows, the
+    /// visible tab and the attaches the visible tab holds.
+    fn settle_selection_projection(&mut self) -> bool {
+        let mut changed = self.refresh_worktree_projection();
+        changed |= self.align_visible_tab_with_selected_pane();
+        changed | self.track_visible_tab_attachments()
     }
 
     fn ingest_session_with_focus_check(
@@ -2467,9 +2551,7 @@ impl Runtime {
                 focus_check,
             );
         }
-        changed |= self.refresh_worktree_projection();
-        changed |= self.align_visible_tab_with_selected_pane();
-        changed |= self.track_visible_tab_attachments();
+        changed |= self.settle_selection_projection();
         changed |= self.refresh_sessions_after_catalog_change(catalog_changed);
         changed |= self.refresh_browser_inventory_scope();
         changed | self.refresh_pet()
@@ -2707,10 +2789,8 @@ impl Runtime {
             };
             pending.pane_control_serial = Some(serial);
             self.pending_pane_focus = Some(pending);
-            if let Some((context, control)) = self.begin_pane_focus_control()
-                && let Err(message) = live::spawn_pane_focus(context, control.clone())
-            {
-                self.ingest_pane_focus_completion(control, Err(message.into()), 0);
+            if let Err(message) = self.submit_pane_focus_turn() {
+                self.fail_unsent_pane_focus(&pane_id, message);
                 return;
             }
         } else {
@@ -2737,9 +2817,11 @@ impl Runtime {
         if self.pane_focus_in_flight.is_some() {
             return None;
         }
-        let pending = self.pending_pane_focus.as_ref()?;
-        let serial = pending.pane_control_serial?;
         let context = self.live.as_ref()?.clone();
+        let pending = self.pending_pane_focus.as_mut()?;
+        let serial = pending.pane_control_serial?;
+        pending.sent = true;
+        pending.requested_at_unix_ms = unix_milliseconds();
         let control = PendingPaneFocusControl {
             serial,
             target_id: pending.target_id.clone(),
@@ -2795,6 +2877,12 @@ impl Runtime {
         request.phase = phase.to_owned();
         request.message = message;
         request.retryable = retryable;
+    }
+    /// A pane focus the lane would not take: it is refused where the operator
+    /// asked, and Hide keeps the pane it selected.
+    fn fail_unsent_pane_focus(&mut self, pane_id: &str, message: String) {
+        self.fail_pending_pane_focus_for_target(pane_id, message.clone());
+        self.set_error("pane.focus_failed", message, true);
     }
     pub(super) fn fail_pending_pane_focus_for_target(
         &mut self,
@@ -2977,7 +3065,8 @@ impl Runtime {
                     && self.pending_pane_focus.is_none()
                     && self.pane_focus_in_flight.is_none()
             });
-            if !adopt_focus {
+            // `None` is an update held for its readback, which is not a refusal.
+            if !adopt_focus && readback.is_some() {
                 crate::diagnostic!(serde_json::json!({
                     "component": "pane_focus",
                     "kind": "pane.focus.stream_unconfirmed",
@@ -3096,8 +3185,12 @@ impl Runtime {
     /// a session that predates both.
     pub(super) fn await_tab_focus(&mut self, next: PendingViewFocus) {
         let next_target_id = next.target_id.clone();
+        // Only a request that already left can be answered late. One still
+        // waiting on the control lane is replaced there and never reaches
+        // Herdr, so nothing of it is remembered.
         if let Some(previous) = self.pending_tab_focus.replace(next)
             && previous.target_id != next_target_id
+            && previous.sent
         {
             self.superseded_tab_focus.retain(|held| {
                 held.scope_id != previous.scope_id || held.target_id != previous.target_id
@@ -4130,6 +4223,28 @@ impl Runtime {
                     ) => self.agent_can_show_created(cwd, id),
                     _ => true,
                 };
+                // A focus the operator asked for after this creation was sent
+                // names where they are now, and the creation's answer is the
+                // older request: the new tab waits in the strip rather than
+                // taking the screen back from the tab they chose.
+                let chosen_since = created_tab_id.is_some()
+                    && self
+                        .control_lane
+                        .running_serial()
+                        .is_some_and(|serial| self.last_view_intent_serial > serial);
+                if chosen_since && can_show_created {
+                    crate::diagnostic!(serde_json::json!({
+                        "component": "tab_control",
+                        "kind": "tab.create.focus_superseded",
+                        "action": action_kind,
+                        "created_tab_id": created_tab_id,
+                    }));
+                    self.push_diagnostic(
+                        "tab.create.focus_superseded",
+                        "A tab was chosen after this one was created; the created tab waits in the strip",
+                    );
+                }
+                let can_show_created = can_show_created && !chosen_since;
                 if can_show_created
                     && matches!(
                         action,
@@ -4157,7 +4272,9 @@ impl Runtime {
                     ) {
                         self.visible_tab_ids
                             .insert(checkout_id.clone(), tab_id.clone());
-                        self.await_tab_focus(PendingViewFocus::new(checkout_id, tab_id.clone()));
+                        self.await_tab_focus(
+                            PendingViewFocus::new(checkout_id, tab_id.clone()).already_sent(),
+                        );
                     }
                     self.yield_surface_to_terminal();
                     self.persist_current_ui_state();

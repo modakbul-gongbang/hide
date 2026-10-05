@@ -71,7 +71,9 @@ Terminal pixels in a web e2e screenshot come from the DOM renderer, so a claim a
 When the behavior depends on the order of two events, the test fixes that order; it does not hope the scheduler produces it.
 
 - Hold one side at a real boundary and release it after the competing event has been observed.
-  `focusGate` in `web/e2e/pane-focus-ordering.spec.ts` is the reference: a proxy on the private Herdr socket that holds one `pane.focus` request, forwards everything else, and lets the test release it, so every answer still comes from the pinned Herdr.
+  `herdrGate` in `web/e2e/herdr-gate.ts` is the shared gate, used by `web/e2e/pane-focus-ordering.spec.ts`: a proxy on the private Herdr socket that holds one request of the method the test arms, forwards everything else, and lets the test release it, so every answer still comes from the pinned Herdr.
+- A rule the core decides is gated one layer lower, in `herdr-core/src/runtime/tests/control_order.rs`: `FakeHerdr` records what actually left over the socket, and the test hands the runtime each answer itself (`complete_lane_tab`, `complete_lane_pane_focus`), so late, replaced, refused and lost answers arrive in the order the test chooses.
+  Put an order rule there; an e2e spec keeps one representative journey that shows the pieces are connected.
 - Before releasing, assert the barrier the race needs, such as the number of accepted requests, so a stale snapshot or an earlier diagnostic cannot satisfy it.
 - After releasing, assert the outcome and the boundary's own record (`gate.requests`, `gate.maximum()`), which show the order the product actually saw.
 - A race the test cannot order proves nothing either way; find the boundary to gate before writing the assertion.
@@ -131,8 +133,17 @@ The Windows fixture boundaries also preserve these requirements:
 
 - An endpoint is a named pipe on Windows: a fixture that would use the socket path `P` on Unix uses `\\.\pipe\P`, because listening on a Unix socket path there fails with `EACCES`.
   `localEndpoint` in `web/e2e/platform-fixture.ts` spells it for both a listener and a client.
+- A new fake `gh`, `tailscale` or provider is a Node script made by `fixtureProgram` in `web/e2e/platform-fixture.ts`, never a `#!/bin/sh` file: Windows cannot run a script by name, and its shell is not the Unix one.
+  One compiled launcher (`name.exe`, compiled once per worker) runs the `name.js` beside it with the interpreter its first line names, so there is one native program and one script per fake.
+  A `PATH` that holds the fake is joined with `path.delimiter`, because `:` splits a drive letter on Windows.
 - A key the core derives from a path is computed from the wire spelling the core uses (`/` between names, `hide-platform`'s `path`), never from the native spelling.
   `web/e2e/s2.spec.ts` hashes the checkout folder to find its owner workspace; hashed in the Windows spelling, the key named a different workspace than the one the core chose, and the new tab the test expected appeared elsewhere.
+- A path a spec puts in a selector or compares with what the page shows is the wire spelling too: `toPage` (`desktop/src/main/wirePath.ts`) turns the native path the spec built into it.
+  `[data-explorer-row="C:\...\notes.md"]` never matches the page's `C:/.../notes.md`, and the wait runs to the test timeout.
+- A pane's shell is the one `isolatedEnv` configured, so a command for it comes from the fixture, never from POSIX text in a spec: `runInPane` runs a program there and returns its exit status, `printLinesCommand` makes it print lines, and `paneShellTabName` names the tab it titles.
+  The family is read from the configured shell (`paneShellOf`), not from `process.platform`; a shell the fixture cannot write for fails with its name.
+  cmd.exe has no `$?`, so the status comes from `call echo %^errorlevel%`, which reads it when it runs, and the status file is written last so its content says the program has finished.
+- The Windows console delivers Enter as a bare CR, where a Unix tty turns it into LF and echoes CRLF; the fixture shim ends the echoed line itself, so the next typed line is not drawn over the last one.
 - A program just copied or just exited can still be locked on Windows, so deleting it can fail with `EBUSY`.
   Confirm the process that ran it has exited before removing it; a deletion retry is not that confirmation.
 - A folder a pane's shell started in is locked until Herdr's server and its panes' processes are gone.
@@ -174,9 +185,8 @@ A piece that another open change is still building is marked as pending with the
    If the product has no signal for the readiness the next step needs, add one to the product (a data attribute, a diagnostic) in the same pull request.
    A signal added for a test is still a product contract: it is an attribute or a diagnostic, not a banner ([UI_BEHAVIOR.md](UI_BEHAVIOR.md)).
 3. **Fix the order with a gate when two events race.**
-   [The test decides the order](#the-test-decides-the-order) owns the rule; `focusGate` in `web/e2e/pane-focus-ordering.spec.ts` is the reference.
-   It holds `pane.focus` only, and only while armed.
-   Pending #438 (not merged): it generalizes it into a shared gate that can hold any Herdr method; once that merges, import the shared gate and do not write a second proxy.
+   [The test decides the order](#the-test-decides-the-order) owns the rule; `herdrGate` in `web/e2e/herdr-gate.ts` is the shared gate and `web/e2e/pane-focus-ordering.spec.ts` is the reference use.
+   It forwards every request to the pinned Herdr, records what arrived (`params`, `maximum`), and holds the next request of the one method `arm` names until the test calls `release`; import it and do not write a second proxy.
 4. **Control UI timers with `page.clock`, not with a wait.**
    A timer the page owns (a toast timeout, a debounce, a hover delay) is advanced with `page.clock.install()` and `page.clock.fastForward()`.
    Why: waiting out a 3-second timer costs 3 seconds on every run and still races a slow runner.
@@ -207,7 +217,7 @@ A piece that another open change is still building is marked as pending with the
    A test whose subject is a surviving page reconnecting to the restarted daemon (`web/e2e/s3.spec.ts`, the two draft recovery tests) must not reload it, and says so in a line allow.
 8. **Put a system difference in one fixture helper.**
    See [Operating-system differences belong to one fixture helper](#operating-system-differences-belong-to-one-fixture-helper); native home variables, executable names, the tool path, the compiler and the no-op opener live in `web/e2e/platform-fixture.ts`, not in a `process.platform` branch in a spec.
-   The endpoint helper (`focusGate` spells the Windows pipe itself in `web/e2e/pane-focus-ordering.spec.ts`) is not there yet; add it to `platform-fixture.ts` when a second spec needs it.
+   The endpoint helper (`herdrGate` spells the Windows pipe itself in `web/e2e/herdr-gate.ts`) is not there yet; add it to `platform-fixture.ts` when a second spec needs it.
 9. **A retry is a label, not a fix.**
    CI runs Playwright with `retries: 1` (`web/playwright.config.ts`, `desktop/playwright.config.ts`), so a test that fails and then passes is reported as `flaky` instead of failing the run; two failures still fail the lane.
    That is a classification for the issue `scripts/ci-flaky-report.py` files for the test, with a seven-day expiry to fix or delete it.
@@ -251,9 +261,10 @@ The crate's own `AGENTS.md` says where the file goes; this section says how the 
    Use a private folder per test and never a fixed name in `/tmp`.
    Why: a leaked process or file is inherited by the next test and by the next run.
 8. **Retries are a classification.**
-   CI runs the Linux Rust lane with `scripts/verify-cargo.sh nextest --profile ci` (`retries = 1` in `.config/nextest.toml`), so a test that fails once and then passes is reported as flaky and recorded in an issue with an expiry; two failures fail the lane.
+   CI runs every Rust lane (Linux, macOS, Windows, the OS contract and nightly) with `scripts/verify-cargo.sh nextest --profile ci` (`retries = 1` in `.config/nextest.toml`), so a test that fails once and then passes is reported as flaky and recorded in an issue with an expiry; two failures fail the lane.
    `nextest` does not run doc tests; the workspace has none that runs today, and a runnable one needs its own `cargo test --doc` step.
-   The Windows and macOS lanes still run `cargo test`, which has no retry; an OS-contract test there is quarantined with `ignore` as described in [Flaky tests](#flaky-tests).
+   `scripts/install-nextest.sh` installs the pinned release on a runner; a lane that runs nextest several times keeps one JUnit report per run, and `scripts/ci-flaky-report.py` reads them all.
+   A flaky OS-contract test is fixed or deleted by its issue's deadline like any other; it is not ignored.
    The rule against raising a deadline to pass is unchanged.
 
 ## Which lanes a pull request runs
@@ -299,10 +310,11 @@ CI retries a failed test once, for classification and for the report, and for no
   The deadline is not a timer that moves the test somewhere quieter, and a later flake on an issue past its deadline says so in its comment.
 - A green lane is not proof that a flaky test passed on that commit: its first attempt failed.
   Read the `Report flaky tests` step and the `quarantine` issues before claiming a flow verified.
-- The report step cannot fail a lane: the run already passed, so a GitHub error costs one missed issue that the next flaky run files.
+- The report step cannot fail a lane: the run already passed.
+  If it cannot file (a GitHub error, a read-only token), it leaves the unfiled tests in a warning annotation and in the job summary under "Flaky tests that were not filed", and the next flaky run files them; a filed run lists its issues in the same summary.
 - `cargo nextest` runs no doc test.
   The workspace has none that runs (its three doc blocks are `ignore`, `text` and `sh`); a runnable doc test needs its own `cargo test --doc` step.
-- Windows and macOS Rust lanes still use `cargo test`, whose retry does not exist; their flaky Rust tests surface as a failed lane.
+- `verify-cargo.sh test` and `test-scoped` stay `cargo test` for local runs and the sealed harness; they never retry.
 
 What the retry does not do:
 
@@ -318,8 +330,8 @@ Until the last `@flaky` tag is gone, a tag removes a test from the required lane
 - A web or desktop e2e test tagged `@flaky` with an `issue` annotation is skipped by the required web shards and the required desktop step (`--grep-invert @flaky`, nightly's suites included), and web shard 1 and the desktop job each still run every tagged test in a step that cannot turn `verify` red, so a fix shows up as a pass.
   Pull-request tagged web tests run only in shard 1 of the Linux lane, never in the macOS or Windows `@platform` jobs.
   The goal is no tag; a new one needs an open issue holding a recorded failure and a deadline, and removing the tag is part of the fix.
-- A Rust OS contract test that fails intermittently on one system is ignored there alone with `#[cfg_attr(target_os = "<system>", ignore = "<issue URL>")]`, so the other systems keep it in their required lanes.
-  Today only macOS `hide-platform` tests are run back: the desktop job's quarantine step runs them with `--ignored` where they cannot turn `verify` red (the plan includes `desktop-e2e` for every `hide-platform` change), and so does nightly's macOS step.
+- Rust has no quarantine: a flaky Rust test is retried, filed and fixed or deleted, and the policy is zero `ignore`.
+  An `ignore` that names an external binary, such as `real_herdr` and `remote_delivery`, is an opt-in run with its own step and says what it needs; it is not a quarantine.
 
 ## Reviewing a pull request that adds or changes a test
 

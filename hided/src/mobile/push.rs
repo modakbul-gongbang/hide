@@ -6,8 +6,11 @@
 //! POST: both are already in the build, and no other TLS stack is added.
 //!
 //! What is sent: one notification per root agent when it enters Needs You
-//! (itself, or a delegated descendant asking) or Done, titled with the task
-//! and saying the state and the project; never terminal content. A later
+//! (itself, or a delegated descendant asking) or Done, as data: the task as
+//! the title, the state (`needs_you` or `done`) and the project; never
+//! terminal content and never a sentence. The words for the state belong to
+//! the phone's language, so the phone page hands them to its service worker
+//! and the worker composes the body (`web/public/m/sw.js`). A later
 //! transition of the same agent replaces it (same tag). Agents the desktop
 //! has since made Seen ride along as tags to close.
 
@@ -298,6 +301,15 @@ pub enum Effective {
 }
 
 impl Effective {
+    /// The state a notification announces for this one, if any.
+    fn announced(self) -> Option<NoticeState> {
+        match self {
+            Self::NeedsYou => Some(NoticeState::NeedsYou),
+            Self::Done => Some(NoticeState::Done),
+            Self::Working | Self::Seen | Self::Other => None,
+        }
+    }
+
     fn from_group(group: &str) -> Self {
         match group {
             "needs_you" => Self::NeedsYou,
@@ -309,12 +321,34 @@ impl Effective {
     }
 }
 
-/// One notification to send to every subscribed phone.
+/// The two states a notification announces; the wire value is also the key
+/// of the phone's translated word for it.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum NoticeState {
+    NeedsYou,
+    Done,
+}
+
+impl NoticeState {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::NeedsYou => "needs_you",
+            Self::Done => "done",
+        }
+    }
+}
+
+/// One notification to send to every subscribed phone. It carries data only:
+/// the title and the place are the operator's own words, the state is a key
+/// the phone words in its own language.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Notice {
     pub key: AgentKey,
     pub title: String,
-    pub body: String,
+    pub state: NoticeState,
+    /// The project (`project`, or the part of `project · branch` before the
+    /// branch separator); empty when the agent has no place.
+    pub place: String,
 }
 
 /// Each root agent's effective state: its own group, raised to Needs You
@@ -357,18 +391,6 @@ fn effective(projection: &Projection) -> BTreeMap<AgentKey, (Effective, String, 
         }
     }
     roots
-}
-
-fn body(state: Effective, place: &str) -> String {
-    let word = match state {
-        Effective::NeedsYou => "내 확인 대기",
-        _ => "끝",
-    };
-    if place.is_empty() {
-        word.to_owned()
-    } else {
-        format!("{word} · {place}")
-    }
 }
 
 /// Follows root agents across projections and says which entered Needs You
@@ -420,16 +442,17 @@ impl Transitions {
             if before == *state {
                 continue;
             }
-            match state {
-                Effective::NeedsYou | Effective::Done => notices.push(Notice {
+            if let Some(announced) = state.announced() {
+                notices.push(Notice {
                     key: key.clone(),
                     title: title.clone(),
-                    body: body(*state, place),
-                }),
-                Effective::Seen if matches!(before, Effective::NeedsYou | Effective::Done) => {
-                    seen.insert(key.clone());
-                }
-                _ => {}
+                    state: announced,
+                    place: place.clone(),
+                });
+            } else if *state == Effective::Seen
+                && matches!(before, Effective::NeedsYou | Effective::Done)
+            {
+                seen.insert(key.clone());
             }
         }
         for (key, before) in &last {
@@ -463,7 +486,8 @@ pub fn mode_allows(mode: PushMode, renderers: usize) -> bool {
 pub fn payload(notice: &Notice, clear: &BTreeSet<AgentKey>) -> Value {
     json!({
         "title": notice.title,
-        "body": notice.body,
+        "state": notice.state.as_str(),
+        "place": notice.place,
         "tag": notice.key.tag(),
         "device_id": notice.key.device_id,
         "pane_id": notice.key.pane_id,
@@ -636,13 +660,16 @@ mod tests {
         let (notices, _) = transitions.observe(&asking);
         assert_eq!(notices.len(), 1);
         assert_eq!(notices[0].title, "task w1:p1");
-        assert_eq!(notices[0].body, "내 확인 대기 · herdr-ide");
+        assert_eq!(notices[0].state, NoticeState::NeedsYou);
+        assert_eq!(notices[0].place, "herdr-ide");
         assert!(
             transitions.observe(&asking).0.is_empty(),
             "no repeat without a transition"
         );
         let done = project(&rest(json!([row("w1:p1", "done", "none", None)])));
-        assert_eq!(transitions.observe(&done).0[0].body, "끝 · herdr-ide");
+        let finished = transitions.observe(&done).0;
+        assert_eq!(finished[0].state, NoticeState::Done);
+        assert_eq!(finished[0].place, "herdr-ide");
         let seen = project(&rest(json!([row("w1:p1", "seen", "none", None)])));
         let (notices, cleared) = transitions.observe(&seen);
         assert!(notices.is_empty());
@@ -653,6 +680,46 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["w1:p1"]
         );
+    }
+
+    /// The wire shape the service worker reads: the state key and the place,
+    /// no sentence in any language.
+    #[test]
+    fn the_payload_carries_state_and_place_and_no_sentence() {
+        let notice = Notice {
+            key: AgentKey {
+                device_id: "mini".into(),
+                pane_id: "w2:p1".into(),
+            },
+            title: "fix the build".into(),
+            state: NoticeState::Done,
+            place: "contong".into(),
+        };
+        let clear = BTreeSet::from([AgentKey {
+            device_id: "local".into(),
+            pane_id: "w1:p1".into(),
+        }]);
+        assert_eq!(
+            payload(&notice, &clear),
+            json!({
+                "title": "fix the build",
+                "state": "done",
+                "place": "contong",
+                "tag": "mini|w2:p1",
+                "device_id": "mini",
+                "pane_id": "w2:p1",
+                "clear": ["local|w1:p1"],
+            })
+        );
+        let asking = Notice {
+            state: NoticeState::NeedsYou,
+            place: String::new(),
+            ..notice
+        };
+        let payload = payload(&asking, &BTreeSet::new());
+        assert_eq!(payload["state"], "needs_you");
+        assert_eq!(payload["place"], "");
+        assert!(payload.get("body").is_none());
     }
 
     #[test]

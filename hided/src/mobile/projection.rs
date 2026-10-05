@@ -92,6 +92,11 @@ pub struct Group {
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
 pub struct Projection {
     pub groups: Vec<Group>,
+    /// The core's explicit interface language (`ui_state.interface_language`)
+    /// as stored, or `None` when the operator follows the system. The phone
+    /// resolves the value; it is part of the projection so a change republishes
+    /// the frame like any other change.
+    pub interface_language: Option<String>,
 }
 
 impl Projection {
@@ -337,7 +342,14 @@ pub fn project(rest: &Value) -> Projection {
         }
     }
     groups.retain(|group| !group.agents.is_empty());
-    Projection { groups }
+    let interface_language = rest
+        .pointer("/ui_state/interface_language")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    Projection {
+        groups,
+        interface_language,
+    }
 }
 
 /// Lays a snapshot frame's `rest` over the one kept so far: a snapshot
@@ -475,6 +487,27 @@ mod tests {
                 .unwrap()
                 .find("path")
                 .is_none()
+        );
+    }
+
+    #[test]
+    fn the_interface_language_is_read_as_stored_and_a_change_makes_the_projection_differ() {
+        let mut rest = rest();
+        assert_eq!(project(&rest).interface_language, None, "absent");
+        rest["ui_state"] = json!({"interface_language": null});
+        let unset = project(&rest);
+        assert_eq!(unset.interface_language, None, "null");
+        rest["ui_state"] = json!({"interface_language": 7});
+        assert_eq!(project(&rest).interface_language, None, "not a string");
+        rest["ui_state"] = json!({"interface_language": "ko"});
+        let korean = project(&rest);
+        assert_eq!(korean.interface_language.as_deref(), Some("ko"));
+        assert_ne!(korean, unset, "the watch channel must republish");
+        rest["ui_state"] = json!({"interface_language": "zh-CN"});
+        assert_eq!(
+            project(&rest).interface_language.as_deref(),
+            Some("zh-CN"),
+            "the string is not validated here"
         );
     }
 
