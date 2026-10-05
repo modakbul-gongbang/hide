@@ -5063,6 +5063,80 @@ function buildOverview(tokens) {
   return screenSheet('screen-overview', 'Screen / Overview', 'Shared Overview modal over the mounted Workspace, or a central page. Approved 2026-10-04: Overview before Open server; File Views badge retained; zero hides count and dot; Light, narrow windows and selected scope use existing tokens and patterns. Existing content is reused below the shared scope header. The entry and toolbar state rows document their placement separately.', build, build);
 }
 
+// -- Screen / Onboarding ---------------------------------------------------------
+
+// The first-run agent choice (web/src/AgentOnboarding.tsx): a Dialog over a
+// grid of square tiles, one per adapter. A set-up agent's tile is on or off, an
+// agent that is not set up is dimmed with no switch. Logos are the bundled
+// marks of web/src/assets/agents (manifest.json names each source); an agent
+// with no mark that may be bundled draws a monogram, never a drawn logo.
+function buildOnboarding(tokens) {
+  const W = num(tokens, '--size-onboarding-dialog-w');
+  const LOGO = num(tokens, '--size-agent-logo');
+  const GAP = num(tokens, '--spacing-sm');
+  const COLUMNS = 4;
+  const INNER = W - 2 * num(tokens, '--spacing-lg');
+  const TILE = Math.floor((INNER - (COLUMNS - 1) * GAP) / COLUMNS);
+  const dimmed = num(tokens, '--opacity-dimmed');
+  const MARKS = {
+    'claude-code': 'agent-claude.png', codex: 'agent-codex.png', opencode: 'agents/opencode.svg', cursor: 'agents/cursor.svg',
+    'copilot-cli': 'agents/copilot-cli.svg', amp: 'agents/amp.svg', 'qwen-code': 'agents/qwen-code.svg', goose: 'agents/goose.svg',
+    cline: 'agents/cline.svg', 'kilo-code': 'agents/kilo-code.svg', pi: 'agents/pi.svg', 'mistral-vibe': 'agents/mistral-vibe.svg',
+  };
+  // [id, label, state]: on, off, or none (not set up on this machine).
+  const AGENTS = [
+    ['claude-code', 'Claude Code', 'on'], ['codex', 'Codex', 'on'], ['opencode', 'OpenCode', 'on'], ['gemini-cli', 'Gemini CLI', 'off'],
+    ['cursor', 'Cursor', 'none'], ['copilot-cli', 'Copilot CLI', 'none'], ['amp', 'Amp', 'none'], ['factory-droid', 'Factory Droid', 'none'],
+    ['kiro', 'Kiro', 'none'], ['qwen-code', 'Qwen Code', 'none'], ['goose', 'Goose', 'none'], ['cline', 'Cline', 'none'],
+    ['kilo-code', 'Kilo Code', 'none'], ['crush', 'Crush', 'none'], ['junie', 'Junie', 'none'], ['augment', 'Augment', 'none'],
+    ['pi', 'Pi', 'none'], ['grok', 'Grok', 'none'], ['kimi-code', 'Kimi Code', 'none'], ['mistral-vibe', 'Mistral Vibe', 'none'],
+  ];
+  const monogramOf = label => {
+    const words = label.split(/[\s-]+/).filter(Boolean);
+    return (words.length > 1 ? words.slice(0, 2).map(word => word[0]) : [...words[0]].slice(0, 2)).join('').toUpperCase();
+  };
+  function build(suffix) {
+    const id = name => `onb-${name}-${suffix}`;
+    const tile = ([agent, label, state]) => {
+      const on = state === 'on';
+      const plate = frame(id(`${agent}-plate`), 'Logo plate', {width: LOGO, height: LOGO, cornerRadius: '$--radius-md', fill: '$--logo-plate', layout: 'horizontal', alignItems: 'center', justifyContent: 'center', clip: true},
+        MARKS[agent]
+          ? [frame(id(`${agent}-logo`), 'Logo', {width: LOGO - 8, height: LOGO - 8, fill: {type: 'image', enabled: true, url: `../web/src/assets/${MARKS[agent]}`, mode: 'fit'}}, [])]
+          : [text(id(`${agent}-mono`), monogramOf(label), {mono: true, weight: '600', fill: '$--muted-foreground'})]);
+      const children = [
+        plate,
+        text(id(`${agent}-name`), label, {weight: '600', fill: '$--foreground'}),
+        text(id(`${agent}-state`), state === 'none' ? 'Not installed' : on ? 'On' : 'Off', {size: '$--text-caption', fill: '$--muted-foreground'}),
+      ];
+      if (state !== 'none') {
+        children.push(frame(id(`${agent}-check`), 'Check', {
+          width: 16, height: 16, cornerRadius: 8, layout: 'horizontal', alignItems: 'center', justifyContent: 'center',
+          ...(on ? {fill: '$--primary'} : {}), stroke: on ? '$--primary' : '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner', layoutPosition: 'absolute', x: TILE - 16 - 8, y: 8,
+        }, on ? [icon(id(`${agent}-checki`), 'check', {size: 12, fill: '$--primary-foreground'})] : []));
+      }
+      return frame(id(`${agent}-tile`), `Tile · ${label} · ${state}`, {
+        width: TILE, height: TILE, layout: 'vertical', alignItems: 'center', justifyContent: 'center', gap: '$--spacing-xs', padding: '$--spacing-sm',
+        cornerRadius: '$--radius-md', stroke: on ? '$--primary' : '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner',
+        ...(on ? {fill: '$--card'} : {}), ...(state === 'none' ? {opacity: dimmed} : {}),
+      }, children);
+    };
+    const rows = [];
+    for (let at = 0; at < AGENTS.length; at += COLUMNS) {
+      rows.push(frame(id(`row-${at / COLUMNS}`), 'Row', {layout: 'horizontal', gap: GAP}, AGENTS.slice(at, at + COLUMNS).map(tile)));
+    }
+    return [screenDialogSurface(id('surface'), {
+      width: W, title: 'Choose the agents Hide works with', prose: true,
+      description: 'Each agent you leave on gets a skill for driving Hide’s browser and, where the agent supports one, a session hook. Hide edits only its own entries, and you can change this any time in Settings, Agents.',
+      body: [
+        frame(id('grid'), 'Grid', {layout: 'vertical', gap: GAP}, rows),
+        text(id('devices'), 'Connected devices get the same choice, each by what is installed there.', {size: '$--text-caption', fill: '$--muted-foreground', width: INNER}),
+      ],
+      actions: [screenButton(id('later'), 'Later', {variant: 'ghost'}), screenButton(id('apply'), 'Apply')],
+    })];
+  }
+  return screenSheet('screen-onboarding', 'Screen / Onboarding', 'web/src/AgentOnboarding.tsx over Dialog (agent adapters PRD, first-run choice): shown once while the core says the choice is pending. One square tile per adapter in four columns, each with its logo on a --logo-plate square (the bundled marks of web/src/assets/agents, each with its source in manifest.json) or, where no mark may be bundled, a monogram; never a drawn or approximated logo. An agent set up on the machine is on by default and shows its state as a word and a check mark as well as the primary border; an agent that is not set up is dimmed, reads Not installed and has no switch. Later closes without installing anything, Apply installs the agents left on here and on connected devices.', build, build);
+}
+
 export function screenSheets(tokens, root) {
   setLibraryRoot(root, tokens);
   return [
@@ -5078,5 +5152,6 @@ export function screenSheets(tokens, root) {
     {name: 'Screen / Projects Sidebar', build: () => buildProjectsSidebar(tokens)},
     {name: 'Screen / Mobile', build: () => buildMobile(tokens)},
     {name: 'Screen / Disk Cleanup', build: () => buildDiskCleanup(tokens)},
+    {name: 'Screen / Onboarding', build: () => buildOnboarding(tokens)},
   ];
 }

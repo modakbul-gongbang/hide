@@ -4,7 +4,7 @@ import os from 'node:os';
 import path from 'node:path';
 import {execFileSync, spawnSync} from 'node:child_process';
 
-const commands = ['check-pen.mjs', 'check-pen-gallery.mjs', 'check-web-tokens.mjs', 'check-hide-screens.mjs'];
+const commands = ['check-pen.mjs', 'check-pen-gallery.mjs', 'check-web-tokens.mjs', 'check-hide-screens.mjs', 'check-agent-logos.mjs'];
 function run(root) {
   for (const command of commands) {
     const result = spawnSync(process.execPath, [path.join(root, 'scripts', command)], {cwd: root, stdio: 'inherit'});
