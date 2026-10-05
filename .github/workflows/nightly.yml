@@ -1,4 +1,8 @@
-# Full web and desktop suites and package checks on all three OSes nightly.
+# Full web and desktop suites and package checks on all three OSes nightly,
+# and `verify` (pr.yml) with every lane on main: a push to main that the merge
+# queue verified runs no lane, so this run is the net under a lane a pull
+# request's plan left out, and it saves main's caches after a runner image
+# changes the toolchain.
 # A test fails this run only when it fails its retry too (CI retries a failed
 # test once); a test that passes the retry is flaky, and
 # scripts/ci-flaky-report.py files it as an issue, as in pr.yml.
@@ -10,7 +14,8 @@
 # and completed jobs must be measured separately from this configured matrix.
 # A hand run picks `lane`: `all`, or one system's web and desktop suites, so
 # checking Windows does not occupy the macOS runners (one full dispatch used 7
-# macOS jobs for 65 minutes). `os contract` and `package` run for `all` only.
+# macOS jobs for 65 minutes). `verify`, `os contract` and `package` run for
+# `all` only.
 # The schedule runs everything. A lane left out is skipped, and the failure
 # report ignores a skipped job.
 #
@@ -195,6 +200,15 @@ jobs:
             desktop/test-results
           if-no-files-found: ignore
 
+  verify:
+    name: verify
+    if: ${{ inputs.lane == '' || inputs.lane == 'all' }}
+    uses: ./.github/workflows/pr.yml
+    # pr.yml's jobs file a flaky test, and its plan job reads the Actions API.
+    permissions:
+      contents: read
+      issues: write
+      actions: read
   package:
     name: package
     if: ${{ inputs.lane == '' || inputs.lane == 'all' }}
@@ -205,7 +219,7 @@ jobs:
 
   report:
     name: report a failure
-    needs: [web-e2e-linux, web-e2e-macos, web-e2e-windows, desktop-e2e, os-contract, package]
+    needs: [web-e2e-linux, web-e2e-macos, web-e2e-windows, desktop-e2e, os-contract, verify, package]
     if: ${{ always() && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
