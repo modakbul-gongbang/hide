@@ -343,10 +343,14 @@ fn a_device_file_is_read_on_a_worker_and_shows_as_a_tab_when_it_arrives() {
 
 /// A read still running when its device is removed opens no tab when its
 /// answer lands.
+///
+/// The open's workers hold weak references to the runtime until they have
+/// handed their answers over, so the weak count falling back to what it was
+/// before the open is the read's answer having landed.
 #[test]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn a_device_read_that_lands_after_the_device_was_removed_opens_nothing() {
     let f = Fixture::new();
+    let idle = Arc::weak_count(&f.shared);
     f.device.hold();
     f.open("a.txt");
     {
@@ -355,11 +359,9 @@ fn a_device_read_that_lands_after_the_device_was_removed_opens_nothing() {
         assert!(runtime.snapshot.editor.opening.is_empty());
     }
     f.device.release();
-    let deadline = std::time::Instant::now() + Duration::from_secs(5);
-    while f.device.waiting() > 0 && std::time::Instant::now() < deadline {
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    std::thread::sleep(Duration::from_millis(200));
+    wait_for("the open's workers to hand their answers over", || {
+        Arc::weak_count(&f.shared) == idle
+    });
     let runtime = f.shared.lock().unwrap();
     assert!(runtime.snapshot.editor.tabs.is_empty());
     assert!(runtime.snapshot.editor.document.is_none());
@@ -789,7 +791,6 @@ fn withdrawing_consent_lets_a_running_save_land() {
 /// no runtime lock. An unrelated action applies while the read waits, and a
 /// reveal of that file moves the screen only when the read lands.
 #[test]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn a_slow_local_read_blocks_nothing_and_a_reveal_moves_only_when_it_lands() {
     let dir = tempfile::tempdir().unwrap();
     let root = dir.path().canonicalize().unwrap();
@@ -829,11 +830,7 @@ fn a_slow_local_read_blocks_nothing_and_a_reveal_moves_only_when_it_lands() {
         &file,
         false,
     ));
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while disk.waiting() == 0 {
-        assert!(Instant::now() < deadline, "the read never reached the disk");
-        thread::sleep(Duration::from_millis(5));
-    }
+    wait_for("the read to reach the disk", || disk.waiting() > 0);
     dispatch(
         serde_json::to_vec(&serde_json::json!({
             "schema_version": SCHEMA_VERSION,
@@ -857,11 +854,9 @@ fn a_slow_local_read_blocks_nothing_and_a_reveal_moves_only_when_it_lands() {
     }
 
     disk.release();
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while shared.lock().unwrap().snapshot.editor.document.is_none() {
-        assert!(Instant::now() < deadline, "the local read never landed");
-        thread::sleep(Duration::from_millis(5));
-    }
+    wait(&shared, "the local read to land", |runtime| {
+        runtime.snapshot.editor.document.is_some()
+    });
     let runtime = shared.lock().unwrap();
     let file_text = file.to_string_lossy().into_owned();
     assert!(runtime.snapshot.ui_state.right_panel_visible);

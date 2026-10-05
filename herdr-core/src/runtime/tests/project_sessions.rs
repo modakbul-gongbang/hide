@@ -745,7 +745,6 @@ fn rejected_search_keeps_its_identity_and_fences_late_valid_answers() {
 }
 
 #[test]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn search_setup_failures_are_observable_and_successful_retry_recovers() {
     use crate::runtime::session_search::{SearchPayload, SearchWorker};
     let dir = tempfile::tempdir().unwrap();
@@ -779,37 +778,31 @@ fn search_setup_failures_are_observable_and_successful_retry_recovers() {
                 days: None,
             });
     };
-    let wait = || {
-        let start = Instant::now();
-        loop {
-            let result = shared
-                .lock()
-                .unwrap()
-                .snapshot
-                .session_search
-                .clone()
-                .unwrap();
-            if !result.loading {
-                return result;
-            }
-            assert!(start.elapsed() < Duration::from_secs(5));
-            thread::sleep(Duration::from_millis(5));
-        }
+    let searched = || {
+        wait(&shared, "the search to finish", |runtime| {
+            !runtime.snapshot.session_search.as_ref().unwrap().loading
+        });
+        shared
+            .lock()
+            .unwrap()
+            .snapshot
+            .session_search
+            .clone()
+            .unwrap()
     };
     submit();
-    let failed = wait();
+    let failed = searched();
     assert!(failed.failure.unwrap().contains("could not open"));
     assert!(!failed.policy_loaded);
     fs::remove_dir(&database).unwrap();
     submit();
-    let recovered = wait();
+    let recovered = searched();
     assert!(recovered.failure.is_none());
     assert!(recovered.policy_loaded);
     drop(worker);
 }
 
 #[test]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn search_capacity_reason_survives_publication() {
     use crate::runtime::session_search::{SearchPayload, SearchWorker};
     let dir = tempfile::tempdir().unwrap();
@@ -855,22 +848,17 @@ fn search_capacity_reason_survives_publication() {
             clear: false,
             days: None,
         });
-    let start = Instant::now();
-    loop {
-        let state = shared
-            .lock()
-            .unwrap()
-            .snapshot
-            .session_search
-            .clone()
-            .unwrap();
-        if !state.loading {
-            assert!(state.failure.unwrap().contains("2,000"));
-            break;
-        }
-        assert!(start.elapsed() < Duration::from_secs(5));
-        thread::sleep(Duration::from_millis(5));
-    }
+    wait(&shared, "the search to finish", |runtime| {
+        !runtime.snapshot.session_search.as_ref().unwrap().loading
+    });
+    let state = shared
+        .lock()
+        .unwrap()
+        .snapshot
+        .session_search
+        .clone()
+        .unwrap();
+    assert!(state.failure.unwrap().contains("2,000"));
     drop(worker);
 }
 

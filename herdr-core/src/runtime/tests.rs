@@ -164,6 +164,36 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 static NEXT_RUNTIME_STATE_ID: AtomicU64 = AtomicU64::new(0);
 
+/// Waits for the core's workers to bring `shared` to a state `ready` accepts;
+/// a timeout names `what` with the operation and the last error.
+#[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
+fn wait(shared: &Arc<Mutex<Runtime>>, what: &str, ready: impl Fn(&Runtime) -> bool) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !ready(&shared.lock().unwrap()) {
+        if std::time::Instant::now() >= deadline {
+            let runtime = shared.lock().unwrap();
+            panic!(
+                "timed out waiting for {what}: {:?} {:?}",
+                runtime.snapshot.task_operation, runtime.snapshot.status.last_error
+            );
+        }
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
+/// Waits for `ready`, for a state outside the runtime (a file, a fake).
+#[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
+fn wait_for(what: &str, ready: impl Fn() -> bool) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(10);
+    while !ready() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "timed out waiting for {what}"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
 fn assert_owner_conflict_observes_and_reconnects(owner_conflict: &str) {
     let mut runtime = runtime();
     runtime.suppress_terminal_session_workers = true;

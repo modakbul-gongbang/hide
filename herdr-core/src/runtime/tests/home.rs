@@ -186,33 +186,6 @@ fn dispatch(shared: &Arc<Mutex<Runtime>>, payload: Value) {
     );
 }
 
-#[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
-fn wait(shared: &Arc<Mutex<Runtime>>, what: &str, ready: impl Fn(&Runtime) -> bool) {
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    while !ready(&shared.lock().unwrap()) {
-        if std::time::Instant::now() >= deadline {
-            let runtime = shared.lock().unwrap();
-            panic!(
-                "timed out waiting for {what}: {:?} {:?}",
-                runtime.snapshot.task_operation, runtime.snapshot.status.last_error
-            );
-        }
-        std::thread::sleep(Duration::from_millis(5));
-    }
-}
-
-#[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
-fn wait_for(what: &str, ready: impl Fn() -> bool) {
-    let deadline = std::time::Instant::now() + Duration::from_secs(10);
-    while !ready() {
-        assert!(
-            std::time::Instant::now() < deadline,
-            "timed out waiting for {what}"
-        );
-        std::thread::sleep(Duration::from_millis(5));
-    }
-}
-
 fn operation(shared: &Arc<Mutex<Runtime>>) -> crate::model::TaskOperationSnapshot {
     shared
         .lock()
@@ -505,7 +478,6 @@ fn the_first_registration_after_launch_is_linked_into_an_existing_home() {
 /// device's helper was down asks the helper once, is left alone through every
 /// later UI state write, and is linked once the helper is ready.
 #[test]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn a_link_change_missed_while_the_helper_reconnects_is_sent_once_it_is_ready() {
     let machine = machine();
     let herdr = herdr("home-reconnect");
@@ -539,7 +511,11 @@ fn a_link_change_missed_while_the_helper_reconnects_is_sent_once_it_is_ready() {
         }
         generation
     };
-    std::thread::sleep(Duration::from_millis(200));
+    // The one connect the writes asked for has ended, so no work they
+    // started is still running.
+    wait(&shared, "the helper's connect attempt to end", |runtime| {
+        !runtime.device_host_connecting(DEVICE)
+    });
     assert!(
         !home.join("app-play").exists(),
         "nothing reaches a helper that is not ready"
