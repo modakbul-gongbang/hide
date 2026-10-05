@@ -826,3 +826,70 @@ fn device_kit_worker_sends_only_its_registered_checkout_paths() {
         [vec!["/device-checkout".to_owned()]]
     );
 }
+
+/// Reinstall repairs what is on: an out-of-date hook part of an agent that is
+/// switched off is not offered one, because the pass would refuse it.
+#[test]
+fn reinstall_is_not_offered_for_the_hook_part_of_an_agent_that_is_off() {
+    use hide_kit::Availability::Available;
+    let snapshot = |enabled| {
+        let mut answer = report(&[(ComponentId::ClaudeCodeHook, ComponentState::Outdated)]);
+        answer.agents = vec![agent_report(
+            "claude-code",
+            Available,
+            enabled,
+            ComponentState::Installed,
+        )];
+        crate::model::KitSnapshot::from_report(&answer)
+    };
+    assert!(snapshot(true).offers_reinstall);
+    assert!(!snapshot(false).offers_reinstall);
+}
+
+/// The latest intent wins (engineering rule 11): a switch pressed while an
+/// earlier press is still queued replaces it, and the same press twice is one.
+#[test]
+fn the_latest_agent_switch_wins_over_one_still_queued() {
+    use hide_kit::Availability::Available;
+    let mut answer = report(&[(ComponentId::Cli, ComponentState::Installed)]);
+    answer.agents = vec![agent_report(
+        "gemini-cli",
+        Available,
+        false,
+        ComponentState::Off,
+    )];
+    let helper = KitDevice::answering(Ok(answer));
+    let shared = with_consent(Some(Arc::clone(&helper)));
+    shared
+        .lock()
+        .unwrap()
+        .queue_device_kit(DEVICE, KitJob::Status);
+    settle(&shared);
+
+    let press = |enabled| {
+        dispatch(
+            &shared,
+            "kit_agent_set",
+            serde_json::json!({ "device_id": DEVICE, "agent": "gemini-cli", "enabled": enabled }),
+        );
+    };
+    // The device reports Gemini off, so a lone "off" would be met; with "on"
+    // queued first it is not, and the later "off" replaces the queued "on".
+    {
+        let mut runtime = shared.lock().unwrap();
+        runtime.device_kit_pending.insert(
+            DEVICE.to_owned(),
+            KitJob::Apply(hide_kit::Scope::agents(["gemini-cli"], [])),
+        );
+    }
+    press(true);
+    press(false);
+    {
+        let runtime = shared.lock().unwrap();
+        let Some(KitJob::Apply(scope)) = runtime.device_kit_pending.get(DEVICE) else {
+            panic!("work stays queued");
+        };
+        assert!(scope.agent_off.contains("gemini-cli"), "{scope:?}");
+        assert!(!scope.agent_on.contains("gemini-cli"), "{scope:?}");
+    }
+}

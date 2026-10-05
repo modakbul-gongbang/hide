@@ -28,6 +28,28 @@ fn set_up(fixture: &Fixture, folder: &str) {
     std::fs::create_dir_all(fixture.home().join(folder)).unwrap();
 }
 
+/// A program the kit will run for its version. A script written a moment ago
+/// cannot be executed while another test thread's fork still holds the file
+/// open for writing (ETXTBSY), so this waits until it can be.
+fn version_program(path: &Path, body: &str) {
+    executable(path, body);
+    for _ in 0..100 {
+        let started = std::process::Command::new(path)
+            .arg("--executable-probe")
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status();
+        match started {
+            Err(error) if error.raw_os_error() == Some(26) => {
+                std::thread::sleep(std::time::Duration::from_millis(20));
+            }
+            _ => return,
+        }
+    }
+    panic!("{} stayed busy", path.display());
+}
+
 fn record(fixture: &Fixture) -> Value {
     serde_json::from_str(
         &std::fs::read_to_string(fixture.home().join(".hide/kit/installed.json")).unwrap(),
@@ -322,7 +344,7 @@ fn claude_code_and_codex_are_on_without_a_choice_and_off_removes_the_hook_part()
 fn an_agent_with_a_documented_minimum_gets_the_hook_only_from_that_version() {
     let fixture = Fixture::new();
     set_up(&fixture, ".kiro");
-    executable(
+    version_program(
         &fixture.home().join(".local/bin/kiro-cli"),
         "#!/bin/sh\necho 'kiro-cli 2.9.0'\n",
     );
@@ -346,7 +368,7 @@ fn an_agent_with_a_documented_minimum_gets_the_hook_only_from_that_version() {
             .exists()
     );
 
-    executable(
+    version_program(
         &fixture.home().join(".local/bin/kiro-cli"),
         "#!/bin/sh\necho 'kiro-cli 3.0.1'\n",
     );
@@ -467,5 +489,122 @@ fn switching_factory_droid_off_finds_its_entry_in_either_file() {
         !std::fs::read_to_string(&settings)
             .unwrap()
             .contains("hide-guidance")
+    );
+}
+
+#[test]
+fn a_file_that_only_mentions_the_marker_is_not_hides_stub() {
+    let fixture = Fixture::new();
+    set_up(&fixture, ".gemini");
+    let own = shared_skill(&fixture);
+    std::fs::create_dir_all(own.parent().unwrap()).unwrap();
+    // The marker's words sit in the body, not in the line Hide writes.
+    let mine = "---\nname: hide-browser\n---\nsee hide-skill@1 in the docs\n";
+    std::fs::write(&own, mine).unwrap();
+
+    let report = apply(&fixture.target, &Scope::agents(["gemini-cli"], []));
+    assert_eq!(
+        agent(&report, "gemini-cli").skill.state,
+        ComponentState::Absent
+    );
+    apply(&fixture.target, &Scope::agents([], ["gemini-cli", "codex"]));
+
+    assert_eq!(std::fs::read_to_string(&own).unwrap(), mine);
+}
+
+#[test]
+fn an_edited_stub_is_reported_and_only_reinstall_puts_hides_text_back() {
+    let fixture = Fixture::new();
+    set_up(&fixture, ".gemini");
+    apply(&fixture.target, &Scope::agents(["gemini-cli"], []));
+    let path = shared_skill(&fixture);
+    let hide_text = std::fs::read_to_string(&path).unwrap();
+    let edited = format!("{hide_text}\nMy own note for this agent.\n");
+    std::fs::write(&path, &edited).unwrap();
+
+    // No automatic pass overwrites the operator's change.
+    let report = apply(&fixture.target, &Scope::automatic());
+    let gemini = agent(&report, "gemini-cli");
+    assert_eq!(gemini.skill.state, ComponentState::Outdated);
+    assert!(gemini.skill.reason.as_deref().unwrap().contains("edited"));
+    assert!(gemini.needs_attention());
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), edited);
+
+    // Switching the agent off keeps what they wrote as well.
+    let off = apply(&fixture.target, &Scope::agents([], ["gemini-cli", "codex"]));
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), edited);
+    assert_eq!(
+        agent(&off, "gemini-cli").skill.state,
+        ComponentState::Off,
+        "an edited stub is the operator's file, so the switch is Off"
+    );
+
+    // Reinstall (switching on again) restores Hide's text.
+    apply(&fixture.target, &Scope::agents(["gemini-cli"], []));
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), hide_text);
+}
+
+#[test]
+fn a_program_with_a_common_name_does_not_count_as_the_agent() {
+    // `goose`, `amp`, `droid`, `copilot` and `kilo` are other programs too.
+    for (program, id, folder) in [
+        ("goose", "goose", ".config/goose"),
+        ("amp", "amp", ".config/amp"),
+        ("droid", "factory-droid", ".factory"),
+        ("copilot", "copilot-cli", ".copilot"),
+        ("kilo", "kilo-code", ".config/kilo"),
+    ] {
+        let fixture = Fixture::new();
+        executable(
+            &fixture.home().join(".local/bin").join(program),
+            "#!/bin/sh\n",
+        );
+        assert_eq!(
+            agent(&status(&fixture.target), id).availability,
+            Availability::NotInstalled,
+            "{program} alone is not {id}"
+        );
+        // The agent's own folder is the signal.
+        set_up(&fixture, folder);
+        assert_eq!(
+            agent(&status(&fixture.target), id).availability,
+            Availability::Available,
+            "{id}"
+        );
+    }
+}
+
+#[test]
+fn a_cli_version_is_asked_once_however_often_the_kit_is_read() {
+    let fixture = Fixture::new();
+    set_up(&fixture, ".kiro");
+    let counter = fixture.home().join("asked");
+    version_program(
+        &fixture.home().join(".local/bin/kiro-cli"),
+        &format!(
+            "#!/bin/sh\n[ \"$1\" = --version ] && echo x >> '{}'\necho 'kiro-cli 3.0.1'\n",
+            counter.display()
+        ),
+    );
+
+    for _ in 0..3 {
+        status(&fixture.target);
+    }
+    apply(&fixture.target, &Scope::agents(["kiro"], []));
+
+    let asked = std::fs::read_to_string(&counter).unwrap().lines().count();
+    assert_eq!(asked, 1, "Settings re-reads the kit every few seconds");
+}
+
+#[test]
+fn the_switch_works_while_either_the_skill_or_the_hook_does_here() {
+    use crate::agents::availability;
+    assert_eq!(availability(false, true, true), Availability::NotInstalled);
+    assert_eq!(availability(true, true, false), Availability::Available);
+    // A system with no documented skill folder but a working hook (Codex).
+    assert_eq!(availability(true, false, true), Availability::Available);
+    assert_eq!(
+        availability(true, false, false),
+        Availability::UnsupportedSystem
     );
 }

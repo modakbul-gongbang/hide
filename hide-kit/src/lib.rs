@@ -297,9 +297,8 @@ impl Scope {
         .settled()
     }
 
-    /// An agent named both ways keeps its later choice; the caller passes
-    /// the later one in `agent_off` or `agent_on` last, so here the switch
-    /// off wins only when both were asked in one request.
+    /// An agent named both ways in one request is switched off, the safer
+    /// reading; a later request overrides an earlier one in [`Self::merge`].
     fn settled(mut self) -> Self {
         let both: Vec<String> = self
             .agent_on
@@ -442,6 +441,11 @@ fn report(
             (ComponentState::Installed, codex_per_pane::note(target))
         }
         (None, Observed::Current) => (ComponentState::Installed, None),
+        // An agent that is switched off gets nothing from a pass, so a hook
+        // that is out of date or cannot be judged is not a repair to offer.
+        (None, Observed::Stale(_) | Observed::Blocked(_)) if switched_off => {
+            (ComponentState::Off, None)
+        }
         (None, Observed::Stale(reason)) => (ComponentState::Outdated, Some(reason)),
         // Gone after Hide applied it: the operator turned it off or undid it
         // by hand, and either way it is theirs now (B36).
