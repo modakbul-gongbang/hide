@@ -52,6 +52,10 @@ Keep one representative journey per user-visible flow; when a long spec carries 
 - A poll only observes (`hide-e2e/no-action-in-poll` in the e2e lint).
   A click, focus, creation or resend is one explicit action outside the poll; an action repeated inside `toPass` or `expect.poll` turns one intent into several and can satisfy the assertion with the wrong one.
 - Prefer subject IDs, request identity and generation or revision numbers over wall-clock comparisons and the last diagnostic string.
+- A barrier on what the page sent is not a barrier on what the daemon accepted.
+  After a burst of clicks, `terminal_click` frames counted at the page say the page sent them; hided may still hold a dozen on its socket, and the last `pane.focus` diagnostic the page has seen can be an earlier request's confirmation.
+  Count the diagnostics the daemon sent back against the changes the page sent, with a cumulative count (`observeDiagnostics(...).added` in `web/e2e/pane-focus-ordering.spec.ts`): the list is capped and drops from its front, so the number of entries of one kind in it falls while a burst appends.
+  Playwright's `framereceived` fires before the page's handler runs, so before reading what the page shows, poll `window.__hideProbe.arrivals()` up to the frames Playwright has seen.
 - A test's own waiting must not compete with a deadline the product enforces.
   While the test holds a request the product will time out, run nothing slow between holding and releasing it, and give every observation poll in that window explicit `intervals`.
   Playwright's default poll backoff grows to a second between attempts, which is time taken from the product's deadline.
@@ -198,7 +202,7 @@ A piece that another open change is still building is marked as pending with the
 5. **Keep the size of a test bounded.**
    One representative journey per user-visible flow, and one small spec per independent contract.
    A long journey that joins several contracts fails whole, so one shaky step hides every contract after it and turns the lane red for all of them; split a test so the part that shakes can be fixed alone.
-   The reference splits are `agent-close-contract.spec.ts` (one Herdr contract, two UI contracts), the drag contracts in `agent-tab-groups.spec.ts`, the row menus in `sidebar-menus.spec.ts` and the view caps in `s7.spec.ts`: each spec starts from one shared `start...` helper, puts itself into the shape it needs as setup, and asserts one contract.
+   The reference splits are `agent-close-contract.spec.ts` (one Herdr contract, two UI contracts), the focus contracts in `pane-focus-ordering.spec.ts` (one held request, keys after a burst, an external focus), the drag contracts in `agent-tab-groups.spec.ts`, the row menus in `sidebar-menus.spec.ts` and the view caps in `s7.spec.ts`: each spec starts from one shared `start...` helper, puts itself into the shape it needs as setup, and asserts one contract.
    Splitting costs a stack start per spec, so say in the pull request what the split bought.
    `web/scripts/check-e2e-test-size.mjs` (run by `lint` in `web` and `desktop`) fails a test over 120 lines or 40 `expect` calls, counted on the `test(...)` call itself.
    The tests that were already over are recorded in `e2e/test-size-baseline.json` as a ceiling that only shrinks: a recorded test that grows fails, and so does an entry whose test is gone or fits the limit, until the entry is removed.
