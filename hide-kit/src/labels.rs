@@ -15,7 +15,7 @@
 use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
-use hide_herdr_client::wire::success_response::{InstalledPluginInfo, PluginSourceKind};
+use hide_herdr_client::plugin::{InstalledPlugin, PluginSourceKind};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
@@ -188,7 +188,7 @@ fn unlink_list(
         .get("plugins")
         .cloned()
         .ok_or_else(|| "Herdr's plugin list had no plugins".to_owned())?;
-    let plugins: Vec<InstalledPluginInfo> = serde_json::from_value(plugins)
+    let plugins: Vec<InstalledPlugin> = serde_json::from_value(plugins)
         .map_err(|error| format!("Herdr's plugin list could not be read: {error}"))?;
     let Some(plugin) = plugins
         .into_iter()

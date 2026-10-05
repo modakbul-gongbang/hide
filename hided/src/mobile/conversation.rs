@@ -21,8 +21,8 @@
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
+use herdr_core::wire::{self, PaneSessionKind};
 use hide_herdr_client::ApiConnector;
-use hide_herdr_client::wire::success_response::{AgentSessionRefKind, ResponseResult};
 use hide_session::{
     Agent, EventKind, SessionError, SessionIdentity, SessionLocator, parse_events_at,
     read_page_before,
@@ -88,20 +88,8 @@ pub fn source(
         Some(code) if code.contains("not_found") => PaneError::Gone,
         _ => PaneError::Unavailable(error.to_string()),
     })?;
-    let pane = match serde_json::from_value::<ResponseResult>(value) {
-        Ok(ResponseResult::PaneInfo { pane }) => pane,
-        Ok(_) => {
-            return Err(PaneError::Unavailable(
-                "pane.get returned no pane".to_owned(),
-            ));
-        }
-        Err(error) => {
-            return Err(PaneError::Unavailable(format!(
-                "pane.get response is malformed: {error}"
-            )));
-        }
-    };
-    let Some(session) = pane.agent_session else {
+    let (cwd, session) = wire::pane_session(value).map_err(PaneError::Unavailable)?;
+    let Some(session) = session else {
         return Ok(None);
     };
     let agent = match session.agent.as_str() {
@@ -110,13 +98,13 @@ pub fn source(
         _ => return Ok(None),
     };
     let identity = match session.kind {
-        AgentSessionRefKind::Id => SessionIdentity::id(session.value),
-        AgentSessionRefKind::Path => SessionIdentity::path(session.value),
+        PaneSessionKind::Id => SessionIdentity::id(session.value),
+        PaneSessionKind::Path => SessionIdentity::path(session.value),
     };
     Ok(Some(Source {
         agent,
         identity,
-        cwd: pane.cwd,
+        cwd,
     }))
 }
 
