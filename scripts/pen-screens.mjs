@@ -4291,9 +4291,12 @@ function buildProjectsSidebar(tokens) {
     batch: {title: '배치 감시', status: 'asking', provider: 'codex', age: '5m', line: 'PR #252 머지할까요?', place: 'Home', bright: true},
     build: {title: '릴리스 빌드 확인', status: 'working', provider: 'codex', age: '1m', place: 'hide › main'},
   };
-  const needsYou = (p, list) => [
-    section(`${p}-sn`, `Needs You · ${list.length}`),
+  // A raised group over Home: its heading with the whole count, its most recent
+  // rows up to the cap, and a More fold for the rest.
+  const raised = (p, title, list, total = list.length) => [
+    section(`${p}-sn`, `${title} · ${total}`),
     ...list.map(([key, extra], i) => agentRow(`${p}-n${i}`, {...AGENTS[key], inset: sm, ...extra})),
+    ...(total > list.length ? [fold(`${p}-more`, `More ${total - list.length}`, 'project')] : []),
   ];
 
   // The Home row with the agents that belong to no project under it.
@@ -4304,16 +4307,17 @@ function buildProjectsSidebar(tokens) {
     ]);
   }
 
-  // One device's sidebar: the header line over Projects | Agents, then the Projects tab's Needs You group, its Home
+  // One device's sidebar: the header line over Projects | Agents, then the Projects tab's Needs You and Done groups, its Home
   // and projects, or the Agents tab's counts and sections; a fixed `height` is the window's, and the list takes what is left.
-  function deviceSidebar(key, s, {name, tag, icons = ['plus', 'search'], menu = false, needs, home, agentsTab = false, counts, rows = [], height}) {
+  function deviceSidebar(key, s, {name, tag, icons = ['plus', 'search'], menu = false, needs, done, home, agentsTab = false, counts, rows = [], height}) {
     const p = `psb-${key}`;
     const id = `${p}-${s}`;
     return frame(`${p}-${s}`, 'Sidebar', {width, ...(height ? {height} : {}), layout: 'vertical', fill: '$--sidebar', clip: true}, [
       headerLine(id, {name, tag, icons, menu}),
-      ruleLine(`${id}-r0`), sharedOverviewRow(id, counts?.find(([state]) => state === "needs_you")?.[1] ?? (needs ? needs.length - 1 : 0)), tabStrip(id, {agents: agentsTab}), ruleLine(`${id}-r1`),
+      ruleLine(`${id}-r0`), sharedOverviewRow(id, counts?.find(([state]) => state === "needs_you")?.[1] ?? needs?.total ?? 0), tabStrip(id, {agents: agentsTab}), ruleLine(`${id}-r1`),
       ...(counts ? [stateCounts(id, counts)] : []),
-      ...(needs ? [frame(`${id}-needs`, 'Needs You', {width, layout: 'vertical', padding: [0, xs, xs, xs]}, needs)] : []),
+      ...(needs ? [frame(`${id}-needs`, 'Needs You', {width, layout: 'vertical', padding: [0, xs, xs, xs]}, raised(needs.p, 'Needs You', needs.rows, needs.total))] : []),
+      ...(done ? [frame(`${id}-done`, 'Done', {width, layout: 'vertical', padding: [0, xs, xs, xs]}, raised(done.p, 'Done', done.rows, done.total))] : []),
       ...(home ? [homeBlock(id, home)] : []),
       frame(`${id}-list`, agentsTab ? 'Agents list' : 'Projects list', {width, ...(height ? {height: 'fill_container'} : {}), layout: 'vertical', padding: [0, xs], clip: Boolean(height)}, rows),
       footer(id),
@@ -4324,9 +4328,9 @@ function buildProjectsSidebar(tokens) {
     const id = key => `psb-${key}-${s}`;
     const mark = {question: 1, working: 2, done: 1};
     // The rest state the review target names: This Mac in front, its Needs You
-    // group over Projects, the Overview child of herdr-ide selected.
+    // and Done groups over Projects, the Overview child of herdr-ide selected.
     const rest = deviceSidebar('sidebar', s, {
-      name: 'This Mac', needs: needsYou(`psb-nu-${s}`, [['deploy'], ['blog']]), home: {count: '6 projects', agents: ['blog', 'research']},
+      name: 'This Mac', needs: {p: `psb-nu-${s}`, rows: [['deploy'], ['blog']], total: 2}, done: {p: `psb-dn-${s}`, rows: [['ci']], total: 1}, home: {count: '6 projects', agents: ['blog', 'research']},
       rows: [
         section(`psb-sec-pin-${s}`, 'Pinned · 1'),
         folderRow(`psb-p-notes-${s}`, {name: 'team-notes', marks: {idle: 1}, purpose: '회의록 요약 정리'}),
@@ -4376,9 +4380,17 @@ function buildProjectsSidebar(tokens) {
       ],
     });
 
-    // A remote device in front: its own Home and Projects, tagged Remote.
+    // A remote device in front: its own Home and Projects, tagged Remote; its
+    // twelve Needs You draw the five most recent and fold the rest.
+    const remoteNeeds = [
+      ['batch', {place: 'Home'}],
+      ['batch', {title: '릴리스 노트 검토', age: '7m', line: '이 문구로 확정할까요?', place: 'hide › main'}],
+      ['batch', {title: '프런트모스트 창 고정', provider: 'claude', age: '12m', line: '접근성 권한을 요청할까요?', place: 'hide › quick/246-frontmost'}],
+      ['batch', {title: '판정 로그 재실행', age: '20m', line: '실패한 3건을 다시 돌릴까요?', place: 'sasu › main'}],
+      ['batch', {title: '디스크 정리', provider: 'claude', age: '31m', line: '캐시 12 GB를 지울까요?', place: 'Home'}],
+    ];
     const remote = deviceSidebar('remote', s, {
-      name: 'mini', tag: 'Remote', height: WIN_H, needs: needsYou(`psb-rm-${s}`, [['batch', {place: 'Home'}]]), home: {count: '2 projects', agents: ['batch']},
+      name: 'mini', tag: 'Remote', height: WIN_H, needs: {p: `psb-rm-${s}`, rows: remoteNeeds, total: 12}, home: {count: '2 projects', agents: ['batch']},
       rows: [
         section(`psb-rm-sp-${s}`, 'Projects · Recent activity · 2'),
         projectRow(`psb-rm-p0-${s}`, {name: 'hide', marks: {working: 1}, expanded: true}),
@@ -4435,13 +4447,13 @@ function buildProjectsSidebar(tokens) {
     const paired = (key, selected, sidebar, options) => frame(id(`pair-${key}`), 'Rail and sidebar', {layout: 'horizontal', gap: 0, alignItems: 'start'}, [deviceRail(id(key), selected, options), sidebar]);
     return [frame(id('wrap'), 'Wrap', {layout: 'vertical', gap: '$--spacing-xl'}, [
       frame(id('row-rest'), 'This Mac in front', {layout: 'horizontal', gap: '$--spacing-lg', alignItems: 'start'}, [
-        labeled('rest', 'This Mac in front · rail, Projects | Agents, Needs You, Home, Projects', [frame(id('pair-rest'), 'Rail and sidebar', {layout: 'horizontal', gap: 0, alignItems: 'start'}, [deviceRail(id('rest'), 'mac'), rest])]),
+        labeled('rest', 'This Mac in front · rail, Projects | Agents, Needs You, Done, Home, Projects', [frame(id('pair-rest'), 'Rail and sidebar', {layout: 'horizontal', gap: 0, alignItems: 'start'}, [deviceRail(id('rest'), 'mac'), rest])]),
         labeled('home', 'Home row · rest and under the pointer', [homeCut('home0', false), homeCut('home1', true)]),
         hoverState(s), menuStates(s),
       ]),
       frame(id('row-states'), 'Rail states', {layout: 'horizontal', gap: '$--spacing-xl', alignItems: 'start'}, [
         labeled('agents', 'Agents tab · this device only, the three counts above, no chip', [paired('agents', 'mac', agentsTab)]),
-        labeled('remote', 'mini in front · 9+ pill', [paired('remote', 'mini', remote)]),
+        labeled('remote', 'mini in front · 9+ pill, Needs You past its cap', [paired('remote', 'mini', remote)]),
         labeled('off', 'mini not connected · dimmed glyph and x, no mark', [paired('off', 'mini', off, {miniOff: true})]),
         labeled('one', 'One device · the rail shows with This Mac alone', [frame(id('pair-one'), 'Rail and sidebar', {layout: 'horizontal', gap: 0, alignItems: 'start'}, [deviceRail(id('one'), 'mac', {tiles: [['mac', {selected: true, done: true}]]}), one])]),
         labeled('hidden', 'Rail hidden · the name is the device menu', [frame(id('pair-hidden'), 'Sidebar and menu', {layout: 'horizontal', gap: '$--spacing-md', alignItems: 'start'}, [hidden, hiddenMenu])]),
@@ -4540,7 +4552,7 @@ function buildProjectsSidebar(tokens) {
     });
     return frame(`psb-hover-${s}`, 'Checkout row under the pointer, with its card', {width: width + gap + cardW, height: listH}, [{...list, x: 0, y: 0}, card]);
   }
-  return screenSheet('screen-projects-sidebar', 'Screen / Projects Sidebar', 'sidebar.tsx, sidebar-header.tsx, projects.ts (quick device-rail-badges, replacing PRD home-device-rail D-09..D-14): the sidebar follows a device rail that is always shown (quick device-rail-slack). The rail is the sidebar’s full-height left column: This Mac and each registered device as a 32 tile with no name under it (the laptop glyph, or the monogram of the device’s name; the hint is the name with its counts in full), the selected tile ringed 2 off its edge, one mark notched into a tile’s top-right for its most urgent state (the Needs You count, ten or more reading 9+, else a dot for unseen Done), no mark for Working, an unreachable device with its glyph dimmed and a x at the bottom-right, and + directly under the last tile to add a device, dashed in the app and drawn solid here. Every device’s sidebar has a header line with the device in front (This Mac, mini Remote) and Add project and Search at its end, then the Projects | Agents strip. Projects holds the device’s Needs You group first, then its Home row (house glyph, the project count, + under the pointer for a new tab in Home) with the agents that belong to no project under it, then Projects. Agents holds the device’s own agents as Needs You, Done, Working and Seen with Needs You N · Done N · Working N above and no device chip on any row. The rest frame is This Mac in front with the main checkout of herdr-ide selected; a remote device in front draws its own Home and Projects; a device that is not connected draws its name, 연결 안 됨 and 다시 연결, and no tree. With one device the rail still shows with This Mac alone. With the rail hidden the name on the header line carries a chevron and opens the device menu (the devices, 기기 추가…, 레일 표시). In the list, pinned and activity-ordered projects, checkout rows with their kind glyph, age and agent line, an opened checkout’s agent rows, and both inactive folds. Every line ends in its time or status badge and then a fold slot, so names never move and the times, badges and chevrons stand in one column each. A row’s menu opens on a right-click, with nothing drawn for it; beside the sidebar each row kind is drawn with its menu open (Project: New worktree…, New tab in main, Reveal in Finder, Copy path, Pin, Remove project…; Checkout: Open, New tab here, Open pull request, Set purpose…, Set as default checkout, Copy branch name, Copy path, Reveal in Finder, Delete worktree…; Agent: Show, Copy title, Copy session id, Close tab…). A status badge counts agents under the mark each agent’s own row draws, worst first (× ! ? ● ✓ ○). A checkout row opens the checkout and unfolds its agents; clicking its already selected, unfolded Workspace folds them without leaving it, and the chevron changes disclosure alone. A checkout name is 12/400 with its prefix up to the first slash muted. Line two is the purpose with the last-commit age on the time column, drawn only for a purpose or a raised-from parent. A parent agent folds its children with the same chevron and speaks for them with its badge; a folded parent draws one line per other checkout, with the server-glyph device chip. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age. Beside the sidebar: a pull-request row under the pointer with its card (Component / PR hover card) opened to its right, the glyph a button that opens the pull request.', build, build);
+  return screenSheet('screen-projects-sidebar', 'Screen / Projects Sidebar', 'sidebar.tsx, sidebar-header.tsx, projects.ts (quick device-rail-badges, replacing PRD home-device-rail D-09..D-14): the sidebar follows a device rail that is always shown (quick device-rail-slack). The rail is the sidebar’s full-height left column: This Mac and each registered device as a 32 tile with no name under it (the laptop glyph, or the monogram of the device’s name; the hint is the name with its counts in full), the selected tile ringed 2 off its edge, one mark notched into a tile’s top-right for its most urgent state (the Needs You count, ten or more reading 9+, else a dot for unseen Done), no mark for Working, an unreachable device with its glyph dimmed and a x at the bottom-right, and + directly under the last tile to add a device, dashed in the app and drawn solid here. Every device’s sidebar has a header line with the device in front (This Mac, mini Remote) and Add project and Search at its end, then the Projects | Agents strip. Projects holds the device’s Needs You and Done groups first, each drawing its five (Needs You) or three (Done) most recent agents and folding the rest behind a More N row, then its Home row (house glyph, the project count, + under the pointer for a new tab in Home) with the agents that belong to no project under it, then Projects. Agents holds the device’s own agents as Needs You, Done, Working and Seen with Needs You N · Done N · Working N above and no device chip on any row. The rest frame is This Mac in front with the main checkout of herdr-ide selected; a remote device in front draws its own Home and Projects; a device that is not connected draws its name, 연결 안 됨 and 다시 연결, and no tree. With one device the rail still shows with This Mac alone. With the rail hidden the name on the header line carries a chevron and opens the device menu (the devices, 기기 추가…, 레일 표시). In the list, pinned and activity-ordered projects, checkout rows with their kind glyph, age and agent line, an opened checkout’s agent rows, and both inactive folds. Every line ends in its time or status badge and then a fold slot, so names never move and the times, badges and chevrons stand in one column each. A row’s menu opens on a right-click, with nothing drawn for it; beside the sidebar each row kind is drawn with its menu open (Project: New worktree…, New tab in main, Reveal in Finder, Copy path, Pin, Remove project…; Checkout: Open, New tab here, Open pull request, Set purpose…, Set as default checkout, Copy branch name, Copy path, Reveal in Finder, Delete worktree…; Agent: Show, Copy title, Copy session id, Close tab…). A status badge counts agents under the mark each agent’s own row draws, worst first (× ! ? ● ✓ ○). A checkout row opens the checkout and unfolds its agents; clicking its already selected, unfolded Workspace folds them without leaving it, and the chevron changes disclosure alone. A checkout name is 12/400 with its prefix up to the first slash muted. Line two is the purpose with the last-commit age on the time column, drawn only for a purpose or a raised-from parent. A parent agent folds its children with the same chevron and speaks for them with its badge; a folded parent draws one line per other checkout, with the server-glyph device chip. The kind glyph is the pull request’s lifecycle when GitHub knows one, else folder, primary, detached or branch; a missing folder is danger with no age. Beside the sidebar: a pull-request row under the pointer with its card (Component / PR hover card) opened to its right, the glyph a button that opens the pull request.', build, build);
 }
 
 // -- Screen / Mobile ---------------------------------------------------------------

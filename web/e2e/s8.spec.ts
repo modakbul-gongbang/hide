@@ -80,6 +80,34 @@ function writeSessions(home: string, root: string, alpha: string): Record<string
   return files;
 }
 
+// @platform: A session file names its folder as the system spells it (`C:\...` on Windows); the row names the checkout by it.
+test("a session recorded in a checkout's own folder is named by that checkout", { tag: "@platform" }, async ({ page }) => {
+  await page.setViewportSize({ width: 1440, height: 900 });
+  const herdr = await startHerdr();
+  let daemon: Daemon | null = null;
+  try {
+    const root = path.join(fs.realpathSync(herdr.root), "fixture");
+    daemon = await startHided(herdr, "s8-checkout");
+    const folder = path.join(daemon.home, ".claude", "projects", "-fixture");
+    fs.mkdirSync(folder, { recursive: true });
+    fs.writeFileSync(path.join(folder, "claude-release.jsonl"), claudeLine(root, "2026-09-21T01:00:00Z", "user", LONG_REQUEST) + "\n");
+    await open(page, daemon);
+    await expect(page.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
+    await page.locator('[data-main-tab="projects"]').click();
+    await page.locator("[data-main-project]", { hasText: "fixture" }).click();
+    await expect(page.locator("[data-workspace-screen]")).toBeVisible();
+    await openCurrentProjectOverview(page, "fixture");
+    await page.locator('[data-lens-tile-button="sessions"]').click();
+    const row = page.locator('[data-session-row="claude-release"]');
+    await expect(row).toHaveCount(1, { timeout: 20_000 });
+    await expect(row).toHaveAttribute("aria-label", /^Claude Code, 배포 스크립트 정리하고 .*, fixture, .*, available$/);
+    await expect(page.locator('[data-session="claude-release"]')).toContainText("fixture");
+  } finally {
+    daemon?.stop();
+    herdr.stop();
+  }
+});
+
 test("a Project's Sessions: history, filters, a read-only session, failures and two windows", async ({ page, context }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   const herdr = await startHerdr();
@@ -133,10 +161,9 @@ test("a Project's Sessions: history, filters, a read-only session, failures and 
     const release = page.locator('[data-session="claude-release"]');
     await expect(release).toContainText("Claude Code");
     await expect(release).toContainText(LONG_REQUEST);
-    await expect(release).toContainText("fixture");
     await expect(page.locator('[data-session="codex-login"]')).toContainText("Codex");
     await expect(page.locator('[data-session="codex-login"]')).toContainText("Fix the flaky login test");
-    await expect(page.locator('[data-session-row="claude-release"]')).toHaveAttribute("aria-label", /^Claude Code, 배포 스크립트 정리하고 .*, fixture, .*, available$/);
+    await expect(page.locator('[data-session-row="claude-release"]')).toHaveAttribute("aria-label", /^Claude Code, 배포 스크립트 정리하고 .*, available$/);
     await expect(screen).not.toContainText(/memory/i);
     await screenshot(page, "s8-history");
 

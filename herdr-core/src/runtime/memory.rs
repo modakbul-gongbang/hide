@@ -824,6 +824,45 @@ mod scope_tests {
         )
     }
 
+    #[cfg(windows)]
+    #[test]
+    fn a_session_row_names_its_checkout_in_the_wire_spelling() {
+        let row = |checkout: &str| {
+            project_session_row(ProjectSession {
+                id: "session-1".to_owned(),
+                agent: Agent::Claude,
+                locator: Path::new(r"C:\home\.claude\session.jsonl").to_path_buf(),
+                checkout_path: Path::new(checkout).to_path_buf(),
+                first_human_request: None,
+                started_at_unix_ms: None,
+                updated_at_unix_ms: 1,
+                title: None,
+                event_count: 0,
+                availability: SessionAvailability::Available,
+            })
+        };
+
+        assert_eq!(row(r"C:\work\fixture").checkout_path, "C:/work/fixture");
+        assert_eq!(row(r"\\?\C:\work\fixture").checkout_path, "C:/work/fixture");
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_kept_session_row_names_its_checkout_in_the_wire_spelling() {
+        let row = super::persisted_unavailable_session_row(hide_memory::SessionSourceRecord {
+            id: "session-1".to_owned(),
+            project_id: "project-1".to_owned(),
+            provider: "claude".to_owned(),
+            locator: r"C:\home\.claude\session.jsonl".to_owned(),
+            checkout_path: r"C:\work\fixture".to_owned(),
+            started_at_unix_ms: None,
+            updated_at_unix_ms: 1,
+            unavailable_reason: None,
+        });
+
+        assert_eq!(row.checkout_path, "C:/work/fixture");
+    }
+
     #[test]
     fn session_detail_opens_before_memory_database_exists() {
         let temp = tempdir().unwrap();
@@ -2107,7 +2146,7 @@ fn persisted_unavailable_session_row(source: SessionSourceRecord) -> SessionRowS
         .to_owned(),
         provider: source.provider,
         locator: source.locator,
-        checkout_path: source.checkout_path,
+        checkout_path: hide_platform::path::to_wire_lossy(Path::new(&source.checkout_path)),
         first_human_request: None,
         started_at_unix_ms: source.started_at_unix_ms,
         updated_at_unix_ms: source.updated_at_unix_ms,
@@ -2135,7 +2174,7 @@ fn project_session_row(session: hide_session::ProjectSession) -> SessionRowSnaps
         }
         .to_owned(),
         locator: session.locator.to_string_lossy().into_owned(),
-        checkout_path: session.checkout_path.to_string_lossy().into_owned(),
+        checkout_path: hide_platform::path::to_wire_lossy(&session.checkout_path),
         first_human_request: session.first_human_request,
         started_at_unix_ms: session.started_at_unix_ms,
         updated_at_unix_ms: session.updated_at_unix_ms,

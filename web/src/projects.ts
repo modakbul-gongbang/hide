@@ -1,4 +1,4 @@
-// The Projects list as the sidebar draws it: the raised Needs You
+// The Projects list as the sidebar draws it: the raised Needs You and Done
 // agents, then pinned rows under their own header, then the activity rows
 // with a per-device fold of inactive projects, and per project a fold of
 // inactive checkouts. The split only reads flags and groups the core set; no
@@ -6,7 +6,7 @@
 
 import type { TFunction } from "i18next";
 import type { MessageKey } from "./i18n/catalogs";
-import { AGENT_GROUPS, agentGroupTitle, type ListedAgent } from "./navigation";
+import { AGENT_GROUPS, agentGroupTitle, type AgentGroup, type ListedAgent } from "./navigation";
 import type { Checkout, InactiveProjectGroup, MarkCounts, PullRequest, RecentCheckout, Workspace } from "./snapshot";
 
 /** Return to this device's last usable checkout, then its primary, then row order. */
@@ -22,21 +22,32 @@ export function projectCheckout(workspace: Workspace, recent: readonly RecentChe
 
 export type ProjectRow =
   | { kind: "header"; section: "pinned" | "recent"; count: number }
-  | { kind: "raised"; group: string; agents: ListedAgent[] }
+  | { kind: "raised"; group: AgentGroup; agents: ListedAgent[]; more: ListedAgent[]; expanded: boolean }
   | { kind: "workspace"; workspace: Workspace; level: "root" | "child" }
   | { kind: "inactive_projects"; group: InactiveProjectGroup; count: number };
 
-/** The group the Projects list raises above its tree (docs/status-model.md); Done and the rest are the Agents tab's. */
-const RAISED_GROUP = "needs_you";
+/**
+ * The groups the Projects list raises above its tree, and how many of each it
+ * draws before folding the rest (docs/status-model.md); Working and Seen are the Agents tab's.
+ */
+const RAISED_CAP: Partial<Record<AgentGroup, number>> = { needs_you: 5, done: 3 };
 
 /**
  * `listed` is every agent the Agents list shows. A raised section holds, in
- * the core's order, the Needs You agents whose pane a drawn project's
+ * the core's order, the Needs You or Done agents whose pane a drawn project's
  * (or the device's Home's) checkout owns, so every raised agent is also in the tree below; an empty
  * section is left out, and a raised row never unfolds, so it is handed on
- * folded (docs/status-model.md, The descendant badge).
+ * folded (docs/status-model.md, The descendant badge). Past its cap a
+ * section draws the most recent ones in `agents` and folds the rest into
+ * `more`, drawn only while `openRaised` names the group.
  */
-export function projectRows(workspaces: Workspace[], groups: InactiveProjectGroup[], listed: ListedAgent[], home: Workspace | null = null): ProjectRow[] {
+export function projectRows(
+  workspaces: Workspace[],
+  groups: InactiveProjectGroup[],
+  listed: ListedAgent[],
+  home: Workspace | null = null,
+  openRaised: readonly string[] = [],
+): ProjectRow[] {
   const rows: ProjectRow[] = [];
   const drawnPanes = new Set<string>();
   // The device's Home is drawn as its own row above, so its agents are raised like a project's.
@@ -44,11 +55,12 @@ export function projectRows(workspaces: Workspace[], groups: InactiveProjectGrou
     for (const checkout of workspace.checkouts) for (const tab of checkout.tabs) for (const pane of tab.panes) drawnPanes.add(pane.id);
   }
   for (const { group } of AGENT_GROUPS) {
-    if (group !== RAISED_GROUP) continue;
+    const cap = RAISED_CAP[group];
+    if (cap === undefined) continue;
     const raised = listed.filter((row) => row.agent.group === group && drawnPanes.has(row.agent.pane_id));
     if (raised.length === 0) continue;
     const agents = raised.map((row) => (row.agent.lineage_collapsed === false ? { ...row, agent: { ...row.agent, lineage_collapsed: true } } : row));
-    rows.push({ kind: "raised", group, agents });
+    rows.push({ kind: "raised", group, agents: agents.slice(0, cap), more: agents.slice(cap), expanded: openRaised.includes(group) });
   }
   const pinned = workspaces.filter((row) => row.pinned);
   const recent = workspaces.filter((row) => !row.pinned);
