@@ -542,19 +542,6 @@ export function issueDate(unixMs: number, language: string): string {
   return formatDateTime(requireInterfaceLanguage(language), unixMs, { month: "short", day: "numeric" });
 }
 
-/** A size the way the Overview writes it: `812 MB`, `1.4 GB`, binary units. */
-export function formatBytes(bytes: number): string {
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let value = bytes;
-  let unit = 0;
-  while (value >= 1024 && unit < units.length - 1) {
-    value /= 1024;
-    unit += 1;
-  }
-  if (unit === 0) return `${Math.trunc(value)} B`;
-  return `${value < 10 ? value.toFixed(1) : value.toFixed(0)} ${units[unit]}`;
-}
-
 // --- pull requests (PRD overview-lenses-prs) -------------------------------------
 
 /** Whose move a pull request waits on (D-11, D-32): the operator's, an agent fixing it, nobody though it is blocked, or merged. */
