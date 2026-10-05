@@ -60,10 +60,7 @@ The cause was found by timestamping each stage against the first request, not by
 A second cost was the page's own rendering: headless Chromium composites in software, so every frame of xterm's WebGL canvas is read back synchronously on the page's main thread.
 A local trace of the held window showed long tasks of 250 to 500 ms, most of them in `GLES2::ReadPixels`, which delayed both the clicks and the snapshot frames the test observes.
 On the failing macOS run, the stage timings and the hided log showed the first diagnostic taking 2.5 seconds to reach the page and the forty clicks another 2.3 seconds, so the held request hit its deadline before the test could release it.
-`web/playwright.config.ts` now launches every web e2e Chromium with `--disable-webgl`, so the shell uses xterm's DOM renderer, its existing fallback, and the held window stays near 0.2 seconds.
-No web spec tests the terminal renderer; the probe reads the parsed buffer, not the canvas, and a web spec asserts terminal content through the probe, never through DOM text.
-A spec file that needs the WebGL renderer sets `test.use({ launchOptions })` at file top level, which replaces the config's `launchOptions` rather than adding to it, and says why.
-The desktop suite is not covered: Electron has its own GPU path, and it is now the only suite that runs the WebGL renderer.
+`web/playwright.config.ts` now launches every web e2e Chromium with `--disable-webgl`, so the shell uses xterm's DOM renderer, its existing fallback, and the held window stays near 0.2 seconds; [Writing a Playwright e2e test](#writing-a-playwright-e2e-test) step 6 says how a spec that tests WebGL opts back in.
 Terminal pixels in a web e2e screenshot come from the DOM renderer, so a claim about how the terminal looks comes from the desktop app.
 
 ## The test decides the order
@@ -176,10 +173,12 @@ A piece that another open change is still building is marked as pending with the
    Most quarantined tests are long journeys that join several contracts (`agent-tab-groups.spec.ts`, `s7.spec.ts`, `sidebar-menus.spec.ts`), and quarantine is per test, so one shaky step takes every contract in it out of the required lane; split a test so the part that shakes can be fixed alone.
    Splitting costs a stack start per spec, so say in the pull request what the split bought.
    A numeric limit on lines and `expect` calls per test is being added as a lint; this step names the numbers when it lands, and until then the reviewer checks the shape.
-6. **Turn off the renderer a spec does not test.**
+6. **Leave the renderer off; turn WebGL on only in a spec that tests it.**
    Headless Chromium composites in software, so each frame of xterm's WebGL canvas is read back synchronously on the page's main thread, 250 to 500 ms at a time.
-   A spec that holds a product deadline and does not test the terminal renderer launches Chromium with `test.use({ launchOptions: { args: ["--disable-webgl"] } })`, so the shell uses xterm's DOM renderer, its existing fallback; `web/e2e/pane-focus-ordering.spec.ts` is the reference, and [Wait for state, not time](#wait-for-state-not-time) has the measurement.
-   Pending #429 (not merged): it sets this once in `web/playwright.config.ts` for every web e2e and removes the per-spec setting; a spec that tests the renderer keeps WebGL on and says why.
+   `web/playwright.config.ts` launches every web e2e Chromium with `--disable-webgl`, so the shell uses xterm's DOM renderer, its existing fallback, and a spec needs no setting of its own; [Wait for state, not time](#wait-for-state-not-time) has the measurement.
+   A spec file that tests the WebGL renderer sets `test.use({ launchOptions })` at file top level, which replaces the config's `launchOptions` rather than adding to it, and says why; no web spec does today.
+   Assert terminal content through the probe, never through DOM text, because the DOM renderer puts terminal text in the page.
+   The desktop suite is not covered: Electron has its own GPU path.
    Do not raise a timeout to cover the stall.
 7. **Restart through `daemon.restart()`, and leave the old page first.**
    `daemon.restart()` in `web/e2e/hided-fixture.ts` stops `hided` and starts it again on the same state folder and port, as a real restart does, and takes an optional callback to edit the state folder before the start; `web/e2e/sidebar-pr-start.spec.ts` restarts three times in one test.
