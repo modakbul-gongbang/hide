@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { createActions } from "./actions";
+import { initializeInterfaceI18n } from "./i18n/instance";
 import { deviceCatalogLine, remoteTargetOfPane, remoteView, supportsRemotePurpose } from "./remote";
 import { queueBuffer, tabBufferKey } from "./buffers";
 import type { Device, EditorSnapshot, RemoteSession, RemoteStatus, SnapshotRest, Tab, Workspace } from "./snapshot";
@@ -9,6 +10,9 @@ import { useUiStore } from "./ui";
 import { noteKeyboardOwner } from "./viewFocus";
 import { frontCheckout } from "./snapshot";
 import type { WorkspaceView } from "./workspace";
+
+const english = initializeInterfaceI18n("en").getFixedT(null, "translation");
+const korean = initializeInterfaceI18n("ko").getFixedT(null, "translation");
 
 const LOCAL_PANE = "w1:p1";
 const PANE_A = "remote:studio:pane:w9:p1";
@@ -300,7 +304,7 @@ describe("deviceCatalogLine", () => {
     session,
     catalog,
   });
-  const line = (value: RemoteStatus | null) => deviceCatalogLine({ device, status: value, session: value?.session ?? null });
+  const line = (value: RemoteStatus | null) => deviceCatalogLine({ device, status: value, session: value?.session ?? null }, english);
 
   it("tells loading, failure, a kept stale list and an empty host apart", () => {
     expect(line(null)?.state).toBe("loading");
@@ -314,6 +318,14 @@ describe("deviceCatalogLine", () => {
     expect(line(status("connected", session(), { state: "unavailable", message: "Allow the helper in Settings", refused: [] }))?.text).toContain("Allow the helper in Settings");
     expect(line(status("connected", session(), { state: "ready", message: null, refused: [{ path: "/gone", message: "missing" }] }))?.state).toBe("partial");
     expect(line(status("connected", session(), { state: "ready", message: null, refused: [] }))).toBeNull();
+  });
+
+  it("words the line in the interface language, a folder count included", () => {
+    const refused = (count: number) => status("connected", session(), { state: "ready", message: null, refused: Array.from({ length: count }, (_, index) => ({ path: `/gone${index}`, message: "missing" })) });
+    expect(line(refused(1))?.text).toBe("1 folder on Studio could not be read and is listed by workspace.");
+    expect(line(refused(2))?.text).toBe("2 folders on Studio could not be read and are listed by workspace.");
+    expect(deviceCatalogLine({ device, status: refused(2), session: session() }, korean)?.text).toBe("Studio의 폴더 2개를 읽지 못해 워크스페이스별로 표시합니다.");
+    expect(deviceCatalogLine({ device, status: null, session: null }, korean)?.text).toBe("Studio에서 프로젝트를 읽는 중…");
   });
 });
 

@@ -82,13 +82,13 @@ describe("where a session ran", () => {
     const stages = [entry];
     try {
       stages.push(sample("zero.before"));
-      expect(sessionTime(0)).toBeNull();
+      expect(sessionTime(0, "en")).toBeNull();
       stages.push(sample("zero.after"));
       stages.push(sample("null.before"));
-      expect(sessionTime(null)).toBeNull();
+      expect(sessionTime(null, "en")).toBeNull();
       stages.push(sample("null.after"));
       stages.push(sample("year.before"));
-      expect(sessionTime(Date.UTC(2020, 0, 2, 3, 4), new Date(Date.UTC(2026, 0, 1)), "en-US")).toContain("2020");
+      expect(sessionTime(Date.UTC(2020, 0, 2, 3, 4), "en", new Date(Date.UTC(2026, 0, 1)))).toContain("2020");
       stages.push(sample("year.after"));
     } finally {
       stages.push(sample("callback.exit"));

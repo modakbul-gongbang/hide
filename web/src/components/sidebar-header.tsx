@@ -27,8 +27,8 @@ export type DeviceMenu = {
  * home-device-rail D-13, D-14). Every device's sidebar is the same three lines:
  * the name of the device in front (`This Mac`, `mini Remote`) with Add project
  * and Search at its right end, the shared Overview row, then `Projects | Agents`. While
- * the rail is hidden the name is a menu that lists the devices, `기기 추가…`
- * and `레일 표시`, since the rail is no longer the way to another device. A
+ * the rail is hidden the name is a menu that lists the devices, Add device
+ * and Show rail, since the rail is no longer the way to another device. A
  * device that cannot be read shows its name alone: it has no list to switch.
  * Drawn from what the caller reads out of the stores, so a test renders it
  * without them.
@@ -140,12 +140,13 @@ export function SidebarHeader({
 
 /** The device name as a menu while the rail is hidden: every device, Add device, and the way to show the rail again. */
 function HiddenRailMenu({ title, menu }: { title: { name: string; note: string | null }; menu: DeviceMenu }) {
+  const { t } = useInterfaceTranslation();
   return (
     <DropdownMenu>
       <DropdownMenuTrigger asChild>
         <button
           type="button"
-          aria-label={`${title.name}${title.note ? ` ${title.note}` : ""}, 기기 전환`}
+          aria-label={t("sidebar.switchDevice", { name: `${title.name}${title.note ? ` ${title.note}` : ""}` })}
           data-sidebar-device-menu="true"
           className="flex min-w-0 flex-1 items-baseline gap-sm rounded-sm text-left outline-none focus-visible:ring-1 focus-visible:ring-ring"
         >
@@ -156,7 +157,7 @@ function HiddenRailMenu({ title, menu }: { title: { name: string; note: string |
           <ChevronDownIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0 self-center text-muted-foreground" />
         </button>
       </DropdownMenuTrigger>
-      <DropdownMenuContent align="start" aria-label="Devices" data-device-menu="true">
+      <DropdownMenuContent align="start" aria-label={t("sidebar.devices")} data-device-menu="true">
         <DropdownMenuRadioGroup value={menu.frontId} onValueChange={menu.onSelect}>
           {menu.devices.map((device) => {
             const Icon = device.remote ? ServerIcon : LaptopIcon;
@@ -164,7 +165,7 @@ function HiddenRailMenu({ title, menu }: { title: { name: string; note: string |
               <DropdownMenuRadioItem key={device.id} value={device.id} data-device-menu-item={device.id}>
                 <Icon aria-hidden="true" />
                 <span className="min-w-0 flex-1 truncate">{device.label}</span>
-                {device.connected ? null : <span className="shrink-0 text-caption text-muted-foreground">연결 안 됨</span>}
+                {device.connected ? null : <span className="shrink-0 text-caption text-muted-foreground">{t("devices.state.unavailable")}</span>}
               </DropdownMenuRadioItem>
             );
           })}
@@ -172,10 +173,10 @@ function HiddenRailMenu({ title, menu }: { title: { name: string; note: string |
         <DropdownMenuSeparator />
         <DropdownMenuItem data-device-menu-add="true" onSelect={menu.onAddDevice}>
           <PlusIcon aria-hidden="true" />
-          기기 추가…
+          {t("sidebar.addDevice")}
         </DropdownMenuItem>
         <DropdownMenuItem data-device-menu-show-rail="true" onSelect={menu.onShowRail}>
-          레일 표시
+          {t("sidebar.showRail")}
         </DropdownMenuItem>
       </DropdownMenuContent>
     </DropdownMenu>

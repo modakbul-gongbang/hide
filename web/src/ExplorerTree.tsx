@@ -34,6 +34,7 @@ import { expandedUnderRoot, watchedFolders } from "./watch";
 import { workspaceViewOf } from "./workspace";
 import { hostKind, keySystem, revealHost } from "./host";
 import { chordEquals, chordFromEvent, defaultChord } from "./shortcuts";
+import { useInterfaceTranslation } from "./i18n/client";
 
 // The Explorer tree (PRD B1, B3, B9, B10): a lazy tree over the focused
 // checkout. The core owns which folders are expanded (`ui_state.expanded_paths`)
@@ -83,6 +84,7 @@ function baseName(path: string): string {
 }
 
 export function ExplorerTree({ actions }: { actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const checkout = useShellStore((s) => explorerContext(s.rest).checkout);
   const device = useShellStore((s) => explorerContext(s.rest).device);
   const rootPath = checkout?.path ?? null;
@@ -113,7 +115,7 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
   /** The watch-frame count already acted on, per folder. */
   const seenChanges = useRef<Record<string, number>>({});
 
-  const gitLine = explorerGitLine(changes);
+  const gitLine = explorerGitLine(changes, t);
   const expandedKey = expandedPaths.join("\n");
   const rows = useMemo(
     () => (rootPath ? explorerRows({ rootPath, listings, expandedPaths, changes }) : EMPTY_ROWS),
@@ -321,7 +323,7 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
   if (!checkout || !rootPath) {
     return (
       <div className="flex min-h-0 flex-1 items-center justify-center px-md text-center text-caption text-muted-foreground" data-explorer-state="no-checkout">
-        No checkout
+        {t("explorer.noCheckout")}
       </div>
     );
   }
@@ -347,12 +349,12 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
           {baseName(rootPath)}
         </span>
         </Hint>
-        <Hint label="Refresh">
+        <Hint label={t("common.refresh")}>
           <Button
             variant="ghost"
             size="icon-sm"
             className="text-muted-foreground hover:bg-transparent hover:text-foreground"
-            aria-label="Refresh the file tree"
+            aria-label={t("explorer.refreshTree")}
             onClick={() => {
               // A cached listing turns stale too, so the button re-reads what it
               // is showing rather than only the folders it never listed.
@@ -378,7 +380,7 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
       {unavailable ? (
         <div className="flex items-center gap-sm border-b border-border px-md py-sm text-caption text-warning" data-explorer-unavailable={unavailable.code}>
           <span className="min-w-0 flex-1 break-words">
-            {unavailable.root_path === rootPath ? "This checkout" : baseName(unavailable.root_path)} could not be listed: {unavailable.message}
+            {t("explorer.listingFailed", { name: unavailable.root_path === rootPath ? t("explorer.thisCheckout") : baseName(unavailable.root_path), reason: unavailable.message })}
           </span>
           {needsSettings ? (
             <Button
@@ -387,7 +389,7 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
               className="h-auto shrink-0 px-none text-subtle-foreground hover:bg-transparent hover:text-foreground"
               onClick={() => actions.openSettings("devices")}
             >
-              Open Settings
+              {t("explorer.openSettings")}
             </Button>
           ) : (
             <Button
@@ -399,21 +401,21 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
                 setRefreshTick((tick) => tick + 1);
               }}
             >
-              Retry
+              {t("common.retry")}
             </Button>
           )}
         </div>
       ) : null}
       {!rootListing && !refused && !rootUnavailable ? (
         <div className="px-md py-sm text-caption text-muted-foreground" data-explorer-state="loading">
-          Loading…
+          {t("common.loading")}
         </div>
       ) : (
         <div
           ref={scrollRef}
           role="tree"
           tabIndex={0}
-          aria-label="Checkout files"
+          aria-label={t("explorer.aria")}
           className="min-h-0 flex-1 overflow-auto outline-none"
           data-explorer-tree="true"
           onPointerDown={(event) => event.currentTarget.focus()}
@@ -549,6 +551,7 @@ function DraftRowView({
   onCommit: (name: string) => void;
   onCancel: () => void;
 }) {
+  const { t } = useInterfaceTranslation();
   const [value, setValue] = useState(initial);
   const done = useRef(false);
   const finish = (commit: boolean) => {
@@ -567,7 +570,7 @@ function DraftRowView({
       <Input
         autoFocus
         value={value}
-        aria-label={rename ? "New name" : "New entry name"}
+        aria-label={rename ? t("explorer.newName") : t("explorer.newEntryName")}
         className="h-auto min-w-0 flex-1 rounded-xs border-primary px-xxs py-none"
         onChange={(event) => setValue(event.target.value)}
         onKeyDown={(event) => {
@@ -613,6 +616,7 @@ function ExplorerContextMenu({
   onRename: (row: ExplorerRow) => void;
   onTrash: (row: ExplorerRow) => void;
 }) {
+  const { t } = useInterfaceTranslation();
   // Read as the menu opens: the room beside the only View area (S7 B9, D-06).
   const besideReason = besideUnavailable(workspaceViewOf(useShellStore.getState().rest)?.layout, drawnViews());
   const items = explorerMenuItems({
@@ -625,7 +629,7 @@ function ExplorerContextMenu({
   });
   return (
     <EntryPointMenu
-      label={row ? `${row.name} actions` : "Folder actions"}
+      label={row ? t("history.fileActions", { name: row.name }) : t("explorer.folderActions")}
       items={items}
       at={{ x: menu.x, y: menu.y }}
       onClose={onClose}
@@ -666,15 +670,16 @@ function ExplorerRowView({
   onDragStart: (source: HTMLElement) => void;
   onDrop: (from: string | null) => void;
 }) {
+  const { t } = useInterfaceTranslation();
   const [over, setOver] = useState(false);
   return (
-    <Hint label={rowTitle(row, rootPath)} reveals>
+    <Hint label={rowTitle(row, rootPath, t)} reveals>
     <div
       role="treeitem"
       aria-selected={selected}
       aria-level={row.depth + 1}
       aria-expanded={row.isDirectory ? row.expanded : undefined}
-      aria-label={rowAccessibilityLabel(row)}
+      aria-label={rowAccessibilityLabel(row, t)}
       draggable
       data-explorer-row={row.path}
       data-selected={selected ? "true" : "false"}
@@ -726,13 +731,13 @@ function ExplorerRowView({
       </span>
       <span className="min-w-0 flex-1 truncate">{row.name}</span>
       {needsRefresh ? (
-        <Hint label="This folder is no longer watched; refresh to read it">
+        <Hint label={t("explorer.unwatched")}>
           <Button
             variant="ghost"
             size="icon-sm"
             className="shrink-0 text-warning hover:bg-transparent hover:text-foreground"
             data-explorer-refresh={row.path}
-            aria-label={`Refresh ${row.name}`}
+            aria-label={t("explorer.refreshFolder", { name: row.name })}
             onClick={(event) => {
               event.stopPropagation();
               onRefresh();
@@ -744,7 +749,7 @@ function ExplorerRowView({
         </Hint>
       ) : null}
       {row.decoration ? (
-        <Hint label={row.decoration.title}>
+        <Hint label={t(row.decoration.title)}>
           <span className={`shrink-0 text-caption ${gitBadgeColor(row.decoration.status)}`}>
             {row.decoration.badge}
           </span>

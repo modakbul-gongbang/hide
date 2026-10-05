@@ -11,6 +11,7 @@
 
 import { ArrowLeftIcon, FolderOpenIcon } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
+import { Trans } from "react-i18next";
 import type { Actions } from "./actions";
 import { defaultProjectParent, folderLabel, parseCloneUrl, refusalText, trimFolder } from "./addProject";
 import { Note, Status } from "./components/settings-rows";
@@ -20,6 +21,7 @@ import { Input } from "./components/ui/input";
 import { RegistrationStatus, useRegistration } from "./registration";
 import type { RepositoryClone, WorkspaceRegistration } from "./snapshot";
 import { useShellStore } from "./store";
+import { useInterfaceTranslation } from "./i18n/client";
 import { useErrorSince } from "./WorkspaceDialogs";
 
 /** How long typing settles before hided is asked about the folder. */
@@ -37,6 +39,7 @@ export function cloneRunning(clone: RepositoryClone | null | undefined): boolean
 type Following = { id: number } | { after: number; at: number; path: string };
 
 export function CloneFromUrl({ actions, registrations, onBack }: { actions: Actions; registrations: readonly WorkspaceRegistration[]; onBack: () => void }) {
+  const { t, i18n } = useInterfaceTranslation();
   const slot = useShellStore((s) => s.rest?.repository_clone ?? null);
   const target = useShellStore((s) => s.cloneTarget);
   const pathRefusal = useShellStore((s) => s.pathRefusal);
@@ -61,7 +64,7 @@ export function CloneFromUrl({ actions, registrations, onBack }: { actions: Acti
     following && "path" in following && pathRefusal?.kind === "clone_repository" && pathRefusal.path === following.path ? pathRefusal.reason : null;
   // A refusal of the clone itself (hided's, or the core's), or the core
   // unable to register the finished folder; a running clone has neither.
-  const refusal = hidedRefusal ? refusalText(hidedRefusal) : cloneError && !running ? cloneError : null;
+  const refusal = hidedRefusal ? refusalText(hidedRefusal, t) : cloneError && !running ? cloneError : null;
   const ended = clone?.phase === "failed" || clone?.phase === "cancelled" || refusal !== null;
   const answer = target && name && target.parent === parentPath && target.name === name ? target : null;
   const waiting = following !== null && !ended && registration.shown === null;
@@ -97,14 +100,14 @@ export function CloneFromUrl({ actions, registrations, onBack }: { actions: Acti
       <DialogHeader>
         <Button type="button" variant="ghost" size="sm" className="-ml-sm mb-xs self-start" disabled={running} onClick={onBack} data-add-project-back="true">
           <ArrowLeftIcon />
-          Back
+          {t("common.back")}
         </Button>
-        <DialogTitle>Clone from URL</DialogTitle>
-        <DialogDescription>Enter the Git URL and choose where to clone it.</DialogDescription>
+        <DialogTitle>{t("addProject.wayClone")}</DialogTitle>
+        <DialogDescription>{t("addProject.clone.description")}</DialogDescription>
       </DialogHeader>
       <DialogBody className="flex flex-col gap-md">
         <label className="flex flex-col gap-xs">
-          <span className="text-body text-subtle-foreground">Git URL</span>
+          <span className="text-body text-subtle-foreground">{t("addProject.clone.urlLabel")}</span>
           <Input
             ref={urlRef}
             autoFocus
@@ -126,13 +129,13 @@ export function CloneFromUrl({ actions, registrations, onBack }: { actions: Acti
           />
           {url.trim() !== "" && !parsed.ok ? (
             <Note tone="error" data-clone-url-reason="true">
-              {parsed.reason}
+              {t(parsed.reason)}
             </Note>
           ) : null}
         </label>
         <div className="flex flex-col gap-xs">
           <label htmlFor="clone-parent" className="text-body text-subtle-foreground">
-            Parent folder
+            {t("addProject.clone.parentLabel")}
           </label>
           <div className="flex items-center gap-sm">
             <Input
@@ -144,17 +147,17 @@ export function CloneFromUrl({ actions, registrations, onBack }: { actions: Acti
               data-clone-parent="true"
               onChange={(event) => setParent(event.target.value)}
             />
-            <Button variant="secondary" size="icon" disabled={running} aria-label="Choose parent folder" onClick={() => void browse()} data-clone-browse="true">
+            <Button variant="secondary" size="icon" disabled={running} aria-label={t("addProject.clone.chooseParent")} onClick={() => void browse()} data-clone-browse="true">
               <FolderOpenIcon />
             </Button>
           </div>
           {name && answer?.reason ? (
             <Note tone="error" data-clone-target-reason={answer.reason}>
-              {refusalText(answer.reason)}
+              {refusalText(answer.reason, t)}
             </Note>
           ) : name ? (
             <p className="break-all text-caption text-muted-foreground" data-clone-target={answer?.path ?? ""}>
-              Clones into a new folder <span className="font-mono text-foreground">{name}</span>
+              <Trans i18n={i18n} t={t} i18nKey="addProject.clone.into" values={{ name }} components={{ name: <span className="font-mono text-foreground" /> }} />
             </p>
           ) : null}
         </div>
@@ -167,15 +170,15 @@ export function CloneFromUrl({ actions, registrations, onBack }: { actions: Acti
           <RegistrationStatus registration={registration} />
         ) : null}
         {clone?.phase === "finished" && (refusal || registration.shown) ? (
-          <Note data-clone-kept={clone.path}>The repository was cloned there; add it with Browse folder.</Note>
+          <Note data-clone-kept={clone.path}>{t("addProject.clone.kept")}</Note>
         ) : null}
         {running && clone ? (
           <Button variant="secondary" size="lg" disabled={clone.phase === "cancelling"} onClick={() => actions.cancelRepositoryClone(clone.id)} data-clone-cancel="true">
-            {clone.phase === "cancelling" ? "Cancelling…" : "Cancel"}
+            {clone.phase === "cancelling" ? t("addProject.clone.cancelling") : t("common.cancel")}
           </Button>
         ) : (
           <Button size="lg" disabled={!canClone} onClick={start} data-clone-submit="true">
-            Clone
+            {t("addProject.clone.submit")}
           </Button>
         )}
       </DialogBody>
@@ -185,11 +188,12 @@ export function CloneFromUrl({ actions, registrations, onBack }: { actions: Acti
 
 /** What the followed clone is doing, in the smallest form each state needs. */
 function CloneProgress({ clone, following }: { clone: RepositoryClone | null; following: boolean }) {
+  const { t } = useInterfaceTranslation();
   if (!following) return null;
   if (clone === null) {
     return (
       <Status tone="pending" data-clone-phase="sent">
-        Starting the clone…
+        {t("addProject.clone.sending")}
       </Status>
     );
   }
@@ -198,11 +202,11 @@ function CloneProgress({ clone, following }: { clone: RepositoryClone | null; fo
     return (
       <div className="flex flex-col gap-xs" data-clone-phase={clone.phase}>
         <Status tone="pending">
-          {clone.phase === "cancelling" ? `Cancelling the clone of ${name}…` : `Cloning ${name} from ${clone.host}…`}
+          {clone.phase === "cancelling" ? t("addProject.clone.cancellingNamed", { name }) : t("addProject.clone.cloning", { name, host: clone.host })}
         </Status>
         <div
           role="progressbar"
-          aria-label={clone.stage ?? "Cloning"}
+          aria-label={clone.stage ?? t("addProject.clone.stageFallback")}
           aria-valuemin={0}
           aria-valuemax={100}
           aria-valuenow={clone.percent ?? undefined}
@@ -211,7 +215,7 @@ function CloneProgress({ clone, following }: { clone: RepositoryClone | null; fo
           <div className="h-full bg-primary transition-[width]" style={{ width: `${clone.percent ?? 0}%` }} />
         </div>
         <span className="text-caption text-muted-foreground" data-clone-stage={clone.stage ?? ""}>
-          {clone.stage ? `${clone.stage}${clone.percent === null ? "" : ` ${clone.percent}%`}` : "Connecting…"}
+          {clone.stage ? `${clone.stage}${clone.percent === null ? "" : ` ${clone.percent}%`}` : t("settings.connection.connecting")}
         </span>
       </div>
     );
@@ -219,14 +223,14 @@ function CloneProgress({ clone, following }: { clone: RepositoryClone | null; fo
   if (clone.phase === "failed") {
     return (
       <div role="alert" data-clone-phase="failed">
-        <Status tone="error">{clone.message ?? "The clone failed."}</Status>
+        <Status tone="error">{clone.message ?? t("addProject.clone.failed")}</Status>
       </div>
     );
   }
   if (clone.phase === "cancelled") {
     return (
       <Note tone="muted" data-clone-phase="cancelled">
-        Clone cancelled; nothing was kept.
+        {t("addProject.clone.cancelled")}
       </Note>
     );
   }

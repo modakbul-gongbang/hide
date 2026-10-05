@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
-import { badgeText, deviceConnected, frontTitle, homeOf, homeProjectCount, railShown, tileCounts, tileHint, tileMonogram, tileName } from "./devices";
+import { badgeText, deviceConnected, frontTitle as frontTitleIn, homeOf, homeProjectCount, railShown, tileCounts, tileHint as tileHintIn, tileMonogram, tileName as tileNameIn } from "./devices";
+import { initializeInterfaceI18n } from "./i18n/instance";
 import type { AgentRow, SnapshotRest } from "./snapshot";
+
+const t = initializeInterfaceI18n("en").getFixedT(null, "translation");
+const korean = initializeInterfaceI18n("ko").getFixedT(null, "translation");
+const tileName = (label: string, connected: boolean, counts: Parameters<typeof tileNameIn>[2]) => tileNameIn(label, connected, counts, t);
+const tileHint = (label: string, connected: boolean, counts: Parameters<typeof tileHintIn>[2]) => tileHintIn(label, connected, counts, t);
+const frontTitle = (devices: Parameters<typeof frontTitleIn>[0], frontId: string) => frontTitleIn(devices, frontId, t);
 
 function agent(paneId: string, group: string): AgentRow {
   return { id: paneId, pane_id: paneId, identity_label: paneId, agent_kind: "claude", symbol: "?", group, status_label: group, changed_at_unix_ms: null, emphasized: false, unread: false, demand: "none", activity: "idle" } as AgentRow;
@@ -70,13 +77,15 @@ describe("the device rail's facts (quick device-rail-badges)", () => {
   it("names a tile for assistive technology by device, connection and each count it marks (B4)", () => {
     expect(tileName("mini", true, { needs_you: 1, done: 0 })).toBe("mini, Needs You 1");
     expect(tileName("This Mac", true, { needs_you: 2, done: 1 })).toBe("This Mac, Needs You 2, Done 1");
-    expect(tileName("build-box", false, { needs_you: 0, done: 0 })).toBe("build-box, 연결 안 됨");
+    expect(tileName("build-box", false, { needs_you: 0, done: 0 })).toBe("build-box, Not connected");
+    expect(tileNameIn("build-box", false, { needs_you: 0, done: 0 }, korean)).toBe("build-box, 연결 안 됨");
     expect(tileName("This Mac", true, { needs_you: 0, done: 0 })).toBe("This Mac");
   });
 
   it("writes the full counts in a tile's hint, where the pill stops at `9+`", () => {
     expect(tileHint("mini", true, { needs_you: 12, done: 1 })).toBe("mini · Needs You 12 · Done 1");
-    expect(tileHint("build-box", false, { needs_you: 3, done: 0 })).toBe("build-box · 연결 안 됨");
+    expect(tileHint("build-box", false, { needs_you: 3, done: 0 })).toBe("build-box · Not connected");
+    expect(tileHintIn("mini", true, { needs_you: 12, done: 1 }, korean)).toBe("mini · 내 차례 12 · 완료 1");
     expect(tileHint("This Mac", true, { needs_you: 0, done: 0 })).toBe("This Mac");
   });
 

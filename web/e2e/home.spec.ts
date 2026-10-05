@@ -144,7 +144,7 @@ test("a ~/hide that is not Hide's is left alone, and the reason shows under the 
     // B21: a start aimed at Home says the same inside the panel and keeps the text.
     await page.keyboard.press(chord("search"));
     await expect(page.locator('[data-palette="Search"] [data-palette-input]')).toBeFocused();
-    await page.keyboard.type("에이전트");
+    await page.keyboard.type("Start an agent");
     await page.locator('[data-palette-row="command:start-agent"]').click();
     const panel = page.locator("[data-start-panel]");
     await expect(panel.locator("[data-start-target]")).toHaveAttribute("data-start-target", "home:local");

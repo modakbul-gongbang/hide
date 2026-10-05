@@ -29,6 +29,12 @@ export const explorerEnglish = {
   "explorer.newFile": "New File",
   "explorer.newFolder": "New Folder",
   "explorer.openBrowser": "Open in Browser",
+  "explorer.moveToTrash": "Move to Trash",
+  "explorer.revealFinder": "Reveal in Finder",
+  "explorer.revealFileExplorer": "Reveal in File Explorer",
+  "explorer.revealFolder": "Open Containing Folder",
+  "explorer.revealFileManager": "Show in File Manager",
+  "explorer.revealHereOnly": "Only for files and folders on this computer.",
 } as const;
 
 const ko = {
@@ -57,6 +63,12 @@ const ko = {
   "explorer.newFile": "새 파일",
   "explorer.newFolder": "새 폴더",
   "explorer.openBrowser": "브라우저에서 열기",
+  "explorer.moveToTrash": "휴지통으로 이동",
+  "explorer.revealFinder": "Finder에서 보기",
+  "explorer.revealFileExplorer": "파일 탐색기에서 보기",
+  "explorer.revealFolder": "포함된 폴더 열기",
+  "explorer.revealFileManager": "파일 관리자에서 보기",
+  "explorer.revealHereOnly": "이 컴퓨터에 있는 파일과 폴더에만 사용할 수 있습니다.",
 } satisfies Catalog<typeof explorerEnglish>;
 
 const zhCN = {
@@ -85,6 +97,12 @@ const zhCN = {
   "explorer.newFile": "新建文件",
   "explorer.newFolder": "新建文件夹",
   "explorer.openBrowser": "在浏览器中打开",
+  "explorer.moveToTrash": "移到废纸篓",
+  "explorer.revealFinder": "在 Finder 中显示",
+  "explorer.revealFileExplorer": "在文件资源管理器中显示",
+  "explorer.revealFolder": "打开所在文件夹",
+  "explorer.revealFileManager": "在文件管理器中显示",
+  "explorer.revealHereOnly": "仅适用于此电脑上的文件和文件夹。",
 } satisfies Catalog<typeof explorerEnglish>;
 
 const ja = {
@@ -113,6 +131,12 @@ const ja = {
   "explorer.newFile": "新しいファイル",
   "explorer.newFolder": "新しいフォルダー",
   "explorer.openBrowser": "ブラウザーで開く",
+  "explorer.moveToTrash": "ゴミ箱に移動",
+  "explorer.revealFinder": "Finderで表示",
+  "explorer.revealFileExplorer": "エクスプローラーで表示",
+  "explorer.revealFolder": "含まれているフォルダーを開く",
+  "explorer.revealFileManager": "ファイルマネージャーで表示",
+  "explorer.revealHereOnly": "このコンピューター上のファイルとフォルダーでのみ使えます。",
 } satisfies Catalog<typeof explorerEnglish>;
 
 export const explorerCatalogs = { en: explorerEnglish, ko, "zh-CN": zhCN, ja } satisfies Catalogs<typeof explorerEnglish>;

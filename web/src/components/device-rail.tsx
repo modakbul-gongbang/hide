@@ -2,6 +2,7 @@ import { LaptopIcon, PlusIcon, XIcon } from "lucide-react";
 import { memo, useMemo } from "react";
 import { useShallow } from "zustand/react/shallow";
 import type { Actions } from "../actions";
+import { useInterfaceTranslation } from "../i18n/client";
 import { badgeText, deviceConnected, frontDeviceId, tileCounts, tileHint, tileMonogram, tileName, type TileCounts } from "../devices";
 import { cn } from "../lib/utils";
 import { useShellStore } from "../store";
@@ -22,31 +23,32 @@ const CUTOUT = "ring-2 ring-sidebar";
  * height with This Mac, each registered device in the core's order, and `+`
  * directly under the last one, which is Add device. Each tile is a square with
  * no name under it; its hint is the name with its counts. It is shown with one device alone,
- * and a right-click on it offers `레일 숨기기`. One tile is selected, ringed.
+ * and a right-click on it offers Hide rail. One tile is selected, ringed.
  * A tile reads only its own facts (its two counts, whether it is connected),
  * so a snapshot that changes another device redraws no tile, and nothing here
  * touches the sidebar's rows.
  */
 export function DeviceRail({ actions }: { actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const devices = useShellStore((s) => s.rest?.navigator?.devices);
   const front = useShellStore((s) => frontDeviceId(s.rest));
   const tiles = useMemo<Tile[]>(() => {
     const list = devices ?? [];
     const local = list.find((device) => device.kind !== "remote");
     return [
-      { id: local?.id ?? "local", label: local?.label ?? "This Mac", icon: "local" },
+      { id: local?.id ?? "local", label: local?.label ?? t("common.thisMac"), icon: "local" },
       ...list.filter((device) => device.kind === "remote").map((device): Tile => ({ id: device.id, label: device.label, icon: "remote" })),
     ];
-  }, [devices]);
+  }, [devices, t]);
   return (
     <EntryContextMenu
       asChild
-      label="Device rail"
-      items={() => [{ id: "hide", label: "레일 숨기기", unavailable: null }]}
+      label={t("devices.rail.menu")}
+      items={() => [{ id: "hide", label: t("devices.rail.hide"), unavailable: null }]}
       onSelect={() => actions.hideDeviceRail()}
       data-device-rail-menu="true"
     >
-      <nav aria-label="Devices" data-device-rail="true" className="flex w-(--size-rail) shrink-0 flex-col overflow-y-auto overflow-x-hidden border-r border-border py-md">
+      <nav aria-label={t("settings.tabs.devices")} data-device-rail="true" className="flex w-(--size-rail) shrink-0 flex-col overflow-y-auto overflow-x-hidden border-r border-border py-md">
         <ul className="flex flex-col items-center gap-md">
           {tiles.map((tile) => (
             <li key={tile.id} className="flex">
@@ -54,7 +56,7 @@ export function DeviceRail({ actions }: { actions: Actions }) {
             </li>
           ))}
           <li className="flex">
-            <Hint label="기기 추가" side="right">
+            <Hint label={t("devices.addTitle")} side="right">
               <button
                 type="button"
                 data-rail-add="true"
@@ -88,11 +90,12 @@ const RailTile = memo(function RailTile({ tile, selected, actions }: { tile: Til
  * current (B3, B8, B41).
  */
 export function RailTileView({ tile, selected, counts, connected, onSelect }: { tile: Tile; selected: boolean; counts: TileCounts; connected: boolean; onSelect: () => void }) {
+  const { t } = useInterfaceTranslation();
   return (
-    <Hint label={tileHint(tile.label, connected, counts)} side="right">
+    <Hint label={tileHint(tile.label, connected, counts, t)} side="right">
       <button
         type="button"
-        aria-label={tileName(tile.label, connected, counts)}
+        aria-label={tileName(tile.label, connected, counts, t)}
         aria-pressed={selected}
         data-rail-tile={tile.id}
         data-rail-connected={connected ? "true" : "false"}

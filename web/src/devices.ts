@@ -5,6 +5,7 @@
 // already publishes; nothing is counted that it does not carry, and a device
 // that is not connected has no count, since what it last reported is not current.
 
+import type { TFunction } from "i18next";
 import { groupCounts } from "./navigation";
 import type { AgentRow, Device, SnapshotRest, Workspace } from "./snapshot";
 
@@ -37,11 +38,7 @@ export function deviceAgents(rest: SnapshotRest | null, localAgents: AgentRow[],
 }
 
 /** The states the Agents tab counts above its list, in its order: Needs You, unseen Done, Working. */
-export const BADGE_STATES = [
-  { state: "needs_you", label: "Needs You" },
-  { state: "done", label: "Done" },
-  { state: "working", label: "Working" },
-] as const;
+export const BADGE_STATES = [{ state: "needs_you" }, { state: "done" }, { state: "working" }] as const;
 
 /** The text color of a state's count in the Agents tab's header: one color per state, the fill the rail's marks wear. */
 export const BADGE_TEXT: Record<BadgeState, string> = { needs_you: "text-warning", done: "text-success", working: "text-agent-working" };
@@ -77,20 +74,20 @@ export function tileMonogram(label: string): string {
   return initial(first).toLocaleUpperCase() + initial(second);
 }
 
-/** What a tile says besides its name: `연결 안 됨`, or each non-zero count it marks, in full where the pill reads `9+`. */
-function tileFacts(connected: boolean, counts: TileCounts): string[] {
-  if (!connected) return ["연결 안 됨"];
-  return [counts.needs_you > 0 ? `Needs You ${counts.needs_you}` : null, counts.done > 0 ? `Done ${counts.done}` : null].filter((fact) => fact !== null);
+/** What a tile says besides its name: that it is not connected, or each non-zero count it marks, in full where the pill reads `9+`. */
+function tileFacts(connected: boolean, counts: TileCounts, t: TFunction<"translation">): string[] {
+  if (!connected) return [t("devices.rail.notConnected")];
+  return [counts.needs_you > 0 ? t("devices.rail.needsYou", { count: counts.needs_you }) : null, counts.done > 0 ? t("devices.rail.done", { count: counts.done }) : null].filter((fact) => fact !== null);
 }
 
 /** What a tile is called for assistive technology: the name, then its connection or its counts (B4). */
-export function tileName(label: string, connected: boolean, counts: TileCounts): string {
-  return [label, ...tileFacts(connected, counts)].join(", ");
+export function tileName(label: string, connected: boolean, counts: TileCounts, t: TFunction<"translation">): string {
+  return [label, ...tileFacts(connected, counts, t)].join(", ");
 }
 
 /** A tile's hint, the only place its name is written: the name, then its connection or its counts (`mini · Needs You 12 · Done 1`). */
-export function tileHint(label: string, connected: boolean, counts: TileCounts): string {
-  return [label, ...tileFacts(connected, counts)].join(" · ");
+export function tileHint(label: string, connected: boolean, counts: TileCounts, t: TFunction<"translation">): string {
+  return [label, ...tileFacts(connected, counts, t)].join(" · ");
 }
 
 /** How many projects a device has registered, without its Home (D-04, B16): a count from the registrations, not from any folder. */
@@ -105,9 +102,9 @@ export function homeOf(rest: SnapshotRest | null, deviceId: string): Workspace |
 }
 
 /** The name on the sidebar's top line and the smaller word after it: the device in front. */
-export function frontTitle(devices: readonly Device[] | undefined, frontId: string | null | undefined): { name: string; note: string | null } {
+export function frontTitle(devices: readonly Device[] | undefined, frontId: string | null | undefined, t: TFunction<"translation">): { name: string; note: string | null } {
   const device = devices?.find((row) => row.id === (frontId ?? "local"));
-  return { name: device?.label ?? "This Mac", note: device?.kind === "remote" ? "Remote" : null };
+  return { name: device?.label ?? t("common.thisMac"), note: device?.kind === "remote" ? t("devices.remote") : null };
 }
 
 /** What the sidebar's list shows: the front device's Projects or Agents tab, or the way to reconnect a device that cannot be read. */

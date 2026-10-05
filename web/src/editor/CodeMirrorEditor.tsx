@@ -32,11 +32,13 @@ import {
   type ViewUpdate,
 } from "@codemirror/view";
 import { useEffect, useLayoutEffect, useRef } from "react";
+import { useInterfaceTranslation } from "../i18n/client";
 import type { EditorDocumentSnapshot } from "../snapshot";
 import { splitFrontmatter } from "./frontmatter";
 import { lineOffset, onLineRequest, takeLine } from "./lineRequest";
 import { languageLoader } from "./languages";
 import { markdownLive } from "./markdownLivePlugin";
+import { editorPhrases } from "./phrases";
 import { echoDecision, joinDocument, minimalChange, peerState, type PeerState } from "./sync";
 import { baseTheme, liveTheme, scaleTheme } from "./theme";
 
@@ -45,6 +47,7 @@ const readonlyConf = new Compartment();
 const wrapConf = new Compartment();
 const scaleConf = new Compartment();
 const liveConf = new Compartment();
+const phrasesConf = new Compartment();
 
 /** How many lines of frontmatter the pane shows before it scrolls (D-11). */
 const FRONTMATTER_LINES = 8;
@@ -115,6 +118,9 @@ export function CodeMirrorEditor({
   /** Saves the document: the editor's own Mod-s (docs/UI_BEHAVIOR.md, Keyboard shortcuts per system). */
   onSave: () => void;
 }) {
+  const { t } = useInterfaceTranslation();
+  const phrasesRef = useRef(editorPhrases(t));
+  phrasesRef.current = editorPhrases(t);
   const bodyHost = useRef<HTMLDivElement>(null);
   const frontHost = useRef<HTMLDivElement>(null);
   const bodyView = useRef<EditorView | null>(null);
@@ -198,6 +204,7 @@ export function CodeMirrorEditor({
       bracketMatching(),
       highlightActiveLine(),
       baseTheme(),
+      phrasesConf.of(phrasesRef.current),
       readonlyConf.of(readonlyExtensions(readonly)),
       wrapConf.of(wrap ? EditorView.lineWrapping : []),
       scaleConf.of(scaleTheme(scale)),
@@ -345,6 +352,10 @@ export function CodeMirrorEditor({
   useEffect(() => {
     both(readonlyConf.reconfigure(readonlyExtensions(readonly)));
   }, [readonly]);
+
+  useEffect(() => {
+    both(phrasesConf.reconfigure(editorPhrases(t)));
+  }, [t]);
 
   useEffect(() => {
     both(wrapConf.reconfigure(wrap ? EditorView.lineWrapping : []));

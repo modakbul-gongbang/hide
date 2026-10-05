@@ -1,6 +1,7 @@
 import { ChevronRightIcon } from "lucide-react";
 import { memo, useRef } from "react";
 import { AgentMark } from "../AgentMark";
+import { useInterfaceTranslation } from "../i18n/client";
 import { badgeLabel, badgeParts, branchChip, lineShownAtRest, lineTone, markTone, rowAccessibleName, rowLine } from "../agentRow";
 import type { AgentRow } from "../snapshot";
 import { AgentChildrenPopover } from "./agent-children-popover";
@@ -49,6 +50,7 @@ export const AgentRowItem = memo(function AgentRowItem({
   /** Where a root's first column starts; a list nested under another row passes that row's name column. */
   inset?: string;
 }) {
+  const { t } = useInterfaceTranslation();
   const main = useRef<HTMLButtonElement>(null);
   const line = rowLine(agent);
   const branch = branchChip(agent);
@@ -87,7 +89,7 @@ export const AgentRowItem = memo(function AgentRowItem({
           {hasChildren ? (
             <button
               type="button"
-              aria-label={folded ? `Show ${agent.identity_label}'s agents` : `Hide ${agent.identity_label}'s agents`}
+              aria-label={folded ? t("agents.showChildren", { name: agent.identity_label }) : t("agents.hideChildren", { name: agent.identity_label })}
               aria-expanded={!folded}
               data-agent-tree-toggle={agent.pane_id}
               className="rounded-xs text-muted-foreground outline-none hover:text-foreground focus-visible:ring-1 focus-visible:ring-ring"
@@ -164,6 +166,7 @@ export function DescendantBadge({
   onUnfold: (() => void) | null;
   returnFocus: () => void;
 }) {
+  const { t } = useInterfaceTranslation();
   const parts = badgeParts(agent.descendant_counts);
   return (
     <AgentChildrenPopover
@@ -175,7 +178,7 @@ export function DescendantBadge({
       trigger={
         <button
           type="button"
-          aria-label={badgeLabel(agent.descendant_counts, descendants)}
+          aria-label={badgeLabel(agent.descendant_counts, descendants, t)}
           aria-haspopup="dialog"
           data-descendant-badge={descendants}
           className="relative shrink-0 rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-ring data-[state=open]:ring-1 data-[state=open]:ring-ring"

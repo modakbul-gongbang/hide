@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
+import type { TFunction } from "i18next";
+import { createInterfaceI18n } from "./i18n/instance";
 import {
   decorationFor,
   explorerGitLine,
@@ -61,6 +63,13 @@ const SRC = listing(`${ROOT}/src`, [
   ["a.ts", false],
   ["nested", true],
 ]);
+
+let t: TFunction<"translation">;
+let ko: TFunction<"translation">;
+beforeAll(async () => {
+  t = (await createInterfaceI18n("en")).t;
+  ko = (await createInterfaceI18n("ko")).t;
+});
 
 describe("explorerRows", () => {
   it("shows a folder's children in the order hided sent them, at depth zero", () => {
@@ -134,11 +143,9 @@ describe("git decorations", () => {
 
   it("gives a file the letter Git names its status with", () => {
     const decorations = gitDecorations(changes([["src/a.ts", "modified"]]), ROOT);
-    expect(decorationFor(decorations, `${ROOT}/src/a.ts`, ROOT, false)).toEqual({
-      badge: "M",
-      title: "Modified",
-      status: "modified",
-    });
+    const decoration = decorationFor(decorations, `${ROOT}/src/a.ts`, ROOT, false);
+    expect(decoration).toMatchObject({ badge: "M", status: "modified" });
+    expect(t(decoration!.title)).toBe("Modified");
   });
 
   it("gives a folder the dot and its riskiest descendant's status", () => {
@@ -150,11 +157,9 @@ describe("git decorations", () => {
       ]),
       ROOT,
     );
-    expect(decorationFor(decorations, `${ROOT}/src`, ROOT, true)).toEqual({
-      badge: "●",
-      title: "Contains changed files; highest priority is conflict",
-      status: "conflict",
-    });
+    const folder = decorationFor(decorations, `${ROOT}/src`, ROOT, true);
+    expect(folder).toMatchObject({ badge: "●", status: "conflict" });
+    expect(t(folder!.title)).toBe("Contains changed files; highest priority is conflict");
     expect(decorationFor(decorations, `${ROOT}/src/nested`, ROOT, true)?.status).toBe("conflict");
   });
 
@@ -165,6 +170,11 @@ describe("git decorations", () => {
     expect(decorationFor(gitDecorations(null, ROOT), `${ROOT}/src/a.ts`, ROOT, false)).toBeNull();
   });
 
+  it("words a folder's tooltip in the chosen language", () => {
+    const rows = explorerRows({ rootPath: ROOT, listings: { [ROOT]: TOP }, expandedPaths: [], changes: changes([["src/a.ts", "deleted"]]) });
+    expect(rowTitle(rows[0]!, ROOT, ko)).toBe("src · 변경된 파일이 있으며, 삭제된 파일의 우선순위가 가장 높습니다.");
+  });
+
   it("puts the relative path and the status title in the row's tooltip", () => {
     const rows = explorerRows({
       rootPath: ROOT,
@@ -172,7 +182,7 @@ describe("git decorations", () => {
       expandedPaths: [],
       changes: changes([["src/a.ts", "deleted"]]),
     });
-    expect(rows.map((row) => rowTitle(row, ROOT))).toEqual([
+    expect(rows.map((row) => rowTitle(row, ROOT, t))).toEqual([
       "src · Contains changed files; highest priority is deleted",
       "README.md",
       ".gitignore",
@@ -251,10 +261,14 @@ describe("removal selection", () => {
 describe("the Explorer's Git status line (S5.5 B20, B22)", () => {
   const base = { root_path: "/repo", entries: [], committed: [], selected_path: null, diff: null } as unknown as ChangesSnapshot;
   it("says a failed read is unavailable or out of date and never draws it as current", () => {
-    expect(explorerGitLine(null)).toEqual({ state: "loading", text: "Loading Git status" });
-    expect(explorerGitLine({ ...base, unavailable_reason: "git is not installed" })?.text).toBe("Git status unavailable: git is not installed");
-    expect(explorerGitLine({ ...base, stale_reason: "git status timed out" })?.state).toBe("stale");
-    expect(explorerGitLine(base)).toBeNull();
+    expect(explorerGitLine(null, t)).toEqual({ state: "loading", text: "Loading Git status" });
+    expect(explorerGitLine({ ...base, unavailable_reason: "git is not installed" }, t)?.text).toBe("Git status unavailable: git is not installed");
+    expect(explorerGitLine({ ...base, stale_reason: "git status timed out" }, t)?.state).toBe("stale");
+    expect(explorerGitLine(base, t)).toBeNull();
+  });
+
+  it("words the line in the chosen language", () => {
+    expect(explorerGitLine({ ...base, unavailable_reason: "git is not installed" }, ko)?.text).toBe("Git 상태를 읽을 수 없습니다: git is not installed");
   });
 });
 

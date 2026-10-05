@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState } from "react";
 import type { Actions } from "./actions";
-import { allBuffers, bufferDecision, bufferFor, claimLegacyBuffer, deleteBuffer, draftStorageHold, flushBuffer, identity, queueBuffer, tabBufferKey, type BufferKey } from "./buffers";
+import { allBuffers, bufferDecision, bufferFor, claimLegacyBuffer, deleteBuffer, draftStorageHold, flushBuffer, identity, MAX_STORED_BYTES, queueBuffer, tabBufferKey, type BufferKey } from "./buffers";
+import { useInterfaceTranslation } from "./i18n/client";
 import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
 import { CodeMirrorEditor } from "./editor/CodeMirrorEditor";
@@ -222,7 +223,8 @@ export function DisplayEditor({ display, placeKey, actions }: { display: ViewDis
   const document = useShellStore((s) => (display.tab_id ? (s.documents[display.tab_id] ?? null) : null));
   const scaleValue = useShellStore((s) => s.rest?.ui_state?.editor_text_scale);
   const scale = typeof scaleValue === "number" ? scaleValue : DEFAULT_SCALE;
-  if (!tab) return <Notice text="Loading…" state="loading" />;
+  const { t } = useInterfaceTranslation();
+  if (!tab) return <Notice text={t("common.loading")} state="loading" />;
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-editor={tab.id} data-editor-kind={display.kind} data-editor-display={display.id}>
       <EditorHeader display={display} tab={tab} document={document} actions={actions} />
@@ -242,17 +244,18 @@ export function DisplayEditor({ display, placeKey, actions }: { display: ViewDis
  * the core sent nothing for.
  */
 function DiffBody({ display, wrap, scale }: { display: ViewDisplaySnapshot; wrap: boolean; scale: number }) {
+  const { t } = useInterfaceTranslation();
   const changes = useShellStore((s) => changesFor(s.changes, s.rest?.navigator?.changes_root_path ?? null));
-  if (!changes) return <Notice text="Reading the diff…" state="diff-loading" />;
-  if (changes.unavailable_reason) return <Notice text={`History is unavailable: ${changes.unavailable_reason}`} state="diff-unavailable" />;
+  if (!changes) return <Notice text={t("documents.readingDiff")} state="diff-loading" />;
+  if (changes.unavailable_reason) return <Notice text={t("documents.historyUnavailable", { reason: changes.unavailable_reason })} state="diff-unavailable" />;
   const committed = display.committed === true;
   const diff = (changes.diffs ?? []).find((row) => row.path === display.path && row.committed === committed) ?? null;
   if (!diff) {
     const group = committed ? changes.committed : changes.entries;
     if (!group.some((entry) => entry.path === display.path)) {
-      return <Notice text="This file is no longer in the selected History group. Close this view or choose another row." state="diff-unavailable" />;
+      return <Notice text={t("documents.historyFileGone")} state="diff-unavailable" />;
     }
-    return <Notice text="Reading the diff…" state="diff-loading" />;
+    return <Notice text={t("documents.readingDiff")} state="diff-loading" />;
   }
   return (
     <div className="flex min-h-0 min-w-0 flex-1 flex-col" data-diff-path={display.path} data-diff-group={committed ? "committed" : "working"}>
@@ -276,25 +279,25 @@ function EditorHeader({
   const file = display.kind === "file";
   const isMarkdown = file && document?.document_kind === "markdown";
   const editable = document?.document_kind === "text" || isMarkdown;
-  const group = display.committed ? "Committed on branch" : "Uncommitted";
+  const { t } = useInterfaceTranslation();
   // A file or a diff is named from its checkout, as the Explorer names it; a path the
   // header still cannot fit loses its start, so the file name stays shown.
   const root = useShellStore((s) => frontCheckout(s.rest)?.path ?? null);
   const path = root ? relativeTo(display.path, root) : display.path;
   return (
     <div className="flex h-[var(--size-tab-strip)] shrink-0 items-center gap-sm border-b border-border px-md text-caption text-subtle-foreground" data-document-header="true">
-      <Hint label={file ? display.path : `${group}: ${display.path}`} reveals>
+      <Hint label={file ? display.path : display.committed ? t("documents.committedPath", { path: display.path }) : t("documents.uncommittedPath", { path: display.path })} reveals>
       <span className="min-w-0 flex-1 truncate text-left [direction:rtl]" data-editor-path="true">
-        <bdi dir="ltr">{file ? "" : `${display.committed ? "Branch diff" : "Working diff"} · `}{path}</bdi>
+        <bdi dir="ltr">{file ? path : display.committed ? t("documents.branchDiffPath", { path }) : t("documents.workingDiffPath", { path })}</bdi>
       </span>
       </Hint>
       {document?.dirty ? (
         <span className="text-warning" data-editor-dirty="true">
-          Unsaved
+          {t("documents.unsaved")}
         </span>
       ) : null}
       {isMarkdown && editable ? (
-        <Hint label={tab.markdown_live ? "Edit with formatting shown in place" : "Edit Markdown source"}>
+        <Hint label={tab.markdown_live ? t("documents.liveHint") : t("documents.sourceHint")}>
           <Button
             variant="ghost"
             size="sm"
@@ -302,12 +305,12 @@ function EditorHeader({
             data-markdown-mode={tab.markdown_live ? "live" : "source"}
             onClick={() => actions.setFileView(tab.id, !tab.markdown_live, tab.wrap)}
           >
-            {tab.markdown_live ? "Live" : "Source"}
+            {tab.markdown_live ? t("documents.live") : t("documents.source")}
           </Button>
         </Hint>
       ) : null}
       {display.kind === "diff" || (file && editable) ? (
-        <Hint label="Wrap lines">
+        <Hint label={t("documents.wrapLines")}>
           <Button
             variant="ghost"
             size="sm"
@@ -315,21 +318,21 @@ function EditorHeader({
             data-editor-wrap={tab.wrap ? "true" : "false"}
             onClick={() => actions.setFileView(tab.id, tab.markdown_live, !tab.wrap)}
           >
-            Wrap
+            {t("documents.wrap")}
           </Button>
         </Hint>
       ) : null}
       {file ? (
-        <Hint label="Find in document" shortcut={commandLabel("find_in_pane")}>
+        <Hint label={t("documents.findHint")} shortcut={commandLabel("find_in_pane")}>
           <Button variant="ghost" size="sm" className="text-muted-foreground" disabled={!editable} onClick={() => actions.requestEditorFind(display.id)}>
-            Find
+            {t("documents.find")}
           </Button>
         </Hint>
       ) : null}
       {display.preview ? (
-        <Hint label="Keep open" shortcut={commandLabel("keep_open")}>
+        <Hint label={t("documents.view.keepOpen")} shortcut={commandLabel("keep_open")}>
           <Button variant="ghost" size="sm" className="text-muted-foreground" data-editor-preview="true" onClick={() => actions.keepViewOpen(display.id)}>
-            preview
+            {t("documents.preview")}
           </Button>
         </Hint>
       ) : null}
@@ -352,6 +355,7 @@ function FileBody({
   scale: number;
   actions: Actions;
 }) {
+  const { t } = useInterfaceTranslation();
   const findRequest = useUiStore((s) => s.editorFindRequest);
   const findTarget = useUiStore((s) => s.editorFindDisplay === display.id);
   // A draft store that refused a write holds every other clean document
@@ -361,7 +365,7 @@ function FileBody({
   const unstored = useShellStore((s) => s.bufferWarnings.has(tab.id));
   const hold = draftStorageHold({ storageFull, unstored, dirty: document?.dirty ?? false });
   if (!document) {
-    return <Notice text="Loading…" state="loading" />;
+    return <Notice text={t("common.loading")} state="loading" />;
   }
   if (document.document_kind !== "text" && document.document_kind !== "markdown") {
     return <FileViewer document={document} />;
@@ -380,12 +384,12 @@ function FileBody({
       ) : null}
       {hold === "held" ? (
         <div role="status" className="border-b border-border px-md py-xs text-caption text-warning" data-editor-draft-hold="held">
-          Unsaved drafts cannot be stored right now (their storage is full at 512 MiB or this browser's quota, or unavailable), so this document stays read-only until the unstored draft is saved, exported or discarded. Stored drafts are never removed to make room.
+          {t("documents.storageHold", { limit: MAX_STORED_BYTES / (1024 * 1024) })}
         </div>
       ) : null}
       {hold === "unstored" ? (
         <div role="status" className="flex items-center gap-sm border-b border-border px-md py-xs text-caption text-warning" data-editor-draft-hold="unstored">
-          <span className="min-w-0 flex-1">This draft is not stored: draft storage is full or unavailable, so it lives in this tab only. Save or export it; the next edit is stored again once there is room.</span>
+          <span className="min-w-0 flex-1">{t("documents.unstored")}</span>
           <ExportDraftButton tabId={tab.id} path={tab.path} />
         </div>
       ) : null}
@@ -412,11 +416,12 @@ function FileBody({
 }
 
 function PreviewOnly({ document }: { document: EditorDocumentSnapshot }) {
-  const [downloadError, setDownloadError] = useState<string | null>(null);
+  const { t } = useInterfaceTranslation();
+  const [downloadError, setDownloadError] = useState<{ reason: string | null } | null>(null);
   const source = useFileSource();
   return (
     <div className="flex flex-1 flex-col items-center justify-center gap-sm px-md text-center text-caption text-muted-foreground" data-editor-preview-only="true">
-      <span>{document.readonly_reason ?? "This file is too large to edit here."}</span>
+      <span>{document.readonly_reason ?? t("documents.tooLarge")}</span>
       <Button
         variant="secondary"
         data-editor-download="true"
@@ -424,14 +429,14 @@ function PreviewOnly({ document }: { document: EditorDocumentSnapshot }) {
           setDownloadError(null);
           void downloadFile(document.path, source).catch((error: unknown) => {
             if ((error as { name?: string }).name !== "AbortError") {
-              setDownloadError(error instanceof Error ? error.message : "download_failed");
+              setDownloadError({ reason: error instanceof Error ? error.message : null });
             }
           });
         }}
       >
-        Download
+        {t("documents.download")}
       </Button>
-      {downloadError ? <span className="text-destructive" data-editor-download-failed="true">The download failed: {downloadError}</span> : null}
+      {downloadError ? <span className="text-destructive" data-editor-download-failed="true">{downloadError.reason ? t("documents.downloadFailed", { reason: downloadError.reason }) : t("documents.downloadFailedUnknown")}</span> : null}
     </div>
   );
 }
@@ -455,9 +460,10 @@ function exportDraft(tabId: string, path: string) {
 }
 
 function ExportDraftButton({ tabId, path }: { tabId: string; path: string }) {
+  const { t } = useInterfaceTranslation();
   return (
     <Button variant="ghost" size="sm" data-export-draft="true" onClick={() => exportDraft(tabId, path)}>
-      Export draft
+      {t("documents.exportDraft")}
     </Button>
   );
 }
@@ -473,19 +479,18 @@ function SaveStatusBar({ tabId, path, save, actions }: { tabId: string; path: st
   // `not_applied` is an unanswered save read back unchanged: it has not
   // reached the file yet but may still, so it is not called unsaved. Retry
   // is safe there: a save that meets the late one lands as a conflict.
-  const prefix = save.state === "refused" ? "Not saved: " : save.state === "not_applied" ? "Not saved yet: " : "";
-  const settled = prefix !== "";
+  const { t } = useInterfaceTranslation();
+  const message = save.message ?? t("documents.saveUnknown");
+  const settled = save.state === "refused" || save.state === "not_applied";
   return (
     <div role="status" className="flex flex-wrap items-center gap-sm border-b border-border px-md py-xs text-caption text-warning" data-editor-save-state={save.state}>
       <span className="min-w-0 flex-1 break-words">
-        {prefix}
-        {save.message ?? "The last save's result is unknown; reading the file back."}
-        {settled ? "" : " Your draft is preserved."}
+        {save.state === "refused" ? t("documents.notSaved", { message }) : save.state === "not_applied" ? t("documents.notSavedYet", { message }) : t("documents.saveUnsettled", { message })}
       </span>
       <ExportDraftButton tabId={tabId} path={path} />
       {settled ? (
         <Button variant="ghost" size="sm" data-save-retry="true" onClick={() => actions.saveFile(tabId)}>
-          Retry
+          {t("common.retry")}
         </Button>
       ) : null}
     </div>
@@ -493,10 +498,11 @@ function SaveStatusBar({ tabId, path, save, actions }: { tabId: string; path: st
 }
 
 function ConflictBar({ tabId, path, removed, actions }: { tabId: string; path: string; removed: boolean; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   return (
     <div className="flex flex-wrap items-center gap-sm border-b border-border px-md py-xs text-caption text-warning" data-editor-conflict="true">
       <span className="flex-1">
-        {removed ? "This file was removed or could not be read back." : "This file changed on disk."} Your draft is preserved.
+        {removed ? t("documents.conflictRemoved") : t("documents.conflictChanged")}
       </span>
       <ExportDraftButton tabId={tabId} path={path} />
       <Button
@@ -510,10 +516,10 @@ function ConflictBar({ tabId, path, removed, actions }: { tabId: string; path: s
           actions.resolveConflict(tabId, "reload");
         }}
       >
-        Reload disk version
+        {t("documents.reloadDisk")}
       </Button>
       <Button variant="ghost" size="sm" data-conflict-action="keep_editing" onClick={() => actions.resolveConflict(tabId, "keep_editing")}>
-        Keep editing
+        {t("documents.keepEditing")}
       </Button>
     </div>
   );

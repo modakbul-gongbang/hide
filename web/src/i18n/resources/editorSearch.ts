@@ -2,20 +2,22 @@ import type { Catalog, Catalogs } from "../schema";
 
 export const editorSearchEnglish = {
   "editorSearch.replace": "Replace",
-  "editorSearch.next": "Next",
-  "editorSearch.previous": "Previous",
-  "editorSearch.all": "All",
-  "editorSearch.matchCase": "Match case",
-  "editorSearch.regexp": "Regular expression",
-  "editorSearch.byWord": "Whole word",
-  "editorSearch.replaceAll": "Replace all",
+  "editorSearch.next": "next",
+  "editorSearch.previous": "previous",
+  "editorSearch.all": "all",
+  "editorSearch.matchCase": "match case",
+  "editorSearch.regexp": "regexp",
+  "editorSearch.byWord": "by word",
+  "editorSearch.replaceAll": "replace all",
   "editorSearch.goToLine": "Go to line",
-  "editorSearch.go": "Go",
-  "editorSearch.currentMatch": "Current match",
-  "editorSearch.onLine": "On line",
+  "editorSearch.go": "go",
+  "editorSearch.currentMatch": "current match",
+  "editorSearch.onLine": "on line",
   "editorSearch.controlCharacter": "Control character",
-  "editorSearch.replacedMatch": "Replaced match on line {{line}}",
-  "editorSearch.replacedMatches": "Matches replaced: {{matches}}",
+  "editorSearch.replacedMatch": "replaced match on line {{line}}",
+  "editorSearch.replacedMatches": "replaced {{matches}} matches",
+  "editorSearch.replaceButton": "replace",
+  "editorSearch.close": "close",
 } as const;
 
 const ko = {
@@ -33,7 +35,9 @@ const ko = {
   "editorSearch.onLine": "줄 번호",
   "editorSearch.controlCharacter": "제어 문자",
   "editorSearch.replacedMatch": "{{line}}번째 줄의 일치 항목을 바꿨습니다",
-  "editorSearch.replacedMatches": "바꾼 항목 수: {{matches}}",
+  "editorSearch.replacedMatches": "일치 항목 {{matches}}개를 바꿨습니다",
+  "editorSearch.replaceButton": "바꾸기",
+  "editorSearch.close": "닫기",
 } satisfies Catalog<typeof editorSearchEnglish>;
 
 const zhCN = {
@@ -51,7 +55,9 @@ const zhCN = {
   "editorSearch.onLine": "行号",
   "editorSearch.controlCharacter": "控制字符",
   "editorSearch.replacedMatch": "已替换第 {{line}} 行的匹配项",
-  "editorSearch.replacedMatches": "已替换的匹配项数：{{matches}}",
+  "editorSearch.replacedMatches": "已替换 {{matches}} 个匹配项",
+  "editorSearch.replaceButton": "替换",
+  "editorSearch.close": "关闭",
 } satisfies Catalog<typeof editorSearchEnglish>;
 
 const ja = {
@@ -69,7 +75,9 @@ const ja = {
   "editorSearch.onLine": "行番号",
   "editorSearch.controlCharacter": "制御文字",
   "editorSearch.replacedMatch": "{{line}} 行目の一致箇所を置換しました",
-  "editorSearch.replacedMatches": "置換した一致箇所の数: {{matches}}",
+  "editorSearch.replacedMatches": "{{matches}} 件の一致箇所を置換しました",
+  "editorSearch.replaceButton": "置換",
+  "editorSearch.close": "閉じる",
 } satisfies Catalog<typeof editorSearchEnglish>;
 
 export const editorSearchCatalogs = { en: editorSearchEnglish, ko, "zh-CN": zhCN, ja } satisfies Catalogs<typeof editorSearchEnglish>;

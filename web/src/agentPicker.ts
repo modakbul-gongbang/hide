@@ -32,13 +32,14 @@ export function selectKind(kind: AgentKind, start: AgentStartChoice | undefined)
 
 /**
  * The model list of one kind: the catalog's `ready` list, the last one seen
- * while the catalog is read again, or the reason there is none. `loading` is
- * every state where the catalog has not answered yet.
+ * while the catalog is read again, or the reason there is none (null when the
+ * provider answered with an empty list). `loading` is every state where the
+ * catalog has not answered yet.
  */
 export type ModelCatalog =
   | { state: "ready"; models: readonly string[] }
   | { state: "loading" }
-  | { state: "unavailable"; reason: string };
+  | { state: "unavailable"; reason: string | null };
 
 /** The lists seen so far, kept for the page's life so a second open shows one at once. */
 const lastLists = new Map<ProviderKind, readonly string[]>();
@@ -52,7 +53,7 @@ export function catalogFor(ai: BackgroundAi | undefined, kind: ProviderKind): Mo
   const kept = lastLists.get(kind);
   if (kept) return { state: "ready", models: kept };
   if (!provider || provider.state === "unread") return { state: "loading" };
-  return { state: "unavailable", reason: provider.models_unavailable_reason ?? provider.message ?? "모델 목록이 비어 있습니다." };
+  return { state: "unavailable", reason: provider.models_unavailable_reason ?? provider.message ?? null };
 }
 
 /** Forgets the kept lists; tests start from a page that has seen none. */

@@ -4,6 +4,7 @@
 // focus_pane that carries a request id; the core owns the outcome, so a
 // click's pending, failed and retry states are its answer, never a guess.
 
+import type { TFunction } from "i18next";
 import type { AgentChip, LineageStep, PaneFocusRequest, PaneRow } from "./snapshot";
 
 /**
@@ -22,14 +23,14 @@ export type RelationState = { phase: "pending" } | { phase: "failed"; message: s
  * Where the request stands by the core's receipt. Until the receipt names
  * this request it is still in flight; a succeeded one needs no mark.
  */
-export function relationState(relation: Relation | null, outcome: PaneFocusRequest | null | undefined): RelationState {
+export function relationState(relation: Relation | null, outcome: PaneFocusRequest | null | undefined, t: TFunction<"translation">): RelationState {
   if (!relation) return null;
   const answered = outcome && outcome.request_id === relation.requestId ? outcome : null;
   if (answered?.phase === "failed") {
-    return { phase: "failed", message: answered.message ?? `Could not open ${relation.label}`, retryable: answered.retryable };
+    return { phase: "failed", message: answered.message ?? t("agents.relation.openFailed", { name: relation.label }), retryable: answered.retryable };
   }
   if (answered && answered.phase !== "pending") return null;
-  if (relation.timedOut) return { phase: "failed", message: `${relation.label} did not open: Hide did not answer in time.`, retryable: true };
+  if (relation.timedOut) return { phase: "failed", message: t("agents.relation.timeout", { name: relation.label }), retryable: true };
   return { phase: "pending" };
 }
 

@@ -307,11 +307,19 @@ export type CycleTarget =
   /** A project with no surface to restore, on its checkout and device. */
   | { kind: "checkout"; deviceId: string; workspaceId: string; checkoutId: string };
 
+/** What a switcher row says under its title; the overlay words it in the interface language. */
+export type CycleDetail =
+  /** Where a surface is and what it is; a null place is the device's Home. */
+  | { kind: "surface"; place: string | null; surface: SurfaceKind }
+  | { kind: "projects"; count: number }
+  | { kind: "text"; text: string };
+
 /** What a switcher row draws and what committing it names. */
 export type CycleItem = {
   key: string;
+  /** The row's name; empty on a device's Home page (kind `main`), which the overlay names in the interface language. */
   title: string;
-  detail: string;
+  detail: CycleDetail;
   kind: SurfaceKind | "project" | PageScreen["kind"];
   /** The device's name when the row is not on the device in front, drawn as a chip (PRD home-device-rail D-16); null otherwise. */
   chip: DeviceChipView | null;
@@ -319,8 +327,6 @@ export type CycleItem = {
   agent: Pick<AgentRow, "agent_kind" | "symbol" | "status_label" | "demand" | "activity" | "emphasized" | "waiting_on_descendants"> | null;
   target: CycleTarget;
 };
-
-const KIND_LABEL: Record<SurfaceKind, string> = { herdr: "Terminal", file: "File", diff: "Diff", browser: "Browser" };
 
 /** "project · checkout", collapsed to the checkout when both share a name. */
 export function placeLabel(workspace: Pick<Workspace, "label">, checkout: Pick<Checkout, "label">): string {
@@ -372,7 +378,7 @@ export function paneItem(rest: SnapshotRest | null, paneId: string): CycleItem |
   return {
     key: paneKey(paneId),
     title: agent.identity_label,
-    detail: `${place.workspace.is_home ? "Home" : placeLabel(place.workspace, place.checkout)} · ${KIND_LABEL[AGENT_SURFACE]}`,
+    detail: { kind: "surface", place: place.workspace.is_home ? null : placeLabel(place.workspace, place.checkout), surface: AGENT_SURFACE },
     kind: AGENT_SURFACE,
     chip: deviceChip(rest, place.deviceId),
     agent,
@@ -392,7 +398,7 @@ export function panelItem(rest: SnapshotRest | null, entry: RecentEntry): CycleI
   const surface = entry;
   const place = findCheckout(rest, surface.checkoutId);
   if (!place) return null;
-  const detail = `${place.workspace.is_home ? "Home" : placeLabel(place.workspace, place.checkout)} · ${KIND_LABEL[surface.kind]}`;
+  const detail: CycleDetail = { kind: "surface", place: place.workspace.is_home ? null : placeLabel(place.workspace, place.checkout), surface: surface.kind };
   const base = { key: surface.key, kind: surface.kind, chip: deviceChip(rest, place.deviceId), target: { kind: "surface", surface } as const, detail };
   if (surface.kind !== AGENT_SURFACE) return { ...base, title: surface.label, agent: null };
   const tab = place.checkout.tabs.find((row) => row.id === surface.id);
@@ -410,8 +416,8 @@ function screenItem(rest: SnapshotRest | null, visit: ScreenVisit): CycleItem | 
     const count = allProjectsCount(rest, deviceId);
     return {
       key: visit.key,
-      title: "Home",
-      detail: `${count} ${count === 1 ? "project" : "projects"}`,
+      title: "",
+      detail: { kind: "projects", count },
       kind: screen.kind,
       chip: deviceChip(rest, deviceId),
       agent: null,
@@ -428,7 +434,7 @@ export function projectItem(workspace: Workspace, rest: SnapshotRest | null): Cy
   const restored = lastItem ? last : null;
   const checkout = (restored && workspace.checkouts.find((row) => row.id === restored.checkoutId)) ?? workspace.checkouts[0];
   if (!checkout) return null;
-  const detail = lastItem ? `${lastItem.title} · ${checkout.label}` : checkout.label;
+  const detail: CycleDetail = { kind: "text", text: lastItem ? `${lastItem.title} · ${checkout.label}` : checkout.label };
   const target: CycleTarget = restored ? { kind: "surface", surface: restored } : { kind: "checkout", deviceId: workspace.device_id, workspaceId: workspace.id, checkoutId: checkout.id };
   return { key: workspace.id, title: workspace.label, detail, kind: "project", chip: deviceChip(rest, workspace.device_id), agent: null, target };
 }

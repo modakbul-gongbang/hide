@@ -27,8 +27,8 @@ export const commandsEnglish = {
   "commands.sidebar_projects": "Projects sidebar",
   "commands.sidebar_agents": "Agents sidebar",
   "commands.toggle_device_rail": "Toggle device rail",
-  "commands.toggle_explorer": "Toggle tools",
-  "commands.toggle_right_panel": "Toggle side panel",
+  "commands.toggle_explorer": "Toggle Tools",
+  "commands.toggle_right_panel": "Toggle File Views",
   "commands.find_in_pane": "Find in pane",
   "commands.save_file": "Save file",
   "commands.keep_open": "Keep open",
@@ -63,6 +63,9 @@ export const commandsEnglish = {
   "commands.binding.terminalPaste": "{{chord}} pastes into a terminal.",
   "commands.binding.conflict": "{{chord}} is already {{command}}.",
   "commands.binding.system": "the system",
+  "commands.binding.modifierDesktopPc": "Ctrl+Shift or Alt+Shift",
+  "commands.binding.modifierBrowserMac": "⌘, ⌥ or ⌃",
+  "commands.binding.modifierBrowserPc": "Ctrl or Alt",
 } as const;
 
 const ko = {
@@ -92,7 +95,7 @@ const ko = {
   "commands.sidebar_agents": "에이전트 사이드바",
   "commands.toggle_device_rail": "기기 목록 열기/닫기",
   "commands.toggle_explorer": "도구 열기/닫기",
-  "commands.toggle_right_panel": "보조 패널 열기/닫기",
+  "commands.toggle_right_panel": "파일 보기 열기/닫기",
   "commands.find_in_pane": "페인에서 찾기",
   "commands.save_file": "파일 저장",
   "commands.keep_open": "열어 두기",
@@ -127,6 +130,9 @@ const ko = {
   "commands.binding.terminalPaste": "{{chord}}는 터미널에 붙여넣습니다.",
   "commands.binding.conflict": "{{chord}}는 이미 {{command}}에 사용 중입니다.",
   "commands.binding.system": "시스템",
+  "commands.binding.modifierDesktopPc": "Ctrl+Shift 또는 Alt+Shift",
+  "commands.binding.modifierBrowserMac": "⌘, ⌥ 또는 ⌃",
+  "commands.binding.modifierBrowserPc": "Ctrl 또는 Alt",
 } satisfies Catalog<typeof commandsEnglish>;
 
 const zhCN = {
@@ -156,7 +162,7 @@ const zhCN = {
   "commands.sidebar_agents": "智能体侧边栏",
   "commands.toggle_device_rail": "切换设备栏",
   "commands.toggle_explorer": "切换工具栏",
-  "commands.toggle_right_panel": "切换辅助面板",
+  "commands.toggle_right_panel": "切换文件视图",
   "commands.find_in_pane": "在窗格中查找",
   "commands.save_file": "保存文件",
   "commands.keep_open": "保持打开",
@@ -191,6 +197,9 @@ const zhCN = {
   "commands.binding.terminalPaste": "{{chord}} 用于粘贴到终端。",
   "commands.binding.conflict": "{{chord}} 已用于{{command}}。",
   "commands.binding.system": "系统",
+  "commands.binding.modifierDesktopPc": "Ctrl+Shift 或 Alt+Shift",
+  "commands.binding.modifierBrowserMac": "⌘、⌥ 或 ⌃",
+  "commands.binding.modifierBrowserPc": "Ctrl 或 Alt",
 } satisfies Catalog<typeof commandsEnglish>;
 
 const ja = {
@@ -220,7 +229,7 @@ const ja = {
   "commands.sidebar_agents": "エージェントサイドバー",
   "commands.toggle_device_rail": "デバイス一覧を切り替え",
   "commands.toggle_explorer": "ツールを切り替え",
-  "commands.toggle_right_panel": "補助パネルを切り替え",
+  "commands.toggle_right_panel": "ファイルビューを切り替え",
   "commands.find_in_pane": "ペイン内を検索",
   "commands.save_file": "ファイルを保存",
   "commands.keep_open": "開いたままにする",
@@ -255,6 +264,9 @@ const ja = {
   "commands.binding.terminalPaste": "{{chord}}はターミナルにペーストします。",
   "commands.binding.conflict": "{{chord}}はすでに「{{command}}」に割り当てられています。",
   "commands.binding.system": "システム",
+  "commands.binding.modifierDesktopPc": "Ctrl+Shift または Alt+Shift",
+  "commands.binding.modifierBrowserMac": "⌘、⌥、または ⌃",
+  "commands.binding.modifierBrowserPc": "Ctrl または Alt",
 } satisfies Catalog<typeof commandsEnglish>;
 
 export const commandsCatalogs = { en: commandsEnglish, ko, "zh-CN": zhCN, ja } satisfies Catalogs<typeof commandsEnglish>;

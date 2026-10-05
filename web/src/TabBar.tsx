@@ -11,6 +11,7 @@ import { Hint, Tooltip, TooltipTrigger, TooltipContent } from "./components/ui/t
 import type { AsyncOperation, Checkout, StripTab } from "./snapshot";
 import { useShellStore } from "./store";
 import { tabFit, type AreaTabInteraction } from "./AreaTree";
+import { useInterfaceTranslation } from "./i18n/client";
 import type { TabFit } from "./areaLayout";
 
 // The sole Agent tab rendering unit, reused by every local and device area.
@@ -25,15 +26,15 @@ export function closingSuffix(targetId: string, kind: "tab.close" | "pane.close"
 }
 
 export function AgentTab({ number, entry, checkout, interaction, actions, renaming, onCancelRename }: { number: number | null; entry: StripTab; checkout: Checkout; interaction: AreaTabInteraction; actions: Actions; renaming: boolean; onCancelRename: () => void }) {
+  const { t } = useInterfaceTranslation();
   const operations = useShellStore((s) => s.rest?.status?.async_operations) ?? NONE;
   const agent = checkout.tabs.find((row) => row.id === entry.source_id)?.agent;
-  const identity = `${agent ? `${agent.agent_kind} agent` : "Terminal"} tab ${entry.label}${agent ? ` · ${agent.status_label}` : ""}`;
-  return <TabButton entry={entry} editor={renaming ? <TabRenameInput key={entry.source_id} entry={entry} actions={actions} onCancel={onCancelRename} /> : null} identity={identity} mark={<>{agent ? <StatusMark symbol={agent.symbol} className={markTone(agent)} data-tab-status={agent.status_label} /> : null}<AgentMark kind={agent?.agent_kind} /></>} number={number} active={interaction.selected} areaActive={interaction.areaActive} closing={closingSuffix(entry.source_id, "tab.close", operations)} closeLabel={`Close tab ${entry.label}`} fit={interaction.fit} dragging={interaction.dragging} onSelect={interaction.select} onClose={() => actions.closeTab(entry.source_id)} onPointerDown={interaction.press} />;
+  const identity = `${agent ? t("panes.agent.tabIdentityAgent", { kind: agent.agent_kind, label: entry.label }) : t("panes.agent.tabIdentityTerminal", { label: entry.label })}${agent ? ` · ${agent.status_label}` : ""}`;
+  return <TabButton entry={entry} editor={renaming ? <TabRenameInput key={entry.source_id} entry={entry} actions={actions} onCancel={onCancelRename} /> : null} identity={identity} mark={<>{agent ? <StatusMark symbol={agent.symbol} className={markTone(agent)} data-tab-status={agent.status_label} /> : null}<AgentMark kind={agent?.agent_kind} /></>} number={number} active={interaction.selected} areaActive={interaction.areaActive} closing={closingSuffix(entry.source_id, "tab.close", operations)} closeLabel={t("shell.closeTab", { title: entry.label })} fit={interaction.fit} dragging={interaction.dragging} onSelect={interaction.select} onClose={() => actions.closeTab(entry.source_id)} onPointerDown={interaction.press} />;
 }
 
-const RENAME_FAILURE = "이름을 저장하지 못했습니다 · 다시 시도";
-
 function TabRenameInput({ entry, actions, onCancel }: { entry: StripTab; actions: Actions; onCancel: () => void }) {
+  const { t } = useInterfaceTranslation();
   const [value, setValue] = useState(entry.label);
   const [requestId, setRequestId] = useState<string | null>(null);
   const sent = useRef(false);
@@ -60,7 +61,7 @@ function TabRenameInput({ entry, actions, onCancel }: { entry: StripTab; actions
       <TooltipTrigger asChild>
         <Input
           ref={input}
-          aria-label="Tab name"
+          aria-label={t("panes.agent.tabName")}
           data-renaming="true"
           aria-invalid={failed || undefined}
           aria-describedby={failed ? "tab-rename-failure" : undefined}
@@ -85,7 +86,7 @@ function TabRenameInput({ entry, actions, onCancel }: { entry: StripTab; actions
           }}
         />
       </TooltipTrigger>
-      <TooltipContent side="bottom" align="start" className="max-w-none whitespace-nowrap text-destructive" id="tab-rename-failure" role="status">{RENAME_FAILURE}</TooltipContent>
+      <TooltipContent side="bottom" align="start" className="max-w-none whitespace-nowrap text-destructive" id="tab-rename-failure" role="status">{t("shell.renameFailed")}</TooltipContent>
     </Tooltip>
   );
 }
@@ -124,6 +125,7 @@ const TabButton = memo(function TabButton({
   onPointerDown: (event: React.PointerEvent<HTMLElement>) => void;
 }) {
   const fit = tabFit(active, slotFit);
+  const { t } = useInterfaceTranslation();
   return (
     <Hint label={identity} reveals>
     <div
@@ -149,7 +151,7 @@ const TabButton = memo(function TabButton({
       {mark}
       {editor ?? <span className={`min-w-0 flex-1 truncate ${fit.title}`}>
         {entry.label}
-        {closing ? <span className="text-muted-foreground"> closing…</span> : null}
+        {closing ? <span className="text-muted-foreground"> {t("panes.transport.closing")}</span> : null}
       </span>}
       <Hint label={closeLabel}>
         <Button

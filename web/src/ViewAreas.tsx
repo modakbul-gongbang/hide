@@ -26,14 +26,15 @@ import { workspaceViewOf } from "./workspace";
  * the column is not drawn (`columnFrame`).
  */
 export function ViewAreas({ actions }: { actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const view = useShellStore((s) => workspaceViewOf(s.rest));
   if (!view) return null;
   const layout = view.layout;
   if (!layout) {
-    return <AreaEmpty state="view-layout-missing" text="This Hide core publishes no View areas, so no file or diff can be shown here." />;
+    return <AreaEmpty state="view-layout-missing" text={t("documents.view.noLayout")} />;
   }
   if (layout.display_count === 0) {
-    return <AreaEmpty state="view-opening" text="Opening…" />;
+    return <AreaEmpty state="view-opening" text={t("documents.view.opening")} />;
   }
   // One tree per Workspace: a front that moves to another Workspace ends a
   // drag, a divider drag or a menu begun on this one, whose ids (a1, d2, s1)
@@ -43,6 +44,7 @@ export function ViewAreas({ actions }: { actions: Actions }) {
 
 const SharedViewTree = createAreaTree<ViewDisplaySnapshot>("view");
 function ViewTree({ layout, deviceId, path, actions }: { layout: ViewLayoutSnapshot; deviceId: string; path: string; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   const owner = useKeyboardOwner();
   const checkoutId = useShellStore((s) => frontCheckout(s.rest)?.id ?? null);
   const workspace = useMemo(() => ({ device_id: deviceId, path }), [deviceId, path]);
@@ -89,9 +91,9 @@ function ViewTree({ layout, deviceId, path, actions }: { layout: ViewLayoutSnaps
     sameContent: showsSameDocument,
     tab: (display, interaction) => <DisplayTab display={display} interaction={interaction} actions={actions} />,
     body: (display) => <DisplayBody key={display.id} display={display} workspace={workspace} actions={actions} />,
-    empty: () => <AreaEmpty state="no-view" text="No file, diff or page is open in this area." />,
+    empty: () => <AreaEmpty state="no-view" text={t("documents.view.empty")} />,
     floating: (display) => <>{displayMark(display)}<span className={`truncate ${display.preview ? "italic" : ""}`}>{display.label}</span></>,
-    menu: (id, geometry, sizes) => [{ id: "new_tab", label: "New tab", unavailable: null }, ...displayMenu(layout, geometry, sizes, id, { host: revealHost(), device: workspace.device_id })],
+    menu: (id, geometry, sizes) => [{ id: "new_tab", label: t("panes.area.newTab"), unavailable: null }, ...displayMenu(layout, geometry, sizes, id, { host: revealHost(), device: workspace.device_id })],
     runMenu: (id, displayId) => id === "new_tab" ? actions.openBrowser("", workspace, locateDisplay(layout.root, displayId)?.area.id) : actions.runViewMenu(id as ViewMenuId, displayId),
     focus: actions.focusView,
     focusArea: actions.focusViewArea,
@@ -99,10 +101,10 @@ function ViewTree({ layout, deviceId, path, actions }: { layout: ViewLayoutSnaps
     split: actions.splitView,
     resize: actions.resizeViewSplit,
     newTab: (areaId) => actions.openBrowser("", workspace, areaId),
-    newTabLabel: "New tab",
+    newTabLabel: t("panes.area.newTab"),
     newTabShortcut: commandLabel("new_tab"),
-    tabListLabel: "View tabs",
-    actionsLabel: "View actions",
+    tabListLabel: t("documents.view.tabList"),
+    actionsLabel: t("documents.view.actions"),
     onDraw: (frame) => noteDrawnViews(frame ? { ...frame, workspace } : null),
     onBody: setBody,
   };
@@ -113,21 +115,22 @@ function ViewTree({ layout, deviceId, path, actions }: { layout: ViewLayoutSnaps
 
 /** A display's body: its document or diff, or the state it is in (B16, contract 3). */
 function DisplayBody({ display, workspace, actions }: { display: ViewDisplaySnapshot; workspace: ViewWorkspace; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
   if (display.kind === "browser") return <BrowserDisplay display={display} workspace={workspace} actions={actions} />;
   if (display.state === "open") {
     return <DisplayEditor display={display} placeKey={placeKey(workspaceKey(workspace), display)} actions={actions} />;
   }
-  if (display.state === "opening") return <AreaEmpty state="view-opening" text={`Opening ${display.label}…`} />;
-  if (display.state === "waiting") return <AreaEmpty state="view-waiting" text={display.reason ?? `Waiting to read ${display.path}.`} />;
+  if (display.state === "opening") return <AreaEmpty state="view-opening" text={t("documents.view.openingNamed", { label: display.label })} />;
+  if (display.state === "waiting") return <AreaEmpty state="view-waiting" text={display.reason ?? t("documents.view.waitingPath", { path: display.path })} />;
   return (
-    <AreaEmpty state="view-unavailable" text={`${display.path} is unavailable${display.reason ? `: ${display.reason}` : "."}`}>
+    <AreaEmpty state="view-unavailable" text={display.reason ? t("documents.view.unavailableReason", { path: display.path, reason: display.reason }) : t("documents.view.unavailable", { path: display.path })}>
       {/* Each button is one action on this view alone, like a tab's ×: its
           press does not also make the area active (one action, one event). */}
       <Button variant="secondary" onPointerDown={(event) => event.stopPropagation()} onClick={() => actions.closeView(display.id)} data-close-unavailable={display.id}>
-        Close view
+        {t("documents.view.closeView")}
       </Button>
       <Button variant="ghost" onPointerDown={(event) => event.stopPropagation()} onClick={() => actions.retryView(display.id)} data-retry-unavailable={display.id}>
-        Retry
+        {t("common.retry")}
       </Button>
     </AreaEmpty>
   );
@@ -143,7 +146,7 @@ export function DisplayTab({ display, interaction, actions }: { display: ViewDis
   const tabOnly = useShellStore((s) => display.tab_id !== null && s.bufferWarnings.has(display.tab_id));
   const unavailable = display.state === "unavailable";
   const state = saving ? t("documents.tabSaving") : dirty ? t("documents.unsaved") : null;
-  const identity = [displayIdentity(display), state, tabOnly ? t("documents.tabOnly") : null].filter(Boolean).join(" · ");
+  const identity = [displayIdentity(display, t), state, tabOnly ? t("documents.tabOnly") : null].filter(Boolean).join(" · ");
   const closeLabel = t("documents.closeView", { label: display.label });
   return (
     <Hint label={identity} reveals>

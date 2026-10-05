@@ -1,21 +1,26 @@
 import { describe, expect, it } from "vitest";
-import { addProjectHosts, alreadyRegistered, defaultProjectParent, initialHost, parseCloneUrl, projectNameProblem, projectPath, trimFolder } from "./addProject";
+import { initializeInterfaceI18n } from "./i18n/instance";
+import { addProjectHosts, alreadyRegistered, defaultProjectParent, initialHost, parseCloneUrl, projectNameProblem, projectPath, refusalText, trimFolder } from "./addProject";
 import type { Device, WorkspaceRegistration } from "./snapshot";
+
+const { t } = initializeInterfaceI18n("en");
+const ko = initializeInterfaceI18n("ko").t;
 
 const device = (id: string, label: string, kind = "remote") => ({ id, label, kind }) as Device;
 const registration = (path: string, device_id = "local") => ({ id: path, label: path, path, device_id, pinned: false }) as WorkspaceRegistration;
 
 describe("Add a project", () => {
   it("lists this Mac first, then every registered device", () => {
-    expect(addProjectHosts(undefined)).toEqual([{ id: "local", label: "This Mac" }]);
-    expect(addProjectHosts([device("mini", "Mini"), device("local", "Studio", "local")])).toEqual([
+    expect(addProjectHosts(undefined, t)).toEqual([{ id: "local", label: "This Mac" }]);
+    expect(addProjectHosts(undefined, ko)).toEqual([{ id: "local", label: "이 Mac" }]);
+    expect(addProjectHosts([device("mini", "Mini"), device("local", "Studio", "local")], t)).toEqual([
       { id: "local", label: "Studio" },
       { id: "mini", label: "Mini" },
     ]);
   });
 
   it("opens on the focused device while it is listed, this Mac otherwise", () => {
-    const hosts = addProjectHosts([device("mini", "Mini")]);
+    const hosts = addProjectHosts([device("mini", "Mini")], t);
     expect(initialHost(hosts, "mini")).toBe("mini");
     expect(initialHost(hosts, "gone")).toBe("local");
     expect(initialHost(hosts, null)).toBe("local");
@@ -60,9 +65,17 @@ describe("Add a project", () => {
     expect(projectNameProblem("my-project")).toBeNull();
     expect(projectNameProblem("")).toBeNull();
     expect(projectNameProblem(".hidden")).toBeNull();
-    expect(projectNameProblem("a/b")).toContain("/");
-    expect(projectNameProblem(".")).not.toBeNull();
-    expect(projectNameProblem("..")).not.toBeNull();
+    expect(projectNameProblem("a/b")).toBe("addProject.name.slash");
+    expect(projectNameProblem(".")).toBe("addProject.name.dots");
+    expect(projectNameProblem("..")).toBe("addProject.name.dots");
+    expect(t("addProject.name.slash")).toBe("A name is one folder, without `/`.");
+    expect(ko("addProject.name.dots")).toBe("`.`와 `..`는 폴더 이름이 될 수 없습니다.");
+  });
+
+  it("words a refusal in the operator's language, and a code it does not know with that code", () => {
+    expect(refusalText("outside_home", t)).toBe("Only a folder inside your home folder can be added.");
+    expect(refusalText("outside_home", ko)).toBe("홈 폴더 안의 폴더만 추가할 수 있습니다.");
+    expect(refusalText("quota", ko)).toBe("폴더가 거부되었습니다 (quota).");
   });
 
   it("previews the full path as the name is typed", () => {

@@ -1,4 +1,6 @@
-import { describe, expect, it } from "vitest";
+import { beforeAll, describe, expect, it } from "vitest";
+import type { TFunction } from "i18next";
+import { createInterfaceI18n } from "./i18n/instance";
 import { paneMenuItems } from "./PaneRelations";
 import { sleepAfterChoice, sleepingCount } from "./settings";
 import { sleepCaption, wakingLine } from "./sleep";
@@ -7,20 +9,37 @@ import type { AgentRow, PaneRow } from "./snapshot";
 const HOUR = 60 * 60 * 1000;
 const now = 100 * HOUR;
 
+let t: TFunction<"translation">;
+let ko: TFunction<"translation">;
+beforeAll(async () => {
+  t = (await createInterfaceI18n("en")).t;
+  ko = (await createInterfaceI18n("ko")).t;
+});
+
 describe("a sleeping pane's words", () => {
   it("says how long the agent has slept, then waking, then that it could not resume", () => {
-    expect(sleepCaption({ state: "sleeping", since_unix_ms: now - 22 * HOUR }, now)).toEqual({ text: "sleeping · 22h", moon: true });
-    expect(sleepCaption({ state: "sleeping", since_unix_ms: now - 1000 }, now)).toEqual({ text: "sleeping", moon: true });
-    expect(sleepCaption({ state: "waking", since_unix_ms: now - 22 * HOUR }, now)).toEqual({ text: "waking…", moon: true });
-    expect(sleepCaption({ state: "failed", since_unix_ms: now, reason: "The conversation couldn’t be resumed." }, now)).toEqual({
+    expect(sleepCaption({ state: "sleeping", since_unix_ms: now - 22 * HOUR }, now, t)).toEqual({ text: "sleeping · 22h", moon: true });
+    expect(sleepCaption({ state: "sleeping", since_unix_ms: now - 1000 }, now, t)).toEqual({ text: "sleeping", moon: true });
+    expect(sleepCaption({ state: "waking", since_unix_ms: now - 22 * HOUR }, now, t)).toEqual({ text: "waking…", moon: true });
+    expect(sleepCaption({ state: "failed", since_unix_ms: now, reason: "The conversation couldn’t be resumed." }, now, t)).toEqual({
       text: "could not resume",
       moon: false,
     });
   });
 
   it("names the age of the conversation a wake resumes", () => {
-    expect(wakingLine({ state: "waking", since_unix_ms: now - 3 * 24 * HOUR }, now)).toBe("Resuming the conversation from 3d ago");
-    expect(wakingLine({ state: "waking", since_unix_ms: now }, now)).toBe("Resuming the conversation");
+    expect(wakingLine({ state: "waking", since_unix_ms: now - 3 * 24 * HOUR }, now, t)).toBe("Resuming the conversation from 3d ago");
+    expect(wakingLine({ state: "waking", since_unix_ms: now }, now, t)).toBe("Resuming the conversation");
+  });
+
+  it("words the caption and the age line in the chosen language", () => {
+    expect(sleepCaption({ state: "sleeping", since_unix_ms: now - 22 * HOUR }, now, ko)).toEqual({ text: "휴면 중 · 22시간", moon: true });
+    expect(wakingLine({ state: "waking", since_unix_ms: now - 3 * 24 * HOUR }, now, ko)).toBe("3일 전 대화를 다시 시작하는 중");
+  });
+
+  it("leaves the age out under a minute in every language, not by comparing the word", () => {
+    expect(sleepCaption({ state: "sleeping", since_unix_ms: now - 1000 }, now, ko)).toEqual({ text: "휴면 중", moon: true });
+    expect(wakingLine({ state: "waking", since_unix_ms: now }, now, ko)).toBe("대화를 다시 시작하는 중");
   });
 });
 

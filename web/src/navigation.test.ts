@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
-import { agentSections, allAgents, allProjectsCount, liveDescendantCounts, mainSections, openingProgress, overviewProject, startupScreen } from "./navigation";
+import { createInterfaceI18n } from "./i18n/instance";
+import { agentGroupTitle, agentSections, allAgents, allProjectsCount, liveDescendantCounts, mainSections, openingProgress, overviewProject, startupScreen } from "./navigation";
 import type { SnapshotRest } from "./snapshot";
 
 const project = (id: string, device: string, pinned = false) => ({
@@ -96,13 +97,19 @@ describe("Main's order", () => {
 describe("the Agents explorer", () => {
   const row = (pane_id: string, group: string, children: string[] = []) => ({ pane_id, group, lineage_child_pane_ids: children }) as never;
 
-  it("keeps the fixed group order, leaves empty groups out and never drops a row", () => {
+  it("keeps the fixed group order, leaves empty groups out and never drops a row", async () => {
+    const { t } = await createInterfaceI18n("en");
     const sections = agentSections([row("a", "seen"), row("b", "needs_you"), row("c", "paused"), row("d", "seen")]);
-    expect(sections.map((section) => [section.label, section.agents.length])).toEqual([
+    expect(sections.map((section) => [agentGroupTitle(section.group, t), section.agents.length])).toEqual([
       ["Needs You", 1],
       ["Seen", 2],
       ["paused", 1],
     ]);
+  });
+
+  it("names the groups in the selected language and shows an unknown group under its wire name", async () => {
+    const { t } = await createInterfaceI18n("ko");
+    expect(["needs_you", "done", "working", "seen", "on_hold"].map((group) => agentGroupTitle(group, t))).toEqual(["내 차례", "완료", "작업 중", "확인함", "on hold"]);
   });
 
   it("counts every live descendant once, not only the direct children", () => {

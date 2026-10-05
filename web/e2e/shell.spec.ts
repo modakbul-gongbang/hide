@@ -127,7 +127,7 @@ test("sidebar shows a missing Herdr socket and the badge goes live", async ({ pa
   const daemon = await startHided();
   try {
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
-    await expect(page.getByText("Herdr 소켓 없음")).toBeVisible();
+    await expect(page.getByText("Herdr socket missing")).toBeVisible();
     await expect(page.locator("[data-connection]")).toHaveCount(0);
   } finally {
     daemon.stop();
@@ -138,7 +138,7 @@ test("a bad token shows the refused connection state", async ({ page }) => {
   const daemon = await startHided();
   try {
     await page.goto(`${daemon.origin}/#token=${"aa".repeat(32)}`);
-    await expect(page.getByText("연결 거부")).toBeVisible();
+    await expect(page.getByText("connection refused - run hide again")).toBeVisible();
   } finally {
     daemon.stop();
   }
