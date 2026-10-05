@@ -256,6 +256,7 @@ jobs:
         # A test that failed and passed its retry becomes an issue with a
         # seven-day deadline, or a comment on the issue that tracks it. A
         # report that fails to file is a warning, not a failed lane.
+        id: flaky
         if: ${{ !cancelled() }}
         continue-on-error: true
         timeout-minutes: 5
@@ -288,8 +289,9 @@ jobs:
         # and Playwright's own test-results: with no screenshot or trace
         # option set that is the error-context page snapshot. The wire trace
         # is on the step's stdout. A screen assertion alone cannot say which
-        # side moved.
-        if: failure()
+        # side moved. A flaky run keeps them too: its first attempt failed,
+        # and its issue has no other evidence of why.
+        if: ${{ failure() || steps.flaky.outputs.flaky == 'true' }}
         uses: actions/upload-artifact@v7
         with:
           name: hide-web-e2e-logs-${{ inputs.lane }}-${{ matrix.shard }}
