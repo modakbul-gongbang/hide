@@ -35,7 +35,7 @@ export type StartTargets = {
 export const homeKey = (deviceId: string) => `home:${deviceId}`;
 export const checkoutKey = (deviceId: string, path: string) => `checkout:${deviceId}:${path}`;
 
-const LOCAL: Device = { id: "local", label: "This Mac", kind: "local", state: "local", message: null, ssh_alias: null, agent_count: 0, test: null };
+const localDevice = (t: TFunction<"translation">): Device => ({ id: "local", label: t("common.thisMac"), kind: "local", state: "local", message: null, ssh_alias: null, agent_count: 0, test: null });
 
 /** A device's workspaces as the catalog lists them, and whether the device answers commands now. */
 function deviceWorkspaces(rest: SnapshotRest, device: Device): { workspaces: Workspace[]; connected: boolean } {
@@ -102,7 +102,7 @@ function frontKey(rest: SnapshotRest, screen: Screen | null, noProject: boolean,
  */
 export function startTargets(rest: SnapshotRest | null, screen: Screen | null, t: TFunction<"translation">, settings = false, projectId: string | null = null): StartTargets {
   if (!rest) return { groups: [], defaultKey: null };
-  const devices = rest.navigator?.devices?.length ? rest.navigator.devices : [LOCAL];
+  const devices = rest.navigator?.devices?.length ? rest.navigator.devices : [localDevice(t)];
   const named = screen?.kind === "main" ? screen.deviceId : undefined;
   const frontId = named && devices.some((device) => device.id === named) ? named : (remoteContext(rest)?.device.id ?? "local");
   const ordered = [...devices.filter((device) => device.id === frontId), ...devices.filter((device) => device.id !== frontId)];

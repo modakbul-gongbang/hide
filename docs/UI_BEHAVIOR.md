@@ -1316,7 +1316,7 @@ The phones group is titled 연결된 폰 · n / 4; each row shows the phone's na
 
 ### The phone app
 
-The QR opens a page with the hide icon, "<Mac>와 연결", a line on what the phone can do, 연결, and a note that the code expires in five minutes.
+The QR opens a page with the hide icon, "<Mac>에 연결", a line on what the phone can do, 연결, and a note that the code expires in five minutes.
 연결 opens the list and a one-time hint to keep hide on the Home Screen; an expired or spent code says so, a fifth phone is told the limit and to revoke one on the Mac, and a page opened with no code or credential says to scan the QR in Settings > Mobile.
 The list's header shows hide, the Mac's name, how many other phones are connected, and a connection dot.
 Agents sit in 내 확인 대기, 끝, 진행 중 and 확인함 with their counts, each row with its status mark, provider mark, task name, project and branch, the SSH device's chip, the elapsed time and the request or news line, and the list updates live.

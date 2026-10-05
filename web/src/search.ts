@@ -9,6 +9,7 @@ import { checkoutPlaces } from "./navigation";
 import { deviceConnected, frontDeviceId, localDeviceId } from "./devices";
 import type { TFunction } from "i18next";
 import type { MessageKey } from "./i18n/catalogs";
+import { translate } from "./i18n/client";
 import { projectsOf } from "./remote";
 import type { AgentRow, Checkout, Device, GithubSearchResult, PullRequest, SnapshotRest, Task, Workspace } from "./snapshot";
 
@@ -141,7 +142,6 @@ export function openUrlEntry(query: string, unavailable: string | null, t: TFunc
   };
 }
 
-const THIS_MAC = { id: "local", label: "This Mac", kind: "local" } as Device;
 
 /** What ⌘K reads from one device: its label, its agents and its projects (not its Home, which the device entry stands for). */
 export type SearchDevice = { device: Device; agents: AgentRow[]; workspaces: Workspace[]; allWorkspaces: Workspace[]; local: boolean };
@@ -150,7 +150,7 @@ export type SearchDevice = { device: Device; agents: AgentRow[]; workspaces: Wor
 export function searchDevices(rest: SnapshotRest): SearchDevice[] {
   const rows: SearchDevice[] = [];
   // A snapshot that names no device is this machine's alone.
-  const devices = rest.navigator?.devices?.length ? rest.navigator.devices : [THIS_MAC];
+  const devices = rest.navigator?.devices?.length ? rest.navigator.devices : [{ id: "local", label: translate("common.thisMac"), kind: "local" } as Device];
   for (const device of devices) {
     if (device.id === localDeviceId(rest)) {
       const all = rest.navigator?.workspaces ?? [];
