@@ -4,10 +4,6 @@
     "expect": 40
   },
   "tests": {
-    "agent-tab-groups.spec.ts::Agent pointer drags split live canvases, reorder, move, cancel, resize, collapse and restore": {
-      "lines": 123,
-      "expect": 41
-    },
     "checkout-pr.spec.ts::a checkout's pull request: the glyph opens it, the row's card describes it, the menu names it": {
       "lines": 202,
       "expect": 63
@@ -72,10 +68,6 @@
       "lines": 140,
       "expect": 41
     },
-    "s7.spec.ts::the tab menu offers only what a view can do, and each cap refuses with its reason and leaves the views alone": {
-      "lines": 138,
-      "expect": 33
-    },
     "s8.spec.ts::a Project's Sessions: history, filters, a read-only session, failures and two windows": {
       "lines": 244,
       "expect": 88
@@ -83,10 +75,6 @@
     "server-session-search.spec.ts::running Workspace ports and conversation content: keyboard, jump, scroll, policy and scope": {
       "lines": 126,
       "expect": 31
-    },
-    "sidebar-menus.spec.ts::the sidebar's row menus: pin an unregistered project, open a tab, move the default, copy a session id": {
-      "lines": 129,
-      "expect": 26
     },
     "sidebar-status.spec.ts::a root waiting on its child, the badge's child list, and the progress line rules": {
       "lines": 144,

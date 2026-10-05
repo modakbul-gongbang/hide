@@ -1342,7 +1342,7 @@ fn create_worktree_observing_purpose(
         return Ok(WorktreeTaskOutcome {
             path: created.path,
             pane_id: created.pane_id,
-            created_tab_id: None,
+            created_tab_id: Some(created.tab_id),
             issue_error,
             purpose_error: purpose_failure
                 .as_ref()

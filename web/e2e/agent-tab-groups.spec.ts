@@ -32,24 +32,53 @@ async function shape(page: Page) {
   })));
 }
 
-// Quarantined: runs in CI without blocking `verify` until #303 is fixed.
-test("Agent pointer drags split live canvases, reorder, move, cancel, resize, collapse and restore", { tag: "@flaky", annotation: { type: "issue", description: "https://github.com/modakbul-gongbang/hide/issues/303" } }, async ({ page }) => {
+// Three tabs in one Agent area, hided running. Each contract below starts
+// here and puts itself into the shape it needs, so a failure names one contract.
+async function startGroups(page: Page, name: string) {
   await page.setViewportSize({ width: 1920, height: 1080 });
   const herdr = await startHerdr({ agents: false });
-  let daemon: Daemon | null = null;
   try {
     const created = ["second", "third"].map((label) => herdr.run(["tab", "create", "--workspace", herdr.workspace, "--cwd", path.join(herdr.root, "fixture"), "--label", label, "--no-focus"]) as { result: { tab: { tab_id: string }; root_pane: { pane_id: string } } });
-    const [first, second, third] = [herdr.tab, ...created.map((row) => row.result.tab.tab_id)];
-    daemon = await startHided(herdr, "agent-groups");
-    const sent = countSent(page);
-    await page.goto(`${daemon.origin}/?probe=1#token=${daemon.token}`);
+    const [first, second, third] = [herdr.tab, ...created.map((row) => row.result.tab.tab_id)] as [string, string, string];
+    const group = { herdr, created, first, second, third, daemon: await startHided(herdr, name), sent: countSent(page) };
+    await page.goto(`${group.daemon.origin}/?probe=1#token=${group.daemon.token}`);
     await enterWorkspace(page, "fixture");
-    await expect(tab(page, third!)).toBeVisible();
+    await expect(tab(page, third)).toBeVisible();
+    expect((await shape(page))[0]?.tabs).toEqual([first, second, third]);
+    return { ...group, stop: () => { group.daemon.stop(); herdr.stop(); } };
+  } catch (error) {
+    herdr.stop();
+    throw error;
+  }
+}
+type Groups = Awaited<ReturnType<typeof startGroups>>;
+// Moves the third tab into an area of its own on the right, as a setup step.
+async function splitThirdRight(page: Page, group: Groups) {
+  const body = await box(page.locator("[data-agent-body]").first());
+  await drag(page, tab(page, group.third), { x: body.x + body.width * .92, y: body.y + body.height / 2 });
+  await expect(areas(page)).toHaveCount(2);
+  await expect(areas(page).nth(1).locator("[data-canvas]")).toHaveAttribute("data-canvas", group.third);
+}
+
+// The right area holds the second and third tabs, in that order.
+async function gatherRight(page: Page, group: Groups) {
+  await splitThirdRight(page, group);
+  const right = await box(tab(page, group.third));
+  await drag(page, tab(page, group.second), { x: right.x + right.width + 20, y: right.y + right.height / 2 });
+  await expect.poll(async () => (await shape(page))[1]?.tabs).toEqual([group.third, group.second]);
+  const last = await box(tab(page, group.second));
+  await drag(page, tab(page, group.third), { x: last.x + last.width + 15, y: last.y + last.height / 2 });
+  await expect.poll(async () => (await shape(page))[1]?.tabs).toEqual([group.second, group.third]);
+}
+
+test("dragging a tab to the right edge previews a split, then splits into two live canvases", async ({ page }) => {
+  const group = await startGroups(page, "agent-groups-split");
+  try {
+    const { herdr, created, first, third, sent } = group;
     const original = await shape(page);
-    expect(original[0]?.tabs).toEqual([first, second, third]);
     const body = await box(page.locator("[data-agent-body]").first());
     const beforeResize = sent.get("terminal_resize") ?? 0;
-    await drag(page, tab(page, third!), { x: body.x + body.width * .92, y: body.y + body.height / 2 }, async () => {
+    await drag(page, tab(page, third), { x: body.x + body.width * .92, y: body.y + body.height / 2 }, async () => {
       await expect(page.locator('[data-agent-drop="right"]')).toHaveText("Split right");
       await expect(page.locator("[data-agent-drag-tab]")).toBeVisible();
       expect(await shape(page)).toEqual(original);
@@ -57,8 +86,8 @@ test("Agent pointer drags split live canvases, reorder, move, cancel, resize, co
       await screenshot(page, "agent-groups-split-preview");
     });
     await expect(areas(page)).toHaveCount(2);
-    await expect(areas(page).nth(0).locator("[data-canvas]")).toHaveAttribute("data-canvas", first!);
-    await expect(areas(page).nth(1).locator("[data-canvas]")).toHaveAttribute("data-canvas", third!);
+    await expect(areas(page).nth(0).locator("[data-canvas]")).toHaveAttribute("data-canvas", first);
+    await expect(areas(page).nth(1).locator("[data-canvas]")).toHaveAttribute("data-canvas", third);
     expect(sent.get("agent_layout.split")).toBe(1);
     await expect(page.locator('[data-transport="released"]')).toHaveCount(0);
     // Both shown tabs keep receiving fresh output while the other owns focus.
@@ -66,33 +95,63 @@ test("Agent pointer drags split live canvases, reorder, move, cancel, resize, co
     for (const [index, pane] of live.entries()) execFileSync(herdr.bin, ["pane", "run", pane, `for n in 1 2 3; do printf 'area-${index}-live-%s\\n' "$n"; sleep 0.1; done`], { env: herdr.env, timeout: 10_000 });
     for (const [index, pane] of live.entries()) await expect.poll(() => page.evaluate((id) => window.__hideProbe?.paneText(id) ?? "", pane)).toContain(`area-${index}-live-3`);
     await screenshot(page, "agent-groups-two-live-areas");
+  } finally { group.stop(); }
+});
+
+test("two live Agent areas render in the light theme", async ({ page }) => {
+  const group = await startGroups(page, "agent-groups-light");
+  try {
+    await splitThirdRight(page, group);
     await page.keyboard.press(chord("settings"));
     await page.locator('[data-settings-tab="appearance"]').click();
     await page.locator('[data-theme-option="light"]').click();
     await expect(page.locator("html")).toHaveClass(/(^|\s)light(\s|$)/);
     await page.keyboard.press("Escape");
     await screenshot(page, "agent-groups-two-live-areas-light");
+  } finally { group.stop(); }
+});
+
+test("a tab dropped on its own area's edge is refused and nothing moves", async ({ page }) => {
+  const group = await startGroups(page, "agent-groups-refused");
+  try {
+    await splitThirdRight(page, group);
     const ownBody = await box(areas(page).nth(1).locator("[data-agent-body]"));
     const beforeInvalid = await shape(page);
-    await drag(page, tab(page, third!), { x: ownBody.x + 5, y: ownBody.y + ownBody.height / 2 }, async () => {
+    await drag(page, tab(page, group.third), { x: ownBody.x + 5, y: ownBody.y + ownBody.height / 2 }, async () => {
       await expect(page.locator("[data-agent-drop]")).toHaveCount(0);
       await expect(page.locator("html")).toHaveAttribute("data-agent-drag", "forbidden");
     });
     expect(await shape(page)).toEqual(beforeInvalid);
-    const right = await box(tab(page, third!));
-    await drag(page, tab(page, second!), { x: right.x + right.width + 20, y: right.y + right.height / 2 });
+  } finally { group.stop(); }
+});
+
+test("tabs reorder inside an area by drag, and Escape cancels a drag in progress", async ({ page }) => {
+  const group = await startGroups(page, "agent-groups-reorder");
+  try {
+    const { first, second, third } = group;
+    await splitThirdRight(page, group);
+    // The second tab joins the third's area first, as setup for the reorder.
+    const right = await box(tab(page, third));
+    await drag(page, tab(page, second), { x: right.x + right.width + 20, y: right.y + right.height / 2 });
     await expect.poll(async () => (await shape(page))[1]?.tabs).toEqual([third, second]);
-    const last = await box(tab(page, second!));
-    await drag(page, tab(page, third!), { x: last.x + last.width + 15, y: last.y + last.height / 2 });
+    const last = await box(tab(page, second));
+    await drag(page, tab(page, third), { x: last.x + last.width + 15, y: last.y + last.height / 2 });
     await expect.poll(async () => (await shape(page))[1]?.tabs).toEqual([second, third]);
     const beforeCancel = await shape(page);
-    const target = await box(tab(page, first!));
-    await drag(page, tab(page, third!), { x: target.x + target.width + 15, y: target.y + target.height / 2 }, async () => {
+    const target = await box(tab(page, first));
+    await drag(page, tab(page, third), { x: target.x + target.width + 15, y: target.y + target.height / 2 }, async () => {
       await expect(page.locator('[data-agent-drop="bar"]')).toBeVisible();
       await page.keyboard.press("Escape");
       await expect(page.locator("[data-agent-drop]")).toHaveCount(0);
     });
     expect(await shape(page)).toEqual(beforeCancel);
+  } finally { group.stop(); }
+});
+
+test("the divider resizes two areas, a narrow window shows one, and widening restores the shape", async ({ page }) => {
+  const group = await startGroups(page, "agent-groups-resize");
+  try {
+    await splitThirdRight(page, group);
     const divider = page.locator("[data-agent-divider]");
     const boundary = await box(divider);
     await page.mouse.move(boundary.x + boundary.width / 2, boundary.y + 150);
@@ -109,17 +168,39 @@ test("Agent pointer drags split live canvases, reorder, move, cancel, resize, co
     await screenshot(page, "agent-groups-narrow");
     await page.setViewportSize({ width: 1920, height: 1080 });
     await expect.poll(() => shape(page)).toEqual(wideShape);
+  } finally { group.stop(); }
+});
+
+test("the area layout and its divider ratio survive a hided restart", async ({ page }) => {
+  const group = await startGroups(page, "agent-groups-restart");
+  try {
+    await splitThirdRight(page, group);
+    const divider = page.locator("[data-agent-divider]");
+    const boundary = await box(divider);
+    await page.mouse.move(boundary.x + boundary.width / 2, boundary.y + 150);
+    await page.mouse.down();
+    await page.mouse.move(boundary.x - 130, boundary.y + 150, { steps: 12 });
+    await page.mouse.up();
+    await expect.poll(async () => Number(await divider.getAttribute("aria-valuenow"))).toBeLessThan(50);
     const restoredShape = await shape(page);
     const ratio = await divider.getAttribute("aria-valuenow");
-    await expect.poll(() => fs.existsSync(path.join(daemon!.stateDir, "workspace-views.json"))).toBe(true);
-    daemon = await daemon.restart();
+    await expect.poll(() => fs.existsSync(path.join(group.daemon.stateDir, "workspace-views.json"))).toBe(true);
+    group.daemon = await group.daemon.restart();
     await page.goto("about:blank");
-    await page.goto(`${daemon.origin}/?probe=1#token=${daemon.token}`);
+    await page.goto(`${group.daemon.origin}/?probe=1#token=${group.daemon.token}`);
     await expect.poll(() => shape(page)).toEqual(restoredShape);
     await expect(divider).toHaveAttribute("aria-valuenow", ratio!);
     await screenshot(page, "agent-groups-restarted");
-    const destination = await box(tab(page, second!));
-    await drag(page, tab(page, first!), { x: destination.x + destination.width / 4, y: destination.y + destination.height / 2 }, async () => {
+  } finally { group.stop(); }
+});
+
+test("dropping onto another area's bar collapses the areas, and the other edges split again", async ({ page }) => {
+  const group = await startGroups(page, "agent-groups-edges");
+  try {
+    const { first, second, third, sent } = group;
+    await gatherRight(page, group);
+    const destination = await box(tab(page, second));
+    await drag(page, tab(page, first), { x: destination.x + destination.width / 4, y: destination.y + destination.height / 2 }, async () => {
       await expect(page.locator('[data-agent-drop="bar"]')).toBeVisible();
     });
     await expect(areas(page)).toHaveCount(1);
@@ -132,29 +213,35 @@ test("Agent pointer drags split live canvases, reorder, move, cancel, resize, co
         x: content.x + content.width * (edge === "left" ? .05 : .5),
         y: content.y + content.height * (edge === "up" ? .05 : edge === "down" ? .95 : .5),
       };
-      await drag(page, tab(page, third!), target, async () => {
+      await drag(page, tab(page, third), target, async () => {
         await expect(page.locator(`[data-agent-drop="${edge}"]`)).toHaveText(`Split ${edge}`);
       });
       await expect(areas(page)).toHaveCount(2);
-      const destination = await box(tab(page, first!));
+      const back = await box(tab(page, first));
       // The sidebar's centered resize grab owns the column's first 10px.
       // The first quarter of the tab is inside its bar, before its midpoint.
-      await drag(page, tab(page, third!), { x: destination.x + destination.width / 4, y: destination.y + destination.height / 2 }, async () => {
+      await drag(page, tab(page, third), { x: back.x + back.width / 4, y: back.y + back.height / 2 }, async () => {
         await expect(page.locator('[data-agent-drop="bar"]')).toBeVisible();
       });
       await expect(areas(page)).toHaveCount(1);
     }
+  } finally { group.stop(); }
+});
+
+test("a tab dragged onto the floating tools panel is refused and the areas stay as they were", async ({ page }) => {
+  const group = await startGroups(page, "agent-groups-panel");
+  try {
     await showTool(page, "explorer");
     const panel = page.locator('[data-column="tools"]');
     await expect(panel).toBeVisible();
     const floating = await box(panel);
     const beforePanelDrop = await shape(page);
-    await drag(page, tab(page, first!), { x: floating.x + floating.width - 5, y: floating.y + floating.height / 2 }, async () => {
+    await drag(page, tab(page, group.first), { x: floating.x + floating.width - 5, y: floating.y + floating.height / 2 }, async () => {
       await expect(page.locator("[data-agent-drop]")).toHaveCount(0);
       await expect(page.locator("html")).toHaveAttribute("data-agent-drag", "forbidden");
     });
     expect(await shape(page)).toEqual(beforePanelDrop);
-  } finally { daemon?.stop(); herdr.stop(); }
+  } finally { group.stop(); }
 });
 
 test("New tab and Reopen use the requested area and Rename works in either bar", async ({ page }) => {

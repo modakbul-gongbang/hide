@@ -180,7 +180,8 @@ A piece that another open change is still building is marked as pending with the
    The timers of `hided` and the core are not the page's; those are injected in Rust (see [Writing a Rust test](#writing-a-rust-test)).
 5. **Keep the size of a test bounded.**
    One representative journey per user-visible flow, and one small spec per independent contract.
-   Most quarantined tests are long journeys that join several contracts (`agent-tab-groups.spec.ts`, `s7.spec.ts`, `sidebar-menus.spec.ts`), and quarantine is per test, so one shaky step takes every contract in it out of the required lane; split a test so the part that shakes can be fixed alone.
+   A long journey that joins several contracts is quarantined whole, because quarantine is per test, so one shaky step takes every contract in it out of the required lane; split a test so the part that shakes can be fixed alone.
+   The reference splits are `agent-close-contract.spec.ts` (one Herdr contract, two UI contracts), the drag contracts in `agent-tab-groups.spec.ts`, the row menus in `sidebar-menus.spec.ts` and the view caps in `s7.spec.ts`: each spec starts from one shared `start...` helper, puts itself into the shape it needs as setup, and asserts one contract.
    Splitting costs a stack start per spec, so say in the pull request what the split bought.
    `web/scripts/check-e2e-test-size.mjs` (run by `lint` in `web` and `desktop`) fails a test over 120 lines or 40 `expect` calls, counted on the `test(...)` call itself.
    The tests that were already over are recorded in `e2e/test-size-baseline.json` as a ceiling that only shrinks: a recorded test that grows fails, and so does an entry whose test is gone or fits the limit, until the entry is removed.
