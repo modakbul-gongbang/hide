@@ -100,20 +100,8 @@ export class BrowserViews {
   private registry: readonly Command[] = systemRegistry(keySystemOf(process.platform));
   private cycleInput: { page: Page; release: string; cycleId: number } | null = null;
   private cycleSequence = 0;
-  /** The page a blur cancelled a hold on, owed the keyboard once the window is key and the page shown. */
-  private returnTo: Page | null = null;
 
   setRegistry(registry: readonly Command[]): void { this.registry = registry; }
-
-  /** Pays the keyboard owed to the page a blur cancelled a hold on, once the window is key and the page shown. */
-  private giveBack(): void {
-    const page = this.returnTo;
-    if (!page) return;
-    if (!page.visible || !this.window?.isFocused()) return;
-    this.returnTo = null;
-    page.view.webContents.focus();
-    this.log.event("browser.window_return", { page_focused: page.view.webContents.isFocused() });
-  }
 
   cdpIncarnation(scope: CdpScope): number | null { return this.cdpScopes.get(JSON.stringify([scope.workspace, scope.area_id])) ?? null; }
 
@@ -253,16 +241,9 @@ export class BrowserViews {
     window.webContents.on("did-start-navigation", (details) => {
       if (details.isMainFrame && !details.isSameDocument) this.hideAll();
     });
-    window.on("blur", () => {
-      const held = this.cycleInput;
-      this.cancelCycle();
-      // The hold moved the native responder to the shell. When the window
-      // comes back, the page that started it takes the keyboard again, as
-      // it would after Escape, once it is shown: the overlay that covered it
-      // goes away through the shell's next sync, which can land after the window returns.
-      if (held) this.returnTo = held.page;
-    });
-    window.on("focus", () => this.giveBack());
+    // The cancel is reported to the shell, which asks for the page's
+    // keyboard back when the window returns (`web/src/keyboard.ts`).
+    window.on("blur", () => this.cancelCycle());
     window.on("closed", () => {
       this.cancelCycle();
       for (const page of [...this.pages.values()]) this.destroy(page, "window_closed");
@@ -330,11 +311,7 @@ export class BrowserViews {
     const listed = new Set(retained.map((row) => viewKey(row.workspace, row.id)));
     for (const page of [...this.pages.values()]) {
       if (!listed.has(page.key)) this.destroy(page, "closed");
-      else if (page.workspace !== workspace) {
-        // The operator left this page's Workspace: nothing is owed to it.
-        if (this.returnTo === page) this.returnTo = null;
-        this.show(page, false);
-      }
+      else if (page.workspace !== workspace) this.show(page, false);
     }
     const now = Date.now();
     const zoom = window.webContents.getZoomFactor();
@@ -515,8 +492,6 @@ export class BrowserViews {
       this.update(page, { loading: false, failure: this.words()("native.browser.stopped") });
     });
     contents.on("focus", () => {
-      // Another page holding the keyboard settles the debt: it is not the page the hold began on.
-      if (this.returnTo && this.returnTo !== page) this.returnTo = null;
       if (page.visible) this.emit({ kind: "focus", workspace: page.workspace, id: page.id });
     });
     this.guard(page, contents);
@@ -734,7 +709,6 @@ export class BrowserViews {
     if (starts && release && page) {
       this.cycleSequence = (this.cycleSequence + 1) % Number.MAX_SAFE_INTEGER;
       this.cycleInput = { page, release, cycleId: this.cycleSequence };
-      this.returnTo = null;
     }
     const cycle = held ?? this.cycleInput;
     if (!cycle) return false;
@@ -791,7 +765,6 @@ export class BrowserViews {
     // shell preserves its logical page owner and consumes release/Escape.
     page.visible = visible;
     page.view.setVisible(visible);
-    if (visible && this.returnTo === page) this.giveBack();
     if (!visible && this.cycleInput?.page === page && this.window?.isFocused()) this.window.webContents.focus();
   }
 
@@ -802,7 +775,6 @@ export class BrowserViews {
   private destroy(page: Page, reason: CdpRetirement["reason"]): void {
     if (reason === "evicted") this.emit({ kind: "gone", workspace: page.workspace, id: page.id, load: page.applied, url: page.state.url });
     if (this.cycleInput?.page === page) this.cancelCycle();
-    if (this.returnTo === page) this.returnTo = null;
     this.pages.delete(page.key);
     this.publishCdp({ contentsId: page.view.webContents.id, reason });
     this.release(page.workspace, page.id, page.applied);

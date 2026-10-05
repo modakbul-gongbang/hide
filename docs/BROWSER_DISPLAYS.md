@@ -274,9 +274,9 @@ The trusted bridge carries only cycle keydown/keyup and cancellation; the shell 
 The shell also reports the matching identifier when release arrived in its renderer, so a late completion cannot erase a newer hold.
 Release or Escape received by another native page still ends the frozen initiating cycle.
 Window blur, page renderer failure and destruction of the held page cancel the host slot, and a hidden or unfocused page cannot begin a cycle.
-After a blur cancels a hold, the host owes the initiating page the keyboard and pays it once the window is key and that page is shown, as Escape does.
-The shell's sync that uncovers the page can land after the window returns, so the debt waits for the page instead of expiring at the first focus event.
-Another page taking the keyboard, a new hold, leaving the page's Workspace, or the page closing ends the debt.
+After a blur cancels a hold, the shell owes the initiating page the keyboard and asks for it when the window returns, as Escape does.
+The request follows the shell's next visible-slot sync, so a page the overlay still covered is shown before the host focuses it, and the host holds no debt of its own; it can neither miss the cancel nor focus the page ahead of the shell's own focus restore.
+A key or click in the shell before the window returns, or a new hold, ends the debt.
 After the core confirms a selected display, the existing keyboard-follow request focuses its document or diff, or schedules one trusted native-page focus command after visible-slot sync.
 The host focuses only a visible page in its already-focused candidate window; it never brings a window forward for this command.
 Cycle menu items are immediate command clicks without accelerators, so one physical key cannot also dispatch a menu selection.

@@ -186,6 +186,10 @@ export function installKeyboard(actions: Actions): () => void {
     browserBridge()?.endCycle(nativeCycle.cycleId);
     nativeCycle = null;
   };
+  // The page a lost window cancelled a hold on. It takes the keyboard back
+  // when the shell itself gets the window back, the last thing the window's
+  // return does, so nothing the return restores can overwrite it.
+  let owedPage: { workspace: string; id: string } | null = null;
 
   const run = (id: CommandId, event: KeyboardEvent | null) => {
     if (isNumberedCommand(id)) {
@@ -455,11 +459,20 @@ export function installKeyboard(actions: Actions): () => void {
   // Losing the window mid-cycle (⌥-Tab switching apps) cancels it; nothing
   // is committed for a chord the operator did not finish here.
   const onBlur = () => {
-    // The host gives the page back its keyboard when the window returns.
+    if (nativeCycle) owedPage = { workspace: nativeCycle.workspace, id: nativeCycle.id };
     endNativeCycle();
     if (ui().cycle) ui().setCycle(null);
     endHold();
   };
+
+  // The window coming back pays what its loss left owed, as Escape would
+  // have; a key or click in the shell first means the operator already chose.
+  const onFocus = () => {
+    const owed = owedPage;
+    owedPage = null;
+    if (owed) focusBrowserDisplay(owed.workspace, owed.id);
+  };
+  const forgetOwed = () => { owedPage = null; };
 
   // A menu item names a command id; one this registry does not know is a
   // host/shell version mismatch, recorded rather than guessed at.
@@ -472,6 +485,7 @@ export function installKeyboard(actions: Actions): () => void {
     if (input.kind !== "cycle-input") return;
     const firstStart = !nativeCycle && !ui().cycle && input.type === "keyDown";
     nativeCycle = { cycleId: input.cycleId, workspace: input.workspace, id: input.id };
+    owedPage = null;
     const cycle = ui().cycle;
     const scope = focusedCycleScope(useShellStore.getState().rest);
     const frame = drawnViews();
@@ -535,6 +549,9 @@ export function installKeyboard(actions: Actions): () => void {
   window.addEventListener("keydown", onKeyDown, true);
   window.addEventListener("keyup", onKeyUp, true);
   window.addEventListener("blur", onBlur);
+  window.addEventListener("focus", onFocus);
+  window.addEventListener("pointerdown", forgetOwed, true);
+  window.addEventListener("keydown", forgetOwed, true);
   document.addEventListener("visibilitychange", onVisibility);
   return () => {
     onBlur();
@@ -550,6 +567,9 @@ export function installKeyboard(actions: Actions): () => void {
     window.removeEventListener("keydown", onKeyDown, true);
     window.removeEventListener("keyup", onKeyUp, true);
     window.removeEventListener("blur", onBlur);
+    window.removeEventListener("focus", onFocus);
+    window.removeEventListener("pointerdown", forgetOwed, true);
+    window.removeEventListener("keydown", forgetOwed, true);
     document.removeEventListener("visibilitychange", onVisibility);
   };
 }

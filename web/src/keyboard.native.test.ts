@@ -176,4 +176,35 @@ describe("native cycle responder return", () => {
     expect(ended).toEqual([1]);
     expect(pageCommands).toEqual([["local\u0000/fixture", "d1", "focus"]]);
   });
+
+  it("a lost window cancels the hold and the window's return gives the origin the keyboard once", () => {
+    input();
+    window.dispatchEvent(new Event("blur"));
+    flushFrames();
+    expect(useUiStore.getState().cycle).toBeNull();
+    expect(events).toEqual([]);
+    expect(ended).toEqual([1]);
+    expect(pageCommands).toEqual([]);
+    window.dispatchEvent(new Event("focus"));
+    flushFrames();
+    expect(pageCommands).toEqual([["local\u0000/fixture", "d1", "focus"]]);
+    window.dispatchEvent(new Event("focus"));
+    flushFrames();
+    expect(pageCommands).toHaveLength(1);
+  });
+
+  it("the window's return owes nothing when no hold was cancelled", () => {
+    window.dispatchEvent(new Event("focus"));
+    flushFrames();
+    expect(pageCommands).toEqual([]);
+  });
+
+  it.each(["pointerdown", "keydown"])("a %s in the shell before the window returns ends the debt", (choice) => {
+    input();
+    window.dispatchEvent(new Event("blur"));
+    window.dispatchEvent(new Event(choice));
+    window.dispatchEvent(new Event("focus"));
+    flushFrames();
+    expect(pageCommands).toEqual([]);
+  });
 });
