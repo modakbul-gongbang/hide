@@ -925,79 +925,124 @@ async function dragToEdge(page: Page, from: Locator, target: Locator, edge: "rig
   await dragTab(page, from, point, during);
 }
 
-// Quarantined: runs in CI without blocking `verify` until #286 is fixed.
-test("the tab menu offers only what a view can do, and each cap refuses with its reason and leaves the views alone", { tag: "@flaky", annotation: { type: "issue", description: "https://github.com/modakbul-gongbang/hide/issues/286" } }, async ({ page }) => {
+// A Workspace of sixty-five files with the first one previewed in a wide window.
+async function startCaps(page: Page, name: string) {
   await page.setViewportSize({ width: 2560 + RAIL, height: 1080 });
   const files = Object.fromEntries(Array.from({ length: 65 }, (_, index) => [`f${String(index + 1).padStart(2, "0")}.txt`, `file ${index + 1}\n`]));
-  const stack = await startStack(page, "s7-caps", files);
+  const stack = await startStack(page, name, files);
   try {
     await explorerRow(page, stack, "f01.txt").click();
     await expect.poll(() => shape(page)).toBe("@(>f01.txt*)");
     await widenFileViews(page);
-    const layoutEvents = () => viewEvents(stack).length;
+    return stack;
+  } catch (error) {
+    stopStack(stack);
+    throw error;
+  }
+}
+const layoutEvents = (stack: Stack) => viewEvents(stack).length;
 
-    // A preview alone in its area: New tab, Keep open, four splits that cannot land
-    // (with the reason), the path, Select in File Tree and Close view (a browser
-    // tab has no OS file manager to reveal in); no Move without a neighbour and
-    // never a file deletion. Opening it changes nothing (B11).
-    const sentBefore = layoutEvents();
+/** Pins f02 to f10 in one area. The first click of each double click takes the preview's place, so the f01 preview gives way to f02 (B1). */
+async function pinNine(page: Page, stack: Stack) {
+  for (let index = 2; index <= 10; index += 1) await explorerRow(page, stack, `f${String(index).padStart(2, "0")}.txt`).dblclick();
+  await expect.poll(() => shape(page)).toBe("@(f02.txt f03.txt f04.txt f05.txt f06.txt f07.txt f08.txt f09.txt >f10.txt)");
+}
+
+/** Two areas: f10 on its own at the right, the rest at the left. */
+async function pinNineAndSplit(page: Page, stack: Stack) {
+  await pinNine(page, stack);
+  await tabMenu(page, page, "f10.txt", "split_right");
+  await expect.poll(() => shape(page)).toBe("(f02.txt f03.txt f04.txt f05.txt f06.txt f07.txt f08.txt >f09.txt) | @(>f10.txt)");
+}
+
+const areaWith = (page: Page, name: string) => page.locator("[data-view-area-id]").filter({ has: tab(page, name) });
+const areaCount = (page: Page) => page.locator("[data-view-area-id]").count();
+
+/** Four areas, three splits deep at the left. */
+async function splitToDepth(page: Page, stack: Stack) {
+  await pinNineAndSplit(page, stack);
+  await tabMenu(area(page, 0), page, "f09.txt", "split_down");
+  await tabMenu(area(page, 0), page, "f08.txt", "split_right");
+  await expect.poll(() => areaCount(page)).toBe(4);
+}
+
+/** Six areas, by drops on other areas' edges. */
+async function splitToSix(page: Page, stack: Stack) {
+  await splitToDepth(page, stack);
+  await dragToEdge(page, tab(area(page, 0), "f07.txt"), areaWith(page, "f10.txt"), "down");
+  await expect.poll(() => areaCount(page)).toBe(5);
+  await dragToEdge(page, tab(area(page, 0), "f06.txt"), areaWith(page, "f09.txt"), "right");
+  await expect.poll(() => areaCount(page)).toBe(6);
+}
+
+test("a preview alone in its area offers its menu without the splits it cannot make, and opening it changes nothing", async ({ page }) => {
+  const stack = await startCaps(page, "s7-caps-menu");
+  try {
+    // New tab, Keep open, four splits that cannot land (with the reason), the
+    // path, Select in File Tree and Close view (a browser tab has no OS file
+    // manager to reveal in); no Move without a neighbour and never a file
+    // deletion (B11).
+    const sentBefore = layoutEvents(stack);
     const alone = await tabMenuRows(page, page, "f01.txt");
     expect(alone.map((row) => row.id)).toEqual(["new_tab", "keep_open", ...SPLITS, "copy_path", "select_in_tree", "close_view"]);
     expect(alone.map((row) => row.label)).toEqual(["New tab", "Keep open", "Split right", "Split left", "Split up", "Split down", "Copy path", "Select in File Tree", "Close view"]);
     for (const row of alone.filter((entry) => SPLITS.includes(entry.id))) expect(row).toMatchObject({ disabled: true, reason: "This is the only view in its area." });
-    expect(layoutEvents()).toBe(sentBefore);
+    expect(layoutEvents(stack)).toBe(sentBefore);
     await tab(page, "f01.txt").click({ button: "right" });
     await expect(page.locator('[role="menu"]')).not.toContainText(/Trash|Delete/);
     await screenshot(page, "s7-caps-menu-preview");
     await page.keyboard.press("Escape");
+  } finally { stopStack(stack); }
+});
 
-    // A pinned view has no Keep open; beside another area it can move there.
-    // (The first click of each double click takes the preview's place, so
-    // the f01 preview gives way to f02, B1.)
-    for (let index = 2; index <= 10; index += 1) await explorerRow(page, stack, `f${String(index).padStart(2, "0")}.txt`).dblclick();
-    await expect.poll(() => shape(page)).toBe("@(f02.txt f03.txt f04.txt f05.txt f06.txt f07.txt f08.txt f09.txt >f10.txt)");
-    await tabMenu(page, page, "f10.txt", "split_right");
-    await expect.poll(() => shape(page)).toBe("(f02.txt f03.txt f04.txt f05.txt f06.txt f07.txt f08.txt >f09.txt) | @(>f10.txt)");
+test("a pinned view has no Keep open and, beside another area, can move there", async ({ page }) => {
+  const stack = await startCaps(page, "s7-caps-pinned");
+  try {
+    await pinNineAndSplit(page, stack);
     const left = await tabMenuRows(page, area(page, 0), "f02.txt");
     expect(left.map((row) => row.id)).toEqual(["new_tab", ...SPLITS, "move_right", "copy_path", "select_in_tree", "close_view"]);
     expect(left.every((row) => !row.disabled)).toBe(true);
     const right = await tabMenuRows(page, area(page, 1), "f10.txt");
     expect(right.map((row) => row.id)).toEqual(["new_tab", ...SPLITS, "move_left", "copy_path", "select_in_tree", "close_view"]);
+  } finally { stopStack(stack); }
+});
 
-    // Room is a reason too: in a narrower window the areas side by side
-    // cannot be halved again across, only down (B9, D-06).
+test("a window too narrow to halve two side by side areas again refuses the split across and still offers the split down", async ({ page }) => {
+  const stack = await startCaps(page, "s7-caps-room");
+  try {
+    // Room is a reason too (B9, D-06).
+    await pinNineAndSplit(page, stack);
     await page.setViewportSize({ width: 1280, height: 1080 });
     await expect.poll(async () => (await boxOf(area(page, 0))).width).toBeLessThan(450);
     const cramped = await tabMenuRows(page, area(page, 0), "f02.txt");
     expect(cramped.find((row) => row.id === "split_right")).toMatchObject({ disabled: true, reason: "This view area is too narrow to split." });
     expect(cramped.find((row) => row.id === "split_down")).toMatchObject({ disabled: false });
-    await page.setViewportSize({ width: 2560 + RAIL, height: 1080 });
-    await expect.poll(async () => (await boxOf(area(page, 0))).width).toBeGreaterThan(600);
+  } finally { stopStack(stack); }
+});
 
-    // Down to the depth limit: an area three splits deep cannot split again (B9, B19).
-    await tabMenu(area(page, 0), page, "f09.txt", "split_down");
-    await tabMenu(area(page, 0), page, "f08.txt", "split_right");
-    await expect.poll(() => page.locator("[data-view-area-id]").count()).toBe(4);
+test("an area three splits deep cannot split again and says why", async ({ page }) => {
+  const stack = await startCaps(page, "s7-caps-depth");
+  try {
+    // B9, B19
+    await splitToDepth(page, stack);
     const deep = await tabMenuRows(page, area(page, 0), "f02.txt");
     for (const row of deep.filter((entry) => SPLITS.includes(entry.id))) expect(row).toMatchObject({ disabled: true, reason: "View areas can be split only 3 levels deep." });
+  } finally { stopStack(stack); }
+});
 
-    // Up to the area limit by drops on other areas' edges: six areas (B7, B19).
-    const areaWith = (name: string) => page.locator("[data-view-area-id]").filter({ has: tab(page, name) });
-    await dragToEdge(page, tab(area(page, 0), "f07.txt"), areaWith("f10.txt"), "down");
-    await expect.poll(() => page.locator("[data-view-area-id]").count()).toBe(5);
-    await dragToEdge(page, tab(area(page, 0), "f06.txt"), areaWith("f09.txt"), "right");
-    await expect.poll(() => page.locator("[data-view-area-id]").count()).toBe(6);
+test("at six view areas every split is refused with its reason, in the menu and on a drag, and no view moves", async ({ page }) => {
+  const stack = await startCaps(page, "s7-caps-areas");
+  try {
+    // B7, B9, B19
+    await splitToSix(page, stack);
     const six = await shape(page);
     const splitsAtSix = stack.sent.get("view_layout.split") ?? 0;
-
-    // At six every split is refused with the reason, in the menu, on a drag
-    // and every view stays where it was (B9, B19).
     const capped = await tabMenuRows(page, area(page, 0), "f02.txt");
     for (const row of capped.filter((entry) => SPLITS.includes(entry.id))) expect(row).toMatchObject({ disabled: true, reason: "This Workspace already shows 6 view areas, the most it can." });
     await tab(area(page, 0), "f02.txt").click({ button: "right" });
     await screenshot(page, "s7-caps-area-limit-menu");
     await page.keyboard.press("Escape");
-    await dragToEdge(page, tab(area(page, 0), "f05.txt"), areaWith("f10.txt"), "down", async () => {
+    await dragToEdge(page, tab(area(page, 0), "f05.txt"), areaWith(page, "f10.txt"), "down", async () => {
       await expect(page.locator("[data-view-drop]")).toHaveCount(0);
       await expect(page.locator("html")).toHaveAttribute("data-view-drag", "forbidden");
       await expect(page.locator("[data-view-drag-tab]")).toContainText("This Workspace already shows 6 view areas, the most it can.");
@@ -1005,12 +1050,17 @@ test("the tab menu offers only what a view can do, and each cap refuses with its
     // The refused menu and drag changed nothing.
     const sixFocused = await shape(page);
     expect(stack.sent.get("view_layout.split") ?? 0).toBe(splitsAtSix);
-    expect(await shape(page)).toBe(sixFocused);
     expect(sixFocused.replace(/[>@]/g, "")).toBe(six.replace(/[>@]/g, ""));
+    expectFrontWorkspaceOnEveryViewEvent(stack);
+  } finally { stopStack(stack); }
+});
 
-    // Sixty-four views are the most one Workspace holds: an open past it is
-    // refused with the reason and changes nothing, and opening a file already
-    // shown still just moves to it (B19, contract 2).
+test("a Workspace holds at most sixty-four views: opening one more is refused with the reason, and opening a shown file still moves to it", async ({ page }) => {
+  await page.setViewportSize({ width: 2560 + RAIL, height: 1080 });
+  const files = Object.fromEntries(Array.from({ length: 65 }, (_, index) => [`f${String(index + 1).padStart(2, "0")}.txt`, `file ${index + 1}\n`]));
+  const stack = await startStack(page, "s7-caps-views", files);
+  try {
+    // B19, contract 2
     const seeded = {
       schema_version: 2,
       workspaces: [
