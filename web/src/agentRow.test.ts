@@ -52,7 +52,14 @@ describe("the mark and the badge (D-01, D-02)", () => {
   it("draws a waiting root's ring in the working colour and every other row from its own axes", () => {
     expect(markTone(row("root", { activity: "stopped", symbol: "○", waiting_on_descendants: true }))).toBe("text-agent-working");
     expect(markTone(row("idle", { activity: "stopped", symbol: "○" }))).toBe("text-subtle-foreground");
-    expect(markTone(row("ask", { demand: "question", activity: "stopped" }))).toBe("text-warning");
+    expect(markTone(row("ask", { demand: "question", activity: "stopped", group: "needs_you", emphasized: true, unread: true }))).toBe("text-warning");
+  });
+
+  it("keeps a read demand's hue at reduced emphasis, so an unread one stands out", () => {
+    expect(markTone(row("asked", { demand: "question", activity: "stopped", group: "seen" }))).toBe("text-warning opacity-(--opacity-read-status)");
+    expect(markTone(row("approved", { demand: "approval", activity: "stopped", group: "seen" }))).toBe("text-warning opacity-(--opacity-read-status)");
+    expect(markTone(row("failed", { demand: "error", activity: "stopped", group: "seen" }))).toBe("text-destructive opacity-(--opacity-read-status)");
+    expect(markTone(row("blocked", { demand: "approval", activity: "stopped", group: "needs_you", emphasized: true }))).toBe("text-warning");
   });
 
   it("lists the badge's states worst first and leaves the zero ones out", async () => {

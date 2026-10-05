@@ -78,7 +78,8 @@ function agent({ elapsed, ...spec }: AgentSpec): AgentRow {
     id: spec.pane_id,
     identity_label: spec.pane_id,
     agent_kind: "claude",
-    emphasized: false,
+    // The core draws a row bright exactly while it is in Needs You or Done.
+    emphasized: spec.group === "needs_you" || spec.group === "done",
     unread: false,
     demand: "none",
     activity: "idle",
@@ -263,7 +264,7 @@ export function sidebarScene(content: SceneContent, folds: SceneFolds, nowMs: nu
       detail: "프로덕션 배포 전에 변경 내용을 확인해 주세요",
     }),
     agent({ pane_id: "q1", identity_label: "브라우저 표시 확인", group: "needs_you", symbol: "?", status_label: "Question", demand: "question", elapsed: "40m", detail: "주소 경계를 어디에 둘까요?" }),
-    agent({ pane_id: "q2", identity_label: "검색 팔레트", group: "done", symbol: "✓", status_label: "Done", activity: "stopped", emphasized: true, elapsed: "1h" }),
+    agent({ pane_id: "q2", identity_label: "검색 팔레트", group: "done", symbol: "✓", status_label: "Done", activity: "stopped", elapsed: "1h" }),
     agent({ pane_id: "e1", identity_label: "단축키 연결", group: "working", symbol: "●", status_label: "Working", activity: "working", elapsed: "2h" }),
   ];
 
@@ -346,7 +347,7 @@ const BUSY_AGENTS: AgentRow[] = [
   ...Array.from({ length: 11 }, (_, index) =>
     agent({ pane_id: `remote:mini:busy:${index}`, identity_label: `배치 ${index + 1}`, agent_kind: "codex", group: "needs_you", symbol: "?", status_label: "Question", demand: "question", elapsed: "3m", detail: "확인이 필요합니다" }),
   ),
-  agent({ pane_id: "remote:mini:done:1", identity_label: "빌드 정리", agent_kind: "codex", group: "done", symbol: "✓", status_label: "Done", activity: "stopped", emphasized: true, elapsed: "9m" }),
+  agent({ pane_id: "remote:mini:done:1", identity_label: "빌드 정리", agent_kind: "codex", group: "done", symbol: "✓", status_label: "Done", activity: "stopped", elapsed: "9m" }),
   agent({ pane_id: "remote:mini:working:2", identity_label: "로그 수집", agent_kind: "codex", group: "working", symbol: "●", status_label: "Working", activity: "working", elapsed: "2m" }),
 ];
 

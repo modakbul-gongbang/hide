@@ -224,7 +224,8 @@ Every surface draws the mark in one box of one size: `●` and `○` as a filled
 | Owning server unavailable | `⊘` | Gray | Disconnected; current agent activity is unavailable |
 | Hide ended the agent and holds its conversation | `☾` (moon) | Gray | `Sleeping · resumes when opened`, `Waking…`, or `Sleeping · couldn’t resume`; stays in Seen |
 
-Read questions, approvals, and errors retain their symbol and hue with reduced emphasis.
+Read questions, approvals, and errors retain their symbol and hue with reduced emphasis: a demand on a row the core does not emphasize (read, or a delegated child's) draws its mark at `--opacity-read-status`, so an unread `?` stands apart from one already looked at (`chipTone` in `web/src/lineage.ts`).
+A blocked approval stays in Needs You and keeps full emphasis until it is answered.
 Reading is acknowledgment, not evidence that a demand was resolved.
 A read, non-blocked demand belongs to Seen unless the core places its running activity in Working; the status mark still describes the demand.
 Disconnected presentation overrides the retained mark and text on every affected surface without modifying demand, activity, read records, or the last known group.
