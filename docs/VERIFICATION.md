@@ -45,6 +45,9 @@ The Windows/Linux package lanes check the real archive's headless daemon/kit beh
 The call must return the parent's code and both markers within the original five-second deadline, with the helper gone; test recovery is armed with that helper's identity before its parent exits.
 This regression checks process and pipe ownership, not a native app window or Unix crash containment.
 
+CI retries a failed e2e or Rust test once, so a green lane can hide a test whose first attempt failed.
+The `Report flaky tests` step and the open `quarantine` issues say which; read them before claiming a flow verified, and treat a flaky test as unproven ([TESTING.md](TESTING.md#flaky-tests) owns the policy).
+
 A scenario someone would check by hand becomes a spec when it can; [TESTING.md](TESTING.md) says how to write it.
 Playwright drives the renderer over its own connection rather than through OS input, so a spec needs no keyboard focus and cannot type into another app.
 Manual QA covers what a spec cannot reach yet, and the pull request's Evidence says the check was manual.

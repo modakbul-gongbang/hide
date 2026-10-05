@@ -12,7 +12,7 @@ Run the same required lanes CI runs.
 These are the local equivalents; the remote `verify` result still depends on the actual CI run.
 CI's `plan` job picks the lanes a pull request needs from the paths it changes, and `verify` requires exactly those; a push to main runs every lane, and [docs/TESTING.md](docs/TESTING.md#which-lanes-a-pull-request-runs) owns the rules.
 Across its lanes CI runs the Rust suite, the unit suites, the invariant checks and the whole web end-to-end (six shards) on Linux, where the Herdr schema comparison and the web end-to-end use the pinned release's Linux asset; two jobs on macOS, the platform hide ships on: the Electron end-to-end and the web end-to-end's `@platform` tests; and on Windows `windows check` (compile, daemon and unit suites) and `windows e2e` (the browser `@platform` tests).
-`.github/workflows/pr.yml` says why; `nightly.yml` configures full web and desktop suites and package checks on Linux, macOS and Windows, with tracked flaky tests blocking the nightly result.
+`.github/workflows/pr.yml` says why; `nightly.yml` configures full web and desktop suites and package checks on Linux, macOS and Windows, where a test fails the nightly only when it fails its retry too.
 Read the executed jobs and their skips before claiming an OS is verified; a configured matrix is not execution evidence.
 
 ```sh
