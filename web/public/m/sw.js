@@ -4,11 +4,22 @@
 // shows the unreachable line rather than a blank page. Agent state, rows,
 // replies and the push subscription travel on /ws and are never cached here.
 //
+// A push carries data, not a sentence: the agent's title, its state
+// ("needs_you" | "done") and its place. The words for the state belong to the
+// language the phone page is in, so the page posts `{type: "words", words}` on
+// load, on every language change and when a subscription is created, and this
+// worker keeps them in the Cache API (a closed app must still notify). The
+// body is the state's word and the place joined with " · "; with no words
+// stored, which is a subscription made before the page ever sent them, it is
+// the place alone.
+//
 // There is no start_url in the manifest on purpose: the Home Screen app keeps
 // the address it was added from, whose fragment carries the phone's
 // credential into an installed app whose storage iOS may keep apart.
 
 const CACHE = "hide-phone-shell-v1";
+const WORDS_CACHE = "hide-phone-words";
+const WORDS_URL = "/m/words.json";
 const SHELL = ["/m/", "/m/manifest.webmanifest", "/m/icon-192.png", "/m/icon-512.png", "/m/apple-touch-icon.png"];
 
 self.addEventListener("install", (event) => {
@@ -24,12 +35,15 @@ self.addEventListener("activate", (event) => {
   event.waitUntil(
     caches
       .keys()
-      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE).map((key) => caches.delete(key))))
+      .then((keys) => Promise.all(keys.filter((key) => key !== CACHE && key !== WORDS_CACHE).map((key) => caches.delete(key))))
       .then(() => self.clients.claim()),
   );
 });
 
 function isShell(url) {
+  // The words store is this worker's own state: neither cached as shell nor
+  // answered from the network.
+  if (url.pathname === WORDS_URL) return false;
   return url.origin === self.location.origin && (url.pathname.startsWith("/m/") || url.pathname.startsWith("/assets/"));
 }
 
@@ -69,6 +83,35 @@ self.addEventListener("fetch", (event) => {
   );
 });
 
+function isWord(value) {
+  return typeof value === "string" && value.length > 0;
+}
+
+// Only the two state words are kept, whatever else a page sends.
+self.addEventListener("message", (event) => {
+  const data = event.data;
+  if (!data || data.type !== "words" || !data.words || typeof data.words !== "object") return;
+  const { needs_you, done } = data.words;
+  if (!isWord(needs_you) || !isWord(done)) return;
+  const words = JSON.stringify({ needs_you, done });
+  event.waitUntil(
+    caches
+      .open(WORDS_CACHE)
+      .then((cache) => cache.put(WORDS_URL, new Response(words, { headers: { "Content-Type": "application/json" } }))),
+  );
+});
+
+async function storedWords() {
+  const hit = await (await caches.open(WORDS_CACHE)).match(WORDS_URL);
+  if (!hit) return {};
+  try {
+    const words = await hit.json();
+    return words && typeof words === "object" ? words : {};
+  } catch {
+    return {};
+  }
+}
+
 async function closeTags(tags) {
   if (!Array.isArray(tags) || tags.length === 0) return;
   const shown = await self.registration.getNotifications();
@@ -84,9 +127,9 @@ self.addEventListener("push", (event) => {
   }
   if (!payload || typeof payload.title !== "string") return;
   event.waitUntil(
-    closeTags(payload.clear).then(() =>
+    Promise.all([closeTags(payload.clear), storedWords()]).then(([, words]) =>
       self.registration.showNotification(payload.title, {
-        body: payload.body,
+        body: [words[payload.state], payload.place].filter(isWord).join(" · "),
         tag: payload.tag,
         icon: "/m/icon-192.png",
         badge: "/m/icon-192.png",

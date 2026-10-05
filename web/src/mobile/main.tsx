@@ -8,6 +8,7 @@ import "../index.css";
 import "./mobile.css";
 import { App } from "./App";
 import { openDetail, start } from "./connection";
+import { PhoneLanguageBoundary } from "./language";
 import { openKey } from "./protocol";
 
 const scheme = window.matchMedia("(prefers-color-scheme: dark)");
@@ -30,6 +31,7 @@ const container = document.getElementById("root");
 if (!container) throw new Error("root missing");
 createRoot(container).render(
   <StrictMode>
+    <PhoneLanguageBoundary />
     <App />
   </StrictMode>,
 );

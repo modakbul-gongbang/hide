@@ -4,7 +4,7 @@
 // older messages a pull to the top away; or the pane's recent rows read-only
 // in the terminal's colours, wrapped at the phone's width because the pane is
 // as wide as the desktop (a box-drawn rule is clipped to one line instead).
-// 대화 | 터미널 switches between them while the pane has a conversation; a
+// Conversation | Terminal switches between them while the pane has a conversation; a
 // pane without one shows its terminal alone. The quick keys and one-line
 // reply are on every detail, whatever its group.
 
@@ -12,6 +12,7 @@ import { AnsiUp } from "ansi_up";
 import { ArrowLeftIcon } from "lucide-react";
 import { memo, useEffect, useLayoutEffect, useMemo, useRef, useState, type UIEvent } from "react";
 import { Elapsed } from "../components/elapsed";
+import { useInterfaceTranslation } from "../i18n/translator";
 import { Button } from "../components/ui/button";
 import { Tabs, TabsList, TabsTrigger } from "../components/ui/tabs";
 import { renderMarkdown } from "./markdown";
@@ -21,9 +22,11 @@ import {
   MAX_MESSAGES,
   MAX_REPLY_CHARS,
   QUICK_KEYS,
-  UNREACHABLE_TEXT,
+  UNREACHABLE_NOTICE,
   boxDrawingRow,
+  inputFailure,
   messageTime,
+  noticeText,
   rowsProblem,
   type Conversation,
   type ConversationMessage,
@@ -50,6 +53,7 @@ function ansiRows(text: string): AnsiRow[] {
 }
 
 export function Detail({ onBack }: { onBack: () => void }) {
+  const { t } = useInterfaceTranslation();
   const detail = usePhone((s) => s.detail);
   const groups = usePhone((s) => s.groups);
   const connected = usePhone((s) => s.connected);
@@ -66,22 +70,22 @@ export function Detail({ onBack }: { onBack: () => void }) {
   return (
     <main className="flex h-full flex-col" data-phone-detail={detail ? `${detail.key.device_id}|${detail.key.pane_id}` : ""}>
       <header className="phone-safe-top shrink-0 border-b border-border bg-card px-lg pb-md">
-        {/* ← 목록, 대화 | 터미널 in the middle, and the elapsed time share one row, so the switch costs no height. */}
+        {/* ← List, Conversation | Terminal in the middle, and the elapsed time share one row, so the switch costs no height. */}
         <div className="flex items-center gap-sm pt-sm">
           <div className="flex min-w-0 flex-1 basis-0">
             <button type="button" onClick={onBack} className="-ml-sm flex min-h-(--size-touch-target) items-center gap-xs px-sm text-title text-foreground" data-phone-back="true">
               <ArrowLeftIcon aria-hidden="true" className="size-(--size-icon-lg)" />
-              목록
+              {t("mobile.list")}
             </button>
           </div>
           {hasConversation && detail ? (
             <Tabs value={detail.view} onValueChange={(value) => setView(value as DetailView)} className="shrink-0">
               <TabsList>
                 <TabsTrigger value="conversation" className="h-(--size-touch-target) px-md text-title" data-phone-view="conversation">
-                  대화
+                  {t("mobile.tab.conversation")}
                 </TabsTrigger>
                 <TabsTrigger value="terminal" className="h-(--size-touch-target) px-md text-title" data-phone-view="terminal">
-                  터미널
+                  {t("mobile.tab.terminal")}
                 </TabsTrigger>
               </TabsList>
             </Tabs>
@@ -99,12 +103,12 @@ export function Detail({ onBack }: { onBack: () => void }) {
       </header>
       {unreachable && !connected ? (
         <div role="status" className="shrink-0 bg-secondary px-lg py-sm text-subhead text-subtle-foreground" data-phone-unreachable="true">
-          {UNREACHABLE_TEXT}
+          {noticeText(t, UNREACHABLE_NOTICE)}
         </div>
       ) : null}
       {note ? (
         <p role="status" className="shrink-0 px-lg py-sm text-subhead text-warning" data-phone-rows-state={rowsNote ? rows?.state : "gone"}>
-          {note}
+          {noticeText(t, note)}
         </p>
       ) : null}
       {!showsConversation ? (
@@ -113,7 +117,7 @@ export function Detail({ onBack }: { onBack: () => void }) {
         <ConversationLog conversation={conversation} />
       ) : (
         <div className="min-h-0 flex-1 bg-background px-lg py-md">
-          <p className="text-body text-muted-foreground">불러오는 중…</p>
+          <p className="text-body text-muted-foreground">{t("mobile.loading")}</p>
         </div>
       )}
       <ReplyBar disabled={gone || !connected} />
@@ -149,15 +153,16 @@ function usePinnedScroll(content: unknown, top: number, onTop: () => void) {
 }
 
 function Scrollback({ text, more, lines, loading }: { text: string; more: boolean; lines: number; loading: boolean }) {
+  const { t } = useInterfaceTranslation();
   const rows = useMemo(() => ansiRows(text), [text]);
   const { scroller, onScroll } = usePinnedScroll(rows, lines, () => {
     if (more) loadMore();
   });
   return (
     <div ref={scroller} className="min-h-0 flex-1 overflow-auto overscroll-contain bg-background px-lg py-md" data-phone-scrollback={lines} onScroll={onScroll}>
-      {more ? <p className="pb-sm text-center text-body text-muted-foreground">위로 당기면 더 불러와요</p> : null}
-      {loading ? <p className="text-body text-muted-foreground">불러오는 중…</p> : null}
-      <pre aria-label="터미널 최근 출력" className="phone-ansi m-none font-mono text-body leading-normal text-foreground">
+      {more ? <p className="pb-sm text-center text-body text-muted-foreground">{t("mobile.pullOlder")}</p> : null}
+      {loading ? <p className="text-body text-muted-foreground">{t("mobile.loading")}</p> : null}
+      <pre aria-label={t("mobile.recentOutput")} className="phone-ansi m-none font-mono text-body leading-normal text-foreground">
         {rows.map((row, index) => (
           <span
             key={index}
@@ -173,6 +178,7 @@ function Scrollback({ text, more, lines, loading }: { text: string; more: boolea
 }
 
 function ConversationLog({ conversation }: { conversation: Conversation }) {
+  const { t } = useInterfaceTranslation();
   const { messages, before } = conversation;
   const { scroller, onScroll } = usePinnedScroll(messages, messages[0]?.id ?? 0, loadOlder);
   const capped = before !== null && messages.length >= MAX_MESSAGES;
@@ -180,11 +186,11 @@ function ConversationLog({ conversation }: { conversation: Conversation }) {
     <div ref={scroller} className="min-h-0 flex-1 overflow-auto overscroll-contain bg-background px-lg py-md" data-phone-conversation={messages.length} onScroll={onScroll}>
       {before !== null ? (
         <p className="pb-md text-center text-body text-muted-foreground" data-phone-older={capped ? "capped" : "more"}>
-          {capped ? `최근 ${MAX_MESSAGES}개까지 볼 수 있어요` : "위로 당기면 더 불러와요"}
+          {capped ? t("mobile.messageLimit", { limit: MAX_MESSAGES }) : t("mobile.pullOlder")}
         </p>
       ) : null}
-      {messages.length === 0 ? <p className="text-body text-muted-foreground">아직 대화가 없어요</p> : null}
-      <ol aria-label="대화" className="flex flex-col gap-md">
+      {messages.length === 0 ? <p className="text-body text-muted-foreground">{t("mobile.noConversation")}</p> : null}
+      <ol aria-label={t("mobile.tab.conversation")} className="flex flex-col gap-md">
         {messages.map((message, index) => (
           // The time closes each turn: after the operator's message and after the agent's last one.
           <MessageItem key={message.id} message={message} timed={messages[index + 1]?.who !== message.who} />
@@ -196,6 +202,7 @@ function ConversationLog({ conversation }: { conversation: Conversation }) {
 
 /** Memoized: a message never changes once it arrived, so its Markdown is parsed once. */
 const MessageItem = memo(function MessageItem({ message, timed }: { message: ConversationMessage; timed: boolean }) {
+  const { t } = useInterfaceTranslation();
   const time = timed ? (
     <time dateTime={new Date(message.at_ms).toISOString()} className="block pt-xs text-right font-mono text-body text-muted-foreground">
       {messageTime(message.at_ms)}
@@ -204,7 +211,7 @@ const MessageItem = memo(function MessageItem({ message, timed }: { message: Con
   if (message.who === "stopped") {
     return (
       <li data-phone-message="stopped" className="text-body text-muted-foreground">
-        중단됨
+        {t("mobile.stopped")}
       </li>
     );
   }
@@ -225,12 +232,13 @@ const MessageItem = memo(function MessageItem({ message, timed }: { message: Con
 });
 
 function AgentMessage({ message, time }: { message: ConversationMessage; time: React.ReactNode }) {
+  const { t } = useInterfaceTranslation();
   const body = useMemo(() => renderMarkdown(message.text), [message.text]);
   return (
     <li data-phone-message="agent">
       <div className="space-y-sm wrap-anywhere text-body leading-normal text-foreground">
         {body}
-        {message.truncated ? <p className="text-muted-foreground">… 길어서 여기까지 보여요</p> : null}
+        {message.truncated ? <p className="text-muted-foreground">{t("mobile.truncated")}</p> : null}
       </div>
       {time}
     </li>
@@ -238,6 +246,7 @@ function AgentMessage({ message, time }: { message: ConversationMessage; time: R
 }
 
 function ReplyBar({ disabled }: { disabled: boolean }) {
+  const { t } = useInterfaceTranslation();
   const [text, setText] = useState("");
   const pending = usePhone((s) => s.pendingInput);
   const error = usePhone((s) => s.inputError);
@@ -250,14 +259,15 @@ function ReplyBar({ disabled }: { disabled: boolean }) {
   );
   const tooLong = [...text].length > MAX_REPLY_CHARS;
   const blocked = disabled || pending !== null;
+  const shown = tooLong ? inputFailure("too_long") : error;
   return (
     <footer className="phone-safe-bottom shrink-0 border-t border-border bg-card px-lg pt-md">
-      <div className="grid grid-cols-5 gap-sm" role="group" aria-label="퀵키">
+      <div className="grid grid-cols-5 gap-sm" role="group" aria-label={t("mobile.quickKeys")}>
         {QUICK_KEYS.map((quick) => (
           <Button
             key={quick.key}
             variant="secondary"
-            aria-label={quick.name}
+            aria-label={t(quick.name)}
             disabled={blocked}
             data-phone-key={quick.key}
             className="h-(--size-touch-target) rounded-lg font-mono text-title"
@@ -277,8 +287,8 @@ function ReplyBar({ disabled }: { disabled: boolean }) {
         <input
           value={text}
           onChange={(event) => setText(event.target.value)}
-          placeholder="답장..."
-          aria-label="답장"
+          placeholder={t("mobile.replyPlaceholder")}
+          aria-label={t("mobile.reply")}
           disabled={disabled}
           enterKeyHint="send"
           autoComplete="off"
@@ -288,12 +298,12 @@ function ReplyBar({ disabled }: { disabled: boolean }) {
           className="h-(--size-touch-target) min-w-0 flex-1 rounded-lg border border-border bg-input px-md text-title text-foreground outline-none placeholder:text-muted-foreground focus-visible:ring-1 focus-visible:ring-ring disabled:opacity-50"
         />
         <Button type="submit" disabled={blocked || text.trim().length === 0 || tooLong} className="h-(--size-touch-target) rounded-lg px-lg text-title font-semibold" data-phone-send="true">
-          보내기
+          {t("mobile.send")}
         </Button>
       </form>
-      {tooLong || error ? (
+      {shown ? (
         <p role="alert" className="-mt-sm pb-md text-body text-destructive" data-phone-input-error="true">
-          {tooLong ? `답장은 한 번에 ${MAX_REPLY_CHARS.toLocaleString("ko-KR")}자까지 보낼 수 있어요.` : error}
+          {noticeText(t, shown)}
         </p>
       ) : null}
     </footer>

@@ -5,6 +5,7 @@
 import { BellIcon, ChevronRightIcon, LaptopIcon, Loader2Icon, PlusIcon, XIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import { useElapsed } from "../components/elapsed";
+import { useInterfaceTranslation } from "../i18n/translator";
 import { Button } from "../components/ui/button";
 import { closeDetail, openDetail, openStartSheet, pairNow } from "./connection";
 import { Detail } from "./Detail";
@@ -13,9 +14,10 @@ import { StartSheet } from "./StartSheet";
 import {
   GROUP_ORDER,
   GROUP_TITLE,
-  REFUSAL_TEXT,
-  UNREACHABLE_TEXT,
+  REFUSAL_NOTICE,
+  UNREACHABLE_NOTICE,
   headerLine,
+  noticeText,
   notificationRow,
   type PhoneAgent,
 } from "./protocol";
@@ -43,13 +45,14 @@ function Centered({ children }: { children: React.ReactNode }) {
 
 /** The page the QR opens (B11). */
 function PairScreen() {
+  const { t } = useInterfaceTranslation();
   const macName = usePhone((s) => s.macName);
   const [pairing, setPairing] = useState(false);
   return (
     <Centered>
       <HideIcon />
-      <h1 className="text-headline font-semibold text-foreground">{macName}와 연결</h1>
-      <p className="max-w-(--size-mobile-copy) text-subhead text-muted-foreground">이 폰에서 hide의 에이전트를 보고, 기다리는 에이전트에 답할 수 있어요.</p>
+      <h1 className="text-headline font-semibold text-foreground">{t("mobile.pair.title", { name: macName || t("mobile.mac") })}</h1>
+      <p className="max-w-(--size-mobile-copy) text-subhead text-muted-foreground">{t("mobile.pair.description")}</p>
       <Button
         className="h-(--size-touch-target) w-full max-w-(--size-mobile-copy) rounded-lg text-title font-semibold"
         disabled={pairing}
@@ -59,24 +62,25 @@ function PairScreen() {
           pairNow();
         }}
       >
-        연결
+        {t("mobile.pair.connect")}
       </Button>
-      <p className="text-body text-muted-foreground">코드는 5분 안에 만료돼요. 만료되면 맥에서 QR을 다시 여세요.</p>
+      <p className="text-body text-muted-foreground">{t("mobile.pair.expiry")}</p>
     </Centered>
   );
 }
 
 /** No credential, or one hided refused for good (B13, B14, B16). */
 function Guidance({ refused }: { refused: boolean }) {
+  const { t } = useInterfaceTranslation();
   const refusal = usePhone((s) => s.refusal);
-  const text = refused && refusal ? REFUSAL_TEXT[refusal] : REFUSAL_TEXT.no_credential;
+  const text = noticeText(t, refused && refusal ? REFUSAL_NOTICE[refusal] : REFUSAL_NOTICE.no_credential);
   return (
     <Centered>
       <HideIcon />
       <p role={refused ? "alert" : undefined} className="max-w-(--size-mobile-copy) text-title text-foreground" data-phone-guidance={refused ? (refusal ?? "revoked") : "unpaired"}>
         {text}
       </p>
-      {refused && refusal !== "phone_limit" && refusal !== "no_credential" ? <p className="text-subhead text-muted-foreground">{REFUSAL_TEXT.no_credential}</p> : null}
+      {refused && refusal !== "phone_limit" && refusal !== "no_credential" ? <p className="text-subhead text-muted-foreground">{noticeText(t, REFUSAL_NOTICE.no_credential)}</p> : null}
     </Centered>
   );
 }
@@ -87,6 +91,7 @@ function standalone(): boolean {
 }
 
 function ListScreen() {
+  const { t } = useInterfaceTranslation();
   const macName = usePhone((s) => s.macName);
   const otherPhones = usePhone((s) => s.otherPhones);
   const connected = usePhone((s) => s.connected);
@@ -106,13 +111,13 @@ function ListScreen() {
           <div className="flex items-center gap-md">
             <span
               role="img"
-              aria-label={connected ? "연결됨" : "연결 안 됨"}
+              aria-label={connected ? t("mobile.connected") : t("mobile.disconnected")}
               data-phone-connected={connected ? "true" : "false"}
               className={`size-(--size-status-mark) rounded-full ${connected ? "bg-success" : "bg-muted-foreground"}`}
             />
             <button
               type="button"
-              aria-label="에이전트 시작"
+              aria-label={t("mobile.start.title")}
               data-phone-start="true"
               className="-mr-sm flex size-(--size-touch-target) items-center justify-center rounded-lg text-foreground active:bg-accent"
               onClick={openStartSheet}
@@ -122,16 +127,16 @@ function ListScreen() {
           </div>
         </div>
         {macName ? (
-          <p className="mt-xs flex items-center gap-xs text-subhead text-muted-foreground" data-phone-header={headerLine(macName, otherPhones)}>
+          <p className="mt-xs flex items-center gap-xs text-subhead text-muted-foreground" data-phone-header={headerLine(t, macName, otherPhones)}>
             <LaptopIcon aria-hidden="true" className="size-(--size-icon) shrink-0" />
-            <span className="min-w-0 truncate">{headerLine(macName, otherPhones)}</span>
+            <span className="min-w-0 truncate">{headerLine(t, macName, otherPhones)}</span>
           </p>
         ) : null}
       </header>
       {dim ? (
         <div role="status" className="mt-md flex items-center gap-md bg-secondary px-lg py-md text-subhead text-subtle-foreground" data-phone-unreachable="true">
           <Loader2Icon aria-hidden="true" className="size-(--size-icon-lg) shrink-0 animate-spin" />
-          <span>{UNREACHABLE_TEXT}</span>
+          <span>{noticeText(t, UNREACHABLE_NOTICE)}</span>
         </div>
       ) : null}
       {installHint && !standalone() ? <InstallHint /> : null}
@@ -139,7 +144,7 @@ function ListScreen() {
       <div className={dim ? "opacity-50" : undefined} aria-busy={dim}>
         {groups && agents.length === 0 ? (
           <p className="px-lg py-xxl text-center text-title text-muted-foreground" data-phone-empty="true">
-            실행 중인 에이전트가 없어요
+            {t("mobile.noAgents")}
           </p>
         ) : null}
         {GROUP_ORDER.map((id) => {
@@ -148,7 +153,7 @@ function ListScreen() {
           return (
             <section key={id} className="px-lg pt-lg" data-phone-group={id}>
               <h2 className="flex gap-sm pb-xs text-subhead text-muted-foreground">
-                <span>{GROUP_TITLE[id]}</span>
+                <span>{t(GROUP_TITLE[id])}</span>
                 <span className="font-mono" data-phone-group-count={group.agents.length}>
                   {group.agents.length}
                 </span>
@@ -201,18 +206,20 @@ function AgentRow({ agent }: { agent: PhoneAgent }) {
 
 /** Shown once after pairing, in a browser tab: keep hide on the Home Screen (B11). */
 function InstallHint() {
+  const { t } = useInterfaceTranslation();
   return (
     <div className="mx-lg mt-md flex items-start gap-md rounded-lg border border-border bg-card px-md py-sm text-subhead text-card-foreground" data-phone-install-hint="true">
-      <span className="min-w-0 flex-1">공유 › 홈 화면에 추가로 hide를 앱처럼 두세요. 알림도 거기서 켤 수 있어요.</span>
-      <button type="button" aria-label="닫기" className="flex size-(--size-touch-target) shrink-0 items-center justify-center text-muted-foreground" onClick={() => patch({ installHint: false })}>
+      <span className="min-w-0 flex-1">{t("mobile.installHint")}</span>
+      <button type="button" aria-label={t("common.close")} className="flex size-(--size-touch-target) shrink-0 items-center justify-center text-muted-foreground" onClick={() => patch({ installHint: false })}>
         <XIcon aria-hidden="true" className="size-(--size-icon)" />
       </button>
     </div>
   );
 }
 
-/** 알림 켜기, the Home Screen first, or the OS setting that is off (B30). */
+/** Turn on notifications, the Home Screen first, or the OS setting that is off (B30). */
 function NotificationRow() {
+  const { t } = useInterfaceTranslation();
   const pushMode = usePhone((s) => s.pushMode);
   const notifications = usePhone((s) => s.notifications);
   const [asking, setAsking] = useState(false);
@@ -231,7 +238,7 @@ function NotificationRow() {
         }}
       >
         <BellIcon aria-hidden="true" className="size-(--size-icon-lg) shrink-0 text-primary" />
-        <span className="flex-1">알림 켜기</span>
+        <span className="flex-1">{t("mobile.notifications.enable")}</span>
         <ChevronRightIcon aria-hidden="true" className="size-(--size-icon) text-muted-foreground" />
       </button>
     );
@@ -239,7 +246,7 @@ function NotificationRow() {
   return (
     <p className="mx-lg mt-md flex items-start gap-md rounded-lg border border-border bg-card px-md py-sm text-subhead text-muted-foreground" data-phone-notifications={row}>
       <BellIcon aria-hidden="true" className="mt-xxs size-(--size-icon) shrink-0" />
-      <span>{row === "denied" ? "알림이 꺼져 있어요 · 설정 > 알림에서 hide를 켜세요" : "알림은 홈 화면에 추가한 hide에서 켤 수 있어요. 공유 › 홈 화면에 추가"}</span>
+      <span>{row === "denied" ? t("mobile.notifications.denied") : t("mobile.notifications.installFirst")}</span>
     </p>
   );
 }

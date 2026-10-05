@@ -6,7 +6,9 @@
 //! conversation or its terminal, ask for older messages or more rows, close
 //! it, send that pane a reply or one key, open the start sheet and start an
 //! agent from it, and register or report its push subscription. Anything else is refused and recorded.
-//! It never receives a file, a path, a setting or the core's snapshot.
+//! It never receives a file, a path, a setting or the core's snapshot; the one
+//! exception is the interface language, which rides each `agents` frame so the
+//! phone speaks the language the operator chose.
 //!
 //! Every frame to the phone goes through `encode`, the one place a relay
 //! transport would wrap in end-to-end encryption (PRD D-01).
@@ -86,7 +88,12 @@ pub fn is_phone(first: &Value) -> bool {
 }
 
 fn agents_frame(projection: &Projection) -> Value {
-    json!({"type": "agents", "groups": projection.groups})
+    json!({
+        "type": "agents",
+        "groups": projection.groups,
+        // The core's language as stored, or null to follow the phone's own.
+        "interface_language": projection.interface_language,
+    })
 }
 
 fn meta_frame(meta: &PhoneMeta) -> Value {
@@ -766,5 +773,23 @@ async fn input(
             let reason = if certain { error.reason() } else { "uncertain" };
             answer(false, Some(reason))
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn the_agents_frame_carries_the_interface_language() {
+        let mut projection = Projection::default();
+        assert_eq!(
+            agents_frame(&projection),
+            json!({"type": "agents", "groups": [], "interface_language": null})
+        );
+        projection.interface_language = Some("ko".to_owned());
+        let frame = agents_frame(&projection);
+        assert_eq!(frame["interface_language"], "ko");
+        assert_eq!(frame["type"], "agents");
     }
 }
