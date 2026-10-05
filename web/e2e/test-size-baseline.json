@@ -68,10 +68,6 @@
       "lines": 244,
       "expect": 88
     },
-    "server-session-search.spec.ts::running Workspace ports and conversation content: keyboard, jump, scroll, policy and scope": {
-      "lines": 126,
-      "expect": 31
-    },
     "sidebar-status.spec.ts::a root waiting on its child, the badge's child list, and the progress line rules": {
       "lines": 144,
       "expect": 47

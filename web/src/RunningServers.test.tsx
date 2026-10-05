@@ -91,10 +91,25 @@ describe("Workspace server action", () => {
     await act(async () => root.render(<TooltipProvider><RunningServers checkout={displayed} view={view} actions={actions} /></TooltipProvider>));
   }
   async function openServer() {
-    const button = container.querySelector<HTMLButtonElement>('button[aria-label="Open server"]');
+    const button = container.querySelector<HTMLButtonElement>("button[data-open-server]");
     if (!button) throw new Error("Missing server action");
     await act(async () => button.click());
   }
+
+  it("names how many servers are known, and leaves the count out while it is unknown", async () => {
+    const name = () => container.querySelector("button[data-open-server]")?.getAttribute("aria-label");
+    const listing = (count: number) => checkout(Array.from({ length: count }, (_, index) => ({ host: "127.0.0.1", port: 3000 + index })));
+    for (const [count, expected] of [[0, "Open server, 0 running"], [1, "Open server, 1 running"], [2, "Open server, 2 running"]] as const) {
+      const shown = listing(count);
+      useShellStore.setState({ rest: catalog(shown, shown) });
+      await render(shown);
+      expect(name()).toBe(expected);
+    }
+    const reading = listing(2);
+    useShellStore.setState({ rest: { ...catalog(reading, reading), status: { server_discovery: { loading: true, failure: null } } } });
+    await render(reading);
+    expect(name()).toBe("Open server");
+  });
 
   it("shows actionable small feedback when the single direct server has disappeared before the click", async () => {
     const stale = checkout([{ host: "127.0.0.1", port: 3000 }]);
