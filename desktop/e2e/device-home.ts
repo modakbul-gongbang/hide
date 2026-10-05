@@ -84,7 +84,20 @@ export function seedAgentFiles(home: string): { claude: AgentSettings; codex: Ag
     fs.writeFileSync(file, `${JSON.stringify(settings, null, 2)}\n`);
   }
   seedCodex(home);
+  seedKitRecord(home);
   return { claude, codex };
+}
+
+/**
+ * An empty kit record, so this HOME reads as a machine the kit has run on. A
+ * machine with no record is held for the first-run agent choice and gets no
+ * hook until the operator answers it; these specs prove what the kit installs
+ * once it may, and the first-run choice has its own spec.
+ */
+function seedKitRecord(home: string): void {
+  const dir = path.join(home, ".hide", "kit");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "installed.json"), `${JSON.stringify({ format: 1, installed: [] })}\n`);
 }
 
 /**
