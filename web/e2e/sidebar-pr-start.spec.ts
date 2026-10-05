@@ -142,8 +142,8 @@ test("the sidebar draws every project's pull request with no screen asking, and 
      * A merged pull request's checkout is settled, so its row sits in the project's Inactive fold. The fold is
      * seeded open in the state the first start reads, not clicked open: a click is a toggle sent from a page that
      * has read `aria-expanded` and waits for the core to answer, which says nothing about the pull request glyph
-     * this flow proves. That the toggle opens and closes the fold is owned by the core test in
-     * `herdr-core/src/runtime/tests/projects.rs`.
+     * this flow proves. That the click sends the toggle is owned by `web/src/inactiveFold.test.tsx`, and what the
+     * core does with it by the core test in `herdr-core/src/runtime/tests/projects.rs`.
      */
     const mergedGlyph = async () => {
       await expect(page.locator('[data-inactive-checkouts$="/charlie"]')).toHaveAttribute("aria-expanded", "true", { timeout: 30_000 });
