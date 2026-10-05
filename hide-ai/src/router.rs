@@ -218,6 +218,9 @@ pub struct AiRouter {
     config: RouterConfig,
     sink: Arc<dyn AiLogSink>,
     sleep: Box<dyn Fn(Duration) + Send + Sync>,
+    /// The time every park, cache window and per-minute window is measured
+    /// against: the system's monotonic clock unless a test gives another.
+    now: Box<dyn Fn() -> Instant + Send + Sync>,
     state: Mutex<State>,
 }
 
@@ -243,6 +246,7 @@ impl AiRouter {
             config,
             sink,
             sleep,
+            now: Box::new(Instant::now),
             state: Mutex::new(State {
                 in_flight: HashMap::new(),
                 in_flight_count: 0,
@@ -257,6 +261,14 @@ impl AiRouter {
                 },
             }),
         }
+    }
+
+    /// Tests inject a clock so a park or a cache window can end without
+    /// waiting it out.
+    #[cfg(test)]
+    fn with_clock(mut self, now: Box<dyn Fn() -> Instant + Send + Sync>) -> Self {
+        self.now = now;
+        self
     }
 
     /// Current availability of every registered provider, refreshed when the
@@ -382,7 +394,7 @@ impl AiRouter {
                 measured: state.in_flight_count as u64 + 1,
             });
         }
-        let now = Instant::now();
+        let now = (self.now)();
         let window = Duration::from_secs(60);
         while state
             .recent_starts
@@ -461,7 +473,7 @@ impl AiRouter {
         request: &AiRequest,
         cancel: &CancelToken,
     ) -> Result<AiResult, AiError> {
-        let started = Instant::now();
+        let started = (self.now)();
         // Availability is read once per request, and a parked provider is
         // not read at all.
         let selection = self.select();
@@ -617,13 +629,13 @@ impl AiRouter {
                             let wait = retry_after.unwrap_or(self.config.default_cooldown);
                             self.lock()
                                 .cooldown_until
-                                .insert(provider, Instant::now() + wait);
+                                .insert(provider, (self.now)() + wait);
                             0
                         }
                         AiError::NotAuthenticated => {
                             self.lock()
                                 .availability
-                                .insert(provider, (Availability::NeedsLogin, Instant::now()));
+                                .insert(provider, (Availability::NeedsLogin, (self.now)()));
                             0
                         }
                         AiError::ProviderUnavailable(reason) => {
@@ -633,7 +645,7 @@ impl AiRouter {
                                     Availability::Unavailable {
                                         reason: reason.clone(),
                                     },
-                                    Instant::now(),
+                                    (self.now)(),
                                 ),
                             );
                             0
@@ -736,21 +748,21 @@ impl AiRouter {
     fn cached_availability(&self, backend: &dyn AiBackend) -> Availability {
         let provider = backend.id();
         if let Some((state, checked)) = self.lock().availability.get(&provider)
-            && checked.elapsed() < self.config.availability_ttl
+            && (self.now)().saturating_duration_since(*checked) < self.config.availability_ttl
         {
             return state.clone();
         }
         let state = backend.availability();
         self.lock()
             .availability
-            .insert(provider, (state.clone(), Instant::now()));
+            .insert(provider, (state.clone(), (self.now)()));
         state
     }
 
     fn cooldown_remaining(&self, provider: ProviderId) -> Option<Duration> {
         let mut state = self.lock();
         let until = *state.cooldown_until.get(&provider)?;
-        let now = Instant::now();
+        let now = (self.now)();
         if until <= now {
             state.cooldown_until.remove(&provider);
             // The park is over. Drop the cached answer with it so the next
@@ -779,7 +791,8 @@ impl AiRouter {
             event.event = "ai.request.finished";
             event.provider = provider;
             event.outcome_class = Some(class);
-            event.duration_ms = Some(started.elapsed().as_millis() as u64);
+            event.duration_ms =
+                Some((self.now)().saturating_duration_since(started).as_millis() as u64);
             event.attempt = Some(attempt);
             let mut detail = Vec::new();
             if let Err(error) = result {
@@ -1111,6 +1124,26 @@ mod tests {
         }
     }
 
+    /// A clock the test moves by hand, starting where the system's was when
+    /// it was made.
+    #[derive(Clone)]
+    struct ManualClock(Arc<Mutex<Instant>>);
+
+    impl ManualClock {
+        fn new() -> Self {
+            Self(Arc::new(Mutex::new(Instant::now())))
+        }
+
+        fn advance(&self, by: Duration) {
+            *self.0.lock().unwrap() += by;
+        }
+
+        fn source(&self) -> Box<dyn Fn() -> Instant + Send + Sync> {
+            let clock = Arc::clone(&self.0);
+            Box::new(move || *clock.lock().unwrap())
+        }
+    }
+
     fn make_router(backends: Vec<Arc<dyn AiBackend>>, sink: Arc<Recorder>) -> AiRouter {
         let config = RouterConfig {
             backoff_base: Duration::from_millis(1),
@@ -1387,7 +1420,6 @@ mod tests {
     }
 
     #[test]
-    #[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
     fn a_usage_limit_parks_the_provider_account_wide_until_it_resets() {
         let sink = Arc::new(Recorder::default());
         let codex = Scripted::new(
@@ -1399,7 +1431,8 @@ mod tests {
                 ok("after"),
             ],
         );
-        let router = make_router(vec![codex.clone()], sink);
+        let clock = ManualClock::new();
+        let router = make_router(vec![codex.clone()], sink).with_clock(clock.source());
         let first = router
             .execute(&request("p1", "x"), &CancelToken::new())
             .unwrap_err();
@@ -1416,7 +1449,14 @@ mod tests {
             }
         ));
         assert_eq!(codex.calls(), 1);
-        std::thread::sleep(Duration::from_millis(250));
+        // The park lasts the reset window the provider named, and no longer.
+        clock.advance(Duration::from_millis(199));
+        assert!(matches!(
+            router.execute(&other, &CancelToken::new()),
+            Err(AiError::UsageLimited { .. })
+        ));
+        assert_eq!(codex.calls(), 1);
+        clock.advance(Duration::from_millis(1));
         assert_eq!(
             router
                 .execute(&request("p3", "z"), &CancelToken::new())
@@ -1583,7 +1623,6 @@ mod tests {
     /// When the reason ends the router asks the selected provider once and
     /// goes back to it; nobody has to tell it the limit reset.
     #[test]
-    #[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
     fn an_expired_cooldown_re_reads_availability_once_and_returns_to_the_selected_provider() {
         let sink = Arc::new(Recorder::default());
         let codex = Scripted::new(
@@ -1593,12 +1632,14 @@ mod tests {
             })],
         );
         let claude = Scripted::new(ProviderId::Claude, vec![ok("claude")]);
-        let router = make_sticky_router(vec![codex.clone(), claude.clone()], sink.clone());
+        let clock = ManualClock::new();
+        let router = make_sticky_router(vec![codex.clone(), claude.clone()], sink.clone())
+            .with_clock(clock.source());
         router
             .execute(&request("p1", "x"), &CancelToken::new())
             .unwrap();
         let parked_probes = codex.probes();
-        std::thread::sleep(Duration::from_millis(250));
+        clock.advance(Duration::from_millis(200));
         codex.queue(vec![ok("codex is back")]);
 
         let state = router.provider_state().unwrap();
