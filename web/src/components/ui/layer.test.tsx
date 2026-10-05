@@ -1,8 +1,10 @@
 // @vitest-environment jsdom
 import { act } from "react";
 import { createRoot } from "react-dom/client";
-import { expect, it, vi } from "vitest";
+import { afterEach, expect, it, vi } from "vitest";
 import { useReturnFocus } from "./layer";
+
+afterEach(() => { document.body.replaceChildren(); });
 
 type Handback = (event: Event) => void;
 
@@ -66,4 +68,27 @@ it("does not take the keyboard back once a newer layer opened and closed after i
   expect(event.defaultPrevented).toBe(true);
   expect(document.activeElement).toBe(document.body);
   settingsButton.remove();
+});
+
+it("counts a layer that replaces another in one commit as opened after the other closed", () => {
+  vi.stubGlobal("IS_REACT_ACT_ENVIRONMENT", true);
+  holder("settings");
+  let older: Handback = () => {};
+  function Older() {
+    older = useReturnFocus(true);
+    return null;
+  }
+  function Newer() {
+    useReturnFocus(true);
+    return null;
+  }
+  const container = document.createElement("div");
+  document.body.append(container);
+  const root = createRoot(container);
+  act(() => root.render(<Older />));
+  act(() => root.render(<Newer />));
+  (document.activeElement as HTMLElement).blur();
+  act(() => root.unmount());
+  handBack(older);
+  expect(document.activeElement).toBe(document.body);
 });

@@ -4,7 +4,7 @@
 // and closes the innermost registered layer first; so every open layer
 // registers its close here, and nested layers close innermost-first.
 
-import { useCallback, useEffect, useRef, useState } from "react";
+import { useCallback, useEffect, useLayoutEffect, useRef, useState } from "react";
 import { restoreFocus } from "../../terminals";
 import { useUiStore } from "../../ui";
 
@@ -60,15 +60,19 @@ export function useReturnFocus(open: boolean) {
   // Radix hands focus back after a timeout, so the value must outlive the close.
   if (open && !wasOpen.current && typeof document !== "undefined") {
     previous.current = document.activeElement instanceof HTMLElement ? document.activeElement : null;
+  }
+  wasOpen.current = open;
+  // Layout cleanups of what a commit removes run before the layout effects of what it adds, so a layer
+  // replacing another in one commit counts as opened after the other closed. A content part is mounted
+  // only while its layer is open, so it closes by unmounting; a menu closes by `open` turning false.
+  useLayoutEffect(() => {
+    if (!open) return;
     layersOpened += 1;
     openedAtClose.current = null;
-  }
-  if (!open && wasOpen.current) openedAtClose.current = layersOpened;
-  wasOpen.current = open;
-  // A content part is mounted only while its layer is open, so it closes by unmounting.
-  useEffect(() => () => {
-    openedAtClose.current = layersOpened;
-  }, []);
+    return () => {
+      openedAtClose.current = layersOpened;
+    };
+  }, [open]);
   return useCallback((event: Event) => {
     const target = previous.current;
     if (!target) return;
