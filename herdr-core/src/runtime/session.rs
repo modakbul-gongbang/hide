@@ -20,6 +20,9 @@ pub(crate) type BirthClock = Arc<dyn Fn() -> Instant + Send + Sync>;
 /// announces settling.
 pub(super) struct CreatedTabCheckout {
     path: String,
+    /// `path` as `PathRules` read it, so a comparison costs no file system
+    /// lookup of the checkout.
+    root: String,
     /// The session has carried the tab at least once, so its absence from a
     /// later session means it closed.
     seen: bool,
@@ -48,52 +51,74 @@ impl CreatedTabCheckout {
     }
 }
 
+/// How a path is read before it is compared with a checkout's: this machine's
+/// own paths resolve links and trailing separators on its file system, a
+/// device's are its own strings, which this machine's files cannot speak for.
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub(super) enum PathRules {
+    Local,
+    Device,
+}
+
+impl PathRules {
+    pub(super) fn read(self, path: &str) -> String {
+        match self {
+            Self::Local => workspace::normalized_for_comparison(Path::new(path)),
+            Self::Device => path.trim_end_matches('/').to_owned(),
+        }
+    }
+}
+
+/// Whether `cwd` is `root` or below it, by names alone and whole names: a
+/// sibling that only starts with the checkout's name is outside it. Both are
+/// already read by the same `PathRules`.
+pub(super) fn within_by_names(cwd: &str, root: &str) -> bool {
+    hide_platform::path::wire_relative(root, cwd).is_ok()
+}
+
 /// Where a created tab's panes are read as being until one of them reports a
-/// cwd in it: the checkout the tab was created for, less the checkouts nested
-/// below it.
+/// cwd in it: the checkout the tab was created for, less the worktrees of its
+/// repository nested below it.
 pub(crate) struct CreatedTabClamp {
     pub(crate) tab_id: String,
+    /// The checkout as it was asked for, which a clamped pane reads as its cwd.
     pub(crate) path: String,
-    /// Linked worktrees Git lists inside `path`. A folder in one is that
-    /// worktree's, so it is no more the outer checkout's shell start folder
-    /// than a sibling is.
+    rules: PathRules,
+    /// `path` as `rules` read it, once, when the tab was recorded.
+    root: String,
+    /// The repository's other worktrees below `root`, as `rules` read them.
+    /// A folder in one is that worktree's, so it is no more the outer
+    /// checkout's shell start folder than a sibling is.
     nested: Vec<String>,
 }
 
 impl CreatedTabClamp {
-    /// Whether `cwd` is the checkout's own, by the path rules of the machine
-    /// that owns both paths.
-    fn holds(&self, cwd: &str, within: fn(&str, &str) -> bool) -> bool {
-        within(cwd, &self.path) && !self.nested.iter().any(|nested| within(cwd, nested))
+    /// Whether `cwd` is the checkout's own. One read of `cwd`; the nested
+    /// worktrees are compared by names, so their number costs no file system
+    /// lookup.
+    pub(super) fn holds(&self, cwd: &str) -> bool {
+        let cwd = self.rules.read(cwd);
+        within_by_names(&cwd, &self.root)
+            && !self
+                .nested
+                .iter()
+                .any(|nested| within_by_names(&cwd, nested))
     }
 }
 
-/// The worktrees below `path` among the repositories' listed ones. Both sides
-/// are spelled by Git and by the registry, so they are related by their names
-/// alone: this runs under the runtime lock on every session, where a file
-/// system lookup per worktree is not affordable.
-fn nested_worktrees<'a>(
-    projects: impl Iterator<Item = &'a crate::model::ProjectWorktreesSnapshot>,
-    path: &str,
-) -> Vec<String> {
-    let wire = |path: &str| hide_platform::path::to_wire_lossy(Path::new(path));
-    let path = wire(path);
-    projects
-        .flat_map(|project| &project.worktrees)
-        .map(|worktree| wire(&worktree.path))
-        .filter(|candidate| {
-            candidate.trim_end_matches('/') != path.trim_end_matches('/')
-                && device_path_within(candidate, &path)
-        })
+/// The worktrees of the repository that lists `root`, strictly below it.
+/// `repositories` holds each repository's worktree paths as `PathRules` read
+/// them; a checkout no repository lists has none, so a worktree the catalog
+/// has not listed yet is not told apart from the checkout around it.
+fn nested_worktrees(repositories: &[Vec<String>], root: &str) -> Vec<String> {
+    repositories
+        .iter()
+        .find(|worktrees| worktrees.iter().any(|path| path == root))
+        .into_iter()
+        .flatten()
+        .filter(|path| path.as_str() != root && within_by_names(path, root))
+        .cloned()
         .collect()
-}
-
-/// Whether `cwd` is `root` or below it on a device. The device owns both
-/// paths, so they are related by their names alone and never asked of this
-/// machine's files, where the same name may be another folder or a link
-/// (`hide_platform::path`).
-pub(super) fn device_path_within(cwd: &str, root: &str) -> bool {
-    hide_platform::path::wire_relative(root, cwd).is_ok()
 }
 
 enum SessionFocusCheck {
@@ -2127,8 +2152,8 @@ impl Runtime {
         if let Ok(payload) = fetched.as_mut() {
             self.label_overlay.apply(payload);
             self.settle_agent_sleep(payload);
-            self.settle_created_tabs(payload);
-            Self::clamp_created_tab_cwds(payload, &self.created_tab_clamps());
+            let unsettled = self.settle_created_tabs(payload, self.created_tab_clamps());
+            Self::clamp_created_tab_cwds(payload, &unsettled);
         } else {
             // Herdr's tab ids are its own server's; a later connection may
             // hand one to a tab Hide never created.
@@ -5037,6 +5062,11 @@ impl Runtime {
     /// asked to republish, because nothing else would place it again until an
     /// unrelated change.
     fn record_created_tab_checkout(&mut self, tab_id: &str, path: &str) {
+        // The same tab acknowledged twice is one record: a second one would
+        // start its window again and read an entered folder as a birth value.
+        if self.created_tab_checkouts.contains_key(tab_id) {
+            return;
+        }
         if self.created_tab_checkouts.len() >= CREATED_TAB_CHECKOUT_LIMIT
             && !self.created_tab_checkouts.contains_key(tab_id)
         {
@@ -5053,6 +5083,7 @@ impl Runtime {
             tab_id.to_owned(),
             CreatedTabCheckout {
                 path: path.to_owned(),
+                root: PathRules::Local.read(path),
                 seen: false,
                 settled: false,
                 recorded_at: (self.birth_clock)(),
@@ -5077,27 +5108,37 @@ impl Runtime {
     /// Notes which created tabs report a cwd inside their checkout, read off
     /// the session as Herdr sent it: from then on the cwd is where the shell
     /// is, not where it was born.
-    fn settle_created_tabs(&mut self, payload: &SessionSnapshotPayload) {
+    /// Returns the clamps of the tabs still on a birth value.
+    fn settle_created_tabs(
+        &mut self,
+        payload: &SessionSnapshotPayload,
+        clamps: Vec<CreatedTabClamp>,
+    ) -> Vec<CreatedTabClamp> {
         let now = (self.birth_clock)();
-        for clamp in self.created_tab_clamps() {
-            let Some(created) = self.created_tab_checkouts.get_mut(&clamp.tab_id) else {
-                continue;
-            };
-            let mut carried = false;
-            let mut inside = false;
-            for pane in payload
-                .layouts
-                .iter()
-                .filter(|layout| layout.tab_id == clamp.tab_id)
-                .flat_map(|layout| &layout.panes)
-            {
-                carried = true;
-                if let Some(cwd) = Self::pane_cwd(payload, &pane.pane_id) {
-                    inside |= clamp.holds(&cwd, path_is_within_checkout);
+        clamps
+            .into_iter()
+            .filter(|clamp| {
+                let Some(created) = self.created_tab_checkouts.get_mut(&clamp.tab_id) else {
+                    return false;
+                };
+                let mut carried = false;
+                let mut inside = false;
+                for pane in payload
+                    .layouts
+                    .iter()
+                    .filter(|layout| layout.tab_id == clamp.tab_id)
+                    .flat_map(|layout| &layout.panes)
+                {
+                    carried = true;
+                    if let Some(cwd) = Self::pane_cwd(payload, &pane.pane_id) {
+                        inside |= clamp.holds(&cwd);
+                    }
                 }
-            }
-            created.settled = inside || (carried && created.birth_window_over(now, &clamp.tab_id));
-        }
+                created.settled =
+                    inside || (carried && created.birth_window_over(now, &clamp.tab_id));
+                !created.settled
+            })
+            .collect()
     }
 
     /// The created tabs whose pane cwd is still a birth value, with the
@@ -5108,17 +5149,12 @@ impl Runtime {
             .filter(|(_, created)| !created.settled)
             .map(|(tab_id, created)| CreatedTabClamp {
                 tab_id: tab_id.clone(),
-                nested: self.nested_checkouts(&created.path),
                 path: created.path.clone(),
+                rules: PathRules::Local,
+                nested: nested_worktrees(&self.local_worktree_paths, &created.root),
+                root: created.root.clone(),
             })
             .collect()
-    }
-
-    /// The linked worktrees Git lists below `path` on this machine: each is a
-    /// checkout of its own, so a folder in one is not in the checkout around
-    /// it.
-    fn nested_checkouts(&self, path: &str) -> Vec<String> {
-        nested_worktrees(self.worktree_catalog.projects.iter(), path)
     }
 
     /// Reads a created tab's panes as inside the checkout the tab was created
@@ -5139,10 +5175,8 @@ impl Runtime {
                 .flat_map(|layout| layout.panes.iter().map(|pane| pane.pane_id.clone()))
                 .collect::<Vec<_>>();
             for pane_id in pane_ids {
-                let outside = |cwd: &Option<String>| {
-                    cwd.as_deref()
-                        .is_none_or(|cwd| !clamp.holds(cwd, path_is_within_checkout))
-                };
+                let outside =
+                    |cwd: &Option<String>| cwd.as_deref().is_none_or(|cwd| !clamp.holds(cwd));
                 for pane in payload
                     .panes
                     .iter_mut()
@@ -5171,6 +5205,10 @@ impl Runtime {
     /// publish.
     pub(super) fn record_created_device_tab(&mut self, target_id: &str, tab_id: &str, path: &str) {
         let key = (target_id.to_owned(), tab_id.to_owned());
+        // See `record_created_tab_checkout`: one record per tab.
+        if self.created_device_tabs.contains_key(&key) {
+            return;
+        }
         if self.created_device_tabs.len() >= CREATED_TAB_CHECKOUT_LIMIT
             && !self.created_device_tabs.contains_key(&key)
         {
@@ -5188,6 +5226,7 @@ impl Runtime {
             key,
             CreatedTabCheckout {
                 path: path.to_owned(),
+                root: PathRules::Device.read(path),
                 seen: false,
                 settled: false,
                 recorded_at: (self.birth_clock)(),
@@ -5203,12 +5242,21 @@ impl Runtime {
         }
     }
 
-    /// The linked worktrees a device's helper listed below `path`.
-    fn device_nested_checkouts(&self, target_id: &str, path: &str) -> Vec<String> {
+    /// The worktrees of each repository a device's helper listed, as the
+    /// helper spelled them.
+    fn device_worktree_paths(&self, target_id: &str) -> Vec<Vec<String>> {
         self.device_worktrees
             .get(target_id)
-            .map(|listed| nested_worktrees(listed.projects.values(), path))
-            .unwrap_or_default()
+            .into_iter()
+            .flat_map(|listed| listed.projects.values())
+            .map(|project| {
+                project
+                    .worktrees
+                    .iter()
+                    .map(|worktree| PathRules::Device.read(&worktree.path))
+                    .collect()
+            })
+            .collect()
     }
 
     /// Reads a device tab Hide created as in the folder it was created for
@@ -5241,6 +5289,7 @@ impl Runtime {
                 present || !created.seen
             });
         let now = (self.birth_clock)();
+        let repositories = self.device_worktree_paths(target_id);
         let clamps = self
             .created_device_tabs
             .iter()
@@ -5249,8 +5298,10 @@ impl Runtime {
             })
             .map(|((_, tab_id), created)| CreatedTabClamp {
                 tab_id: tab_id.clone(),
-                nested: self.device_nested_checkouts(target_id, &created.path),
                 path: created.path.clone(),
+                rules: PathRules::Device,
+                nested: nested_worktrees(&repositories, &created.root),
+                root: created.root.clone(),
             })
             .map(|clamp| (clamp.tab_id.clone(), clamp))
             .collect::<BTreeMap<_, _>>();
@@ -5273,16 +5324,13 @@ impl Runtime {
                     else {
                         continue;
                     };
-                    created.settled = tab
-                        .panes
-                        .iter()
-                        .any(|pane| clamp.holds(&pane.cwd, device_path_within))
-                        || created.birth_window_over(now, native);
+                    created.settled = tab.panes.iter().any(|pane| clamp.holds(&pane.cwd))
+                        || (!tab.panes.is_empty() && created.birth_window_over(now, native));
                     if created.settled {
                         continue;
                     }
                     for pane in &mut tab.panes {
-                        if !clamp.holds(&pane.cwd, device_path_within) {
+                        if !clamp.holds(&pane.cwd) {
                             pane.cwd = clamp.path.clone();
                         }
                     }

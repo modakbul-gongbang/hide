@@ -2064,7 +2064,7 @@ fn a_device_tab_whose_pane_never_reports_its_folder_is_believed_after_the_window
 /// folder that only starts with the checkout's name is not inside it.
 #[test]
 fn a_device_path_is_inside_a_checkout_by_whole_names() {
-    use crate::runtime::session::device_path_within as within;
+    use crate::runtime::session::within_by_names as within;
 
     assert!(within("C:/repo/src", "C:/repo"));
     assert!(within("C:/repo", "C:/repo"));
@@ -2186,4 +2186,30 @@ fn a_device_birth_cwd_inside_a_nested_linked_worktree_stays_clamped_to_the_outer
         .flat_map(|(_, tabs)| tabs)
         .collect::<Vec<_>>();
     assert_eq!(in_main_checkout, ["t1", "t2"], "{:?}", layout(session));
+}
+
+/// The device acknowledges the same tab twice (a retry, or the worktree answer
+/// and the tab acknowledgment): the second must not start the record again and
+/// read the folder the shell has since entered as a birth value.
+#[test]
+fn a_repeated_device_acknowledgment_keeps_the_settled_record() {
+    let t = tree();
+    let mut runtime = device_runtime(&t);
+    let raw = |cwd: &str| {
+        session(vec![herdr_workspace(
+            TARGET,
+            "w1",
+            &t.main,
+            &[("t1", &t.main), ("t2", cwd)],
+        )])
+    };
+
+    acknowledge_device_tab(&mut runtime, &t.main);
+    runtime.ingest_remote_session(TARGET, Ok(raw(&t.main)));
+    // The shell has entered the folder and then left it.
+    runtime.ingest_remote_session(TARGET, Ok(raw(&t.other)));
+    assert_eq!(device_tabs_in(&runtime, &t.main), ["t1"]);
+
+    acknowledge_device_tab(&mut runtime, &t.main);
+    assert_eq!(device_tabs_in(&runtime, &t.main), ["t1"]);
 }
