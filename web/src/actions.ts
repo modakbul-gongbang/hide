@@ -2071,7 +2071,7 @@ export function createActions(send: DispatchFn) {
     },
 
     /** Opens the trash confirmation; nothing is dispatched until it is confirmed. */
-    requestTrash(path: string, name: string, isDirectory: boolean, selectAfter: string, inode: number | null) {
+    requestTrash(path: string, name: string, isDirectory: boolean, selectAfter: string, inode: string | null) {
       const target = explorerTarget();
       if (!target) return diagnostic("path_trash: no focused checkout");
       ui().setPendingTrash({ path, name, isDirectory, selectAfter, inode, target });

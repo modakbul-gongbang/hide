@@ -114,7 +114,8 @@ export async function prepareDraft({ tag, sha, directory, client }) {
   if (release) requireRelease(release, tag, marker);
   else {
     await preflight();
-    release = await client.create({ tag_name: tag, target_commitish: sha, name: tag, body: marker, draft: true, prerelease: false });
+    // The tag already exists; under immutable releases GitHub refuses a target commit for it with HTTP 403.
+    release = await client.create({ tag_name: tag, name: tag, body: marker, draft: true, prerelease: false });
     requireRelease(release, tag, marker);
   }
   const id = release.id;

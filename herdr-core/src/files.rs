@@ -366,6 +366,30 @@ pub struct ExplorerOperation {
     pub expected_inode: Option<u64>,
 }
 
+/// An inode on the shell's wire, as decimal text. A browser reads a JSON
+/// number as a double, which rounds a 64-bit id past 2^53 (an NTFS file id
+/// once its sequence number reaches 32), and a trash that sent the rounded
+/// id back would be refused as an item that changed while its prompt was
+/// open. `contracts/hided-ws.schema.json` names the field a string.
+pub mod inode_text {
+    use serde::{Deserialize, Deserializer, Serializer};
+
+    pub fn serialize<S: Serializer>(inode: &Option<u64>, serializer: S) -> Result<S::Ok, S::Error> {
+        match inode {
+            Some(inode) => serializer.serialize_str(&inode.to_string()),
+            None => serializer.serialize_none(),
+        }
+    }
+
+    pub fn deserialize<'de, D: Deserializer<'de>>(
+        deserializer: D,
+    ) -> Result<Option<u64>, D::Error> {
+        Option::<String>::deserialize(deserializer)?
+            .map(|text| text.parse().map_err(serde::de::Error::custom))
+            .transpose()
+    }
+}
+
 impl ExplorerOperation {
     pub fn create(
         kind: ExplorerOperationKind,
@@ -599,6 +623,33 @@ fn item_below(parent: &RelPath, name: &str) -> Result<RelPath, String> {
     parent
         .join(name)
         .map_err(|_| format!("{name} is not a valid name"))
+}
+
+#[cfg(test)]
+mod inode_text_tests {
+    #[derive(serde::Deserialize, serde::Serialize)]
+    struct Row {
+        #[serde(default, with = "super::inode_text")]
+        inode: Option<u64>,
+    }
+
+    #[test]
+    fn an_inode_past_what_a_browser_number_holds_round_trips_as_text() {
+        let row = Row {
+            inode: Some((1_u64 << 53) + 1),
+        };
+        let text = serde_json::to_string(&row).unwrap();
+        assert_eq!(text, r#"{"inode":"9007199254740993"}"#);
+        let back: Row = serde_json::from_str(&text).unwrap();
+        assert_eq!(back.inode, Some((1_u64 << 53) + 1));
+    }
+
+    #[test]
+    fn an_inode_sent_as_a_number_or_absent_is_not_taken_for_one() {
+        assert!(serde_json::from_str::<Row>(r#"{"inode":9007199254740993}"#).is_err());
+        assert!(serde_json::from_str::<Row>(r#"{"inode":"12a"}"#).is_err());
+        assert_eq!(serde_json::from_str::<Row>("{}").unwrap().inode, None);
+    }
 }
 
 #[cfg(test)]

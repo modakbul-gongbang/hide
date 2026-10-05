@@ -14,6 +14,7 @@ Web owner: `web/src/WorkspaceScreen.tsx`, `web/src/ViewAreas.tsx`, `web/src/Tool
 The toolbar spans the Workspace's full width and holds the path back (`Home / Project / Workspace`, where `Home` opens the Overview), led by the device's colored band when the Workspace is not this Mac's; a tab in Home reads `Home / ~/hide`, since Home is no project.
 Its right end holds three icons and nothing else, in this order: `Open server`, File Views and Tools.
 `Open server` (a globe): one known listener opens directly as a page in File Views, and multiple listeners open a compact keyboard picker.
+Its accessible name carries how many listeners are known (`Open server, 2 running`), so a screen reader tells a globe that opens a page at once from one that opens the picker; while the count is unknown (a remote Workspace, no connection, a discovery that is still reading or failed) the name is `Open server`, and the tooltip always says `Open server`.
 The picker shows each real bind address and port, preserves IPv4/IPv6 scope, and supports arrows, Home, End, Enter and Escape.
 An empty, loading, disconnected, failed or stale catalog gives small feedback in the same popover; a remote Workspace explicitly has no local discovery.
 Discovery never starts or stops a server, and an opened page retains the Browser View’s own connection failure and recovery controls.
@@ -909,7 +910,7 @@ Repeating a direct command leaves the same list selected; hidden or narrow keyca
 Retired `toggle_sidebar_view` and `project_home` stored bindings are ignored without losing other valid bindings, with a diagnostic.
 
 A device that is not connected shows the top line and its reconnect view with no tab strip.
-Projects lists the device's Needs You, its Home row and its projects, with Done left to the Agents tab (the one-device sidebar used to raise Done above Home too); Agents lists the device's own agents under Needs You, Done, Working and Seen (docs/status-model.md), with `Needs You N · Done N · Working N` above the list, a zero count left out, and no row naming its device.
+Projects lists the device's Needs You and Done, its Home row and its projects, with Working and Seen left to the Agents tab; Agents lists the device's own agents under Needs You, Done, Working and Seen (docs/status-model.md), with `Needs You N · Done N · Working N` above the list, a zero count left out, and no row naming its device.
 Choosing a tile keeps each device's lists apart: another device's agents never appear in this device's Agents, and ⌥n numbers the front device's Agents list.
 Search opens the ⌘K palette and Add project the Add a project dialog (see Adding a project), on this machine or a selected SSH device alike; there is no Search field row and no bottom new-workspace button.
 The Herdr status line sits under the top and above the list, and is not shown while a device is in front.
@@ -925,8 +926,10 @@ While a checkout's agent rows are closed, its status badge ends line one; openin
 A checkout's second line is its purpose, after the parent checkout it was raised from when there is one, with the last-commit age ending it on the time column; it is drawn only while the checkout has a purpose or a raising parent, so a checkout with agents and neither is one line.
 A checkout with neither, or one whose Git facts have not been read yet, is one line, with its age on that line.
 Workspace disclosure persists across launches and hides only the nested agent rows, preserving selection, running panes, and raised attention rows.
-The web shell draws the raised group at the top of the Projects list as `Needs You · N`, left out while empty: the Needs You agents whose pane a listed project's checkout or the Home owns, in the core's order, on the Agents list's own row with its place line, drawn whatever their project, checkout or parent has folded, never unfolded themselves, and opened as the Agents row opens.
-A device's Projects list is its `Needs You · N` group, then the Home row, then Pinned and the projects, with no Done group (Done is in the Agents tab), and no row there names the device, since the whole list is that device's (PRD home-device-rail B6, with the rail rework of quick device-rail-badges).
+The web shell draws the raised groups at the top of the Projects list as `Needs You · N` and then `Done · N`, each left out while empty: the agents of that group whose pane a listed project's checkout or the Home owns, in the core's order, on the Agents list's own row with its place line, drawn whatever their project, checkout or parent has folded, never unfolded themselves, and opened as the Agents row opens.
+A raised group draws at most its five (Needs You) or three (Done) most recent agents; the rest wait behind a `More N` fold row under them, styled as the inactive folds, which opens them below itself, and N in the group's heading stays the whole count.
+The fold is the page's own and starts closed on a fresh load, so the list returns to its short form; an agent folded there keeps its ⌥n number on its checkout row.
+A device's Projects list is its `Needs You · N` group, its `Done · N` group, then the Home row, then Pinned and the projects, and no row there names the device, since the whole list is that device's (with the rail rework of quick device-rail-badges).
 An agent row's title is its identity label at both densities: the rolling task, or the provider's name when no task exists; a Herdr agent name and a Herdr workspace label never become display copy.
 A row whose descendants are folded, and every raised row, wears a descendant badge counting live descendants by state before the elapsed time; opening the fold removes the badge because the opened rows carry their own marks.
 
@@ -1102,6 +1105,7 @@ Recent Projects (⌥Tab / ⌥⇧Tab) retains its global project order and restor
 Both global lists and the Agent pane cycle carry a device chip on a row outside the device in front and move the rail, sidebar and center together when committed.
 The session uses one bounded recent-surface history; the View area cycle filters it and appends normal area tabs not yet visited.
 The Agent pane cycle reads the core's order of pane visits (`ui_state.recent_pane_ids`, saved with the UI state); the page decides what a visit is and reports it with `pane_visit`, and the fifty most recent panes are kept, shell panes included, since an agent may start in one later.
+Until the core's order moves after a report, the page puts the pane it reported first, so a cycle opened before the echo arrives starts where the keyboard last was.
 The shown tab of the recorded keyboard area is the current visit, including native browser pages; intermediate commit frames are not visits.
 
 Reopen Closed Tab is disabled when the session-local recent-close stack is empty or a restore is already running, and restoration works regardless of which surface currently owns focus.

@@ -341,7 +341,7 @@ const REMOTE_AGENTS: Record<SceneContent, AgentRow[]> = {
   ],
 };
 
-/** Enough more agents on `mini` for ten or more Needs You, an unseen Done and a second Working. */
+/** Enough more agents on `mini` for ten or more Needs You, past the Projects list's cap, an unseen Done and a second Working. */
 const BUSY_AGENTS: AgentRow[] = [
   ...Array.from({ length: 11 }, (_, index) =>
     agent({ pane_id: `remote:mini:busy:${index}`, identity_label: `배치 ${index + 1}`, agent_kind: "codex", group: "needs_you", symbol: "?", status_label: "Question", demand: "question", elapsed: "3m", detail: "확인이 필요합니다" }),
@@ -376,7 +376,8 @@ function deviceWorld(content: SceneContent, workspaces: Workspace[], now: number
     checkouts: [{ ...checkout({ id: `${id}:main`, workspace: id, branch: "main", primary: true, age: 300, panes }, now), workspace_id: id }],
   });
   const miniWorkspaces = [
-    remoteWorkspace("remote:mini:workspace:web", "web", {}, ["remote:mini:pane:1", "remote:mini:pane:2"]),
+    // Busy, the extra agents run in web too, so its Projects list raises them past the Needs You cap.
+    remoteWorkspace("remote:mini:workspace:web", "web", {}, ["remote:mini:pane:1", "remote:mini:pane:2", ...(busy ? BUSY_AGENTS.map((row) => row.pane_id) : [])]),
     { ...remoteWorkspace("remote:mini:workspace:home", "hide", { is_home: true, is_git: false }, []), path: "/Users/example/hide" },
   ];
   return {

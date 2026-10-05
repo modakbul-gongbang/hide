@@ -30,8 +30,8 @@ export type TerminalChunk = {
   bytes_base64: string;
 };
 
-/** `inode` is the entry's own identity in a checkout listing, which a trash of the row confirms. */
-export type DirectoryEntry = { name: string; path: string; is_directory: boolean; inode?: number };
+/** `inode` is the entry's own identity in a checkout listing, which a trash of the row confirms: decimal text, because a number would round a 64-bit id. */
+export type DirectoryEntry = { name: string; path: string; is_directory: boolean; inode?: string };
 export type DirectoryList = {
   /** The event that asked: `file_list`, the Explorer's. */
   kind: string;

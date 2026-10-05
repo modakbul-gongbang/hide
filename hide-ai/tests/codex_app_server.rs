@@ -85,20 +85,47 @@ fn the_child_is_started_with_tools_disabled_and_stdio_listen() {
     });
 }
 
+/// Waits until the slow fake has created `marker`, which it does once a turn
+/// has started. The fake is another process, so the file is polled.
+#[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
+fn wait_for_turn(marker: &std::path::Path) {
+    let deadline = std::time::Instant::now() + Duration::from_secs(20);
+    while !marker.exists() {
+        assert!(
+            std::time::Instant::now() < deadline,
+            "the turn never started: {}",
+            marker.display()
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+}
+
 #[test]
-#[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
 fn a_cancelled_request_interrupts_the_turn_and_keeps_the_child() {
     with_mode("slow", || {
+        let marker =
+            std::env::temp_dir().join(format!("hide-ai-turn-started-{}.txt", std::process::id()));
+        let _ = std::fs::remove_file(&marker);
+        // SAFETY: `with_mode` holds the lock every writer of FAKE_* takes.
+        unsafe { std::env::set_var("FAKE_STARTED_FILE", &marker) };
         let backend = backend();
         let cancel = CancelToken::new();
         let canceller = cancel.clone();
-        std::thread::spawn(move || {
-            std::thread::sleep(Duration::from_millis(300));
-            canceller.cancel();
-        });
+        // The cancel is raised once the turn is running, so it is a running
+        // turn that is interrupted, not a start that is abandoned.
+        let raised = {
+            let marker = marker.clone();
+            std::thread::spawn(move || {
+                wait_for_turn(&marker);
+                canceller.cancel();
+            })
+        };
         let error = backend
             .execute(&request(Duration::from_secs(10)), &cancel)
             .unwrap_err();
+        unsafe { std::env::remove_var("FAKE_STARTED_FILE") };
+        let _ = std::fs::remove_file(&marker);
+        raised.join().unwrap();
         assert_eq!(error, AiError::Cancelled);
         // The same child answers the next availability probe.
         assert_eq!(backend.availability(), Availability::Ready);

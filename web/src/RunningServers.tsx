@@ -27,6 +27,10 @@ export function RunningServers({ checkout, view, actions }: { checkout: Checkout
   const [gone, setGone] = useState(false);
   const ports = runningServers(checkout);
   const unavailable = view.device_id !== "local" ? t("documents.serversUnavailable") : !live ? t("documents.serversWaiting") : discovery?.loading ? t("documents.serversReading") : discovery?.failure;
+  // The name says how many listeners are known, so a screen reader can tell
+  // whether the globe opens a page at once or the picker; an unknown count
+  // is left out rather than said as zero.
+  const name = unavailable ? t("documents.openServer") : t("documents.openServerCount", { count: ports.length });
   const choose = (server: {host: string; port: number}) => {
     // A picker can outlive a port sample or Workspace. Read the current
     // catalog, route explicitly, and never substitute another Workspace.
@@ -49,7 +53,7 @@ export function RunningServers({ checkout, view, actions }: { checkout: Checkout
     }}>
       <Hint label={t("documents.openServer")}>
         <PopoverTrigger asChild>
-          <Button variant="ghost" size="icon-sm" aria-label={t("documents.openServer")} data-open-server="true"><GlobeIcon /></Button>
+          <Button variant="ghost" size="icon-sm" aria-label={name} data-open-server="true"><GlobeIcon /></Button>
         </PopoverTrigger>
       </Hint>
       <PopoverContent align="end" aria-label={t("documents.runningServers")} className="flex flex-col gap-xs" onOpenAutoFocus={(event) => {

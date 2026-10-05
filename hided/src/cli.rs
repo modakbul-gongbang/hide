@@ -35,6 +35,10 @@ pub enum CommandKind {
     BrowserConnect {
         display_id: Option<String>,
     },
+    /// `hide browser <verb> <display> ...`: read or act on a page.
+    BrowserPage(crate::browser_page::Command),
+    /// `hide browser help`: the agent guide for the page commands.
+    BrowserHelp,
     WorkspaceBootstrap,
     WorkspaceInfo,
     ViewList,
@@ -47,7 +51,7 @@ pub enum CommandKind {
     },
 }
 
-const BROWSER_USAGE: &str = "usage: hide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>] | connect [--display <id>]";
+const BROWSER_USAGE: &str = "usage: hide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>] | connect [--display <id>] | help | <command> <display> ... (see hide browser help)";
 
 pub fn parse_args(args: &[String]) -> Result<CommandKind, String> {
     let mut iter = args.iter().skip(1);
@@ -216,6 +220,15 @@ fn parse_view<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<CommandK
 
 fn parse_browser<'a>(mut iter: impl Iterator<Item = &'a String>) -> Result<CommandKind, String> {
     let verb = iter.next().map(String::as_str);
+    if verb == Some("help") {
+        return match iter.next() {
+            None => Ok(CommandKind::BrowserHelp),
+            Some(_) => Err(BROWSER_USAGE.to_owned()),
+        };
+    }
+    if let Some(verb) = verb.filter(|verb| crate::browser_page::VERBS.contains(verb)) {
+        return crate::browser_page::parse(verb, iter).map(CommandKind::BrowserPage);
+    }
     if verb == Some("connect") {
         let display_id = match (iter.next().map(String::as_str), iter.next(), iter.next()) {
             (None, None, None) => None,
@@ -260,8 +273,13 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
         println!("{}", crate::delivery_cli::USAGE);
         println!("{}", crate::agent_cli::USAGE);
         println!(
-            "hide workspace info\nhide file open <path> [--beside] [--reveal] [--request-id <id>]\nhide diff open <path> [--beside] [--reveal] [--request-id <id>]\nhide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>]\nhide browser connect [--display <id>]\nhide view list\nhide view status <view-id>\nhide view select <view-id> [--reveal] [--request-id <id>]\nhide view close <view-id> [--request-id <id>]\nhide view split <view-id> --area <area-id> --edge left|right|up|down [--request-id <id>]\nhide view move <view-id> --area <area-id> --index <n> [--request-id <id>]\nEach Workspace command requires a live Hide renderer and a caller Hide can bind to a checkout, an attested Herdr pane or a shell inside a registered checkout; it never starts Hide."
+            "hide workspace info\nhide file open <path> [--beside] [--reveal] [--request-id <id>]\nhide diff open <path> [--beside] [--reveal] [--request-id <id>]\nhide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>]\nhide browser connect [--display <id>]\nhide browser snapshot|click|fill|type|press|hover|drag|scroll|wait|screenshot|eval|console|network <display> ...\nhide browser help\nhide view list\nhide view status <view-id>\nhide view select <view-id> [--reveal] [--request-id <id>]\nhide view close <view-id> [--request-id <id>]\nhide view split <view-id> --area <area-id> --edge left|right|up|down [--request-id <id>]\nhide view move <view-id> --area <area-id> --index <n> [--request-id <id>]\nEach Workspace command requires a live Hide renderer and a caller Hide can bind to a checkout, an attested Herdr pane or a shell inside a registered checkout; it never starts Hide."
         );
+        return Ok(());
+    }
+    // The agent guide needs no daemon and no environment.
+    if kind == CommandKind::BrowserHelp {
+        print!("{}", crate::browser_page::HELP);
         return Ok(());
     }
     let env = match env::load() {
@@ -276,6 +294,7 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
                     | CommandKind::ViewStatus { .. }
                     | CommandKind::BrowserOpen { .. }
                     | CommandKind::BrowserConnect { .. }
+                    | CommandKind::BrowserPage(_)
                     | CommandKind::WorkspaceAction { .. }
             ) =>
         {
@@ -300,7 +319,7 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
                 crate::delivery_cli::run(&env, command)
             }
         }
-        CommandKind::Help => unreachable!("handled above"),
+        CommandKind::Help | CommandKind::BrowserHelp => unreachable!("handled above"),
         CommandKind::Open => open(&env),
         CommandKind::Connect => connect_json(&env),
         CommandKind::Status { json: true } => status_json(&env),
@@ -319,6 +338,7 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
             println!("{answer}");
             Ok(())
         }
+        CommandKind::BrowserPage(command) => crate::browser_page::run(&env, command),
         CommandKind::WorkspaceBootstrap => {
             let reference = crate::workspace_cli::bootstrap(&env, false)?;
             println!("{}", serde_json::json!({"ok":true,"reference":reference}));
@@ -411,7 +431,7 @@ fn workspace_action_value(
 
 /// What the caller can do about a refused credential bootstrap. The daemon
 /// answers the bootstrap with a reason only, so the CLI names the next step.
-fn bootstrap_next_action(reason: &str) -> &'static str {
+pub(crate) fn bootstrap_next_action(reason: &str) -> &'static str {
     match reason {
         "checkout_not_registered" => crate::pane_auth::CHECKOUT_NEXT_ACTION,
         "caller_unavailable" => "Retry from a live shell inside a registered project checkout",
@@ -905,7 +925,7 @@ fn daemon_url(state: &DaemonState) -> String {
 fn status(env: &Env) -> Result<(), String> {
     match healthy_state(env) {
         Some(state) => {
-            let health = health_json(state.port)?;
+            let health = health_json(state.port, HEALTH_REQUEST)?;
             let clients = health
                 .get("clients")
                 .and_then(|value| value.as_u64())
@@ -1061,15 +1081,51 @@ fn spawn_daemon(env: &Env, keep_alive: bool) -> Result<(), String> {
     Ok(())
 }
 
+/// How long `hide connect` waits for the daemon it started to answer, on
+/// the wall clock; the error names this same bound.
+const HEALTHY_WITHIN: Duration = Duration::from_secs(10);
+
+/// The longest one `/health` request may take.
+const HEALTH_REQUEST: Duration = Duration::from_secs(1);
+
+/// The pause between two looks at a daemon that has not answered yet.
+const HEALTH_PAUSE: Duration = Duration::from_millis(100);
+
 #[allow(clippy::disallowed_methods)] // a production wait, not test code
 fn wait_healthy(env: &Env) -> Result<DaemonState, String> {
-    for _ in 0..100 {
-        if let Some(state) = healthy_state(env) {
-            return Ok(state);
+    wait_healthy_within(
+        HEALTHY_WITHIN,
+        std::time::Instant::now,
+        std::thread::sleep,
+        |timeout| probe_daemon(&env.state_dir, timeout).map(|(state, _)| state),
+    )
+}
+
+/// Looks at the started daemon until it answers or `within` has passed on
+/// `now`'s clock. No request may outlast the time left, so the wait ends at
+/// the bound it names, and the error says what was last seen, so a slow
+/// start names its stage.
+fn wait_healthy_within(
+    within: Duration,
+    now: impl Fn() -> std::time::Instant,
+    mut pause: impl FnMut(Duration),
+    mut probe: impl FnMut(Duration) -> Result<DaemonState, String>,
+) -> Result<DaemonState, String> {
+    let deadline = now() + within;
+    loop {
+        let left = deadline.saturating_duration_since(now());
+        let seen = match probe(left.min(HEALTH_REQUEST)) {
+            Ok(state) => return Ok(state),
+            Err(seen) => seen,
+        };
+        let left = deadline.saturating_duration_since(now());
+        if left.is_zero() {
+            return Err(format!(
+                "hided did not become healthy within {within:?}; last waited on {seen}"
+            ));
         }
-        std::thread::sleep(Duration::from_millis(100));
+        pause(left.min(HEALTH_PAUSE));
     }
-    Err("hided did not become healthy within 10s".into())
 }
 
 fn healthy_state(env: &Env) -> Option<DaemonState> {
@@ -1085,24 +1141,44 @@ fn healthy_daemon(env: &Env) -> Option<(DaemonState, serde_json::Value)> {
 }
 
 fn healthy_daemon_in(state_dir: &Path) -> Option<(DaemonState, serde_json::Value)> {
-    let state = state_file::read_state(state_dir).ok().flatten()?;
+    probe_daemon(state_dir, HEALTH_REQUEST).ok()
+}
+
+/// The daemon `state_dir` names and its `/health`, asked within `timeout`,
+/// or what stands in the way: no state yet, a pid that is not that daemon,
+/// or a `/health` that failed or came from another process.
+fn probe_daemon(
+    state_dir: &Path,
+    timeout: Duration,
+) -> Result<(DaemonState, serde_json::Value), String> {
+    let state = state_file::read_state(state_dir)
+        .map_err(|error| format!("the daemon state, which could not be read: {error}"))?
+        .ok_or_else(|| "the daemon to write its state".to_owned())?;
     if !still_the_daemon(&state) {
-        return None;
+        return Err(format!(
+            "pid {} the state names, which is not that daemon",
+            state.pid
+        ));
     }
-    let health = health_json(state.port).ok()?;
-    if health.get("pid").and_then(serde_json::Value::as_u64) != Some(u64::from(state.pid)) {
-        return None;
+    let health = health_json(state.port, timeout)
+        .map_err(|error| format!("/health on port {}: {error}", state.port))?;
+    let answered = health.get("pid").and_then(serde_json::Value::as_u64);
+    if answered != Some(u64::from(state.pid)) {
+        return Err(format!(
+            "/health on port {}, which answered for pid {answered:?} rather than {}",
+            state.port, state.pid
+        ));
     }
-    Some((state, health))
+    Ok((state, health))
 }
 
 /// The daemon's `/health`, asked in process: a forked `curl` exists only
 /// where the system ships one at `/usr/bin/curl`, and Windows has none. The
 /// request goes to this machine's loopback, so no proxy from the
 /// environment may carry it, and a status other than 2xx is a failure.
-fn health_json(port: u16) -> Result<serde_json::Value, String> {
+fn health_json(port: u16, timeout: Duration) -> Result<serde_json::Value, String> {
     let agent: ureq::Agent = ureq::Agent::config_builder()
-        .timeout_global(Some(Duration::from_secs(1)))
+        .timeout_global(Some(timeout))
         .proxy(None)
         .build()
         .into();
@@ -1166,6 +1242,43 @@ mod tests {
         assert!(still_the_daemon(&recorded(stranger.id(), Some(real_start))));
         let _ = stranger.kill();
         let _ = stranger.wait();
+    }
+
+    #[test]
+    fn a_daemon_that_never_answers_ends_the_wait_at_its_bound_and_names_what_it_waited_on() {
+        let start = std::time::Instant::now();
+        let clock = std::cell::Cell::new(start);
+        let asked = std::cell::RefCell::new(Vec::new());
+        let error = wait_healthy_within(
+            HEALTHY_WITHIN,
+            || clock.get(),
+            |pause| clock.set(clock.get() + pause),
+            // A `/health` that times out takes all the time it is given.
+            |timeout| {
+                let left = (start + HEALTHY_WITHIN).saturating_duration_since(clock.get());
+                asked.borrow_mut().push((timeout, left));
+                clock.set(clock.get() + timeout);
+                Err("/health on port 7001: timed out".to_owned())
+            },
+        )
+        .unwrap_err();
+        assert_eq!(
+            clock.get() - start,
+            HEALTHY_WITHIN,
+            "the wait ends at the bound it names"
+        );
+        assert!(
+            asked
+                .borrow()
+                .iter()
+                .all(|(timeout, left)| timeout <= left && *timeout <= HEALTH_REQUEST),
+            "no request outlasts the time left: {:?}",
+            asked.borrow()
+        );
+        assert_eq!(
+            error,
+            "hided did not become healthy within 10s; last waited on /health on port 7001: timed out"
+        );
     }
 
     #[test]

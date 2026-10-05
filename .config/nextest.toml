@@ -8,6 +8,21 @@
 retries = 1
 # Run every test, so one run reports every flaky test and every failure.
 fail-fast = false
+# A test still running after two periods is ended and fails with its name, so
+# a hang is retried and reported like any other failure instead of holding the
+# lane until a step or job limit cancels it with no test named. It is a hang
+# guard, not a deadline: in the green runs of 2026-10-05 (about 100 jobs
+# across every Rust lane) the slowest test took 21 s and none but the one
+# below reached 60 s. Two hung attempts (with nextest's 10 s grace each) end
+# within 260 s, inside the shortest step limit that runs nextest (5 minutes).
+slow-timeout = { period = "60s", terminate-after = 2 }
 
 [profile.ci.junit]
 path = "junit.xml"
+
+# The remote mailbox test drives two Herdr servers over SSH and took 38 to
+# 63 s on the macOS runner in 19 green runs; it is ended at 240 s, and two hung
+# attempts still end inside its step's 10-minute limit.
+[[profile.ci.overrides]]
+filter = 'binary_id(herdr-core::remote_delivery)'
+slow-timeout = { period = "60s", terminate-after = 4 }

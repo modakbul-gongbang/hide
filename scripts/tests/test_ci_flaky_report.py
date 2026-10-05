@@ -43,6 +43,16 @@ class Reading(unittest.TestCase):
         )
         self.assertEqual(r.nextest_flaky(root), [{"file": None, "name": "p::t wobbles", "error": "panicked at x"}])
 
+    def test_a_nextest_case_that_hung_once_is_listed_as_a_timeout(self):
+        # The shape cargo-nextest 0.9.143 writes for a test ended by slow-timeout that passed its retry.
+        root = ET.fromstring(
+            '<testsuites><testsuite name="p">'
+            '<testcase name="hangs" classname="p"><flakyFailure time="120.003" type="test timeout">'
+            "\n<system-out>running 1 test\n</system-out><system-err></system-err></flakyFailure></testcase>"
+            "</testsuite></testsuites>"
+        )
+        self.assertEqual(r.nextest_flaky(root), [{"file": None, "name": "p hangs", "error": "test timeout"}])
+
 
 class Matching(unittest.TestCase):
     TEST = {"file": "web/e2e/tab-strip-fit.spec.ts", "name": "Agent tabs shrink in stages, the selected one keeping its title longest", "error": ""}

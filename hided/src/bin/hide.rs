@@ -4,7 +4,7 @@ fn main() {
     if let Err(error) = &parsed
         && matches!(
             args.get(1).map(String::as_str),
-            Some("workspace" | "file" | "diff" | "view")
+            Some("workspace" | "file" | "diff" | "view" | "browser")
         )
     {
         println!(

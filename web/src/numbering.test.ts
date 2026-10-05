@@ -118,4 +118,17 @@ describe("numbering (electron-digit-shortcuts-hints D-02)", () => {
     expect(numberOfPane("child", "main")).toBeNull();
     expect(numberOfPane("child", "wt")).toBe(3);
   });
+
+  it("leaves a raised agent folded past its section's cap numbered on its tree row until the section opens", () => {
+    const panes = ["d1", "d2", "d3", "d4"];
+    const workspaces = [{ id: "w", device_id: "local", pinned: false, checkouts: [{ id: "main", tabs: [{ id: "t", panes: panes.map((id) => ({ id })) }] }] } as unknown as Workspace];
+    const listed = panes.map((pane) => ({ agent: agent(pane, { group: "done" }), device: null }));
+    const numbered = new Map([[4, "d4"]] as const);
+    const folded = projectListNumbers(numbered, projectRows(workspaces, [], listed), workspaces);
+    expect(folded("d4", null)).toBeNull();
+    expect(folded("d4", "main")).toBe(4);
+    const opened = projectListNumbers(numbered, projectRows(workspaces, [], listed, null, ["done"]), workspaces);
+    expect(opened("d4", null)).toBe(4);
+    expect(opened("d4", "main")).toBeNull();
+  });
 });

@@ -290,6 +290,43 @@ export async function shellPage(app: ElectronApplication): Promise<Page> {
 }
 
 /**
+ * TAKES THE APP'S FOCUS: gives the keyboard to the browser page whose URL
+ * or title is `page`, once. A page holds the keyboard only in the key
+ * window, and macOS makes the window key after the app activates; Electron
+ * then restores the shell's focus, so a page focused while that activation
+ * is in flight loses the keyboard a moment later. This activates the app,
+ * waits for the window's `focus` event, and only then focuses the shell and
+ * the page: a page already holding native focus announces nothing when
+ * focused again, so the shell takes it first and the page enters as an
+ * operator's click would. Throws when the page does not take it.
+ */
+export async function focusPage(app: ElectronApplication, page: { url: string } | { title: string }): Promise<void> {
+  await app.evaluate(async ({ app: electron, BrowserWindow }, page) => {
+    const window = BrowserWindow.getAllWindows()[0]!;
+    if (!window.isFocused()) {
+      await new Promise<void>((resolve, reject) => {
+        const deadline = setTimeout(() => reject(new Error("the window never became the key window")), 10_000);
+        window.once("focus", () => {
+          clearTimeout(deadline);
+          resolve();
+        });
+        electron.focus({ steal: true });
+        window.focus();
+      });
+    }
+    const view = window.contentView.children.find((child) => {
+      const contents = (child as { webContents?: Electron.WebContents }).webContents;
+      return contents !== undefined && ("url" in page ? contents.getURL() === page.url : contents.getTitle() === page.title);
+    });
+    if (!view) throw new Error(`no page ${JSON.stringify(page)} in the window`);
+    const contents = (view as unknown as { webContents: Electron.WebContents }).webContents;
+    window.webContents.focus();
+    contents.focus();
+    if (!contents.isFocused()) throw new Error(`page ${JSON.stringify(page)} did not take the keyboard in the key window`);
+  }, page);
+}
+
+/**
  * Sizes the first window to what a layout needs, within the primary work
  * area: a CI runner's screen is 1024 points wide and its usable height
  * differs by runner (681 on one, 700 or more on another), and macOS clamps a

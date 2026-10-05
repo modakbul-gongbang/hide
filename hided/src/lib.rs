@@ -4,6 +4,8 @@ pub mod boundary;
 mod browser_assets;
 pub mod browser_cli;
 pub mod browser_control;
+pub mod browser_page;
+pub mod browser_relay;
 pub mod browser_routes;
 pub mod build_id;
 pub mod cli;

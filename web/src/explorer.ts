@@ -27,7 +27,7 @@ export type ExplorerRow = {
   depth: number;
   isDirectory: boolean;
   /** The entry's own inode, which a trash of the row sends so the host moves only this item; null when the listing carried none. */
-  inode: number | null;
+  inode: string | null;
   /** True while the operator has this folder expanded. */
   expanded: boolean;
   /** The children hided answered for this folder; null while none has arrived. */

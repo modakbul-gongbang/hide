@@ -14,6 +14,11 @@ use tokio::sync::Semaphore;
 
 const MAX_HOSTS: usize = 4;
 const MAX_REQUESTS: usize = 8;
+/// One relay per `hide browser` command in flight. A relay holds one of the
+/// daemon's eight client connections for its whole life, so half stay free
+/// for the shell and other commands, and the gateway's eight CDP clients for
+/// external tools.
+const MAX_RELAYS: usize = 4;
 const MAX_ANSWER_BYTES: u64 = 16 * 1024;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(8);
 
@@ -38,6 +43,7 @@ struct Host {
 pub struct BrowserControl {
     hosts: Mutex<HashMap<i32, Host>>,
     slots: Arc<Semaphore>,
+    relays: Arc<Semaphore>,
 }
 
 impl Default for BrowserControl {
@@ -45,6 +51,7 @@ impl Default for BrowserControl {
         Self {
             hosts: Mutex::new(HashMap::new()),
             slots: Arc::new(Semaphore::new(MAX_REQUESTS)),
+            relays: Arc::new(Semaphore::new(MAX_RELAYS)),
         }
     }
 }
@@ -169,6 +176,17 @@ impl BrowserControl {
             (
                 "browser_control_busy",
                 "Wait for an earlier browser request to finish and retry",
+            )
+        })
+    }
+
+    /// Held for a relay's whole life, so a crossed cap refuses the next one
+    /// with its reason instead of queueing it.
+    pub fn acquire_relay(&self) -> Result<tokio::sync::OwnedSemaphorePermit, Failure> {
+        self.relays.clone().try_acquire_owned().map_err(|_| {
+            (
+                "browser_relay_limit",
+                "Wait for another hide browser command to finish and retry",
             )
         })
     }
@@ -467,6 +485,22 @@ mod tests {
         assert_eq!(registry.acquire().unwrap_err().0, "browser_control_busy");
         drop(slots);
         assert!(registry.acquire().is_ok());
+    }
+
+    #[test]
+    fn relays_have_their_own_cap_and_free_their_slot_when_they_end() {
+        let registry = BrowserControl::default();
+        let relays: Vec<_> = (0..MAX_RELAYS)
+            .map(|_| registry.acquire_relay().unwrap())
+            .collect();
+        assert_eq!(
+            registry.acquire_relay().unwrap_err().0,
+            "browser_relay_limit"
+        );
+        // Discovery and actions keep their own admission while relays are full.
+        assert!(registry.acquire().is_ok());
+        drop(relays);
+        assert!(registry.acquire_relay().is_ok());
     }
 
     #[test]

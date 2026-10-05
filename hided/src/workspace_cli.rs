@@ -237,6 +237,39 @@ pub fn request_delivery(
     )
 }
 
+/// The relay socket for one `hide browser` page command: the same scoped
+/// handshake and claim as every Workspace request, after which the socket
+/// carries CDP frames to the caller's display. A refusal keeps the daemon's
+/// reason and next action.
+/// The relay socket, and whether the display is its area's selected View.
+pub(crate) async fn browser_relay(
+    path: &Path,
+    display_id: &str,
+) -> Result<(WorkspaceSocket, bool), (String, Option<String>)> {
+    let reference = read_reference(path).map_err(|reason| (reason, None))?;
+    let request_id = fresh_request_id().map_err(|reason| (reason, None))?;
+    let payload = json!({"type":"browser_relay","request_id":request_id,"display_id":display_id});
+    let (answer, mut socket) =
+        tokio::time::timeout(TIMEOUT, exchange_response(&reference, payload, &request_id))
+            .await
+            .map_err(|_| ("request_timeout".to_owned(), None))?
+            .map_err(|reason| (reason, None))?;
+    if answer["ok"] != true {
+        return Err((
+            answer["reason"]
+                .as_str()
+                .unwrap_or("browser_relay_refused")
+                .to_owned(),
+            answer["next_action"].as_str().map(str::to_owned),
+        ));
+    }
+    tokio::time::timeout(Duration::from_secs(2), claim(&mut socket, path))
+        .await
+        .map_err(|_| ("credential_expired".to_owned(), None))?
+        .map_err(|reason| (reason, None))?;
+    Ok((socket, answer["result"]["selected"] == true))
+}
+
 pub fn request_action(path: &Path, action: Action, request_id: &str) -> Result<Value, String> {
     let reference = read_reference(path)?;
     if !valid_request_id(request_id) {
@@ -306,7 +339,7 @@ fn run_exchange(
     Ok(value)
 }
 
-type WorkspaceSocket =
+pub(crate) type WorkspaceSocket =
     tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
 
 async fn exchange_response(

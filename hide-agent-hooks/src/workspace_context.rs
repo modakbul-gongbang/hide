@@ -122,6 +122,9 @@ fn format_context(program: &OsString, reference: &Path, answer: &Value) -> Optio
     }
     if has("browser.open") {
         commands.push("browser open <url-or-path> [--reveal] [--wait]");
+        commands.push(
+            "browser snapshot|click|fill|type|press|hover|drag|scroll|wait|screenshot|eval|console|network <display> ... (read and drive a browser display; `browser help` explains refs, checking with `--diff`, and failures)",
+        );
     }
     if has("view.list") {
         commands.push("view list");
@@ -190,10 +193,7 @@ mod tests {
             context
                 .contains("HIDE_CAP_REF='/srv/state/pane-capabilities/ref.json' '/opt/hide/hide'")
         );
-        assert!(
-            context
-                .contains("browser open <url-or-path> [--reveal] [--wait], view close <view-id>")
-        );
+        assert!(context.contains("browser open <url-or-path> [--reveal] [--wait], browser snapshot|click|fill|type|press|hover|drag|scroll|wait|screenshot|eval|console|network <display> ... (read and drive a browser display; `browser help` explains refs, checking with `--diff`, and failures), view close <view-id>"));
         assert!(!context.contains("file open"));
     }
 

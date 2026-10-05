@@ -133,8 +133,11 @@ pub struct Entry {
     pub path: String,
     pub is_directory: bool,
     /// The entry's own inode in a checkout listing, which a trash of the
-    /// row confirms.
-    #[serde(skip_serializing_if = "Option::is_none")]
+    /// row confirms; decimal text on the wire (`herdr_core::inode_text`).
+    #[serde(
+        skip_serializing_if = "Option::is_none",
+        serialize_with = "herdr_core::inode_text::serialize"
+    )]
     pub inode: Option<u64>,
 }
 
@@ -1876,5 +1879,26 @@ mod windows_boundary_tests {
         fs::rename(&root, home.join("moved")).unwrap();
         fs::create_dir(&root).unwrap();
         assert!(boundary.known_root(&root.display().to_string()).is_none());
+    }
+}
+
+#[cfg(test)]
+mod wire_tests {
+    use super::Entry;
+
+    /// A browser reads a JSON number as a double, which rounds an id past
+    /// 2^53 (an NTFS file id once its sequence number reaches 32), and a
+    /// trash that sends the rounded id back is refused as a change.
+    #[test]
+    fn an_inode_past_what_a_browser_number_holds_reaches_the_shell_exact() {
+        let inode = (1_u64 << 53) + 1;
+        let entry = Entry {
+            name: "dest".to_owned(),
+            path: "/checkout/dest".to_owned(),
+            is_directory: true,
+            inode: Some(inode),
+        };
+        let sent = serde_json::to_value(&entry).unwrap();
+        assert_eq!(sent["inode"], serde_json::json!("9007199254740993"));
     }
 }

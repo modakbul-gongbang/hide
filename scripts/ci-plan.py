@@ -6,7 +6,8 @@
 step: a planned lane must have succeeded and an unplanned one must have been
 skipped, so a lane whose `if:` is wrong fails `verify` instead of passing it.
 
-A merge queue group plans from the paths between its base and its head. A
+A merge queue group plans from the paths between its base (main, or the
+group queued ahead of it) and its head. A
 push to main plans no lane when a merge queue run already verified that
 commit and the push changed no file a CI cache key hashes; otherwise it plans
 every lane, as do a comparison that cannot be computed, a path no rule claims
@@ -374,9 +375,9 @@ def plan(event, base, head, root=ROOT, crates=None, draft=False, queue_runs=None
             ).split()
             if len(parents) != 3:
                 raise ValueError(f"{head} is not a merge commit")
-        # A merge queue group names its base (`merge_group.base_sha`), so the
-        # comparison needs no parent: base..head is every pull request queued
-        # up to and including this one, the tree main becomes.
+        # A merge queue group names its base (`merge_group.base_sha`): main,
+        # or the commit of the group queued ahead of it. base..head is then
+        # this group's own pull request, on the tree the ones ahead make.
         entries = changed_entries(base, head, root)
     except subprocess.CalledProcessError as error:
         detail = error.stderr.strip() if isinstance(error.stderr, str) else (error.stderr or b"").decode(errors="replace").strip()
