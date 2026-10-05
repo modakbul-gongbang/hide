@@ -1475,8 +1475,13 @@ mod tests {
     fn one_claude_read_per_attempt_and_its_answer_lands_on_a_later_wake() {
         let calls = Arc::new(std::sync::atomic::AtomicU32::new(0));
         let counted = Arc::clone(&calls);
+        // The worker says when a call has begun, so the test waits for that
+        // rather than for a guess at how long a thread takes to be scheduled.
+        let (began, hear_begin) = std::sync::mpsc::channel::<()>();
+        let began = std::sync::Mutex::new(began);
         let mut read = BackgroundRead::on_change(Duration::ZERO, move |_: &ClaudeUsageRequest| {
             counted.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            began.lock().unwrap().send(()).unwrap();
             std::thread::sleep(Duration::from_millis(20));
             ClaudeUsageAnswer {
                 checked_at_unix_ms: 1,
@@ -1485,21 +1490,22 @@ mod tests {
         });
         let one = ClaudeUsageRequest { attempt: 1 };
         assert!(read.poll(one.clone()).is_none());
-        let mut answered = false;
-        for _ in 0..500 {
+        // The limit only ends a worker that never answers.
+        let hang_limit = Instant::now() + Duration::from_secs(30);
+        loop {
             if read.poll(one.clone()).is_some() {
-                answered = true;
                 break;
             }
+            assert!(Instant::now() < hang_limit, "the first read never answered");
             std::thread::sleep(Duration::from_millis(2));
         }
-        assert!(answered);
         for _ in 0..20 {
             assert!(read.poll(one.clone()).is_none());
         }
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 1);
         assert!(read.poll(ClaudeUsageRequest { attempt: 2 }).is_none());
-        std::thread::sleep(Duration::from_millis(60));
+        hear_begin.recv_timeout(Duration::from_secs(30)).unwrap();
+        hear_begin.recv_timeout(Duration::from_secs(30)).unwrap();
         assert_eq!(calls.load(std::sync::atomic::Ordering::SeqCst), 2);
     }
 }
