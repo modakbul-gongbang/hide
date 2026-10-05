@@ -11,6 +11,7 @@ claims all plan every lane. docs/TESTING.md, "Which lanes a pull request
 runs", owns the rules and the reasons for them.
 """
 import argparse
+from fnmatch import fnmatchcase
 import json
 import os
 from pathlib import Path, PurePosixPath
@@ -92,6 +93,73 @@ READERS = (
     # web/src/settings.test.ts, theme.test.ts and web/e2e/theme.spec.ts read the tokens.
     ("design/tokens.json", {"web-checks", "web-e2e"}, set()),
 )
+
+
+# Paths named here are the only ones narrower than "every lane"; a path no rule
+# names still plans every lane. Each entry says who reads the path, and
+# `scripts/tests/test_ci_plan.py` checks the claim where it can be checked.
+#
+# Paths no `pr.yml` lane reads: `policy` alone. Its script suite and the
+# repository invariants are what reads them.
+POLICY_ONLY = (
+    "agents/*", "site/*", "plugins/*", "tools/*", "spikes/*",
+    ".gitignore", "web/.gitignore", "desktop/.gitignore",
+    ".github/pull_request_template.md", ".github/dependabot.yml",
+    # Workflows no `pr.yml` job calls; `package.yml` and `design-contract.yml`
+    # have their own pull request triggers.
+    ".github/workflows/nightly.yml", ".github/workflows/package.yml", ".github/workflows/release.yml",
+    ".github/workflows/herdr-update.yml", ".github/workflows/design-contract.yml",
+    "scripts/tests/*",
+    # Scripts only `policy`, another workflow or nobody runs.
+    "scripts/nightly-report.cjs",
+    "scripts/check-agent-asset-committed.sh", "scripts/check-capability-readers-off-lock.sh",
+    "scripts/check-harness-ignore-anchor.sh", "scripts/check-herdr-pin-single-source.sh",
+    "scripts/check-no-workstation-identity.*", "scripts/check-worktree-removal-boundary.sh",
+    "scripts/check-hide-full.sh", "scripts/check-hide-screens.mjs", "scripts/check-typed-live-remote.sh",
+    "scripts/check-release-assets.mjs", "scripts/release-draft.mjs",
+    "scripts/pen-*.mjs", "scripts/design-review.mjs", "scripts/web-shell-measure/*",
+)
+
+# Paths whose readers are a known set of lanes. `web/e2e` helpers are imported
+# by the desktop suites too, and `desktop/e2e` unit tests run in `windows
+# check`, so neither is web-only or desktop-only.
+WEB_E2E_LANES = {"web-checks", "web-e2e", "web-e2e-platform", "windows-e2e", "desktop-checks", "desktop-e2e", "windows-check"}
+DESKTOP_E2E_LANES = {"desktop-checks", "desktop-e2e", "windows-check"}
+NAMED_LANES = (
+    ("web/e2e/*", WEB_E2E_LANES),
+    ("desktop/e2e/*", DESKTOP_E2E_LANES),
+    ("web/playwright.config.ts", {"web-checks", "web-e2e", "web-e2e-platform", "windows-e2e"}),
+    ("desktop/playwright.config.ts", DESKTOP_E2E_LANES),
+    ("desktop/vitest.config.ts", DESKTOP_E2E_LANES),
+    # `web` and `desktop` lint share the e2e rules and the size check.
+    ("web/eslint.config.js", {"web-checks", "desktop-checks"}),
+    ("web/eslint.e2e.mjs", {"web-checks", "desktop-checks"}),
+    ("web/eslint-rules/*", {"web-checks", "desktop-checks"}),
+    ("web/scripts/check-e2e-test-size.mjs", {"web-checks", "desktop-checks"}),
+    ("web/scripts/gen-types.mjs", {"web-checks", "web-e2e"}),
+    ("desktop/eslint.config.mjs", {"desktop-checks"}),
+    ("desktop/eslint.globals.mjs", {"desktop-checks"}),
+    # `build.mjs` is the e2e's build; `package.mjs` and `smoke-package.mjs` run
+    # in `package.yml`, which has its own trigger on this folder.
+    ("desktop/scripts/build.mjs", {"desktop-checks", "desktop-e2e"}),
+    ("desktop/scripts/package.mjs", {"desktop-checks"}),
+    ("desktop/scripts/smoke-package.mjs", {"desktop-checks"}),
+)
+
+
+def named_lanes(path):
+    """The lanes a named path needs, or None when no rule names it."""
+    name = path.as_posix()
+    if any(fnmatchcase(name, pattern) for pattern in POLICY_ONLY):
+        return set(), f"named path, no lane reads it: {name}"
+    # Documentation below a folder no rule claims (a crate's own README is
+    # claimed by its crate, which may include it in a doc test).
+    if path.suffix == ".md":
+        return set(), f"documentation: {name}"
+    for pattern, lanes in NAMED_LANES:
+        if fnmatchcase(name, pattern):
+            return set(lanes), f"named path read by a known set of lanes: {name}"
+    return None
 
 
 def cargo_crates(root=ROOT):
@@ -186,9 +254,12 @@ def classify(path, status, crates, root):
                 # start; its unit suite runs on Windows in `windows check`.
                 lanes.add("windows-check")
             return lanes, f"desktop host: {path}", set()
-    # Workflows, scripts, contracts and the Herdr pin, fixtures,
-    # lockfiles, toolchain and package configuration, and any path no rule
-    # above claims.
+    named = named_lanes(path)
+    if named is not None:
+        return named[0], named[1], set()
+    # Workflows, scripts, contracts and the Herdr pin, lockfiles, toolchain and
+    # package configuration, and any path no rule above or in `named_lanes`
+    # names: every lane.
     return None, f"shared or unclassified: {path}", set()
 
 
