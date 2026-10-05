@@ -151,30 +151,66 @@ where
 mod tests {
     use super::*;
 
-    #[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
+    /// The answer the next poll hands back once the running read has ended:
+    /// a poll starts the read when it is due, and joining the worker is the
+    /// read having sent its answer.
     fn settle<Q, A>(reader: &mut BackgroundRead<Q, A>, request: Q) -> A
     where
         Q: Clone + PartialEq + Send + 'static,
         A: Send + 'static,
     {
-        for _ in 0..500 {
+        if let Some(answer) = reader.poll(request.clone()) {
+            return answer;
+        }
+        reader.join_pending();
+        reader
+            .poll(request)
+            .expect("a finished read is handed back on the next poll")
+    }
+
+    /// The answer to a request that is not due until its spacing has passed.
+    /// The spacing is measured on the wall clock, so no state says when the
+    /// read starts.
+    #[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
+    fn answer_after_spacing<Q, A>(reader: &mut BackgroundRead<Q, A>, request: Q) -> A
+    where
+        Q: Clone + PartialEq + Send + 'static,
+        A: Send + 'static,
+    {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
             if let Some(answer) = reader.poll(request.clone()) {
                 return answer;
             }
+            assert!(Instant::now() < deadline, "the worker never answered");
             std::thread::sleep(Duration::from_millis(2));
         }
-        panic!("the worker never answered");
+    }
+
+    /// A read that waits until the test drops the returned sender, so the
+    /// test decides whether it is still running. Bounded only so a test that
+    /// fails before releasing it does not hang.
+    fn held_read<R: Send + 'static>(
+        answer: impl Fn(u8) -> R + Send + Sync + 'static,
+    ) -> (
+        std::sync::mpsc::Sender<()>,
+        impl Fn(&u8) -> R + Send + Sync + 'static,
+    ) {
+        let (release, held) = std::sync::mpsc::channel::<()>();
+        let held = std::sync::Mutex::new(held);
+        let read = move |request: &u8| {
+            let _ = held.lock().unwrap().recv_timeout(Duration::from_secs(30));
+            answer(*request)
+        };
+        (release, read)
     }
 
     #[test]
-    #[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
     fn an_answer_arrives_on_a_later_poll_rather_than_blocking_the_first() {
-        let mut reader =
-            BackgroundRead::new(Duration::from_secs(60), Duration::ZERO, |request: &u8| {
-                std::thread::sleep(Duration::from_millis(20));
-                u32::from(*request) * 2
-            });
+        let (release, read) = held_read(|request| u32::from(request) * 2);
+        let mut reader = BackgroundRead::new(Duration::from_secs(60), Duration::ZERO, read);
         assert_eq!(reader.poll(7), None);
+        drop(release);
         assert_eq!(settle(&mut reader, 7), 14);
     }
 
@@ -197,14 +233,13 @@ mod tests {
     /// read for the new one starts on that same poll - so a request that
     /// keeps moving still publishes on every completed read instead of never.
     #[test]
-    #[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
     fn a_changed_request_publishes_the_overtaken_answer_and_reads_again() {
-        let mut reader =
-            BackgroundRead::new(Duration::from_secs(60), Duration::ZERO, |request: &u8| {
-                std::thread::sleep(Duration::from_millis(20));
-                u32::from(*request)
-            });
+        let (release, read) = held_read(u32::from);
+        let mut reader = BackgroundRead::new(Duration::from_secs(60), Duration::ZERO, read);
         assert_eq!(reader.poll(1), None);
+        // The request moves while the read for 1 still runs.
+        assert_eq!(reader.poll(2), None);
+        drop(release);
         assert_eq!(
             settle(&mut reader, 2),
             1,
@@ -225,7 +260,7 @@ mod tests {
         );
         assert_eq!(settle(&mut reader, 1), 1);
         let started = Instant::now();
-        let answer = settle(&mut reader, 2);
+        let answer = answer_after_spacing(&mut reader, 2);
         assert_eq!(answer, 2);
         assert!(
             started.elapsed() >= Duration::from_millis(80),

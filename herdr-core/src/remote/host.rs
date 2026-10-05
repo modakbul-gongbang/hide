@@ -1517,12 +1517,23 @@ mod tests {
         }
     }
 
+    /// Waits until a request waits for a slot. Queueing wakes no one, so
+    /// the count is the only state to watch.
+    #[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
+    fn queued(gate: &Gate, what: &str) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while lock_recover(&gate.state).queued == 0 {
+            assert!(Instant::now() < deadline, "{what}");
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    }
+
     /// B52: withdrawing consent stops the channel admitting anything new,
     /// whoever still holds it, and refuses a request waiting for a slot
     /// unsent, while the requests already admitted run to their answers and
     /// the connection waits for them before it closes.
     #[test]
-    #[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
+    #[allow(clippy::disallowed_methods)] // a window in which the idle wait must not end: no state reports an event that has not happened
     fn a_draining_connection_refuses_new_and_waiting_requests_and_waits_for_running_ones() {
         let gate = Arc::new(Gate::new());
         for _ in 0..MAX_RUNNING {
@@ -1532,11 +1543,7 @@ mod tests {
             let gate = Arc::clone(&gate);
             std::thread::spawn(move || gate.admit(Duration::from_secs(60)))
         };
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while lock_recover(&gate.state).queued == 0 {
-            assert!(Instant::now() < deadline, "the request never waited");
-            std::thread::sleep(Duration::from_millis(5));
-        }
+        queued(&gate, "the request never waited");
 
         let stopped = Instant::now();
         gate.stop("consent revoked");
@@ -1550,10 +1557,16 @@ mod tests {
             Err(HostCallError::NotConnected(_))
         ));
 
+        let (started, waiting_idle) = std::sync::mpsc::channel();
         let idle = {
             let gate = Arc::clone(&gate);
-            std::thread::spawn(move || gate.wait_idle(Instant::now() + Duration::from_secs(60)))
+            std::thread::spawn(move || {
+                started.send(()).unwrap();
+                gate.wait_idle(Instant::now() + Duration::from_secs(60))
+            })
         };
+        // The window covers only the wait itself, not the thread's start.
+        waiting_idle.recv_timeout(Duration::from_secs(10)).unwrap();
         std::thread::sleep(Duration::from_millis(100));
         assert!(!idle.is_finished(), "closed while admitted requests ran");
         for _ in 0..MAX_RUNNING {
@@ -1816,7 +1829,6 @@ mod probe {
 
     #[test]
     #[ignore = "needs an authorized SSH device and a disposable fixture"]
-    #[allow(clippy::disallowed_methods)] // #437 the sleep stands in for a state the test can wait for
     fn remote_host_open_save_conflict_and_close_probe() {
         let alias_name = std::env::var("HERDR_TEST_SSH_ALIAS").expect("configured SSH alias");
         let fixture = std::env::var("HERDR_TEST_REMOTE_FIXTURE").expect("remote fixture folder");
@@ -1835,15 +1847,14 @@ mod probe {
             identity: None,
         };
         let packages = HelperPackages::new(Some(PathBuf::from(helper_dir)));
-        let closed = Arc::new(Mutex::new(None::<String>));
-        let seen = Arc::clone(&closed);
+        let (seen, closed) = std::sync::mpsc::channel::<String>();
         let established = establish(
             &client,
             &packages,
             &consent,
             &[],
             Box::new(move |reason| {
-                *lock_recover(&seen) = Some(reason);
+                let _ = seen.send(reason);
             }),
         )
         .expect("helper established");
@@ -1959,10 +1970,9 @@ mod probe {
             Err(HostCallError::NotConnected(_)) => {}
             other => panic!("a closed host takes no request: {other:?}"),
         }
-        let deadline = Instant::now() + Duration::from_secs(10);
-        while lock_recover(&closed).is_none() && Instant::now() < deadline {
-            std::thread::sleep(Duration::from_millis(50));
-        }
-        eprintln!("probe: close observed = {:?}", lock_recover(&closed));
+        eprintln!(
+            "probe: close observed = {:?}",
+            closed.recv_timeout(Duration::from_secs(10)).ok()
+        );
     }
 }
