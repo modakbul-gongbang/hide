@@ -256,6 +256,7 @@ impl Runtime {
         // snapshot's tabs carry the formatted form, so the free number has to
         // be taken here or read back out of display text later.
         let mut raw_tab_labels: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let mut missing_created: Vec<String> = Vec::new();
         for session_tab in &payload.tabs {
             let Some(layout) = payload
                 .layouts
@@ -269,12 +270,13 @@ impl Runtime {
             // start folder, and Herdr sends no event when it settles, so
             // reading it placed a new tab under another checkout until the
             // next unrelated publish (#400). A checkout no longer in the
-            // catalog falls back to the pane rule below.
+            // catalog is reported once, and the tab falls back to the pane
+            // rule below from then on.
             let created = self
                 .created_tab_checkouts
                 .get(&session_tab.tab_id)
                 .and_then(|created| {
-                    workspaces
+                    let found = workspaces
                         .iter()
                         .enumerate()
                         .find_map(|(index, workspace)| {
@@ -283,13 +285,23 @@ impl Runtime {
                                 .iter()
                                 .position(|checkout| checkout.path == created.path)
                                 .map(|checkout| (index, checkout))
-                        })
+                        });
+                    if found.is_none() {
+                        missing_created.push(session_tab.tab_id.clone());
+                        crate::diagnostic!(serde_json::json!({
+                            "component": "session",
+                            "kind": "created_tab.checkout_missing",
+                            "tab_id": session_tab.tab_id,
+                            "checkout_path": created.path,
+                        }));
+                    }
+                    found
                 });
             let (workspace_snapshot, checkout_index) = match created {
                 Some((index, checkout)) => (&mut workspaces[index], Some(checkout)),
                 None => {
-                    // Any other tab was made outside Hide, so its pane cwd is
-                    // all there is. A plain terminal pane is not necessarily
+                    // Any other tab has no recorded intent, so its pane cwd
+                    // is all there is. A plain terminal pane is not necessarily
                     // represented in the agent list. Its cwd is still
                     // authoritative for attaching the live layout to the
                     // registered checkout. Falling back to the agent record
@@ -407,6 +419,9 @@ impl Runtime {
                 .entry(checkout.id.clone())
                 .or_default()
                 .push(session_tab.label.clone());
+        }
+        for tab_id in missing_created {
+            self.created_tab_checkouts.remove(&tab_id);
         }
 
         // A worktree earns its row from git, not from a pane, so which rows
@@ -1931,6 +1946,10 @@ impl Runtime {
         if let Ok(payload) = fetched.as_mut() {
             self.label_overlay.apply(payload);
             self.settle_agent_sleep(payload);
+        } else {
+            // Herdr's tab ids are its own server's; a later connection may
+            // hand one to a tab Hide never created.
+            self.created_tab_checkouts.clear();
         }
         // The session update is this runtime's only regular tick, so it is
         // also where a notification Herdr never answered stops being pending.
@@ -3187,10 +3206,16 @@ impl Runtime {
                 let live::WorktreeTaskOutcome {
                     path,
                     pane_id,
+                    created_tab_id,
                     purpose_error,
                     unconfirmed_purpose_token,
                     issue_error,
                 } = outcome;
+                if device.is_none()
+                    && let Some(tab_id) = created_tab_id.as_deref()
+                {
+                    self.record_created_tab_checkout(tab_id, &path);
+                }
                 if let Some(detail) = issue_error {
                     self.push_diagnostic(
                         "checkout_issue.create_failed",

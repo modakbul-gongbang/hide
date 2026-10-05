@@ -972,6 +972,14 @@ fn a_created_tab_joins_its_requested_checkout_while_an_external_tab_follows_its_
         ordered_tab_ids(&runtime, &checkout_id),
         ["w-order:t1", "w-order:t4"]
     );
+
+    // Losing Herdr drops every record, because the next server numbers its
+    // own tabs.
+    runtime.ingest_session(Err(SessionFetchError::SocketMissing(
+        "herdr went away".to_owned(),
+    )));
+    runtime.ingest_session(Ok(payload(&all)));
+    assert_eq!(ordered_tab_ids(&runtime, &checkout_id), ["w-order:t1"]);
 }
 
 fn reorder_tab(runtime: &mut Runtime, checkout_id: &str, entry_id: &str, to_index: usize) -> bool {
