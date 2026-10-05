@@ -1868,3 +1868,88 @@ fn a_device_tab_hide_created_stays_in_its_folder_while_its_pane_reports_the_birt
     runtime.forget_device_catalog(TARGET);
     assert!(runtime.created_device_tabs.is_empty());
 }
+
+/// A device's session update that shows a pane operation's effect can reach
+/// the runtime before the answer to the request, because the two come from
+/// different threads. The update finds the operation still transmitting and
+/// skips it, and the device sends nothing more once its layout stops moving,
+/// so the answer has to settle the operation from the session the runtime
+/// already holds; otherwise every later operation in that tab is turned away
+/// as already running.
+#[test]
+fn a_device_pane_operation_whose_session_arrived_before_its_answer_settles_on_the_answer() {
+    let t = tree();
+    let mut runtime = runtime();
+    runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
+        target_id: TARGET.to_owned(),
+        state: "connected".to_owned(),
+        message: None,
+        herdr_version: Some("0.9.1".to_owned()),
+        session: None,
+        files: RemoteFileListSnapshot::idle(),
+        catalog: Default::default(),
+    });
+    let tab_id = format!("remote:{TARGET}:tab:t1");
+    let pane_id = format!("remote:{TARGET}:pane:t1");
+    let raw = |zoomed: bool| {
+        let mut raw = session(vec![herdr_workspace(
+            TARGET,
+            "w1",
+            &t.main,
+            &[("t1", &t.main)],
+        )]);
+        raw.pane_layouts
+            .push(crate::model::RemotePaneLayoutSnapshot {
+                workspace_id: format!("remote:{TARGET}:workspace:w1"),
+                tab_id: tab_id.clone(),
+                focused_pane_id: pane_id.clone(),
+                zoomed,
+                frames: Vec::new(),
+            });
+        raw
+    };
+    runtime.ingest_remote_session(TARGET, Ok(raw(false)));
+    let _requests = recording_device(&mut runtime);
+    let zoom = |runtime: &mut Runtime, request_id: &str| {
+        runtime.request_remote_control(RemoteControlPayload {
+            target_id: TARGET.to_owned(),
+            request_id: request_id.to_owned(),
+            report_pane_focus_outcome: false,
+            focus_device: false,
+            request: RemoteControlRequest::TogglePaneZoom {
+                pane_id: pane_id.clone(),
+            },
+        });
+    };
+
+    zoom(&mut runtime, "zoom-1");
+    assert_eq!(runtime.snapshot.status.last_error, None);
+    assert_eq!(runtime.remote_operations.len(), 1);
+
+    // The device's update with the zoomed layout arrives while the request
+    // is still unanswered.
+    runtime.ingest_remote_session(TARGET, Ok(raw(true)));
+    assert_eq!(runtime.remote_operations.len(), 1);
+
+    assert!(runtime.ingest_remote_control_result(
+        TARGET,
+        "zoom-1",
+        RemoteControlAction::Pane(PaneControlAction::ToggleZoom {
+            pane_id: "t1".to_owned(),
+        }),
+        Ok(RemoteControlOutcome::Acknowledged {
+            created_tab_id: None,
+            created_pane_id: None,
+        }),
+        4,
+    ));
+    assert!(
+        runtime.remote_operations.is_empty(),
+        "the answer settled the zoom from the session already received"
+    );
+
+    // The next operation in the tab is sent, not turned away as running.
+    zoom(&mut runtime, "zoom-2");
+    assert_eq!(runtime.snapshot.status.last_error, None);
+    assert_eq!(runtime.remote_operations.len(), 1);
+}

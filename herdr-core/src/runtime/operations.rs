@@ -243,6 +243,41 @@ pub(super) fn remote_mutation_descriptor(
     }
 }
 
+/// Whether `session`, a device's session as its Herdr last reported it, shows
+/// the effect of `operation`.
+fn remote_operation_confirmed_by(
+    operation: &PendingRemoteOperation,
+    session: &RemoteSessionSnapshot,
+) -> bool {
+    let tabs = || {
+        session
+            .workspaces
+            .iter()
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .flat_map(|checkout| checkout.tabs.iter())
+    };
+    match operation.kind.as_str() {
+        "pane.close" => !tabs()
+            .flat_map(|tab| tab.panes.iter())
+            .any(|pane| pane.id == operation.target_id),
+        "tab.close" => !tabs().any(|tab| tab.id.as_deref() == Some(operation.target_id.as_str())),
+        "pane.split" => operation.created_pane_id.as_ref().is_some_and(|created| {
+            tabs().any(|tab| {
+                tab.id.as_deref() == Some(operation.scope_id.as_str())
+                    && tab.panes.iter().any(|pane| pane.id == *created)
+            })
+        }),
+        "pane.zoom" => operation.baseline_zoomed.is_some_and(|baseline| {
+            session
+                .pane_layouts
+                .iter()
+                .find(|layout| layout.tab_id == operation.scope_id)
+                .is_some_and(|layout| layout.zoomed != baseline)
+        }),
+        _ => false,
+    }
+}
+
 impl Runtime {
     pub(crate) fn request_status_refresh(&mut self) -> bool {
         self.status_refresh_requested = true;
@@ -385,57 +420,57 @@ impl Runtime {
             current.deadline_at_unix_ms =
                 Some(unix_milliseconds().saturating_add(CLOSE_STAGE_TIMEOUT_MS));
         }
-        self.sync_async_operations();
+        if !self.settle_remote_operation_from_known_session(&key) {
+            self.sync_async_operations();
+        }
         true
     }
 
-    pub(super) fn observe_remote_operations(&mut self, session: &RemoteSessionSnapshot) -> bool {
-        let mut completed = Vec::new();
-        for (key, operation) in &self.remote_operations {
-            if !matches!(operation.phase.as_str(), "awaiting_topology" | "unknown") {
-                continue;
-            }
-            let confirmed = match operation.kind.as_str() {
-                "pane.close" => !session
-                    .workspaces
-                    .iter()
-                    .flat_map(|workspace| workspace.checkouts.iter())
-                    .flat_map(|checkout| checkout.tabs.iter())
-                    .flat_map(|tab| tab.panes.iter())
-                    .any(|pane| pane.id == operation.target_id),
-                "tab.close" => !session
-                    .workspaces
-                    .iter()
-                    .flat_map(|workspace| workspace.checkouts.iter())
-                    .flat_map(|checkout| checkout.tabs.iter())
-                    .any(|tab| tab.id.as_deref() == Some(operation.target_id.as_str())),
-                "pane.split" => operation.created_pane_id.as_ref().is_some_and(|created| {
-                    session
-                        .workspaces
-                        .iter()
-                        .flat_map(|workspace| workspace.checkouts.iter())
-                        .flat_map(|checkout| checkout.tabs.iter())
-                        .any(|tab| {
-                            tab.id.as_deref() == Some(operation.scope_id.as_str())
-                                && tab.panes.iter().any(|pane| pane.id == *created)
-                        })
-                }),
-                "pane.zoom" => operation.baseline_zoomed.is_some_and(|baseline| {
-                    session
-                        .pane_layouts
-                        .iter()
-                        .find(|layout| layout.tab_id == operation.scope_id)
-                        .is_some_and(|layout| layout.zoomed != baseline)
-                }),
-                _ => false,
-            };
-            if confirmed {
-                completed.push(key.clone());
-            }
+    /// Settles the operation `key` from the session its device last reported.
+    /// A session that shows an operation's effect can arrive while the request
+    /// is still unanswered, when only that session's own pass could have
+    /// confirmed it; the device sends nothing more once its layout stops
+    /// moving, so the answer has to look at what was already received.
+    fn settle_remote_operation_from_known_session(&mut self, key: &(String, String)) -> bool {
+        let Some(operation) = self.remote_operations.get(key) else {
+            return false;
+        };
+        let Some(status) = self
+            .snapshot
+            .status
+            .remote
+            .iter()
+            .find(|status| status.target_id == key.0 && status.state == "connected")
+        else {
+            return false;
+        };
+        let Some(session) = status.session.as_ref() else {
+            return false;
+        };
+        if !remote_operation_confirmed_by(operation, session) {
+            return false;
         }
-        let changed = !completed.is_empty();
+        self.settle_remote_operations(vec![key.clone()])
+    }
+
+    pub(super) fn observe_remote_operations(&mut self, session: &RemoteSessionSnapshot) -> bool {
+        let completed = self
+            .remote_operations
+            .iter()
+            .filter(|(_, operation)| {
+                matches!(operation.phase.as_str(), "awaiting_topology" | "unknown")
+            })
+            .filter(|(_, operation)| remote_operation_confirmed_by(operation, session))
+            .map(|(key, _)| key.clone())
+            .collect::<Vec<_>>();
+        self.settle_remote_operations(completed)
+    }
+
+    fn settle_remote_operations(&mut self, completed: Vec<(String, String)>) -> bool {
+        let mut changed = false;
         for key in completed {
             if let Some(operation) = self.remote_operations.remove(&key) {
+                changed = true;
                 self.push_diagnostic(
                     "remote.control.topology_confirmed",
                     format!(
@@ -447,9 +482,8 @@ impl Runtime {
         }
         if changed {
             self.sync_async_operations();
-            return true;
         }
-        false
+        changed
     }
 
     pub(super) fn expire_remote_operations(&mut self, now_unix_ms: u64) -> bool {
