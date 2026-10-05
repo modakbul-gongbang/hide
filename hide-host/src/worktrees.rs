@@ -1337,7 +1337,21 @@ fn set_aside(root: &Path, common: &Path, checkout: &Path, force: bool) -> Option
         .ok()?
         .as_nanos();
     let entry = trash.join(format!("{nanos}-{}-{id}", std::process::id()));
-    std::fs::rename(checkout, &entry).ok()?;
+    if let Err(error) = std::fs::rename(checkout, &entry) {
+        // Git removes the folder in place from here; record why the cheap
+        // path was not taken, since the removal's own result will not.
+        eprintln!(
+            "{}",
+            serde_json::json!({
+                "component": "worktree_removal",
+                "kind": "set_aside_refused",
+                "checkout": checkout,
+                "os_error": error.raw_os_error(),
+                "message": error.to_string(),
+            })
+        );
+        return None;
+    }
     Some(SetAside { entry, admin })
 }
 

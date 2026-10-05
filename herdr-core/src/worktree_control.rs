@@ -128,6 +128,7 @@ pub fn spawn_worktree_close(
                 context.connector.as_ref(),
                 std::slice::from_ref(&checkout_path),
                 &pane_ids,
+                ProcessWait::for_folder_removal(context.local),
                 CONFIRM_TIMEOUT,
             );
             // This thread is the removal's only executor: it closes the panes,
@@ -261,6 +262,7 @@ pub fn spawn_workspace_close(
                 context.connector.as_ref(),
                 &checkout_paths,
                 &pane_ids,
+                ProcessWait::Skip,
                 CONFIRM_TIMEOUT,
             );
             if let Some(runtime) = context.runtime.upgrade() {
@@ -1649,20 +1651,135 @@ fn trace(_path: &str, pane_ids: &[String], stage: &str, error: Option<&str>) {
     );
 }
 
+/// Whether closing waits for the processes of the panes it closes.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ProcessWait {
+    /// Until every shell and foreground process the panes held has ended.
+    ForEnd,
+    /// Herdr's own confirmation is enough.
+    Skip,
+}
+
+impl ProcessWait {
+    /// A running process holds its working folder only on Windows, and its pid
+    /// means something only on the machine that runs it, so only a folder on
+    /// this Windows machine is waited for; the cost elsewhere is a deletion
+    /// that fails for a process that could not have blocked it.
+    pub(crate) fn for_folder_removal(local: bool) -> Self {
+        if local && cfg!(windows) {
+            Self::ForEnd
+        } else {
+            Self::Skip
+        }
+    }
+}
+
+/// A process of a pane, named by its pid and start so a pid the system hands
+/// to another process later is not mistaken for it.
+struct PaneProcess {
+    pid: u32,
+    started: u64,
+}
+
+impl PaneProcess {
+    /// Only a process that does not exist, or is another one now, has ended;
+    /// a process that cannot be read is not claimed to be gone.
+    fn has_ended(&self) -> Result<bool, String> {
+        match hide_platform::process::start_time(self.pid) {
+            Ok(started) => Ok(started != self.started),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(true),
+            Err(error) => Err(format!("process {} could not be read: {error}", self.pid)),
+        }
+    }
+}
+
+/// The shell and foreground processes Herdr reports for `pane_id`. A process
+/// that already ended is not listed: there is nothing to wait for.
+fn pane_processes(connector: &dyn ApiConnector, pane_id: &str) -> Result<Vec<PaneProcess>, String> {
+    let value = control_request(
+        connector,
+        "pane.process_info",
+        wire::pane_process_info_params(pane_id)?,
+    )?;
+    let group = wire::pane_process_group(value)?;
+    let mut pids: Vec<u32> = group
+        .shell_pid
+        .into_iter()
+        .chain(group.foreground_pids)
+        // Pid 0 and 1 are the system's, never a pane's.
+        .filter(|pid| *pid > 1)
+        .collect();
+    pids.sort_unstable();
+    pids.dedup();
+    let mut running = Vec::new();
+    for pid in pids {
+        match hide_platform::process::start_time(pid) {
+            Ok(started) => running.push(PaneProcess { pid, started }),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => return Err(format!("process {pid} could not be read: {error}")),
+        }
+    }
+    Ok(running)
+}
+
+/// Waits until none of `held` is running or `deadline` passes, checking once
+/// more at the deadline, and names the pids still running when it does.
+/// `pause` is how long it lets the processes go on, which a test replaces.
+fn wait_for_processes_to_end(
+    held: &mut Vec<PaneProcess>,
+    deadline: Instant,
+    mut pause: impl FnMut(Duration),
+) -> Result<(), String> {
+    loop {
+        let mut running = Vec::new();
+        for process in held.drain(..) {
+            if !process.has_ended()? {
+                running.push(process);
+            }
+        }
+        *held = running;
+        if held.is_empty() {
+            return Ok(());
+        }
+        let Some(left) = deadline.checked_duration_since(Instant::now()) else {
+            return Err(format!(
+                "Herdr closed the panes but their processes are still running (pid {}), so the folder may still be held",
+                held.iter()
+                    .map(|process| process.pid.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ));
+        };
+        pause(CONFIRM_POLL.min(left));
+    }
+}
+
 /// Closes `pane_ids` and waits until Herdr's snapshot lists none of them and
-/// no pane at any of `paths`, so the caller's next step cannot run beside a
-/// pane that is still there. A worktree deletion and a reviewed cleanup share
-/// this one pane-closing path.
+/// no pane at any of `paths`, and, when `wait` says so, until the processes the
+/// panes held have ended, so the caller's next step cannot run beside a pane
+/// that is still there. Herdr confirms a pane closed before its shell or agent
+/// has exited, and on Windows a process that is still ending holds its working
+/// folder, so the folder cannot be moved or deleted until it is gone. A worktree
+/// deletion and a reviewed cleanup share this one pane-closing path.
 #[allow(clippy::disallowed_methods)] // a production wait, not test code
 pub(crate) fn close_checkout_panes(
     connector: &dyn ApiConnector,
     paths: &[String],
     pane_ids: &[String],
+    wait: ProcessWait,
     timeout: Duration,
 ) -> Result<(), String> {
     let path = paths.join(",");
     let path = path.as_str();
     let result = (|| {
+        // Read every pane's processes before closing any, so a pane that
+        // cannot be read closes none.
+        let mut held = Vec::new();
+        if wait == ProcessWait::ForEnd {
+            for pane_id in pane_ids {
+                held.extend(pane_processes(connector, pane_id)?);
+            }
+        }
         for pane_id in pane_ids {
             trace(path, std::slice::from_ref(pane_id), "close_requested", None);
             control_request(connector, "pane.close", json!({"pane_id":pane_id}))?;
@@ -1695,7 +1812,8 @@ pub(crate) fn close_checkout_panes(
                 .ok_or("Herdr close confirmation is missing snapshot.panes")?;
             let (present, pane_at_checkout) = confirmation_state(panes, paths)?;
             if pane_ids.iter().all(|id| !present.contains(id)) && !pane_at_checkout {
-                return Ok(());
+                // Herdr has nothing more to say; only the processes remain.
+                return wait_for_processes_to_end(&mut held, deadline, thread::sleep);
             }
             thread::sleep(CONFIRM_POLL.min(deadline.saturating_duration_since(Instant::now())));
         }
@@ -2434,6 +2552,7 @@ mod tests {
             &server,
             &["/fixture/topic".into()],
             &["w1:p1".into(), "w1:p2".into()],
+            ProcessWait::Skip,
             CONFIRM_TIMEOUT,
         );
         assert!(result.unwrap_err().contains("close refused"));
@@ -2451,6 +2570,7 @@ mod tests {
             &server,
             &["/fixture/topic".into()],
             &["w1:p1".into(), "w1:p2".into()],
+            ProcessWait::Skip,
             CONFIRM_TIMEOUT,
         )
         .unwrap();
@@ -2487,12 +2607,139 @@ mod tests {
                     &server,
                     &["/fixture/topic".into()],
                     &["w1:p1".into()],
+                    ProcessWait::Skip,
                     CONFIRM_TIMEOUT
                 )
                 .is_err()
             );
         }
     }
+    fn process_info(pane: &str, shell: u32) -> Value {
+        json!({"result":{"type":"pane_process_info","process_info":{
+            "pane_id":pane,"shell_pid":shell,"foreground_process_group_id":shell,
+            "foreground_processes":[{"pid":shell,"name":"sleep"}]}}})
+    }
+
+    /// A child that is ended however the test leaves.
+    #[cfg(unix)]
+    struct LongLived(std::process::Child);
+    #[cfg(unix)]
+    impl LongLived {
+        fn start() -> Self {
+            Self(Command::new("sleep").arg("30").spawn().unwrap())
+        }
+        fn end(&mut self) {
+            let _ = self.0.kill();
+            let _ = self.0.wait();
+        }
+    }
+    #[cfg(unix)]
+    impl Drop for LongLived {
+        fn drop(&mut self) {
+            self.end();
+        }
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn the_wait_goes_on_while_a_process_runs_and_ends_when_it_has() {
+        let mut child = LongLived::start();
+        let pid = child.0.id();
+        let server = server(vec![process_info("w1:p1", pid)]);
+        let mut held = pane_processes(&server, "w1:p1").unwrap();
+        let mut pauses = 0;
+        wait_for_processes_to_end(&mut held, Instant::now() + CONFIRM_TIMEOUT, |_| {
+            pauses += 1;
+            child.end();
+        })
+        .unwrap();
+        assert_eq!(
+            pauses, 1,
+            "it paused once while the child ran and not again"
+        );
+        assert!(held.is_empty());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn a_process_still_running_at_the_deadline_fails_the_wait_and_names_its_pid() {
+        let child = LongLived::start();
+        let pid = child.0.id();
+        let server = server(vec![process_info("w1:p1", pid)]);
+        let mut held = pane_processes(&server, "w1:p1").unwrap();
+        assert_eq!(held.len(), 1);
+        // A deadline that has passed still checks once before it fails.
+        let error = wait_for_processes_to_end(&mut held, Instant::now(), |_| {
+            panic!("no time is left to wait")
+        })
+        .unwrap_err();
+        assert!(
+            error.contains(&format!("still running (pid {pid})")),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn a_process_that_has_ended_is_not_waited_for() {
+        let mut held = vec![PaneProcess {
+            pid: u32::MAX - 1,
+            started: 1,
+        }];
+        wait_for_processes_to_end(&mut held, Instant::now(), |_| panic!("nothing to wait for"))
+            .unwrap();
+        assert!(held.is_empty());
+    }
+
+    #[test]
+    fn a_pane_reports_each_running_process_once_and_never_the_systems_pids() {
+        let me = std::process::id();
+        for shell in [0, 1, u32::MAX - 1] {
+            let server = server(vec![process_info("w1:p1", shell)]);
+            assert!(
+                pane_processes(&server, "w1:p1").unwrap().is_empty(),
+                "pid {shell}"
+            );
+        }
+        // The shell is also the foreground process, and is listed once.
+        let server = server(vec![process_info("w1:p1", me)]);
+        let held = pane_processes(&server, "w1:p1").unwrap();
+        assert_eq!(
+            held.iter().map(|process| process.pid).collect::<Vec<_>>(),
+            [me]
+        );
+    }
+
+    #[test]
+    fn a_pane_whose_processes_cannot_be_read_closes_no_pane() {
+        let server = server(vec![
+            json!({"error":{"code":"pane_not_found","message":"no such pane"}}),
+        ]);
+        let error = close_checkout_panes(
+            &server,
+            &["/fixture/topic".into()],
+            &["w1:p1".into(), "w1:p2".into()],
+            ProcessWait::ForEnd,
+            CONFIRM_TIMEOUT,
+        )
+        .unwrap_err();
+        assert!(error.contains("pane.process_info failed"), "{error}");
+        assert_eq!(server.requests.lock().unwrap().len(), 1);
+    }
+
+    #[test]
+    fn a_wait_that_is_skipped_never_asks_for_processes() {
+        let server = server(vec![json!({"result":{"type":"ok"}}), snapshot(&[])]);
+        close_checkout_panes(
+            &server,
+            &["/fixture/topic".into()],
+            &["w1:p1".into()],
+            ProcessWait::Skip,
+            CONFIRM_TIMEOUT,
+        )
+        .unwrap();
+        assert_eq!(server.requests.lock().unwrap()[0]["method"], "pane.close");
+    }
+
     #[test]
     fn confirmation_timeout_cannot_authorize_removal() {
         let server = server(vec![json!({"result":{"type":"ok"}}), snapshot(&["w1:p1"])]);
@@ -2501,6 +2748,7 @@ mod tests {
                 &server,
                 &["/fixture/topic".into()],
                 &["w1:p1".into()],
+                ProcessWait::Skip,
                 Duration::from_millis(20)
             )
             .unwrap_err()
