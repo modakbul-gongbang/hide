@@ -21,7 +21,7 @@ bash scripts/verify-cargo.sh test                # herdr-core (labels included),
 bash scripts/verify-web.sh                       # web and desktop typecheck, lint, test and build
 bash scripts/verify-cargo.sh build -p hided
 bash scripts/verify-web.sh web build
-bash scripts/verify-web.sh web e2e       # Playwright against a local hided: missing Herdr, and an isolated pinned Herdr (HIDE_E2E_HERDR_BIN, HERDR_BIN_PATH or PATH) for the S2 flows and the S3 Explorer, editor, viewers, attach, watch and reconnect flows (one worker, because each spec starts its own Herdr, hided and browser; CI deals the same tests out to six Linux shards)
+bash scripts/verify-web.sh web e2e       # Playwright against a local hided: missing Herdr, and an isolated pinned Herdr (HIDE_E2E_HERDR_BIN, HERDR_BIN_PATH or PATH) for the S2 flows and the S3 Explorer, editor, viewers, attach, watch and reconnect flows (one worker, because each spec starts its own Herdr, hided and browser; CI deals the same tests out to four Linux shards)
 bash scripts/verify-cargo.sh cli
 bash scripts/verify-web.sh desktop e2e            # Playwright `_electron` against a private hided and the pinned Herdr; windows never activate the app except in `@needs-focus` specs, which `--grep-invert @needs-focus` skips
 MEASURE_SCENARIO=multi HIDE_MEASURE_RUN_DIR=agents/runs/<slug>/measure/<attempt> bash scripts/web-shell-measure/run.sh   # echo and frame gates with four splits and five attached tabs; review-required evidence, not a CI check
@@ -73,7 +73,7 @@ There is no label or bypass for any of them; when a gate is wrong, change the ga
 
 No test leaves a required gate: CI retries a failed test once and files a flaky one as an issue with a deadline, there is no quarantine tag or step, and a Rust test is never ignored for flakiness; [docs/TESTING.md](docs/TESTING.md#flaky-tests) owns the policy.
 
-A web e2e test that exercises what differs by operating system is tagged `{ tag: "@platform" }` with a comment saying what, and a pull request whose plan includes the platform lanes runs those on macOS and Windows as well as in the full Linux shards: Trash, process ownership, file watching and saving, worktree paths, disk cleanup, terminal input and echo through the platform's Herdr, and platform editing chords and browser-composed Korean input.
+A web e2e test that exercises what differs by operating system is tagged `{ tag: "@platform" }` with a comment saying what, and a pull request whose plan includes the platform lanes runs those on Windows as well as in the full Linux shards, and the nightly runs them on macOS: Trash, process ownership, file watching and saving, worktree paths, disk cleanup, terminal input and echo through the platform's Herdr, and platform editing chords and browser-composed Korean input.
 Every web e2e presses its chords through `web/e2e/chords.ts`, which reads them from the shell's registry for the runner's system, so the Linux shards press the Ctrl+Shift and Alt+Shift chords Windows and Linux use and the macOS run presses the ⌘ ones; a spec spells a chord itself only when it binds one in Settings or presses one the shell must not answer.
 The PR runs the remaining web tests on Linux.
 The nightly configures the full web suite on Linux (six shards), macOS and Windows (four shards each), the full desktop suite on all three, per-OS schema/runtime contracts, and all three packages.
