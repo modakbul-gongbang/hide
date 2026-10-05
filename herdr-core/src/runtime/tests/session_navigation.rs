@@ -1825,6 +1825,34 @@ fn only_one_pane_focus_readback_is_outstanding_and_a_superseded_one_hands_on() {
 }
 
 #[test]
+fn a_move_that_arrives_during_an_unconfirmed_readback_is_read_again() {
+    let mut runtime = live_runtime();
+    let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6020)];
+    runtime.ingest_session(Ok(finished_tab_payload(&panes, "w1:p1")));
+
+    // A late layout from an earlier burst shows p2 and starts a read.
+    let (_, stale) = runtime
+        .ingest_session_awaiting_focus_readback(Ok(finished_tab_payload(&panes, "w1:p2")), None);
+    let stale = stale.unwrap();
+    // Herdr really moves to p2 while that read is out: the layout looks the
+    // same, and the one slot is taken.
+    let (_, moved) = runtime
+        .ingest_session_awaiting_focus_readback(Ok(finished_tab_payload(&panes, "w1:p2")), None);
+    assert!(moved.is_none());
+
+    // The read was answered before the move, so it does not confirm. The
+    // move came after the read began, so it is read again rather than lost.
+    let (_, next) = runtime.finish_pane_focus_readback(stale, false);
+    assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p1"));
+    let next = next.expect("the move that arrived during the read is read again");
+    assert_eq!(next.target_id, "w1:p2");
+    runtime.finish_pane_focus_readback(next, true);
+    assert_eq!(runtime.snapshot().focused.pane_id.as_deref(), Some("w1:p2"));
+    assert_eq!(diagnostic_count(&runtime, "pane.focus.followed"), 1);
+    assert!(runtime.pane_focus_readback.is_none());
+}
+
+#[test]
 fn superseded_same_pane_focus_failure_cannot_fail_a_newer_correlated_request() {
     let mut runtime = live_runtime();
     let panes = [("w1:p1", 6018_u64), ("w1:p2", 6019), ("w1:p3", 6020)];
