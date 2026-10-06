@@ -129,7 +129,7 @@ test("the project row's menu lists the board's items, and Pin registers and pins
     // its reveal is absent; a row Herdr shows without a registration still
     // offers Pin and Remove project….
     let menu = await openMenu(page, projectRow, "repo actions");
-    expect(await menuLines(menu)).toEqual(["New worktree…", `New tab in main ${commandLabel("new_tab")}`, "─", "Copy path", "─", "Pin", "Remove project…"]);
+    expect(await menuLines(menu)).toEqual(["New worktree…", `New tab in main ${commandLabel("new_tab")}`, "─", "Copy path", "Issue source", "─", "Pin", "Remove project…"]);
     await screenshot(page, "sidebar-menus-project-dark");
     await menu.locator('[data-menu-item="pin"]').click();
     await expect(menu).toHaveCount(0);
@@ -138,6 +138,47 @@ test("the project row's menu lists the board's items, and Pin registers and pins
     await expect(page.locator("[data-project-row]", { hasText: /^repo/ })).toHaveCount(1);
     menu = await openMenu(page, projectRow, "repo actions");
     await expect(menu.locator('[data-menu-item="unpin"]')).toHaveText(/Unpin/);
+    await page.keyboard.press("Escape");
+  } finally { stop(); }
+});
+
+// B7, D-04: the project's issue source is a submenu of the row's menu; the
+// choice is the one the old Settings tab sent and the stored value comes back
+// as the checked item, by pointer and by keyboard.
+test("the project row's Issue source submenu shows the stored choice and changes it", async ({ page }) => {
+  const { projectRow, stop } = await startMenus(page);
+  try {
+    let menu = await openMenu(page, projectRow, "repo actions");
+    await menu.locator('[data-menu-item="issue_source"]').click();
+    const choices = page.getByRole("menu", { name: "Issue source" });
+    await expect(choices).toBeVisible();
+    // Automatic is in force until the operator chooses; it names what it resolved to.
+    await expect(choices.getByRole("menuitemradio")).toHaveText([/^Automatic \(/, /^GitHub/, /^Local$/]);
+    await expect(choices.getByRole("menuitemradio", { name: /^Automatic/ })).toHaveAttribute("aria-checked", "true");
+    await screenshot(page, "sidebar-menus-issue-source-dark");
+    await choices.getByRole("menuitemradio", { name: "Local" }).click();
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    // The stored choice comes back checked the next time the menu opens.
+    menu = await openMenu(page, projectRow, "repo actions");
+    await menu.locator('[data-menu-item="issue_source"]').click();
+    await expect(page.getByRole("menu", { name: "Issue source" }).getByRole("menuitemradio", { name: "Local" })).toHaveAttribute("aria-checked", "true");
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
+    // The keyboard reaches it too: menu key on the row, ArrowRight into the submenu, Enter on a choice.
+    await projectRow.locator("[data-project-row]").focus();
+    await page.keyboard.press("Shift+F10");
+    const keyed = page.getByRole("menu", { name: "repo actions" });
+    await expect(keyed).toBeVisible();
+    await keyed.locator('[data-menu-item="issue_source"]').focus();
+    await page.keyboard.press("ArrowRight");
+    const submenu = page.getByRole("menu", { name: "Issue source" });
+    await expect(submenu).toBeVisible();
+    await submenu.getByRole("menuitemradio", { name: /^Automatic/ }).focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    menu = await openMenu(page, projectRow, "repo actions");
+    await menu.locator('[data-menu-item="issue_source"]').click();
+    await expect(page.getByRole("menu", { name: "Issue source" }).getByRole("menuitemradio", { name: /^Automatic/ })).toHaveAttribute("aria-checked", "true");
     await page.keyboard.press("Escape");
   } finally { stop(); }
 });

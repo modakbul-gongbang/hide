@@ -954,7 +954,7 @@ function WorkspaceRows({ workspace, level, context }: { workspace: Workspace; le
     <li data-project={workspace.id} className={inset}>
       <EntryContextMenu
         label={t("common.entryActions", { name: workspace.label })}
-        items={() => projectMenu(workspace, menuHost(), t)}
+        items={() => projectMenu(workspace, menuHost(), t, useShellStore.getState().rest?.ui_state?.project_issue_sources?.[workspace.path])}
         onSelect={(item) => runProjectItem(actions, workspace, item)}
         className="group flex items-stretch"
         data-project-menu={workspace.id}
@@ -1435,6 +1435,10 @@ function runProjectItem(actions: Actions, workspace: Workspace, item: MenuItem["
     case "pin":
     case "unpin":
       return actions.setPinned(workspace.id, item === "pin");
+    case "issue_source_auto":
+    case "issue_source_github":
+    case "issue_source_local":
+      return actions.setIssueSource(workspace.path, item.slice("issue_source_".length) as "auto" | "github" | "local");
     case "remove_project":
       return useUiStore.getState().setWorkspaceDialog({ kind: "remove_project", workspaceId: workspace.id });
   }

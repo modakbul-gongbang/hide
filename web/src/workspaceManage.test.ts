@@ -9,7 +9,7 @@ const ko = initializeInterfaceI18n("ko").t;
 const agentMenu = (agent: Parameters<typeof manage.agentMenu>[0], chord: string) => manage.agentMenu(agent, chord, t);
 const checkoutMenu = (workspace: Workspace, checkout: Checkout, host: Parameters<typeof manage.checkoutMenu>[2], purposeProblem: string | null = null) => manage.checkoutMenu(workspace, checkout, host, t, purposeProblem);
 const folderMenu = (workspace: Workspace, checkout: Checkout, host: Parameters<typeof manage.folderMenu>[2], purposeProblem: string | null = null) => manage.folderMenu(workspace, checkout, host, t, purposeProblem);
-const projectMenu = (workspace: Workspace, host: Parameters<typeof manage.projectMenu>[1]) => manage.projectMenu(workspace, host, t);
+const projectMenu = (workspace: Workspace, host: Parameters<typeof manage.projectMenu>[1], issueSource?: string) => manage.projectMenu(workspace, host, t, issueSource);
 const deletionFacts = (checkout: Checkout, panes: number) => manage.deletionFacts(checkout, panes, t);
 const projectRemovalFacts = (workspace: Workspace) => manage.projectRemovalFacts(workspace, t);
 const purposeCountLabel = (text: string) => manage.purposeCountLabel(text, t);
@@ -118,6 +118,24 @@ describe("row menus", () => {
     expect(drawn(projectMenu(project, browser))).toEqual(["New worktree…", "New tab in main ⌥T", "─", "Copy path", "─", "Pin", "Remove project…"]);
     expect(projectMenu(workspace({ pinned: true, checkouts: [primary()] }), desktop).find((item) => item.id === "unpin")?.label).toBe("Unpin");
     expect(projectMenu(workspace({ is_git: false, checkouts: [primary({ is_primary: false })] }), desktop).find((item) => item.id === "new_worktree")?.unavailable).toMatch(/not a Git/);
+  });
+
+  it("offers the Issue source choice on a project the boards read, checked as stored (B7, D-04)", () => {
+    const source = { kind: "github", label: "GitHub", name: "acme/repo", reading: false, failure: null, last_read_at_unix_ms: null };
+    const read = workspace({ checkouts: [primary()], tasks: { source, tasks: [] } as unknown as Workspace["tasks"] });
+    const choices = (stored?: string) => projectMenu(read, desktop, stored).find((item) => item.id === "issue_source")?.choices?.map((choice) => [choice.id, choice.label, choice.checked]);
+    expect(choices()).toEqual([
+      ["issue_source_auto", "Automatic (GitHub)", true],
+      ["issue_source_github", "GitHub · acme/repo", false],
+      ["issue_source_local", "Local", false],
+    ]);
+    expect(choices("local")?.map((choice) => choice[2])).toEqual([false, false, true]);
+    // A folder has no GitHub choice, and a device's project or the Home offers none.
+    const folder = workspace({ is_git: false, checkouts: [primary()], tasks: { source: { ...source, kind: "local", label: "Local" }, tasks: [] } as unknown as Workspace["tasks"] });
+    expect(projectMenu(folder, desktop).find((item) => item.id === "issue_source")?.choices?.map((choice) => choice.id)).toEqual(["issue_source_auto", "issue_source_local"]);
+    expect(projectMenu({ ...read, remote_target_id: "studio", device_id: "studio" }, desktop).some((item) => item.id === "issue_source")).toBe(false);
+    expect(projectMenu({ ...read, is_home: true }, desktop).some((item) => item.id === "issue_source")).toBe(false);
+    expect(projectMenu(workspace({ checkouts: [primary()] }), desktop).some((item) => item.id === "issue_source")).toBe(false);
   });
 
   it("offers Pin and Remove on a row Herdr shows without a registration (B3, D-14)", () => {

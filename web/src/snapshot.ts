@@ -256,7 +256,7 @@ export type TaskSource = {
   /** The last read failed; the tasks are the answer before it. */
   failure: string | null;
   last_read_at_unix_ms: number | null;
-  /** The operator chose this source in Settings › Issues rather than the default. */
+  /** The operator chose this source from the project's Issue source menu rather than the default. */
   chosen?: boolean;
 };
 
