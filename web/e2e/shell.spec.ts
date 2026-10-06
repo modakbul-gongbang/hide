@@ -4,6 +4,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { herdrBinary, linkFixtureTranscripts, startHerdr, type HerdrFixture } from "./herdr-fixture";
+import { aiSettingsFile } from "./hided-fixture";
 import { enterWorkspace } from "./wire";
 import { fixtureExecutable, fixtureHomeEnv, fixtureOpenCommand, fixtureToolPath, inheritedFixtureEnv } from "./platform-fixture";
 import { ownUntilWorkerExit } from "./worker-owned";
@@ -58,7 +59,14 @@ async function startHided(extra: Record<string, string> = {}, herdr?: HerdrFixtu
     try { stop(); cleanup(); } catch (error) { process.exitCode = 1; throw error; }
   });
   try {
-    if (herdr) linkFixtureTranscripts(herdr, dir);
+    if (herdr) {
+      linkFixtureTranscripts(herdr, dir);
+      // Agent titles come from Hide AI, which asks no model until an agent is chosen (B47):
+      // the operator of this fixture has already chosen the `claude` fixture shim.
+      const aiFile = aiSettingsFile(dir);
+      fs.mkdirSync(path.dirname(aiFile), { recursive: true });
+      fs.writeFileSync(aiFile, JSON.stringify({ provider: "claude" }));
+    }
     const bin = path.resolve("..", "target", "debug", fixtureExecutable("hided"));
     const env = {
       ...inheritedFixtureEnv(),

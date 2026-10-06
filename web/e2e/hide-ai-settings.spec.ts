@@ -59,8 +59,13 @@ test("Use Hide AI dims the rest and keeps its values, and Runs on shows the sign
     await runsOn.locator("[data-ai-model]").click();
     await expect(page.getByRole("option", { name: "sonnet" })).toBeVisible();
     await page.keyboard.press("Escape");
-    // B35 and B38: no other agent is installed, so Add agent has nothing to offer.
-    await expect(tab.locator("[data-ai-add-agent]")).toBeDisabled();
+    // B35 and B38: no other agent can answer here, so Add agent offers none to choose. A daemon that
+    // does not run from an installed app has no kit answer, so the agents Hide AI cannot use yet are
+    // still listed dimmed and the button opens; what it must never hold is a choosable agent.
+    await tab.locator("[data-ai-add-agent]").click();
+    await expect(page.locator("[data-ai-add-menu]")).toBeVisible();
+    await expect(page.locator("[data-ai-add-item]")).toHaveCount(0);
+    await page.keyboard.press("Escape");
 
     // B33: off dims and disables the rest; the stored values are untouched.
     const body = tab.locator("[data-hide-ai-body]");

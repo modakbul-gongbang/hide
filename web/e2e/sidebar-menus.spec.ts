@@ -156,12 +156,12 @@ test("the project row's Issue source submenu shows the stored choice and changes
     await expect(choices.getByRole("menuitemradio")).toHaveText([/^Automatic \(/, /^GitHub/, /^Local$/]);
     await expect(choices.getByRole("menuitemradio", { name: /^Automatic/ })).toHaveAttribute("aria-checked", "true");
     await screenshot(page, "sidebar-menus-issue-source-dark");
-    await choices.getByRole("menuitemradio", { name: "Local" }).click();
+    await choices.getByRole("menuitemradio", { name: /^Local$/ }).click();
     await expect(page.getByRole("menu")).toHaveCount(0);
     // The stored choice comes back checked the next time the menu opens.
     menu = await openMenu(page, projectRow, "repo actions");
     await menu.locator('[data-menu-item="issue_source"]').click();
-    await expect(page.getByRole("menu", { name: "Issue source" }).getByRole("menuitemradio", { name: "Local" })).toHaveAttribute("aria-checked", "true");
+    await expect(page.getByRole("menu", { name: "Issue source" }).getByRole("menuitemradio", { name: /^Local$/ })).toHaveAttribute("aria-checked", "true");
     await page.keyboard.press("Escape");
     await page.keyboard.press("Escape");
     // The keyboard reaches it too: menu key on the row, ArrowRight into the submenu, Enter on a choice.
@@ -206,11 +206,11 @@ test("a plain folder's row shows the stored Issue source, not Automatic", async 
     const choices = page.getByRole("menu", { name: "Issue source" });
     await expect(choices.getByRole("menuitemradio")).toHaveText([/^Automatic/, /^Local$/]);
     await expect(choices.getByRole("menuitemradio", { name: /^Automatic/ })).toHaveAttribute("aria-checked", "true");
-    await choices.getByRole("menuitemradio", { name: "Local" }).click();
+    await choices.getByRole("menuitemradio", { name: /^Local$/ }).click();
     await expect(page.getByRole("menu")).toHaveCount(0);
     menu = await openMenu(page, row, "notes actions");
     await menu.locator('[data-menu-item="issue_source"]').click();
-    await expect(page.getByRole("menu", { name: "Issue source" }).getByRole("menuitemradio", { name: "Local" })).toHaveAttribute("aria-checked", "true");
+    await expect(page.getByRole("menu", { name: "Issue source" }).getByRole("menuitemradio", { name: /^Local$/ })).toHaveAttribute("aria-checked", "true");
     await page.keyboard.press("Escape");
     await page.keyboard.press("Escape");
   } finally {
