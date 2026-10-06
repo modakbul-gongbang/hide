@@ -36,6 +36,7 @@ const LABELS: &str = "labels.json";
 const DELIVERY_LEDGER: &str = "delivery-ledger.json";
 const PROJECT_MEMORY: &str = "project-memory.sqlite3";
 const SESSION_SEARCH: &str = "session-search.sqlite3";
+const LINKS: &str = "links.sqlite3";
 
 /// How one machine-bound key is kept pointing at the right machine.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -160,6 +161,16 @@ pub const KEYS: &[(&str, &str, Mechanism)] = &[
         SESSION_SEARCH,
         "policy, control_outcomes, files, messages: project",
         Mechanism::Rewritten,
+    ),
+    (
+        LINKS,
+        "projects.device and projects.key, prs.project, worktrees.project, every device column",
+        Mechanism::Rewritten,
+    ),
+    (
+        LINKS,
+        "meta listed_at, pr_issues.issue `local:<root>#n`, paths and cwds",
+        Mechanism::Owned,
     ),
     (
         "github-snapshot.json",
@@ -296,6 +307,13 @@ pub fn convert(state_dir: &Path, home: &Path, node: &NodeId) -> Result<Outcome, 
         if outcome.search_rows > 0 {
             outcome.files.push(search.display().to_string());
         }
+    }
+
+    let links = hide_kit::layout::links_store(state_dir);
+    if links.is_file()
+        && convert_links(&links, node, &backup).map_err(|reason| refuse(&links, reason))?
+    {
+        outcome.files.push(links.display().to_string());
     }
 
     let marker = serde_json::to_vec(&Marker {
@@ -523,6 +541,23 @@ fn convert_memory(
         .map_err(|error| error.to_string())
 }
 
+/// The link record opens as its worker opens it: one of a newer schema, or
+/// one that does not open, is left for the worker to report, and a damaged
+/// one is set aside and made again, as the worker would on its own start.
+/// The record is rebuilt from session files and GitHub, but its copy keeps
+/// the closed links only it remembers.
+fn convert_links(path: &Path, node: &NodeId, backup: &Backup) -> Result<bool, String> {
+    let Ok((mut store, _)) = crate::links::store::LinkStore::open(path) else {
+        return Ok(false);
+    };
+    if !store.has_device(LEGACY)? {
+        return Ok(false);
+    }
+    backup.copy_with(path, |destination| store.copy_to(destination))?;
+    store.convert_device(LEGACY, node.as_str())?;
+    Ok(true)
+}
+
 /// `node-migration-backup/<started-at>/`, made on the first file it copies.
 struct Backup {
     directory: PathBuf,
@@ -690,6 +725,29 @@ mod tests {
                 [&old_project],
             )
             .unwrap();
+        let (links, _) = crate::links::store::LinkStore::open(&state.join(LINKS)).unwrap();
+        drop(links);
+        let connection = rusqlite::Connection::open(state.join(LINKS)).unwrap();
+        connection
+            .execute_batch(&format!(
+                "INSERT INTO projects VALUES('{old}','local','{root}','id:R',NULL,1);
+                 INSERT INTO projects VALUES('project:mini','mini','/srv/p',NULL,NULL,1);
+                 INSERT INTO prs VALUES('id:R',7,'{old}','b','t','u',1,NULL,NULL,1);
+                 INSERT INTO pr_issues VALUES('id:R',7,'local:{root}#4','hide',1,NULL);
+                 INSERT INTO worktrees VALUES('{old}','{root}','b',1,1);
+                 INSERT INTO sessions(device,agent,id,path,cwd) VALUES('local','claude','s1','/f','{root}');
+                 INSERT INTO sessions(device,agent,id) VALUES('mini','claude','s1');
+                 INSERT INTO session_branches(device,agent,id,file,branch,first_at,last_at)
+                     VALUES('local','claude','s1','/f','b',1,1);
+                 INSERT INTO session_prs(device,agent,id,file,repo_name,number,at)
+                     VALUES('local','claude','s1','/f','acme/p',7,1);
+                 INSERT INTO session_parents VALUES('local','claude','s2','claude','s1','p');
+                 INSERT INTO cursors(device,path,agent,stamp) VALUES('local','/f','claude','1');
+                 INSERT INTO meta VALUES('listed_at','1');",
+                old = old_project,
+            ))
+            .unwrap();
+        drop(connection);
         Legacy {
             _dir: dir,
             state,
@@ -829,6 +887,57 @@ mod tests {
         );
         assert_ne!(legacy.old_project, new_project);
 
+        let links = rusqlite::Connection::open(legacy.state.join(LINKS)).unwrap();
+        let count = |sql: &str| -> i64 { links.query_row(sql, [], |row| row.get(0)).unwrap() };
+        for table in [
+            "projects",
+            "sessions",
+            "session_branches",
+            "session_prs",
+            "session_parents",
+            "cursors",
+        ] {
+            assert_eq!(
+                count(&format!(
+                    "SELECT COUNT(*) FROM {table} WHERE device='local'"
+                )),
+                0,
+                "{table} still names `local`"
+            );
+        }
+        let moved: (String, String, String, String) = links
+            .query_row(
+                "SELECT (SELECT device FROM projects WHERE key=?1), \
+                 (SELECT project FROM prs WHERE number=7), \
+                 (SELECT project FROM worktrees), (SELECT device FROM cursors)",
+                [&new_project],
+                |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?)),
+            )
+            .unwrap();
+        assert_eq!(
+            moved,
+            (
+                NODE.into(),
+                new_project.clone(),
+                new_project.clone(),
+                NODE.into()
+            )
+        );
+        // A remote device's rows and the node-owned keys stay as they were.
+        assert_eq!(
+            count("SELECT COUNT(*) FROM projects WHERE device='mini' AND key='project:mini'"),
+            1
+        );
+        assert_eq!(
+            count("SELECT COUNT(*) FROM sessions WHERE device='mini'"),
+            1
+        );
+        assert_eq!(
+            count("SELECT COUNT(*) FROM pr_issues WHERE issue LIKE 'local:%#4'"),
+            1
+        );
+        assert_eq!(count("SELECT COUNT(*) FROM meta WHERE key='listed_at'"), 1);
+
         assert_eq!(read(&legacy.state.join(MARKER_FILE))["node"], NODE);
     }
 
@@ -850,11 +959,30 @@ mod tests {
             );
         }
         assert!(backups[0].join(PROJECT_MEMORY).is_file());
+        let copy = rusqlite::Connection::open(backups[0].join(LINKS)).unwrap();
+        let legacy_rows: i64 = copy
+            .query_row(
+                "SELECT COUNT(*) FROM sessions WHERE device='local'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(
+            legacy_rows, 1,
+            "the links copy holds the rows before the move"
+        );
 
         let converted = snapshot(&legacy.state);
         let again = convert(&legacy.state, &legacy.home, &node()).unwrap();
         assert_eq!(again, Outcome::default());
-        assert_eq!(snapshot(&legacy.state), converted);
+        let after = snapshot(&legacy.state);
+        assert_eq!(
+            after.keys().collect::<Vec<_>>(),
+            converted.keys().collect::<Vec<_>>()
+        );
+        for (file, bytes) in &after {
+            assert!(bytes == &converted[file], "{file} was written again");
+        }
     }
 
     #[test]
@@ -886,6 +1014,7 @@ mod tests {
             LABELS,
             DELIVERY_LEDGER,
             SESSION_SEARCH,
+            LINKS,
         ] {
             assert_eq!(after[file], before[file], "{file} changed");
         }
@@ -895,6 +1024,32 @@ mod tests {
             memory.has_device(LEGACY).unwrap(),
             "the transaction rolled back"
         );
+    }
+
+    #[test]
+    fn a_link_row_the_move_would_land_on_stops_the_start_and_rolls_the_record_back() {
+        let legacy = legacy();
+        let links = rusqlite::Connection::open(legacy.state.join(LINKS)).unwrap();
+        links
+            .execute(
+                "INSERT INTO sessions(device,agent,id) VALUES(?1,'claude','s1')",
+                [NODE],
+            )
+            .unwrap();
+        drop(links);
+        let refusal = convert(&legacy.state, &legacy.home, &node()).unwrap_err();
+        assert_eq!(refusal.file, legacy.state.join(LINKS));
+        assert!(refusal.reason.contains("sessions"), "{refusal}");
+        let links = rusqlite::Connection::open(legacy.state.join(LINKS)).unwrap();
+        let legacy_rows: i64 = links
+            .query_row(
+                "SELECT COUNT(*) FROM projects WHERE device='local'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(legacy_rows, 1, "the transaction rolled back");
+        assert!(!legacy.state.join(MARKER_FILE).exists());
     }
 
     #[test]

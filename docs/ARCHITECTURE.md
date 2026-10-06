@@ -829,7 +829,7 @@ The desktop host learns it from the shell's browser sync (`node`) and keys the s
 A Herdr workspace whose `hide_owner` mark was written for `local` is still read as this node's folder (`OwnerOpen::on_node`), so a folder project opened before the change keeps its Workspace.
 
 A state folder written under `local` is converted before the core starts (`herdr_core::node_migration::convert`, called from `hided`'s `start_daemon` after it holds the instance lock).
-`core-state.json`, `workspace-views.json`, `labels.json` and `delivery-ledger.json` are rewritten whole through a temporary file and a rename; Project Memory, both the state folder's and the agent hooks' app-data database, and the session search index re-key their project ids in one SQLite transaction each.
+`core-state.json`, `workspace-views.json`, `labels.json` and `delivery-ledger.json` are rewritten whole through a temporary file and a rename; Project Memory, both the state folder's and the agent hooks' app-data database, the session search index and the link record (`links.sqlite3`) re-key their project ids, and the link record its device names, in one SQLite transaction each.
 The originals are copied under `node-migration-backup/<unix ms>/` first, except the session search index, which is a rebuildable cache that can be hundreds of megabytes.
 `node.json` is written last, so a start interrupted before it converts again, and a start of an already converted folder writes nothing.
 A store that cannot be converted stops the daemon with the file and the reason; a JSON file its own loader cannot read is left to that loader, which already reports it.

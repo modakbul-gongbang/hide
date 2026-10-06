@@ -1032,10 +1032,10 @@ mod tests {
         let nested = worktree.join("src");
         fs::create_dir_all(&nested).expect("nested directory");
         let (_plain_scratch, folder) = temp_dir("no-spawn-plain");
-        let demo =
-            registration(root.to_str().unwrap(), "Demo", crate::node::TEST_NODE).expect("registration");
-        let plain =
-            registration(folder.to_str().unwrap(), "Plain", crate::node::TEST_NODE).expect("registration");
+        let demo = registration(root.to_str().unwrap(), "Demo", crate::node::TEST_NODE)
+            .expect("registration");
+        let plain = registration(folder.to_str().unwrap(), "Plain", crate::node::TEST_NODE)
+            .expect("registration");
         let spaces = vec![
             SessionSpace {
                 id: "w1".to_owned(),
@@ -1187,8 +1187,8 @@ mod tests {
     #[test]
     fn flat_folder_is_visible_without_implicit_git_init() {
         let (_scratch, root) = temp_dir("flat");
-        let registration =
-            registration(root.to_str().unwrap(), "Flat", crate::node::TEST_NODE).expect("registration");
+        let registration = registration(root.to_str().unwrap(), "Flat", crate::node::TEST_NODE)
+            .expect("registration");
         let snapshot = inspect_registered(&registration);
         assert!(!snapshot.is_git);
         assert_eq!(snapshot.checkouts.len(), 1);
@@ -1202,8 +1202,9 @@ mod tests {
     #[test]
     fn a_space_occupying_a_registered_directory_does_not_duplicate_it() {
         let (_scratch, root) = temp_dir("temporary");
-        let registration = registration(root.to_str().unwrap(), "Registered", crate::node::TEST_NODE)
-            .expect("registration");
+        let registration =
+            registration(root.to_str().unwrap(), "Registered", crate::node::TEST_NODE)
+                .expect("registration");
         let spaces = [SessionSpace {
             id: "w1".to_owned(),
             label: "Registered".to_owned(),
@@ -1594,8 +1595,8 @@ mod tests {
     #[test]
     fn a_missing_worktree_is_a_row_that_says_it_is_missing() {
         let (_scratch, root) = temp_dir("missing-worktree");
-        let registration =
-            registration(root.to_str().unwrap(), "Project", crate::node::TEST_NODE).expect("registration");
+        let registration = registration(root.to_str().unwrap(), "Project", crate::node::TEST_NODE)
+            .expect("registration");
         let worktrees = WorktreeCatalogSnapshot {
             projects: vec![ProjectWorktreesSnapshot {
                 root_path: root.to_string_lossy().into_owned(),
@@ -1627,8 +1628,8 @@ mod tests {
     #[test]
     fn a_project_with_no_worktree_answer_keeps_the_rows_it_had() {
         let (_scratch, root) = temp_dir("no-answer");
-        let registration =
-            registration(root.to_str().unwrap(), "Project", crate::node::TEST_NODE).expect("registration");
+        let registration = registration(root.to_str().unwrap(), "Project", crate::node::TEST_NODE)
+            .expect("registration");
 
         let before = build_catalog(
             &crate::node::test_node(),

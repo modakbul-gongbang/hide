@@ -86,11 +86,10 @@ pub(crate) fn spawn_worker(
     notifier: ChangeNotifier,
     home: Option<PathBuf>,
 ) -> Result<LinkWorker, String> {
-    let state_path = runtime
-        .lock()
-        .map_err(|_| "runtime lock poisoned")?
-        .state_path
-        .clone();
+    let (state_path, node) = {
+        let runtime = runtime.lock().map_err(|_| "runtime lock poisoned")?;
+        (runtime.state_path.clone(), runtime.node.to_string())
+    };
     let directory = state_path
         .parent()
         .filter(|directory| !directory.as_os_str().is_empty())
@@ -99,7 +98,7 @@ pub(crate) fn spawn_worker(
         store: hide_kit::layout::links_store(directory),
         search: state_path.with_file_name("session-search.sqlite3"),
         home,
-        local_device: workspace::LOCAL_DEVICE_ID.to_owned(),
+        local_device: node,
     };
     let worker = LinkWorker::spawn(
         paths,
@@ -354,7 +353,7 @@ impl Runtime {
             .unwrap_or_default();
         Some(crate::links::query::Scope {
             store: hide_kit::layout::links_store(directory),
-            local_device: workspace::LOCAL_DEVICE_ID.to_owned(),
+            local_device: self.node.to_string(),
             caller,
             projects,
         })
