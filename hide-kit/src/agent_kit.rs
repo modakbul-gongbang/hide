@@ -5,8 +5,9 @@
 //! another tool wrote is never touched, a piece that failed does not stop
 //! the others and says why, and a piece the kit installed and the operator
 //! then took away stays away until Reinstall. The record's `agents` map is
-//! the operator's choice; its `installed` set holds `hook:<agent>` and
-//! `skill:<folder>` for what the kit has put down.
+//! the operator's choice; its `installed` set holds `hook:<agent>`,
+//! `skill:<folder>` and `herdr:<agent>` (Herdr's own integration, installed
+//! through the machine's Herdr CLI) for what the kit has put down.
 //!
 //! Claude Code and Codex keep their hook as a kit part ([`HookSupport::Part`])
 //! because Memory, pane diagnosis and the device rows read it there. Their
@@ -23,6 +24,7 @@ use crate::agents::{
     SkillObserved, adapter_of_part, availability, install_skill, observe_skill, remove_skill,
     skill_location,
 };
+use crate::herdr_integration::{self, Integration, Statuses};
 use crate::record::Record;
 use crate::{
     ComponentId, ComponentState, KitTarget, Observed, RemoveOutcome, Retirement, Scope,
@@ -39,6 +41,10 @@ fn hook_code(adapter: &AgentAdapter) -> String {
 
 fn skill_code(dir: SkillDir) -> String {
     format!("skill:{}", dir.code())
+}
+
+fn herdr_code(adapter: &AgentAdapter) -> String {
+    format!("herdr:{}", adapter.id)
 }
 
 /// Whether the agent is on: the operator's choice made in `scope` now, else
@@ -242,6 +248,7 @@ pub(crate) fn status(
     let readable = record.as_ref().unwrap_or(&empty);
     let detection = Detection::probe(target);
     let dirs = observe_dirs(target, readable, &scope, &detection);
+    let herdr = Statuses::probe(target);
     ADAPTERS
         .iter()
         .map(|adapter| {
@@ -253,6 +260,7 @@ pub(crate) fn status(
                 on,
                 &dirs,
                 &detection,
+                &herdr,
                 None,
                 record.is_ok(),
                 parts,
@@ -292,6 +300,7 @@ fn report_agent(
     on: bool,
     dirs: &[(SkillDir, SkillObserved, bool)],
     detection: &Detection,
+    herdr: &HerdrView,
     failures: Option<&AgentFailures>,
     record_readable: bool,
     parts: &[PartView],
@@ -397,6 +406,7 @@ fn report_agent(
             target, adapter, agent, record, on, detection, failures,
         )),
     };
+    let herdr = herdr_piece(target, adapter, record, on, detection, herdr, failures);
     AgentReport {
         id: adapter.id.to_owned(),
         label: adapter.label.to_owned(),
@@ -404,8 +414,107 @@ fn report_agent(
         enabled: on,
         skill,
         hook,
+        herdr,
         doc_url: adapter.doc_url.to_owned(),
     }
+}
+
+/// Herdr's integrations as one pass read them: `None` for a machine with no
+/// Herdr CLI Hide can find, else the listing or why it could not be read.
+type HerdrView = Option<Result<Statuses, String>>;
+
+/// One agent's Herdr integration as the row states it; `None` for an agent
+/// the pinned Herdr has no integration for, which then has no row for it and
+/// no failure (the agent's state is read from its screen).
+fn herdr_piece(
+    target: &KitTarget,
+    adapter: &AgentAdapter,
+    record: &Record,
+    on: bool,
+    detection: &Detection,
+    herdr: &HerdrView,
+    failures: Option<&AgentFailures>,
+) -> Option<PieceReport> {
+    let integration = adapter.herdr?;
+    let folder = integration
+        .folder
+        .iter()
+        .fold(target.home.clone(), |path, part| path.join(part));
+    let location = Some(folder.display().to_string());
+    let code = herdr_code(adapter);
+    let recorded = record.contains_piece(&code);
+    let listed = match herdr {
+        Some(Ok(statuses)) => statuses.of(integration.name),
+        _ => None,
+    };
+    let piece = |state, reason: Option<String>| PieceReport {
+        state,
+        reason,
+        location: location.clone(),
+    };
+    let failure = failures.and_then(|failures| failures.herdr.get(adapter.id).cloned());
+    if !on {
+        // Hide's own integration is still there after the switch-off: the
+        // removal failed or never ran, and the row must not read Off over it.
+        let left = failure.or_else(|| {
+            (record.agent_choice(adapter.id) == Some(false)
+                && recorded
+                && matches!(listed, Some(Integration::Current | Integration::Outdated)))
+            .then(|| {
+                "Hide's Herdr integration is still in place; switch the agent on and off again to remove it".to_owned()
+            })
+        });
+        return Some(match left {
+            Some(reason) => piece(ComponentState::Failed, Some(reason)),
+            None => piece(ComponentState::Off, None),
+        });
+    }
+    if !detection.installed(adapter) {
+        return Some(PieceReport {
+            state: ComponentState::Absent,
+            reason: Some(not_found(adapter)),
+            location: None,
+        });
+    }
+    if let Some(reason) = failure {
+        return Some(piece(ComponentState::Failed, Some(reason)));
+    }
+    Some(match herdr {
+        None => piece(
+            ComponentState::Absent,
+            Some("Herdr is not found on this machine".to_owned()),
+        ),
+        Some(Err(reason)) => piece(ComponentState::Failed, Some(reason.clone())),
+        Some(Ok(_)) if !folder.is_dir() => piece(
+            ComponentState::Absent,
+            Some(format!(
+                "{} has not created its own folder yet; Herdr's integration is put in once it has",
+                adapter.label
+            )),
+        ),
+        Some(Ok(_)) => match listed {
+            None => piece(
+                ComponentState::Absent,
+                Some(format!(
+                    "this Herdr has no integration for {}; update Herdr to get it",
+                    adapter.label
+                )),
+            ),
+            Some(Integration::Current) => piece(ComponentState::Installed, None),
+            // An integration Hide did not install is the operator's: it is
+            // judged present and never replaced.
+            Some(Integration::Outdated) if !recorded => piece(ComponentState::Installed, None),
+            Some(Integration::Outdated) => piece(
+                ComponentState::Outdated,
+                Some("an older version of Herdr's integration is there".to_owned()),
+            ),
+            Some(Integration::Missing) if recorded => piece(
+                ComponentState::Removed,
+                Some("taken out after Hide installed it; Reinstall puts it back".to_owned()),
+            ),
+            Some(Integration::Missing) => piece(ComponentState::NotInstalled, None),
+        },
+    })
 }
 
 /// Hide's skill stub is still in the folder of an agent the operator switched
@@ -502,6 +611,7 @@ fn guidance_piece(
 struct AgentFailures {
     hook: std::collections::BTreeMap<&'static str, String>,
     skill: std::collections::BTreeMap<SkillDir, String>,
+    herdr: std::collections::BTreeMap<&'static str, String>,
 }
 
 /// Applies the operator's per-agent choices in `scope` and what the pass
@@ -642,6 +752,16 @@ pub(crate) fn apply(
         }
     }
 
+    let herdr = apply_herdr(
+        target,
+        scope,
+        record,
+        record_readable,
+        &detection,
+        &mut failures,
+        &mut changed,
+    );
+
     let dirs = observe_dirs(target, record, scope, &detection);
     let reports: Vec<AgentReport> = ADAPTERS
         .iter()
@@ -654,6 +774,7 @@ pub(crate) fn apply(
                 on,
                 &dirs,
                 &detection,
+                &herdr,
                 Some(&failures),
                 record_readable,
                 parts,
@@ -661,6 +782,110 @@ pub(crate) fn apply(
         })
         .collect();
     (reports, changed, retirement.report)
+}
+
+/// Herdr's integrations: installed for an agent that is on and found, taken
+/// out for an agent switched off now, and only ever what the record says Hide
+/// installed. Answers the machine's integrations as they are afterwards.
+fn apply_herdr(
+    target: &KitTarget,
+    scope: &Scope,
+    record: &mut Record,
+    record_readable: bool,
+    detection: &Detection,
+    failures: &mut AgentFailures,
+    changed: &mut bool,
+) -> HerdrView {
+    let before = Statuses::probe(target);
+    let mut installed_now = Vec::new();
+    let mut touched = false;
+    for adapter in ADAPTERS {
+        let Some(integration) = adapter.herdr else {
+            continue;
+        };
+        let code = herdr_code(adapter);
+        let recorded = record.contains_piece(&code);
+        if !enabled(record, scope, adapter) {
+            // Without a readable record the kit cannot tell its own
+            // integration from the operator's, and takes nothing out.
+            if !(scope.agent_off.contains(adapter.id) && recorded && record_readable) {
+                continue;
+            }
+            match &before {
+                Some(Ok(statuses))
+                    if statuses.of(integration.name) == Some(Integration::Missing) =>
+                {
+                    *changed |= record.forget_piece(&code);
+                }
+                Some(Ok(_)) => match herdr_integration::uninstall(target, integration.name) {
+                    Ok(()) => {
+                        *changed |= record.forget_piece(&code);
+                        touched = true;
+                    }
+                    Err(reason) => {
+                        failures.herdr.insert(adapter.id, reason);
+                    }
+                },
+                Some(Err(reason)) => {
+                    failures.herdr.insert(adapter.id, reason.clone());
+                }
+                None => {
+                    failures.herdr.insert(
+                        adapter.id,
+                        "Herdr is not found on this machine, so Hide's integration stays"
+                            .to_owned(),
+                    );
+                }
+            }
+            continue;
+        }
+        let folder = integration
+            .folder
+            .iter()
+            .fold(target.home.clone(), |path, part| path.join(part));
+        if !detection.installed(adapter) || !folder.is_dir() {
+            continue;
+        }
+        let Some(Ok(statuses)) = &before else {
+            continue;
+        };
+        let restore = scope.agent_on.contains(adapter.id);
+        let install_now = match statuses.of(integration.name) {
+            Some(Integration::Missing) => restore || (!recorded && record_readable),
+            // Only what Hide installed is Hide's to bring up to date.
+            Some(Integration::Outdated) => recorded,
+            Some(Integration::Current) | None => false,
+        };
+        if !install_now {
+            continue;
+        }
+        match herdr_integration::install(target, integration.name) {
+            Ok(()) => {
+                installed_now.push(adapter);
+                touched = true;
+            }
+            Err(reason) => {
+                failures.herdr.insert(adapter.id, reason);
+            }
+        }
+    }
+    if !touched {
+        return before;
+    }
+    // What Herdr reports now decides what is recorded: an install that did
+    // not take is not Hide's.
+    let after = Statuses::probe(target);
+    if let Some(Ok(statuses)) = &after {
+        for adapter in installed_now {
+            let Some(integration) = adapter.herdr else {
+                continue;
+            };
+            if statuses.of(integration.name) == Some(Integration::Current) && record_readable {
+                *changed |= record.insert_piece(&herdr_code(adapter));
+            }
+        }
+    }
+    after
 }
 
 /// Takes every Hide piece off a machine: each guidance hook's marked
@@ -685,6 +910,42 @@ pub(crate) fn remove(target: &KitTarget) -> Vec<(String, RemoveOutcome)> {
     }
     outcomes.extend(retired_agents::remove(target));
     outcomes
+}
+
+/// Takes the Herdr integrations Hide installed off a machine that is being
+/// removed from Hide, by the record's ownership; an integration the operator
+/// installed stays.
+pub(crate) fn remove_herdr(target: &KitTarget, record: &Record) -> Vec<(String, RemoveOutcome)> {
+    let owned: Vec<&AgentAdapter> = ADAPTERS
+        .iter()
+        .filter(|adapter| adapter.herdr.is_some() && record.contains_piece(&herdr_code(adapter)))
+        .collect();
+    if owned.is_empty() {
+        return Vec::new();
+    }
+    let statuses = Statuses::probe(target);
+    owned
+        .into_iter()
+        .filter_map(|adapter| {
+            let integration = adapter.herdr?;
+            let outcome = match &statuses {
+                None => RemoveOutcome::Failed {
+                    reason: "Herdr is not found on this machine".to_owned(),
+                },
+                Some(Err(reason)) => RemoveOutcome::Failed {
+                    reason: reason.clone(),
+                },
+                Some(Ok(listed)) if listed.of(integration.name) == Some(Integration::Missing) => {
+                    RemoveOutcome::Absent
+                }
+                Some(Ok(_)) => match herdr_integration::uninstall(target, integration.name) {
+                    Ok(()) => RemoveOutcome::Removed,
+                    Err(reason) => RemoveOutcome::Failed { reason },
+                },
+            };
+            Some((herdr_code(adapter), outcome))
+        })
+        .collect()
 }
 
 /// The kit parts' reports, in the shape [`apply`] and [`status`] take.

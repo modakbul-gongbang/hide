@@ -23,6 +23,7 @@ pub mod agents;
 mod cli;
 mod coordination_retirement;
 mod device;
+mod herdr_integration;
 mod hooks;
 mod labels;
 pub mod layout;
@@ -772,6 +773,11 @@ pub fn remove(target: &KitTarget) -> RemoveReport {
         };
         components.push((id, outcome));
     }
+    // Before the record goes: it is what says which integrations were Hide's.
+    let herdr = match record::load(&target.home) {
+        Ok(record) => agent_kit::remove_herdr(target, &record),
+        Err(_) => Vec::new(),
+    };
     if let Err(reason) = record::forget(&target.home) {
         components.push((
             ComponentId::Cli,
@@ -780,7 +786,8 @@ pub fn remove(target: &KitTarget) -> RemoveReport {
             },
         ));
     }
-    let agents = agent_kit::remove(target);
+    let mut agents = agent_kit::remove(target);
+    agents.extend(herdr);
     RemoveReport { components, agents }
 }
 

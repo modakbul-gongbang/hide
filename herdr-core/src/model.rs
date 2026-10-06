@@ -665,6 +665,10 @@ pub struct KitAgentSnapshot {
     pub skill: KitPieceSnapshot,
     /// `None` for an agent that gets the skill only.
     pub hook: Option<KitPieceSnapshot>,
+    /// Herdr's own integration for the agent, installed through the
+    /// machine's Herdr CLI; `None` for an agent the pinned Herdr has none
+    /// for (Gemini CLI).
+    pub herdr: Option<KitPieceSnapshot>,
     /// The official page the adapter's answers come from.
     pub doc_url: String,
 }
@@ -678,7 +682,11 @@ impl KitAgentSnapshot {
                 || self
                     .hook
                     .as_ref()
-                    .is_some_and(|hook| hook.state.needs_attention()))
+                    .is_some_and(|hook| hook.state.needs_attention())
+                || self
+                    .herdr
+                    .as_ref()
+                    .is_some_and(|herdr| herdr.state.needs_attention()))
     }
 }
 
@@ -722,6 +730,7 @@ impl KitSnapshot {
                 enabled: agent.enabled,
                 skill: (&agent.skill).into(),
                 hook: agent.hook.as_ref().map(Into::into),
+                herdr: agent.herdr.as_ref().map(Into::into),
                 doc_url: agent.doc_url.clone(),
             })
             .collect::<Vec<_>>();

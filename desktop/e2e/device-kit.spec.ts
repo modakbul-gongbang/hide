@@ -98,6 +98,11 @@ async function stopDeviceRun(setup: DeviceRun): Promise<void> {
   fs.rmSync(setup.bridge, { recursive: true, force: true });
 }
 
+/** The files Herdr's integrations for Claude Code and Codex leave in an account's home. */
+function herdrIntegrations(home: string): string[] {
+  return [path.join(home, ".claude", "hooks", "herdr-agent-state.sh"), path.join(home, ".codex", "herdr-agent-state.sh")];
+}
+
 /** The plugin list the device's Herdr answers, as JSON text. */
 function devicePlugins(herdr: HerdrFixture): string {
   const listed = spawnSync(herdr.bin, ["plugin", "list", "--json"], { env: herdr.env, encoding: "utf8", timeout: 10_000 });
@@ -120,6 +125,11 @@ function withoutHide(settings: AgentSettings, hooks: string): AgentSettings {
       .filter((group) => group.hooks.length > 0)])
     .filter(([, groups]) => groups.length > 0));
   return { ...settings, hooks: events };
+}
+
+/** The file with Herdr's own integration entries taken out: the claude integration adds a SessionStart hook of its own to the operator's file. */
+function withoutHerdr(settings: AgentSettings): AgentSettings {
+  return withoutHide(settings, "herdr-agent-state");
 }
 
 /** Runs a shell line in the device's first pane and returns its exit status and output. */
@@ -161,6 +171,8 @@ test("a device gets this Mac's kit, keeps a part the operator removed out until 
       expect(now.hooks.SessionStart).toEqual(expect.arrayContaining(before.hooks.SessionStart!));
       expect({ ...now, hooks: undefined }).toEqual({ ...before, hooks: undefined });
     }
+    // PRD settings-cleanup D-13: Herdr's own integration for each agent that is on, put in with the device's own Herdr.
+    for (const file of herdrIntegrations(home)) expect(fs.existsSync(file), file).toBe(true);
     // D-14: the kit reads Codex's daemon setting and never turns it off on its own.
     expect(codexDaemonWritten(home)).toBe(false);
     // Labels for device panes are made on this Mac; the kit links no plugin there (PRD labels-in-hided B2).
@@ -189,7 +201,7 @@ test("a device gets this Mac's kit, keeps a part the operator removed out until 
     await expect(page.locator(`[data-kit-part="${DEVICE}:claude_code_hook:removed"]`)).toBeVisible({ timeout: 60_000 });
     await expect(page.locator(`[data-kit-reinstall="${DEVICE}"]`)).toBeVisible();
     await screenshot(page, "device-kit-removed-part");
-    expect(readSettings(claudeSettings(home))).toEqual(original.claude);
+    expect(withoutHerdr(readSettings(claudeSettings(home)))).toEqual(original.claude);
     const reinstalls = applied().length;
     await page.locator(`[data-kit-reinstall="${DEVICE}"]`).click();
     await expect(page.locator(`[data-kit-part="${DEVICE}:claude_code_hook:installed"]`)).toBeVisible({ timeout: 60_000 });
@@ -208,6 +220,7 @@ test("a device gets this Mac's kit, keeps a part the operator removed out until 
       .find((line) => line.device_id === DEVICE && /^device\.kit_(removed|left)$/.test(line.kind ?? ""))?.kind, { timeout: 60_000 }).toBe("device.kit_removed");
     expect(readSettings(claudeSettings(home))).toEqual(original.claude);
     expect(readSettings(codexHooks(home))).toEqual(original.codex);
+    for (const file of herdrIntegrations(home)) expect(fs.existsSync(file), file).toBe(false);
     expect(fs.lstatSync(path.join(cliDir, "hide"), { throwIfNoEntry: false })).toBeUndefined();
     expect(fs.existsSync(helper)).toBe(false);
     expect(devicePlugins(device)).not.toContain(LABELS_ID);

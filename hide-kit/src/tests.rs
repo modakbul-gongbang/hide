@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 use super::*;
 
 mod agent_cases;
+mod herdr_cases;
 mod retired_cases;
 
 type IndexReadHook = Box<dyn FnOnce(&Path)>;
@@ -141,6 +142,37 @@ fn executable(path: &Path, body: &str) {
     std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755)).unwrap();
 }
 
+/// The `herdr` CLI: plugin calls go to `$HOME/herdr.log`, integration calls
+/// to `herdr-integration.log`, and each integration's state lives in
+/// `herdr-fake/<target>` (`current` or `outdated`; no file is not installed)
+/// the way `herdr integration status` lists it, both beside the fixture's
+/// HOME so a pass that changes nothing in HOME is still seen to. A file
+/// `herdr-fails` in HOME makes an install fail.
+const FAKE_HERDR: &str = r#"#!/bin/sh
+if [ "$1" = integration ]; then
+  fixture="$(dirname "$HOME")"
+  echo "$@" >> "$fixture/herdr-integration.log"
+  dir="$fixture/herdr-fake"
+  mkdir -p "$dir"
+  case "$2" in
+    status)
+      for t in pi omp claude codex copilot devin droid kimi opencode kilo hermes qodercli qwen cursor mastracode antigravity-cli grok letta; do
+        case "$(cat "$dir/$t" 2>/dev/null)" in
+          current) echo "$t: current (v1) (/x/$t)" ;;
+          outdated) echo "$t: outdated (v0 < v1) (/x/$t)" ;;
+          *) echo "$t: not installed (/x/$t)" ;;
+        esac
+      done ;;
+    install)
+      if [ -e "$HOME/herdr-fails" ]; then echo "disk full" >&2; exit 1; fi
+      echo current > "$dir/$3" ;;
+    uninstall) rm -f "$dir/$3" ;;
+  esac
+  exit 0
+fi
+echo "$@" >> "$HOME/herdr.log"
+"#;
+
 const OTHER_TOOL: &str = r#"{
   "model": "opus",
   "hooks": {
@@ -186,10 +218,7 @@ impl Fixture {
         executable(&kit.join("hide"), "#!/bin/sh\n");
         executable(&kit.join("hide-agent-hooks"), "#!/bin/sh\n");
         executable(&root.join("launchctl"), "#!/bin/sh\nexit 113\n");
-        executable(
-            &root.join("bin/herdr"),
-            "#!/bin/sh\necho \"$@\" >> \"$HOME/herdr.log\"\n",
-        );
+        executable(&root.join("bin/herdr"), FAKE_HERDR);
         let herdr = FakeHerdr::start(&root);
         let target = KitTarget {
             home: home.clone(),
@@ -219,6 +248,31 @@ impl Fixture {
 
     fn home(&self) -> &Path {
         &self.target.home
+    }
+
+    /// What the fake Herdr holds of one integration: `current`, `outdated`
+    /// or `none`.
+    fn integration(&self, target: &str) -> String {
+        std::fs::read_to_string(self.root.join("herdr-fake").join(target))
+            .map(|state| state.trim().to_owned())
+            .unwrap_or_else(|_| "none".to_owned())
+    }
+
+    /// An integration the operator put there before Hide looked.
+    fn operator_installed(&self, target: &str, state: &str) {
+        let dir = self.root.join("herdr-fake");
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join(target), format!("{state}\n")).unwrap();
+    }
+
+    /// The `herdr integration install|uninstall` calls the kit made, in order.
+    fn integration_changes(&self) -> Vec<String> {
+        std::fs::read_to_string(self.root.join("herdr-integration.log"))
+            .unwrap_or_default()
+            .lines()
+            .filter(|line| !line.starts_with("integration status"))
+            .map(str::to_owned)
+            .collect()
     }
 
     fn settings(&self) -> String {
@@ -319,6 +373,7 @@ fn a_first_apply_installs_every_part_and_keeps_other_tools_entries() {
             "claude_code_hook",
             "cli",
             "coordination_retirement",
+            "herdr:claude-code",
             "skill:claude"
         ],
         "{record}"

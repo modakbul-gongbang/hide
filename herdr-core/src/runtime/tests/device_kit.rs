@@ -313,6 +313,7 @@ fn agent_report(
         enabled,
         skill: piece(skill),
         hook: None,
+        herdr: None,
         doc_url: "https://example.test/skills".to_owned(),
     }
 }
@@ -385,6 +386,39 @@ fn an_agent_switch_on_a_device_sends_the_agent_and_repeats_nothing() {
         ],
         "{actions:?}"
     );
+}
+
+/// PRD settings-cleanup D-13: a device's Herdr integration for an agent is a
+/// piece of that agent's row, a failed one offers Reinstall for that agent
+/// alone, and an agent without one (Gemini CLI) carries none.
+#[test]
+fn a_failed_herdr_integration_shows_on_its_agent_and_offers_reinstall() {
+    use hide_kit::Availability::Available;
+    let mut pi = agent_report("pi", Available, true, ComponentState::Installed);
+    pi.herdr = Some(hide_kit::PieceReport {
+        state: ComponentState::Failed,
+        reason: Some("`herdr integration install pi` failed: disk full".to_owned()),
+        location: Some("/home/me/.pi/agent".to_owned()),
+    });
+    let gemini = agent_report("gemini-cli", Available, true, ComponentState::Installed);
+    let mut answer = report(&[(ComponentId::Cli, ComponentState::Installed)]);
+    answer.agents = vec![pi, gemini];
+    let shared = with_consent(Some(KitDevice::answering(Ok(answer))));
+    shared
+        .lock()
+        .unwrap()
+        .queue_device_kit(DEVICE, KitJob::Status);
+    settle(&shared);
+
+    let kit = kit(&shared);
+
+    let piece = kit.agents[0].herdr.as_ref().expect("pi has an integration");
+    assert_eq!(piece.state, ComponentState::Failed);
+    assert!(piece.reason.as_deref().unwrap().contains("disk full"));
+    assert!(kit.agents[0].needs_attention());
+    assert!(kit.agents[1].herdr.is_none());
+    assert!(!kit.agents[1].needs_attention());
+    assert!(kit.offers_reinstall);
 }
 
 /// A pass that ran: it lists the agents, which a refused or failed pass never does.

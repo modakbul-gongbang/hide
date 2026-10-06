@@ -133,10 +133,10 @@ The core follows it (`ui_state.agent_onboarding`), applies the answer to this Ma
 Claude Code and Codex are the agents the kit has always had a hook for.
 Hide supports seven agents: Claude Code, Codex, Gemini CLI, Grok, OpenCode, Pi and Cursor, in that order.
 Every agent is one row of `hide-kit/src/agents.rs` (`ADAPTERS`), and one switch per agent per machine turns its pieces on and off, in Settings, Agents and in each device's row.
-A row carries the agent's program names (`executables`), the folder it reads skills from and the systems the documentation confirms that folder on, whether Hide writes a hook for it, and the official page the row's answers come from (`doc_url`).
+A row carries the agent's program names (`executables`), the folder it reads skills from and the systems the documentation confirms that folder on, whether Hide writes a hook for it, Herdr's integration name for it (none for Gemini CLI), and the official page the row's answers come from (`doc_url`).
 A test fails a row with no `https` `doc_url`, and a row with no program, so a claim in the table below always has a page behind it and every agent can be found.
 
-Two pieces are written per agent, and nothing else:
+Two pieces are written per agent into the agent's own files, and nothing else; a third, Herdr's integration, is put in through Herdr's own CLI (below):
 
 - The skill stub `hide-browser/SKILL.md` in the folder the agent reads.
   It is a few lines that point at `hide browser help`, so it stays right as the CLI's guide changes.
@@ -168,7 +168,7 @@ Hide keeps the Cursor guidance hook and makes the Claude Code hook stay out: `hi
 Cursor's page on third-party hooks does not say whether those get the variable, so this rests on the documented one; a session where it is missing would run both hooks, which print different fields and count only for `claude-code`.
 The guidance hook is not written on Windows, because its command is a shell command and Gemini CLI's documentation names no Windows form.
 
-The record `~/.hide/kit/installed.json` keeps the operator's choice per agent (`agents`) and the pieces Hide installed (`hook:<agent>`, `skill:<folder>`), and an older build ignores them.
+The record `~/.hide/kit/installed.json` keeps the operator's choice per agent (`agents`) and the pieces Hide installed (`hook:<agent>`, `skill:<folder>`, `herdr:<agent>`), and an older build ignores them.
 With no choice on record Claude Code and Codex are on, as they have been since their hooks became part of the kit, and every other agent is off.
 A piece that was installed and is gone stays gone until Reinstall, and an agent switched off keeps nothing of Hide's and gets nothing back from a later pass.
 Whether the agent is installed only decides whether a switch can work: an agent that is not installed on a machine has no switch there, and switching it on is not recorded.
@@ -201,19 +201,30 @@ Claude Code's and Codex's hook parts follow the kit-part rule instead: they are 
 Hook "done" means Hide writes the guidance hook; "none" rows have no command hook that Hide can write to put text into a session's context, and the row says why and where the documentation says so.
 Every row gets the skill stub where the system column says so.
 
-| Agent | Skill folder (systems) | Hook | Why, and the page that says so |
-| --- | --- | --- | --- |
-| Claude Code | `~/.claude/skills` (all) | done: five-event hook, a kit part | [skills](https://code.claude.com/docs/en/skills) |
-| Codex | `~/.agents/skills` (macOS, Linux) | done: five-event hook, a kit part | [skills](https://learn.chatgpt.com/docs/build-skills) |
-| Gemini CLI | `~/.agents/skills` (macOS, Linux) | done: guidance `SessionStart` | [skills](https://geminicli.com/docs/cli/skills/), hooks at geminicli.com/docs/hooks |
-| Grok | `~/.agents/skills` (macOS, Linux) | none: `SessionStart` cannot add context, only tool-call events can | [skills](https://docs.x.ai/build/features/skills-plugins-marketplaces) |
-| OpenCode | `~/.agents/skills` (macOS, Linux) | none: its documentation gives no command hook, only JS plugins (<https://opencode.ai/docs/plugins/>), and the one plugin hook that adds context is `experimental.session.compacting`, which fires at compaction and is marked experimental (<https://opencode.ai/docs/config/>); `instructions` takes a file, glob or URL (<https://opencode.ai/docs/rules/>) and cannot run a command, so it could only carry static text and would mean editing the operator's `opencode.json`. A machine whose OpenCode already runs `~/.claude/settings.json` hooks through a bridge plugin gets Claude Code's hook output without Hide writing anything | [skills](https://opencode.ai/docs/skills/) |
-| Pi | `~/.agents/skills` (all) | none: TS extensions, no command hooks | [skills](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/skills.md) |
-| Cursor | `~/.agents/skills` (macOS, Linux) | done: guidance `sessionStart` in `~/.cursor/hooks.json`, returning `additional_context` ([hooks](https://cursor.com/docs/hooks)); the hooks page does not mention the CLI, and its changelog says the CLI runs session-start hooks (<https://cursor.com/docs/cli/changelog>), so whether the CLI honours `additional_context` is unconfirmed; no Windows shell is named | [skills](https://cursor.com/docs/context/skills) |
+| Agent | Skill folder (systems) | Hook | Herdr integration | Why, and the page that says so |
+| --- | --- | --- | --- | --- |
+| Claude Code | `~/.claude/skills` (all) | done: five-event hook, a kit part | `claude` | [skills](https://code.claude.com/docs/en/skills) |
+| Codex | `~/.agents/skills` (macOS, Linux) | done: five-event hook, a kit part | `codex` | [skills](https://learn.chatgpt.com/docs/build-skills) |
+| Gemini CLI | `~/.agents/skills` (macOS, Linux) | done: guidance `SessionStart` | none: the pinned Herdr lists no Gemini CLI target, so its state is read from its screen | [skills](https://geminicli.com/docs/cli/skills/), hooks at geminicli.com/docs/hooks |
+| Grok | `~/.agents/skills` (macOS, Linux) | none: `SessionStart` cannot add context, only tool-call events can | `grok` | [skills](https://docs.x.ai/build/features/skills-plugins-marketplaces) |
+| OpenCode | `~/.agents/skills` (macOS, Linux) | none: its documentation gives no command hook, only JS plugins (<https://opencode.ai/docs/plugins/>), and the one plugin hook that adds context is `experimental.session.compacting`, which fires at compaction and is marked experimental (<https://opencode.ai/docs/config/>); `instructions` takes a file, glob or URL (<https://opencode.ai/docs/rules/>) and cannot run a command, so it could only carry static text and would mean editing the operator's `opencode.json`. A machine whose OpenCode already runs `~/.claude/settings.json` hooks through a bridge plugin gets Claude Code's hook output without Hide writing anything | `opencode` | [skills](https://opencode.ai/docs/skills/) |
+| Pi | `~/.agents/skills` (all) | none: TS extensions, no command hooks | `pi` | [skills](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/skills.md) |
+| Cursor | `~/.agents/skills` (macOS, Linux) | done: guidance `sessionStart` in `~/.cursor/hooks.json`, returning `additional_context` ([hooks](https://cursor.com/docs/hooks)); the hooks page does not mention the CLI, and its changelog says the CLI runs session-start hooks (<https://cursor.com/docs/cli/changelog>), so whether the CLI honours `additional_context` is unconfirmed; no Windows shell is named | `cursor` | [skills](https://cursor.com/docs/context/skills) |
 
 An agent is a row only when its documentation confirms where it reads skills and the name of the program it installs.
 The other thirteen agents earlier builds supported are no longer rows (see Retired agents below).
 Hide does not write an agent's `AGENTS.md` or `CLAUDE.md`, its MCP configuration, its model settings, or its Codex hook trust review, and it runs no installer for an agent.
+
+### Herdr's integration for an agent
+
+Herdr learns an agent's session id, and for some agents its lifecycle, from a hook script or plugin that `herdr integration install <target>` puts into the agent's own configuration.
+Lineage, the mailbox identity, labels and sleep all read that session id, so the kit installs the integration with the agent's other pieces, as a third piece of the agent's row, `herdr:<agent>` in the record.
+It runs through the machine's own Herdr CLI (`KitTarget::herdr_bin`): the Herdr bundled in the app on this Mac, and the device's own Herdr on a device.
+Every call is one owned child with a deadline and a cleared environment but `HOME` and `PATH`, on the kit worker and never under the runtime lock.
+The integration is put in only when the agent is on, installed and has made its own folder, since Herdr refuses an agent whose configuration folder is missing.
+Hide takes out only what it put in: an integration that was already in place when Hide first looked is the operator's and stays, whether the agent is switched on or off or the machine leaves Hide, and an older one of the operator's is not replaced.
+One of Hide's own that is older is replaced, and one the operator removed by hand stays removed until Reinstall, as for every other piece.
+Gemini CLI has no target in the pinned Herdr, so its row carries no integration piece and that is not a failure; a failed install shows on that agent's row alone and the other agents are untouched.
 
 ### Retired agents
 

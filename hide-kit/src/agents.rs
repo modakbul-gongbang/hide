@@ -118,6 +118,17 @@ pub enum HookSupport {
     None,
 }
 
+/// The integration Herdr itself ships for an agent
+/// (`herdr integration install <name>`, [`crate::herdr_integration`]).
+#[derive(Clone, Copy, Debug)]
+pub struct HerdrIntegration {
+    /// The target name Herdr's CLI knows the agent by.
+    pub name: &'static str,
+    /// The agent's own configuration folder under the account's home, which
+    /// Herdr's install refuses to create; Hide does not either.
+    pub folder: &'static [&'static str],
+}
+
 /// One agent Hide knows.
 #[derive(Clone, Copy, Debug)]
 pub struct AgentAdapter {
@@ -136,6 +147,9 @@ pub struct AgentAdapter {
     /// The systems the agent's documentation confirms that folder on.
     pub skill_os: &'static [Os],
     pub hook: HookSupport,
+    /// Herdr's integration for the agent, `None` when the pinned Herdr has
+    /// none (Gemini CLI), so the agent's status is read from its screen only.
+    pub herdr: Option<HerdrIntegration>,
     /// Whether the agent is on without the operator choosing, as Claude Code
     /// and Codex have been since their hooks became part of the kit.
     pub default_on: bool,
@@ -155,6 +169,10 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         skill_dir: SkillDir::Claude,
         skill_os: ALL_OS,
         hook: HookSupport::Part(ComponentId::ClaudeCodeHook),
+        herdr: Some(HerdrIntegration {
+            name: "claude",
+            folder: &[".claude"],
+        }),
         default_on: true,
         doc_url: "https://code.claude.com/docs/en/skills",
     },
@@ -165,6 +183,10 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         skill_dir: SkillDir::Shared,
         skill_os: UNIX_OS,
         hook: HookSupport::Part(ComponentId::CodexHook),
+        herdr: Some(HerdrIntegration {
+            name: "codex",
+            folder: &[".codex"],
+        }),
         default_on: true,
         doc_url: "https://learn.chatgpt.com/docs/build-skills",
     },
@@ -175,6 +197,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         skill_dir: SkillDir::Shared,
         skill_os: UNIX_OS,
         hook: HookSupport::Guidance(GuidanceAgent::Gemini),
+        herdr: None,
         default_on: false,
         doc_url: "https://geminicli.com/docs/cli/skills/",
     },
@@ -185,6 +208,10 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         skill_dir: SkillDir::Shared,
         skill_os: UNIX_OS,
         hook: HookSupport::None,
+        herdr: Some(HerdrIntegration {
+            name: "grok",
+            folder: &[".grok"],
+        }),
         default_on: false,
         doc_url: "https://docs.x.ai/build/features/skills-plugins-marketplaces",
     },
@@ -195,6 +222,10 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         skill_dir: SkillDir::Shared,
         skill_os: UNIX_OS,
         hook: HookSupport::None,
+        herdr: Some(HerdrIntegration {
+            name: "opencode",
+            folder: &[".config", "opencode"],
+        }),
         default_on: false,
         doc_url: "https://opencode.ai/docs/skills/",
     },
@@ -205,6 +236,10 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         skill_dir: SkillDir::Shared,
         skill_os: ALL_OS,
         hook: HookSupport::None,
+        herdr: Some(HerdrIntegration {
+            name: "pi",
+            folder: &[".pi", "agent"],
+        }),
         default_on: false,
         doc_url: "https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/skills.md",
     },
@@ -215,6 +250,10 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         skill_dir: SkillDir::Shared,
         skill_os: UNIX_OS,
         hook: HookSupport::Guidance(GuidanceAgent::Cursor),
+        herdr: Some(HerdrIntegration {
+            name: "cursor",
+            folder: &[".cursor"],
+        }),
         default_on: false,
         doc_url: "https://cursor.com/docs/context/skills",
     },
@@ -609,6 +648,10 @@ pub struct AgentReport {
     pub skill: PieceReport,
     /// `None` for an agent with no hook (skill only).
     pub hook: Option<PieceReport>,
+    /// Herdr's integration for the agent; `None` for an agent the pinned
+    /// Herdr has none for, and in a report from a build that predates it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub herdr: Option<PieceReport>,
     pub doc_url: String,
 }
 
@@ -621,6 +664,10 @@ impl AgentReport {
                 || self
                     .hook
                     .as_ref()
-                    .is_some_and(|hook| hook.state.needs_attention()))
+                    .is_some_and(|hook| hook.state.needs_attention())
+                || self
+                    .herdr
+                    .as_ref()
+                    .is_some_and(|herdr| herdr.state.needs_attention()))
     }
 }

@@ -964,6 +964,8 @@ export type KitAgent = {
   enabled: boolean;
   skill: KitPiece;
   hook: KitPiece | null;
+  /** Herdr's own integration for the agent; null for an agent the pinned Herdr has none for (Gemini CLI). */
+  herdr?: KitPiece | null;
   doc_url: string;
 };
 

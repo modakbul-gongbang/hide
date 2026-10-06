@@ -35,10 +35,11 @@ use crate::root::RootIdentity;
 /// pane closes. A helper without this preflight must never remove instead.
 /// 17: Hello carries native machine identity for lineage, and the kit reports
 /// the one-release coordination retirement instead of installing it.
-/// 18: the kit has seven agents, retires the other thirteen once, and no
-/// longer carries `codex_per_pane`; `reinstall` has no `turn_off` and a report
-/// names the Codex daemon capability itself (PRD settings-cleanup D-06, D-14).
-/// A helper on 17 would still turn the Codex daemon off and know none of it.
+/// 18: the kit has seven agents, each with a Herdr integration piece in its
+/// report, retires the other thirteen once, and no longer carries
+/// `codex_per_pane`; `reinstall` has no `turn_off` and a report names the
+/// Codex daemon capability itself (PRD settings-cleanup D-06, D-13, D-14). A
+/// helper on 17 would still turn the Codex daemon off and know none of it.
 pub const PROTOCOL_VERSION: u32 = 18;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

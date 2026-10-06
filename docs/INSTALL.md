@@ -208,6 +208,7 @@ The one exception is a Mac the kit has never run on: it holds Claude Code's and 
 - `~/.local/bin/hide`, a link to the app's `hide` command, unless a `hide` that is not Hide's is already there;
 - Hide's entries in `~/.claude/settings.json` and `~/.codex/hooks.json`, for each of Claude Code and Codex whose folder (`~/.claude`, `~/.codex`) is on this Mac, next to whatever other tools put there;
 - A one-release retirement stage removes the former coordination installation after its read-only preflight succeeds; see Coordination retirement below;
+- for each of the seven supported agents that is on and installed (Claude Code, Codex, Gemini CLI, Grok, OpenCode, Pi and Cursor), Herdr's own integration, installed with the bundled Herdr (`herdr integration install <agent>`) so Herdr learns the agent's session; one the operator installed before is left as it is, and Hide removes only what it installed;
 - a one-time removal of what an earlier Hide put down for thirteen agents it no longer supports (GitHub Copilot CLI, Amp, Factory Droid, Kiro, Qwen Code, Goose, Cline, Kilo Code, Crush, Junie, Augment, Kimi Code and Mistral Vibe): only its marked skill and hook entries come out, and a file you wrote stays;
 - the Codex daemon setting is no longer touched: a Mac where an earlier Hide ran `codex features disable daemon_auto_start` keeps it off, and Hide only reads it so every Codex it starts gets `--no-daemon`.
 

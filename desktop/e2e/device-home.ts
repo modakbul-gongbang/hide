@@ -84,6 +84,7 @@ export function seedAgentFiles(home: string): { claude: AgentSettings; codex: Ag
     fs.writeFileSync(file, `${JSON.stringify(settings, null, 2)}\n`);
   }
   seedCodex(home);
+  seedClaude(home);
   seedKitRecord(home);
   return { claude, codex };
 }
@@ -125,6 +126,13 @@ function seedCodex(home: string): void {
     "",
   ].join("\n");
   fs.writeFileSync(path.join(bin, "codex"), script, { mode: 0o755 });
+}
+
+/** A `claude` in the account's `~/.local/bin`, so Claude Code reads as installed on a runner without it. */
+function seedClaude(home: string): void {
+  const bin = path.join(home, ".local", "bin");
+  fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(path.join(bin, "claude"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
 }
 
 /** Whether a Codex setting the kit must never write was written: the stand-in's `features disable` leaves this file. */
