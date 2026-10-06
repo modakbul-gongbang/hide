@@ -180,6 +180,8 @@ struct State {
     /// Projects posted but not yet written, kept while the store is closed.
     projects_due: bool,
     panes: Arc<Vec<PaneFact>>,
+    /// Parents posted but not yet written.
+    parents: Option<Arc<Vec<ParentFact>>>,
     panel: Option<PanelRequest>,
     panel_answer: Option<Result<PanelAnswer, String>>,
     summaries: BTreeMap<String, ProjectLinkSummary>,
@@ -298,6 +300,7 @@ fn run(client: &LinkClient, paths: &Paths, sink: &impl Sink) {
         projects: Arc::default(),
         projects_due: false,
         panes: Arc::default(),
+        parents: None,
         panel: None,
         panel_answer: None,
         summaries: BTreeMap::new(),
@@ -366,6 +369,15 @@ fn run(client: &LinkClient, paths: &Paths, sink: &impl Sink) {
             state.projects = projects;
             state.projects_due = true;
         }
+        // Facts are handed only when they change, so what arrives while the
+        // store is closed waits for it.
+        if let Some(panes) = panes {
+            state.panes = panes;
+            state.panes_at = None;
+        }
+        if let Some(parents) = parents {
+            state.parents = Some(parents);
+        }
         let store = match store.as_mut() {
             Ok(store) => store,
             Err(code) => {
@@ -391,10 +403,6 @@ fn run(client: &LinkClient, paths: &Paths, sink: &impl Sink) {
             }
             state.dirty_at.get_or_insert_with(Instant::now);
         }
-        if let Some(panes) = panes {
-            state.panes = panes;
-            state.panes_at = None;
-        }
         if state.panes_at.is_none_or(|at| at.elapsed() >= PANES_EVERY) {
             if !state.panes.is_empty() {
                 let result = store.apply_panes(&state.panes, now_ms());
@@ -403,7 +411,7 @@ fn run(client: &LinkClient, paths: &Paths, sink: &impl Sink) {
             }
             state.panes_at = Some(Instant::now());
         }
-        if let Some(parents) = parents {
+        if let Some(parents) = state.parents.take() {
             let result = store.apply_parents(&parents);
             state.wrote(result, "parents");
             state.dirty_at.get_or_insert_with(Instant::now);
@@ -491,8 +499,13 @@ fn next_wait(state: &State) -> Duration {
         wait = wait.min(every.saturating_sub(at.elapsed()));
     }
     for device in state.devices.values() {
+        let waiting = !device.queue.is_empty()
+            || device
+                .listing
+                .as_ref()
+                .is_some_and(|listing| listing.next.is_some());
         if let Some(at) = device.retry_at
-            && !device.queue.is_empty()
+            && waiting
         {
             wait = wait.min(at.saturating_duration_since(Instant::now()));
         }
@@ -672,7 +685,16 @@ fn device_turn(store: &mut LinkStore, sink: &impl Sink, state: &mut State) {
         .devices
         .retain(|id, _| devices.iter().any(|(device, _)| device == id));
     for (device, channel) in devices {
-        let entry = state.devices.entry(device.clone()).or_default();
+        let entry = state
+            .devices
+            .entry(device.clone())
+            .or_insert_with(|| DeviceQueue {
+                // A device listed through before is not filling for the first time.
+                filled: store
+                    .meta(&format!("{LISTED_AT}:{device}"))
+                    .is_ok_and(|at| at.is_some()),
+                ..DeviceQueue::default()
+            });
         if entry.retry_at.is_some_and(|at| at > Instant::now()) {
             continue;
         }
@@ -724,7 +746,12 @@ fn read_device(
                 path: candidate.path.clone(),
                 checkpoint,
             }),
-            Err(code) => log_write(&code, "cursor"),
+            Err(code) => {
+                log_write(&code, "cursor");
+                if let Some(listing) = entry.listing.as_mut() {
+                    listing.failed = true;
+                }
+            }
         }
     }
     let answers = match call_as::<Vec<links::ReadAnswer>>(
@@ -797,8 +824,9 @@ fn list_device(
         DEVICE_TIMEOUT,
     )
     .map_err(|error| device_code(&error))?;
+    let stamps = store.stamps(device)?;
     listing.page(&page, until, device);
-    entry.queue = unread(page, &store.stamps(device)?);
+    entry.queue = unread(page, &stamps);
     Ok(())
 }
 
