@@ -94,7 +94,10 @@ impl AnalysisFailure {
                 AiError::NotAuthenticated
                 | AiError::NoProvider(_)
                 | AiError::ProviderUnavailable(_)
-                | AiError::OverBudget { .. },
+                | AiError::OverBudget { .. }
+                // Hide AI turned off between the check and the request: the
+                // turn waits for it to be turned on instead of being parked.
+                | AiError::Disabled,
             ) => Some(PROVIDER_RECOVERY_INTERVAL),
             Self::Provider(_) | Self::Invalid(_) | Self::Worker(_) | Self::Stopped => None,
         }
@@ -633,5 +636,14 @@ mod tests {
         assert_eq!(humans.last().map(String::as_str), Some("h19"));
         assert_eq!(humans.len(), 3 + 8);
         assert_eq!(events.back().map(|event| event.text.as_str()), Some("a19"));
+    }
+
+    #[test]
+    fn a_request_refused_because_hide_ai_is_off_waits_instead_of_being_parked() {
+        assert_eq!(
+            AnalysisFailure::Provider(AiError::Disabled).retry_after(),
+            Some(PROVIDER_RECOVERY_INTERVAL),
+            "a turn is asked again once Hide AI is on; it is not given up on (B33)"
+        );
     }
 }

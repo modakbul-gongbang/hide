@@ -90,6 +90,17 @@ static int provider(int argc, char **argv) {
   printf("{\"type\":\"result\",\"is_error\":false,\"structured_output\":%s}\n", label);
   return 0;
 }
+// The model list Hide AI reads: one `initialize` control request on stdin, answered with
+// the models and no turn (the same shape `hide-ai/tests/fixtures/fake-claude.py` answers).
+static int models(void) {
+  char sink[4096];
+  while (read(0, sink, sizeof sink) > 0) {}
+  puts("{\"type\":\"control_response\",\"response\":{\"subtype\":\"success\",\"request_id\":\"hide-models\","
+       "\"response\":{\"models\":[{\"value\":\"default\",\"resolvedModel\":\"claude-opus-5-5\"},"
+       "{\"value\":\"opus\",\"resolvedModel\":\"claude-opus-5-5\"},"
+       "{\"value\":\"sonnet\",\"resolvedModel\":\"claude-sonnet-5-5\"}]}}}");
+  return 0;
+}
 int main(int argc, char **argv) {
 #ifdef _WIN32
   _setmode(0, _O_BINARY);
@@ -97,6 +108,7 @@ int main(int argc, char **argv) {
 #endif
   for (int i = 1; i < argc; i++) {
     if (strcmp(argv[i], "--json-schema") == 0 || (i == 1 && strcmp(argv[i], "auth") == 0)) return provider(argc, argv);
+    if (strcmp(argv[i], "--input-format") == 0) return models();
   }
   const char *log_path = getenv("HIDE_E2E_INPUT_LOG");
   int flags = O_WRONLY | O_CREAT | O_APPEND;

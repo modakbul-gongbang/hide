@@ -493,7 +493,7 @@ The facts line's right end carries the chosen view's controls: the status chips,
 The request view is one row per agent of the scope: what the operator asked it, what came of it, and what is the operator's to do now.
 Its groups stand in this order, each headed `name count`, a group with no row not drawn: 답할 것, 고칠 것, 리뷰·머지, 멈춤, 결과 볼 것, 일하는 중, 기다리는 중, and 쉬는 중, which is one folded line `쉬는 중 N · 펼치기` until its head opens it.
 A row's group is the verb the core gives it; the web only sorts and draws.
-멈춤 holds a row whose turn the agent label read as unfinished, and a wait the label read on something other than a pull request is 기다리는 중; without the label (Settings › Background AI `에이전트 요약` off, no provider, a failed analysis) no row stops, a written question is a finished turn like any other, and the view stands in the same shape with no warning.
+멈춤 holds a row whose turn the agent label read as unfinished, and a wait the label read on something other than a pull request is 기다리는 중; without the label (Settings › Hide AI › Features › Agent summaries off, no provider, a failed analysis) no row stops, a written question is a finished turn like any other, and the view stands in the same shape with no warning.
 A to-do group puts the row that has waited longest first and shows how long it has held that verb; the other groups put the most recent activity first and show the time since it.
 A delegated child is not a row of its own while its parent is in the scope: the parent's row carries `자식 N · 일하는 중 M`, with a warning `질문 K` when descendants ask, and a child whose parent is gone is a row.
 On the Home Overview each row carries its project's name.
@@ -594,7 +594,7 @@ The graph's elements carry `data-graph-box`, `data-graph-row`, `data-graph-edge`
 The Issues tab opens a board of issues, laid out by PRD overview-lenses-issues: four columns, `백로그 · 진행 중 · 리뷰 · 완료`, each headed `name count`, on a page that scrolls as one; a column grows with its cards and its head stays in view while the page scrolls under it.
 백로그 always stands, so a new issue has somewhere to go; another column shows only while it holds a card or a line of work with no issue.
 
-Every project on this Mac has one issue source, chosen in Settings › Issues: GitHub issues, read and written through the operator's own `gh`, or Local issues, which Hide keeps in `local-issues.json` in its state directory, numbered per project and shown as `L-N`.
+Every project on this Mac has one issue source, chosen in the project row's Issue source menu (Auto, GitHub or Local, the stored choice checked): GitHub issues, read and written through the operator's own `gh`, or Local issues, which Hide keeps in `local-issues.json` in its state directory, numbered per project and shown as `L-N`.
 A project's source defaults to GitHub when its repository reads as a GitHub repository and to Local otherwise (a folder, a repository with no GitHub remote, or `gh` not installed); a project on a device has no source here.
 The core hands the web a source-neutral task (the id the source shows, URL, title, open or closed, when it last changed), so no view reads a GitHub shape, and a new source is one more adapter in `herdr-core/src/tasks.rs`.
 
@@ -637,9 +637,9 @@ Hover, focus and a half-second rest publish no snapshot and start no Git or disk
 The header's primary action is `새 이슈` (`C` whenever the page itself has the keyboard); New agent, which starts work with no issue, is the quiet one beside it.
 New issue makes the issue in the page's project's source, and its `어디에` list moves it to another project on this Mac; `만들고 바로 시작` goes on to the Start dialog once the source has the issue.
 The Start dialog turns an issue into work in one step: a worktree named for the issue, its base, the agent, and the agent's first prompt.
-The name opens as the issue number and the title's English words (`192-hided-sigterm-handler`, `L-3-...`, or `issue-192` when the title has none), and when Settings › Issues allows it the background AI's name replaces it once it answers, unless the operator has typed; `↺ AI 이름으로` brings the AI's name back.
+The name opens as the issue number and the title's English words (`192-hided-sigterm-handler`, `L-3-...`, or `issue-192` when the title has none), and when Settings > Hide AI > Features allows it the background AI's name replaces it once it answers, unless the operator has typed; `↺ AI 이름으로` brings the AI's name back.
 A name that is already a branch says so, and when a worktree has it the primary button opens that worktree instead.
-The first prompt is filled from the issue's body, which the dialog reads when it opens, names the issue, and for a GitHub issue asks for a pull request that closes it when Settings › Issues says so; the operator edits it before starting.
+The first prompt is filled from the issue's body, which the dialog reads when it opens, names the issue, and for a GitHub issue asks for a pull request that closes it when Settings > Agents > Starting work says so; the operator edits it before starting.
 Starting creates the worktree, writes the link into it, starts the agent with the prompt as its first instruction, then brings the new pane's Workspace to the front; a folder project has no worktree, so its agent starts in the folder with the prompt.
 
 The tab row's right end carries the filter and `Board | List | Dependencies` on both scopes.
@@ -1172,7 +1172,7 @@ The counts come from the device's own agents in the snapshot (`deviceAgents()` a
 A device that is not connected dims its glyph and wears a `×` at the bottom-right, with no mark, since its last counts are not current; selected, its sidebar shows only its name, `연결 안 됨` and `다시 연결`, which retries the connection in place, and never the tree it last reported.
 Selecting a device tile sends `focus_device`, and the sidebar becomes that device's Projects | Agents; no row there names the device.
 Every tile is a button reached with Tab and chosen with Enter or Space, named for assistive technology by the device, its connection and each count it marks (`mini, 연결 안 됨`, `This Mac, Needs You 2, Done 1`).
-`기기 추가` opens Settings › Devices at its Add device form, as the hidden rail's `기기 추가…` and the Add a project dialog's host list do.
+`기기 추가` opens Settings › Devices with the Add device dialog in front, as the hidden rail's `기기 추가…` and the Add a project dialog's host list do.
 Removing the device in front moves the front to This Mac; that device's agents and its `~/hide` stay on it, and the rail stays.
 
 A right-click on the rail offers `레일 숨기기`.
@@ -1201,7 +1201,7 @@ The panel follows only the answer carrying its own request id, even after it clo
 An agent that fails to start after its tab opened puts its text back in the draft with the reason, unless a new draft took its place, so the next ⌘N shows both; the reason stays until the text changes.
 A start with no answer in 90 seconds, the core's own limit for one, says so inside the panel.
 New worktree, Start from an issue and 맡기기 carry the same kind and model menus with the remembered choice preselected, and what they start becomes the next default; New worktree's kind menu starts with `Terminal only`, which is never remembered.
-Settings › Issues has no default agent of its own.
+Settings > Agents > Starting work has no default agent of its own.
 
 ## Weekly usage
 
@@ -1306,12 +1306,38 @@ A child on another device adds the server-glyph device chip with that device's r
 Ownership is drawn as emphasis, not as a new color or container: the operator's own rows are bright, delegated rows are subdued, and nothing new is introduced, because a delegated row is simply never emphasized.
 A child's question or completion reaches the operator through its ancestors: the ancestor row turns unread and its descendant badge changes, and the ancestor's own group does not move.
 An uninstrumented mark (agent detected but its subagents not visible to Hide) is drawn only where an agent was detected, is a mark plus an accessible name and never a color alone, and its subagent count sits beside it as a badge; a count Hide cannot read is drawn as unknown and never as a zero, because a zero claims the agent is working alone.
+A Claude Code or Codex pane whose session Hide does not hear wears a Not connected chip in its header (`web/src/PaneConnection.tsx`); a connected pane, a pane the core has nothing to judge for, and a plain shell draw none, and the chip is a chip, never a banner.
+The chip opens a popover by click, Enter or Space; Esc closes it and hands focus back to the chip.
+A Codex on the shared server reads "Hide can't follow this Codex" with its reason, Reopen on its own server, Not now, and a quiet link "Turn off Codex's shared server…" under the sentence that it changes Codex everywhere on this Mac (or on the device's name for a device pane); a session that started before Hide's hook reads "Started before Hide was set up" with Reopen and Not now; a setup problem (the hook is missing or out of date) names the cause and offers no Reopen, since a Reopen would change nothing.
+Reopen is hidden where the core says the pane cannot be reopened (a pane on another device).
+Not now closes the popover only and the chip stays; Settings has no Reopen button.
+Reopen sends one `pane_reopen` however often it is pressed before the core answers, shows the core's pending state as a busy button, and on a refusal known before the agent was touched leaves one line from the refusal code (the agent is working, no saved conversation, the folder is gone, the agent would not stop) while the pane stays as it was; a session that reconnects loses its chip and closes the popover with it.
+A start refused after the agent was ended leaves a pane with no agent and so no chip to carry a line, and it is the one Reopen failure that is a notice rather than only a diagnostic (design principle 13): the operator can act on it, because the agent is gone from the pane and its conversation is kept, so they start it again.
+The shell turns `last_error` kind `pane_reopen.not_restarted` into the one-line notice bar (`web/src/errorNotice.ts`), and the notice stays until dismissed or until the front device changes, because the core clears `last_error` at its next event of any kind; every other failure of Reopen stays on the chip.
+The link sends `codex_daemon_disable` for the pane's machine and shows the answer the kit reads back (turning off, done, or the failure code's line); a failure leaves the setting unchanged, and a finished answer is shown only to the operator who asked in that popover.
+`PaneChildren.connection` carries the reason, whether Reopen is offered, and a Reopen's pending or refused state as a code, and `docs/status-model.md`, Not connected and what fixes it, owns what each one means; `web/src/paneConnectionRules.ts` names what each code asks of the operator.
 An Overview agent row reuses the same agent identity and state presentation as the sidebar and relationship sheet; a missing row means the current live projection has no agent there, and an uninstrumented mark never means zero.
 The header wash marks the pane Hide is showing, while the neutral split-pane outline marks the terminal that owns keyboard focus; moving keyboard focus into Overview keeps the shown wash and removes the terminal outline.
 Keys typed after a click go to the pane clicked last, whatever order snapshots arrive in: the header may briefly follow an older snapshot, but keyboard focus does not leave the last-clicked pane until the core has answered that click, and a focus move the core makes afterwards (Herdr's own move, or a refused click) is followed.
 Unread weight is never reused to mean parent, child, delegated, or selected.
 
 ## Settings: each machine's install kit
+
+Settings has six tabs, in this order: General, Agents, Hide AI, Devices, Mobile and Shortcuts.
+Each tab's description line says what it holds, and the tab names are the same in every language.
+While a remote device is selected, a small device chip beside the tab description says that selecting it changes where files, Git and panes run, not where Settings are kept; with This Mac selected the chip is absent and no sentence about ownership is shown.
+
+### General
+
+General holds three groups: Appearance, Connections and About.
+Appearance is one group with Language, Theme, Accent and Interface text; Accent shows its swatches and no hex value, and Interface text carries one note that the sidebar keeps its own sizes.
+Connections has the GitHub row: its description, whether `gh` is signed in, and Check again, which asks the core to read GitHub again for the registered projects.
+Hide has no GitHub sign-in of its own, so there is no connect or reconnect action beyond that read.
+About shows the `hide` version and Herdr as `Connected · <version>` or its failure in one line, and a closed Details disclosure holds the rest: the process, lifetime, state file, page connection, Herdr's runtime message, version, protocol, socket and binary paths, the environment rows, the recent diagnostics and Copy diagnostics.
+The Protocol row shows one number while the protocol Hide expects and the one Herdr answered are the same, and `<received> (expects <expected>)` when they differ.
+Version and Protocol come from the answer to `session.snapshot` the core last accepted, so a Herdr that is connected never shows a missing version or protocol.
+
+### Language
 
 General includes Language, using the existing Settings row and selector pattern.
 Its options name English, 한국어, 简体中文 and 日本語 in their own scripts, plus Use system language.
@@ -1320,28 +1346,48 @@ The selector remains available while connected, so a concurrent choice from anot
 An explicit choice is shared by connected shell windows; Use system language resolves separately in each client, with English for unsupported languages.
 [LOCALIZATION.md](LOCALIZATION.md) owns the policy and the remaining integration surfaces.
 
-Settings > Devices shows This Mac and every device in the same form: under each machine's connection and helper lines, one line per part of Hide's kit (the `hide` command, the Claude Code hook, the Codex hook, the one-release coordination retirement stage, `Codex를 pane마다 실행`), with a mark, the part, and where it is when installed or its state and reason when not (PRD device-parity B7).
-The retirement row shows completion, or the failed step and recovery action; Reinstall retries that stage.
-A retirement preflight with active runs, open requests, active watches or uninspectable state shows its reason before changing anything; this stage creates no new screen.
-Installed is ✓, not on this machine is –, turned off is ○ with `꺼짐`, outdated, not installed or removed is !, and failed is ✕; the state is also read out, since the mark is hidden from assistive technology.
-`Codex를 pane마다 실행` reads – where the machine's Codex has no shared daemon (none, or an older one), carries `새로 여는 Codex부터 적용` under its installed row while a Codex daemon still runs, and is the one row with a switch at its end: off gives Codex its daemon back and the row reads `꺼짐` with no Reinstall and nothing asking to turn it on again, and on applies it again (PRD overview-request-view B33..B36).
-Reinstall sits on a machine's row only while one of its parts needs it, repairs only those parts, and reads Reinstalling… while the machine's kit work runs (B8); nothing else on the screen reacts, and the detail of every install goes to the diagnostic log (B18).
-A machine whose kit does not run says why in that place instead of its parts: a daemon outside the installed app, a device not allowed yet, a device that must be allowed again, or a platform this build does not carry (B11, B17, B21).
-A device not read yet reads that its kit is checked when it connects; the tab reads every machine once when it opens.
-The add form has one Add button and lists, once, what the kit puts on the device and where (B12); a device registered earlier without the helper offers Allow and install on its row, with the same list.
+Settings > Devices lists This Mac and every device, one row each (PRD settings-cleanup B54, B55, B56): the name, a line with the SSH alias, the platform its helper runs on and the Herdr version it reported, and the connection state, with Test (a device) and a ⋯ menu at the end.
+`+ Add device` is one button above the list on the right; the Add dialog is on the page only after it is pressed, and every other way in (the rail's `+`, the hidden rail's `기기 추가…`, Add a project's host list) opens Settings › Devices with that dialog in front.
+The dialog closes by itself once the device is listed.
+The Add dialog lists the Host entries of the daemon machine's `~/.ssh/config` with the address each leads to (`user@host:port`, which `ssh -G` resolves without connecting); it asks hided for them each time it opens (`ssh_hosts_list`, answered in `status.ssh_hosts`) and says it is reading until they arrive (PRD settings-cleanup B50 to B52).
+Choosing a Host fills the Name with the alias, which the person can rewrite and which later choices no longer replace; Add stores only that name and the alias, so the dialog has no input for a username, port or key and no way to type an alias.
+A Host a registered device already uses, or one that reaches the same machine as one, is dimmed with `Added as <name>` and cannot be chosen; a Host whose address could not be read is dimmed with a short reason (no `ssh`, `ssh` could not read it, `ssh` took too long); a wildcard Host is not listed, and a config with more concrete Hosts than the list holds says so.
+With no Host at all the dialog shows only `Not listed? Add a Host entry…` with an example entry, and no form.
+The list is a radio group: the arrow keys move between the Hosts that can be chosen and Enter adds.
+Advanced, closed at first, holds `What Hide installs there` in three lines (the helper and the `hide` command, hooks and Herdr integrations for the agents turned on, and that removing the device takes them off) and the Herdr socket; the description above the list says Hide installs its helper on the device, so adding is still the one place the kit is agreed to (device-parity D-12).
+The ⋯ menu offers Select, Connection details…, Allow and install… (a device whose helper is not allowed) or Revoke helper… (one that is), and, after a separator, Remove…; This Mac's menu has Select and Connection details… only.
+Revoke helper… and Remove… ask before they act, with the same confirmations and events as before; no button is focused when a confirmation opens.
+Connection details is a dialog with the helper's state and folder, the helper program, the folder of the `hide` command and the SSH host key the consent is bound to, then every part of Hide's kit with a mark, its name and where it is when installed or its state and reason when not.
+Installed is ✓, not on this machine is –, turned off is ○, outdated, not installed or removed is !, and failed is ✕; the state is also read out, since the mark is hidden from assistive technology, and a part that is not on the machine says so once, without repeating its reason.
+A healthy kit is on no row.
+A line grows under a device only when something needs the operator: a refused connection with the step and what to do, a helper that is not running (Retry helper) or not allowed (Allow and install…) while the connection is fine, a part of Hide's kit that failed or was removed, outdated or never installed, as one line naming it with Reinstall, or the result of a test they asked for.
+Reinstall repairs only the parts the line names, reads Reinstalling… while the machine's kit work runs (B8), and the line goes when the parts are whole again; nothing else on the screen reacts, and the detail of every install goes to the diagnostic log (B18).
+A machine whose kit does not run says why in that place: a daemon outside the installed app, a device not allowed yet, a device that must be allowed again, or a platform this build does not carry (B11, B17, B21).
+The first install reads Installing Hide's kit… under the device; the tab reads every machine once when it opens.
+The add form has one Add button and lists, once, what the kit puts on the device and where (B12); a device registered earlier without the helper offers Allow and install… in its menu, with the same list.
 Removing a device asks once, names in one line what comes off that device (with its helper folder, `~/.hide/host-helper` by default) and that the records in `~/.hide` stay, or, when its helper is not connected, that the kit stays there; no button is focused when the confirmation opens (B22).
 When another registered device reaches the same account on that machine, such as a second Herdr server there, the line says the kit stays for it instead.
+The page has no per-device agents line, no coordination retirement row and no Codex per pane row: the kit no longer turns Codex's shared daemon off, and a machine's agents are on the Agents tab.
 
-Settings > Agents lists, for every machine, This Mac first and then each device in the Devices order, one row per agent that is installed there or is on: its name, one line saying what its switch puts there (a skill and a session hook, or the skill only), its state, and the switch.
-An agent that is off reads `Off` with nothing else, an agent that is on reads the state of its worst piece with that piece's reason when it is not installed, and Reinstall sits on an agent's row only while that agent is on and one of its pieces needs it.
-An agent is installed on a machine when its program is found there ([agent-hooks.md: Installed means the program is found](agent-hooks.md#installed-means-the-program-is-found)); a folder it creates does not count.
-An agent installed on the machine keeps its switch whatever the system, as long as one of its pieces (the skill, the hook) works there, so one switched off can be switched on again; a hook that cannot be written (Kiro below 3.0, a version Hide cannot read) shows its reason beside the skill's `Installed`.
-An agent that is on and whose program is no longer found keeps its row and its switch, reads `Not on this machine` with the reason that its program is not found, and offers no Reinstall; what Hide put down for it stays until the operator switches it off, and it is whole again once the program is back.
-The agents Hide knows that are not installed on the machine are one muted line, with no switch and no row each, so a machine with two agents shows two rows and not twenty.
-Settings > Devices shows the same agents on a machine's kit rows, each with its switch.
+Settings > Agents shows the seven agents Hide supports, Claude Code, Codex, Gemini CLI, Grok, OpenCode, Pi and Cursor, in that order, for one machine at a time (PRD settings-cleanup B8 to B20, B67).
+With a device registered, a switch at the top chooses This Mac or a device and the list below is that machine's; with none there is no switch.
+A device that cannot be reached shows one line and Try again in place of its list; a machine whose kit cannot run says why above a list it may still have.
+`Installed N` lists the agents whose program is found on the machine ([agent-hooks.md: Installed means the program is found](agent-hooks.md#installed-means-the-program-is-found)), or that are on and whose program went away, so they can still be switched off; a folder an agent creates does not count.
+`↻ Check again` at its right asks the kit to read the machines again, reads `Checking…` while it runs and rests again after a moment, since a read that changes nothing sends no frame; a failed read leaves the list as it was and shows its reason in one line.
+`Not installed N` is a folded list of the rest, each with its official mark, its name and `Install ↗`, which opens the vendor's installation guide (`web/src/settings/agentRows.ts`); an agent with no program has no switch.
+A row is the agent's official mark (the same in light and dark), its name and a switch, with no line about what the switch puts there; `Docs ↗` to the kit's skills page for the agent shows only while the row is hovered or has keyboard focus, and always on a screen with no hover.
+The switch is that machine's: turning an agent on installs its skill and hook and the Herdr integration there, turning it off takes out only what Hide installed (docs/agent-hooks.md), and an agent that is off wears no status.
+An agent that is on says one of three things: `N connected` for the open sessions Hide hears, `Ready` when it is set up and has none, and `N not connected`, which opens the list of those sessions, each with its title, its project and pane and `Go to pane`, which focuses the pane and closes the sheet; the list holds 32 and `+N more` counts the rest.
+There is no Reopen in Settings: a session that runs without Hide is fixed from its own pane header (docs/status-model.md).
+Gemini CLI, Grok, OpenCode, Pi and Cursor wear a `Partial` chip, on or off, and show no counts; the chip opens a popover with every feature of the kit's feature table, `✓ Works` or `– Not available`, and for an agent Herdr has no integration for (Gemini CLI) one line that Hide judges its status from the screen.
+Escape closes the popover and focus returns to the chip.
+A part that failed, was removed or is outdated shows one line on that agent's row naming it (`Hook: Removed`, `Herdr integration: Failed: …`) with Reinstall, only while the agent is on; a hook the operator removed stays removed until Reinstall or switching the agent off and on.
+A switch-off whose removal did not finish keeps the row from reading Off and says so in its own line.
+There is no row or switch for Codex per pane, no per-agent CLI group (that is Hide AI's) and no hooks diagnosis list: the row statuses are the diagnosis.
+Idle agents (`Sleep after`) and Starting work (`Link the issue in pull requests`) follow the list.
 
 The first-run agent choice is a dialog over the shell, PRD agent-adapters-onboarding, shown when this Mac's kit has never run and stays until it is answered.
-It lists all twenty agents Hide knows as tiles in a grid, each with the agent's own mark (or a two-letter monogram where no official mark is bundled, `docs/BRAND.md`) and its state: the agents installed here are on and show a check, an agent not installed is dimmed and has no switch, and a tile is a switch (`role="switch"`) pressed with Space or Enter.
+It lists the seven agents Hide supports, Claude Code, Codex, Gemini CLI, Grok, OpenCode, Pi and Cursor in that order, as tiles in a grid, each with the agent's own mark (or a two-letter monogram where no official mark is bundled, `docs/BRAND.md`) and its state: the agents installed here are on and show a check, an agent not installed is dimmed and has no switch, and a tile is a switch (`role="switch"`) pressed with Space or Enter.
 Claude Code and Codex are on when they are installed; every other installed agent is on too, since the operator chose the full set, and `Apply` installs what is left on.
 `Apply` is the only button and the only way out: Escape, a click outside and a close button do nothing, so a stray key cannot finish a choice that leaves Claude Code and Codex off with no hooks; with every tile off, Apply installs nothing and ends the question.
 The question belongs to the kit record (`awaiting_choice` in `~/.hide/kit/installed.json`), not to the window: closing the app, reloading the page or a failed save leaves it asked, and the next launch asks again until Apply has saved.
@@ -1350,26 +1396,45 @@ A Mac whose kit has already run (an existing install) never sees it, and nothing
 Until the choice is made the kit puts nothing for Claude Code or Codex on a fresh Mac either, so the hooks wait for Apply or for Settings, Agents.
 A device whose own record waits gets the saved choice once per run, by what is installed there, as soon as it reports (also after it was not connected when Apply was pressed); with nothing chosen it is told that, so its record stops waiting, and nothing is installed for agents.
 A device that still waits after it was sent the choice is logged once (`first_run_choice.unanswered`) and not sent it again until it reconnects.
+Under `Apply`, one line names the agent Hide AI will use: the first agent in that fixed order that is switched on in the dialog and signed in (`firstRunAgent` in `web/src/hideAi.ts`, "Hide AI uses Claude Code"; in Korean the name takes 를, or 을 after Grok, whose reading ends in a consonant, `hideAiFirstRunKey` in `web/src/agentOnboardingRules.ts`), read from `status.background_ai.providers[].state`, which the dialog asks the core to probe while it is open; with no such agent the line is absent, and it follows each flip of a tile (PRD settings-cleanup D-18, B45, B46).
 An agent installed later appears in these rows off and is never turned on by a pass.
-Its Background AI group ends with `에이전트 요약`, a switch on by default and kept on this Mac across launches (PRD overview-request-view D-11, B21): off, no agent label is asked for, the one being made is dropped, and every surface names each agent by its session's own title or its provider with no AI line or written question; on again, the kept labels return at once and each pane's current turn is asked for.
+
+### Hide AI
+
+Settings > Hide AI is the agent Hide runs behind the scenes (labels, worktree names, Project Memory analysis), separate from the agents the operator runs (PRD settings-cleanup D-14 to D-18, B33 to B47).
+Every value is the core's `status.background_ai`; the tab sends `ai_settings` events, one per intent, and an edit is pending until the snapshot carries it, so a choice the core refused simply returns to what the snapshot says.
+
+- **Use Hide AI** is a switch on its own at the top.
+  Off, Hide makes no model call: agent titles show each session's own text, worktree names are typed, and Project Memory analysis waits while saved Memory search keeps working.
+  Everything below it dims and is out of reach (`inert`), and the stored values stay as they were, so turning it on resumes with them.
+- **Runs on** has an Agent select and a Model select.
+  The Agent select lists only agents the core would accept (`selectable`: installed, signed in, a Hide AI backend, a call that cannot change files) with each official mark, and the chosen agent stays in it with its state even when it has a problem; the same row shows its state as symbol and words (Signed in, Not signed in, Out of usage until 3:10 PM).
+  The Model select lists what the agent reported, with `CLI default` first where the agent can be asked without a model, and a marker "Fixed list" for an agent whose list cannot be asked (Gemini CLI); the stored model is always offered, and a list that failed to load leaves it in place with one line.
+- **If <Runs on> can't answer** lists the agents the operator added, in the order added, each with a number, its mark and state, its own model select and a remove ×; there is no switch and no reordering, so an empty list is no fallback and a different order is a remove and an add.
+  `+ Add agent` opens a menu of selectable agents not yet used; installed agents Hide AI cannot use yet are listed under "Hide AI can't use these yet", dimmed, each with its reason (not signed in, can't guarantee it only reads, not supported yet), and an agent that is not installed is not listed.
+  With nothing to offer the button is disabled.
+  Choosing a listed agent as Runs on takes it off the list.
+- While another agent answers, one line under Runs on reads "Using Codex · Claude Code is out of usage until 3:10 PM" and disappears when Runs on answers again.
+  With the list empty and Runs on unable to answer, the Agent row says why and that Hide AI is paused; nothing else on screen changes, and a failure the operator cannot act on stays in the diagnostic log.
+- With no agent signed in, one line says "Sign in to <first agent that is on> to use Hide AI" (or to turn an agent on in Agents when none is); it appears only after every agent has been probed, and Hide's other features keep working without AI.
+- **Features** holds Agent summaries (the `agent_summary` switch of `ai_settings`: off, no agent label is asked for, the one being made is dropped, and every surface names each agent by its session's own title or its provider with no AI line or written question; on again, the kept labels return at once and each pane's current turn is asked for) and Worktree names (the same `issue_settings` value the Issues tab held).
 
 ## Mobile companion
 
 ### Settings > Mobile
 
 Settings has a Mobile tab after Devices.
-Its switch, 폰에서 hide 열기, is off at first, and its description says hide turns tailscale serve on and removes only the entry it made.
+Its switch, 폰에서 hide 열기, is off at first, and its one-line description says it works over Tailscale and only inside the tailnet (PRD settings-cleanup B59).
 While the switch is off hide runs no Tailscale command.
-Turned on, it shows four steps in order: Tailscale installed on this Mac, logged in with the Mac's name, MagicDNS and HTTPS on for the tailnet, and Tailscale on the phone with the same account.
-A passed step shows a check; only the first failing step shows a warning with its action (a download link, "Tailscale 앱에서 로그인", or the admin console's DNS page with a link), and the steps after it wait.
-The phone step is guidance hide cannot check: it waits until the QR shows and then reads as done.
+Turned on, the three Mac checks (Tailscale installed, logged in, MagicDNS and HTTPS on for the tailnet) fold into one line, `Tailscale is ready`, once they all pass (B57); a failing step shows only itself with a warning and its action (a download link, "Tailscale 앱에서 로그인", or the admin console's DNS page with a link) and nothing for the steps that passed or still wait.
+The phone side, Tailscale on the phone with the same account, is guidance hide cannot check and is part of the `폰 연결하기` row's description.
 The tab rechecks every three seconds while it is open, so logging in or turning HTTPS on continues without reopening it.
-Once every Mac step passes and hide has confirmed its serve entry, the tab shows the QR, 폰 카메라로 찍으세요, the ts.net address, the code's m:ss countdown and 새 코드.
-An HTTPS entry hide did not make shows its target in one line and no QR; a failed serve command shows the failed step and its message in one line, and so does a Funnel that would publish the address, which also disconnects every phone when it is turned on later.
+Once every Mac step passes and hide has confirmed its serve entry, the `폰 연결하기` row offers `QR 보기`; opening the tab makes no code and voids none (B58).
+Pressing it shows the QR, 폰 카메라로 찍으세요, the ts.net address and the code's m:ss countdown, and the row's button becomes `QR 숨기기`, which takes the code out again; a pairing phone spends the code and the QR goes, so the next phone needs `QR 보기` again.
+An HTTPS entry hide did not make shows its target in one line and no pairing row; a failed serve command shows the failed step and its message in one line, and so does a Funnel that would publish the address, which also disconnects every phone when it is turned on later.
 A removal that fails when the switch goes off keeps that line under the switch until hide finishes it.
-Opening the tab, pressing 새 코드, or a phone pairing shows a new code, and the previous code stops working.
 The phones group is titled 연결된 폰 · n / 4; each row shows the phone's name, when it was last seen, whether notifications are on or off, the days left before the seven-day revoke once it has been away a day, and 해지, which closes that phone at once.
-푸시 알림 offers 끔 (the default), 앱이 닫혀 있을 때만 and 항상, and the choice survives a restart.
+푸시 알림 is one dropdown of 끔 (the default), 앱이 닫혀 있을 때만 and 항상, with the description of the chosen mode only under it, and the choice survives a restart (B59).
 
 ### The phone app
 
@@ -1446,6 +1511,14 @@ Settings, Shortcuts refuses a binding on the terminal's copy or paste chord.
 The hold hint follows the same table: holding Ctrl+Shift alone in the desktop app on Windows and Linux floats the tab numbers, and holding Alt alone the Agents-list numbers.
 A command marked none has no chord until the operator binds one in Settings, Shortcuts, where it can be bound; the browser tab's moved chords are the ones Chrome keeps for itself on that system.
 
+Settings, Shortcuts (PRD settings-cleanup B60-B63, B66) lists the editable pane and navigation commands, each as its name and a chip holding its chord.
+Pressing the chip, or Enter on it, waits for the next chord, which applies at once; there is no second Apply step, Escape cancels the recording without closing the sheet, and a refused chord leaves the old one with the reason beside the row.
+The chip's accessible name carries the command and its current chord.
+The restore-default and clear controls of a row show while the pointer is on the row or the keyboard is inside it (and always where there is no hover), and keep their place so the chip does not move.
+The eight area commands have no chord until the operator sets one, so they fold into one line that says how many are still unset and opens to a row each.
+The numbered chords are fixed and read as one row per family under Fixed, whose subtitle names the modifier to hold to see the numbers ("Hold ⌘ to see the numbers", the system's own modifier names elsewhere); a browser tab has no numbered chords, so those rows say so and carry no subtitle.
+The sheet carries no row or explanation for a command the removed native app alone ran (`toggle_conversation` stays in a stored set and is never run here).
+
 | Command | Desktop app, macOS | Desktop app, Windows and Linux | Browser tab, macOS | Browser tab, Windows and Linux |
 | --- | --- | --- | --- | --- |
 | New tab | `⌘T` | `Ctrl+Shift+T` | `⌥T` | `Alt+T` |
@@ -1454,10 +1527,10 @@ A command marked none has no chord until the operator binds one in Settings, Sho
 | Select tab 1-9 | `⌘1 … ⌘9` | `Ctrl+Shift+1 … Ctrl+Shift+9` | none | none |
 | Add project | `⇧⌘N` | `Alt+Shift+N` | none | none |
 | Start agent | `⌘N` | `Ctrl+Shift+N` | none | none |
-| Next recent Agent pane or View tab | `⌃⇥` | `Ctrl+Tab` | `` ⌥` `` | `` Alt+` `` |
-| Previous recent Agent pane or View tab | `⌃⇧⇥` | `Ctrl+Shift+Tab` | `` ⌥⇧` `` | `` Alt+Shift+` `` |
-| Next global recent panel | none | none | none | none |
-| Previous global recent panel | none | none | none | none |
+| Next recent tab | `⌃⇥` | `Ctrl+Tab` | `` ⌥` `` | `` Alt+` `` |
+| Previous recent tab | `⌃⇧⇥` | `Ctrl+Shift+Tab` | `` ⌥⇧` `` | `` Alt+Shift+` `` |
+| Next panel (all projects) | none | none | none | none |
+| Previous panel (all projects) | none | none | none | none |
 | Next recent project (exception) | `⌥⇥` | `` Ctrl+Shift+` `` | `⌥⇥` | `` Ctrl+Shift+` `` |
 | Previous recent project (exception) | `⌥⇧⇥` | `` Ctrl+Alt+Shift+` `` | `⌥⇧⇥` | `` Ctrl+Alt+Shift+` `` |
 | Select agent 1-9 | `⌥1 … ⌥9` | `Alt+1 … Alt+9` | none | none |

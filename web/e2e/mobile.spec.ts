@@ -18,87 +18,14 @@ import { execFileSync, spawnSync } from "node:child_process";
 import crypto from "node:crypto";
 import fs from "node:fs";
 import http from "node:http";
-import os from "node:os";
 import path from "node:path";
 import { elsewhereTab, finishFixtureTurn, labelAgent, labelMarker, setFixtureLifecycle, setFixtureSession, startHerdr, type HerdrFixture } from "./herdr-fixture";
+import { DNS, FakeTailscale } from "./fake-tailscale";
 import { startHided, type Daemon } from "./hided-fixture";
-import { endWindowsProcesses, fixtureExecutable, fixtureProgram } from "./platform-fixture";
 import { screenshot } from "./wire";
 import { chord } from "./chords";
 
 test.describe.configure({ timeout: 240_000 });
-
-const DNS = "mac.tailnet-name.ts.net";
-
-/** A `tailscale` CLI whose answers the test writes; it records every call. */
-class FakeTailscale {
-  readonly dir = fs.mkdtempSync(path.join(os.tmpdir(), "hide-ts-"));
-  readonly bin = path.join(this.dir, fixtureExecutable("tailscale"));
-
-  install(): void {
-    fixtureProgram(
-      this.dir,
-      "tailscale",
-      `const fs = require("fs");
-const path = require("path");
-const file = (name) => path.join(${JSON.stringify(this.dir)}, name);
-const args = process.argv.slice(2);
-fs.appendFileSync(file("calls.log"), args.join(" ") + "\\n");
-if (args[0] === "status") { process.stdout.write(fs.readFileSync(file("status.json"), "utf8")); process.exit(0); }
-if (args[0] === "serve") {
-  const rest = args.slice(1);
-  if (rest[0] === "status") {
-    process.stdout.write(fs.existsSync(file("serve.json")) ? fs.readFileSync(file("serve.json"), "utf8") : "{}\\n");
-    process.exit(0);
-  }
-  const last = rest[rest.length - 1];
-  fs.writeFileSync(file("serve.json"), last === "off" ? "{}\\n" : '{"TCP":{"443":{"HTTPS":true}},"Web":{"${DNS}:443":{"Handlers":{"/":{"Proxy":"' + last + '"}}}}}');
-  process.exit(0);
-}
-process.exit(2);
-`,
-    );
-  }
-
-  status(value: unknown): void {
-    fs.writeFileSync(path.join(this.dir, "status.json"), JSON.stringify(value));
-  }
-
-  loggedOut(): void {
-    this.status({ BackendState: "NeedsLogin", Self: { DNSName: "", HostName: "mac" } });
-  }
-
-  httpsOff(): void {
-    this.status({ BackendState: "Running", Self: { DNSName: `${DNS}.`, HostName: "mac" }, CurrentTailnet: { MagicDNSEnabled: true } });
-  }
-
-  ready(): void {
-    this.status({ BackendState: "Running", Self: { DNSName: `${DNS}.`, HostName: "mac" }, CurrentTailnet: { MagicDNSEnabled: true }, CertDomains: [DNS] });
-  }
-
-  proxy(): string | null {
-    try {
-      const serve = JSON.parse(fs.readFileSync(path.join(this.dir, "serve.json"), "utf8")) as { Web?: Record<string, { Handlers?: Record<string, { Proxy?: string }> }> };
-      return serve.Web?.[`${DNS}:443`]?.Handlers?.["/"]?.Proxy ?? null;
-    } catch {
-      return null;
-    }
-  }
-
-  calls(): string {
-    try {
-      return fs.readFileSync(path.join(this.dir, "calls.log"), "utf8");
-    } catch {
-      return "";
-    }
-  }
-
-  remove(): void {
-    // Windows keeps a running fake's executable locked; end what runs from this folder first.
-    if (process.platform === "win32") endWindowsProcesses([], this.dir);
-    fs.rmSync(this.dir, { recursive: true, force: true });
-  }
-}
 
 type Push = { authorization: string; payload: { title: string; state: "needs_you" | "done"; place: string; tag: string; device_id: string; pane_id: string; clear: string[] } };
 
@@ -238,6 +165,17 @@ async function openMobileSettings(page: Page, daemon: Daemon): Promise<void> {
   await expect(page.locator('[data-mobile-tab="true"]')).toBeVisible();
 }
 
+/** Show QR: the one action that makes a pairing code; opening the tab makes none (B58). */
+async function showPairing(page: Page): Promise<void> {
+  await page.locator('[data-mobile-show-code="true"]').click({ timeout: 20_000 });
+}
+
+/** Picks a push mode in the one dropdown. */
+async function choosePush(page: Page, mode: "off" | "app_closed" | "always"): Promise<void> {
+  await page.locator("[data-push-select]").click();
+  await page.locator(`[data-push-choice="${mode}"]`).click();
+}
+
 /** The QR's `#pair=...` fragment, opened on this loopback daemon instead of the ts.net address. */
 async function pairingUrl(page: Page, daemon: Daemon): Promise<string> {
   const qr = page.locator("[data-mobile-qr]");
@@ -245,6 +183,12 @@ async function pairingUrl(page: Page, daemon: Daemon): Promise<string> {
   const url = (await qr.getAttribute("data-mobile-qr")) ?? "";
   expect(url.startsWith(`https://${DNS}/m/#pair=`)).toBe(true);
   return `${daemon.origin}/m/${url.slice(url.indexOf("#"))}`;
+}
+
+/** Presses Show QR, then reads the pairing address it shows. */
+async function shownPairingUrl(page: Page, daemon: Daemon): Promise<string> {
+  await showPairing(page);
+  return pairingUrl(page, daemon);
 }
 
 function coreLog(daemon: Daemon): string {
@@ -290,9 +234,8 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     await openMobileSettings(page, daemon);
     const toggle = page.locator('[data-mobile-switch="true"]');
     await expect(toggle).toHaveAttribute("aria-checked", "false");
-    await expect(page.locator('[data-mobile-tab="true"]')).toContainText("removes only its own entry");
-    await expect(page.locator("[data-push-choice]")).toHaveCount(3);
-    await expect(page.locator('[role="radio"][value="off"]')).toHaveAttribute("aria-checked", "true");
+    await expect(page.locator('[data-mobile-tab="true"]')).toContainText("Over Tailscale, only inside your tailnet.");
+    await expect(page.locator("[data-push-select]")).toHaveText("Off");
     expect(tailscale.calls()).toBe("");
 
     // B2: the CLI is missing, so the first step carries the download link and the rest wait.
@@ -300,34 +243,35 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     const step = (id: string) => page.locator(`[data-mobile-step="${id}"]`);
     await expect(step("installed")).toHaveAttribute("data-step-state", "failed", { timeout: 20_000 });
     await expect(page.locator('[data-mobile-step-link="installed"]')).toHaveAttribute("href", "https://tailscale.com/download");
-    for (const id of ["logged_in", "https", "phone"]) await expect(step(id)).toHaveAttribute("data-step-state", "waiting");
-    await expect(page.locator("[data-mobile-qr]")).toHaveCount(0);
-    await expect(page.locator('[data-mobile-pairing="waiting"]')).toContainText("The QR code will appear here");
+    // B57: only the failing step shows; the ones after it wait unseen, and there is nothing to pair with yet.
+    for (const id of ["logged_in", "https"]) await expect(step(id)).toHaveCount(0);
+    await expect(page.locator("[data-mobile-pairing]")).toHaveCount(0);
 
     // B3: installed and logged out, then HTTPS off, each seen without reopening the tab.
     tailscale.loggedOut();
     tailscale.install();
-    await expect(step("installed")).toHaveAttribute("data-step-state", "ok", { timeout: 20_000 });
+    await expect(step("installed")).toHaveCount(0, { timeout: 20_000 });
     await expect(step("logged_in")).toHaveAttribute("data-step-state", "failed");
     await expect(step("logged_in")).toContainText("Sign in in the Tailscale app");
     tailscale.httpsOff();
     await expect(step("https")).toHaveAttribute("data-step-state", "failed", { timeout: 20_000 });
-    await expect(step("logged_in")).toContainText("mac");
     await expect(page.locator('[data-mobile-step-link="https"]')).toHaveAttribute("href", "https://login.tailscale.com/admin/dns");
     await screenshot(page, "mobile-settings-blocked");
 
-    // B4: every Mac step passes, hided adds its serve entry and only then shows the QR.
+    // B4, B57, B58: every Mac step passes, the checks fold into one line, hided adds its serve entry, and the QR appears only on Show QR.
     tailscale.ready();
-    const firstUrl = await pairingUrl(page, daemon);
+    await expect(page.locator('[data-mobile-ready="true"]')).toContainText("Tailscale is ready", { timeout: 20_000 });
     expect(tailscale.proxy()).toBe(daemon.origin);
-    await expect(step("phone")).toHaveAttribute("data-step-state", "ok");
+    await expect(page.locator("[data-mobile-qr]")).toHaveCount(0);
+    const firstUrl = await shownPairingUrl(page, daemon);
     await expect(page.locator("[data-mobile-url]")).toHaveAttribute("data-mobile-url", `https://${DNS}`);
     await expect(page.locator("[data-mobile-countdown]")).toHaveText(/Code expires in [45]:\d\d/);
 
-    // B10: a new code voids the one before it.
-    await page.locator('[data-mobile-new-code="true"]').click();
-    await expect.poll(async () => pairingUrl(page, daemon as Daemon)).not.toBe(firstUrl);
-    const pairUrl = await pairingUrl(page, daemon);
+    // B10, B58: Hide QR takes the code out of the page, and the next Show QR makes a new one that voids the one before it.
+    await page.locator('[data-mobile-hide-code="true"]').click();
+    await expect(page.locator("[data-mobile-qr]")).toHaveCount(0);
+    const pairUrl = await shownPairingUrl(page, daemon);
+    expect(pairUrl).not.toBe(firstUrl);
     const stale = await (await phoneContext(browser, undefined, "ko-KR")).newPage();
     contexts.push(stale.context());
     await stale.goto(firstUrl);
@@ -354,8 +298,8 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     await expect(page.locator("[data-mobile-phones]")).toHaveAttribute("data-mobile-phones", "1");
     await expect(page.locator("[data-mobile-phone-line]")).toHaveText("Just now");
     await expect(page.getByText("Connected phones · 1 / 4")).toBeVisible();
-    // The spent code gives way to the next one while the tab is open.
-    await expect.poll(async () => pairingUrl(page, daemon as Daemon)).not.toBe(pairUrl);
+    // The spent code is gone from the page; the next phone needs Show QR (B58).
+    await expect(page.locator("[data-mobile-qr]")).toHaveCount(0);
     // B10: the code that paired is spent.
     const again = await (await phoneContext(browser)).newPage();
     contexts.push(again.context());
@@ -491,7 +435,7 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     await screenshot(phone, "mobile-phone-detail");
 
     // B30: with push on, the list offers Turn on notifications; allowing it registers the subscription.
-    await page.locator('[data-push-choice="always"]').click();
+    await choosePush(page, "always");
     await phone.locator('[data-phone-back="true"]').tap();
     const enable = phone.locator('[data-phone-notifications="enable"]');
     await expect(enable).toBeVisible({ timeout: 20_000 });
@@ -522,7 +466,7 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
     await phone.locator('[data-phone-back="true"]').tap();
 
     // B33 (off): nothing.
-    await page.locator('[data-push-choice="off"]').click();
+    await choosePush(page, "off");
     await work(herdr, two);
     await expect.poll(() => groupOf(frames, two)).toBe("working");
     await ask(herdr, two, "끔에서는 조용히");
@@ -531,7 +475,7 @@ test("Settings > Mobile to a paired phone: list, detail, reply, quick keys, push
 
     // B33 (only while the app is closed): nothing while the desktop is connected. The
     // desktop then reads two, which clears its notification (B34).
-    await page.locator('[data-push-choice="app_closed"]').click();
+    await choosePush(page, "app_closed");
     await work(herdr, two);
     await expect.poll(() => groupOf(frames, two)).toBe("working");
     await finish(two);
@@ -608,11 +552,11 @@ test("an empty list, the unreachable line, the phone limit and the seven-day rev
     daemon = await startHided(herdr, "mobile-limits", undefined, { HIDE_TAILSCALE_BIN: tailscale.bin });
     await openMobileSettings(page, daemon);
     await page.locator('[data-mobile-switch="true"]').click();
-    await page.locator('[data-push-choice="app_closed"]').click();
+    await choosePush(page, "app_closed");
     const phoneContextA = await phoneContext(browser);
     contexts.push(phoneContextA);
     const phone = await phoneContextA.newPage();
-    await phone.goto(await pairingUrl(page, daemon));
+    await phone.goto(await shownPairingUrl(page, daemon));
     await phone.locator('[data-phone-pair="true"]').tap();
 
     // B22: no agents, one line.
@@ -667,7 +611,7 @@ test("an empty list, the unreachable line, the phone limit and the seven-day rev
 
     // B29: the push mode survived the restart.
     await openMobileSettings(page, daemon);
-    await expect(page.locator('[role="radio"][value="app_closed"]')).toHaveAttribute("aria-checked", "true");
+    await expect(page.locator("[data-push-select]")).toHaveText("Only when the app is closed");
 
     // B14: three more phones on record make four; a fifth is refused with the reason.
     const record = (id: string, lastSeen: number) => ({
@@ -689,7 +633,7 @@ test("an empty list, the unreachable line, the phone limit and the seven-day rev
     await expect(page.getByText("Connected phones · 4 / 4")).toBeVisible({ timeout: 20_000 });
     const fifth = await (await phoneContext(browser)).newPage();
     contexts.push(fifth.context());
-    await fifth.goto(await pairingUrl(page, daemon));
+    await fifth.goto(await shownPairingUrl(page, daemon));
     await fifth.locator('[data-phone-pair="true"]').tap();
     await expect(fifth.locator('[data-phone-guidance="phone_limit"]')).toHaveText("You can connect up to 4 phones. Revoke one in Settings > Mobile on your Mac.", { timeout: 20_000 });
     await screenshot(page, "mobile-settings-ready");
@@ -732,7 +676,7 @@ test("the phone's start sheet starts an agent in a checkout and in Home, and kee
     const phoneContextA = await phoneContext(browser);
     contexts.push(phoneContextA);
     const phone = await phoneContextA.newPage();
-    await phone.goto(await pairingUrl(page, daemon));
+    await phone.goto(await shownPairingUrl(page, daemon));
     await phone.locator('[data-phone-pair="true"]').tap();
     await expect(phone.locator('[data-phone-connected="true"]')).toBeVisible({ timeout: 20_000 });
 

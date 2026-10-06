@@ -463,6 +463,12 @@ impl AgentSleepStore {
     }
 }
 
+/// Whether Hide can put an agent of this Herdr kind to sleep and wake it:
+/// only the two whose session files it reads.
+pub(crate) fn sleeps_kind(kind: &str) -> bool {
+    matches!(kind.to_ascii_lowercase().as_str(), "claude" | "codex")
+}
+
 /// Why this agent cannot be put to sleep now, or `None` when it can (B5,
 /// B15). The time and the screen are the automatic decision's alone; a
 /// person asking from the pane menu has already looked.
@@ -470,10 +476,7 @@ pub fn sleep_refusal(agent: &SidebarAgentSnapshot) -> Option<&'static str> {
     if agent.pane_id.starts_with(REMOTE_PANE_ID_PREFIX) {
         return Some("Agents on another device cannot sleep");
     }
-    if !matches!(
-        agent.agent_kind.to_ascii_lowercase().as_str(),
-        "claude" | "codex"
-    ) {
+    if !sleeps_kind(&agent.agent_kind) {
         return Some("Only Claude and Codex agents can sleep");
     }
     if agent.sleep.is_some() {

@@ -45,24 +45,14 @@ fn run_with(home: &Path, runtime: &str, event: &str, extra: &[(&str, &str)]) -> 
 #[test]
 fn every_agent_gets_the_guidance_in_its_own_field_at_session_start() {
     let home = tempfile::tempdir().unwrap();
-    for agent in GuidanceAgent::ALL {
+    for agent in GuidanceAgent::LIVE {
         let stdout = run(home.path(), agent.id(), "SessionStart");
         assert!(stdout.contains("hide browser help"), "{agent:?}: {stdout}");
         match agent {
-            GuidanceAgent::Kiro => assert!(stdout.starts_with("When you create a worktree")),
             GuidanceAgent::Cursor => {
                 let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
                 assert!(
                     value["additional_context"]
-                        .as_str()
-                        .unwrap()
-                        .contains(GUIDANCE_LINE)
-                );
-            }
-            GuidanceAgent::Copilot | GuidanceAgent::Junie => {
-                let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
-                assert!(
-                    value["additionalContext"]
                         .as_str()
                         .unwrap()
                         .contains(GUIDANCE_LINE)
@@ -84,7 +74,7 @@ fn every_agent_gets_the_guidance_in_its_own_field_at_session_start() {
 #[test]
 fn the_guidance_hook_prints_nothing_for_any_other_event_and_writes_no_pane_state() {
     let home = tempfile::tempdir().unwrap();
-    for agent in GuidanceAgent::ALL {
+    for agent in GuidanceAgent::LIVE {
         assert_eq!(run(home.path(), agent.id(), "Stop"), "", "{agent:?}");
     }
     assert!(
@@ -96,7 +86,7 @@ fn the_guidance_hook_prints_nothing_for_any_other_event_and_writes_no_pane_state
 #[test]
 fn a_session_started_twice_gets_the_same_guidance_and_changes_no_state() {
     let home = tempfile::tempdir().unwrap();
-    for agent in GuidanceAgent::ALL {
+    for agent in GuidanceAgent::LIVE {
         let first = run(home.path(), agent.id(), "SessionStart");
         let second = run(home.path(), agent.id(), "SessionStart");
         assert_eq!(first, second, "{agent:?}");
@@ -113,5 +103,23 @@ fn claude_codes_hook_stays_out_under_cursor() {
     let args = |extra: &[(&str, &str)]| run_with(home.path(), "claude-code", "SessionStart", extra);
     assert!(args(&[]).contains("hookSpecificOutput"));
     assert_eq!(args(&[("CURSOR_VERSION", "2.0.0")]), "");
+    assert!(std::fs::read_dir(home.path()).unwrap().next().is_none());
+}
+
+/// An entry an earlier build left in a retired agent's file runs nothing,
+/// writes no pane state and says nothing, until the kit takes it out.
+#[test]
+fn a_retired_agents_leftover_hook_is_silent() {
+    let home = tempfile::tempdir().unwrap();
+    for retired in [
+        "qwen-code",
+        "factory-droid",
+        "copilot-cli",
+        "kiro",
+        "augment",
+        "junie",
+    ] {
+        assert_eq!(run(home.path(), retired, "SessionStart"), "", "{retired}");
+    }
     assert!(std::fs::read_dir(home.path()).unwrap().next().is_none());
 }

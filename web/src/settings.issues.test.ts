@@ -3,7 +3,7 @@ import { initializeInterfaceI18n } from "./i18n/instance";
 import { githubAccess, githubAccessLine as githubAccessLineIn, issueSourceChoices as issueSourceChoicesIn } from "./settings";
 import type { Checkout, GithubFailureCategory, GithubStatus, TaskSource, Workspace } from "./snapshot";
 
-// Korean is the wording Settings > Issues shipped with; the rules read the same under it.
+// Korean is the wording the Settings Issues tab shipped with; the rules read the same under it.
 const t = initializeInterfaceI18n("ko").getFixedT(null, "translation");
 const english = initializeInterfaceI18n("en").getFixedT(null, "translation");
 const githubAccessLine = (access: Parameters<typeof githubAccessLineIn>[0]) => githubAccessLineIn(access, t);
@@ -48,7 +48,7 @@ const project = (patch: Partial<Workspace> & { github?: GithubStatus }): Workspa
   };
 };
 
-describe("Settings › Issues", () => {
+describe("Issue settings", () => {
   it("reads gh as connected once any project's read succeeded, and otherwise names gh's own refusal first", () => {
     const loggedOut = project({ github: status({ available: false, failure_category: "not_logged_in", unavailable_reason: "run gh auth login" }) });
     const offline = project({ id: "w2", github: status({ stale: true, failure_category: "network_or_rate_limit", unavailable_reason: "timeout" }) });

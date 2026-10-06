@@ -648,7 +648,46 @@ pub struct KitSnapshot {
     /// machine, by its label; removing this device then leaves the kit there
     /// for it.
     pub shares_account_with: Option<String>,
+    /// What the machine's Codex answered about its shared daemon, for the
+    /// `--no-daemon` start flag (`codex_launch`): `true` when it has the
+    /// setting, `false` when it is confirmed older and has none, `None`
+    /// when there is no answer (no Codex, or the read failed).
+    pub codex_daemon: Option<bool>,
+    /// Whether that Codex starts the shared daemon on its own now (`None`
+    /// with no answer or an older Codex). With it on, a Codex pane that
+    /// reports nothing is read as running on the shared server (B27).
+    pub codex_daemon_on: Option<bool>,
+    /// How the last turn-off of the shared server ended, until the next one
+    /// starts; the pane popover reads it (B30).
+    pub codex_daemon_off: Option<CodexDaemonOffSnapshot>,
+    /// A read asked with Check again is under way on this machine: set when
+    /// the request is queued and cleared by whatever answer lands first (B10).
+    pub checking: bool,
+    /// Why this machine's last read failed, until a read lands; the report
+    /// the machine last gave stays as it was (B10).
+    pub check_failed: Option<KitCheckFailure>,
 }
+
+/// Why a kit read did not come back with a report. A code, never the call's
+/// own words (the words go to the diagnostic log).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KitCheckFailure {
+    /// The call to the machine's helper ended without a report.
+    ReadFailed,
+}
+
+/// The outcome of the operator's request to turn Codex's shared server off on
+/// one machine. A failure carries a code, never the command's own words.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum CodexDaemonOffSnapshot {
+    Pending,
+    Done,
+    Failed { reason: CodexDaemonOffFailure },
+}
+
+pub use hide_kit::CodexDaemonOffFailure;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct KitComponentSnapshot {
@@ -657,7 +696,6 @@ pub struct KitComponentSnapshot {
     pub state: hide_kit::ComponentState,
     pub reason: Option<String>,
     pub location: Option<String>,
-    pub codex_daemon: Option<bool>,
 }
 
 /// One agent on one machine: its switch, and what Hide put there for it.
@@ -667,11 +705,63 @@ pub struct KitAgentSnapshot {
     pub label: String,
     pub availability: hide_kit::Availability,
     pub enabled: bool,
+    /// The machine's record holds the operator's own choice for this agent.
+    /// An agent that is on only by default has none, so a shell keeps an
+    /// agent under Installed once its program is gone only when this is true
+    /// (PRD settings-cleanup B9, D-07).
+    pub chosen: bool,
     pub skill: KitPieceSnapshot,
     /// `None` for an agent that gets the skill only.
     pub hook: Option<KitPieceSnapshot>,
+    /// Herdr's own integration for the agent, installed through the
+    /// machine's Herdr CLI; `None` for an agent the pinned Herdr has none
+    /// for (Gemini CLI).
+    pub herdr: Option<KitPieceSnapshot>,
+    /// Hide does only some of what it does for Claude Code with this agent:
+    /// the row wears the Partial chip whether or not the agent is on (PRD
+    /// settings-cleanup B18).
+    pub partial: bool,
+    /// Every feature of the Partial popover, in the table's order, with
+    /// whether this build does it for the agent (`hide_kit::agents::Feature`).
+    pub features: Vec<KitFeatureSnapshot>,
+    /// The agent's sessions open on this machine now, counted for the row's
+    /// "N connected" and "N not connected" (B16, B17); `None` for an agent
+    /// Hide cannot tell a connection of (B19) and for a machine whose
+    /// sessions are not read yet.
+    pub sessions: Option<KitAgentSessionsSnapshot>,
     /// The official page the adapter's answers come from.
     pub doc_url: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct KitFeatureSnapshot {
+    pub id: hide_kit::Feature,
+    pub supported: bool,
+}
+
+/// One agent's open sessions on one machine, by whether Hide hears them.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct KitAgentSessionsSnapshot {
+    pub connected: u32,
+    /// Each open session Hide does not hear, in the order the sidebar lists
+    /// their panes. Capped at [`MAX_NOT_CONNECTED_SESSIONS`]; `connected` and
+    /// the list's length together are the open sessions up to the cap.
+    pub not_connected: Vec<NotConnectedSessionSnapshot>,
+    /// The count of not connected sessions beyond the cap, so the number the
+    /// row says stays true while the list is bounded.
+    pub not_connected_hidden: u32,
+}
+
+/// Cap on the sessions one agent row lists; a person fixes them one pane at a
+/// time, and a longer list is a count.
+pub const MAX_NOT_CONNECTED_SESSIONS: usize = 32;
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct NotConnectedSessionSnapshot {
+    pub pane_id: String,
+    pub title: String,
+    pub project: String,
+    pub reason: PaneConnectionReason,
 }
 
 impl KitAgentSnapshot {
@@ -683,7 +773,11 @@ impl KitAgentSnapshot {
                 || self
                     .hook
                     .as_ref()
-                    .is_some_and(|hook| hook.state.needs_attention()))
+                    .is_some_and(|hook| hook.state.needs_attention())
+                || self
+                    .herdr
+                    .as_ref()
+                    .is_some_and(|herdr| herdr.state.needs_attention()))
     }
 }
 
@@ -715,7 +809,6 @@ impl KitSnapshot {
                 state: part.state,
                 reason: part.reason.clone(),
                 location: part.location.clone(),
-                codex_daemon: part.codex_daemon,
             })
             .collect::<Vec<_>>();
         let agents = report
@@ -726,8 +819,23 @@ impl KitSnapshot {
                 label: agent.label.clone(),
                 availability: agent.availability,
                 enabled: agent.enabled,
+                chosen: agent.chosen,
                 skill: (&agent.skill).into(),
                 hook: agent.hook.as_ref().map(Into::into),
+                herdr: agent.herdr.as_ref().map(Into::into),
+                partial: hide_kit::agents::adapter(&agent.id).is_some_and(|row| row.partial()),
+                features: hide_kit::agents::adapter(&agent.id)
+                    .map(|row| {
+                        hide_kit::agents::Feature::ALL
+                            .into_iter()
+                            .map(|id| KitFeatureSnapshot {
+                                id,
+                                supported: row.supports(id),
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                sessions: None,
                 doc_url: agent.doc_url.clone(),
             })
             .collect::<Vec<_>>();
@@ -752,6 +860,19 @@ impl KitSnapshot {
             components,
             agents,
             shares_account_with: None,
+            codex_daemon: report.codex_daemon,
+            codex_daemon_on: report.codex_daemon_on,
+            codex_daemon_off: report
+                .codex_daemon_off
+                .as_ref()
+                .map(|outcome| match outcome {
+                    hide_kit::CodexDaemonOff::Done => CodexDaemonOffSnapshot::Done,
+                    hide_kit::CodexDaemonOff::Failed { reason, .. } => {
+                        CodexDaemonOffSnapshot::Failed { reason: *reason }
+                    }
+                }),
+            checking: false,
+            check_failed: None,
         }
     }
 
@@ -1664,6 +1785,63 @@ pub struct PaneSnapshot {
     pub sleep_action: Option<AgentSleepActionSnapshot>,
 }
 
+/// Why a session is not connected to Hide.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaneConnectionReason {
+    /// Codex on its shared server runs its hooks there, not in the pane, so
+    /// Hide hears nothing from it (openai/codex#48500). Reopen starts it on
+    /// its own server.
+    CodexSharedServer,
+    /// The hook was installed after this session started, so it never fired.
+    StartedBeforeHide,
+    /// Hide's hook is missing, unreadable or outdated on the machine: the
+    /// fix is the agent's row in Settings, not Reopen.
+    SetupNeeded,
+}
+
+/// What a Reopen of a not connected pane is doing.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum PaneReopenSnapshot {
+    Pending,
+    /// The pane stayed as it was; `reason` names why for the popover's one
+    /// line.
+    Failed {
+        reason: PaneReopenFailure,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaneReopenFailure {
+    /// Herdr or the agent could not start the session again.
+    StartRefused,
+    /// The pane or its session id is gone.
+    SessionGone,
+    /// The machine's Codex has not been read, so the start would not know
+    /// whether to leave the shared server.
+    CodexUnread,
+    /// The agent is working or waiting for the operator, so ending it to
+    /// start it again would lose what it is doing.
+    AgentBusy,
+    /// The agent did not hand the terminal back to its shell, or Herdr
+    /// refused the end; nothing was started.
+    EndRefused,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub struct PaneConnectionSnapshot {
+    pub connected: bool,
+    /// Whether the popover offers Reopen: false for a session that Reopen
+    /// cannot fix (`setup_needed`) and for a pane on another device.
+    pub can_reopen: bool,
+    /// Present exactly when `connected` is false.
+    pub reason: Option<PaneConnectionReason>,
+    /// Absent while no Reopen was asked or the last one ended well.
+    pub reopen: Option<PaneReopenSnapshot>,
+}
+
 /// What a pane header says about the work its agent delegated.
 ///
 /// The three shapes it can take are deliberately different screens: chips
@@ -1688,6 +1866,13 @@ pub struct PaneChildrenSnapshot {
     /// an in-process subagent has no pane, so it cannot be a chip the
     /// operator clicks into (PRD D-63).
     pub chips: Vec<AgentChipSnapshot>,
+    /// Whether Hide hears this pane's session, for the pane header's "Not
+    /// connected" chip (PRD settings-cleanup B26 to B31). `None` on an agent
+    /// Hide has no connection to judge (Gemini CLI, Grok, OpenCode, Pi,
+    /// Cursor: B19) and on one whose hook is switched off or whose machine
+    /// the core has not read yet. Derived from the same observation as
+    /// `instrumented` above, never a second detector.
+    pub connection: Option<PaneConnectionSnapshot>,
     /// The parent badge, chosen from the pane children by the same priority
     /// the Workspace summary uses. In-process subagents take no part in it.
     pub representative: Option<AgentChipSnapshot>,
@@ -3723,6 +3908,8 @@ pub struct StatusSnapshot {
     pub environment: Vec<EnvironmentStatusSnapshot>,
     pub agent_hooks: AgentHooksSnapshot,
     pub background_ai: BackgroundAiSnapshot,
+    /// The Host entries Add device offers (Settings › Devices).
+    pub ssh_hosts: SshHostsSnapshot,
     pub diagnostics: Vec<DiagnosticSnapshot>,
     pub last_error: Option<LastErrorSnapshot>,
     /// Core-owned operations which are waiting for a transport result or an
@@ -3738,6 +3925,43 @@ pub struct StatusSnapshot {
     /// themselves, oldest first and bounded, so a `hide browser open` waiting
     /// on one reads its own (issue 155).
     pub browser_opens: Vec<BrowserOpenReceiptSnapshot>,
+}
+
+/// The concrete Host entries of the account's `~/.ssh/config`, as Add device
+/// lists them (PRD settings-cleanup D-19). Hide keeps only an alias and a name
+/// for a device; this is read on request and never stored.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct SshHostsSnapshot {
+    /// `idle` before the first request, `loading` while one runs, `ready`
+    /// once its answer is in; a later request shows the last answer as
+    /// `loading` until the new one lands.
+    pub state: String,
+    pub hosts: Vec<SshHostSnapshot>,
+    /// The config names more concrete aliases than are listed.
+    pub truncated: bool,
+}
+
+impl Default for SshHostsSnapshot {
+    fn default() -> Self {
+        Self {
+            state: "idle".to_owned(),
+            hosts: Vec::new(),
+            truncated: false,
+        }
+    }
+}
+
+/// One alias of the config.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct SshHostSnapshot {
+    pub alias: String,
+    /// `user@host:port` as `ssh -G` resolved it; absent when it could not.
+    pub address: Option<String>,
+    /// The name of the registered device that already uses this alias or
+    /// reaches the same address.
+    pub added_as: Option<String>,
+    /// Why there is no address: `ssh_missing`, `ssh_failed` or `timed_out`.
+    pub problem: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -3767,25 +3991,38 @@ pub struct PaneFocusRequestSnapshot {
     pub retryable: bool,
 }
 
-/// Which agent and model the background AI features use, and what each
-/// provider can do about it right now.
+/// Which agent and model Hide AI uses, and what each agent can do about it
+/// right now (Settings › Hide AI).
 ///
 /// The choice is the operator's, stored by `hide-ai` in its own file; the
 /// availability and the model lists come from asking the providers, on the
-/// coordinator's reader, never under the runtime mutex.
+/// coordinator's reader, never under the runtime mutex. Every reason is a
+/// short machine code: the shell writes the words, and nothing here carries
+/// an account, a path or a conversation (B68).
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct BackgroundAiSnapshot {
-    /// The provider a background request runs on first. It is the operator's
-    /// choice when they have made one and the default otherwise.
-    pub provider: String,
-    /// Whether `provider` is a saved choice rather than the default.
+    /// Use Hide AI (D-14). Off, no model is asked anything and the other
+    /// settings are kept.
+    pub enabled: bool,
+    /// The agent Hide AI runs on first (Runs on), or `None` when nobody
+    /// chose one and none can be chosen yet (B47): Hide features then work
+    /// without a model, and the first agent that is switched on and signed in
+    /// is chosen by itself (D-18, D-27).
+    pub provider: Option<String>,
+    /// Whether `provider` is a stored choice.
     pub chosen: bool,
     /// The `에이전트 요약` switch: agent labels are asked for and shown.
     pub agent_summary: bool,
-    /// One row per provider Hide can route to, in the offered order. A
-    /// provider that is not on this Mac is still a row, because "not here"
-    /// and "not signed in" are different answers.
+    /// One row per agent Hide AI knows, in the fixed order. An agent that is
+    /// not on this Mac is still a row, because "not here" and "not signed in"
+    /// are different answers.
     pub providers: Vec<BackgroundAiProviderSnapshot>,
+    /// The agents tried, in this order, when `provider` cannot answer; empty
+    /// until the operator adds one (D-16).
+    pub fallback: Vec<BackgroundAiFallbackSnapshot>,
+    /// Why Runs on is not answering, and which listed agent answers instead;
+    /// absent while the chosen agent answers (B41, B42).
+    pub refusal: Option<BackgroundAiRefusalSnapshot>,
     /// Why the saved choice could not be read or written. The defaults are in
     /// use while this is set; it is never left empty to stand for success.
     pub unavailable_reason: Option<String>,
@@ -3793,24 +4030,14 @@ pub struct BackgroundAiSnapshot {
 
 impl BackgroundAiSnapshot {
     /// Every provider, none of them asked yet. This is what the screen shows
-    /// before the first read lands, and what an unobserved read answers. The
-    /// choice it names is the default, because nothing has been read that
-    /// could have changed it.
+    /// before the first read lands, and what an unobserved read answers. No
+    /// choice is claimed, because nothing has been read that could say one.
     pub fn unread() -> Self {
         Self {
-            provider: hide_ai::AiSettings::default().provider.as_str().to_owned(),
+            enabled: true,
             providers: hide_ai::PROVIDERS
                 .iter()
-                .map(|provider| BackgroundAiProviderSnapshot {
-                    id: provider.as_str().to_owned(),
-                    label: provider.label().to_owned(),
-                    state: "unread".to_owned(),
-                    headline: "Not checked yet".to_owned(),
-                    message: None,
-                    model: hide_ai::settings::default_model(*provider).to_owned(),
-                    models: Vec::new(),
-                    models_unavailable_reason: None,
-                })
+                .map(|provider| BackgroundAiProviderSnapshot::unread(*provider))
                 .collect(),
             agent_summary: true,
             ..Self::default()
@@ -3820,9 +4047,13 @@ impl BackgroundAiSnapshot {
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct BackgroundAiProviderSnapshot {
-    /// The provider layer's own id: `codex` or `claude`.
+    /// The provider layer's own id, such as `codex`.
     pub id: String,
     pub label: String,
+    /// The kit's adapter id for the same agent (`claude-code`, `codex`,
+    /// `gemini-cli`, `grok`, `opencode`, `pi`, `cursor`), which the Agents
+    /// tab and the logos are keyed by.
+    pub agent: String,
     /// The availability class the provider layer reported: `ready`,
     /// `needs_login`, `not_installed`, `unavailable`, `unsupported`, or
     /// `unread` before it has been asked.
@@ -3830,14 +4061,74 @@ pub struct BackgroundAiProviderSnapshot {
     /// The short words beside the provider's name. The core writes them; no
     /// view builds a sentence out of `state`.
     pub headline: String,
-    /// The provider layer's own reason, when its state carries one.
+    /// The provider layer's own reason code, when its state carries one
+    /// (`cannot_guarantee_read_only`, `model_not_offered:<model>`).
     pub message: Option<String>,
-    /// The model this provider is asked for.
+    /// Whether the agent's program was found; false only for
+    /// `not_installed`.
+    pub installed: bool,
+    /// Whether the agent's sign-in is checked without a request. False for
+    /// Gemini CLI, whose `ready` only means its program was found, so the
+    /// shell does not call it signed in and it is never chosen by itself.
+    pub login_checked: bool,
+    /// Whether Runs on and Add agent offer it: installed, signed in, a
+    /// backend, and a call that cannot change files (D-15). Parked in a usage
+    /// limit is still selectable.
+    pub selectable: bool,
+    /// When a usage limit ends, as unix milliseconds, when the agent said.
+    pub retry_at_ms: Option<u64>,
+    /// The model this agent is asked for; empty is the CLI's own default. For
+    /// an agent in the fallback list it is that entry's model.
     pub model: String,
-    /// The models this provider offers. Empty when they are not known, which
+    /// The models this agent offers. Empty when they are not known, which
     /// `models_unavailable_reason` then says.
     pub models: Vec<String>,
+    /// The list is the CLI's documented one and cannot be asked for (Gemini
+    /// CLI), so the shell says so beside the menu (B36).
+    pub models_fixed: bool,
+    /// Whether "CLI default" can be chosen: the agent is asked with no
+    /// `--model` (B36). True for the agents measured against nothing yet.
+    pub cli_default: bool,
     pub models_unavailable_reason: Option<String>,
+}
+
+impl BackgroundAiProviderSnapshot {
+    pub fn unread(provider: hide_ai::ProviderId) -> Self {
+        Self {
+            id: provider.as_str().to_owned(),
+            label: provider.label().to_owned(),
+            agent: provider.descriptor().agent.to_owned(),
+            state: "unread".to_owned(),
+            headline: "Not checked yet".to_owned(),
+            installed: true,
+            login_checked: provider.login_probe(),
+            model: provider.default_model().to_owned(),
+            cli_default: provider.default_model().is_empty(),
+            ..Self::default()
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct BackgroundAiFallbackSnapshot {
+    pub provider: String,
+    /// The model it is asked for; empty is the CLI's default.
+    pub model: String,
+}
+
+/// "Using Codex · Claude Code is out of usage until 3:10 PM" (B41), or the
+/// Runs on row's reason when nothing answers (B42). Codes only.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct BackgroundAiRefusalSnapshot {
+    /// The agent that cannot answer: Runs on.
+    pub provider: String,
+    /// The router's availability class for it: `usage_limited`,
+    /// `needs_login`, `not_installed`, `unavailable` or `unsupported`.
+    pub reason: String,
+    /// When a usage limit ends, as unix milliseconds, when the agent said.
+    pub retry_at_ms: Option<u64>,
+    /// The listed agent answering instead; absent when none can (B42).
+    pub using: Option<String>,
 }
 
 /// What the Settings diagnosis says about agent hooks (PRD B27, B28, D-31,
@@ -3845,21 +4136,15 @@ pub struct BackgroundAiProviderSnapshot {
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct AgentHooksSnapshot {
     /// Each machine's hook parts are its kit rows (`DeviceSnapshot.kit`,
-    /// PRD device-parity B27); this section keeps what only the panes say.
-    ///
-    pub sessions_predating_install: Vec<AgentHookPaneSnapshot>,
+    /// PRD device-parity B27), and the sessions Hide does not hear are
+    /// counted on those rows' `sessions` and named on each pane's
+    /// `children.connection` (PRD settings-cleanup D-23: one per-session
+    /// warning list that grew with every session is gone).
     /// The sentence describing the last hook report Herdr did not take, when
     /// the most recent report failed. It is what separates "installed but
     /// every report is refused" from the restart advice above: with it on
     /// screen, a restart is not the fix and the sentence says what is.
     pub last_report_failure: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct AgentHookPaneSnapshot {
-    pub pane_id: String,
-    pub label: String,
-    pub message: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -4124,6 +4409,7 @@ impl Snapshot {
                 environment: Vec::new(),
                 agent_hooks: AgentHooksSnapshot::default(),
                 background_ai: BackgroundAiSnapshot::unread(),
+                ssh_hosts: SshHostsSnapshot::default(),
                 diagnostics: Vec::new(),
                 last_error: None,
                 async_operations: Vec::new(),
@@ -4763,8 +5049,7 @@ mod wire_enum_tests {
                 hide_kit::ComponentId::Cli
                 | hide_kit::ComponentId::ClaudeCodeHook
                 | hide_kit::ComponentId::CodexHook
-                | hide_kit::ComponentId::CoordinationRetirement
-                | hide_kit::ComponentId::CodexPerPane => {}
+                | hide_kit::ComponentId::CoordinationRetirement => {}
             }
         }
         assert_wire(&contract, "kit_component_id", &kit_parts);
@@ -4817,6 +5102,83 @@ mod wire_enum_tests {
         assert_wire(&contract, "kit_agent_availability", &kit_availability);
         checked.insert("kit_agent_availability");
 
+        let features = hide_kit::Feature::ALL;
+        for variant in features {
+            match variant {
+                hide_kit::Feature::Skill
+                | hide_kit::Feature::Guidance
+                | hide_kit::Feature::Letters
+                | hide_kit::Feature::Memory
+                | hide_kit::Feature::Subagents
+                | hide_kit::Feature::HerdrIntegration
+                | hide_kit::Feature::Sleep
+                | hide_kit::Feature::Fork
+                | hide_kit::Feature::Start
+                | hide_kit::Feature::Titles => {}
+            }
+        }
+        assert_wire(&contract, "kit_feature", &features);
+        checked.insert("kit_feature");
+
+        let reasons = [
+            PaneConnectionReason::CodexSharedServer,
+            PaneConnectionReason::StartedBeforeHide,
+            PaneConnectionReason::SetupNeeded,
+        ];
+        for variant in reasons {
+            match variant {
+                PaneConnectionReason::CodexSharedServer
+                | PaneConnectionReason::StartedBeforeHide
+                | PaneConnectionReason::SetupNeeded => {}
+            }
+        }
+        assert_wire(&contract, "pane_connection_reason", &reasons);
+        checked.insert("pane_connection_reason");
+
+        let reopen_failures = [
+            PaneReopenFailure::StartRefused,
+            PaneReopenFailure::SessionGone,
+            PaneReopenFailure::CodexUnread,
+            PaneReopenFailure::AgentBusy,
+            PaneReopenFailure::EndRefused,
+        ];
+        for variant in reopen_failures {
+            match variant {
+                PaneReopenFailure::StartRefused
+                | PaneReopenFailure::SessionGone
+                | PaneReopenFailure::CodexUnread
+                | PaneReopenFailure::AgentBusy
+                | PaneReopenFailure::EndRefused => {}
+            }
+        }
+        assert_wire(&contract, "pane_reopen_failure", &reopen_failures);
+        checked.insert("pane_reopen_failure");
+
+        let daemon_failures = [
+            CodexDaemonOffFailure::CodexMissing,
+            CodexDaemonOffFailure::CodexRefused,
+            CodexDaemonOffFailure::TimedOut,
+            CodexDaemonOffFailure::Unreachable,
+        ];
+        for variant in daemon_failures {
+            match variant {
+                CodexDaemonOffFailure::CodexMissing
+                | CodexDaemonOffFailure::CodexRefused
+                | CodexDaemonOffFailure::TimedOut
+                | CodexDaemonOffFailure::Unreachable => {}
+            }
+        }
+        assert_wire(&contract, "codex_daemon_off_failure", &daemon_failures);
+        checked.insert("codex_daemon_off_failure");
+
+        let check_failures = [KitCheckFailure::ReadFailed];
+        for variant in check_failures {
+            match variant {
+                KitCheckFailure::ReadFailed => {}
+            }
+        }
+        assert_wire(&contract, "kit_check_failure", &check_failures);
+        checked.insert("kit_check_failure");
         use crate::links::{FileState, IssueSource, LinkTarget, SessionRole};
         let files = [FileState::Present, FileState::Missing, FileState::Unknown];
         for variant in files {

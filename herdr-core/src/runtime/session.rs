@@ -2274,13 +2274,21 @@ impl Runtime {
             .as_ref()
             .map(|payload| self.reconcile_session_catalog(payload, precomputed))
             .unwrap_or(false);
-        let protocol_details = fetched.as_ref().err().and_then(|error| {
-            error
+        // A refused revision names both protocols; a connected Herdr's details
+        // are its version and the revision this build requires, which its
+        // snapshot already matched, so Settings can show real values (B5).
+        let protocol_details = match fetched.as_ref() {
+            Ok(payload) => Some((
+                u64::from(crate::herdr_contract::HERDR_PROTOCOL_REVISION),
+                u64::from(crate::herdr_contract::HERDR_PROTOCOL_REVISION),
+                payload.herdr_version.clone(),
+            )),
+            Err(error) => error
                 .protocol_details()
                 .map(|(expected, received, version)| {
                     (expected, received, version.map(str::to_owned))
-                })
-        });
+                }),
+        };
         let (state, message, agents, layouts, layout, selection_changed) = match fetched {
             Ok(payload) => {
                 self.consume_restore_hint(&payload);

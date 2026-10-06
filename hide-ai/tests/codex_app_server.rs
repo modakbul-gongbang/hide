@@ -22,6 +22,7 @@ fn backend() -> CodexAppServerBackend {
             binary: fixture(),
             model: "gpt-5.6-luna".to_owned(),
             cwd: std::env::temp_dir(),
+            search_path: None,
         },
         Arc::new(NoopLogSink),
     )
@@ -228,7 +229,7 @@ fn availability_reports_login_model_and_install_state() {
     });
     let missing = CodexAppServerBackend::new(
         CodexConfig {
-            binary: PathBuf::from("codex-binary-that-does-not-exist"),
+            binary: PathBuf::from("/nonexistent/codex-binary-that-does-not-exist"),
             ..CodexConfig::default()
         },
         Arc::new(NoopLogSink),

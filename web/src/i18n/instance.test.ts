@@ -63,7 +63,7 @@ describe("interface translator", () => {
     expect(() => instance.t("devices.installTitle")).toThrow("missing_interpolation");
     try {
       // @ts-expect-error The source schema also rejects missing interpolations.
-      instance.t("settings.backgroundDegraded", { agent: "private-user-content" });
+      instance.t("hideAi.using", { using: "private-user-content" });
       expect.fail("A missing status must fail");
     } catch (error) {
       expect(error).toBeInstanceOf(TranslationError);

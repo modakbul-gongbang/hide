@@ -107,7 +107,7 @@ test("two live Agent areas render in the light theme", async ({ page }) => {
   try {
     await splitThirdRight(page, group);
     await page.keyboard.press(chord("settings"));
-    await page.locator('[data-settings-tab="appearance"]').click();
+    await page.locator('[data-settings-tab="general"]').click();
     await page.locator('[data-theme-option="light"]').click();
     await expect(page.locator("html")).toHaveClass(/(^|\s)light(\s|$)/);
     await page.keyboard.press("Escape");

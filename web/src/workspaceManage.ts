@@ -10,6 +10,7 @@ import type { MessageKey } from "./i18n/catalogs";
 import { shownPullRequest } from "./projects";
 import { supportsRemotePurpose } from "./remote";
 import { revealExternalEntry, type RevealHost } from "./revealExternal";
+import { issueSourceChoices } from "./settings";
 import type { AgentRow, Checkout, RemoteStatus, TaskOperation, Workspace, WorktreeRemoval } from "./snapshot";
 
 /** The native purpose field's limits (`PurposeInputPresentation`). */
@@ -67,6 +68,10 @@ export type MenuItem = {
     | "new_tab_primary"
     | "reveal_external"
     | "copy_path"
+    | "issue_source"
+    | "issue_source_auto"
+    | "issue_source_github"
+    | "issue_source_local"
     | "pin"
     | "unpin"
     | "remove_project"
@@ -86,6 +91,8 @@ export type MenuItem = {
   shortcut?: string;
   /** An action that removes something from disk, drawn in the destructive color. */
   destructive?: boolean;
+  /** A choice of one: the item opens a submenu of these, the current one checked. */
+  choices?: { id: MenuItem["id"]; label: string; checked: boolean }[];
 };
 
 /** What a row's menu reads from where the shell runs, so the rules stay pure. */
@@ -125,7 +132,7 @@ function revealItem(workspace: Workspace, host: MenuHost, t: TFunction<"translat
  * and pins it in the same event, and Remove closes its panes, after which the
  * row leaves with Herdr's workspace because there is no registration to keep it.
  */
-export function projectMenu(workspace: Workspace, host: MenuHost, t: TFunction<"translation">): MenuItem[] {
+export function projectMenu(workspace: Workspace, host: MenuHost, t: TFunction<"translation">, storedIssueSource?: string): MenuItem[] {
   const primary = primaryCheckout(workspace);
   const reveal = revealItem(workspace, host, t, true);
   return [
@@ -138,8 +145,28 @@ export function projectMenu(workspace: Workspace, host: MenuHost, t: TFunction<"
     },
     ...reveal,
     { id: "copy_path", label: t("workspace.menu.copyPath"), unavailable: null, ...(reveal.length ? {} : { separated: true }) },
+    ...issueSourceItem(workspace, storedIssueSource, t),
     { id: workspace.pinned ? "unpin" : "pin", label: workspace.pinned ? t("workspace.menu.unpin") : t("workspace.menu.pin"), unavailable: null, separated: true },
     { id: "remove_project", label: t("workspace.menu.removeProject"), unavailable: null },
+  ];
+}
+
+/**
+ * Where this project's issues live (PRD settings-cleanup D-04): a submenu of
+ * Automatic, GitHub (a Git project only) and Local with the one in force
+ * checked. A project the issue boards do not draw for (a device's, the Home)
+ * offers none.
+ */
+function issueSourceItem(workspace: Workspace, stored: string | undefined, t: TFunction<"translation">): MenuItem[] {
+  if (workspace.remote_target_id || workspace.is_home || workspace.tasks?.source == null) return [];
+  const { value, options } = issueSourceChoices(workspace, stored, t);
+  return [
+    {
+      id: "issue_source",
+      label: t("issueSettings.sourceMenu"),
+      unavailable: null,
+      choices: options.map((option) => ({ id: `issue_source_${option.id}` as const, label: option.label, checked: option.id === value })),
+    },
   ];
 }
 
@@ -169,9 +196,17 @@ export const FOLDER_CHECKOUT_ITEMS: ReadonlySet<MenuItem["id"]> = new Set<MenuIt
  * checkout, so its new tab, path and reveal items are the project's, and it
  * has no other checkout to make the default.
  */
-export function folderMenu(workspace: Workspace, checkout: Checkout, host: MenuHost, t: TFunction<"translation">, purposeProblem: string | null = null): MenuItem[] {
+export function folderMenu(
+  workspace: Workspace,
+  checkout: Checkout,
+  host: MenuHost,
+  t: TFunction<"translation">,
+  purposeProblem: string | null = null,
+  storedIssueSource?: string,
+): MenuItem[] {
+  const project = projectMenu(workspace, host, t, storedIssueSource);
   const [first, ...rest] = checkoutMenu(workspace, checkout, host, t, purposeProblem).filter((item) => FOLDER_CHECKOUT_ITEMS.has(item.id));
-  return first ? [...projectMenu(workspace, host, t), { ...first, separated: true }, ...rest.map((item) => ({ ...item, separated: false }))] : projectMenu(workspace, host, t);
+  return first ? [...project, { ...first, separated: true }, ...rest.map((item) => ({ ...item, separated: false }))] : project;
 }
 
 /**

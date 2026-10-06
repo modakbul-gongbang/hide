@@ -11,5 +11,6 @@ pub mod ipc;
 pub mod listeners;
 pub mod path;
 pub mod process;
+pub mod programs;
 pub mod user_agents;
 pub mod watch;

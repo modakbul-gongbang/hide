@@ -29,6 +29,7 @@ fn backend() -> ClaudeCliBackend {
         binary: fixture(),
         model: "haiku".to_owned(),
         cwd: std::env::temp_dir(),
+        search_path: None,
     })
 }
 
@@ -219,7 +220,7 @@ fn a_completion_unknown_outcome_is_never_retried_or_moved() {
         let router = AiRouter::new(
             vec![std::sync::Arc::new(backend())],
             RouterConfig {
-                priority: vec![ProviderId::Claude],
+                priority: vec![ProviderId::CLAUDE],
                 ..RouterConfig::default()
             },
             std::sync::Arc::new(NoopLogSink),
@@ -232,7 +233,7 @@ fn a_completion_unknown_outcome_is_never_retried_or_moved() {
         assert!(matches!(error, AiError::CompletionUnknown(_)), "{error:?}");
         // The provider was not parked by it: the next intent is new.
         let state = router.provider_state().unwrap();
-        assert_eq!(state.active, Some(ProviderId::Claude));
+        assert_eq!(state.active, Some(ProviderId::CLAUDE));
         assert_eq!(state.degraded, None);
     });
 }
@@ -353,7 +354,7 @@ fn availability_reports_login_install_and_probe_state() {
         );
     });
     let missing = ClaudeCliBackend::new(ClaudeConfig {
-        binary: PathBuf::from("claude-binary-that-does-not-exist"),
+        binary: PathBuf::from("/nonexistent/claude-binary-that-does-not-exist"),
         ..ClaudeConfig::default()
     });
     assert_eq!(missing.availability(), Availability::NotInstalled);
@@ -387,6 +388,7 @@ mod usage {
             binary: fixture(),
             model: "haiku".to_owned(),
             cwd: cwd.to_path_buf(),
+            search_path: None,
         })
     }
 
@@ -498,7 +500,7 @@ mod usage {
             Err(UsageError::NoResultFrame)
         );
         let missing = ClaudeCliBackend::new(ClaudeConfig {
-            binary: PathBuf::from("claude-binary-that-does-not-exist"),
+            binary: PathBuf::from("/nonexistent/claude-binary-that-does-not-exist"),
             ..ClaudeConfig::default()
         });
         assert_eq!(
@@ -522,4 +524,115 @@ mod usage {
             "the child was not killed"
         );
     }
+}
+
+#[test]
+fn the_model_list_is_asked_of_the_cli_without_a_model_turn_and_leaks_no_account() {
+    with_mode("ok", || {
+        let args_file = scratch("claude-models-args");
+        let stdin_file = scratch("claude-models-stdin");
+        unsafe {
+            std::env::set_var("FAKE_ARGS_FILE", &args_file);
+            std::env::set_var("FAKE_STDIN_FILE", &stdin_file);
+        }
+        let catalog = backend().models();
+        unsafe {
+            std::env::remove_var("FAKE_ARGS_FILE");
+            std::env::remove_var("FAKE_STDIN_FILE");
+        }
+        let args: Vec<String> =
+            serde_json::from_slice(&std::fs::read(&args_file).unwrap()).unwrap();
+        let request = std::fs::read_to_string(&stdin_file).unwrap();
+        let _ = std::fs::remove_file(&args_file);
+        let _ = std::fs::remove_file(&stdin_file);
+
+        assert_eq!(args, ClaudeCliBackend::models_arguments());
+        assert!(args.windows(2).any(|p| p == ["--tools", ""]), "{args:?}");
+        assert!(request.contains(r#""subtype":"initialize""#), "{request}");
+        assert_eq!(
+            catalog,
+            hide_ai::ModelCatalog::Offered(vec!["opus".to_owned(), "sonnet".to_owned()]),
+            "the account's models, without the CLI's own 'default'"
+        );
+        assert!(
+            !format!("{catalog:?}").contains("example"),
+            "no account field reaches the answer"
+        );
+    });
+}
+
+#[test]
+fn a_model_list_the_cli_cannot_give_is_reported_not_replaced_by_a_guess() {
+    with_mode("init_broken", || match backend().models() {
+        hide_ai::ModelCatalog::Unknown { reason } => {
+            assert!(reason.starts_with("claude_models_unreadable"), "{reason}");
+        }
+        other => panic!("{other:?}"),
+    });
+}
+
+/// Drives the real, logged-in `claude`: its model list through the
+/// `initialize` request, then one tiny request through the router. It writes
+/// the model values and the outcome class to `HIDE_AI_LIVE_EVIDENCE` and
+/// nothing else, so no account or organisation field can reach the record.
+///
+/// ```sh
+/// HIDE_AI_LIVE_EVIDENCE=<folder> cargo test -p hide-ai --test claude_cli -- --ignored real_claude
+/// ```
+#[test]
+#[ignore = "needs a logged-in claude on PATH"]
+fn real_claude_lists_its_models_and_answers_one_request() {
+    let evidence = PathBuf::from(
+        std::env::var("HIDE_AI_LIVE_EVIDENCE").expect("HIDE_AI_LIVE_EVIDENCE names the folder"),
+    );
+    std::fs::create_dir_all(&evidence).unwrap();
+    let backend = std::sync::Arc::new(ClaudeCliBackend::new(ClaudeConfig {
+        model: "haiku".to_owned(),
+        ..ClaudeConfig::default()
+    }));
+
+    let catalog = backend.models();
+    let models = match &catalog {
+        hide_ai::ModelCatalog::Offered(models) => models.clone(),
+        other => panic!("the live model list was not offered: {other:?}"),
+    };
+    assert!(!models.is_empty() && !models.iter().any(|model| model == "default"));
+
+    let router = AiRouter::new(
+        vec![backend.clone()],
+        RouterConfig {
+            priority: vec![ProviderId::CLAUDE],
+            ..RouterConfig::default()
+        },
+        std::sync::Arc::new(NoopLogSink),
+    );
+    let mut ask = request(Duration::from_secs(60));
+    ask.input = "user: please rename the build script".to_owned();
+    let outcome = router.execute(&ask, &CancelToken::new());
+    let class = match &outcome {
+        Ok(_) => "ok",
+        Err(error) => error.class(),
+    };
+    let statuses: Vec<Value> = router
+        .statuses()
+        .iter()
+        .map(|status| {
+            json!({
+                "provider": status.provider.as_str(),
+                "selectable": status.selectable,
+            })
+        })
+        .collect();
+    std::fs::write(
+        evidence.join("claude-live.json"),
+        serde_json::to_string_pretty(&json!({
+            "models": models,
+            "request_outcome": class,
+            "answered_by": router.last_answered().map(|provider| provider.as_str()),
+            "statuses": statuses,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(class, "ok", "{outcome:?}");
 }
