@@ -15,7 +15,7 @@ const EARLY_FOCUS_LIMIT: usize = 16;
 /// How many panes a replica holds waiting for their cwd to be confirmed
 /// (`unconfirmed_cwds`). The coordinator confirms each pane right after the
 /// event that announced it, so the set holds one pane at a time; a pane past
-/// the cap keeps the cwd its event carried and is logged.
+/// the cap keeps the cwd it was announced with and is logged.
 const UNCONFIRMED_CWD_LIMIT: usize = 64;
 
 static NEXT_REPLICA_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
@@ -685,6 +685,21 @@ impl SessionReplica {
         self.unconfirmed_cwds.iter().cloned().collect()
     }
 
+    /// Holds a pane's cwd as unconfirmed until the coordinator reads it back.
+    fn await_cwd(&mut self, pane_id: String) {
+        if self.unconfirmed_cwds.len() < UNCONFIRMED_CWD_LIMIT {
+            self.unconfirmed_cwds.insert(pane_id);
+        } else {
+            crate::diagnostic!(json!({
+                "component": "session_sync",
+                "kind": "pane_cwd.unconfirmed_over_cap",
+                "pane_id": pane_id,
+                "limit": UNCONFIRMED_CWD_LIMIT,
+                "applied_events": self.applied_events,
+            }));
+        }
+    }
+
     /// Applies a `pane.get` answer to a pane waiting for its cwd, and reports
     /// whether the cwd changed. The read is the confirmation whatever it
     /// says, so the pane stops waiting either way; an answer with no cwd (the
@@ -770,6 +785,10 @@ impl SessionReplica {
         mode: ApplyMode,
     ) -> Result<ApplyOutcome, SessionFetchError> {
         let mut candidate = self.clone();
+        let created_pane = match &event {
+            ReplicaEvent::PaneCreated { pane } => Some(pane.pane_id.clone()),
+            _ => None,
+        };
         let refresh_worktrees = matches!(
             event,
             ReplicaEvent::WorktreeCreated { .. }
@@ -791,6 +810,14 @@ impl SessionReplica {
                     "applied_events": self.applied_events,
                     "message": detail,
                 }));
+                // A creation the snapshot already holds means the snapshot
+                // was read while Herdr created the pane, so it may carry the
+                // same early cwd the event would have.
+                if let Some(pane_id) = created_pane
+                    .filter(|pane_id| self.state.panes.iter().any(|pane| &pane.pane_id == pane_id))
+                {
+                    self.await_cwd(pane_id);
+                }
                 return Ok(ApplyOutcome {
                     publish: false,
                     refresh_agents: false,
@@ -1209,17 +1236,7 @@ impl SessionReplica {
                     return Err(malformed_event(event, "created pane already exists"));
                 }
                 self.pending_layouts.insert(input_pane.tab_id.clone());
-                if self.unconfirmed_cwds.len() < UNCONFIRMED_CWD_LIMIT {
-                    self.unconfirmed_cwds.insert(input_pane.pane_id.clone());
-                } else {
-                    crate::diagnostic!(json!({
-                        "component": "session_sync",
-                        "kind": "pane_cwd.unconfirmed_over_cap",
-                        "pane_id": input_pane.pane_id,
-                        "limit": UNCONFIRMED_CWD_LIMIT,
-                        "applied_events": self.applied_events,
-                    }));
-                }
+                self.await_cwd(input_pane.pane_id.clone());
                 self.state.panes.push(input_pane);
             }
             ReplicaEvent::PaneClosed {
