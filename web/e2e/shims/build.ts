@@ -1,5 +1,5 @@
 // The C programs the e2e fixtures run in place of a real provider, opener and
-// process lister. They are compiled once, by the e2e entry point's
+// process programs. They are compiled once, by the e2e entry point's
 // `globalSetup`, into `web/.e2e-shims` (ignored by git), each named with a
 // hash of its source: a test only copies a finished program, so no test
 // holds a compiler and a stale program cannot be mistaken for the current one.
@@ -12,10 +12,10 @@ const windows = process.platform === "win32";
 const ext = windows ? ".exe" : "";
 
 /** A program the fixtures copy, by the name of its source in `web/e2e/shims`. */
-export type FixtureShim = "claude-shim" | "spawn-provider" | "noop" | "launcher" | "hide-children";
+export type FixtureShim = "claude-shim" | "spawn-provider" | "noop" | "launcher" | "hide-children" | "hide-processes";
 
-/** The programs this system builds: the launcher and process lister only exist for Windows. */
-const BUILT: FixtureShim[] = windows ? ["claude-shim", "spawn-provider", "noop", "launcher", "hide-children"] : ["claude-shim", "spawn-provider", "noop"];
+/** The programs this system builds: the launcher and the two process programs only exist for Windows. */
+const BUILT: FixtureShim[] = windows ? ["claude-shim", "spawn-provider", "noop", "launcher", "hide-children", "hide-processes"] : ["claude-shim", "spawn-provider", "noop"];
 
 // The programs a run built, by name, handed to the tests through the environment:
 // Playwright starts its workers after `globalSetup`, so they inherit it.
@@ -67,12 +67,17 @@ export function buildFixtureShims(packageDir: string): void {
   process.env[PROGRAMS] = JSON.stringify(built);
 }
 
-/** Copies the finished `name` to `executable`; a program that was not built is a failure that says how to build it. */
-export function copyFixtureShim(name: FixtureShim, executable: string): void {
+/** The finished program `name`, run where it is built; a program that was not built is a failure that says how to build it. */
+export function fixtureShimPath(name: FixtureShim): string {
   const programs = JSON.parse(process.env[PROGRAMS] ?? "{}") as Record<string, string>;
   const program = programs[name];
   if (!program || !fs.existsSync(program)) {
     throw new Error(`fixture program ${name} is not built (${program ?? `no ${PROGRAMS} in the environment`}); Playwright's globalSetup builds it, so run the e2e through \`playwright test\` (scripts/verify-web.sh web e2e)`);
   }
-  fs.copyFileSync(program, executable);
+  return program;
+}
+
+/** Copies the finished `name` to `executable`; a program that was not built is a failure that says how to build it. */
+export function copyFixtureShim(name: FixtureShim, executable: string): void {
+  fs.copyFileSync(fixtureShimPath(name), executable);
 }
