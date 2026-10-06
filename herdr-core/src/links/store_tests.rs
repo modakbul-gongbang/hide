@@ -837,3 +837,46 @@ fn what_a_codex_session_appends_later_stays_on_its_line() {
     );
     assert_eq!(lines[0].ended_at_unix_ms, Some(T0 + 4 * MIN));
 }
+
+/// A long file is read in pieces: an address printed in a later piece keeps
+/// the request an earlier piece held (found reading a 2.8 MB session live).
+#[test]
+fn an_address_read_after_its_request_keeps_that_request() {
+    let home = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    let mut store = open(state.path());
+    store
+        .apply_project(&project(vec![pr(7, "feat/x", T0 + 10 * MIN, None)]), T0)
+        .unwrap();
+    let path = claude_file(
+        home.path(),
+        "s-maker",
+        ROOT,
+        "cli",
+        &[Turn {
+            at: T0,
+            branch: "feat/x",
+            text: "PR 올려 줘",
+        }],
+        None,
+    );
+    ingest(&mut store, home.path(), &path);
+    let mut contents = fs::read_to_string(&path).unwrap();
+    contents.push_str(
+        &(serde_json::json!({
+            "type": "pr-link", "sessionId": "s-maker", "prNumber": 7,
+            "prRepository": "acme/app", "prUrl": "https://github.com/acme/app/pull/7",
+            "timestamp": iso(T0 + 10 * MIN + 1_000),
+        })
+        .to_string()
+            + "\n"),
+    );
+    fs::write(&path, contents).unwrap();
+    ingest(&mut store, home.path(), &path);
+
+    let lines = panel(&store, 7);
+    assert_eq!(
+        (lines[0].role, lines[0].request.as_deref()),
+        (SessionRole::Created, Some("PR 올려 줘"))
+    );
+}

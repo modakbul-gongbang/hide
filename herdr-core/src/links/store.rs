@@ -466,6 +466,20 @@ impl LinkStore {
         let agent = answer.agent.as_str();
         let mut last_branch = previous.and_then(|row| row.last_branch);
         if let Some(id) = facts.session_id.as_deref() {
+            // A chunk that printed an address before any request of its own
+            // continues the request an earlier read recorded.
+            let before: Option<String> = if continuing {
+                tx.query_row(
+                    "SELECT last_request FROM sessions WHERE device=?1 AND agent=?2 AND id=?3",
+                    [device, agent, id],
+                    |row| row.get(0),
+                )
+                .optional()
+                .map_err(failed)?
+                .flatten()
+            } else {
+                None
+            };
             upsert_session(&tx, device, agent, id, path, facts)?;
             for (index, span) in facts.spans.iter().enumerate() {
                 let stated = if span.inherited {
@@ -570,7 +584,7 @@ impl LinkStore {
                         mark.repository.to_ascii_lowercase(),
                         mark.number as i64,
                         mark.at_unix_ms as i64,
-                        mark.request,
+                        mark.request.as_ref().or(before.as_ref()),
                     ],
                 )
                 .map_err(failed)?;
