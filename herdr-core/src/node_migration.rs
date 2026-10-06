@@ -344,11 +344,21 @@ pub fn convert(state_dir: &Path, home: &Path, node: &NodeId) -> Result<Outcome, 
             continue;
         }
         if convert(&mut value, node.as_str(), &project_ids) {
+            let bytes =
+                serde_json::to_vec(&value).map_err(|error| refuse(&path, error.to_string()))?;
+            let limit = stored_limit(file);
+            if bytes.len() > limit {
+                return Err(refuse(
+                    &path,
+                    format!(
+                        "converted, it would be {} bytes, over the {limit} bytes its loader reads",
+                        bytes.len()
+                    ),
+                ));
+            }
             backup
                 .copy(&path, file)
                 .map_err(|reason| refuse(&path, reason))?;
-            let bytes =
-                serde_json::to_vec(&value).map_err(|error| refuse(&path, error.to_string()))?;
             write(&path, &bytes).map_err(|reason| refuse(&path, reason))?;
             outcome.files.push(path.display().to_string());
         }
@@ -388,6 +398,16 @@ pub fn convert(state_dir: &Path, home: &Path, node: &NodeId) -> Result<Outcome, 
 }
 
 type JsonConverter = fn(&mut Value, &str, &BTreeMap<String, String>) -> bool;
+
+/// The size a store's own loader refuses beyond: the node id is longer than
+/// `local`, so a store near its limit could otherwise convert into one its
+/// loader would then refuse on every start.
+fn stored_limit(file: &str) -> usize {
+    match file {
+        DELIVERY_LEDGER => crate::delivery::FILE_LIMIT,
+        _ => usize::MAX,
+    }
+}
 
 /// Each JSON store, the field that names its version, and the versions this
 /// build reads. A file of any other version, or with none, is left as it is
@@ -474,8 +494,9 @@ fn each<'a>(value: &'a mut Value, key: &str) -> impl Iterator<Item = &'a mut Val
         .flatten()
 }
 
-/// Renames the object key `"local"` to `node`. When both exist, the node's
-/// entry stands and the legacy one is dropped only if it adds nothing.
+/// Renames the object key `"local"` to `node`. When both exist, an object or
+/// a list takes the legacy entries the node's lacks, and any other value the
+/// node wrote since stands.
 fn rename_key(object: Option<&mut Value>, node: &str) -> bool {
     let Some(map) = object.and_then(Value::as_object_mut) else {
         return false;
@@ -491,6 +512,17 @@ fn rename_key(object: Option<&mut Value>, node: &str) -> bool {
                 }
             }
         }
+        // An expanded-paths list keeps the paths of both.
+        Some(Value::Array(current)) => {
+            if let Value::Array(legacy) = legacy {
+                for entry in legacy {
+                    if !current.contains(&entry) {
+                        current.push(entry);
+                    }
+                }
+            }
+        }
+        // A value the node wrote since is the newer one.
         Some(_) => {}
         None => {
             map.insert(node.to_owned(), legacy);
@@ -1271,6 +1303,47 @@ mod tests {
             unknown
         );
         assert!(!dir.path().join(BACKUP_DIR).exists());
+    }
+
+    #[test]
+    fn a_folder_both_names_wrote_keeps_the_entries_of_both() {
+        let dir = tempfile::tempdir().unwrap();
+        let core_state = json!({
+            "schema_version": 1,
+            "device_expanded_paths": {"local": ["/a", "/b"], NODE: ["/b", "/c"]},
+        });
+        std::fs::write(dir.path().join(CORE_STATE), core_state.to_string()).unwrap();
+        convert(dir.path(), dir.path(), &node()).unwrap();
+        assert_eq!(
+            read(&dir.path().join(CORE_STATE))["device_expanded_paths"],
+            json!({NODE: ["/b", "/c", "/a"]})
+        );
+    }
+
+    #[test]
+    fn a_ledger_the_longer_id_would_push_past_its_loader_limit_stops_the_start() {
+        let dir = tempfile::tempdir().unwrap();
+        let actor = json!({"device_id": "local", "pane_id": "p"});
+        let letter = json!({"sender": actor, "recipient": actor});
+        // Each letter grows by twice the id's extra length once converted.
+        let letter_bytes = letter.to_string().len() + 1;
+        let growth = 2 * (NODE.len() - LEGACY.len());
+        let count = crate::delivery::FILE_LIMIT / (letter_bytes + growth) + 1;
+        let ledger = json!({"version": 1, "letters": vec![letter; count]});
+        let bytes = serde_json::to_vec(&ledger).unwrap();
+        assert!(
+            bytes.len() <= crate::delivery::FILE_LIMIT,
+            "fixture starts loadable"
+        );
+        std::fs::write(dir.path().join(DELIVERY_LEDGER), &bytes).unwrap();
+
+        let refusal = convert(dir.path(), dir.path(), &node()).unwrap_err();
+        assert_eq!(refusal.file, dir.path().join(DELIVERY_LEDGER));
+        assert_eq!(
+            std::fs::read(dir.path().join(DELIVERY_LEDGER)).unwrap(),
+            bytes
+        );
+        assert!(!dir.path().join(MARKER_FILE).exists());
     }
 
     #[test]

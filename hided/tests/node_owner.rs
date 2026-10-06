@@ -88,6 +88,7 @@ fn a_folder_owned_by_another_node_stops_the_daemon_and_logs_why() {
 
 /// What the desktop host shows (B2): `hide connect` answers at once, not
 /// after its health wait, with the file the daemon refused.
+#[cfg(unix)]
 #[test]
 fn hide_connect_names_the_file_a_refused_start_stopped_on() {
     let root = tempfile::tempdir().unwrap();

@@ -3543,6 +3543,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[test]
     fn a_browser_file_report_keeps_its_load_through_a_registered_root_alias() {
         let home = tempfile::tempdir().unwrap();
