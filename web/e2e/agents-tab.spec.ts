@@ -78,9 +78,9 @@ test("lists the installed agents with a status and a switch, and folds the other
     await expect(fold.locator('[data-agent-install="cursor"]')).toHaveAttribute("href", "https://cursor.com/docs/cli/installation");
     await screenshot(page, "agents-list");
 
-    // B10: Check again reads as under way and rests; the list is unchanged.
+    // B10: Check again reads the machine again and the list stays as it was; the in-progress
+    // and failed states come from the kit snapshot's `checking` and `check_failed` (unit-tested).
     await list.locator("[data-agents-check]").click();
-    await expect(list.locator("[data-agents-check]")).toHaveAttribute("data-agents-check", "checking");
     await expect(list.locator("[data-agents-check]")).toHaveAttribute("data-agents-check", "idle");
     await expect(list.locator("[data-agent-row]")).toHaveCount(7);
   } finally {

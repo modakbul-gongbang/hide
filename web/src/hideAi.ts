@@ -117,11 +117,12 @@ export function nobodySignedIn(ai: BackgroundAi): boolean {
 
 /**
  * The first-run rule (D-18, B45, B46): the first agent in the fixed order that
- * is switched on in the choice and signed in. The registry already lists the
+ * is switched on in the choice and verifiably signed in: an agent whose sign-in
+ * the core cannot probe (`login_checked` false) is never picked on its own. The registry already lists the
  * agents in that order.
  */
 export function firstRunAgent(ai: BackgroundAi | undefined, on: ReadonlySet<string>): AiProvider | null {
-  return ai?.providers.find((provider) => on.has(provider.agent) && provider.state === "ready") ?? null;
+  return ai?.providers.find((provider) => on.has(provider.agent) && provider.state === "ready" && provider.login_checked !== false) ?? null;
 }
 
 /** When a usage limit ends: the time of day today, with the weekday on another day. */

@@ -118,12 +118,13 @@ describe("the first-run rule (D-18, B45, B46)", () => {
   const rows = [
     provider("claude", { state: "needs_login", selectable: false }),
     provider("codex"),
-    provider("gemini-cli", { agent: "gemini-cli" }),
+    provider("gemini-cli", { agent: "gemini-cli", login_checked: false }),
   ];
 
   it("takes the first agent in the fixed order that is switched on and signed in", () => {
     expect(firstRunAgent(ai(rows), new Set(["claude-code", "codex", "gemini-cli"]))?.id).toBe("codex");
-    expect(firstRunAgent(ai(rows), new Set(["gemini-cli"]))?.id).toBe("gemini-cli");
+    // Gemini CLI has no sign-in probe: it is selectable by hand, never picked for the operator.
+    expect(firstRunAgent(ai(rows), new Set(["gemini-cli"]))).toBeNull();
   });
 
   it("names nobody when no chosen agent is signed in, and while the probe has not been read", () => {
