@@ -98,7 +98,11 @@ jobs:
       - name: Choose the lanes this change needs
         id: plan
         # The crate graph comes from `cargo metadata`, which needs no build.
-        run: python3 scripts/ci-plan.py plan --event "$GITHUB_EVENT_NAME" --draft "${{ github.event.pull_request.draft || false }}"
+        # TEMP evidence run for #672 (do not merge): herdr-core focus tests and agent-tab-names.
+        run: |
+          echo 'lanes=["rust","web-e2e"]' >> "$GITHUB_OUTPUT"
+          echo 'full=false' >> "$GITHUB_OUTPUT"
+          echo 'rust-packages=["herdr-core"]' >> "$GITHUB_OUTPUT"
 
   policy:
     name: policy checks
@@ -176,10 +180,10 @@ jobs:
           else
             mapfile -t packages < <(jq -r '.[] | "-p", .' <<<"$PACKAGES")
             (( ${#packages[@]} )) || { echo 'the plan chose the rust lane but no crate' >&2; exit 1; }
-            bash scripts/verify-cargo.sh nextest --profile ci "${packages[@]}"
+            bash scripts/verify-cargo.sh nextest --profile ci "${packages[@]}" --retries 0 --no-fail-fast -E 'test(ui_state_focus) | test(registered_subfolder_history_stays_scoped_through_runtime_selection) | test(a_returned_pane_id_selects_its_layout_when_other_panes_share_the_cwd)'
           fi
       - name: Report flaky tests
-        if: ${{ !cancelled() }}
+        if: ${{ false }}
         continue-on-error: true
         timeout-minutes: 5
         env:
@@ -408,7 +412,7 @@ jobs:
       # a Linux shard, because the organization runs 20 jobs at once and a
       # full run asked for 23. Four shards put two fewer jobs in the queue; each
       # shard's time at four is measured after merge (docs/TESTING.md).
-      shards: 4
+      shards: 1
 
   # The remote mailbox crate-boundary lane (herdr-core/tests/remote_delivery.rs,
   # docs/TESTING.md), in `remote-mailbox.yml`. It has its own job because it was
