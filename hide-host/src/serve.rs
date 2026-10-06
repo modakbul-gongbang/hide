@@ -331,6 +331,28 @@ pub fn handle(call: Call) -> HostResult<Value> {
             })?;
             session_activity(Path::new(&home), &request)
         }
+        Call::LinkFiles {
+            since_unix_ms,
+            until_unix_ms,
+        } => {
+            let home = std::env::var_os("HOME")
+                .ok_or_else(|| HostError::new(ErrorCode::Unsupported, "links_home_unavailable"))?;
+            let listed =
+                hide_session::links::candidates(Path::new(&home), since_unix_ms, until_unix_ms)
+                    .map_err(|code| HostError::new(ErrorCode::Io, code))?;
+            to_value(listed)
+        }
+        Call::LinkRead { requests } => {
+            if requests.len() > hide_session::links::READ_FILE_LIMIT {
+                return Err(HostError::new(
+                    ErrorCode::InvalidRequest,
+                    "links_read_limit",
+                ));
+            }
+            let home = std::env::var_os("HOME")
+                .ok_or_else(|| HostError::new(ErrorCode::Unsupported, "links_home_unavailable"))?;
+            to_value(hide_session::links::read(Path::new(&home), &requests))
+        }
         Call::WorktreeRemove { removal } => {
             absolute(&removal.repository_root)?;
             absolute(&removal.checkout_path)?;

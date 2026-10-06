@@ -170,11 +170,10 @@ impl HostChannel for FakeDevice {
 }
 
 struct Fixture {
-    _dir: tempfile::TempDir,
     root: PathBuf,
     /// The device checkout, keyed by its folder as the catalog keys it.
     checkout: String,
-    shared: Arc<Mutex<Runtime>>,
+    shared: SharedRuntime,
     device: Arc<FakeDevice>,
 }
 
@@ -213,18 +212,29 @@ impl Fixture {
                 generation: 1,
             },
         );
-        let shared = Arc::new(Mutex::new(runtime));
-        shared.lock().unwrap().install_worker_context(
-            Arc::downgrade(&shared),
-            crate::handle::ChangeNotifier::noop(),
-        );
+        // The checkout is written by the runtime's workers, so it is the
+        // runtime's and goes after they have let go.
+        runtime.test_dirs.push(dir);
+        let shared = SharedRuntime::new(runtime);
+        shared
+            .lock()
+            .unwrap()
+            .install_worker_context(shared.weak(), crate::handle::ChangeNotifier::noop());
         Self {
-            _dir: dir,
             root,
             checkout: checkout_id,
             shared,
             device,
         }
+    }
+
+    /// A folder the runtime writes into on its workers. It is the runtime's,
+    /// so it goes after they have let go, never under a save still running.
+    fn runtime_dir(&self, prefix: &str) -> PathBuf {
+        let dir = scratch_dir(prefix);
+        let path = dir.path().to_path_buf();
+        self.shared.lock().unwrap().test_dirs.push(dir);
+        path
     }
 
     fn path(&self, name: &str) -> String {
@@ -810,11 +820,11 @@ fn a_slow_local_read_blocks_nothing_and_a_reveal_moves_only_when_it_lands() {
     runtime.snapshot.ui_state.right_panel_visible = false;
     let disk = FakeDevice::new();
     runtime.local_host = disk.clone();
-    let shared = Arc::new(Mutex::new(runtime));
-    shared.lock().unwrap().install_worker_context(
-        Arc::downgrade(&shared),
-        crate::handle::ChangeNotifier::noop(),
-    );
+    let shared = SharedRuntime::new(runtime);
+    shared
+        .lock()
+        .unwrap()
+        .install_worker_context(shared.weak(), crate::handle::ChangeNotifier::noop());
     let dispatch = |event: Vec<u8>| shared.lock().unwrap().dispatch_json(&event);
     let file = root.join("nested/b.txt");
 
@@ -1300,13 +1310,13 @@ fn helper_ready(runtime: &mut Runtime, device: &Arc<FakeDevice>) {
 fn a_device_workspaces_displays_wait_for_its_helper_after_a_restart() {
     let f = Fixture::new();
     let root = f.root.to_string_lossy().into_owned();
-    let views_dir = tempfile::tempdir().unwrap();
+    let views_dir = f.runtime_dir("hide-document-views-");
     let file_display;
     {
         let mut runtime = f.shared.lock().unwrap();
         studio_connecting(&mut runtime);
         let mut store =
-            WorkspaceViewStore::open(views_dir.path().join("views.json"), Default::default()).0;
+            WorkspaceViewStore::open(views_dir.join("views.json"), Default::default()).0;
         // The file's diff, and the file beside it in use.
         let layout = &mut store.views.entry(DEVICE, &root).layout;
         let diff = layout.new_display(&f.path("a.txt"), DisplayKind::Diff, Some(false), false);
@@ -1445,8 +1455,8 @@ fn a_device_workspaces_displays_wait_for_its_helper_after_a_restart() {
 fn a_quit_mid_restore_keeps_the_stored_layout_byte_for_byte() {
     let f = Fixture::new();
     std::fs::write(f.root.join("b.txt"), "b\n").unwrap();
-    let views_dir = tempfile::tempdir().unwrap();
-    let file = views_dir.path().join("workspace-views.json");
+    let views_dir = f.runtime_dir("hide-document-views-");
+    let file = views_dir.join("workspace-views.json");
     // The last session: a.txt's diff and a preview of b.txt in one area,
     // and a.txt in the area beside it, which was in use.
     let mut views = crate::workspace_views::WorkspaceViews::default();
@@ -1531,8 +1541,8 @@ fn a_quit_mid_restore_keeps_the_stored_layout_byte_for_byte() {
 fn a_preview_open_landing_right_after_its_restore_read_replaces_that_preview() {
     let f = Fixture::new();
     std::fs::write(f.root.join("b.txt"), "b\n").unwrap();
-    let views_dir = tempfile::tempdir().unwrap();
-    let file = views_dir.path().join("workspace-views.json");
+    let views_dir = f.runtime_dir("hide-document-views-");
+    let file = views_dir.join("workspace-views.json");
     let mut views = crate::workspace_views::WorkspaceViews::default();
     let layout = &mut views.entry(DEVICE, &f.root.to_string_lossy()).layout;
     let restored = layout.new_display(&f.path("b.txt"), DisplayKind::File, None, true);
@@ -1592,16 +1602,12 @@ fn a_preview_open_landing_right_after_its_restore_read_replaces_that_preview() {
 #[test]
 fn a_double_click_during_the_first_clicks_read_pins_the_document() {
     let f = Fixture::new();
-    let views_dir = tempfile::tempdir().unwrap();
+    let views_dir = f.runtime_dir("hide-document-views-");
     {
         let mut runtime = f.shared.lock().unwrap();
         studio_connecting(&mut runtime);
         runtime.workspace_views = Some(
-            WorkspaceViewStore::open(
-                views_dir.path().join("workspace-views.json"),
-                Default::default(),
-            )
-            .0,
+            WorkspaceViewStore::open(views_dir.join("workspace-views.json"), Default::default()).0,
         );
         helper_ready(&mut runtime, &f.device);
     }
@@ -1652,7 +1658,7 @@ fn the_same_path_on_two_devices_is_two_documents_in_two_views() {
     let f = Fixture::new();
     let path = f.root.to_string_lossy().into_owned();
     let (local_id, local_checkout) = ("workspace:local-same-path", "checkout:local-same-path");
-    let views_dir = tempfile::tempdir().unwrap();
+    let views_dir = f.runtime_dir("hide-document-views-");
     {
         let mut runtime = f.shared.lock().unwrap();
         studio_connecting(&mut runtime);
@@ -1668,9 +1674,8 @@ fn the_same_path_on_two_devices_is_two_documents_in_two_views() {
             f.root.clone(),
             opened,
         )]));
-        runtime.workspace_views = Some(
-            WorkspaceViewStore::open(views_dir.path().join("views.json"), Default::default()).0,
-        );
+        runtime.workspace_views =
+            Some(WorkspaceViewStore::open(views_dir.join("views.json"), Default::default()).0);
         runtime.sync_workspace_view();
     }
     let device_tab = Runtime::file_tab_id(WORKSPACE, &f.checkout, &f.path("a.txt"));
@@ -1747,8 +1752,8 @@ fn the_same_path_on_two_devices_is_two_documents_in_two_views() {
 fn a_retried_view_shows_opening_while_its_read_is_in_flight() {
     let f = Fixture::new();
     let root = f.root.to_string_lossy().into_owned();
-    let views_dir = tempfile::tempdir().unwrap();
-    let file = views_dir.path().join("workspace-views.json");
+    let views_dir = f.runtime_dir("hide-document-views-");
+    let file = views_dir.join("workspace-views.json");
     let mut views = crate::workspace_views::WorkspaceViews::default();
     let layout = &mut views.entry(DEVICE, &root).layout;
     let restored = layout.new_display(&f.path("gone.txt"), DisplayKind::File, None, false);

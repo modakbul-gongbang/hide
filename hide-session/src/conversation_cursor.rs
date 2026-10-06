@@ -1,6 +1,6 @@
 use crate::{
     Agent, AppendedBytes, ParsedSession, Result, SESSION_LINE_LIMIT_BYTES, SessionCursor,
-    SessionError, SkipReason, parse_events_at,
+    SessionError, SkipReason, parse_events_into,
 };
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
@@ -159,6 +159,7 @@ impl ConversationCursor {
             rescan_reason,
             ..ParsedSession::default()
         };
+        let mut found = crate::links::LinkAccumulator::default();
         for fragment in appended.split_inclusive(|byte| *byte == b'\n') {
             let line_start = offset.saturating_sub(pending.len() as u64 + discarded_bytes);
             offset += fragment.len() as u64;
@@ -209,7 +210,12 @@ impl ConversationCursor {
                 discarded_bytes = 0;
                 continue;
             }
-            let line = parse_events_at(agent, &String::from_utf8_lossy(&pending), line_start);
+            let line = parse_events_into(
+                agent,
+                &String::from_utf8_lossy(&pending),
+                line_start,
+                &mut found,
+            );
             parsed.events.extend(line.events);
             parsed.event_offsets.extend(line.event_offsets);
             parsed.skipped_lines += line.skipped_lines;
@@ -225,6 +231,7 @@ impl ConversationCursor {
             parsed.pr_sightings.extend(line.pr_sightings);
             pending.clear();
         }
+        parsed.links = found.finish();
         // Commit only a successful poll: a relevant capacity failure cannot
         // silently consume a Human turn or publish a partial result.
         self.cursor.offset = offset;

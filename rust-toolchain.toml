@@ -1,0 +1,9 @@
+# The Rust toolchain every build of this repository uses, on CI and on a
+# workstation. rustup reads this file and installs the version on first use, so
+# a runner image's own toolchain is never what builds. This is the only place
+# the version is written; docs/BUILD.md, "One toolchain version", owns why and
+# how it moves.
+[toolchain]
+channel = "1.98.0"
+profile = "minimal"
+components = ["rustfmt", "clippy"]

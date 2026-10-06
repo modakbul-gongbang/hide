@@ -250,7 +250,7 @@ Everything Hide owns on a machine is under `~/.hide`:
 
 | Folder | What it holds |
 | --- | --- |
-| `~/.hide/state` | The daemon's state: registered projects, screen layout, labels, phone pairing, logs (`HIDE_STATE_DIR` or a set `XDG_STATE_HOME` choose another folder) |
+| `~/.hide/state` | The daemon's state: registered projects, screen layout, labels, phone pairing, the session search index (`session-search.sqlite3`) and the link record (`links.sqlite3`), logs (`HIDE_STATE_DIR` or a set `XDG_STATE_HOME` choose another folder) |
 | `~/.hide/kit` | The kit record and one-release retirement receipt |
 | `~/.hide/agent-hooks` | The hook helper's per-pane counters and last report |
 | `~/.hide/host-helper` | On a device: Hide's helper builds |

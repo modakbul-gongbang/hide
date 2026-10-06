@@ -30,6 +30,7 @@ mod conversation_cursor;
 mod envelope;
 mod label_owner;
 pub mod label_transcript;
+pub mod links;
 mod opencode;
 pub mod search;
 pub mod session_activity;
@@ -282,6 +283,9 @@ pub struct ParsedSession {
     /// Pull request addresses the session's tools printed, in record order
     /// (`sightings`).
     pub pr_sightings: Vec<PrSighting>,
+    /// What the chunk says about links: branches, pull request addresses,
+    /// the run kind and continuation pointers (`links`).
+    pub links: links::LinkFacts,
     pub skipped_lines: usize,
     pub skipped_reasons: BTreeMap<SkipReason, usize>,
     pub rescan_reason: Option<RescanReason>,
@@ -1017,12 +1021,12 @@ enum LineResult {
 
 /// Parse Claude Code JSONL records into normalized events.
 pub fn parse_claude_events(contents: &str) -> ParsedSession {
-    parse_lines(contents, parse_claude_line)
+    parse_events_at(Agent::Claude, contents, 0)
 }
 
 /// Parse Codex response_item JSONL records into normalized events.
 pub fn parse_codex_events(contents: &str) -> ParsedSession {
-    parse_lines(contents, parse_codex_line)
+    parse_events_at(Agent::Codex, contents, 0)
 }
 
 /// Parse a complete-line chunk for the selected provider.
@@ -1034,21 +1038,50 @@ pub fn parse_events(agent: Agent, contents: &str) -> ParsedSession {
 /// offset. The caller supplies the byte offset where `contents` begins.
 /// OpenCode keeps no session file, so a chunk of one parses to nothing.
 pub fn parse_events_at(agent: Agent, contents: &str, base_offset: u64) -> ParsedSession {
+    let mut found = links::LinkAccumulator::default();
+    let mut parsed = parse_events_into(agent, contents, base_offset, &mut found);
+    parsed.links = found.finish();
+    parsed
+}
+
+/// [`parse_events_at`] with the link reader's state carried by the caller,
+/// so a reader that parses one line at a time keeps what earlier lines said
+/// (the branch the session is on, its last request). `links` of the result
+/// is left empty; the caller finishes the accumulator.
+pub(crate) fn parse_events_into(
+    agent: Agent,
+    contents: &str,
+    base_offset: u64,
+    found: &mut links::LinkAccumulator,
+) -> ParsedSession {
     match agent {
-        Agent::Claude => parse_lines_at(contents, base_offset, parse_claude_line),
-        Agent::Codex => parse_lines_at(contents, base_offset, parse_codex_line),
+        Agent::Claude => parse_lines_at(
+            contents,
+            base_offset,
+            parse_claude_line,
+            links::claude_line,
+            found,
+        ),
+        Agent::Codex => parse_lines_at(
+            contents,
+            base_offset,
+            parse_codex_line,
+            links::codex_line,
+            found,
+        ),
         Agent::OpenCode => ParsedSession::default(),
     }
 }
 
-fn parse_lines(contents: &str, mut extract: impl FnMut(&Value) -> LineResult) -> ParsedSession {
-    parse_lines_at(contents, 0, &mut extract)
-}
-
+/// Each record is parsed once and read by both the conversation parser and
+/// the link reader (`links`), so a chunk yields its events and its link facts
+/// from the same pass.
 fn parse_lines_at(
     contents: &str,
     base_offset: u64,
     mut extract: impl FnMut(&Value) -> LineResult,
+    link: links::LinkLine,
+    found: &mut links::LinkAccumulator,
 ) -> ParsedSession {
     let mut parsed = ParsedSession::default();
     let mut relative_offset = 0_u64;
@@ -1066,16 +1099,21 @@ fn parse_lines_at(
                 continue;
             }
         };
+        link(&value, line_offset, found);
         match extract(&value) {
             LineResult::Ignore => {}
             LineResult::Skip(reason) => parsed.skipped(reason),
             LineResult::Event(event) => {
+                found.event(event.kind, event.at_unix_ms, &event.text);
                 parsed.events.push(event);
                 parsed.event_offsets.push(line_offset);
             }
             LineResult::Title(title) => parsed.title = Some(title),
             LineResult::CustomTitle(title) => parsed.custom_title = Some(title),
-            LineResult::Sightings(found) => parsed.pr_sightings.extend(found),
+            LineResult::Sightings(sightings) => {
+                found.sightings(&sightings);
+                parsed.pr_sightings.extend(sightings);
+            }
         }
     }
     parsed

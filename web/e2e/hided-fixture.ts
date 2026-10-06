@@ -2,7 +2,7 @@
 // lanes. It reads the daemon's state file for the loopback origin and token,
 // so nothing here touches the operator's running daemon.
 
-import { spawn } from "node:child_process";
+import { spawn, spawnSync, type ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -27,6 +27,40 @@ export type Daemon = {
   /** `beforeStart` runs on the daemon's state directory while it is down, and may wait. */
   restart: (beforeStart?: (stateDir: string) => void | Promise<void>) => Promise<Daemon>;
 };
+
+/**
+ * Starts a fixture daemon tied to this worker. On Unix it takes the channel on
+ * descriptor 3 as its owner (`OwnerWatch`), so it ends, with what it started,
+ * when the worker ends however it ends: a SIGKILL or an OOM kill runs no exit
+ * callback. Windows passes an owner as a job, which Node cannot make.
+ */
+export function spawnDaemon(binary: string, env: NodeJS.ProcessEnv): ChildProcess {
+  if (process.platform === "win32") return spawn(binary, [], { env, stdio: ["ignore", "pipe", "pipe"] });
+  return spawn(binary, [], { env: { ...env, HIDE_PROCESS_OWNER_FD: "3" }, stdio: ["ignore", "pipe", "pipe", "pipe"] });
+}
+
+/**
+ * Ends a fixture daemon on Unix through `hide stop`, which sends SIGTERM,
+ * gives the graceful stop five seconds, then ends the daemon's tree and fails
+ * if it still runs. A stopped daemon holds that SIGTERM pending, so it is
+ * continued first. True once the end is confirmed; a daemon that never wrote
+ * its state has nothing to save and is killed, and false says its exit is not
+ * observed yet. Throws, naming `root` to keep, when the stop is not confirmed.
+ */
+export function stopDaemon(child: ChildProcess, binary: string, env: NodeJS.ProcessEnv, root: string): boolean {
+  if (child.pid === undefined || child.exitCode !== null || child.signalCode !== null) return true;
+  child.kill("SIGCONT");
+  if (!fs.existsSync(path.join(env.HIDE_STATE_DIR!, "hided.json"))) {
+    child.kill("SIGKILL");
+    return false;
+  }
+  const cli = path.join(path.dirname(binary), fixtureExecutable("hide"));
+  const stopped = spawnSync(cli, ["stop"], { env, encoding: "utf8", timeout: 20_000 });
+  if (stopped.error || stopped.status !== 0) {
+    throw new Error(`hided ${child.pid} did not stop; preserve ${root}: ${stopped.error?.message ?? (stopped.stderr || stopped.stdout || `exit ${stopped.status}`)}`);
+  }
+  return true;
+}
 
 /**
  * `extraEnv` is laid over the daemon's environment; an undefined value leaves that variable unset.
@@ -81,26 +115,24 @@ async function launch(herdr: HerdrFixture, label: string, dir: string, home: str
   const statePath = path.join(dir, "hide", "hided.json");
   fs.rmSync(statePath, { force: true });
   const binary = bundledAt ?? path.resolve("..", "target", "debug", fixtureExecutable("hided"));
-  const child = spawn(binary, [], {
-    env: {
-      ...env,
-      ...fixtureHomeEnv(home),
-      HIDE_STATE_DIR: path.join(dir, "hide"),
-      HIDE_KEEP_ALIVE: "1",
-      HIDE_PORT: port,
-      HIDED_UI_DIR: path.resolve("dist"),
-      HERDR_SOCKET_PATH: herdr.socket,
-      HERDR_BIN_PATH: herdr.bin,
-      // Catalog discovery probes every provider on hided's PATH, so use the
-      // same controlled shim and system tools as the private Herdr server.
-      // Specs adding a shim prepend it to this path through extraEnv.
-      PATH: herdr.fixturePath,
-      // `open_external` must not launch a GUI application on the runner.
-      HIDE_OPEN_COMMAND: fixtureOpenCommand(herdr.root),
-      ...extraEnv,
-    },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
+  const daemonEnv: NodeJS.ProcessEnv = {
+    ...env,
+    ...fixtureHomeEnv(home),
+    HIDE_STATE_DIR: path.join(dir, "hide"),
+    HIDE_KEEP_ALIVE: "1",
+    HIDE_PORT: port,
+    HIDED_UI_DIR: path.resolve("dist"),
+    HERDR_SOCKET_PATH: herdr.socket,
+    HERDR_BIN_PATH: herdr.bin,
+    // Catalog discovery probes every provider on hided's PATH, so use the
+    // same controlled shim and system tools as the private Herdr server.
+    // Specs adding a shim prepend it to this path through extraEnv.
+    PATH: herdr.fixturePath,
+    // `open_external` must not launch a GUI application on the runner.
+    HIDE_OPEN_COMMAND: fixtureOpenCommand(herdr.root),
+    ...extraEnv,
+  };
+  const child = spawnDaemon(binary, daemonEnv);
   // A daemon that cannot be spawned (no debug build in this worktree) is an
   // error event; unheard, it kills the worker before any test cleanup runs.
   let spawnFailed = null as Error | null;
@@ -141,7 +173,11 @@ async function launch(herdr: HerdrFixture, label: string, dir: string, home: str
   // next. So its tree is listed while it runs, then ended, and this returns
   // once none of it is left.
   const end = () => {
-    if (process.platform !== "win32" || !child.pid || child.exitCode !== null || child.signalCode !== null) {
+    if (process.platform !== "win32") {
+      stopDaemon(child, binary, daemonEnv, dir);
+      return;
+    }
+    if (!child.pid || child.exitCode !== null || child.signalCode !== null) {
       child.kill();
       return;
     }
@@ -152,9 +188,11 @@ async function launch(herdr: HerdrFixture, label: string, dir: string, home: str
     endWindowsProcesses(tree);
     if (failure !== undefined) throw failure;
   };
+  // The directory goes only after the daemon's end is confirmed: one that
+  // throws keeps it, named in the error.
   const { stop, disown } = ownUntilWorkerExit(() => {
-    herdr.afterStop(removeDir);
     end();
+    herdr.afterStop(removeDir);
   });
   for (let i = 0; i < 50; i += 1) {
     if (spawnFailed) {

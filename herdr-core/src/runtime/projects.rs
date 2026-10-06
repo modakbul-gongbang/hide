@@ -2884,6 +2884,7 @@ impl Runtime {
         changed |= self.sync_issues();
         changed |= self.sync_tasks();
         changed |= self.sync_request_rows();
+        self.feed_links();
         changed
     }
 
@@ -3333,6 +3334,23 @@ impl Runtime {
                     return true;
                 }
             };
+        let resume = match payload.resume_session_id.as_deref() {
+            None => None,
+            Some(session_id) => match agent_kind.as_deref().and_then(|kind| {
+                resume_session_arguments(kind, session_id).filter(|_| payload.prompt.is_none())
+            }) {
+                Some(arguments) => Some(arguments),
+                None => {
+                    self.set_request_error(
+                        "agent_start.invalid_resume",
+                        "This session cannot be resumed".to_owned(),
+                        false,
+                        request_id.as_deref(),
+                    );
+                    return true;
+                }
+            },
+        };
         let prompt = agent_kind.as_ref().and(payload.prompt.clone());
         // A prompt the agent's command line cannot carry is refused before a
         // tab or Home sync, so nothing is left behind.
@@ -3400,11 +3418,9 @@ impl Runtime {
             operation.device_id = (!local).then(|| device.clone());
         }
         self.remember_agent_choice(agent_kind.as_deref(), model.as_deref());
-        self.set_task_agent_launch(
-            id,
-            prompt,
-            agent_choice::agent_arguments(model.as_deref(), &[]),
-        );
+        let mut arguments = resume.unwrap_or_default();
+        arguments.extend(agent_choice::agent_arguments(model.as_deref(), &[]));
+        self.set_task_agent_launch(id, prompt, arguments);
         let request = live::CheckoutTabRequest {
             id,
             checkout_path,
@@ -3827,6 +3843,27 @@ fn pull_request_times(
             Some((pull_request_address(&pull_request.url)?, created))
         })
         .collect()
+}
+
+/// The arguments that resume `session_id` in `kind`'s CLI, or none for an id
+/// that is not one plain token: it reaches the agent's command line, where
+/// one that began with `-` would read as an option.
+fn resume_session_arguments(kind: &str, session_id: &str) -> Option<Vec<String>> {
+    let plain = session_id
+        .bytes()
+        .next()
+        .is_some_and(|byte| byte.is_ascii_alphanumeric())
+        && session_id.len() <= 128
+        && session_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-' || byte == b'_');
+    if !plain {
+        return None;
+    }
+    crate::recent_closed::resume_arguments(&crate::recent_closed::ClosedAgent {
+        kind: kind.to_owned(),
+        session_id: Some(session_id.to_owned()),
+    })
 }
 
 #[cfg(test)]

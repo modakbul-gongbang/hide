@@ -99,6 +99,10 @@ pub struct RunningDaemon {
     pane_bootstrap_record: std::path::PathBuf,
     remote_bridges: Arc<remote_bridge::Supervisor>,
     pub mobile: Arc<mobile::Mobile>,
+    /// Ended on drop, before the instance lock is released: the core's last
+    /// layout and state saves are on disk before another daemon can start,
+    /// and before whoever owns the state folder can remove it.
+    core: Arc<CoreHandle>,
 }
 
 impl RunningDaemon {
@@ -124,6 +128,7 @@ impl Drop for RunningDaemon {
         self.shutdown.notify_waiters();
         self.pane_capabilities.revoke_all();
         self.remove_bootstrap_socket();
+        self.core.shutdown();
     }
 }
 
@@ -399,7 +404,7 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
     tokio::spawn(pane_auth::serve(
         pane_listener,
         Arc::clone(&pane_capabilities),
-        core,
+        Arc::clone(&core),
         env.herdr_socket_path.as_ref().map(std::path::PathBuf::from),
         port,
         Arc::clone(&shutdown),
@@ -423,6 +428,7 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         pane_bootstrap_record: pane_auth::bootstrap_socket_record(&env.state_dir),
         remote_bridges,
         mobile,
+        core,
     })
 }
 

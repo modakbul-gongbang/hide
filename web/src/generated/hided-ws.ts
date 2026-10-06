@@ -4,7 +4,7 @@
  * Handshake, server frames, close reason codes, path refusal reason codes, and client dispatch events for hided.
  */
 export type HidedWebSocketContract =
-  Handshake | ServerFrame | ClientEvent | WorkspaceQuery | WorkspaceAction | WorkspaceResult;
+  Handshake | ServerFrame | ClientEvent | WorkspaceQuery | WorkspaceAction | LinksQuery | WorkspaceResult;
 export type WorkspaceRequestId = string;
 export type WorkspaceCommand =
   | {
@@ -100,6 +100,33 @@ export interface WorkspaceAction {
   type: "workspace_action";
   request_id: WorkspaceRequestId;
   command: WorkspaceCommand;
+}
+/**
+ * `hide links`: a read of the link record on a capability-authenticated WebSocket, answered as a workspace_result without a shell. The caller checkout's Project is the scope unless all_projects is set; a target only another Project holds is refused with other_project, and one the record never saw with not_found.
+ */
+export interface LinksQuery {
+  type: "links";
+  request_id: WorkspaceRequestId;
+  query: {
+    all_projects?: boolean;
+    target:
+      | {
+          kind: "pr";
+          number: number;
+        }
+      | {
+          kind: "issue";
+          number: number;
+        }
+      | {
+          kind: "branch";
+          name: string;
+        }
+      | {
+          kind: "session";
+          id: string;
+        };
+  };
 }
 /**
  * A pane-scoped request outcome. A successful action result includes context, request_id, changed, view_id, and optionally area_id; a refusal names reason and next_action.

@@ -25,12 +25,15 @@ class EntryPoints(unittest.TestCase):
         self.bin.mkdir()
         for name in ["verify-cargo.sh", "verify-web.sh", "toolchain-env.sh"]:
             shutil.copyfile(ROOT / "scripts" / name, self.root / "scripts" / name)
-        for name in ["cargo", "pnpm"]:
+        for name in ["cargo", "pnpm", "rustc"]:
             file = self.bin / name
             file.write_text("#!/usr/bin/env python3\n"
                             "import json, os, sys\n"
                             "with open(os.environ['RECORD'], 'a') as f:\n"
-                            " f.write(json.dumps({'argv': sys.argv[1:], 'cwd': os.getcwd(), 'env': dict(os.environ)})+'\\n')\n"
+                            " f.write(json.dumps({'argv': [os.path.basename(sys.argv[0]), *sys.argv[1:]], 'cwd': os.getcwd(), 'env': dict(os.environ)})+'\\n')\n"
+                            "if sys.argv[1:] == ['--version']:\n"
+                            " print(os.path.basename(sys.argv[0]) + ' 0.0.0-fixture')\n"
+                            " sys.exit(0)\n"
                             "sys.exit(int(os.environ.get('FAIL_COMMAND', '0')))\n")
             file.chmod(0o755)
         self.record = self.root / "record.jsonl"
@@ -45,7 +48,18 @@ class EntryPoints(unittest.TestCase):
                               env={**self.env, **env}, capture_output=True, text=True, timeout=10)
 
     def records(self):
-        return [json.loads(line) for line in self.record.read_text().splitlines()]
+        """The work calls, without the program name and the version report."""
+        every = [json.loads(line) for line in self.record.read_text().splitlines()]
+        return [{**r, "argv": r["argv"][1:]} for r in every if r["argv"][1:] != ["--version"]]
+
+    def test_the_toolchain_is_named_on_stderr_before_cargo_runs(self):
+        result = self.run_entry("verify-cargo.sh", "metadata", "--format-version", "1")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        calls = [json.loads(line)["argv"] for line in self.record.read_text().splitlines()]
+        self.assertEqual(calls, [["rustc", "--version"], ["cargo", "--version"],
+                                 ["cargo", "metadata", "--locked", "--format-version", "1"]])
+        self.assertEqual(result.stderr.splitlines()[:2], ["rustc 0.0.0-fixture", "cargo 0.0.0-fixture"])
+        self.assertNotIn("0.0.0-fixture", result.stdout)
 
     def test_scoped_cargo_keeps_target_and_drops_operator_identity(self):
         result = self.run_entry("verify-cargo.sh", "test-scoped", "-p", "hide-platform", "--", "--ignored")

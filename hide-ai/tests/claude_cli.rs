@@ -372,18 +372,14 @@ mod usage {
     use super::*;
     use hide_ai::{USAGE_ENVIRONMENT, UsageError};
 
-    fn usage_dir(mode: &str) -> PathBuf {
-        let dir = std::env::temp_dir().join(format!(
-            "hide-ai-usage-{mode}-{}-{}",
-            std::process::id(),
-            std::thread::current()
-                .name()
-                .unwrap_or("t")
-                .replace("::", "-")
-        ));
-        let _ = std::fs::remove_dir_all(&dir);
-        std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("usage-mode"), mode).unwrap();
+    /// The fake CLI's working folder, which tells it what to answer and
+    /// keeps what it received; it goes when the test drops it.
+    fn usage_dir(mode: &str) -> tempfile::TempDir {
+        let dir = tempfile::Builder::new()
+            .prefix(&format!("hide-ai-usage-{mode}-"))
+            .tempdir()
+            .unwrap();
+        std::fs::write(dir.path().join("usage-mode"), mode).unwrap();
         dir
     }
 
@@ -399,14 +395,18 @@ mod usage {
     #[test]
     fn the_result_text_comes_back_whatever_it_says() {
         let dir = usage_dir("text");
-        let text = usage_backend(&dir).usage_text(&CancelToken::new()).unwrap();
+        let text = usage_backend(dir.path())
+            .usage_text(&CancelToken::new())
+            .unwrap();
         assert!(
             text.contains("Current week (all models): 1% used"),
             "{text}"
         );
 
         let dir = usage_dir("cost");
-        let text = usage_backend(&dir).usage_text(&CancelToken::new()).unwrap();
+        let text = usage_backend(dir.path())
+            .usage_text(&CancelToken::new())
+            .unwrap();
         assert!(text.starts_with("Total cost:"), "{text}");
     }
 
@@ -421,7 +421,7 @@ mod usage {
             std::env::set_var("CLAUDECODE", "1");
             std::env::set_var("FAKE_MODE", "no_account");
         }
-        let result = usage_backend(&dir).usage_text(&CancelToken::new());
+        let result = usage_backend(dir.path()).usage_text(&CancelToken::new());
         unsafe {
             std::env::remove_var("HERDR_ENV");
             std::env::remove_var("CLAUDECODE");
@@ -430,7 +430,8 @@ mod usage {
         result.unwrap();
 
         let args: Vec<String> =
-            serde_json::from_slice(&std::fs::read(dir.join("usage-args.json")).unwrap()).unwrap();
+            serde_json::from_slice(&std::fs::read(dir.path().join("usage-args.json")).unwrap())
+                .unwrap();
         assert_eq!(args, ClaudeCliBackend::usage_arguments());
         assert_eq!(args[..2], ["-p", "/usage"]);
         assert!(args.iter().any(|arg| arg == "--no-session-persistence"));
@@ -440,7 +441,8 @@ mod usage {
         // that must not cross and the ones the account needs. Python reports
         // Windows names in upper case, and Windows names do not differ by case.
         let keys: Vec<String> =
-            serde_json::from_slice(&std::fs::read(dir.join("usage-env.json")).unwrap()).unwrap();
+            serde_json::from_slice(&std::fs::read(dir.path().join("usage-env.json")).unwrap())
+                .unwrap();
         for planted in ["HERDR_ENV", "CLAUDECODE", "FAKE_MODE"] {
             assert!(!keys.iter().any(|key| key == planted), "{planted} {keys:?}");
         }
@@ -484,17 +486,17 @@ mod usage {
     fn each_failure_shape_is_its_own_class_and_none_carries_output() {
         let dir = usage_dir("exit");
         assert_eq!(
-            usage_backend(&dir).usage_text(&CancelToken::new()),
+            usage_backend(dir.path()).usage_text(&CancelToken::new()),
             Err(UsageError::Failed("usage_exit_2".to_owned()))
         );
         let dir = usage_dir("is_error");
         assert_eq!(
-            usage_backend(&dir).usage_text(&CancelToken::new()),
+            usage_backend(dir.path()).usage_text(&CancelToken::new()),
             Err(UsageError::Failed("usage_is_error".to_owned()))
         );
         let dir = usage_dir("not_json");
         assert_eq!(
-            usage_backend(&dir).usage_text(&CancelToken::new()),
+            usage_backend(dir.path()).usage_text(&CancelToken::new()),
             Err(UsageError::NoResultFrame)
         );
         let missing = ClaudeCliBackend::new(ClaudeConfig {
@@ -510,10 +512,10 @@ mod usage {
     #[test]
     fn a_cancelled_read_kills_the_child() {
         let dir = usage_dir("slow");
-        let (cancel, raised) = cancel_once_started(dir.join("usage-started"));
+        let (cancel, raised) = cancel_once_started(dir.path().join("usage-started"));
         let started = std::time::Instant::now();
         assert_eq!(
-            usage_backend(&dir).usage_text(&cancel),
+            usage_backend(dir.path()).usage_text(&cancel),
             Err(UsageError::Cancelled)
         );
         raised.join().unwrap();

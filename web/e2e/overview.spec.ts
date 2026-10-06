@@ -793,8 +793,8 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
 
     // A line of work with no issue (B4): the worktree line's popover says
     // where it goes and names them, its click is the graph with that line open; the pull
-    // request line's is the PRs tab, where each has an issue cell to link
-    // (overview-lenses-prs B21).
+    // request line's is the PRs tab, where each panel offers Link issue
+    // (overview-lenses-prs B21, link-graph B4).
     const looseWorktrees = column("working").locator("[data-loose-worktrees]");
     await restOn(page, looseWorktrees, ["View in the Agents graph", "prd/asking"]);
     await looseWorktrees.click();
@@ -805,7 +805,7 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await restOn(page, loosePrs, ["View on the PRs tab", "#12"]);
     await loosePrs.click();
     await expect(overview).toHaveAttribute("data-overview-view", "prs");
-    await expect(overview.locator('[data-pr="12"] [data-pr-issue="none"]')).toBeVisible();
+    await expect(overview.locator('[data-pr="12"]')).toBeVisible();
     await tile("issues").locator("[data-lens-tile-button]").click();
 
     // The filter at the facts line's right end (B21): a picked label and the words

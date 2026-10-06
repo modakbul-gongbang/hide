@@ -14,26 +14,61 @@ use serde_json::{Value, json};
 
 const DEVICE: &str = "device-h";
 
-/// A helper whose account home is `user_home`.
+/// A helper whose account home is `user_home`, counting the calls it is
+/// still answering in its machine's `writing`.
 struct HomeHost {
     user_home: PathBuf,
+    writing: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 impl HostChannel for HomeHost {
     fn call(&self, call: Call, _timeout: Duration) -> Result<HostAnswer, HostCallError> {
-        match call {
+        use std::sync::atomic::Ordering;
+        self.writing.fetch_add(1, Ordering::SeqCst);
+        let answer = match call {
             Call::HomeSync { projects } => hide_host::home::sync(&self.user_home, &projects)
                 .map(|synced| HostAnswer::Parsed(serde_json::to_value(synced).unwrap()))
                 .map_err(HostCallError::Refused),
             other => Err(HostCallError::Unknown(format!("not faked: {other:?}"))),
-        }
+        };
+        self.writing.fetch_sub(1, Ordering::SeqCst);
+        answer
     }
 }
 
+/// The folder a test's helpers write into. A helper call runs on a runtime
+/// worker that does not hold the runtime while it writes, so it can still be
+/// writing after the test's last assertion; the folder goes only once no
+/// call is, or a write lands in a folder already removed and makes it again.
 struct Machine {
     _dir: tempfile::TempDir,
     user_home: PathBuf,
     projects: Vec<String>,
+    writing: Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl Machine {
+    /// A helper writing into this machine's home.
+    fn helper(&self) -> Arc<HomeHost> {
+        Arc::new(HomeHost {
+            user_home: self.user_home.clone(),
+            writing: Arc::clone(&self.writing),
+        })
+    }
+}
+
+impl Drop for Machine {
+    fn drop(&mut self) {
+        // Silent when the test already failed: a second panic would abort.
+        let settled = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            wait_for("the helper calls into the home to end", || {
+                self.writing.load(std::sync::atomic::Ordering::SeqCst) == 0
+            })
+        }));
+        if settled.is_err() && !std::thread::panicking() {
+            panic!("a helper call was still writing into the test's home");
+        }
+    }
 }
 
 /// An account home and two registered projects sharing a folder name.
@@ -54,6 +89,7 @@ fn machine() -> Machine {
         _dir: dir,
         user_home,
         projects,
+        writing: Arc::default(),
     }
 }
 
@@ -119,7 +155,7 @@ fn herdr(name: &str) -> FakeHerdr {
 
 /// A runtime whose device `DEVICE` is connected through `herdr` and whose
 /// helper's account home is `user_home`.
-fn device_runtime(herdr: &FakeHerdr, user_home: &Path) -> Arc<Mutex<Runtime>> {
+fn device_runtime(herdr: &FakeHerdr, machine: &Machine) -> SharedRuntime {
     let mut runtime = runtime();
     runtime
         .snapshot
@@ -134,44 +170,40 @@ fn device_runtime(herdr: &FakeHerdr, user_home: &Path) -> Arc<Mutex<Runtime>> {
         DEVICE.to_owned(),
         hosts::DeviceHost {
             phase: hosts::HostPhase::Ready {
-                host: Arc::new(HomeHost {
-                    user_home: user_home.to_owned(),
-                }),
+                host: machine.helper(),
                 platform: "macos aarch64".to_owned(),
                 helper_path: "/fake/hide-host-helper".to_owned(),
             },
             generation: 1,
         },
     );
-    let shared = Arc::new(Mutex::new(runtime));
+    let shared = SharedRuntime::new(runtime);
     let mut runtime = shared.lock().unwrap();
     runtime.install_remote_control(RemoteControlContext::new(
         DEVICE,
         Arc::new(herdr.connector()),
-        Arc::downgrade(&shared),
+        shared.weak(),
         ChangeNotifier::noop(),
     ));
-    runtime.install_worker_context(Arc::downgrade(&shared), ChangeNotifier::noop());
+    runtime.install_worker_context(shared.weak(), ChangeNotifier::noop());
     drop(runtime);
     shared
 }
 
 /// The same for this machine: its own Herdr and in-process helper.
-fn local_runtime(herdr: &FakeHerdr, user_home: &Path) -> Arc<Mutex<Runtime>> {
+fn local_runtime(herdr: &FakeHerdr, machine: &Machine) -> SharedRuntime {
     let mut runtime = runtime();
-    runtime.local_host = Arc::new(HomeHost {
-        user_home: user_home.to_owned(),
-    });
-    let shared = Arc::new(Mutex::new(runtime));
+    runtime.local_host = machine.helper();
+    let shared = SharedRuntime::new(runtime);
     let mut runtime = shared.lock().unwrap();
     runtime.live = Some(live::LiveContext {
         socket_path: herdr.socket_path().to_owned(),
         herdr_bin: None,
-        runtime: Arc::downgrade(&shared),
+        runtime: shared.weak(),
         notifier: ChangeNotifier::noop(),
         api_connector: Arc::new(herdr.connector()),
     });
-    runtime.install_worker_context(Arc::downgrade(&shared), ChangeNotifier::noop());
+    runtime.install_worker_context(shared.weak(), ChangeNotifier::noop());
     drop(runtime);
     shared
 }
@@ -204,7 +236,7 @@ fn operation(shared: &Arc<Mutex<Runtime>>) -> crate::model::TaskOperationSnapsho
 fn a_device_home_start_makes_home_then_starts_the_agent_with_its_folders() {
     let machine = machine();
     let herdr = herdr("home-device");
-    let shared = device_runtime(&herdr, &machine.user_home);
+    let shared = device_runtime(&herdr, &machine);
     shared.lock().unwrap().ingest_kit_report(
         DEVICE,
         &hide_kit::KitReport {
@@ -328,7 +360,7 @@ fn a_device_home_start_makes_home_then_starts_the_agent_with_its_folders() {
 fn a_device_home_start_with_unknown_codex_reports_the_next_action_without_starting() {
     let machine = machine();
     let herdr = herdr("home-device-unknown-codex");
-    let shared = device_runtime(&herdr, &machine.user_home);
+    let shared = device_runtime(&herdr, &machine);
     dispatch(
         &shared,
         json!({"home": true, "device_id": DEVICE, "provider": "codex", "prompt": "tidy the notes", "request_id": "unknown"}),
@@ -364,7 +396,7 @@ fn a_device_home_start_with_unknown_codex_reports_the_next_action_without_starti
 fn home_links_follow_registrations_once_home_exists() {
     let machine = machine();
     let herdr = herdr("home-local");
-    let shared = local_runtime(&herdr, &machine.user_home);
+    let shared = local_runtime(&herdr, &machine);
     shared
         .lock()
         .unwrap()
@@ -443,7 +475,7 @@ fn the_first_registration_after_launch_is_linked_into_an_existing_home() {
     let herdr = herdr("home-relaunch");
     // The earlier run's Home, with the first project linked.
     let earlier = hide_host::home::sync(&machine.user_home, &machine.projects[..1]).unwrap();
-    let shared = local_runtime(&herdr, &machine.user_home);
+    let shared = local_runtime(&herdr, &machine);
     {
         let mut runtime = shared.lock().unwrap();
         let registrations = &mut runtime.snapshot.ui_state.workspace_registrations;
@@ -476,7 +508,7 @@ fn a_link_change_missed_while_the_helper_reconnects_is_sent_once_it_is_ready() {
     let machine = machine();
     let herdr = herdr("home-reconnect");
     let earlier = hide_host::home::sync(&machine.user_home, &machine.projects[..1]).unwrap();
-    let shared = device_runtime(&herdr, &machine.user_home);
+    let shared = device_runtime(&herdr, &machine);
     let home = machine.user_home.join("hide");
     let generation = {
         let mut runtime = shared.lock().unwrap();
@@ -526,9 +558,7 @@ fn a_link_change_missed_while_the_helper_reconnects_is_sent_once_it_is_ready() {
     {
         let mut runtime = shared.lock().unwrap();
         runtime.device_hosts.get_mut(DEVICE).unwrap().phase = hosts::HostPhase::Ready {
-            host: Arc::new(HomeHost {
-                user_home: machine.user_home.clone(),
-            }),
+            host: machine.helper(),
             platform: "macos aarch64".to_owned(),
             helper_path: "/fake/hide-host-helper".to_owned(),
         };
@@ -545,7 +575,7 @@ fn a_link_change_missed_while_the_helper_reconnects_is_sent_once_it_is_ready() {
 fn a_foreign_home_folder_refuses_the_start_and_is_left_alone() {
     let machine = machine();
     let herdr = herdr("home-conflict");
-    let shared = local_runtime(&herdr, &machine.user_home);
+    let shared = local_runtime(&herdr, &machine);
     let home = machine.user_home.join("hide");
     std::fs::create_dir(&home).unwrap();
     std::fs::write(home.join("mine.txt"), "operator's").unwrap();
@@ -594,7 +624,7 @@ fn a_foreign_home_folder_refuses_the_start_and_is_left_alone() {
 fn a_device_checkout_start_opens_its_tab_on_that_device() {
     let machine = machine();
     let herdr = herdr("home-device-checkout");
-    let shared = device_runtime(&herdr, &machine.user_home);
+    let shared = device_runtime(&herdr, &machine);
     {
         let mut runtime = shared.lock().unwrap();
         let workspace_id = format!("remote:{DEVICE}:workspace:w9");
@@ -660,7 +690,7 @@ fn a_device_checkout_start_opens_its_tab_on_that_device() {
 /// request id before anything is asked of Herdr or a helper.
 #[test]
 fn a_start_naming_no_place_or_two_is_refused() {
-    let shared = Arc::new(Mutex::new(runtime()));
+    let shared = SharedRuntime::new(runtime());
     for (request_id, payload) in [
         ("none", json!({"provider": "claude"})),
         (
@@ -688,7 +718,7 @@ fn a_start_naming_no_place_or_two_is_refused() {
 fn a_prompt_the_command_line_cannot_carry_is_refused_before_anything_opens() {
     let machine = machine();
     let herdr = herdr("home-bad-prompt");
-    let shared = local_runtime(&herdr, &machine.user_home);
+    let shared = local_runtime(&herdr, &machine);
     let long = "a".repeat(300 * 1024);
     for (request_id, payload) in [
         (

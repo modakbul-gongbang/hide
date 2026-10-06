@@ -60,8 +60,8 @@ fn fixture() -> (tempfile::TempDir, String, PathBuf) {
 
 /// A runtime whose live context points back at itself, as the daemon's does,
 /// with a Herdr socket that does not exist.
-fn shared_runtime() -> Arc<Mutex<Runtime>> {
-    let shared = Arc::new(Mutex::new(runtime()));
+fn shared_runtime() -> SharedRuntime {
+    let shared = SharedRuntime::new(runtime());
     let socket_path = std::env::temp_dir()
         .join(format!(
             "herdr-core-clone-{}-{}.sock",
@@ -73,7 +73,7 @@ fn shared_runtime() -> Arc<Mutex<Runtime>> {
     shared.lock().unwrap().live = Some(live::LiveContext {
         socket_path: socket_path.clone().into(),
         herdr_bin: None,
-        runtime: Arc::downgrade(&shared),
+        runtime: shared.weak(),
         notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(hide_herdr_client::LocalSocketConnector::new(&socket_path)),
     });

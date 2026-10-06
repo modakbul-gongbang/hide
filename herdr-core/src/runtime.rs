@@ -22,6 +22,7 @@ mod home;
 mod hosts;
 mod issues;
 mod kit;
+pub(crate) mod links;
 mod memory;
 mod operations;
 mod pane_reopen;
@@ -1315,6 +1316,8 @@ pub struct Runtime {
     project_sessions_work: project_sessions::ProjectSessionsWork,
     search_client: Option<session_search::SearchClient>,
     search_generation: u64,
+    /// What the link worker was last handed, and its panel reads.
+    links_work: links::LinksWork,
     memory_operation_in_flight: bool,
     memory_operation_generation: u64,
     memory_operation_checkout_path: Option<String>,
@@ -1890,6 +1893,7 @@ impl Runtime {
             project_sessions_work: project_sessions::ProjectSessionsWork::default(),
             search_client: None,
             search_generation: 0,
+            links_work: links::LinksWork::default(),
             memory_operation_in_flight: false,
             memory_operation_generation: 0,
             memory_operation_checkout_path: None,

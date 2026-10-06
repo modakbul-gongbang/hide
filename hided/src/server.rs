@@ -872,6 +872,26 @@ async fn client_loop(
     client_gone(&state, connection, renderer, desktop);
 }
 
+enum ScopedRequest {
+    Query(herdr_core::workspace_control::Query),
+    Action(herdr_core::workspace_control::Action),
+    BrowserConnect(Option<String>),
+    /// `hide browser` page commands: the same checks as a display
+    /// connection, then this socket carries the CDP frames.
+    BrowserRelay(String),
+    Delivery(herdr_core::delivery::Command, Option<String>),
+    /// `hide links`: a read of the link record, which needs no shell.
+    Links(herdr_core::links::query::LinksQuery),
+}
+
+impl ScopedRequest {
+    /// A request a shell must be open to answer. Delivery and the link
+    /// record are the daemon's own and answer without one (B43).
+    fn needs_renderer(&self) -> bool {
+        !matches!(self, Self::Delivery(..) | Self::Links(..))
+    }
+}
+
 /// A pane capability can submit only Workspace commands. It never receives a
 /// snapshot, file bytes, or the shell's unrestricted dispatch channel.
 async fn scoped_client_loop(
@@ -881,15 +901,6 @@ async fn scoped_client_loop(
     token: String,
     one_shot: bool,
 ) {
-    enum ScopedRequest {
-        Query(herdr_core::workspace_control::Query),
-        Action(herdr_core::workspace_control::Action),
-        BrowserConnect(Option<String>),
-        /// `hide browser` page commands: the same checks as a display
-        /// connection, then this socket carries the CDP frames.
-        BrowserRelay(String),
-        Delivery(herdr_core::delivery::Command, Option<String>),
-    }
     let previous = state.clients.fetch_add(1, Ordering::SeqCst);
     if previous >= MAX_CLIENTS {
         state.clients.fetch_sub(1, Ordering::SeqCst);
@@ -939,6 +950,12 @@ async fn scoped_client_loop(
                             .ok()
                             .map(ScopedRequest::Action)
                         }
+                        Some("links") => serde_json::from_value::<
+                            herdr_core::links::query::LinksQuery,
+                        >(value["query"].clone())
+                        .ok()
+                        .filter(|query| query.target.valid())
+                        .map(ScopedRequest::Links),
                         Some("delivery") => {
                             serde_json::from_value::<herdr_core::delivery::Command>(
                                 value["command"].clone(),
@@ -1000,7 +1017,7 @@ async fn scoped_client_loop(
                             let cap = registry
                                 .validate(&query_token, herdr_socket.as_deref(), &core)
                                 .map_err(|reason| (reason.to_owned(), crate::pane_auth::refusal_next_action(reason)))?;
-                            if !matches!(&command, ScopedRequest::Delivery(..)) && renderers.load(Ordering::SeqCst) == 0 {
+                            if command.needs_renderer() && renderers.load(Ordering::SeqCst) == 0 {
                                 return Err((
                                     "renderer_unavailable".to_owned(),
                                     "Open Hide's web or desktop shell and retry",
@@ -1044,6 +1061,14 @@ async fn scoped_client_loop(
                                     core.prepare_delivery(&cap.context.device_id, &cap.pane_id, &cap.context, hint, command)
                                         .and_then(|prepared| prepared.run(Duration::from_secs(5)))
                                         .map_err(|code| (code, "Check the current agent pane and retry the same intent"))?
+                                }
+                                ScopedRequest::Links(query) => {
+                                    let scope = core.links_scope(&cap.context).ok_or((
+                                        "links_unavailable".to_owned(),
+                                        "Retry; the reason is in Hide's diagnostic log",
+                                    ))?;
+                                    herdr_core::links::query::run(&scope, &query)
+                                        .map_err(|(reason, next_action)| (reason.to_owned(), next_action))?
                                 }
                                 ScopedRequest::Query(query) => {
                                     let mut result = core
@@ -3290,6 +3315,20 @@ mod tests {
             Err("not_openable"),
             "PE by e_lfanew"
         );
+    }
+
+    /// B43: `hide links` and delivery answer with no shell open; every
+    /// Workspace command still needs one.
+    #[test]
+    fn only_the_daemons_own_reads_answer_without_a_shell() {
+        use herdr_core::links::query::{LinksQuery, QueryTarget};
+        let links = ScopedRequest::Links(LinksQuery {
+            target: QueryTarget::Pr { number: 1 },
+            all_projects: false,
+        });
+        assert!(!links.needs_renderer());
+        assert!(ScopedRequest::Query(herdr_core::workspace_control::Query::Info).needs_renderer());
+        assert!(ScopedRequest::BrowserConnect(None).needs_renderer());
     }
 
     #[test]

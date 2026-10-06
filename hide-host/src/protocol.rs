@@ -35,18 +35,21 @@ use crate::root::RootIdentity;
 /// pane closes. A helper without this preflight must never remove instead.
 /// 17: Hello carries native machine identity for lineage, and the kit reports
 /// the one-release coordination retirement instead of installing it.
-/// 18: the kit has seven agents, each with a Herdr integration piece in its
+/// 18: `link_files` lists the device's session files changed since a time
+/// and `link_read` reads their link facts from a checkpoint (PRD link-graph
+/// D-21); a helper on 17 would refuse both as unknown.
+/// 19: the kit has seven agents, each with a Herdr integration piece in its
 /// report, retires the other thirteen once, and no longer carries
 /// `codex_per_pane`; `reinstall` has no `turn_off` and a report names the
 /// Codex daemon capability itself (PRD settings-cleanup D-06, D-13, D-14). A
-/// helper on 17 would still turn the Codex daemon off and know none of it.
-/// 19: a `reinstall` can carry `codex_daemon_off`, the operator's own request
+/// helper on 18 would still turn the Codex daemon off and know none of it.
+/// 20: a `reinstall` can carry `codex_daemon_off`, the operator's own request
 /// to turn Codex's shared server off on that device, and the report that
 /// answers it carries `codex_daemon_off` (PRD settings-cleanup B27). A helper
-/// on 18 would run the pass and silently ignore the request. An agent row
+/// on 19 would run the pass and silently ignore the request. An agent row
 /// of the report carries `chosen`, the operator's own choice on record (PRD
 /// settings-cleanup B9, D-07); a report without it reads as no choice.
-pub const PROTOCOL_VERSION: u32 = 19;
+pub const PROTOCOL_VERSION: u32 = 20;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Request {
@@ -216,6 +219,21 @@ pub enum Call {
     /// Metadata-only activity using the same native ownership proof as labels.
     SessionActivity {
         request: hide_session::session_activity::SessionActivityRequest,
+    },
+    /// The device's session files changed since a time and, for a later
+    /// page, up to one, newest first and capped
+    /// (`hide_session::links::candidates`).
+    LinkFiles {
+        since_unix_ms: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        until_unix_ms: Option<u64>,
+    },
+    /// Link facts read from each file's checkpoint, a few files and one read
+    /// budget each (`hide_session::links::read`). The answer carries branch
+    /// spans, pull request addresses and the request before each, never a
+    /// conversation; a path outside the agent roots is refused.
+    LinkRead {
+        requests: Vec<hide_session::links::ReadRequest>,
     },
 }
 

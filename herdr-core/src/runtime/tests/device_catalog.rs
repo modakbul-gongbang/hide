@@ -303,11 +303,11 @@ fn a_device_checkout_recorded_before_grouping_is_the_same_record_after_it() {
             generation: 1,
         },
     );
-    let shared = Arc::new(Mutex::new(runtime));
-    shared.lock().unwrap().install_worker_context(
-        Arc::downgrade(&shared),
-        crate::handle::ChangeNotifier::noop(),
-    );
+    let shared = SharedRuntime::new(runtime);
+    shared
+        .lock()
+        .unwrap()
+        .install_worker_context(shared.weak(), crate::handle::ChangeNotifier::noop());
     let mut raw = session(vec![
         herdr_workspace(TARGET, "w1", &t.main, &[("t1", &t.main)]),
         herdr_workspace(TARGET, "w2", &t.linked, &[("t3", &t.linked)]),
@@ -372,11 +372,11 @@ fn a_device_session_is_grouped_when_its_helper_answers() {
             generation: 1,
         },
     );
-    let shared = Arc::new(Mutex::new(runtime));
-    shared.lock().unwrap().install_worker_context(
-        Arc::downgrade(&shared),
-        crate::handle::ChangeNotifier::noop(),
-    );
+    let shared = SharedRuntime::new(runtime);
+    shared
+        .lock()
+        .unwrap()
+        .install_worker_context(shared.weak(), crate::handle::ChangeNotifier::noop());
     let raw = session(vec![
         herdr_workspace(TARGET, "w1", &t.main, &[("t1", &t.main)]),
         herdr_workspace(TARGET, "w2", &t.linked, &[("t3", &t.linked)]),

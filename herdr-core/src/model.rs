@@ -122,6 +122,15 @@ pub struct Snapshot {
     pub project_sessions: Option<ProjectSessionsSnapshot>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_search: Option<SessionSearchSnapshot>,
+    /// Each project's link counts and session chips (PRD link-graph D-45),
+    /// absent until the link worker first answers. Its own revisioned
+    /// section, off `rest`, so an agent row's change never resends it.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub link_summaries: Option<crate::links::LinkSummariesSnapshot>,
+    /// The record for the pull request or issue a panel shows, absent until
+    /// a shell opens one; its own revisioned section.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub link_panel: Option<crate::links::LinkPanelSnapshot>,
 }
 
 /// A snapshot value that takes a new edit number whenever it may change, so
@@ -4419,6 +4428,8 @@ impl Snapshot {
             browser_views_revision: None,
             project_sessions: None,
             session_search: None,
+            link_summaries: None,
+            link_panel: None,
         }
     }
 }
@@ -4577,6 +4588,8 @@ pub struct SnapshotDeltaPayload {
     pub documents: Option<DocumentsDelta>,
     pub project_sessions: Option<Arc<ProjectSessionsSnapshot>>,
     pub session_search: Option<Arc<SessionSearchSnapshot>>,
+    pub link_summaries: Option<Arc<crate::links::LinkSummariesSnapshot>>,
+    pub link_panel: Option<Arc<crate::links::LinkPanelSnapshot>>,
     pub find: PaneFindSnapshot,
     pub input_generation: u64,
     pub terminal_sequence: u64,
@@ -4621,6 +4634,10 @@ pub struct SnapshotDeltaWire<'a> {
     pub project_sessions: Option<&'a ProjectSessionsSnapshot>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub session_search: Option<&'a SessionSearchSnapshot>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub link_summaries: Option<&'a crate::links::LinkSummariesSnapshot>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub link_panel: Option<&'a crate::links::LinkPanelSnapshot>,
     /// Find state rides top-level rather than in `rest`, because it changes on
     /// every keystroke while a search is open. In `rest` each keystroke would
     /// restamp that revision and resend the whole navigator, ui state, and pet
@@ -4651,6 +4668,8 @@ impl<'a> SnapshotDeltaWire<'a> {
             }),
             project_sessions: payload.project_sessions.as_deref(),
             session_search: payload.session_search.as_deref(),
+            link_summaries: payload.link_summaries.as_deref(),
+            link_panel: payload.link_panel.as_deref(),
             find: &payload.find,
             input_generation: payload.input_generation,
             terminal_sequence: payload.terminal_sequence,
@@ -5160,6 +5179,50 @@ mod wire_enum_tests {
         }
         assert_wire(&contract, "kit_check_failure", &check_failures);
         checked.insert("kit_check_failure");
+        use crate::links::{FileState, IssueSource, LinkTarget, SessionRole};
+        let files = [FileState::Present, FileState::Missing, FileState::Unknown];
+        for variant in files {
+            match variant {
+                FileState::Present | FileState::Missing | FileState::Unknown => {}
+            }
+        }
+        assert_wire(&contract, "link_file_state", &files);
+        checked.insert("link_file_state");
+
+        let sources = [IssueSource::Closes, IssueSource::Hide];
+        for variant in sources {
+            match variant {
+                IssueSource::Closes | IssueSource::Hide => {}
+            }
+        }
+        assert_wire(&contract, "link_issue_source", &sources);
+        checked.insert("link_issue_source");
+
+        let roles = [SessionRole::Created, SessionRole::Worked];
+        for variant in roles {
+            match variant {
+                SessionRole::Created | SessionRole::Worked => {}
+            }
+        }
+        assert_wire(&contract, "link_session_role", &roles);
+        checked.insert("link_session_role");
+
+        // An internally tagged enum: its `kind` is the wire string.
+        let targets = [
+            LinkTarget::Pr { number: 1 },
+            LinkTarget::Issue { key: "k".into() },
+        ];
+        let kinds = targets
+            .iter()
+            .map(|target| {
+                match target {
+                    LinkTarget::Pr { .. } | LinkTarget::Issue { .. } => {}
+                }
+                serde_json::to_value(target).unwrap()["kind"].clone()
+            })
+            .collect::<Vec<_>>();
+        assert_wire(&contract, "link_target_kind", &kinds);
+        checked.insert("link_target_kind");
 
         let unchecked = contract
             .keys()

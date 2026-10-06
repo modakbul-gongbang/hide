@@ -42,6 +42,8 @@ mod issues;
 mod labels;
 #[path = "tests/lineage.rs"]
 mod lineage;
+#[path = "tests/links.rs"]
+mod links;
 #[path = "tests/memory.rs"]
 mod memory;
 #[path = "tests/operator_focus.rs"]
@@ -376,6 +378,62 @@ pub(super) fn scratch_dir(prefix: &str) -> tempfile::TempDir {
 /// runtime: a restart test drops the runtime and starts another on its files.
 pub(super) fn hold_dirs(runtime: &mut Runtime) -> Vec<tempfile::TempDir> {
     std::mem::take(&mut runtime.test_dirs)
+}
+
+/// A runtime shared with the workers it starts, as hided shares it.
+///
+/// The runtime owns the folders made for it, so they go when it is dropped,
+/// and a shared runtime is dropped by whichever holder lets go last. A worker
+/// keeps its hold for a moment after its last step; when that outlasted the
+/// test, the test process exited before the worker let go, the runtime was
+/// never dropped, and its folders stayed in the temp folder. Dropping this
+/// takes the runtime back on the test's own thread once every worker has let
+/// go (a worker only upgrades its weak reference, which fails after that), so
+/// the folders go with the test.
+pub(super) struct SharedRuntime(Option<Arc<Mutex<Runtime>>>);
+
+impl SharedRuntime {
+    pub(super) fn new(runtime: Runtime) -> Self {
+        Self(Some(Arc::new(Mutex::new(runtime))))
+    }
+
+    pub(super) fn weak(&self) -> std::sync::Weak<Mutex<Runtime>> {
+        Arc::downgrade(&**self)
+    }
+}
+
+impl std::ops::Deref for SharedRuntime {
+    type Target = Arc<Mutex<Runtime>>;
+
+    fn deref(&self) -> &Self::Target {
+        self.0.as_ref().expect("the runtime is shared until drop")
+    }
+}
+
+impl Drop for SharedRuntime {
+    #[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
+    fn drop(&mut self) {
+        let Some(mut shared) = self.0.take() else {
+            return;
+        };
+        let deadline = std::time::Instant::now() + Duration::from_secs(10);
+        loop {
+            match Arc::try_unwrap(shared) {
+                Ok(runtime) => {
+                    drop(runtime);
+                    return;
+                }
+                Err(held) if std::time::Instant::now() < deadline => {
+                    shared = held;
+                    std::thread::sleep(Duration::from_millis(5));
+                }
+                Err(_) if std::thread::panicking() => return,
+                Err(_) => panic!(
+                    "a worker still held the runtime 10 s after the test ended, so its folders would outlive the test"
+                ),
+            }
+        }
+    }
 }
 
 pub(super) fn runtime() -> Runtime {
@@ -920,10 +978,18 @@ fn strip_labels(runtime: &Runtime, checkout_id: &str) -> Vec<String> {
 /// The temp root is a symlink on macOS and the catalog keys checkouts by
 /// the real path, so the fixture uses that. It is also made its own
 /// repository, because a directory inside another repository is
-/// catalogued under that repository's root instead.
+/// catalogued under that repository's root instead. The checkout is a
+/// folder inside the scratch folder rather than the scratch folder itself,
+/// so a second checkout, a worktree or a link a test makes beside it is
+/// inside the scratch folder too and goes with it.
 fn strip_checkout(name: &str) -> (Runtime, String, PathBuf) {
     let folder = scratch_dir(&format!("hide-strip-{name}-"));
-    let directory = folder.path().canonicalize().expect("a real checkout path");
+    let directory = folder
+        .path()
+        .canonicalize()
+        .expect("a real scratch path")
+        .join(name);
+    std::fs::create_dir(&directory).expect("the checkout folder");
     assert!(
         std::process::Command::new("git")
             .args(["init", "-q", "-b", "main"])
@@ -946,11 +1012,12 @@ fn strip_checkout(name: &str) -> (Runtime, String, PathBuf) {
 fn a_created_tab_joins_its_requested_checkout_while_an_external_tab_follows_its_pane_cwd() {
     let (mut runtime, checkout_id, directory) = strip_checkout("created-membership");
     let checkout_path = directory.to_string_lossy().into_owned();
-    let birth_cwd = directory
-        .parent()
-        .expect("the checkout has a parent folder")
-        .to_string_lossy()
-        .into_owned();
+    // A folder of the test's own beside the checkout, not one holding it: a
+    // pane in the checkout lies inside every row of a folder that holds it,
+    // and which of those rows it joins is not what this test is about.
+    let birth = directory.with_file_name("birth");
+    std::fs::create_dir(&birth).expect("the birth folder");
+    let birth_cwd = birth.to_string_lossy().into_owned();
     // Every tab but the first reports the birth cwd, outside the checkout.
     let payload = |tabs: &[&str]| {
         let mut payload = tab_order_payload(&checkout_path, tabs, tabs, "w-order:t1");
