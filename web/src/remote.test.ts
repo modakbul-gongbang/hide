@@ -31,7 +31,7 @@ function tab(id: string, paneIds: string[], working: string[] = []): Tab {
       herdr_label: paneId,
       terminal_title: null,
       cwd: "/home/remote/app",
-      status_label: "idle",
+      status_code: "idle",
       requires_close_confirmation: working.includes(paneId),
       requires_close_status_check: false,
       identity_label: null,

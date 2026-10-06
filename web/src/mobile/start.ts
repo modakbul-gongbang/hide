@@ -3,6 +3,7 @@
 // the words for each refusal, named by catalog key. Pure, so every rule is
 // tested without a socket.
 
+import type { TFunction } from "i18next";
 import type { Notice, StartCatalog, StartKind, StartKindEntry, StartTarget } from "./protocol";
 
 /** The longest instruction hided starts an agent with (hided/src/mobile/start.rs MAX_PROMPT_CHARS). */
@@ -36,9 +37,9 @@ export function startProblem(text: string): "empty" | "too_long" | "control_char
   return null;
 }
 
-/** The sheet's target label: the device, then the place on it. Both names are the Mac's data. */
-export function targetText(target: StartTarget): string {
-  return `${target.device_label} · ${target.label}`;
+/** The sheet's target label: the device, then the place on it. The Mac's own names are data; Home and this Mac are named here. */
+export function targetText(t: TFunction<"translation">, target: StartTarget): string {
+  return `${target.device_label ?? t("common.thisMac")} · ${target.place ?? t("mobile.start.home")}`;
 }
 
 /** What the sheet shows selected: This Mac's Home until the operator picks, the remembered kind and model until then. */

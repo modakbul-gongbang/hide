@@ -63,7 +63,7 @@ use crate::live::{
     SessionFetchError, TerminalSession, TerminalSessionContext, TerminalSessionMode,
 };
 use crate::model::{
-    ArchiveDetailSnapshot, CheckoutSnapshot, CoreOptions, DEFAULT_PANE_TEXT_SCALE,
+    AgentStatusCode, ArchiveDetailSnapshot, CheckoutSnapshot, CoreOptions, DEFAULT_PANE_TEXT_SCALE,
     DiagnosticSnapshot, Edited, EditorDocumentSnapshot, EditorTabKind, EditorTabSnapshot,
     ExplorerOperationSnapshot, LastErrorSnapshot, OperatorFocusAck, PANE_TEXT_SCALE_STEP,
     PaneFindOpened, PaneFindRoute, PaneFindSnapshot, PaneFocusRequestSnapshot, PaneForkSnapshot,
@@ -668,7 +668,7 @@ fn sync_pane_status(
             (
                 agent.pane_id.as_str(),
                 (
-                    agent.status_label.as_str(),
+                    agent.status_code,
                     agent.requires_close_confirmation,
                     agent.requires_close_status_check,
                 ),
@@ -682,13 +682,13 @@ fn sync_pane_status(
         .flat_map(|checkout| checkout.tabs.iter_mut())
         .flat_map(|tab| tab.panes.iter_mut())
     {
-        let Some((status_label, requires_close_confirmation, requires_close_status_check)) =
+        let Some((status_code, requires_close_confirmation, requires_close_status_check)) =
             by_pane.get(pane.id.as_str()).copied()
         else {
             continue;
         };
-        if pane.status_label != status_label {
-            pane.status_label = status_label.to_owned();
+        if pane.status_code != status_code {
+            pane.status_code = status_code;
             changed = true;
         }
         if pane.requires_close_confirmation != requires_close_confirmation {
@@ -2185,9 +2185,9 @@ fn project_layout_panes(
                 // read-dependent values are refilled from the navigator's
                 // agent rows once those are final; see
                 // `sync_pane_status_from_agents`.
-                status_label: agent
-                    .map(|agent| agent.status_label.clone())
-                    .unwrap_or_else(|| "Unknown".to_owned()),
+                status_code: agent
+                    .map(|agent| agent.status_code)
+                    .unwrap_or(AgentStatusCode::Unknown),
                 requires_close_confirmation: agent
                     .is_some_and(|agent| agent.requires_close_confirmation),
                 requires_close_status_check: agent

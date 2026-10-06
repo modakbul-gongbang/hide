@@ -70,7 +70,7 @@ export function StartSheet() {
             {selection.target ? (
               catalog?.targets.map((target) => (
                 <option key={target.id} value={target.id} disabled={!target.connected}>
-                  {target.connected ? targetText(target) : `${targetText(target)} · ${t("mobile.start.targetDisconnected")}`}
+                  {target.connected ? targetText(t, target) : `${targetText(t, target)} · ${t("mobile.start.targetDisconnected")}`}
                 </option>
               ))
             ) : (

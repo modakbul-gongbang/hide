@@ -41,8 +41,12 @@ pub struct Target {
     /// `home:<device_id>` for a device's Home, else the checkout's id.
     pub id: String,
     pub device_id: String,
-    pub label: String,
-    pub device_label: String,
+    /// The place on the device (`project · branch`, or a folder's name);
+    /// `None` is the device's Home, which the phone names in its language.
+    pub place: Option<String>,
+    /// The device's name; `None` is this Mac, which the phone names in its
+    /// language.
+    pub device_label: Option<String>,
     pub connected: bool,
 }
 
@@ -88,17 +92,11 @@ impl Catalog {
         };
         let devices = array_of(rest.pointer("/navigator/devices"));
         let statuses = array_of(rest.pointer("/status/remote"));
-        let local_label = devices
-            .iter()
-            .find(|device| str_of(device, "id") == LOCAL_DEVICE)
-            .map(|device| str_of(device, "label"))
-            .filter(|label| !label.is_empty())
-            .unwrap_or("This Mac");
         let local_workspaces: Vec<&Value> = array_of(rest.pointer("/navigator/workspaces"))
             .iter()
             .filter(|workspace| workspace.get("remote_target_id").is_none_or(Value::is_null))
             .collect();
-        catalog.add_device(LOCAL_DEVICE, local_label, true, &local_workspaces);
+        catalog.add_device(LOCAL_DEVICE, None, true, &local_workspaces);
         for device in devices {
             let id = str_of(device, "id");
             if id == LOCAL_DEVICE || id.is_empty() || str_of(device, "kind") != "remote" {
@@ -121,7 +119,7 @@ impl Catalog {
             let label = Some(str_of(device, "label"))
                 .filter(|label| !label.is_empty())
                 .unwrap_or(id);
-            catalog.add_device(id, label, connected, &workspaces);
+            catalog.add_device(id, Some(label), connected, &workspaces);
         }
         for kind in KINDS {
             let provider = array_of(rest.pointer("/status/background_ai/providers"))
@@ -142,13 +140,13 @@ impl Catalog {
     fn add_device(
         &mut self,
         device_id: &str,
-        device_label: &str,
+        device_label: Option<&str>,
         connected: bool,
         workspaces: &[&Value],
     ) {
         let local = device_id == LOCAL_DEVICE;
         let route_device = (!local).then(|| device_id.to_owned());
-        let push = |catalog: &mut Self, id: String, label: String, path: Option<String>| {
+        let push = |catalog: &mut Self, id: String, place: Option<String>, path: Option<String>| {
             if catalog.targets.len() >= MAX_TARGETS {
                 herdr_core::diagnostic!(json!({
                     "component": "mobile_phone", "kind": "start.targets_capped", "cap": MAX_TARGETS,
@@ -168,12 +166,12 @@ impl Catalog {
             catalog.targets.push(Target {
                 id,
                 device_id: device_id.to_owned(),
-                label,
-                device_label: device_label.to_owned(),
+                place,
+                device_label: device_label.map(str::to_owned),
                 connected,
             });
         };
-        push(self, home_id(device_id), "Home".to_owned(), None);
+        push(self, home_id(device_id), None, None);
         for workspace in workspaces {
             if workspace.get("is_home").and_then(Value::as_bool) == Some(true) {
                 continue;
@@ -201,7 +199,7 @@ impl Catalog {
                         .unwrap_or_else(|| str_of(checkout, "label"));
                     format!("{} · {branch}", str_of(workspace, "label"))
                 };
-                push(self, id.to_owned(), label, Some(path.to_owned()));
+                push(self, id.to_owned(), Some(label), Some(path.to_owned()));
             }
         }
     }
@@ -592,19 +590,20 @@ mod tests {
         let catalog = Catalog::of(&rest());
         let ids: Vec<_> = catalog.targets.iter().map(|t| t.id.as_str()).collect();
         assert_eq!(ids, ["home:local", "c1", "c2", "c4", "home:mini", "rc1"]);
-        let labels: Vec<_> = catalog.targets.iter().map(|t| t.label.as_str()).collect();
+        let places: Vec<_> = catalog.targets.iter().map(|t| t.place.as_deref()).collect();
         assert_eq!(
-            labels,
+            places,
             [
-                "Home",
-                "herdr-ide · main",
-                "herdr-ide · prd/a",
-                "notes",
-                "Home",
-                "contong · main"
+                None,
+                Some("herdr-ide · main"),
+                Some("herdr-ide · prd/a"),
+                Some("notes"),
+                None,
+                Some("contong · main")
             ]
         );
-        assert_eq!(catalog.targets[0].device_label, "This Mac");
+        assert_eq!(catalog.targets[0].device_label, None);
+        assert_eq!(catalog.targets[4].device_label.as_deref(), Some("mini"));
         assert!(catalog.targets.iter().all(|target| target.connected));
     }
 

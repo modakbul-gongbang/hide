@@ -65,7 +65,7 @@ function checkoutIssues(scope: SearchDevice, workspace: Workspace, checkout: Che
 type Lineage = { byPane: Map<string, AgentRow>; here: Set<string> };
 
 /** The agents of `agent`'s lineage that sit in this checkout, as rows: ancestors in it, the agent, its descendants in it. */
-function lineageRows(scope: SearchDevice, lineage: Lineage, agent: AgentRow, places: Map<string, string>, front: string, tagHere: boolean): SearchEntry[] {
+function lineageRows(scope: SearchDevice, lineage: Lineage, agent: AgentRow, places: Map<string, string>, front: string, tagHere: boolean, t: TFunction<"translation">): SearchEntry[] {
   const chain: AgentRow[] = [];
   let top = agent;
   const seen = new Set<string>([agent.pane_id]);
@@ -78,7 +78,7 @@ function lineageRows(scope: SearchDevice, lineage: Lineage, agent: AgentRow, pla
     top = parent;
   }
   const rows: SearchEntry[] = [];
-  const row = (row: AgentRow, depth: number, tag?: SearchEntry["tag"]): SearchEntry => ({ ...agentEntry(scope, row, places.get(row.pane_id) ?? null, front), depth, ...(tag ? { tag } : {}) });
+  const row = (row: AgentRow, depth: number, tag?: SearchEntry["tag"]): SearchEntry => ({ ...agentEntry(scope, row, places.get(row.pane_id) ?? null, front, t), depth, ...(tag ? { tag } : {}) });
   chain.forEach((ancestor, depth) => rows.push(row(ancestor, depth)));
   const anchorDepth = chain.length;
   rows.push(row(agent, anchorDepth, tagHere ? "here" : undefined));
@@ -86,7 +86,7 @@ function lineageRows(scope: SearchDevice, lineage: Lineage, agent: AgentRow, pla
   const outside = (top.lineage_parent_pane_id ? lineage.byPane.get(top.lineage_parent_pane_id) : undefined);
   if (outside && !lineage.here.has(outside.pane_id)) {
     const place = places.get(outside.pane_id) ?? null;
-    rows.push({ ...agentEntry(scope, outside, place, front), depth: anchorDepth + 1, tag: "parent" });
+    rows.push({ ...agentEntry(scope, outside, place, front, t), depth: anchorDepth + 1, tag: "parent" });
   }
   const walk = (parent: AgentRow, depth: number) => {
     for (const childId of parent.lineage_child_pane_ids ?? []) {
@@ -130,7 +130,7 @@ function delegatedGroup(scope: SearchDevice, workspace: Workspace, checkout: Che
     .filter((agent) => inside.has(agent.pane_id))
     .map((agent) => {
       const parent = agent.lineage_parent_pane_id ? lineage.byPane.get(agent.lineage_parent_pane_id) : undefined;
-      const entry = agentEntry(scope, agent, places.get(agent.pane_id) ?? null, front);
+      const entry = agentEntry(scope, agent, places.get(agent.pane_id) ?? null, front, t);
       return {
         ...entry,
         depth: parent && inside.has(parent.pane_id) ? 1 : 0,
@@ -161,7 +161,7 @@ export function relationsOf(rest: SnapshotRest | null, target: RelationTarget, t
       const places = checkoutPlaces(scope.allWorkspaces);
       const byPane = new Map(scope.agents.map((row) => [row.pane_id, row]));
       const lineage: Lineage = { byPane, here: paneSet(placed.checkout) };
-      const own = group(scope, placed.workspace, placed.checkout, front, lineageRows(scope, lineage, agent, places, front, anchor), t);
+      const own = group(scope, placed.workspace, placed.checkout, front, lineageRows(scope, lineage, agent, places, front, anchor, t), t);
       const groups = [own];
       const delegated = descendantsOf(agent, byPane);
       for (const workspace of scope.allWorkspaces) {

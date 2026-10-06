@@ -12,7 +12,7 @@ beforeAll(async () => {
 const relation: Relation = { requestId: "r1", sourcePaneId: "parent", targetPaneId: "child", label: "child task" };
 
 function chip(pane_id: string): AgentChip {
-  return { pane_id, label: pane_id, detail: null, status_word_visible: false, agent_kind: "codex", demand: "none", activity: "working", emphasized: false, symbol: "●", status_label: "Working", delegated: true };
+  return { pane_id, label: pane_id, detail: null, status_word_visible: false, agent_kind: "codex", demand: "none", activity: "working", emphasized: false, symbol: "●", status_code: "working", delegated: true };
 }
 
 describe("a relationship focus", () => {

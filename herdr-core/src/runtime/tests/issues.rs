@@ -371,7 +371,7 @@ fn a_project_without_github_reads_local_issues_and_links_by_branch_number() {
             root_path: "/repo".into(),
             status: crate::model::GithubStatusSnapshot {
                 unavailable_reason: Some("none of the git remotes point to GitHub".into()),
-                failure_category: Some("no GitHub remote".into()),
+                failure_category: Some(crate::model::GithubFailureCategory::NoGithubRemote),
                 ..Default::default()
             },
             ..Default::default()

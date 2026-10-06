@@ -42,7 +42,7 @@ pub struct PhoneAgent {
     /// elapsed time from it, so time passing sends nothing.
     pub changed_at_unix_ms: Option<u64>,
     pub line: Option<Line>,
-    pub status_label: String,
+    pub status_code: String,
     pub demand: String,
 }
 
@@ -269,7 +269,7 @@ fn rows(
             device_label: device_label.map(str::to_owned),
             changed_at_unix_ms: agent.get("changed_at_unix_ms").and_then(Value::as_u64),
             line: line(agent),
-            status_label: str_of(agent, "status_label").to_owned(),
+            status_code: str_of(agent, "status_code").to_owned(),
             demand: agent
                 .get("demand")
                 .and_then(Value::as_str)
@@ -380,7 +380,7 @@ mod tests {
     fn agent(pane: &str, group: &str, extra: Value) -> Value {
         let mut value = json!({
             "pane_id": pane, "group": group, "symbol": "●", "identity_label": format!("task {pane}"),
-            "agent_kind": "claude", "changed_at_unix_ms": 1_790_000_000_000_u64, "status_label": group, "demand": "none",
+            "agent_kind": "claude", "changed_at_unix_ms": 1_790_000_000_000_u64, "status_code": "idle", "demand": "none",
         });
         for (key, field) in extra.as_object().unwrap() {
             value[key] = field.clone();

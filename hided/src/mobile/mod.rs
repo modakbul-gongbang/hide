@@ -34,6 +34,7 @@ use serde_json::{Value, json};
 use tokio::sync::{Notify, watch};
 
 use crate::core::CoreHandle;
+use herdr_core::delivery::worker::{HumanNotice, HumanNoticeKind};
 use phones::{PairRefusal, Phones};
 use projection::{AgentKey, Projection};
 use store::{MobileSettings, Notifications, PhoneRecord, PushMode, PushSubscription, ServeRecord};
@@ -270,14 +271,13 @@ impl Mobile {
     }
 
     /// The mac's name on the phone: its tailnet name, else the system's.
-    pub fn mac_name(&self) -> String {
+    pub fn mac_name(&self) -> Option<String> {
         let inner = self.lock();
         inner
             .checklist
             .as_ref()
             .and_then(|checklist| checklist.host_name.clone())
             .or_else(|| self.config.host_name.clone())
-            .unwrap_or_else(|| "Mac".to_owned())
     }
 
     /// Whether a WebSocket Origin is this Mac's tailnet address while it is
@@ -892,7 +892,7 @@ impl Mobile {
         }
     }
 
-    fn push_delivery(&self, notice: &herdr_core::delivery::worker::HumanNotice) -> bool {
+    fn push_delivery(&self, notice: &HumanNotice) -> bool {
         let Some(vapid) = self.vapid.as_ref() else {
             return false;
         };
@@ -932,12 +932,17 @@ impl Mobile {
                     device_id: notice.actor.device_id.clone(),
                     pane_id: notice.actor.pane_id.clone(),
                 },
-                title: notice.title.clone(),
-                // A delivery notice asks the operator to look; its sentence
-                // is the core's own text, carried untranslated where a
-                // place would go.
-                state: push::NoticeState::NeedsYou,
-                place: notice.body.clone(),
+                // A delivery notice names the agent that has not answered,
+                // and the phone words the cause from its state key.
+                title: notice.recipient.clone(),
+                state: match notice.kind {
+                    HumanNoticeKind::ObserverUnconfirmed => push::NoticeState::ObserverUnconfirmed,
+                    HumanNoticeKind::LetterUndelivered => push::NoticeState::LetterUndelivered,
+                },
+                place: match notice.kind {
+                    HumanNoticeKind::ObserverUnconfirmed => notice.about.clone(),
+                    HumanNoticeKind::LetterUndelivered => notice.id.clone(),
+                },
             },
             &BTreeSet::new(),
         );

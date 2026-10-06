@@ -140,7 +140,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
         <button
           ref={main}
           type="button"
-          aria-label={[rowAccessibleName(agent, device), closing ? t("agents.closingName") : null, place].filter(Boolean).join(", ")}
+          aria-label={[rowAccessibleName(t, agent, device), closing ? t("agents.closingName") : null, place].filter(Boolean).join(", ")}
           aria-current={selected ? "true" : undefined}
           data-agent-open={agent.pane_id}
           className="absolute inset-0 rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"
@@ -148,7 +148,7 @@ export const SidebarAgentRow = memo(function SidebarAgentRow({
         />
       </Hint>
       <span className="pointer-events-none flex min-h-(--size-sidebar-line) shrink-0 items-center gap-xs">
-        <StatusMark symbol={agent.symbol} className={markTone(agent)} data-agent-status-mark={agent.waiting_on_descendants ? "waiting" : agent.status_label} />
+        <StatusMark symbol={agent.symbol} className={markTone(agent)} data-agent-status-mark={agent.waiting_on_descendants ? "waiting" : agent.status_code} />
         <AgentMark kind={agent.agent_kind} />
       </span>
       <span className="flex min-w-0 flex-1 flex-col">

@@ -558,7 +558,7 @@ export function allProjectsStats(workspaces: readonly (Workspace | null)[]): All
     if (!workspace) continue;
     const stats = projectStats(workspace);
     merged += stats.merged;
-    if (!workspace.is_git || workspace.checkouts.some((checkout) => checkout.github?.failure_category === "no GitHub remote")) continue;
+    if (!workspace.is_git || workspace.checkouts.some((checkout) => checkout.github?.failure_category === "no_github_remote")) continue;
     openPullRequests = openPullRequests === null || stats.openPullRequests === null ? null : openPullRequests + stats.openPullRequests;
   }
   return { projects: workspaces.length, openPullRequests: known ? openPullRequests : null, merged: known ? merged : null };
@@ -743,7 +743,7 @@ export function buildPullRequests(project: BoardProject, now: number): PrBoard {
   const groups = PR_GROUPS.map((group) => ({ group, rows: rows.filter((row) => row.group === group).sort(byRecent) })).filter((entry) => entry.rows.length > 0);
   const status = workspace.checkouts.find((checkout) => checkout.github)?.github ?? null;
   // A repository with no GitHub remote has no pull requests, which is an answer, not a failure (design 13).
-  const noRemote = status?.failure_category === "no GitHub remote";
+  const noRemote = status?.failure_category === "no_github_remote";
   const answered = status?.last_success_at_unix_ms != null || noRemote;
   const failed = !noRemote && (status?.stale === true || (status?.unavailable_reason != null && !status.available));
   const age = status?.last_success_at_unix_ms != null ? Math.max(0, Math.floor((now - status.last_success_at_unix_ms) / 60_000)) : null;

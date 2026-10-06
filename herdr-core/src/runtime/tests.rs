@@ -541,7 +541,7 @@ fn pane(id: &str, cwd: &str) -> PaneSnapshot {
         herdr_label: None,
         terminal_title: None,
         cwd: cwd.to_owned(),
-        status_label: "Attached".to_owned(),
+        status_code: crate::model::AgentStatusCode::Attached,
         requires_close_confirmation: false,
         requires_close_status_check: false,
         identity_label: None,

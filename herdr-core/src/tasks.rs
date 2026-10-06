@@ -14,7 +14,7 @@ use serde::Serialize;
 
 use crate::issues::{IssueReference, IssueSnapshot, ProjectIssuesSnapshot};
 use crate::local_issues::LocalIssueProject;
-use crate::model::GithubStatusSnapshot;
+use crate::model::{GithubFailureCategory, GithubStatusSnapshot};
 
 /// The source kind of a GitHub issue.
 pub const GITHUB: &str = "github";
@@ -209,8 +209,8 @@ pub fn source_kind(
         _ if !git => SourceKind::Local,
         _ if issues.repository.is_some() => SourceKind::Github,
         _ if matches!(
-            status.failure_category.as_deref(),
-            Some("not installed" | "no GitHub remote")
+            status.failure_category,
+            Some(GithubFailureCategory::NotInstalled | GithubFailureCategory::NoGithubRemote)
         ) =>
         {
             SourceKind::Local
@@ -486,7 +486,7 @@ mod tests {
             available: true,
             stale: true,
             unavailable_reason: Some("rate limited".into()),
-            failure_category: Some("network or rate limit".into()),
+            failure_category: Some(GithubFailureCategory::NetworkOrRateLimit),
             last_success_at_unix_ms: Some(5),
             ..Default::default()
         };
@@ -502,22 +502,25 @@ mod tests {
     fn without_a_choice_a_repository_gh_cannot_see_on_github_reads_local() {
         let none = ProjectIssuesSnapshot::default();
         for (category, expected) in [
-            ("not installed", SourceKind::Local),
-            ("no GitHub remote", SourceKind::Local),
+            (GithubFailureCategory::NotInstalled, SourceKind::Local),
+            (GithubFailureCategory::NoGithubRemote, SourceKind::Local),
             // Logged out or offline is still a GitHub repository: it stays
             // GitHub and says why it could not be read.
-            ("not logged in", SourceKind::Github),
-            ("network or rate limit", SourceKind::Github),
+            (GithubFailureCategory::NotLoggedIn, SourceKind::Github),
+            (
+                GithubFailureCategory::NetworkOrRateLimit,
+                SourceKind::Github,
+            ),
         ] {
             let status = GithubStatusSnapshot {
-                unavailable_reason: Some(format!("gh: {category}")),
-                failure_category: Some(category.into()),
+                unavailable_reason: Some(format!("gh: {}", category.english())),
+                failure_category: Some(category),
                 ..Default::default()
             };
             assert_eq!(
                 source_kind(None, true, &none, &status),
                 expected,
-                "{category}"
+                "{category:?}"
             );
         }
         // A folder has no GitHub to read; a choice wins over the default.
@@ -539,7 +542,7 @@ mod tests {
     fn a_github_read_that_never_answered_says_why_instead_of_reading_forever() {
         let status = GithubStatusSnapshot {
             unavailable_reason: Some("gh auth login".into()),
-            failure_category: Some("not logged in".into()),
+            failure_category: Some(GithubFailureCategory::NotLoggedIn),
             ..Default::default()
         };
         let tasks = github_tasks(&ProjectIssuesSnapshot::default(), &status, false);

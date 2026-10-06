@@ -10,7 +10,7 @@ function agent(pane: string, patch: Partial<AgentRow> = {}): AgentRow {
     agent_kind: "codex",
     symbol: "●",
     group: "working",
-    status_label: "Working",
+    status_code: "working",
     detail: null,
     changed_at_unix_ms: null,
     emphasized: false,

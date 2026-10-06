@@ -132,7 +132,7 @@ test("the close sheet counts and brightens what needs the operator, stays live w
     // on, so it opens once the sidebar shows every child's: a row whose
     // state is not in yet reads Unknown, which is the core's close guard.
     await page.locator(`[data-agent-tree-toggle="${target}"]`).click();
-    for (const [pane, status] of [[working, "Working"], [asking, "Question"], [finished, "Done"], [quiet, "Idle"]]) {
+    for (const [pane, status] of [[working, "working"], [asking, "question"], [finished, "done"], [quiet, "idle"]]) {
       await expect(page.locator(`[data-pane="${pane}"] [data-agent-status-mark]`)).toHaveAttribute("data-agent-status-mark", status, { timeout: 30_000 });
     }
     await expect(page.locator(`[data-agent-open="${target}"]`)).not.toHaveAccessibleName(/\bUnknown\b/);
@@ -279,7 +279,7 @@ test("an open close sheet follows the snapshot: Stop-work tracks its pane, and a
     const row = confirm.locator(`[data-stop-work-row="${target}"]`);
     const opacity = () => row.evaluate((node) => Number(getComputedStyle(node).opacity));
     // The working state has to be in before the close asks: a quiet pane would close at once.
-    await expect(page.locator(`[data-pane="${target}"] [data-agent-status-mark="Working"]`)).toBeVisible({ timeout: 30_000 });
+    await expect(page.locator(`[data-pane="${target}"] [data-agent-status-mark="working"]`)).toBeVisible({ timeout: 30_000 });
     await page.locator(`[data-terminal-host="${target}"]`).click();
     await page.keyboard.press(chord("close_tab"));
     await expect(row).toHaveAttribute("data-stop-work-state", "active");

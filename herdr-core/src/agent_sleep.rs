@@ -15,7 +15,9 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use serde::{Deserialize, Serialize};
 
-use crate::model::{AgentSleepActionSnapshot, AgentSleepSnapshot, SidebarAgentSnapshot};
+use crate::model::{
+    AgentSleepActionSnapshot, AgentSleepSnapshot, AgentStatusCode, SidebarAgentSnapshot,
+};
 use crate::sidebar::{
     AgentLabel, SessionAgentPayload, SessionAgentSessionPayload, SessionSnapshotPayload,
 };
@@ -236,12 +238,12 @@ impl SleepRecord {
     }
 }
 
-/// The status word a sleeping row carries in place of its own (B10).
-pub fn status_label(sleep: &AgentSleepSnapshot) -> &'static str {
+/// The status a sleeping row carries in place of its own (B10).
+pub fn status_code(sleep: &AgentSleepSnapshot) -> AgentStatusCode {
     match sleep.state.as_str() {
-        "waking" => "Waking\u{2026}",
-        "failed" => "Sleeping \u{b7} couldn\u{2019}t resume",
-        _ => "Sleeping \u{b7} resumes when opened",
+        "waking" => AgentStatusCode::Waking,
+        "failed" => AgentStatusCode::SleepFailed,
+        _ => AgentStatusCode::Sleeping,
     }
 }
 
@@ -526,7 +528,7 @@ mod tests {
             group: "seen".to_owned(),
             symbol: "\u{25cb}".to_owned(),
             emphasized: false,
-            status_label: "Idle".to_owned(),
+            status_code: AgentStatusCode::Idle,
             requires_close_confirmation: false,
             requires_close_status_check: false,
             progress: Some("Split the lexer".to_owned()),
@@ -726,7 +728,7 @@ mod tests {
                 row.session_id.as_deref(),
                 row.spawned_from_pane_id.as_deref(),
                 row.symbol.as_str(),
-                row.status_label.as_str(),
+                row.status_code,
             ),
             (
                 "reviewer",
@@ -735,7 +737,7 @@ mod tests {
                 Some("session-a"),
                 Some("w1:p1"),
                 SLEEPING_SYMBOL,
-                "Sleeping \u{b7} resumes when opened",
+                AgentStatusCode::Sleeping,
             )
         );
         assert_eq!(

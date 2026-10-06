@@ -80,7 +80,7 @@ export function ChildChipRow({ pane, actions }: { pane: PaneRow; actions: Action
         const childLocation = paneLocation(rest, chip.pane_id, t);
         const label = childLocation?.checkout !== parentLocation?.checkout && chip.checkout_label ? chip.checkout_label : chip.label;
         const device = childLocation && childLocation.deviceId !== parentLocation?.deviceId ? childLocation.deviceLabel : null;
-        const title = chipTitle({ ...chip, label });
+        const title = chipTitle(t, { ...chip, label });
         return (
           <Hint key={chip.pane_id} label={title} reveals>
           <button

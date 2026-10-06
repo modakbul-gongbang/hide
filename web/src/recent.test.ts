@@ -46,9 +46,9 @@ const workspaces = (): Workspace[] =>
   ] as unknown as Workspace[];
 
 const agents = [
-  { pane_id: "p1", identity_label: "Fix the build", symbol: "●", status_label: "Working" },
-  { pane_id: "p2", identity_label: "Reviewer", symbol: "?", status_label: "Needs input" },
-  { pane_id: "p3", identity_label: "Writer", symbol: "●", status_label: "Working" },
+  { pane_id: "p1", identity_label: "Fix the build", symbol: "●", status_code: "working" },
+  { pane_id: "p2", identity_label: "Reviewer", symbol: "?", status_code: "needs input" },
+  { pane_id: "p3", identity_label: "Writer", symbol: "●", status_code: "working" },
 ] as AgentRow[];
 
 /** The session with `checkoutId` in front on `tabId`, its Workspace showing `displays`. */

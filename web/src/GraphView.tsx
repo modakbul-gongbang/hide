@@ -505,7 +505,7 @@ function RowView({ row, faded, peers, parent, line, onHover, handlers }: { row: 
       >
         <button
           type="button"
-          aria-label={rowAccessibleName(agent, device)}
+          aria-label={rowAccessibleName(t, agent, device)}
           data-graph-focus="row"
           data-graph-open={agent.pane_id}
           className="absolute inset-0 outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring"

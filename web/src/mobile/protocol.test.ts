@@ -49,7 +49,7 @@ function agent(group: AgentGroup["group"], pane: string, root = pane, demand = "
     device_label: null,
     changed_at_unix_ms: null,
     line: null,
-    status_label: "",
+    status_code: "unknown",
     demand,
   };
 }

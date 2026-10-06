@@ -41,11 +41,46 @@ pub struct Prepared {
 pub struct HumanNotice {
     pub id: String,
     pub actor: Actor,
-    pub title: String,
-    pub body: String,
+    pub kind: HumanNoticeKind,
+    /// The agent that has not confirmed or received the letter.
+    pub recipient: String,
+    /// The watched agent an unconfirmed warning is about; empty for an
+    /// undelivered letter.
+    pub about: String,
+}
+
+/// Which of the two approved human causes a notice is. A phone words it in
+/// its own language from this code; Herdr's own notification has no
+/// translating screen, so it shows `english_title` and `english_body`, whose
+/// tail names the command an agent or a person runs.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HumanNoticeKind {
+    ObserverUnconfirmed,
+    LetterUndelivered,
 }
 
 impl HumanNotice {
+    pub fn english_title(&self) -> &'static str {
+        match self.kind {
+            HumanNoticeKind::ObserverUnconfirmed => "Hide: observer has not confirmed a warning",
+            HumanNoticeKind::LetterUndelivered => "Hide: letter undelivered",
+        }
+    }
+
+    pub fn english_body(&self) -> String {
+        match self.kind {
+            HumanNoticeKind::ObserverUnconfirmed => format!(
+                "{} has not confirmed the first inactivity warning about {} for 60 minutes. Inspect it with hide request show {}.",
+                self.recipient, self.about, self.id
+            ),
+            HumanNoticeKind::LetterUndelivered => format!(
+                "{} did not receive {} within 60 minutes. Inspect it with hide request show {}.",
+                self.recipient, self.id, self.id
+            ),
+        }
+    }
+
     /// Runs only after the durable receipt on a daemon request worker.
     pub fn notify_herdr(
         &self,
@@ -53,7 +88,8 @@ impl HumanNotice {
     ) -> Result<bool, String> {
         // The pinned request schema requires title and accepts body/sound.
         // This outcome is an external effect receipt, never a core input.
-        let params = json!({"title":self.title,"body":self.body,"sound":"request"});
+        let params =
+            json!({"title":self.english_title(),"body":self.english_body(),"sound":"request"});
         let value = hide_herdr_client::request_small_response(
             connector,
             "notification.show",

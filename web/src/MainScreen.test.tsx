@@ -18,7 +18,7 @@ it("restores Main request expansion after departure and remount through Recent P
   const shell = useShellStore.getState();
   const ui = useUiStore.getState();
   const full = Array.from({ length: 25 }, (_, i) => `요청 원문 ${i}`).join("\n");
-  const agent: AgentRow = { id: "a0", pane_id: "a0", identity_label: "요청 결과", agent_kind: "codex", symbol: "●", group: "working", status_label: "Working", changed_at_unix_ms: null, emphasized: false, unread: false,
+  const agent: AgentRow = { id: "a0", pane_id: "a0", identity_label: "요청 결과", agent_kind: "codex", symbol: "●", group: "working", status_code: "working", changed_at_unix_ms: null, emphasized: false, unread: false,
     request: { verb: "idle", verb_since_unix_ms: 0, request: { text: full, cut: false, images: 0, at_unix_ms: 0, sender: { kind: "operator" } }, later_by: null, reply: { text: "전체 결과", cut: false, at_unix_ms: 1 }, pull_requests: [] } };
   const checkout = { id: "main", workspace_id: "project", label: "main", path: "/fixture", branch: "main", active_tab_id: "tab", tabs: [{ id: "tab", label: "Agent", panes: [{ id: "a0" }] }], strip: [] } as unknown as Checkout;
   const project: Workspace = { id: "project", label: "Studio", path: "/fixture", device_id: "local", is_git: true, registered: true, temporary: false, pinned: false, checkouts: [checkout], inactive_checkouts: { expanded: false, checkout_ids: [] } };

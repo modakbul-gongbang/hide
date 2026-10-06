@@ -632,7 +632,7 @@ test("an empty list, the unreachable line, the phone limit and the seven-day rev
           return hit ? ((await hit.json()) as unknown) : null;
         }),
       )
-      .toEqual({ needs_you: "내 확인 대기", done: "끝" });
+      .toEqual({ needs_you: "내 확인 대기", done: "끝", observer_unconfirmed: "관찰자가 경고를 확인하지 않았어요", letter_undelivered: "편지가 전달되지 않았어요" });
     await page.locator("[data-interface-language]").click();
     await page.locator('[data-language-option="system"]').click();
     await expect(phone.locator("[data-phone-empty]")).toHaveText("No agents are running", { timeout: 20_000 });

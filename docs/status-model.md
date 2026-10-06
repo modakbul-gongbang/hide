@@ -90,7 +90,7 @@ Mark precedence on a root is its own demand, then its own work, then waiting on 
 The flag is only ever set on a row with no demand of its own that is not working, so the precedence is the order of the checks in `agent_group_for`, not a second rule.
 Only a lineage root waits: a delegated middle row keeps its own mark, because its group is already Working or Seen by delegation and its parent's badge already counts the grandchild.
 
-`apply_lineage` decides it on the same pass that sums `descendant_counts`, and publishes it as the additive `waiting_on_descendants` flag beside `group: working`; the row's mark stays the hollow ring `○`, its status word is `Waiting`, and it is not emphasized.
+`apply_lineage` decides it on the same pass that sums `descendant_counts`, and publishes it as the additive `waiting_on_descendants` flag beside `group: working`; the row's mark stays the hollow ring `○`, its `status_code` is `waiting` (the word `Waiting`), and it is not emphasized.
 No new group value reaches the wire, so a decoder that does not know the flag draws an ordinary Working row.
 The web row draws the ring in the working color from the flag, and the pet's Working badge and the Workspace representative count the row in Working because both read `group_of`, which reads the flag.
 
@@ -222,7 +222,7 @@ Every surface draws the mark in one box of one size: `●` and `○` as a filled
 | No demand, stopped, read | `○` | Gray | Idle; a read completion is not another unread Done |
 | No demand, unknown activity | `~` | Gray | Unknown; never silently labeled Idle |
 | Owning server unavailable | `⊘` | Gray | Disconnected; current agent activity is unavailable |
-| Hide ended the agent and holds its conversation | `☾` (moon) | Gray | `Sleeping · resumes when opened`, `Waking…`, or `Sleeping · couldn’t resume`; stays in Seen |
+| Hide ended the agent and holds its conversation | `☾` (moon) | Gray | `sleeping`, `waking` or `sleep_failed` (`Sleeping · resumes when opened`, `Waking…`, `Sleeping · couldn’t resume`); stays in Seen |
 
 Read questions, approvals, and errors retain their symbol and hue with reduced emphasis: a demand on a row the core does not emphasize (read, or a delegated child's) draws its mark and its request line at `--opacity-read-status`, so an unread `?` stands apart from one already looked at (`demandTone` in `web/src/lineage.ts`).
 A blocked approval stays in Needs You and keeps full emphasis until it is answered.

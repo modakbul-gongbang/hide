@@ -10,7 +10,7 @@ function pane(id: string, extra: Partial<PaneRow> = {}): PaneRow {
     herdr_label: id,
     terminal_title: null,
     cwd: "/",
-    status_label: "Idle",
+    status_code: "idle",
     requires_close_confirmation: false,
     requires_close_status_check: false,
     identity_label: null,
@@ -26,7 +26,7 @@ function agent(paneId: string, extra: Partial<AgentRow> = {}): AgentRow {
     agent_kind: "claude",
     symbol: "c",
     group: "working",
-    status_label: "Working",
+    status_code: "working",
     changed_at_unix_ms: null,
     emphasized: false,
     unread: false,
@@ -64,9 +64,9 @@ describe("stopWorkOf", () => {
 
   it("follows a pane that settles or starts while the sheet is open", () => {
     const working = [agent("p1", { requires_close_confirmation: true })];
-    expect(stopWorkOf([pane("p1")], working).rows[0]).toMatchObject({ state: "active", agent: { status_label: "Working" } });
-    const settled = [agent("p1", { status_label: "Idle", activity: "idle" })];
-    expect(stopWorkOf([pane("p1")], settled).rows[0]).toMatchObject({ state: "quiet", agent: { status_label: "Idle" } });
+    expect(stopWorkOf([pane("p1")], working).rows[0]).toMatchObject({ state: "active", agent: { status_code: "working" } });
+    const settled = [agent("p1", { status_code: "idle", activity: "idle" })];
+    expect(stopWorkOf([pane("p1")], settled).rows[0]).toMatchObject({ state: "quiet", agent: { status_code: "idle" } });
   });
 
   it("blocks Stop work and close while a pane's status is unknown", () => {
@@ -150,7 +150,7 @@ describe("agentClosing", () => {
 describe("closeSheet", () => {
   it("turns the subtree sheet into the target's Stop-work sheet when the last descendant leaves", () => {
     const target = [pane("p3")];
-    const quiet = { lineage_depth: 0, status_label: "Idle", activity: "idle" };
+    const quiet = { lineage_depth: 0, status_code: "idle" as const, activity: "idle" };
     const alone = [agent("p3", quiet)];
     const withChild = [agent("p3", { ...quiet, lineage_child_pane_ids: ["p9"], close_descendant_pane_ids: ["p9"] }), agent("p9", { lineage_depth: 1, lineage_parent_pane_id: "p3" })];
     expect(closeSheet(target, withChild, withChild)).toMatchObject({ sheet: "subtree", subtree: { ids: ["p9"] } });

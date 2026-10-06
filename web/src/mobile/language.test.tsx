@@ -75,10 +75,10 @@ describe("the phone's language", () => {
   it("gives the service worker the notification words on load and on each language change", async () => {
     await choose("ko");
     await mount();
-    await vi.waitFor(() => expect(postMessage).toHaveBeenLastCalledWith({ type: "words", words: { needs_you: "내 확인 대기", done: "끝" } }));
+    await vi.waitFor(() => expect(postMessage).toHaveBeenLastCalledWith({ type: "words", words: { needs_you: "내 확인 대기", done: "끝", observer_unconfirmed: "관찰자가 경고를 확인하지 않았어요", letter_undelivered: "편지가 전달되지 않았어요" } }));
     await choose("ja");
-    await vi.waitFor(() => expect(postMessage).toHaveBeenLastCalledWith({ type: "words", words: { needs_you: "確認待ち", done: "完了" } }));
+    await vi.waitFor(() => expect(postMessage).toHaveBeenLastCalledWith({ type: "words", words: { needs_you: "確認待ち", done: "完了", observer_unconfirmed: "オブザーバーが警告を確認していません", letter_undelivered: "手紙が届いていません" } }));
     await choose(null);
-    await vi.waitFor(() => expect(postMessage).toHaveBeenLastCalledWith({ type: "words", words: { needs_you: "Needs your attention", done: "Done" } }));
+    await vi.waitFor(() => expect(postMessage).toHaveBeenLastCalledWith({ type: "words", words: { needs_you: "Needs your attention", done: "Done", observer_unconfirmed: "Observer has not confirmed a warning", letter_undelivered: "Letter not delivered" } }));
   });
 });
