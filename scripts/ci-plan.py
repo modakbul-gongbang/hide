@@ -6,13 +6,11 @@
 step: a planned lane must have succeeded and an unplanned one must have been
 skipped, so a lane whose `if:` is wrong fails `verify` instead of passing it.
 
-A merge queue group plans from the paths between its base (main, or the
-group queued ahead of it) and its head. A
-push to main plans no lane when a merge queue run already verified that
-commit and the push changed no file a CI cache key hashes; otherwise it plans
-every lane, as do a comparison that cannot be computed, a path no rule claims
-and the nightly call. docs/TESTING.md, "Which lanes a pull request runs", owns
-the rules and the reasons for them.
+A push to main, a comparison that cannot be computed, a path no rule claims
+and the nightly call all plan every lane. No lane takes a macOS runner for
+anything but what only macOS proves (`os-contract-macos`, `desktop-e2e`); the
+rest of the macOS checks are jobs of `nightly.yml`. docs/TESTING.md, "Which
+lanes a pull request runs", owns the rules and the reasons for them.
 """
 import argparse
 from fnmatch import fnmatchcase
@@ -28,13 +26,13 @@ ROOT = Path(__file__).resolve().parent.parent
 LANES = (
     "policy",
     "rust",
-    "web-checks",
-    "desktop-checks",
+    "checks",
     "os-contract",
+    "os-contract-macos",
     "windows-check",
     "windows-e2e",
     "web-e2e",
-    "web-e2e-platform",
+    "remote-mailbox",
     "desktop-e2e",
 )
 
@@ -50,10 +48,15 @@ OS_CRATES = {
     "hide-kit",
     "hide-platform",
 }
-# `web-e2e-platform` also runs the remote mailbox lane over private SSH, which
-# builds the CLI from these crates; a rule that plans it for fewer of them
-# leaves that lane out too.
-OS_LANES = ("os-contract", "windows-check", "windows-e2e", "web-e2e-platform", "desktop-e2e")
+# The OS contract's macOS leg tests only these two, so only a change to one of
+# them plans it; the others reach it through the nightly.
+OS_CONTRACT_CRATES = {"hide-herdr-client", "hide-platform"}
+OS_LANES = ("os-contract", "windows-check", "windows-e2e")
+# The remote mailbox lane builds `hided`, `hide`, the host helper and the hook
+# binary, and runs `herdr-core`'s `remote_delivery` test against them over
+# private SSH; a change to any crate they link, or to the test, can change its
+# result, and nothing else can. Web code and web specs do not reach it.
+MAILBOX_CRATES = {"herdr-core", "hided", "hide-agent-hooks", "hide-host"}
 
 # Web files the desktop host imports or drives through native input: the host
 # bridge, the shortcut registry the menu is built from, the store and
@@ -82,7 +85,7 @@ SHARED_WEB = (
     "web/src/App.tsx",
     "web/src/main.tsx",
 )
-SHARED_WEB_LANES = ("desktop-checks", "desktop-e2e", "web-e2e-platform", "windows-e2e")
+SHARED_WEB_LANES = ("checks", "desktop-e2e", "windows-e2e")
 
 # Files a lane outside their own directory reads: a change to one also plans
 # that lane, and the Rust crates whose tests read it. An entry ending in `/`
@@ -96,9 +99,9 @@ READERS = (
     ("web/src/", {"rust"}, {"herdr-core"}),
     ("hided/src/", {"rust"}, {"herdr-core"}),
     # web/e2e/s2, s3 and s7 import the wire path conversion.
-    ("desktop/src/main/wirePath.ts", {"web-checks", "web-e2e", "web-e2e-platform", "windows-e2e"}, set()),
+    ("desktop/src/main/wirePath.ts", {"checks", "web-e2e", "windows-e2e"}, set()),
     # web/src/settings.test.ts, theme.test.ts and web/e2e/theme.spec.ts read the tokens.
-    ("design/tokens.json", {"web-checks", "web-e2e"}, set()),
+    ("design/tokens.json", {"checks", "web-e2e"}, set()),
 )
 
 
@@ -130,27 +133,27 @@ POLICY_ONLY = (
 # Paths whose readers are a known set of lanes. `web/e2e` helpers are imported
 # by the desktop suites too, and `desktop/e2e` unit tests run in `windows
 # check`, so neither is web-only or desktop-only.
-WEB_E2E_LANES = {"web-checks", "web-e2e", "web-e2e-platform", "windows-e2e", "desktop-checks", "desktop-e2e", "windows-check"}
-DESKTOP_E2E_LANES = {"desktop-checks", "desktop-e2e", "windows-check"}
+WEB_E2E_LANES = {"checks", "web-e2e", "windows-e2e", "desktop-e2e", "windows-check"}
+DESKTOP_E2E_LANES = {"checks", "desktop-e2e", "windows-check"}
 NAMED_LANES = (
     ("web/e2e/*", WEB_E2E_LANES),
     ("desktop/e2e/*", DESKTOP_E2E_LANES),
-    ("web/playwright.config.ts", {"web-checks", "web-e2e", "web-e2e-platform", "windows-e2e"}),
+    ("web/playwright.config.ts", {"checks", "web-e2e", "windows-e2e"}),
     ("desktop/playwright.config.ts", DESKTOP_E2E_LANES),
     ("desktop/vitest.config.ts", DESKTOP_E2E_LANES),
     # `web` and `desktop` lint share the e2e rules and the size check.
-    ("web/eslint.config.js", {"web-checks", "desktop-checks"}),
-    ("web/eslint.e2e.mjs", {"web-checks", "desktop-checks"}),
-    ("web/eslint-rules/*", {"web-checks", "desktop-checks"}),
-    ("web/scripts/check-e2e-test-size.mjs", {"web-checks", "desktop-checks"}),
-    ("web/scripts/gen-types.mjs", {"web-checks", "web-e2e"}),
-    ("desktop/eslint.config.mjs", {"desktop-checks"}),
-    ("desktop/eslint.globals.mjs", {"desktop-checks"}),
+    ("web/eslint.config.js", {"checks"}),
+    ("web/eslint.e2e.mjs", {"checks"}),
+    ("web/eslint-rules/*", {"checks"}),
+    ("web/scripts/check-e2e-test-size.mjs", {"checks"}),
+    ("web/scripts/gen-types.mjs", {"checks", "web-e2e"}),
+    ("desktop/eslint.config.mjs", {"checks"}),
+    ("desktop/eslint.globals.mjs", {"checks"}),
     # `build.mjs` is the e2e's build; `package.mjs` and `smoke-package.mjs` run
     # in `package.yml`, which has its own trigger on this folder.
-    ("desktop/scripts/build.mjs", {"desktop-checks", "desktop-e2e"}),
-    ("desktop/scripts/package.mjs", {"desktop-checks"}),
-    ("desktop/scripts/smoke-package.mjs", {"desktop-checks"}),
+    ("desktop/scripts/build.mjs", {"checks", "desktop-e2e"}),
+    ("desktop/scripts/package.mjs", {"checks"}),
+    ("desktop/scripts/smoke-package.mjs", {"checks"}),
 )
 
 
@@ -234,28 +237,32 @@ def classify(path, status, crates, root):
         # Every end-to-end lane drives hided, so a crate it links reaches them.
         if "hided" in packages:
             lanes.add("web-e2e")
+        if packages & MAILBOX_CRATES:
+            lanes.add("remote-mailbox")
         if crate["name"] in OS_CRATES:
             lanes.update(OS_LANES)
+        if crate["name"] in OS_CONTRACT_CRATES:
+            lanes.add("os-contract-macos")
         return lanes, f"crate {crate['name']}: {path}", packages
     if parts[0] == "web" and len(parts) > 1:
         if parts[1] == "e2e" and len(parts) == 3 and path.name.endswith(".spec.ts"):
-            lanes = {"web-checks", "web-e2e"}
+            lanes = {"checks", "web-e2e"}
             spec = root / path
             # A deleted spec cannot be read; keep the platform lanes for it.
             if status == "D" or "@platform" in spec.read_text(encoding="utf-8"):
-                lanes.update(("web-e2e-platform", "windows-e2e"))
+                lanes.add("windows-e2e")
             return lanes, f"web e2e spec: {path}", set()
         if parts[1] in ("src", "public") or path.as_posix() in ("web/index.html", "web/mobile.html"):
-            lanes = {"web-checks", "web-e2e"}
+            lanes = {"checks", "web-e2e"}
             if path.as_posix() in SHARED_WEB:
                 lanes.update(SHARED_WEB_LANES)
                 return lanes, f"web shared with the desktop host: {path}", set()
             return lanes, f"web shell: {path}", set()
     if parts[0] == "desktop" and len(parts) > 1:
         if parts[1] == "e2e" and len(parts) == 3 and path.name.endswith(".spec.ts"):
-            return {"desktop-checks", "desktop-e2e"}, f"desktop e2e spec: {path}", set()
+            return {"checks", "desktop-e2e"}, f"desktop e2e spec: {path}", set()
         if parts[1] in ("src", "static"):
-            lanes = {"desktop-checks", "desktop-e2e"}
+            lanes = {"checks", "desktop-e2e"}
             if parts[1:3] == ("src", "main"):
                 # The main process owns paths, child processes and the daemon
                 # start; its unit suite runs on Windows in `windows check`.
@@ -268,32 +275,6 @@ def classify(path, status, crates, root):
     # package configuration, and any path no rule above or in `named_lanes`
     # names: every lane.
     return None, f"shared or unclassified: {path}", set()
-
-
-# Files a CI cache key hashes, and the workflows that name the caches. The
-# caches save only from main and only under a new key (rust-cache hashes
-# Cargo.lock, every crate's Cargo.toml and a toolchain file; setup-node hashes
-# pnpm-lock.yaml), so a push that changes one runs every lane on main to save
-# the new caches, even when the merge queue verified the commit.
-CACHE_KEYS = (
-    "Cargo.lock", "Cargo.toml", "*/Cargo.toml", "rust-toolchain", "rust-toolchain.toml", ".cargo/*",
-    "pnpm-lock.yaml", ".github/workflows/*",
-)
-
-
-def queue_verification(runs_file, head, root=ROOT):
-    """The URL of a successful merge queue run of this workflow on `head`, from
-    the Actions API answer in `runs_file`, or None and the reason there is none."""
-    try:
-        with open(runs_file, encoding="utf-8") as answer:
-            runs = json.load(answer)["workflow_runs"]
-        sha = subprocess.check_output(["git", "rev-parse", head], cwd=root, text=True, stderr=subprocess.PIPE).strip()
-    except (OSError, ValueError, KeyError, TypeError, subprocess.CalledProcessError) as error:
-        return None, f"merge queue lookup failed: {error}"
-    for run in runs:
-        if run.get("event") == "merge_group" and run.get("conclusion") == "success" and run.get("head_sha") == sha:
-            return run["html_url"], None
-    return None, f"no merge queue run verified {sha[:12]}"
 
 
 def select(entries, crates, root=ROOT, full_reason=None):
@@ -325,9 +306,6 @@ def select(entries, crates, root=ROOT, full_reason=None):
         for lane in LANES:
             reasons[lane] = list(full)
         packages = {crate["name"] for crate in crates.values()}
-    # The OS contract's macOS leg runs inside `desktop e2e`.
-    if reasons["os-contract"] and not reasons["desktop-e2e"]:
-        reasons["desktop-e2e"].append("the OS contract's macOS leg")
     planned = [lane for lane in LANES if reasons[lane]]
     return {
         "full": bool(full),
@@ -347,7 +325,7 @@ def changed_entries(base, head, root=ROOT):
     return list(zip(fields[:-1:2], fields[1:-1:2]))
 
 
-def plan(event, base, head, root=ROOT, crates=None, draft=False, queue_runs=None):
+def plan(event, base, head, root=ROOT, crates=None, draft=False):
     if draft:
         # A draft is not a merge candidate: no lane runs, `aggregate` fails
         # `verify` for it, and marking the pull request ready for review
@@ -360,22 +338,16 @@ def plan(event, base, head, root=ROOT, crates=None, draft=False, queue_runs=None
             # Without the crate graph no Rust change can be narrowed; the full
             # Rust lane runs the whole workspace and needs no package list.
             return select([], {}, root, f"crate graph unavailable: {error}")
-    if event == "push":
-        return plan_push(base, head, root, crates, queue_runs)
-    if event not in ("pull_request", "merge_group"):
+    if event != "pull_request":
         return select([], crates, root, f"{event}: every lane runs on main")
     try:
-        if event == "pull_request":
-            # A pull request's checkout is the merge commit GitHub made;
-            # anything else would compare against a parent that is not the base.
-            parents = subprocess.check_output(
-                ["git", "rev-list", "--parents", "-n", "1", head], cwd=root, text=True, stderr=subprocess.PIPE
-            ).split()
-            if len(parents) != 3:
-                raise ValueError(f"{head} is not a merge commit")
-        # A merge queue group names its base (`merge_group.base_sha`): main,
-        # or the commit of the group queued ahead of it. base..head is then
-        # this group's own pull request, on the tree the ones ahead make.
+        # A pull request's checkout is the merge commit GitHub made; anything
+        # else would compare against a parent that is not the base.
+        parents = subprocess.check_output(
+            ["git", "rev-list", "--parents", "-n", "1", head], cwd=root, text=True, stderr=subprocess.PIPE
+        ).split()
+        if len(parents) != 3:
+            raise ValueError(f"{head} is not a merge commit")
         entries = changed_entries(base, head, root)
     except subprocess.CalledProcessError as error:
         detail = error.stderr.strip() if isinstance(error.stderr, str) else (error.stderr or b"").decode(errors="replace").strip()
@@ -383,28 +355,6 @@ def plan(event, base, head, root=ROOT, crates=None, draft=False, queue_runs=None
     except (UnicodeDecodeError, ValueError) as error:
         return select([], crates, root, f"comparison unavailable: {error}")
     return select(entries, crates, root)
-
-
-def plan_push(before, head, root, crates, queue_runs):
-    """A push to main: no lane when a merge queue run verified this commit and
-    the push changed no cache key, every lane with the reason otherwise."""
-    if not before:
-        return select([], crates, root, "push: no passing push run on main to compare from")
-    try:
-        # `before` is the last main commit whose push run passed, so
-        # before..head is every merge since, including a replaced run's.
-        changed = [name for _, name in changed_entries(before, head, root)]
-    except (subprocess.CalledProcessError, UnicodeDecodeError, ValueError) as error:
-        return select([], crates, root, f"push: cache keys unknown, comparison unavailable: {error}")
-    keyed = [name for name in changed if any(fnmatchcase(name, pattern) for pattern in CACHE_KEYS)]
-    if keyed:
-        return select([], crates, root, f"push: {keyed[0]} changes a CI cache key, which main saves")
-    if queue_runs is None:
-        return select([], crates, root, "push: merge queue lookup not given")
-    url, reason = queue_verification(queue_runs, head, root)
-    if url is None:
-        return select([], crates, root, f"push: {reason}")
-    return {"full": False, "lanes": [], "rust_packages": [], "reasons": {}, "verified_by": url}
 
 
 def aggregate(needs):
@@ -420,12 +370,7 @@ def aggregate(needs):
     if needs["plan"]["outputs"].get("draft") == "true":
         raise ValueError("draft: lanes not run, mark ready for review")
     planned = json.loads(needs["plan"]["outputs"]["lanes"])
-    # A push to main that a merge queue run verified plans no lane; every lane
-    # must then have been skipped.
-    verified = bool(needs["plan"]["outputs"].get("verified-by"))
-    if verified and planned:
-        raise ValueError(f"a verified push planned lanes: {planned}")
-    if (not planned and not verified) or not set(planned) <= set(LANES):
+    if not planned or not set(planned) <= set(LANES):
         raise ValueError(f"plan named no lane or an unknown one: {planned}")
     errors = []
     for lane in LANES:
@@ -440,8 +385,6 @@ def aggregate(needs):
 def summary(result):
     if result.get("draft"):
         return "A draft pull request plans no lane; marking it ready for review runs them.\n"
-    if result.get("verified_by"):
-        return f"The merge queue verified this commit ({result['verified_by']}); no lane runs again on main.\n"
     lines = ["| Lane | Runs | Why |", "| --- | --- | --- |"]
     for lane in LANES:
         reasons = result["reasons"].get(lane, [])
@@ -461,21 +404,17 @@ def main():
     plan_parser.add_argument("--base", default="HEAD^1")
     plan_parser.add_argument("--head", default="HEAD")
     plan_parser.add_argument("--draft", choices=("true", "false"), default="false", help="the pull request is a draft")
-    plan_parser.add_argument(
-        "--queue-runs", help="a push: the Actions API answer listing merge queue runs of this workflow on HEAD; missing means the lookup failed"
-    )
     sub.add_parser("aggregate", help="check toJSON(needs), read from NEEDS")
     args = parser.parse_args()
 
     if args.command == "plan":
-        result = plan(args.event, args.base, args.head, draft=args.draft == "true", queue_runs=args.queue_runs)
+        result = plan(args.event, args.base, args.head, draft=args.draft == "true")
         print(json.dumps(result, indent=2))
         if os.environ.get("GITHUB_OUTPUT"):
             with open(os.environ["GITHUB_OUTPUT"], "a", encoding="utf-8") as output:
                 output.write(f"lanes={json.dumps(result['lanes'])}\n")
                 output.write(f"full={str(result['full']).lower()}\n")
                 output.write(f"draft={str(result.get('draft', False)).lower()}\n")
-                output.write(f"verified-by={result.get('verified_by', '')}\n")
                 output.write(f"rust-packages={json.dumps(result['rust_packages'])}\n")
         if os.environ.get("GITHUB_STEP_SUMMARY"):
             with open(os.environ["GITHUB_STEP_SUMMARY"], "a", encoding="utf-8") as output:

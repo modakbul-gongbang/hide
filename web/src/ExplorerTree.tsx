@@ -1,10 +1,11 @@
 import { useVirtualizer } from "@tanstack/react-virtual";
-import { RefreshCwIcon, SearchIcon } from "lucide-react";
+import { LoaderCircleIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
 import { useEffect, useMemo, useRef, useState } from "react";
 import type { Actions } from "./actions";
 import { isHtmlFile } from "./browserViews";
 import { holdShellDrag } from "./shellDrag";
 import { EntryPointMenu } from "./components/entry-menu";
+import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
 import { useEscapeLayer } from "./components/ui/layer";
 import { Input } from "./components/ui/input";
@@ -15,7 +16,7 @@ import {
   explorerRows,
   filteredRows,
   firstChildSelection,
-  explorerGitLine,
+  explorerGitMark,
   gitBadgeColor,
   moveSelection,
   parentPath,
@@ -134,7 +135,7 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
   /** The watch-frame count already acted on, per folder. */
   const seenChanges = useRef<Record<string, number>>({});
 
-  const gitLine = explorerGitLine(changes, t);
+  const gitMark = explorerGitMark(changes, t);
   const expandedKey = expandedPaths.join("\n");
   const rows = useMemo(() => {
     if (!rootPath) return EMPTY_ROWS;
@@ -413,6 +414,17 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
           {baseName(rootPath)}
         </span>
         </Hint>
+        {gitMark ? (
+          <Hint label={gitMark.text}>
+            {gitMark.state === "loading" ? (
+              <LoaderCircleIcon role="img" className="size-(--size-icon-sm) shrink-0 animate-spin text-muted-foreground" data-explorer-git="loading" />
+            ) : (
+              <Badge role="img" variant="outline" className="border-warning text-warning" data-explorer-git={gitMark.state}>
+                !
+              </Badge>
+            )}
+          </Hint>
+        ) : null}
         <Hint label={t("common.refresh")}>
           <Button
             variant="ghost"
@@ -431,11 +443,6 @@ export function ExplorerTree({ actions }: { actions: Actions }) {
           </Button>
         </Hint>
       </div>
-      {gitLine ? (
-        <div className={`break-words border-b border-border px-md py-xs text-caption ${gitLine.state === "loading" ? "text-muted-foreground" : "text-warning"}`} data-explorer-git={gitLine.state}>
-          {gitLine.text}
-        </div>
-      ) : null}
       {refused ? (
         <div className="border-b border-border px-md py-sm text-caption text-destructive" data-explorer-refusal={refused}>
           {refused}

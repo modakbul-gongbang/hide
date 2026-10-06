@@ -242,6 +242,165 @@ fn bind_keeps_a_regular_file_at_the_path() {
     assert_eq!(std::fs::read(&path).unwrap(), b"mine");
 }
 
+#[test]
+fn a_listener_with_a_full_backlog_is_still_live_to_a_second_bind() {
+    // macOS refuses a connect the same way for a dead socket and for a live
+    // listener whose queue is full (#403), so the refusal cannot tell them
+    // apart. Nobody accepts and the clients stay, so the queue fills where
+    // the system's queue is small; Linux queues every one and Windows waits,
+    // and the answer is the same.
+    const PAST_EVERY_SMALL_BACKLOG: usize = 300;
+    let (_folder, path) = endpoint();
+    let first = LocalListener::bind(&path).unwrap();
+    let (done, finished) = mpsc::channel();
+    let flood = {
+        let path = path.clone();
+        thread::spawn(move || {
+            let mut queued = Vec::new();
+            while queued.len() < PAST_EVERY_SMALL_BACKLOG {
+                match connect_and_ask(&path, "queued\n") {
+                    Ok(client) => queued.push(client),
+                    Err(error) => {
+                        let _ = done.send(());
+                        return (queued, Some(error.kind()));
+                    }
+                }
+            }
+            let _ = done.send(());
+            (queued, None)
+        })
+    };
+    // Each client asks as it connects, because `serve_lines` answers one
+    // stream at a time in the order the system hands them out, which on
+    // Windows is not the order they connected: a client that waited to be
+    // served before asking would deadlock the server on another's silence.
+    // Only macOS needs the queue full first, and its refusal comes at once and
+    // ends the flood. Elsewhere the second bind's answer does not depend on
+    // the queue, and a connect that waits for room never ends the flood, so
+    // the bind goes ahead while the flood is still queuing.
+    if std::env::consts::OS == "macos" {
+        finished.recv().expect("the flood ended without an answer");
+    }
+    let error = LocalListener::bind(&path).unwrap_err();
+    assert_eq!(error.kind(), std::io::ErrorKind::AddrInUse, "{error:?}");
+    assert!(
+        is_endpoint(&path).unwrap(),
+        "the live listener's socket was removed"
+    );
+
+    // The first listener still serves: it is not a replaced one.
+    let closer = first.closer();
+    let server = serve_lines(first);
+    let (queued, refusal) = flood.join().unwrap();
+    if std::env::consts::OS == "macos" {
+        // The case this test exists for: the system refused while the
+        // listener lived.
+        assert_eq!(
+            refusal,
+            Some(std::io::ErrorKind::ConnectionRefused),
+            "{} connects queued without the refusal #403 needs",
+            queued.len()
+        );
+        assert!(queued.len() >= IN_FLIGHT, "refused after {}", queued.len());
+    }
+    for (index, mut client) in queued.into_iter().enumerate() {
+        assert_eq!(read_line(&mut client), "QUEUED\n", "queued connect {index}");
+    }
+    closer.close();
+    server.join().unwrap();
+}
+
+#[test]
+fn a_dropped_listener_leaves_nothing_behind() {
+    // Whatever bind uses to know a listener is alive goes with the listener.
+    let (folder, path) = endpoint();
+    let listener = LocalListener::bind(&path).unwrap();
+    drop(listener);
+    let left: Vec<_> = std::fs::read_dir(folder.path())
+        .unwrap()
+        .map(|entry| entry.unwrap().file_name())
+        .collect();
+    assert!(left.is_empty(), "left behind: {left:?}");
+    drop(LocalListener::bind(&path).unwrap());
+}
+
+/// The lock file a listener at `path` holds.
+fn lock_file_of(path: &Path) -> PathBuf {
+    let mut name = path.as_os_str().to_owned();
+    name.push(".lock");
+    PathBuf::from(name)
+}
+
+#[test]
+fn a_lock_file_left_with_no_holder_does_not_block_the_next_bind() {
+    // What a killed listener leaves: its lock file, held by no one.
+    let (_folder, path) = endpoint();
+    std::fs::write(lock_file_of(&path), b"").unwrap();
+    let listener = LocalListener::bind(&path).unwrap();
+    drop(listener);
+    assert!(
+        !lock_file_of(&path).exists(),
+        "the claimed file went with it"
+    );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_linked_lock_file_is_refused_and_its_target_left_alone() {
+    let (folder, path) = endpoint();
+    let target = folder.path().join("target");
+    std::fs::write(&target, b"mine").unwrap();
+    std::os::unix::fs::symlink(&target, lock_file_of(&path)).unwrap();
+    let error = LocalListener::bind(&path).unwrap_err();
+    assert!(
+        error.to_string().contains(".lock"),
+        "the error names the file: {error}"
+    );
+    assert_eq!(std::fs::read(&target).unwrap(), b"mine");
+    assert!(
+        std::fs::symlink_metadata(lock_file_of(&path))
+            .unwrap()
+            .is_symlink(),
+        "the planted link is the caller's to remove"
+    );
+    assert!(!path.exists(), "nothing was bound");
+}
+
+#[test]
+fn a_lock_file_with_a_second_name_is_refused() {
+    let (folder, path) = endpoint();
+    let other = folder.path().join("other");
+    std::fs::write(&other, b"mine").unwrap();
+    std::fs::hard_link(&other, lock_file_of(&path)).unwrap();
+    let error = LocalListener::bind(&path).unwrap_err();
+    assert_eq!(
+        error.kind(),
+        std::io::ErrorKind::PermissionDenied,
+        "{error:?}"
+    );
+    assert!(error.to_string().contains(".lock"), "{error}");
+    assert_eq!(std::fs::read(&other).unwrap(), b"mine");
+    assert!(!path.exists(), "nothing was bound");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_dropped_listener_keeps_a_lock_file_that_is_no_longer_its_own() {
+    // A cleaner replaced the lock file under a live listener. The file at the
+    // path is now another's to keep: removing it would leave whoever holds it
+    // unprotected, which is #403 again.
+    let (folder, path) = endpoint();
+    let listener = LocalListener::bind(&path).unwrap();
+    let replacement = folder.path().join("replacement");
+    std::fs::write(&replacement, b"").unwrap();
+    std::fs::rename(&replacement, lock_file_of(&path)).unwrap();
+    drop(listener);
+    assert!(
+        lock_file_of(&path).exists(),
+        "another's lock file was removed"
+    );
+}
+
 /// Serves `listener` until it is closed: answers each line in capitals, and
 /// passes over a stream whose client already left.
 fn serve_lines(listener: LocalListener) -> thread::JoinHandle<()> {

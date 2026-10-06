@@ -29,6 +29,8 @@ pub enum UninstrumentedReason {
     ConfigUnreadable,
     /// The runtime is here and carries no hook of Hide's.
     HooksNotInstalled,
+    /// The operator switched this agent off in Settings, Agents.
+    HooksSwitchedOff,
     /// The hook is installed, but this session was already running when it
     /// was, so it never fired. Restarting the agent instruments it.
     SessionPredatesInstall,
@@ -46,6 +48,7 @@ impl UninstrumentedReason {
         match self {
             Self::ConfigUnreadable => "config_unreadable",
             Self::HooksNotInstalled => "hooks_not_installed",
+            Self::HooksSwitchedOff => "hooks_switched_off",
             Self::SessionPredatesInstall => "session_predates_install",
             Self::HookOutdated => "hook_outdated",
             Self::Unknown => "unknown",
@@ -59,6 +62,7 @@ impl UninstrumentedReason {
         [
             Self::ConfigUnreadable,
             Self::HooksNotInstalled,
+            Self::HooksSwitchedOff,
             Self::SessionPredatesInstall,
             Self::HookOutdated,
             Self::Unknown,
@@ -76,6 +80,9 @@ impl UninstrumentedReason {
                 "Hide could not read this runtime's settings file, so its hook is not installed."
             }
             Self::HooksNotInstalled => "This runtime's Hide hook is not installed.",
+            Self::HooksSwitchedOff => {
+                "This agent is switched off in Settings, Agents, so Hide's hook is not installed."
+            }
             Self::SessionPredatesInstall => {
                 "This session started before the Hide hook was installed. Restart the agent to instrument it."
             }
@@ -141,6 +148,7 @@ pub fn instrumentation(
         HookStatus::RuntimeAbsent | HookStatus::NotInstalled => {
             return uninstrumented(UninstrumentedReason::HooksNotInstalled);
         }
+        HookStatus::Off => return uninstrumented(UninstrumentedReason::HooksSwitchedOff),
         HookStatus::Installed { .. } | HookStatus::Outdated { .. } => {}
     }
     match observation.token_version {
@@ -209,6 +217,7 @@ impl RuntimeDiagnosis {
                 )
             }
             HookStatus::NotInstalled => "Not installed".to_owned(),
+            HookStatus::Off => "Off".to_owned(),
             HookStatus::Failed { reason } => reason.message(),
         }
     }
@@ -361,7 +370,13 @@ pub(crate) fn runtime_binary(runtime: AgentRuntime, home: &Path) -> Option<PathB
         AgentRuntime::ClaudeCode => "claude",
         AgentRuntime::Codex => "codex",
     };
-    // Where the installers put a CLI that a hook's PATH may not reach.
+    find_binary(name, home)
+}
+
+/// The program `name` as a hook's daemon would find it: the login `PATH`,
+/// then the folders installers put a CLI in that such a `PATH` may not reach.
+/// The install kit uses it to detect every agent it has an adapter for.
+pub fn find_binary(name: &str, home: &Path) -> Option<PathBuf> {
     let installed = std::env::join_paths([
         home.join(".local/bin"),
         home.join("Library/pnpm"),
@@ -374,6 +389,13 @@ pub(crate) fn runtime_binary(runtime: AgentRuntime, home: &Path) -> Option<PathB
         .ok()
         .and_then(|path| hide_platform::host::find_program(&path, name))
         .or_else(|| hide_platform::host::find_program(&installed, name))
+}
+
+/// The version a program reports for `--version`, within the same short
+/// bound the runtime probe uses; `None` when it does not answer in time,
+/// exits non-zero or prints no `x.y.z`.
+pub fn program_version(binary: &Path) -> Option<String> {
+    version_output(binary, RUNTIME_VERSION_PROBE_TIMEOUT).and_then(|output| parse_version(&output))
 }
 
 fn version_output(binary: &Path, timeout: Duration) -> Option<String> {
@@ -405,7 +427,8 @@ fn parse_version(output: &str) -> Option<String> {
     })
 }
 
-fn version_at_least(installed: &str, minimum: &str) -> bool {
+/// Whether `installed` is at least `minimum`, both `x.y.z`.
+pub fn version_at_least(installed: &str, minimum: &str) -> bool {
     let tuple = |version: &str| {
         let parts = version
             .split('.')
@@ -521,10 +544,21 @@ mod tests {
     }
 
     #[test]
+    fn an_agent_switched_off_is_uninstrumented_for_that_reason_and_offers_no_install() {
+        let result = instrumentation(PaneObservation::default(), Some(&HookStatus::Off));
+        assert_eq!(result.reason, Some(UninstrumentedReason::HooksSwitchedOff));
+        assert_eq!(
+            UninstrumentedReason::from_code("hooks_switched_off"),
+            Some(UninstrumentedReason::HooksSwitchedOff)
+        );
+    }
+
+    #[test]
     fn every_reason_carries_a_distinct_sentence() {
         let reasons = [
             UninstrumentedReason::ConfigUnreadable,
             UninstrumentedReason::HooksNotInstalled,
+            UninstrumentedReason::HooksSwitchedOff,
             UninstrumentedReason::SessionPredatesInstall,
             UninstrumentedReason::HookOutdated,
             UninstrumentedReason::Unknown,

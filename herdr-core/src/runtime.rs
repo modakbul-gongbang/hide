@@ -65,8 +65,8 @@ use crate::live::{
 use crate::model::{
     ArchiveDetailSnapshot, CheckoutSnapshot, CoreOptions, DEFAULT_PANE_TEXT_SCALE,
     DiagnosticSnapshot, Edited, EditorDocumentSnapshot, EditorTabKind, EditorTabSnapshot,
-    ExplorerOperationSnapshot, LastErrorSnapshot, PANE_TEXT_SCALE_STEP, PaneFindOpened,
-    PaneFindRoute, PaneFindSnapshot, PaneFocusRequestSnapshot, PaneForkSnapshot,
+    ExplorerOperationSnapshot, LastErrorSnapshot, OperatorFocusAck, PANE_TEXT_SCALE_STEP,
+    PaneFindOpened, PaneFindRoute, PaneFindSnapshot, PaneFocusRequestSnapshot, PaneForkSnapshot,
     PaneLayoutNodeSnapshot, PaneLayoutSnapshot, PaneSnapshot, PetBadgesSnapshot, PetOriginSnapshot,
     PetSnapshot, RemoteFileEntrySnapshot, RemoteFileListSnapshot, RemoteSessionSnapshot,
     RightPanelSection, SCHEMA_VERSION, SessionRowSnapshot, SidebarAgentSnapshot, Snapshot,
@@ -448,6 +448,10 @@ pub(crate) struct PendingPaneFocusControl {
 
 /// How many diagnostics the snapshot keeps. Newest are kept; the oldest go.
 const DIAGNOSTIC_RETENTION: usize = 256;
+/// Pages whose last operator focus number the snapshot keeps, oldest evicted.
+const OPERATOR_FOCUS_CLIENT_LIMIT: usize = 16;
+/// Longest client id a page may give its operator focus events.
+const OPERATOR_FOCUS_CLIENT_ID_LIMIT: usize = 64;
 
 /// How many tabs keep their panes attached: the one on screen and the four
 /// most recently shown.
@@ -1175,6 +1179,10 @@ pub struct Runtime {
     confirmed_pane_layout_signatures: HashMap<String, PaneTopologySignature>,
     recent_closed_sequence: u64,
     reopen_in_flight: Option<String>,
+    /// A reopen asked for while this machine's newest close was still
+    /// settling: it runs once that close completes, and is dropped by any
+    /// other outcome or by a newer close.
+    reopen_after_close: Option<String>,
     /// Advances on every `set_live`, so a worker started against an earlier
     /// local Herdr connection cannot settle an operation on the current one.
     live_generation: u64,
@@ -1191,6 +1199,10 @@ pub struct Runtime {
     /// An acknowledgment arrived for a tab the session had already placed
     /// under another checkout, so the local coordinator republishes once.
     created_tab_republish_requested: bool,
+    /// The clock the birth window is measured on: monotonic, so a wall-clock
+    /// step cannot end it early, and replaceable so a test moves it rather
+    /// than waiting (`session.rs`, `BirthClock`).
+    birth_clock: session::BirthClock,
     next_async_operation_id: u64,
     /// Panes that were scrolled before any view reported their size. One
     /// diagnostic answers for the whole wait; a wheel burst against a pane
@@ -1409,6 +1421,10 @@ pub struct Runtime {
     /// in the snapshot because the shell renders the checkout rows these
     /// produce, not the raw list.
     worktree_catalog: crate::model::WorktreeCatalogSnapshot,
+    /// Each repository's worktree paths as the file system names them, read
+    /// when the catalog arrives so a created tab's clamp compares by names
+    /// on every session (`session.rs`, `CreatedTabClamp`).
+    local_worktree_paths: Vec<Vec<String>>,
     /// Every open repository's pull requests, from the operator's own `gh`.
     github: crate::model::GithubSnapshot,
     /// Measurements for the focused project's worktrees. The reader updates
@@ -1742,11 +1758,13 @@ impl Runtime {
             confirmed_pane_layout_signatures: HashMap::new(),
             recent_closed_sequence: 0,
             reopen_in_flight: None,
+            reopen_after_close: None,
             live_generation: 0,
             status_refresh_requested: false,
             created_tab_checkouts: BTreeMap::new(),
             created_device_tabs: BTreeMap::new(),
             created_tab_republish_requested: false,
+            birth_clock: Arc::new(Instant::now),
             next_async_operation_id: 0,
             #[cfg(test)]
             suppress_terminal_session_workers: false,
@@ -1834,6 +1852,7 @@ impl Runtime {
             fork_sequence: 0,
             listening_ports: crate::model::ListeningPortsSnapshot::default(),
             worktree_catalog: crate::model::WorktreeCatalogSnapshot::default(),
+            local_worktree_paths: Vec::new(),
             github: crate::model::GithubSnapshot::default(),
             disk_usage: Vec::new(),
             github_generations: HashMap::new(),

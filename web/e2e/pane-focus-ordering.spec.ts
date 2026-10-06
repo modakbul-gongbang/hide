@@ -10,17 +10,32 @@ const focused = (gate: Awaited<ReturnType<typeof herdrGate>>) => gate.params("pa
 
 type Diagnostic = { kind: string; message: string; occurred_at: number };
 
-function observeDiagnostics(page: Page): () => Diagnostic[] {
+/** The diagnostics list the page is sent, with a count of every entry of a
+ * kind it has ever been sent and of every frame. The list is capped and drops
+ * from its front as a burst appends, so the number of entries of one kind in
+ * it falls and cannot say how many arrived. */
+function observeDiagnostics(page: Page): (() => Diagnostic[]) & { added: (kind: string) => number; frames: () => number } {
   let diagnostics: Diagnostic[] = [];
+  let frames = 0;
+  const added = new Map<string, number>();
+  const same = (a: Diagnostic, b: Diagnostic) => a.kind === b.kind && a.message === b.message && a.occurred_at === b.occurred_at;
   page.on("websocket", (socket) => socket.on("framereceived", ({ payload }) => {
+    frames += 1;
     const frame = JSON.parse(String(payload)) as {
       type: string; payload?: { rest?: { status?: { diagnostics?: Diagnostic[] } } };
     };
     if ((frame.type === "snapshot" || frame.type === "delta") && frame.payload?.rest?.status?.diagnostics) {
-      diagnostics = frame.payload.rest.status.diagnostics;
+      const next = frame.payload.rest.status.diagnostics;
+      // The list drops from its front and appends at its back, so what is
+      // new is whatever follows the longest run of the old tail that the new
+      // list starts with.
+      let kept = Math.min(diagnostics.length, next.length);
+      while (kept > 0 && !diagnostics.slice(diagnostics.length - kept).every((entry, i) => same(entry, next[i]!))) kept -= 1;
+      for (const entry of next.slice(kept)) added.set(entry.kind, (added.get(entry.kind) ?? 0) + 1);
+      diagnostics = next;
     }
   }));
-  return () => diagnostics;
+  return Object.assign(() => diagnostics, { added: (kind: string) => added.get(kind) ?? 0, frames: () => frames });
 }
 
 /** Passive evidence only: retain the last 64 outgoing focus messages without
@@ -73,20 +88,28 @@ function observeFocusFrames(page: Page) {
   };
 }
 
-// Both cases exercise real terminal input/focus through the platform's Herdr.
-test("rapid pane clicks coalesce behind one request and leave keys on the last pane", { tag: "@platform" }, async ({ page }) => {
+/** Hide on two panes of the platform's Herdr, behind the gate, with the clicks
+ * and the facts the burst tests read. `stop` ends everything that started. */
+async function startFocusStack(page: Page, label: string, mark: (stage: string) => void = () => {}) {
   const herdr = await startHerdr();
   const focusFrames = observeFocusFrames(page);
-  // Two fixed bursts produce at most 32 stage records, with no input contents.
-  const stages: { stage: string; at: number }[] = [];
-  const mark = (stage: string) => { stages.push({ stage, at: Date.now() }); };
-  let firstFocusAt: number | undefined;
-  let mouseSession: CDPSession | undefined;
   let gate: Awaited<ReturnType<typeof herdrGate>> | undefined;
   let daemon: Daemon | undefined;
+  const stop = async () => {
+    try {
+      daemon?.stop();
+      await gate?.stop();
+    } finally {
+      try {
+        herdr.stop();
+      } finally {
+        await focusFrames.save();
+      }
+    }
+  };
   try {
     gate = await herdrGate(herdr);
-    daemon = await startHided({ ...herdr, socket: gate.socket }, "focus-ordering");
+    daemon = await startHided({ ...herdr, socket: gate.socket }, label);
     const diagnostics = observeDiagnostics(page);
     await page.goto(`${daemon.origin}/?probe=1#token=${daemon.token}`);
     await enterWorkspace(page, "fixture");
@@ -95,12 +118,6 @@ test("rapid pane clicks coalesce behind one request and leave keys on the last p
     for (const pane of panes) await expect(pane).toHaveAttribute("data-transport", "controlling");
     await expect.poll(() => herdrHasFocus(herdr, first)).toBe(true);
     const boxes = await Promise.all(panes.map((pane) => pane.boundingBox()));
-    // Protocol setup and detach belong outside the held Herdr request.
-    // Detach alone consumed two seconds of its five-second budget on macOS.
-    mark("cdp.connect.before");
-    const mouse = await page.context().newCDPSession(page);
-    mouseSession = mouse;
-    mark("cdp.connect.after");
     // These polls read captured diagnostics in memory, without browser or
     // Herdr I/O. Observe acceptance promptly within the unchanged timeout.
     const focusObservation = { intervals: [25] };
@@ -143,6 +160,29 @@ test("rapid pane clicks coalesce behind one request and leave keys on the last p
         && last.message.startsWith(`Pane ${first} focus confirmed`)
         && last.occurred_at >= lastClickAt;
     };
+    return { herdr, gate, diagnostics, focusFrames, first, second, panes, focusObservation, click, clickBurst, requested, confirmed, stop };
+  } catch (error) {
+    await stop();
+    throw error;
+  }
+}
+
+// These cases exercise real terminal input/focus through the platform's Herdr.
+test("rapid pane clicks coalesce behind one request", { tag: "@platform" }, async ({ page }) => {
+  // Two fixed bursts produce at most 32 stage records, with no input contents.
+  const stages: { stage: string; at: number }[] = [];
+  const mark = (stage: string) => { stages.push({ stage, at: Date.now() }); };
+  let firstFocusAt: number | undefined;
+  let mouseSession: CDPSession | undefined;
+  const stack = await startFocusStack(page, "focus-ordering", mark);
+  const { herdr, gate, diagnostics, focusFrames, first, second, panes, focusObservation, click, clickBurst, requested, confirmed } = stack;
+  try {
+    // Protocol setup and detach belong outside the held Herdr request.
+    // Detach alone consumed two seconds of its five-second budget on macOS.
+    mark("cdp.connect.before");
+    const mouse = await page.context().newCDPSession(page);
+    mouseSession = mouse;
+    mark("cdp.connect.after");
 
     mark("gate.arm");
     const held = gate.arm("pane.focus");
@@ -187,24 +227,6 @@ test("rapid pane clicks coalesce behind one request and leave keys on the last p
     expect(focused(gate)).toEqual([second, first]);
     expect(gate.maximum("pane.focus")).toBe(1);
     expect(herdrHasFocus(herdr, first)).toBe(true);
-
-    // The same rapid clicks without a held request prove the ordinary path.
-    mouseSession = await page.context().newCDPSession(page);
-    await clickBurst(mouseSession);
-    await expect.poll(confirmed, focusObservation).toBe(true);
-    await expect(panes[0]).toHaveAttribute("data-focused", "true");
-    await expect.poll(() => herdrHasFocus(herdr, first)).toBe(true);
-    const marker = "FOCUS_ORDERING_INPUT";
-    await page.keyboard.type(marker);
-    await expect.poll(() => fs.readFileSync(herdr.inputLogs[0], "utf8")).toContain(marker);
-    expect(fs.readFileSync(herdr.inputLogs[1], "utf8")).not.toContain(marker);
-    expect(gate.maximum("pane.focus")).toBe(1);
-    await screenshot(page, "pane-focus-ordering-last-click");
-
-    // With the local burst confirmed, a real external Herdr focus is followed.
-    herdr.run(["pane", "focus", "--direction", "right", "--pane", first]);
-    await expect(panes[1]).toHaveAttribute("data-focused", "true");
-    await expect.poll(() => diagnostics().some((entry) => entry.kind === "pane.focus.followed")).toBe(true);
   } finally {
     try {
       mark("cdp.detach.before");
@@ -215,11 +237,59 @@ test("rapid pane clicks coalesce behind one request and leave keys on the last p
         first_focus_at: firstFocusAt,
         stages: stages.map(({ stage, at }) => ({ stage, at, since_first_focus_ms: firstFocusAt === undefined ? null : at - firstFocusAt })),
       }));
-      daemon?.stop();
-      await gate?.stop();
-      herdr.stop();
-      await focusFrames.save();
+      await stack.stop();
     }
+  }
+});
+
+test("keys typed after rapid pane clicks reach the last pane", { tag: "@platform" }, async ({ page }) => {
+  const stack = await startFocusStack(page, "focus-keys");
+  const { herdr, gate, diagnostics, focusFrames, first, panes, focusObservation, clickBurst, confirmed } = stack;
+  let mouse: CDPSession | undefined;
+  try {
+    mouse = await page.context().newCDPSession(page);
+    // The page has sent every click when the burst returns, not hided accepted
+    // them: confirming a request that was not the last one is not the burst's
+    // end. Every focus change the page sent is observed accepted, so the last
+    // confirmation is the last click's.
+    const requestedBefore = diagnostics.added("pane.focus.requested");
+    const sentBefore = focusFrames.changes();
+    await clickBurst(mouse);
+    await expect.poll(() => diagnostics.added("pane.focus.requested"), focusObservation).toBe(requestedBefore + focusFrames.changes() - sentBefore);
+    await expect.poll(confirmed, focusObservation).toBe(true);
+    // Playwright sees a frame on the wire before the page's handler runs it, so
+    // every frame seen has to have reached the page before its focus is read.
+    await expect.poll(() => page.evaluate(() => window.__hideProbe?.arrivals() ?? 0), focusObservation).toBeGreaterThanOrEqual(diagnostics.frames());
+    // The keys go to the terminal that holds the keyboard, which follows the snapshot.
+    await expect(panes[0].locator(".xterm-helper-textarea")).toBeFocused();
+    await expect(panes[0]).toHaveAttribute("data-focused", "true");
+    await expect.poll(() => herdrHasFocus(herdr, first)).toBe(true);
+    const marker = "FOCUS_ORDERING_INPUT";
+    await page.keyboard.type(marker);
+    await expect.poll(() => fs.readFileSync(herdr.inputLogs[0], "utf8")).toContain(marker);
+    expect(fs.readFileSync(herdr.inputLogs[1], "utf8")).not.toContain(marker);
+    expect(gate.maximum("pane.focus")).toBe(1);
+    await screenshot(page, "pane-focus-ordering-last-click");
+  } finally {
+    try {
+      await mouse?.detach();
+    } finally {
+      await stack.stop();
+    }
+  }
+});
+
+test("a real external Herdr focus is followed", { tag: "@platform" }, async ({ page }) => {
+  const stack = await startFocusStack(page, "focus-external");
+  const { herdr, diagnostics, first, panes } = stack;
+  try {
+    await expect(panes[0]).toHaveAttribute("data-focused", "true");
+    const startedAt = Date.now();
+    herdr.run(["pane", "focus", "--direction", "right", "--pane", first]);
+    await expect(panes[1]).toHaveAttribute("data-focused", "true");
+    await expect.poll(() => diagnostics().some((entry) => entry.kind === "pane.focus.followed" && entry.occurred_at >= startedAt)).toBe(true);
+  } finally {
+    await stack.stop();
   }
 });
 

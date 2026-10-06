@@ -107,11 +107,12 @@ pub fn device_hook_status(
         },
         ComponentState::Outdated => HookStatus::Outdated { version: 0 },
         ComponentState::Absent => HookStatus::RuntimeAbsent,
-        // A hook part has no switch, so `Off` never names one.
-        ComponentState::NotInstalled
-        | ComponentState::Removed
-        | ComponentState::Failed
-        | ComponentState::Off => HookStatus::NotInstalled,
+        // The agent's switch is off: the hook is absent on purpose, which is
+        // not the same cause as one Hide never installed.
+        ComponentState::Off => HookStatus::Off,
+        ComponentState::NotInstalled | ComponentState::Removed | ComponentState::Failed => {
+            HookStatus::NotInstalled
+        }
     })
 }
 
@@ -160,6 +161,37 @@ mod tests {
         assert_eq!(read.version, Some(1));
         assert_eq!(read.working, None);
         assert_eq!(read.done, None);
+    }
+
+    #[test]
+    fn a_hook_part_of_an_agent_that_is_off_reads_off_and_not_not_installed() {
+        let kit = |state| crate::model::KitSnapshot {
+            components: vec![crate::model::KitComponentSnapshot {
+                id: hide_kit::ComponentId::ClaudeCodeHook,
+                label: String::new(),
+                state,
+                reason: None,
+                location: None,
+                codex_daemon: None,
+            }],
+            ..Default::default()
+        };
+        assert_eq!(
+            device_hook_status(
+                false,
+                &kit(hide_kit::ComponentState::Off),
+                AgentRuntime::ClaudeCode
+            ),
+            Some(hide_agent_hooks::HookStatus::Off)
+        );
+        assert_eq!(
+            device_hook_status(
+                false,
+                &kit(hide_kit::ComponentState::NotInstalled),
+                AgentRuntime::ClaudeCode
+            ),
+            Some(hide_agent_hooks::HookStatus::NotInstalled)
+        );
     }
 
     #[test]

@@ -92,6 +92,13 @@ pub(super) struct FocusPaneRequestPayload {
     /// while another device is in front is one action (S6 B12, B21).
     #[serde(default)]
     pub(super) focus_device: bool,
+    /// The page that sent an operator focus and the number it gave this one,
+    /// so the snapshot can say how much of what the page sent it includes
+    /// (`OperatorFocusAck`). Both or neither.
+    #[serde(default)]
+    pub(super) client_id: Option<String>,
+    #[serde(default)]
+    pub(super) sequence: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1002,6 +1009,19 @@ pub(super) struct KitReinstallPayload {
     pub(super) device_id: String,
     #[serde(default)]
     pub(super) components: Option<Vec<hide_kit::ComponentId>>,
+    /// Agents to repair, by adapter id; with `components`, only what is
+    /// named is repaired.
+    #[serde(default)]
+    pub(super) agents: Option<Vec<String>>,
+}
+
+/// The operator switched an agent on or off from its row (issue #517); every
+/// adapter id has a switch, whether or not the agent is set up there.
+#[derive(Debug, Deserialize)]
+pub(super) struct KitAgentSetPayload {
+    pub(super) device_id: String,
+    pub(super) agent: String,
+    pub(super) enabled: bool,
 }
 
 /// The operator switched a kit part on or off from its row (PRD
@@ -1247,6 +1267,7 @@ pub(super) enum Event {
     CancelRepositoryClone(CancelRepositoryClonePayload),
     KitReinstall(KitReinstallPayload),
     KitComponentSet(KitComponentSetPayload),
+    KitAgentSet(KitAgentSetPayload),
     KitCheck(KitCheckPayload),
     UiAttached(UiAttachedPayload),
     AiSettings(AiSettingsPayload),
@@ -1453,6 +1474,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "cancel_repository_clone" => decode!(CancelRepositoryClonePayload, CancelRepositoryClone),
         "kit_reinstall" => decode!(KitReinstallPayload, KitReinstall),
         "kit_component_set" => decode!(KitComponentSetPayload, KitComponentSet),
+        "kit_agent_set" => decode!(KitAgentSetPayload, KitAgentSet),
         "kit_check" => decode!(KitCheckPayload, KitCheck),
         "ui_attached" => decode!(UiAttachedPayload, UiAttached),
         "ai_settings" => decode!(AiSettingsPayload, AiSettings),
@@ -1655,6 +1677,9 @@ impl Runtime {
                 true
             }
             Event::FocusPane(payload) => {
+                if payload.origin == PaneFocusOrigin::Operator {
+                    self.acknowledge_operator_focus(payload.client_id.as_deref(), payload.sequence);
+                }
                 self.focus_pane(payload.pane_id, payload.origin, payload.request_id);
                 if payload.focus_device
                     && self.snapshot.status.last_error.is_none()
@@ -1709,9 +1734,14 @@ impl Runtime {
                 payload.component,
                 payload.enabled,
             ),
-            Event::KitReinstall(payload) => {
-                self.request_kit_reinstall(&payload.device_id, payload.components.as_deref())
+            Event::KitAgentSet(payload) => {
+                self.request_kit_agent_set(&payload.device_id, &payload.agent, payload.enabled)
             }
+            Event::KitReinstall(payload) => self.request_kit_reinstall(
+                &payload.device_id,
+                payload.components.as_deref(),
+                payload.agents.as_deref(),
+            ),
             Event::KitCheck(_) => self.request_kit_check(),
             // Nothing drawn changes; the coordinator reads it on its next wake.
             Event::UiAttached(payload) => {

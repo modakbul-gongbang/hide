@@ -18,6 +18,8 @@
 //!   "never installed"; `~/.hide/agent-hooks/installed-once` from before the
 //!   kit is not such a record (B20).
 
+mod agent_kit;
+pub mod agents;
 mod cli;
 mod codex_per_pane;
 mod coordination_retirement;
@@ -39,6 +41,7 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
+pub use agents::{AgentAdapter, AgentReport, Availability, HookSupport, PieceReport, SkillDir};
 pub use coordination_retirement::preflight as retirement_preflight;
 pub use device::{CURRENT, device_target};
 pub use labels::{HCOORD_PLUGIN_ID, LABELS_PLUGIN_ID, Retirement, labels_home, plugin_state_dir};
@@ -161,6 +164,10 @@ pub struct ComponentReport {
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct KitReport {
     pub components: Vec<ComponentReport>,
+    /// Every agent Hide has an adapter for, in the adapters' order (issue
+    /// #517); empty in a report from a build that predates them.
+    #[serde(default)]
+    pub agents: Vec<AgentReport>,
     /// What an apply took out of the retired labels plugin; empty when there
     /// was nothing of it (PRD labels-in-hided D-12).
     #[serde(default, skip_serializing_if = "Retirement::is_empty")]
@@ -191,6 +198,7 @@ impl KitReport {
                     codex_daemon: None,
                 })
                 .collect(),
+            agents: Vec::new(),
             labels_retirement: Retirement::default(),
             legacy_retirement: Retirement::default(),
         }
@@ -246,6 +254,13 @@ pub struct Scope {
     pub restore: BTreeSet<ComponentId>,
     /// Parts the operator turned off ([`ComponentId::can_turn_off`]).
     pub turn_off: BTreeSet<ComponentId>,
+    /// Agents the operator switched on, by adapter id: the choice is
+    /// recorded and each of the agent's pieces is installed again, even one
+    /// that was taken away (issue #517).
+    pub agent_on: BTreeSet<String>,
+    /// Agents the operator switched off: their marked entries and stubs come
+    /// out and no pass puts them back.
+    pub agent_off: BTreeSet<String>,
 }
 
 impl Scope {
@@ -257,19 +272,50 @@ impl Scope {
     pub fn reinstall(parts: impl IntoIterator<Item = ComponentId>) -> Self {
         Self {
             restore: parts.into_iter().collect(),
-            turn_off: BTreeSet::new(),
+            ..Self::default()
         }
     }
 
     pub fn turn_off(parts: impl IntoIterator<Item = ComponentId>) -> Self {
         Self {
-            restore: BTreeSet::new(),
             turn_off: parts.into_iter().collect(),
+            ..Self::default()
         }
     }
 
+    /// The operator's per-agent choices: `on` switched on (or Reinstall of an
+    /// agent that is on), `off` switched off.
+    pub fn agents<'a>(
+        on: impl IntoIterator<Item = &'a str>,
+        off: impl IntoIterator<Item = &'a str>,
+    ) -> Self {
+        Self {
+            agent_on: on.into_iter().map(str::to_owned).collect(),
+            agent_off: off.into_iter().map(str::to_owned).collect(),
+            ..Self::default()
+        }
+        .settled()
+    }
+
+    /// An agent named both ways in one request is switched off, the safer
+    /// reading; a later request overrides an earlier one in [`Self::merge`].
+    fn settled(mut self) -> Self {
+        let both: Vec<String> = self
+            .agent_on
+            .intersection(&self.agent_off)
+            .cloned()
+            .collect();
+        for id in both {
+            self.agent_on.remove(&id);
+        }
+        self
+    }
+
     pub fn is_automatic(&self) -> bool {
-        self.restore.is_empty() && self.turn_off.is_empty()
+        self.restore.is_empty()
+            && self.turn_off.is_empty()
+            && self.agent_on.is_empty()
+            && self.agent_off.is_empty()
     }
 
     /// Two requests for one machine as one; for a part named by both, the
@@ -282,6 +328,14 @@ impl Scope {
         for id in later.turn_off {
             self.restore.remove(&id);
             self.turn_off.insert(id);
+        }
+        for id in later.agent_on {
+            self.agent_off.remove(&id);
+            self.agent_on.insert(id);
+        }
+        for id in later.agent_off {
+            self.agent_on.remove(&id);
+            self.agent_off.insert(id);
         }
         self
     }
@@ -337,10 +391,12 @@ fn install(id: ComponentId, target: &KitTarget) -> Result<(), String> {
 fn turn_off(id: ComponentId, target: &KitTarget) -> Result<(), String> {
     match id {
         ComponentId::CodexPerPane => codex_per_pane::turn_off(target),
-        ComponentId::Cli
-        | ComponentId::ClaudeCodeHook
-        | ComponentId::CodexHook
-        | ComponentId::CoordinationRetirement => {
+        // An agent's switch turns its hook part off (`agent_kit::part_gate`).
+        ComponentId::ClaudeCodeHook => {
+            hooks::turn_off(target, hide_agent_hooks::AgentRuntime::ClaudeCode)
+        }
+        ComponentId::CodexHook => hooks::turn_off(target, hide_agent_hooks::AgentRuntime::Codex),
+        ComponentId::Cli | ComponentId::CoordinationRetirement => {
             Err(format!("{} cannot be turned off", id.label()))
         }
     }
@@ -369,6 +425,7 @@ fn report(
     target: &KitTarget,
     observed: Observed,
     recorded: bool,
+    switched_off: bool,
     failure: Option<String>,
 ) -> ComponentReport {
     let codex_daemon = (id == ComponentId::CodexPerPane)
@@ -384,10 +441,17 @@ fn report(
             (ComponentState::Installed, codex_per_pane::note(target))
         }
         (None, Observed::Current) => (ComponentState::Installed, None),
+        // An agent that is switched off gets nothing from a pass, so a hook
+        // that is out of date or cannot be judged is not a repair to offer.
+        (None, Observed::Stale(_) | Observed::Blocked(_)) if switched_off => {
+            (ComponentState::Off, None)
+        }
         (None, Observed::Stale(reason)) => (ComponentState::Outdated, Some(reason)),
         // Gone after Hide applied it: the operator turned it off or undid it
         // by hand, and either way it is theirs now (B36).
-        (None, Observed::Missing) if recorded && id.can_turn_off() => (ComponentState::Off, None),
+        (None, Observed::Missing) if recorded && (id.can_turn_off() || switched_off) => {
+            (ComponentState::Off, None)
+        }
         (None, Observed::Missing) if recorded => (
             ComponentState::Removed,
             Some("taken out after Hide installed it; Reinstall puts it back".to_owned()),
@@ -440,18 +504,35 @@ pub(crate) fn lock_account(target: &KitTarget) -> Result<AccountLock, String> {
     }
 }
 
-/// Judges every part without changing anything.
+/// Judges every part and every agent without changing anything.
 pub fn status(target: &KitTarget) -> KitReport {
     if let Err(reason) = record::private_state_dir(&target.home, false) {
         return retirement_blocked(target, reason);
     }
     let record = record::load(&target.home);
     let recorded = |id| record.as_ref().is_ok_and(|record| record.contains(id));
+    let switched_off = |id| {
+        record
+            .as_ref()
+            .is_ok_and(|record| agent_kit::part_is_off(record, id))
+    };
+    let components: Vec<ComponentReport> = ComponentId::ALL
+        .into_iter()
+        .map(|id| {
+            report(
+                id,
+                target,
+                observe(id, target),
+                recorded(id),
+                switched_off(id),
+                None,
+            )
+        })
+        .collect();
+    let agents = agent_kit::status(target, &record, &agent_kit::part_views(&components));
     KitReport {
-        components: ComponentId::ALL
-            .into_iter()
-            .map(|id| report(id, target, observe(id, target), recorded(id), None))
-            .collect(),
+        components,
+        agents,
         labels_retirement: Retirement::default(),
         legacy_retirement: Retirement::default(),
     }
@@ -504,23 +585,36 @@ pub fn apply(target: &KitTarget, scope: &Scope) -> KitReport {
                 target,
                 observed,
                 record.contains(id),
+                false,
                 retirement_failure.clone(),
             ));
             continue;
         }
         let recorded = record.contains(id);
-        let turning_off = scope.turn_off.contains(&id);
+        // An agent's switch governs the hook part that is its hook: off, the
+        // part is never installed or replaced; switched off now, it comes
+        // out; switched on now, it is Reinstall's (issue #517).
+        let gate = agent_kit::part_gate(&record, scope, id);
+        let agent_off = gate.is_some_and(|gate| !gate.enabled);
+        let turning_off = scope.turn_off.contains(&id) || gate.is_some_and(|gate| gate.turning_off);
+        let restoring = scope.restores(id) || gate.is_some_and(|gate| gate.turning_on);
         let install_now = !turning_off
+            && !agent_off
             && match &observed {
                 Observed::Stale(_) => true,
-                Observed::Missing => scope.restores(id) || (!recorded && record_failure.is_none()),
+                Observed::Missing => restoring || (!recorded && record_failure.is_none()),
                 Observed::Current
                 | Observed::Blocked(_)
                 | Observed::Absent(_)
                 | Observed::Unsupported(_)
                 | Observed::SupportedAbsent(_) => false,
             };
-        let undo_now = turning_off && matches!(observed, Observed::Current | Observed::Stale(_));
+        // A hook part comes out whatever blocks judging it (a missing helper,
+        // an older CLI): only Hide's marked entries are taken.
+        let hook_part = matches!(id, ComponentId::ClaudeCodeHook | ComponentId::CodexHook);
+        let undo_now = turning_off
+            && (matches!(observed, Observed::Current | Observed::Stale(_))
+                || (hook_part && matches!(observed, Observed::Blocked(_))));
         let mut failure = None;
         if install_now {
             match install(id, target) {
@@ -529,7 +623,7 @@ pub fn apply(target: &KitTarget, scope: &Scope) -> KitReport {
             }
         } else if undo_now {
             failure = turn_off(id, target).err();
-        } else if turning_off {
+        } else if turning_off || agent_off {
             // Nothing of it is in place, so it is already off.
         } else if matches!(observed, Observed::Missing) && !recorded {
             // Missing, never recorded, and the record could not be read: the
@@ -554,8 +648,17 @@ pub fn apply(target: &KitTarget, scope: &Scope) -> KitReport {
             changed |= record.remember_cli(cli::wanted(target));
         }
         let recorded_now = record.contains(id);
-        components.push(report(id, target, after, recorded_now, failure));
+        let off = agent_off || agent_kit::part_is_off(&record, id);
+        components.push(report(id, target, after, recorded_now, off, failure));
     }
+    let (agents, agents_changed) = agent_kit::apply(
+        target,
+        scope,
+        &mut record,
+        record_failure.as_ref(),
+        &agent_kit::part_views(&components),
+    );
+    changed |= agents_changed;
     if changed
         && record_failure.is_none()
         && let Err(reason) = record::save(&target.home, &record)
@@ -576,6 +679,7 @@ pub fn apply(target: &KitTarget, scope: &Scope) -> KitReport {
     legacy_retirement.failures.extend(folders.failures);
     KitReport {
         components,
+        agents,
         labels_retirement,
         legacy_retirement,
     }
@@ -617,6 +721,10 @@ pub enum RemoveOutcome {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 pub struct RemoveReport {
     pub components: Vec<(ComponentId, RemoveOutcome)>,
+    /// What removing took off for the agents: each guidance hook
+    /// (`hook:<agent>`) and each skill folder (`skill:<folder>`).
+    #[serde(default)]
+    pub agents: Vec<(String, RemoveOutcome)>,
 }
 
 /// Takes Hide's parts off a machine that is being removed from Hide: the
@@ -634,6 +742,7 @@ pub fn remove(target: &KitTarget) -> RemoveReport {
                         (id, RemoveOutcome::Failed { reason })
                     })
                     .collect(),
+                agents: Vec::new(),
             };
         }
     };
@@ -667,7 +776,8 @@ pub fn remove(target: &KitTarget) -> RemoveReport {
             },
         ));
     }
-    RemoveReport { components }
+    let agents = agent_kit::remove(target);
+    RemoveReport { components, agents }
 }
 
 /// `base` joined with `parts`, each folder checked in turn: the kit keeps

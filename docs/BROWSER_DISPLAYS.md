@@ -296,7 +296,8 @@ The trusted bridge carries only cycle keydown/keyup and cancellation; the shell 
 The shell also reports the matching identifier when release arrived in its renderer, so a late completion cannot erase a newer hold.
 Release or Escape received by another native page still ends the frozen initiating cycle.
 Window blur, page renderer failure and destruction of the held page cancel the host slot, and a hidden or unfocused page cannot begin a cycle.
-After a blur cancels a hold, the host owes the initiating page the keyboard and pays it once the window is key and that page is shown, as Escape does.
+After a blur cancels a hold, the host owes the initiating page the keyboard and pays it once the window is back and that page is shown, as Escape does.
+The window is back at its own `focus` event, not when it reads as key: on macOS that event is the window becoming main again, and Electron restores the focus it stored on `blur` (the shell, which the hold had given the keyboard) just before it, so a page paid while the window is key but not yet back loses the keyboard to that restore.
 The shell's sync that uncovers the page can land after the window returns, so the debt waits for the page instead of expiring at the first focus event.
 Another page taking the keyboard, a new hold, leaving the page's Workspace, or the page closing ends the debt.
 After the core confirms a selected display, the existing keyboard-follow request focuses its document or diff, or schedules one trusted native-page focus command after visible-slot sync.

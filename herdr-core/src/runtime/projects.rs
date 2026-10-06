@@ -394,6 +394,17 @@ impl Runtime {
         let loading = self.snapshot.git_worktrees_loading && !current;
         let changed =
             self.worktree_catalog != catalog || self.snapshot.git_worktrees_loading != loading;
+        self.local_worktree_paths = catalog
+            .projects
+            .iter()
+            .map(|project| {
+                project
+                    .worktrees
+                    .iter()
+                    .map(|worktree| session::PathRules::Local.read(&worktree.path))
+                    .collect()
+            })
+            .collect();
         self.worktree_catalog = catalog;
         self.snapshot.git_worktrees_loading = loading;
         self.refresh_worktree_projection();
@@ -3645,6 +3656,27 @@ impl Runtime {
         // is sent again, only when this read changed it.
         if self.snapshot.changes == changes {
             return false;
+        }
+        // A failure is logged when it first shows or changes. One the
+        // operator cannot act on, a folder that is not a repository, is shown
+        // nowhere else (issue 570).
+        let failure = |changes: &crate::model::ChangesSnapshot| {
+            changes
+                .unavailable_reason
+                .clone()
+                .or_else(|| changes.stale_reason.clone())
+        };
+        if let Some(error) = failure(&changes)
+            && failure(&self.snapshot.changes).as_ref() != Some(&error)
+        {
+            crate::diagnostic!(serde_json::json!({
+                "component": "changes",
+                "kind": "changes.unavailable",
+                "device": self.changes_published_key.as_ref().map(|key| key.device_id.as_str()),
+                "not_a_repository": changes.not_a_repository,
+                "stale": changes.stale_reason.is_some(),
+                "error": error,
+            }));
         }
         self.snapshot.changes.set(changes);
         true

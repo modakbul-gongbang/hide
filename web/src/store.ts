@@ -1,6 +1,7 @@
 import type { StoredBuffer } from "./buffers";
 import { create } from "zustand";
 import type { ConnectionState } from "./connection";
+import { appliedIn } from "./operatorFocus";
 import { remoteContext, remoteView } from "./remote";
 import { share } from "./share";
 import {
@@ -155,6 +156,14 @@ type Store = {
    * SSH device (`remote.ts`).
    */
   focusedPaneId: string | null;
+  /**
+   * The newest operator `focus_pane` number this page sent on the open
+   * connection, and the newest the snapshot says the core applied. While the
+   * second is behind the first, the snapshot's focused pane predates the
+   * operator's last click and does not move DOM focus (`operatorFocus.ts`).
+   */
+  operatorFocusSent: number;
+  operatorFocusApplied: number;
   herdrState: string | null;
   find: PaneFind | null;
   /** The Explorer's listings, one per expanded folder, oldest evicted past `LISTING_CAP`. */
@@ -190,6 +199,10 @@ type Store = {
   viewGeneration: number;
   refused: boolean;
   setConnection: (connection: ConnectionState, refused?: boolean) => void;
+  /** An operator focus left on the socket with this number. */
+  noteOperatorFocusSent: (sequence: number) => void;
+  /** A new connection starts with nothing in flight: what the old socket lost is not awaited. */
+  releaseOperatorFocus: () => void;
   noteDiagnostic: (message: string) => void;
   clearPathRefusal: () => void;
   setAttachmentRefusal: (refusal: { pane_id: string; reason: string } | null) => void;
@@ -269,6 +282,8 @@ export const useShellStore = create<Store>((set, get) => ({
   sessionSearch: null,
   agents: [],
   focusedPaneId: null,
+  operatorFocusSent: 0,
+  operatorFocusApplied: 0,
   herdrState: null,
   find: null,
   listings: {},
@@ -289,6 +304,8 @@ export const useShellStore = create<Store>((set, get) => ({
   viewGeneration: 0,
   refused: false,
   setConnection: (connection, refused = false) => set({ connection, refused }),
+  noteOperatorFocusSent: (sequence) => set({ operatorFocusSent: sequence }),
+  releaseOperatorFocus: () => set({ operatorFocusSent: get().operatorFocusApplied }),
   noteDiagnostic: (message) =>
     set(withDiagnostics(get().diagnostics, get().diagnosticsDropped, [message])),
   clearPathRefusal: () => {
@@ -517,6 +534,7 @@ export const useShellStore = create<Store>((set, get) => ({
         viewGeneration: frame.type === "snapshot" ? get().viewGeneration + 1 : get().viewGeneration,
         ...cursors,
         focusedPaneId: focusedPaneOf(rest),
+        operatorFocusApplied: Math.max(get().operatorFocusApplied, appliedIn(rest) ?? 0),
         herdrState: rest.status?.herdr?.state ?? get().herdrState,
       });
     } else {

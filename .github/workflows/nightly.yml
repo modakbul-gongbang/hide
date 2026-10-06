@@ -1,20 +1,20 @@
 # Full web and desktop suites and package checks on all three OSes nightly,
-# and `verify` (pr.yml) with every lane on main: a push to main that the merge
-# queue verified runs no lane, so this run is the net under a lane a pull
-# request's plan left out, and it saves main's caches after a runner image
-# changes the toolchain.
+# and `verify` (pr.yml) with every lane on main. A push to main runs every lane
+# too, but a lane it fails opens no issue; here it opens the nightly issue, and
+# a lane that breaks with no merge (a runner image, a toolchain, a service a
+# test reaches) is found within a day.
 # A test fails this run only when it fails its retry too (CI retries a failed
 # test once); a test that passes the retry is flaky, and
 # scripts/ci-flaky-report.py files it as an issue, as in pr.yml.
 # Runner windows and Linux Xvfb exercise automation, not physical IME/device QA.
-# PRs retain the Linux shards and macOS `@platform` lane (see pr.yml).
+# PRs run the whole web suite on Linux and its `@platform` tests on Windows (see pr.yml); macOS runs only here.
 # A main-branch nightly failure opens one issue or comments on the existing
 # thread once per run attempt. Candidate-branch runs never write an issue.
 # Run it by hand from the Actions tab (workflow_dispatch); actual queue load
 # and completed jobs must be measured separately from this configured matrix.
 # A hand run picks `lane`: `all`, or one system's web and desktop suites, so
 # checking Windows does not occupy the macOS runners (one full dispatch used 7
-# macOS jobs for 65 minutes). `verify`, `os contract` and `package` run for
+# macOS jobs for 65 minutes). `verify` and `package` run for
 # `all` only.
 # The schedule runs everything. A lane left out is skipped, and the failure
 # report ignores a skipped job.
@@ -82,13 +82,19 @@ jobs:
       herdr-platform: windows-x86_64
       shards: 4
 
-  os-contract:
-    name: os contract
-    if: ${{ inputs.lane == '' || inputs.lane == 'all' }}
-    uses: ./.github/workflows/os-contract.yml
+  # The remote mailbox lane on macOS, the system of the usual remote device;
+  # a pull request runs it on Linux. The OS contract's three legs run in
+  # `verify` below, which plans every lane.
+  remote-mailbox-macos:
+    name: remote mailbox (macOS)
+    if: ${{ inputs.lane != 'linux' && inputs.lane != 'windows' }}
+    uses: ./.github/workflows/remote-mailbox.yml
     permissions:
       contents: read
       issues: write
+    with:
+      runner: macos-15
+      herdr-platform: macos-aarch64
 
   desktop-e2e:
     name: desktop e2e (${{ matrix.system }} full)
@@ -156,15 +162,6 @@ jobs:
           echo "bin=$bin" >> "$GITHUB_OUTPUT"
       - name: Compare the binary schema and version with the pin
         run: python3 scripts/check-herdr-schema.py --herdr-bin "${{ steps.herdr.outputs.bin }}"
-      - name: OS contract on macOS
-        if: runner.os == 'macOS'
-        timeout-minutes: 10
-        env:
-          HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
-        run: |
-          bash scripts/install-nextest.sh
-          bash scripts/verify-cargo.sh nextest --profile ci -p hide-platform -p hide-herdr-client
-          bash scripts/verify-cargo.sh nextest --profile ci -p hide-herdr-client --test real_herdr --run-ignored only --no-capture
       - name: Whole desktop suite
         timeout-minutes: 20
         env:
@@ -204,11 +201,10 @@ jobs:
     name: verify
     if: ${{ inputs.lane == '' || inputs.lane == 'all' }}
     uses: ./.github/workflows/pr.yml
-    # pr.yml's jobs file a flaky test, and its plan job reads the Actions API.
+    # pr.yml's jobs file a flaky test.
     permissions:
       contents: read
       issues: write
-      actions: read
   package:
     name: package
     if: ${{ inputs.lane == '' || inputs.lane == 'all' }}
@@ -219,7 +215,7 @@ jobs:
 
   report:
     name: report a failure
-    needs: [web-e2e-linux, web-e2e-macos, web-e2e-windows, desktop-e2e, os-contract, verify, package]
+    needs: [web-e2e-linux, web-e2e-macos, web-e2e-windows, remote-mailbox-macos, desktop-e2e, verify, package]
     if: ${{ always() && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5

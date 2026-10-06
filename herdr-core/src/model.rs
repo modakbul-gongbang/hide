@@ -628,8 +628,12 @@ pub struct KitSnapshot {
     /// Every part, in the kit's own order; empty until the machine was first
     /// checked.
     pub components: Vec<KitComponentSnapshot>,
-    /// Whether any part is outdated, missing, removed or failed, which is
-    /// the only time the row offers Reinstall.
+    /// Every agent Hide has an adapter for, with its switch and the state of
+    /// its skill and hook on this machine (issue #517); empty until the
+    /// machine was first checked, and from a helper that predates agents.
+    pub agents: Vec<KitAgentSnapshot>,
+    /// Whether any part or any agent that is on is outdated, missing,
+    /// removed or failed, which is the only time the row offers Reinstall.
     pub offers_reinstall: bool,
     /// Another registered device that reaches the same account on the same
     /// machine, by its label; removing this device then leaves the kit there
@@ -647,6 +651,50 @@ pub struct KitComponentSnapshot {
     pub codex_daemon: Option<bool>,
 }
 
+/// One agent on one machine: its switch, and what Hide put there for it.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct KitAgentSnapshot {
+    pub id: String,
+    pub label: String,
+    pub availability: hide_kit::Availability,
+    pub enabled: bool,
+    pub skill: KitPieceSnapshot,
+    /// `None` for an agent that gets the skill only.
+    pub hook: Option<KitPieceSnapshot>,
+    /// The official page the adapter's answers come from.
+    pub doc_url: String,
+}
+
+impl KitAgentSnapshot {
+    /// Whether Reinstall would change something for this agent: only an
+    /// agent that is on has pieces to repair.
+    pub fn needs_attention(&self) -> bool {
+        self.enabled
+            && (self.skill.state.needs_attention()
+                || self
+                    .hook
+                    .as_ref()
+                    .is_some_and(|hook| hook.state.needs_attention()))
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct KitPieceSnapshot {
+    pub state: hide_kit::ComponentState,
+    pub reason: Option<String>,
+    pub location: Option<String>,
+}
+
+impl From<&hide_kit::PieceReport> for KitPieceSnapshot {
+    fn from(piece: &hide_kit::PieceReport) -> Self {
+        Self {
+            state: piece.state,
+            reason: piece.reason.clone(),
+            location: piece.location.clone(),
+        }
+    }
+}
+
 impl KitSnapshot {
     pub fn from_report(report: &hide_kit::KitReport) -> Self {
         let components = report
@@ -661,11 +709,39 @@ impl KitSnapshot {
                 codex_daemon: part.codex_daemon,
             })
             .collect::<Vec<_>>();
+        let agents = report
+            .agents
+            .iter()
+            .map(|agent| KitAgentSnapshot {
+                id: agent.id.clone(),
+                label: agent.label.clone(),
+                availability: agent.availability,
+                enabled: agent.enabled,
+                skill: (&agent.skill).into(),
+                hook: agent.hook.as_ref().map(Into::into),
+                doc_url: agent.doc_url.clone(),
+            })
+            .collect::<Vec<_>>();
         Self {
             unavailable: None,
             busy: false,
-            offers_reinstall: components.iter().any(|part| part.state.needs_attention()),
+            // Reinstall repairs what is on: a hook part of an agent that is
+            // switched off is not a repair, and the pass would refuse it.
+            offers_reinstall: components.iter().any(|part| {
+                part.state.needs_attention()
+                    && hide_kit::agents::agent_of_part(part.id).is_none_or(|agent| {
+                        report
+                            .agents
+                            .iter()
+                            .find(|row| row.id == agent)
+                            .is_none_or(|row| row.enabled)
+                    })
+            }) || report
+                .agents
+                .iter()
+                .any(hide_kit::AgentReport::needs_attention),
             components,
+            agents,
             shares_account_with: None,
         }
     }
@@ -1722,6 +1798,26 @@ pub enum Surface {
 pub struct FocusedSnapshot {
     pub surface: Surface,
     pub pane_id: Option<String>,
+    /// The last operator `focus_pane` the core applied for each page that
+    /// numbers its focus events, oldest page first; see [`OperatorFocusAck`].
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub operator_focus: Vec<OperatorFocusAck>,
+}
+
+/// The newest operator focus a page numbered that the core has applied.
+///
+/// A page that moves its keyboard focus on the operator's click cannot tell a
+/// snapshot older than that click from a real move of focus by the core. The
+/// page numbers each operator `focus_pane` it sends, and the snapshot that
+/// carries the focused pane also says which of those numbers it already
+/// includes, so the page follows the snapshot's pane only once the number it
+/// last sent has come back. The number is recorded whether the core moved focus,
+/// refused it or found it already there, because the page is waiting on the
+/// answer, not on the move.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct OperatorFocusAck {
+    pub client_id: String,
+    pub sequence: u64,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
@@ -2946,6 +3042,11 @@ pub struct ChangesSnapshot {
     /// Why there is nothing to list. Present whenever the reader could not
     /// produce entries, so an empty list is never mistaken for "no changes".
     pub unavailable_reason: Option<String>,
+    /// The reason above is only that Git finds no repository for this
+    /// folder: nothing for the operator to repair, so the Explorer draws no
+    /// mark for it and the reason goes to the diagnostic log (issue 570).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub not_a_repository: bool,
     /// Why the latest read of this checkout failed while the entries above,
     /// from the last read that succeeded, are still shown: they may be out of
     /// date, and the next read replaces them (S5.5 B22).
@@ -3870,6 +3971,7 @@ impl Snapshot {
             focused: FocusedSnapshot {
                 surface: Surface::Terminal,
                 pane_id: None,
+                operator_focus: Vec::new(),
             },
             pane_layouts: Vec::new(),
             terminal: TerminalSnapshot {
@@ -4582,6 +4684,21 @@ mod wire_enum_tests {
         }
         assert_wire(&contract, "kit_component_state", &kit_states);
         checked.insert("kit_component_state");
+
+        let kit_availability = [
+            hide_kit::Availability::Available,
+            hide_kit::Availability::NotInstalled,
+            hide_kit::Availability::UnsupportedSystem,
+        ];
+        for variant in kit_availability {
+            match variant {
+                hide_kit::Availability::Available
+                | hide_kit::Availability::NotInstalled
+                | hide_kit::Availability::UnsupportedSystem => {}
+            }
+        }
+        assert_wire(&contract, "kit_agent_availability", &kit_availability);
+        checked.insert("kit_agent_availability");
 
         let unchecked = contract
             .keys()
