@@ -57,6 +57,8 @@ Today those are Claude Code and Codex.
 Gemini, Grok and Cursor are not targets because their menus were not observed (no logged-in CLI was available for the check); OpenCode, Pi and every other kind keep today's behavior, with letters read through `hide inbox` or a prompt hook.
 Herdr 0.9.1 reads a built-in slash picker such as `/model` or `/resume` as `done`, not `blocked`, for both targets, and a bell typed into an open picker is accepted by it.
 Hide therefore does not take the Enter that opens a picker for a submission: the pane holds as a draft, and stays held after `/clear`, `/model` or `/help` until the next real prompt runs its hook.
+The same holds after an Esc or Ctrl-C that interrupts a turn, since no prompt hook runs for it.
+Two residuals remain: a turn the operator did not start (a scheduled wake or a finished subagent) moves the pane to `working` and clears a half-typed draft, and a pane restarted with hided or whose observation is dropped from a snapshot starts with no draft known.
 A letter that cannot be belled waits, and the reason (`working`, `blocked`, `draft`, `quiet_period`, `kind_not_belled`, `session_changed`, `pane_unavailable`, `status_not_at_rest`, `changed_before_input`) is logged once per change with the letter and pane ids, never with its body and never on screen.
 After a hided restart every pane starts with no key known and a 30 second grace; a draft typed before the restart cannot be known.
 The adapter never copies, clears or restores a draft.
@@ -71,6 +73,8 @@ For any other prompt, the operator's own included (`hide inbox --hook`), it adds
 A letter whose three bells are spent stays pending for `hide inbox` and expires undelivered.
 A payload that is truncated, unreadable or not read within 0.5 seconds counts as an operator prompt.
 Both pulls carry the payload's `session_id`; the core takes the pull as proof the pane's composer was sent only when that session is the pane's own native session, so another process in the pane running `hide inbox --hook` clears no draft.
+A hook that runs while Herdr already reports the pane `working` is a queued prompt being taken up and clears nothing, and an id longer than 256 bytes or holding a control character is refused before it is hashed.
+A device kit older than the local app sends `hide inbox --hook` without `--bell`, so its bell turn gets only the count line and the letter stays pending until the kit is updated; keep the kit and the app on the same build.
 A prompt hook that runs inside an agent with no prompt hook of its own (Grok or OpenCode loading Claude Code's hook) receives nothing and confirms nothing.
 An agent with no prompt hook reads letters with `hide inbox`, which shows an `ack_command` for each, and `hide request ack` is its receipt: it records `hook_confirmed` and ends a matching report watch, as the flushed hook confirmation does for the others.
 Transport arrival and the doorbell alone do not confirm intake.

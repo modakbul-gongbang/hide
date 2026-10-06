@@ -21,14 +21,16 @@ pub(crate) struct Observation {
     pub status: String,
     pub state_change_seq: Option<u64>,
     pub status_changed_at_unix_ms: u64,
-    /// The last key hide routed to this pane, of any kind.
+    /// The last input hide routed to this pane: a key, a paste, a phone
+    /// write or an agent-find key.
     pub last_input_at_unix_ms: u64,
-    /// The last moment the pane's input was submitted: a submitting key hide
-    /// routed, a phone reply, or a prompt hook that ran. Keys after it and
-    /// after `entered_working_at_unix_ms` are an unsent draft.
+    /// The last moment the pane's input was proven submitted: a prompt hook
+    /// of the pane's own session, or a phone reply. No key proves it. Input
+    /// after it and after `entered_working_at_unix_ms` is an unsent draft.
     pub last_submit_at_unix_ms: u64,
     /// The snapshot that first showed the pane `working` in its current run.
-    /// A key hide sent before it was consumed by that work (a menu answer).
+    /// Input hide sent before it was consumed by that work, such as the
+    /// answer to a menu.
     pub entered_working_at_unix_ms: u64,
     pub session: Option<hide_session::session_activity::SessionActivityRequest>,
     pub host_scope: Option<String>,
@@ -179,8 +181,16 @@ impl Runtime {
 
     /// A prompt hook ran in the pane, so whatever was in its composer was
     /// submitted, whoever typed it and wherever it was typed.
+    /// A hook that runs while the pane is already `working` is a queued
+    /// prompt being taken up, not the composer being sent: the operator's
+    /// newer draft is still there, and the turn's own entry to `working`
+    /// already covers whatever was typed before it.
     fn note_prompt_submitted(&mut self, pane_id: &str) {
-        if let Some(observation) = self.delivery_observations.get_mut(pane_id) {
+        if let Some(observation) = self
+            .delivery_observations
+            .get_mut(pane_id)
+            .filter(|observation| observation.status != "working")
+        {
             observation.last_submit_at_unix_ms = unix_milliseconds();
         }
     }
@@ -232,14 +242,19 @@ impl Runtime {
         actor.require_native_identity()?;
         // Only the pane's own session proves its composer was submitted: any
         // process in the pane can run `hide inbox --hook`, and none of them
-        // may clear the operator's draft.
+        // may clear the operator's draft. The id is checked before it is
+        // hashed because this runs under the runtime lock.
         if let Command::Pull {
             session: Some(session),
             ..
         } = &command
-            && crate::wire::session_digest(session) == actor.session
         {
-            self.note_prompt_submitted(&actor.pane_id);
+            if !crate::delivery::valid_key(session) {
+                return Err("session_invalid".into());
+            }
+            if crate::wire::session_digest(session) == actor.session {
+                self.note_prompt_submitted(&actor.pane_id);
+            }
         }
         let resolves_to_caller = |key: &str| {
             key == actor.pane_id
@@ -909,6 +924,35 @@ pub(crate) mod tests {
                 "bell {bell} session {session:?}"
             );
         }
+        let pull = |session: String| Command::Pull {
+            bell: false,
+            session: Some(session),
+        };
+        // An id past the key bound is refused before it is hashed under the lock.
+        assert_eq!(
+            guard
+                .prepare_delivery("local", "recipient", &context, None, pull("x".repeat(257)))
+                .err()
+                .as_deref(),
+            Some("session_invalid")
+        );
+        // A hook that runs while the pane works is a queued prompt being taken
+        // up; it must not clear a draft typed after the turn began.
+        guard
+            .delivery_observations
+            .get_mut("recipient")
+            .unwrap()
+            .status = "working".into();
+        guard
+            .prepare_delivery(
+                "local",
+                "recipient",
+                &context,
+                None,
+                pull("hook-session".into()),
+            )
+            .unwrap();
+        assert_eq!(written(&mut guard), (false, false, false));
         drop(guard);
         drop(worker);
     }

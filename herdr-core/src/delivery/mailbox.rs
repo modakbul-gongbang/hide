@@ -244,7 +244,10 @@ pub fn apply(
                         || letter.sender.same_identity(actor) && letter.state == State::Undelivered)
                     .map(|letter| {
                         let mut view = json!(letter);
-                        if acknowledges && letter.recipient.same_identity(actor) {
+                        if acknowledges
+                            && letter.state == State::Pending
+                            && letter.recipient.same_identity(actor)
+                        {
                             view["ack_command"] = json!(format!("hide request ack {}", letter.id));
                         }
                         view
@@ -891,6 +894,11 @@ mod tests {
             inbox[0]["ack_command"],
             format!("hide request ack {}", ids[0])
         );
+        // An expired letter can no longer be acknowledged, so none is offered.
+        assert!(ledger.expire(10 + super::super::DELIVERY_EXPIRY_MS));
+        let inbox = apply(&mut ledger, &recipient, None, &Command::Inbox, 5).unwrap();
+        assert_eq!(inbox[0]["state"], "undelivered");
+        assert!(inbox[0].get("ack_command").is_none());
         // A hooked agent's prompt hook acknowledges for it; the sender sees none.
         let hooked = actor("hooked");
         pending_for(&mut ledger, &hooked, 1);
