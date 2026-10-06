@@ -1340,19 +1340,137 @@ fn set_aside(root: &Path, common: &Path, checkout: &Path, force: bool) -> Option
     if let Err(error) = std::fs::rename(checkout, &entry) {
         // Git removes the folder in place from here; record why the cheap
         // path was not taken, since the removal's own result will not.
+        let attempt = entry
+            .file_name()
+            .map(|name| name.to_string_lossy().into_owned());
         eprintln!(
             "{}",
             serde_json::json!({
                 "component": "worktree_removal",
                 "kind": "set_aside_refused",
                 "checkout": checkout,
+                "attempt": attempt,
                 "os_error": error.raw_os_error(),
                 "message": error.to_string(),
             })
         );
+        #[cfg(windows)]
+        record_holders(checkout, attempt);
         return None;
     }
     Some(SetAside { entry, admin })
+}
+
+/// The one scan for holders that may run at a time (see [`record_holders`]).
+#[cfg(windows)]
+static HOLDER_SCAN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// What [`spawn_exclusive`] did with the work it was handed.
+#[cfg(any(windows, test))]
+#[derive(Debug)]
+enum Spawned {
+    /// The work runs on the thread this handle joins.
+    Started(std::thread::JoinHandle<()>),
+    /// The slot was taken, so the work did not run.
+    Busy,
+    Failed(std::io::Error),
+}
+
+/// Runs `work` on its own thread unless the thread of an earlier call still
+/// holds `slot`, which the thread's end frees on every exit, a panic included.
+/// The caller never waits for the work: a call that blocks forever keeps the
+/// slot and costs one thread, and every later call answers [`Spawned::Busy`]
+/// instead of adding another. A caller that has no use for the thread drops
+/// the handle, and a test joins it to know the slot is free.
+#[cfg(any(windows, test))]
+fn spawn_exclusive(
+    slot: &'static std::sync::atomic::AtomicBool,
+    name: &str,
+    work: impl FnOnce() + Send + 'static,
+) -> Spawned {
+    use std::sync::atomic::Ordering;
+    if slot
+        .compare_exchange(false, true, Ordering::AcqRel, Ordering::Acquire)
+        .is_err()
+    {
+        return Spawned::Busy;
+    }
+    struct Frees(&'static std::sync::atomic::AtomicBool);
+    impl Drop for Frees {
+        fn drop(&mut self) {
+            self.0.store(false, Ordering::Release);
+        }
+    }
+    // The guard moves into the thread, so a thread that never starts frees the
+    // slot when the closure is dropped, and one that ends frees it as it ends.
+    let frees = Frees(slot);
+    match std::thread::Builder::new()
+        .name(name.to_owned())
+        .spawn(move || {
+            let _frees = frees;
+            work();
+        }) {
+        Ok(thread) => Spawned::Started(thread),
+        Err(error) => Spawned::Failed(error),
+    }
+}
+
+/// One `set_aside_holders` line: the refusal's `checkout` and `attempt`, which
+/// make it read with the `set_aside_refused` line, and what is known of the
+/// holders in `detail`.
+#[cfg(windows)]
+fn holders_line(checkout: &Path, attempt: &Option<String>, detail: serde_json::Value) {
+    let mut record = serde_json::json!({
+        "component": "worktree_removal",
+        "kind": "set_aside_holders",
+        "checkout": checkout,
+        "attempt": attempt,
+    });
+    if let (Some(record), Some(detail)) = (record.as_object_mut(), detail.as_object()) {
+        record.extend(detail.clone());
+    }
+    eprintln!("{record}");
+}
+
+/// Records who holds the folder a rename was refused for, as a line of its own
+/// (`set_aside_holders`) carrying the refusal's `attempt`. The scan reads the
+/// system's table of open handles, and a handle of some kinds can block the
+/// questions asked of it, so it never runs on the removal's thread: the removal
+/// goes on to Git's own removal at once, and the line is written when the scan
+/// ends. Only Windows has the question, so no other system writes the line.
+#[cfg(windows)]
+fn record_holders(checkout: &Path, attempt: Option<String>) {
+    let folder = checkout.to_path_buf();
+    let (scan_folder, scan_attempt) = (folder.clone(), attempt.clone());
+    let spawned = spawn_exclusive(&HOLDER_SCAN, "set-aside-holders", move || {
+        let started = std::time::Instant::now();
+        let detail = match hide_platform::fs::holders::holders_of(&scan_folder, 256) {
+            Ok(holders) => serde_json::json!({
+                "self_pid": std::process::id(),
+                "scan_ms": started.elapsed().as_millis() as u64,
+                "processes": holders
+                    .iter()
+                    .map(|holder| serde_json::json!({
+                        "pid": holder.pid,
+                        "process": holder.process,
+                        "path": holder.path,
+                        "access": format!("{:#x}", holder.access),
+                    }))
+                    .collect::<Vec<_>>(),
+            }),
+            Err(error) => serde_json::json!({"unavailable": error.to_string()}),
+        };
+        holders_line(&scan_folder, &scan_attempt, detail);
+    });
+    match spawned {
+        Spawned::Started(_) => {}
+        Spawned::Busy => holders_line(&folder, &attempt, serde_json::json!({"scan_busy": true})),
+        Spawned::Failed(error) => holders_line(
+            &folder,
+            &attempt,
+            serde_json::json!({"unavailable": error.to_string()}),
+        ),
+    }
 }
 
 /// The name of the worktree's administrative folder, from the `gitdir:`
@@ -1844,5 +1962,63 @@ mod ignored_repository_tests {
             std::fs::set_permissions(&sealed, std::fs::Permissions::from_mode(0o700)).unwrap();
             assert!(refused.unwrap_err().contains("could not confirm"));
         }
+    }
+}
+
+#[cfg(test)]
+mod holder_scan_tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+    use std::sync::mpsc;
+
+    /// A scan that never ends costs one thread and no one waits for it: the call
+    /// that started it returns at once, a later call is told the slot is taken
+    /// instead of adding a thread, and the slot comes back when the scan ends.
+    #[test]
+    fn a_scan_that_blocks_holds_the_slot_and_nothing_waits_for_it() {
+        static SLOT: AtomicBool = AtomicBool::new(false);
+        let (release, blocked) = mpsc::channel::<()>();
+
+        let first = spawn_exclusive(&SLOT, "test-scan", move || {
+            // Blocks until the test lets go, as a handle that never answers would.
+            let _ = blocked.recv();
+        });
+        let thread = match first {
+            Spawned::Started(thread) => thread,
+            Spawned::Busy => panic!("the slot was free"),
+            Spawned::Failed(error) => panic!("the scan thread did not start: {error}"),
+        };
+        assert!(
+            SLOT.load(Ordering::Acquire),
+            "the running scan holds the slot"
+        );
+
+        let second = spawn_exclusive(&SLOT, "test-scan", || {
+            panic!("must not run while the slot is taken")
+        });
+        assert!(matches!(second, Spawned::Busy));
+
+        release.send(()).unwrap();
+        // The thread frees the slot as it ends, so once it is joined it is free.
+        thread.join().expect("the scan ends once released");
+        assert!(
+            !SLOT.load(Ordering::Acquire),
+            "the slot comes back when the scan ends"
+        );
+        assert!(matches!(
+            spawn_exclusive(&SLOT, "test-scan", || {}),
+            Spawned::Started(_)
+        ));
+    }
+
+    #[test]
+    fn a_scan_that_panics_still_frees_the_slot() {
+        static SLOT: AtomicBool = AtomicBool::new(false);
+        let started = spawn_exclusive(&SLOT, "test-scan", || panic!("a scan that fails"));
+        let Spawned::Started(thread) = started else {
+            panic!("the slot was free and the thread should start");
+        };
+        assert!(thread.join().is_err(), "the scan panicked");
+        assert!(!SLOT.load(Ordering::Acquire), "a panic frees the slot too");
     }
 }
