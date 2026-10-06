@@ -11,6 +11,7 @@ class ElectronDebugger extends EventEmitter {
   private attached = false;
   cookie = "unchanged";
   file = "unchanged";
+  readonly drags: Json[] = [];
   closed = false;
   private sequence = 0;
   isAttached(): boolean { return this.attached; }
@@ -34,6 +35,7 @@ class ElectronDebugger extends EventEmitter {
     if (method === "Target.detachFromTarget") this.emit("message", {}, "Target.detachedFromTarget", { sessionId: params.sessionId }, "");
     if (method === "Network.setCookie" || method === "Storage.setCookies") this.cookie = "changed";
     if (method === "DOM.setFileInputFiles") this.file = "changed";
+    if (method === "Input.dispatchDragEvent") this.drags.push(params);
     if (method === "Browser.close") this.closed = true;
     if (method === "Network.getCookies") return { cookies: [{ name: "allowed", domain: new URL((params.urls as string[])[0]!).hostname }] };
     return {};
@@ -404,6 +406,21 @@ describe("scoped desktop CDP public boundary", () => {
     expect((await browser.call("Page.navigate", { url: "file:///outside/private.txt" }, session)).error).toBeDefined();
     for (const method of ["Fetch.continueRequest", "Page.getResourceContent"]) expect((await browser.call(method, { url: "file:///outside/private.txt" }, session)).error).toBeDefined();
     expect((await browser.call("Target.createBrowserContext")).error).toBeDefined();
+  });
+
+  it("refuses a drag that carries files and forwards one that carries none", async () => {
+    const { first, capability, client } = await fixture();
+    const browser = await client((await capability()).browser_ws_url);
+    const session = await attach(browser);
+    const drag = { type: "drop", x: 1, y: 2 };
+    for (const files of [["/outside/private.txt"], "/outside/private.txt", null]) {
+      expect((await browser.call("Input.dispatchDragEvent", { ...drag, data: { items: [], files } }, session)).error, JSON.stringify(files)).toBeDefined();
+    }
+    expect(first.contents.debugger.drags).toEqual([]);
+    for (const data of [{ items: [{ mimeType: "text/plain", data: "hello" }] }, { items: [], files: [] }]) {
+      expect((await browser.call("Input.dispatchDragEvent", { ...drag, data }, session)).error).toBeUndefined();
+    }
+    expect(first.contents.debugger.drags).toHaveLength(2);
   });
 
   it("refuses multilevel legacy envelopes before any mutation reaches the debugger or core", async () => {

@@ -33,18 +33,48 @@ const CHILD = `<!doctype html><meta charset="utf-8"><title>Child</title>
 <input placeholder="Child name"><button onclick="document.querySelector('output').textContent='child: '+document.querySelector('input').value">Send</button>
 <output></output><button onclick="confirm('From the frame')">Frame confirm</button>`;
 
+// Another site's frame whose script never yields once the page has loaded, so
+// its renderer answers nothing. It tells the server when it starts spinning.
+const HUNG_CHILD = `<!doctype html><meta charset="utf-8"><title>Hung child</title>
+<script>addEventListener("load", () => setTimeout(() => { navigator.sendBeacon("/hung-now"); for (;;) {} }, 200));</script>`;
+const HUNG_PAGE = `<!doctype html><meta charset="utf-8"><title>Hung page</title>
+<h1>Beside a hung frame</h1><button>Still readable</button>`;
+let hung = false;
+const DRAG_PAGE = `<!doctype html><meta charset="utf-8"><title>Drag page</title>
+<button id="src" draggable="true">Drag me</button> <button id="dst">Drop here</button> <output></output>
+<script>
+const out = document.querySelector("output");
+document.getElementById("src").addEventListener("dragstart", (event) => event.dataTransfer.setData("text/plain", "hello"));
+const dst = document.getElementById("dst");
+dst.addEventListener("dragover", (event) => event.preventDefault());
+dst.addEventListener("drop", (event) => { event.preventDefault(); out.textContent = "dropped: " + event.dataTransfer.getData("text/plain") + " files: " + event.dataTransfer.files.length; });
+</script>`;
+// A page whose press handler holds the renderer for 12 s, so the press is
+// not answered within a step. It logs every pointer event it receives, and
+// when.
+const BUSY_PAGE = `<!doctype html><meta charset="utf-8"><title>Busy page</title>
+<h1>Busy page</h1><button id="b">Press</button>
+<script>
+window.log = [];
+const note = (what) => window.log.push(what);
+const button = document.getElementById("b");
+button.addEventListener("mousedown", () => { note("down"); const started = Date.now(); while (Date.now() - started < 12000) {} note("down-done"); });
+button.addEventListener("mouseup", () => note("up"));
+button.addEventListener("click", () => note("click"));
+</script>`;
+
 function quote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }
 /** Runs `hide ...` in the isolated pane and returns its exit status and output. */
-async function hideCli(args: string[]): Promise<{ status: number; out: string }> {
+async function hideCli(args: string[], pane = herdr.panes[0]): Promise<{ status: number; out: string }> {
   const stem = path.join(herdr.root, `browser-agent-${++sequence}`);
   const output = `${stem}.out`, status = `${stem}.status`;
   const command = `HIDE_STATE_DIR=${quote(run.env.HIDE_STATE_DIR!)} ${[HIDE_CLI, ...args].map(quote).join(" ")} > ${quote(output)}; printf '%s' "$?" > ${quote(status)}\n`;
-  const sent = spawnSync(herdr.bin, ["pane", "send-text", herdr.panes[0]!, command], { env: herdr.env, encoding: "utf8", timeout: 10_000 });
+  const sent = spawnSync(herdr.bin, ["pane", "send-text", pane, command], { env: herdr.env, encoding: "utf8", timeout: 10_000 });
   expect(sent.status).toBe(0);
   await expect.poll(() => fs.existsSync(status), { timeout: 60_000 }).toBe(true);
   return { status: Number(fs.readFileSync(status, "utf8")), out: fs.readFileSync(output, "utf8") };
 }
-const browserCli = (args: string[]) => hideCli(["browser", ...args]);
+const browserCli = (args: string[], pane?: string) => hideCli(["browser", ...args], pane);
 /** Which View each area shows, from `hide view list`. */
 async function shownViews(): Promise<unknown> {
   const answer = JSON.parse((await hideCli(["view", "list"])).out.trim().split("\n").at(-1)!) as { result: { views: { view_id: string; selected: boolean; active_area: boolean }[] } };
@@ -101,7 +131,12 @@ async function start(): Promise<void> {
 test.beforeAll(async () => {
   herdr = await startHerdr({ agents: false });
   server = createServer((request, response) => {
+    if (request.url === "/hung-now") { hung = true; response.writeHead(204).end(); return; }
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    if (request.url === "/drag") { response.end(DRAG_PAGE); return; }
+    if (request.url === "/busy") { response.end(BUSY_PAGE); return; }
+    if (request.url === "/hang") { response.end(HUNG_CHILD); return; }
+    if (request.url === "/hung") { response.end(HUNG_PAGE.replace("</h1>", `</h1><iframe src="${origin.replace("127.0.0.1", "localhost")}/hang" width="300" height="100"></iframe>`)); return; }
     response.end(request.url?.startsWith("/child") ? CHILD : PAGE.replace("</h1>", `</h1><iframe id="child" src="${child}" width="420" height="120"></iframe>`));
   });
   await new Promise<void>((resolve) => server.listen(0, "127.0.0.1", resolve));
@@ -200,12 +235,96 @@ test("hide browser: a dialog is reported, never answered, and holds the display 
   expect(held.next_action).toContain("operator must answer the dialog");
   await shown[0]!.accept();
   const confirm = ref(await snapshot(display), /button "Frame confirm"/);
-  // A cross-origin frame's dialog holds the page the same way.
+  // A cross-origin frame's dialog holds only that frame, which a later command
+  // cannot tell from a script that never yields: it is noted, not a failure.
   expect(await json(["click", display, confirm])).toMatchObject({ ok: true, dialog: { type: "confirm", message: "From the frame" } });
-  expect(await json(["snapshot", display])).toMatchObject({ ok: false, reason: "dialog_open" });
+  expect(await snapshot(display)).toMatch(/# OOPIF unresponsive origin=http:\/\/localhost:\d+/);
   await expect.poll(() => shown.length).toBe(2);
   await shown[1]!.dismiss();
-  expect(await snapshot(display)).toContain('button "Alert"');
+  expect(await snapshot(display)).toContain('button "Frame confirm"');
+});
+
+test("hide browser: a native HTML5 drag replays through the gateway and drops no files", async () => {
+  await start();
+  const url = `${origin}/drag`;
+  const display = await openDisplay(url);
+  const text = await snapshot(display);
+  expect(await json(["drag", display, ref(text, /button "Drag me"/), ref(text, /button "Drop here"/), "--mode", "html5"])).toMatchObject({ ok: true });
+  expect(await inDisplay<string>(url, "document.querySelector('output').textContent")).toBe("dropped: hello files: 0");
+});
+
+test("hide browser: a cross-origin frame that never answers is noted and the rest of the page is read", async () => {
+  hung = false;
+  await start();
+  const display = await openDisplay(`${origin}/hung`);
+  await expect.poll(() => hung, { timeout: 15_000 }).toBe(true);
+  const text = await snapshot(display);
+  expect(text).toContain('button "Still readable"');
+  expect(text).toMatch(/# OOPIF unresponsive origin=http:\/\/localhost:\d+ - no answer in time/);
+  expect(text).not.toMatch(/# OOPIF [a-z2-9]{4} /);
+});
+
+test("hide browser: a selected View of a Workspace behind another answers input and pixels at once, and nothing arrives when it comes forward", async () => {
+  const other = path.join(herdr.root, "second-checkout");
+  fs.mkdirSync(other, { recursive: true });
+  const created = herdr.run(["workspace", "create", "--cwd", other, "--label", "second", "--no-focus"]) as { result: { root_pane: { pane_id: string } } };
+  const otherPane = created.result.root_pane.pane_id;
+  await start();
+  const url = `${origin}/agent`;
+  const display = await openDisplay(url);
+  const first = await snapshot(display);
+  const name = ref(first, /textbox "Name"/);
+  const apply = ref(first, /button "Apply"/);
+  // Counts what the page receives, whenever it does.
+  await inDisplay(url, `window.received = { clicks: 0, inputs: 0 }; document.addEventListener("click", () => window.received.clicks++, true); document.addEventListener("input", () => window.received.inputs++, true); true`);
+  const received = () => inDisplay<string>(url, `JSON.stringify([window.received, document.querySelector("output").textContent])`);
+  // Another Workspace comes to the front; this one's View stays its area's
+  // selected View, and the host hides it behind the front one.
+  const front = await browserCli(["open", `${origin}/front`, "--reveal", "--wait"], otherPane);
+  expect(front.status, front.out).toBe(0);
+  const viewVisible = () => app!.evaluate(({ BrowserWindow }, address) => BrowserWindow.getAllWindows()[0]!.contentView.children.flatMap((view) => {
+    const contents = (view as { webContents?: Electron.WebContents }).webContents;
+    return contents && !contents.isDestroyed() && contents.getURL() === address ? [(view as Electron.View).getVisible()] : [];
+  }), url);
+  expect(await viewVisible()).toEqual([false]);
+
+  // The hidden page is still a visible document to Chromium, so the first
+  // input is answered at once: nothing times out, and nothing is left to be
+  // delivered once the Workspace returns.
+  expect(await inDisplay<string>(url, "document.visibilityState")).toBe("visible");
+  expect(await json(["fill", display, name, "from behind"])).toMatchObject({ ok: true });
+  expect(await json(["click", display, apply, "--no-verify"])).toMatchObject({ ok: true });
+  const shot = path.join(herdr.root, "behind.png");
+  expect(await json(["screenshot", display, shot])).toMatchObject({ ok: true });
+  expect(fs.readFileSync(shot).subarray(1, 4).toString()).toBe("PNG");
+  const behind = await received();
+  expect(JSON.parse(behind)).toEqual([{ clicks: 1, inputs: 1 }, "applied: from behind"]);
+
+  const back = await hideCli(["view", "select", display, "--reveal"]);
+  expect(back.status, back.out).toBe(0);
+  await expect.poll(viewVisible).toEqual([true]);
+  await snapshot(display);
+  await inDisplay(url, "new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(done)))");
+  expect(await received()).toBe(behind);
+});
+
+test("hide browser: a press the page was too busy to answer took effect, and no release arrives later", async () => {
+  await start();
+  const url = `${origin}/busy`;
+  const display = await openDisplay(url);
+  const press = ref(await snapshot(display), /button "Press"/);
+  const failed = await json(["click", display, press, "--no-verify"]);
+  // The press was sent and is what held the page: it took effect, though the
+  // command could not see it, so the advice is to look before repeating it.
+  expect(failed).toMatchObject({ ok: false, reason: "page_unresponsive" });
+  expect(failed.next_action).toContain("may already have taken effect");
+  expect(failed.next_action).toContain(`hide browser snapshot ${display} --diff`);
+  const log = () => inDisplay<string[]>(url, "window.log");
+  await expect.poll(async () => (await log().catch((): string[] => [])).includes("down-done"), { timeout: 30_000 }).toBe(true);
+  // Once the page yields, no release or click arrives later: the command ended
+  // without sending one, and its session ending delivers none.
+  await inDisplay(url, "new Promise((done) => requestAnimationFrame(() => requestAnimationFrame(() => setTimeout(done, 0))))");
+  expect(await log()).toEqual(["down", "down-done"]);
 });
 
 test("hide browser: a busy, hidden, file or missing display and a stale ref are refused with what to do next", async () => {
