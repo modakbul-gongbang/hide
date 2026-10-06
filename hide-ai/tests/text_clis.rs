@@ -58,6 +58,8 @@ sys.exit(99)
 "#;
 
 struct Fake {
+    /// Removed with the stand-in; a name no other test can share.
+    _folder: tempfile::TempDir,
     dir: PathBuf,
     binary: PathBuf,
     record: PathBuf,
@@ -65,15 +67,11 @@ struct Fake {
 
 impl Fake {
     fn new(name: &str, script: Value) -> Self {
-        let dir = std::env::temp_dir().join(format!(
-            "hide-ai-fake-{name}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&dir).unwrap();
+        let folder = tempfile::Builder::new()
+            .prefix(&format!("hide-ai-fake-{name}-"))
+            .tempdir()
+            .unwrap();
+        let dir = folder.path().to_path_buf();
         let record = dir.join("record.jsonl");
         let mut script = script;
         script["record"] = json!(record);
@@ -81,6 +79,7 @@ impl Fake {
         std::fs::write(&binary, SCRIPT.replace("__SCRIPT__", &script.to_string())).unwrap();
         std::fs::set_permissions(&binary, std::fs::Permissions::from_mode(0o755)).unwrap();
         Self {
+            _folder: folder,
             dir,
             binary,
             record,
@@ -108,12 +107,6 @@ impl Fake {
     /// The last recorded start.
     fn last(&self) -> Value {
         self.starts().pop().expect("the stand-in was started")
-    }
-}
-
-impl Drop for Fake {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.dir);
     }
 }
 

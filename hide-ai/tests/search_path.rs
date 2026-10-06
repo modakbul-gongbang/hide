@@ -26,6 +26,8 @@ use serde_json::json;
 /// A private folder holding the stand-in login shell's two folders: the one
 /// with the interpreter and the one with the CLIs.
 struct Stage {
+    /// Removed with the stage; a name no other test can share.
+    _folder: tempfile::TempDir,
     root: PathBuf,
     interpreters: PathBuf,
     programs: PathBuf,
@@ -38,14 +40,11 @@ fn executable(path: &Path, text: &str) {
 
 impl Stage {
     fn new(name: &str) -> Self {
-        let root = std::env::temp_dir().join(format!(
-            "hide-ai-search-{name}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let folder = tempfile::Builder::new()
+            .prefix(&format!("hide-ai-search-{name}-"))
+            .tempdir()
+            .unwrap();
+        let root = folder.path().to_path_buf();
         let interpreters = root.join("interpreters");
         let programs = root.join("programs");
         std::fs::create_dir_all(&interpreters).unwrap();
@@ -56,6 +55,7 @@ impl Stage {
             "#!/bin/sh\nexec /bin/sh \"$@\"\n",
         );
         Self {
+            _folder: folder,
             root,
             interpreters,
             programs,
@@ -79,12 +79,6 @@ impl Stage {
         let shell_path =
             std::env::join_paths([self.interpreters.clone(), self.programs.clone()]).unwrap();
         cli_path_with(&self.root.join("home"), Some(&shell_path)).unwrap()
-    }
-}
-
-impl Drop for Stage {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.root);
     }
 }
 

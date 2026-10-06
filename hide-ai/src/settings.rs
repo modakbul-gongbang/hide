@@ -379,16 +379,11 @@ mod tests {
     use super::*;
 
     fn home(name: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "hide-ai-settings-{name}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .expect("the clock is after the epoch")
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&root).expect("a temporary home is creatable");
-        root
+        tempfile::Builder::new()
+            .prefix(&format!("hide-ai-settings-{name}-"))
+            .tempdir()
+            .expect("a temporary home is creatable")
+            .keep()
     }
 
     fn write_settings(home: &Path, body: &str) {
