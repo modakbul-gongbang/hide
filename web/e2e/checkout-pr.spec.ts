@@ -9,7 +9,7 @@
 // a checkout with no pull request keeps a plain glyph and a plain card. Light
 // and Dark captures land in HIDE_E2E_SCREENSHOT_DIR.
 
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import { execFileSync, spawnSync } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
@@ -17,10 +17,9 @@ import path from "node:path";
 import { labelAgent, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { fixtureProgram } from "./platform-fixture";
-import { countSent, rest, rowGeometry, screenshot } from "./wire";
-import { chord } from "./chords";
+import { chooseTheme, countSent, rest, rowGeometry, screenshot } from "./wire";
 import { toPage } from "../../desktop/src/main/wirePath";
-import { animationsFinished, quietFor } from "./wait";
+import { quietFor } from "./wait";
 
 test.describe.configure({ timeout: 180_000 });
 
@@ -84,17 +83,6 @@ async function workspaceAt(herdr: HerdrFixture, cwd: string, task: string): Prom
   await prompt(herdr, pane);
   herdr.run(["agent", "start", `agent-${path.basename(cwd)}`, "--kind", "claude", "--pane", pane]);
   labelAgent(herdr, pane, { task });
-}
-
-async function chooseTheme(page: Page, theme: "light" | "dark"): Promise<void> {
-  await page.keyboard.press(chord("settings"));
-  await expect(page.locator('[data-settings="true"]')).toBeVisible();
-  await page.locator('[data-settings-tab="general"]').click();
-  await page.locator(`[data-theme-option="${theme}"]`).click();
-  await expect(page.locator("html")).toHaveClass(new RegExp(`\\b${theme}\\b`));
-  await page.keyboard.press("Escape");
-  await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
-  await animationsFinished(page);
 }
 
 test("a checkout's pull request: the glyph opens it, the row's card describes it, the menu names it", async ({ page }) => {

@@ -41,17 +41,43 @@ A batch keeps the first letter's sender attribution in the request view; neither
 ## Safe intake and manual fallback
 
 A doorbell carries only a short instruction to read `hide inbox`.
-It requires a current idle/done occupant, 30 seconds since Hide last routed a key to that pane, positive native readiness, a positively styled empty composer, and a recognized footer structure.
-Working agents, drafts, uncertain menus and unknown layouts leave the letter pending.
+It is typed when every one of these hide-owned facts holds, and the verdict reads no terminal screen, so a redrawn footer or a user's statusline cannot change it:
+
+- Herdr reports the pane `idle` or `done`, and has for 30 seconds.
+- Hide has routed no key to the pane for 30 seconds.
+- No input hide routed is newer than the later of the pane's last submission and the last time it entered `working`.
+  Typed keys, a pasted attachment, a phone key and the keys of an agent's own find box all count as input, and none of them, Enter included, counts as a submission.
+  A submission is a prompt hook that ran with the pane's own native session id, which the hook passes to `hide inbox --hook --session`, or a phone reply.
+  A pane that entered `working` was submitted to as well, which is how an answered menu or a custom slash command that starts a turn clears the hold.
+  A key after both is an unsent draft, an Esc-restored prompt or a recalled input; a pane held by one stays held until the next real prompt.
+- The pane still hosts the native session the letter was written for, and the agent kind is one the bell targets.
+
+Herdr's `blocked` status is the only menu guard, so only kinds whose permission and selection menus were observed to read `blocked` are bell targets.
+Today those are Claude Code and Codex.
+Gemini, Grok and Cursor are not targets because their menus were not observed (no logged-in CLI was available for the check); OpenCode, Pi and every other kind keep today's behavior, with letters read through `hide inbox` or a prompt hook.
+Herdr 0.9.1 reads a built-in slash picker such as `/model` or `/resume` as `done`, not `blocked`, for both targets, and a bell typed into an open picker is accepted by it.
+Hide therefore does not take the Enter that opens a picker for a submission: the pane holds as a draft, and stays held after `/clear`, `/model` or `/help` until the next real prompt runs its hook.
+The same holds after an Esc or Ctrl-C that interrupts a turn, since no prompt hook runs for it.
+Three residuals remain: a turn the operator did not start (a scheduled wake or a finished subagent) moves the pane to `working` and clears a half-typed draft, a prompt queued while the pane works leaves it held after its turn until the next prompt submitted from rest (its hook runs while `working` and clears nothing), and a pane restarted with hided or whose observation is dropped from a snapshot starts with no draft known.
+A letter that cannot be belled waits, and the reason (`working`, `blocked`, `draft`, `quiet_period`, `kind_not_belled`, `session_changed`, `pane_unavailable`, `status_not_at_rest`, `changed_before_input`) is logged once per change with the letter and pane ids, never with its body and never on screen.
+After a hided restart every pane starts with no key known and a 30 second grace; a draft typed before the restart cannot be known.
 The adapter never copies, clears or restores a draft.
-Its bounded visible ANSI read preserves the styling that distinguishes a placeholder from identical typed text.
-A changed TUI that cannot be classified safely falls back to manual intake.
 Each letter has at most three durable doorbell reservations, including successful input and attempts interrupted before confirmation.
-The reservation is persisted before input, and the adapter repeats the native/composer inspection after the persistence wait.
-A crash or changed composer after reservation may consume an attempt while leaving the letter pending.
+The reservation is persisted before input, and the adapter repeats the native inspection (`agent.get`: kind, session, status, sequence) after the persistence wait.
+A crash or changed pane after reservation may consume an attempt while leaving the letter pending.
 Legacy records with a successful bell but no total count conservatively have no automatic attempts left; manual and prompt-hook intake remain available.
 
-The next `UserPromptSubmit` hook pulls the oldest pending letters and newly acknowledged letters with `hook_confirmed: false`, which remain open for capacity and retention, emits their context, flushes stdout, then confirms those IDs.
+The `UserPromptSubmit` hook of a bell target reads the submitted prompt from its input payload and asks for letters in one of two ways.
+When the prompt is exactly the bell (`hide inbox --hook --bell`), it pulls the oldest pending letters and newly acknowledged letters with `hook_confirmed: false`, which remain open for capacity and retention, emits their context, flushes stdout, then confirms those IDs.
+For any other prompt, the operator's own included (`hide inbox --hook`), it adds at most one line, `Hide 편지 N통 대기 중, 이 턴이 끝난 뒤 전달`, counting the letters a bell will still bring, and confirms nothing; the prompt text is never changed and no letter body reaches an operator's turn.
+A letter whose three bells are spent stays pending for `hide inbox` and expires undelivered.
+A payload that is truncated, unreadable or not read within 0.5 seconds counts as an operator prompt.
+Both pulls carry the payload's `session_id`; the core takes the pull as proof the pane's composer was sent only when that session is the pane's own native session, so a stray `hide inbox --hook` from another tool in the pane clears no draft.
+The session id is not a secret, so this guards against accidents and not against a hostile process in the pane (external input, D-18).
+A hook that runs while Herdr already reports the pane `working` is a queued prompt being taken up and clears nothing, and an id longer than 256 bytes or holding a control character is refused before it is hashed.
+A device kit older than the local app sends `hide inbox --hook` without `--bell`, so its bell turn gets only the count line and the letter stays pending until the kit is updated; keep the kit and the app on the same build.
+A prompt hook that runs inside an agent with no prompt hook of its own (Grok or OpenCode loading Claude Code's hook) receives nothing and confirms nothing.
+An agent with no prompt hook reads letters with `hide inbox`, which shows an `ack_command` for each, and `hide request ack` is its receipt: it records `hook_confirmed` and ends a matching report watch, as the flushed hook confirmation does for the others.
 Transport arrival and the doorbell alone do not confirm intake.
 Interruption before confirmation can repeat the same letter ID; confirmed letters do not appear again in hook context.
 The hook emits at most five letters and 8 KiB of context, with a remaining-count line and `hide inbox` guidance when more are pending.
@@ -65,7 +91,7 @@ Cleanup uncertainty is a separate private diagnostic field and never authorizes 
 Manual `hide inbox` and `hide request show` remain available when the hook is missing or fails.
 
 The pinned Herdr API has no atomic composer guard.
-Hide checks the occupant and composer before and after the durable reservation and checks its memory state immediately before the off-lock pane write, but direct external Herdr/TUI input can race that final write.
+Hide checks the occupant before and after the durable reservation and checks its memory state immediately before the off-lock pane write, but direct external Herdr/TUI input can race that final write.
 That residual limit is the approved D-18 boundary; external input is not represented as a Hide key event.
 
 ## Persistence, clocks and limits
@@ -81,7 +107,7 @@ Capacity errors retain existing letters and watches.
 | Resource or clock | Bound |
 | --- | --- |
 | Pending delivery deadline | 60 minutes, then `undelivered`; visible through CLI |
-| Hide-key quiet period | 30 seconds |
+| Quiet period | 30 seconds since hide last routed a key and since Herdr last changed the pane's status |
 | Doorbell reservations per letter | Three total, persisted across restart |
 | First inactivity warning | 20 minutes without activity |
 | Second inactivity warning | First-warning time plus 60 minutes, at most two warnings per episode |
@@ -173,7 +199,7 @@ The full Rust test and lint lanes still apply to the final committed head.
 Actual Linux and Windows OS-contract runner results are required for the state-machine, ledger and activity portability claim; declaring a workflow does not prove it passed.
 Real TUI delivery requires an isolated Herdr server, private HOME/state, precisely identified candidate processes and disposable provider sessions with observed native identity and registered lineage.
 Register only an actual parent session and spawn its child through `hide agent spawn`; never seed a capability or coordination ledger.
-Exercise idle/done delivery, working delay, a draft identical to the placeholder, uncertain menus, hook confirmation/restart, capacity/corruption, watch clocks/reset/exit/reply and helper privacy/fallback.
+Exercise idle/done delivery to a Claude pane with a statusline and to a Codex pane, working delay, a pending letter held while a permission, question or plan menu is open and delivered after it is answered, each target's menus read as Herdr `blocked`, hook confirmation/restart, capacity/corruption, watch clocks/reset/exit/reply and helper privacy/fallback.
 Label protocol fixtures separately from actual provider runtime observations.
 Measure matched baseline/candidate input latency and idle/driven load through [PERFORMANCE_TESTING.md](PERFORMANCE_TESTING.md); a headless or socket-only check does not prove native presentation.
 Own every fixture process with a deadline and teardown, preserve the operator's app/server/panes/hooks, and remove private authentication caches after the owned agents exit.

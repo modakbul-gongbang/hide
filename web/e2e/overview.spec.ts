@@ -27,9 +27,9 @@ import path from "node:path";
 import { agentsIn, continueFixtureTranscript, declareParent, labelAgent, sessionOf, startHerdr, setFixtureLifecycle, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { fixtureProgram } from "./platform-fixture";
-import { countSent, screenshot } from "./wire";
+import { chooseTheme, countSent, screenshot } from "./wire";
 import { chord, field } from "./chords";
-import { animationsFinished, quietFor, unchangedForFrames } from "./wait";
+import { quietFor, unchangedForFrames } from "./wait";
 
 test.describe.configure({ timeout: 240_000 });
 
@@ -166,18 +166,6 @@ process.exit(1);
 
 async function open(page: Page, daemon: Daemon): Promise<void> {
   await page.goto(`${daemon.origin}/#token=${daemon.token}`);
-}
-
-async function chooseTheme(page: Page, theme: "light" | "dark"): Promise<void> {
-  await page.keyboard.press(chord("settings"));
-  await expect(page.locator('[data-settings="true"]')).toBeVisible();
-  await page.locator('[data-settings-tab="general"]').click();
-  await page.locator(`[data-theme-option="${theme}"]`).click();
-  await expect(page.locator("html")).toHaveClass(new RegExp(`\\b${theme}\\b`));
-  await page.keyboard.press("Escape");
-  await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
-  // Controls fade their colors into the new theme; a capture waits them out.
-  await animationsFinished(page);
 }
 
 /**

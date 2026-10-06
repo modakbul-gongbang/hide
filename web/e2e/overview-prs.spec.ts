@@ -21,9 +21,7 @@ import path from "node:path";
 import { labelAgent, agentsIn, startHerdr, setFixtureLifecycle, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { fixtureProgram } from "./platform-fixture";
-import { countSent, screenshot } from "./wire";
-import { chord } from "./chords";
-import { animationsFinished } from "./wait";
+import { chooseTheme, countSent, screenshot } from "./wire";
 
 test.describe.configure({ timeout: 240_000 });
 
@@ -181,17 +179,6 @@ function writes(state: string): string[][] {
 
 function body(state: string, number: number): string {
   return (JSON.parse(fs.readFileSync(path.join(state, "bodies.json"), "utf8")) as Record<string, string>)[number] ?? "";
-}
-
-async function chooseTheme(page: Page, theme: "light" | "dark"): Promise<void> {
-  await page.keyboard.press(chord("settings"));
-  await expect(page.locator('[data-settings="true"]')).toBeVisible();
-  await page.locator('[data-settings-tab="general"]').click();
-  await page.locator(`[data-theme-option="${theme}"]`).click();
-  await expect(page.locator("html")).toHaveClass(new RegExp(`\\b${theme}\\b`));
-  await page.keyboard.press("Escape");
-  await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
-  await animationsFinished(page);
 }
 
 async function atRest(page: Page): Promise<void> {

@@ -1402,17 +1402,19 @@ impl Runtime {
                                 })))
                     })
                     .map(str::to_owned);
-                let pending_tab = self
+                let pending = self
                     .pending_tab_focus
                     .as_ref()
-                    .filter(|pending| pending.scope_id == checkout.id)
-                    .map(|pending| pending.target_id.clone());
+                    .filter(|pending| pending.scope_id == checkout.id);
+                let pending_tab = pending.map(|pending| pending.target_id.clone());
                 // A tab focus is confirmed by the workspace that owns the
-                // tab showing it, whichever workspace Herdr's keyboard is in.
-                if pending_tab
-                    .as_deref()
-                    .is_some_and(|tab_id| herdr.is_active_in_its_workspace(tab_id))
-                {
+                // tab showing it, whichever workspace Herdr's keyboard is in,
+                // and only once it has left: a session that arrives before
+                // that is Herdr from before the request, whatever it shows,
+                // and the request still reaches Herdr afterwards (#629).
+                if pending.is_some_and(|pending| {
+                    pending.sent && herdr.is_active_in_its_workspace(&pending.target_id)
+                }) {
                     confirmed_pending = true;
                 }
                 // The tab holding the selected pane, when it is in this
@@ -2197,8 +2199,15 @@ impl Runtime {
         let pane_topology_changed = fetched
             .as_ref()
             .is_ok_and(|payload| self.observe_pane_operations(payload));
+        // Only a focus that has left can be confirmed: a layout that arrives
+        // before then is Herdr from before the request, and taking it as the
+        // answer kept the focus from ever being sent (#629).
         let session_confirms_pending_pane = fetched.as_ref().ok().is_some_and(|payload| {
-            let Some(pending) = self.pending_pane_focus.as_ref() else {
+            let Some(pending) = self
+                .pending_pane_focus
+                .as_ref()
+                .filter(|pending| pending.sent)
+            else {
                 return false;
             };
             let herdr_tabs = HerdrTabView::from_payload(payload);
@@ -3387,17 +3396,40 @@ impl Runtime {
     pub(super) fn await_tab_focus(&mut self, next: PendingViewFocus) {
         let next_target_id = next.target_id.clone();
         // Only a request that already left can be answered late. One still
-        // waiting on the control lane is replaced there and never reaches
-        // Herdr, so nothing of it is remembered.
+        // waiting on the control lane is remembered when it leaves, if it
+        // does (`mark_tab_focus_sent`); a newer tab focus replaces it there,
+        // so it never does.
         if let Some(previous) = self.pending_tab_focus.replace(next)
             && previous.target_id != next_target_id
             && previous.sent
         {
-            self.superseded_tab_focus.retain(|held| {
-                held.scope_id != previous.scope_id || held.target_id != previous.target_id
-            });
-            self.superseded_tab_focus.push(previous);
+            self.supersede_tab_focus(previous);
         }
+    }
+    /// Ends the wait on the tab focus for `tab_id` when Herdr has answered it
+    /// and the session Hide last read already shows that tab, the one case
+    /// in which no confirming event follows.
+    pub(super) fn confirm_tab_focus_already_shown(&mut self, tab_id: &str) {
+        let confirmed = self.pending_tab_focus.as_ref().is_some_and(|pending| {
+            pending.sent
+                && pending.target_id == tab_id
+                && self.herdr_active_tab_ids.contains(tab_id)
+        });
+        if confirmed && let Some(pending) = self.pending_tab_focus.take() {
+            crate::diagnostic!(serde_json::json!({
+                "component": "view_state",
+                "kind": "tab.focus.confirmed_by_answer",
+                "checkout_id": pending.scope_id,
+                "tab_id": pending.target_id,
+            }));
+        }
+    }
+    /// Remembers a tab notification Herdr will answer after Hide has moved
+    /// on, so the answer is consumed rather than followed.
+    pub(super) fn supersede_tab_focus(&mut self, held: PendingViewFocus) {
+        self.superseded_tab_focus
+            .retain(|kept| kept.scope_id != held.scope_id || kept.target_id != held.target_id);
+        self.superseded_tab_focus.push(held);
         if self.superseded_tab_focus.len() > SUPERSEDED_TAB_FOCUS_LIMIT {
             let evicted = self.superseded_tab_focus.remove(0);
             crate::diagnostic!(serde_json::json!({
@@ -3448,6 +3480,20 @@ impl Runtime {
         {
             self.pending_tab_focus = None;
         }
+    }
+    pub(super) fn checkout_holding_tab(&self, tab_id: &str) -> Option<String> {
+        self.snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|workspace| &workspace.checkouts)
+            .find(|checkout| {
+                checkout
+                    .tabs
+                    .iter()
+                    .any(|tab| tab.id.as_deref() == Some(tab_id))
+            })
+            .map(|checkout| checkout.id.clone())
     }
     fn checkout_tab_holding_pane(&self, pane_id: &str) -> Option<(String, String)> {
         self.snapshot
@@ -3873,6 +3919,91 @@ impl Runtime {
         self.push_diagnostic(diagnostic_kind, message);
         true
     }
+    /// Starts an Explorer change, or keeps it behind the one still running.
+    /// The page sends a drop and the key that follows it without waiting for
+    /// the drop to land, and a change refused because another one ran was
+    /// lost with nothing logged and nothing on screen (#630); now they run one
+    /// at a time in the order they were asked. At most
+    /// `EXPLORER_QUEUE_LIMIT` wait, and the newest past that is refused and
+    /// logged. The queue is core state only: the snapshot shows the running
+    /// change, never the waiting ones.
+    pub(super) fn request_explorer_change(&mut self, request: ExplorerRequest) -> bool {
+        let running = self
+            .snapshot
+            .explorer_operation
+            .as_ref()
+            .is_some_and(|operation| operation.phase == "working");
+        if !running {
+            return self.start_explorer_operation(&request);
+        }
+        if self.explorer_queue.len() >= EXPLORER_QUEUE_LIMIT {
+            self.push_diagnostic(
+                "explorer.busy",
+                format!(
+                    "{}: {EXPLORER_QUEUE_LIMIT} file operations are already waiting; this one was not run",
+                    request.change.started_from()
+                ),
+            );
+            return true;
+        }
+        crate::diagnostic!(serde_json::json!({
+            "component": "explorer", "kind": "explorer.change_waiting",
+            "operation": request.change.kind().as_str(),
+            "waiting": self.explorer_queue.len() + 1,
+        }));
+        let owner = self.front_checkout_owned();
+        self.explorer_queue
+            .push_back(WaitingExplorerChange { owner, request });
+        false
+    }
+    /// Starts the next waiting change once the running one has settled, planned
+    /// against the checkout as it is now. A change that failed or was refused
+    /// stops the queue: the changes behind it may rely on it, and the operator
+    /// has not seen the failure they would run past. Changes asked in a
+    /// checkout that is no longer in front are dropped as well, since the tree
+    /// they came from is not the one on screen.
+    fn continue_explorer_queue(&mut self) {
+        let failed = self
+            .snapshot
+            .explorer_operation
+            .as_ref()
+            .is_some_and(|operation| operation.phase == "failed");
+        if failed {
+            self.drop_explorer_queue("the change before them did not happen");
+            return;
+        }
+        let Some(next) = self.explorer_queue.pop_front() else {
+            return;
+        };
+        if next.owner != self.front_checkout_owned() {
+            self.explorer_queue.push_front(next);
+            self.drop_explorer_queue("the checkout they were asked in is no longer in front");
+            return;
+        }
+        self.start_explorer_operation(&next.request);
+        let running = self
+            .snapshot
+            .explorer_operation
+            .as_ref()
+            .is_some_and(|operation| operation.phase == "working");
+        if !running {
+            // Refused at its turn, or settled in place without a worker; a
+            // settle already continued the queue, so what is left here
+            // follows a refusal.
+            self.drop_explorer_queue("the change before them was refused");
+        }
+    }
+    fn drop_explorer_queue(&mut self, reason: &str) {
+        if self.explorer_queue.is_empty() {
+            return;
+        }
+        let count = self.explorer_queue.len();
+        self.explorer_queue.clear();
+        self.push_diagnostic(
+            "explorer.queue_dropped",
+            format!("{count} waiting file operation(s) were not run: {reason}"),
+        );
+    }
     /// Decides an explorer change under the lock and runs it off the lock.
     ///
     /// The decision reads nothing from disk: `plan` refuses a path outside
@@ -3887,26 +4018,13 @@ impl Runtime {
     /// `device` is the device the tree that asked was showing. A change for
     /// another device than the checkout in front is refused: the tree it came
     /// from is no longer the one on screen (PRD S5.5 B34).
-    pub(super) fn start_explorer_operation(
-        &mut self,
-        plan: impl FnOnce(&str) -> Result<files::ExplorerOperation, String>,
-        root: &str,
-        started_from: &str,
-        device: Option<&str>,
-    ) -> bool {
-        if self
-            .snapshot
-            .explorer_operation
-            .as_ref()
-            .is_some_and(|operation| operation.phase == "working")
-        {
-            self.set_error(
-                "explorer.busy",
-                "Another file operation is still running",
-                true,
-            );
-            return true;
-        }
+    ///
+    /// The slot holds one change at a time; `request_explorer_change` keeps
+    /// the ones asked meanwhile, and this starts one only on an empty slot.
+    fn start_explorer_operation(&mut self, request: &ExplorerRequest) -> bool {
+        let root = request.root.as_str();
+        let started_from = request.change.started_from();
+        let device = request.device.as_deref();
         self.next_explorer_operation_id = self.next_explorer_operation_id.wrapping_add(1).max(1);
         let id = self.next_explorer_operation_id;
         let device = device.unwrap_or(workspace::LOCAL_DEVICE_ID);
@@ -3925,10 +4043,12 @@ impl Runtime {
             Some(target) if target.device_id != device => Err(format!(
                 "{root} is not on the device in front; nothing was changed"
             )),
-            Some(target) if target.root == root => plan(root).and_then(|operation| {
-                self.document_source(&target.workspace_id, &target.checkout_id)
-                    .map(|source| (operation, target, source))
-            }),
+            Some(target) if target.root == root => {
+                request.change.plan(root).and_then(|operation| {
+                    self.document_source(&target.workspace_id, &target.checkout_id)
+                        .map(|source| (operation, target, source))
+                })
+            }
             Some(target) => Err(format!(
                 "{root} is not the focused checkout {}",
                 target.root
@@ -4159,6 +4279,7 @@ impl Runtime {
                 );
             }
         }
+        self.continue_explorer_queue();
         true
     }
     /// Keeps the first prompt and the CLI arguments for the agent a task
@@ -4535,6 +4656,14 @@ impl Runtime {
                     }
                     self.yield_surface_to_terminal();
                     self.persist_current_ui_state();
+                }
+                // Herdr publishes no event for focusing the tab it already
+                // shows, so a tab focus that lands where the session Hide last
+                // read already had Herdr is confirmed by this answer; waiting
+                // for an event would hold every move Herdr makes until the
+                // deadline. A late event of an earlier request is superseded.
+                if let RemoteControlAction::FocusTab { tab_id } = &action {
+                    self.confirm_tab_focus_already_shown(tab_id);
                 }
                 self.push_diagnostic(
                     "tab.control.ready",

@@ -1335,18 +1335,6 @@ pub(crate) fn delivery_agent(value: Value) -> Result<DeliveryAgent, String> {
     }
 }
 
-pub(crate) fn delivery_screen_params(pane: &str) -> Result<Value, String> {
-    params(req::PaneReadParams {
-        pane_id: pane.into(),
-        // Detection normalizes away styling even with strip_ansi=false.
-        // Visible ANSI distinguishes a placeholder from an identical draft.
-        source: req::ReadSource::Visible,
-        lines: Some(128),
-        format: req::ReadFormat::Ansi,
-        strip_ansi: false,
-    })
-}
-
 pub(crate) fn delivery_input_params(pane: &str, text: &str) -> Result<Value, String> {
     params(req::PaneSendInputParams {
         pane_id: pane.into(),
@@ -1921,11 +1909,6 @@ mod tests {
         assert!(!super::delivery_agent(response.clone()).unwrap().ready);
         response["agent"]["interactive_ready"] = serde_json::json!(false);
         assert!(!super::delivery_agent(response).unwrap().ready);
-        assert_eq!(
-            super::delivery_screen_params("w1:p1").unwrap(),
-            serde_json::json!({"pane_id":"w1:p1", "source":"visible",
-                "lines":128, "format":"ansi", "strip_ansi":false})
-        );
     }
 
     #[test]

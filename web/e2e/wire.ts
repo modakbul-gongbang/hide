@@ -5,6 +5,7 @@
 import { expect, type Locator, type Page, type WebSocket } from "@playwright/test";
 import path from "node:path";
 import { chord } from "./chords";
+import { animationsFinished } from "./wait";
 
 /**
  * Counts client events by kind as the page sends them; one action must be
@@ -216,4 +217,17 @@ export async function sendEvent(
 /** Registers a folder of this machine the way Add a project does: one `create_workspace`. */
 export async function registerFolder(page: Page, daemon: { origin: string; token: string }, folder: string): Promise<void> {
   await sendEvent(page, daemon, "create_workspace", { path: folder, label: path.basename(folder), initialize_git: false });
+}
+
+/** Chooses Light or Dark in Settings > General, closes Settings and waits for the colors to settle. */
+export async function chooseTheme(page: Page, theme: "light" | "dark"): Promise<void> {
+  await page.keyboard.press(chord("settings"));
+  await expect(page.locator('[data-settings="true"]')).toBeVisible();
+  await page.locator('[data-settings-tab="general"]').click();
+  await page.locator(`[data-theme-option="${theme}"]`).click();
+  await expect(page.locator("html")).toHaveClass(new RegExp(`\\b${theme}\\b`));
+  await page.keyboard.press("Escape");
+  await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
+  // Controls fade their colors into the new theme; a capture waits them out.
+  await animationsFinished(page);
 }

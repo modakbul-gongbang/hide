@@ -16,6 +16,43 @@ const OUTPUT_LIMIT: usize = 64 * 1024;
 const CONTEXT_LIMIT: usize = 8 * 1024;
 const CONFIRM_RESERVE: Duration = Duration::from_millis(400);
 
+/// The line the doorbell types into an idle agent pane. The prompt hook
+/// recognizes the turn the bell opened by exactly this text, so the doorbell
+/// and the hook share the one constant.
+pub const BELL_PROMPT: &str = "Hide has pending mail. Read hide inbox for the full letter if the prompt hook did not include it.";
+
+#[derive(Deserialize)]
+struct PromptInput {
+    prompt: Option<String>,
+    session_id: Option<String>,
+}
+
+/// The submitted prompt and the session id of a runtime's `UserPromptSubmit`
+/// payload; a truncated or unreadable payload yields neither, so its prompt is
+/// never taken for the bell and its hook never counts as a submission.
+pub struct Prompt {
+    pub bell: bool,
+    pub session: Option<String>,
+}
+
+pub fn read_prompt(payload: &[u8], truncated: bool) -> Prompt {
+    let input = (!truncated)
+        .then(|| serde_json::from_slice::<PromptInput>(payload).ok())
+        .flatten();
+    Prompt {
+        bell: input
+            .as_ref()
+            .and_then(|input| input.prompt.as_deref())
+            .is_some_and(|prompt| prompt.trim() == BELL_PROMPT),
+        session: input.and_then(|input| input.session_id).filter(|id| {
+            !id.is_empty()
+                && id.len() <= 256
+                && !id.starts_with('-')
+                && !id.chars().any(char::is_control)
+        }),
+    }
+}
+
 #[derive(Deserialize)]
 pub struct Intake {
     pub context: String,
@@ -37,9 +74,18 @@ impl From<&'static str> for Failure {
     }
 }
 
-pub fn pull(deadline: Instant) -> Result<Option<Intake>, Failure> {
+/// What the agent receives for the submitted prompt: the letter bodies when
+/// `bell` says the prompt was Hide's bell, otherwise at most a count.
+pub fn pull(deadline: Instant, prompt: &Prompt) -> Result<Option<Intake>, Failure> {
     let pull_deadline = deadline.checked_sub(CONFIRM_RESERVE).ok_or("deadline")?;
-    let answer = run_cli(&["inbox", "--hook"], pull_deadline)?;
+    let mut arguments = vec!["inbox", "--hook"];
+    if prompt.bell {
+        arguments.push("--bell");
+    }
+    if let Some(session) = &prompt.session {
+        arguments.extend(["--session", session]);
+    }
+    let answer = run_cli(&arguments, pull_deadline)?;
     let intake: Intake = serde_json::from_value(answer).map_err(|_| "format")?;
     if intake.context.len() > CONTEXT_LIMIT
         || intake.ids.len() > 5
@@ -50,7 +96,8 @@ pub fn pull(deadline: Instant) -> Result<Option<Intake>, Failure> {
     {
         return Err("format".into());
     }
-    if intake.ids.is_empty() {
+    // A count-only answer carries a context line and nothing to confirm.
+    if intake.ids.is_empty() && intake.context.is_empty() {
         Ok(None)
     } else {
         Ok(Some(intake))
@@ -212,6 +259,31 @@ fn diagnostic_path(home: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_complete_payload_whose_prompt_is_the_bell_is_the_bell() {
+        let payload = |prompt: &str| {
+            serde_json::to_vec(&serde_json::json!({"session_id":"s","prompt":prompt})).unwrap()
+        };
+        let bell = |bytes: &[u8], truncated| read_prompt(bytes, truncated).bell;
+        assert!(bell(&payload(BELL_PROMPT), false));
+        assert!(bell(&payload(&format!("{BELL_PROMPT}\n")), false));
+        assert!(!bell(&payload(BELL_PROMPT), true));
+        assert!(!bell(&payload("please run the tests"), false));
+        assert!(!bell(&payload(&format!("{BELL_PROMPT} and more")), false));
+        assert!(!bell(b"{\"session_id\":\"s\"}", false));
+        assert!(!bell(b"not json", false));
+        assert!(!bell(b"", false));
+        assert_eq!(
+            read_prompt(&payload("x"), false).session.as_deref(),
+            Some("s")
+        );
+        assert_eq!(read_prompt(&payload("x"), true).session, None);
+        assert_eq!(
+            read_prompt(b"{\"session_id\":\"-rf\"}", false).session,
+            None
+        );
+    }
 
     #[test]
     fn diagnostic_claim_precedes_output_and_repeated_cause_is_suppressed() {

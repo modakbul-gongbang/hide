@@ -326,6 +326,89 @@ pub(crate) struct ExplorerTarget {
     pub(crate) root: String,
 }
 
+/// An Explorer change as the page asked for it. One asked while another runs
+/// waits in `explorer_queue` and is planned when its turn comes, against the
+/// checkout in front then; changes run one at a time in the order they were
+/// asked, so one that relies on the change before it (a rename, then a move
+/// of the renamed item) reaches the host after that change landed.
+#[derive(Clone, Debug)]
+pub(crate) struct ExplorerRequest {
+    pub(crate) root: String,
+    pub(crate) device: Option<String>,
+    pub(crate) change: ExplorerChange,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) enum ExplorerChange {
+    Create {
+        kind: files::ExplorerOperationKind,
+        parent: String,
+        name: String,
+    },
+    Rename {
+        path: String,
+        name: String,
+    },
+    Move {
+        path: String,
+        destination: String,
+    },
+    Trash {
+        path: String,
+        select_after: String,
+        inode: Option<u64>,
+    },
+}
+
+impl ExplorerChange {
+    fn kind(&self) -> files::ExplorerOperationKind {
+        match self {
+            Self::Create { kind, .. } => *kind,
+            Self::Rename { .. } => files::ExplorerOperationKind::PathRename,
+            Self::Move { .. } => files::ExplorerOperationKind::PathMove,
+            Self::Trash { .. } => files::ExplorerOperationKind::PathTrash,
+        }
+    }
+
+    /// The row the change started from, where a refusal is shown.
+    fn started_from(&self) -> &str {
+        match self {
+            Self::Create { parent, .. } => parent,
+            Self::Rename { path, .. } | Self::Move { path, .. } | Self::Trash { path, .. } => path,
+        }
+    }
+
+    fn plan(&self, root: &str) -> Result<files::ExplorerOperation, String> {
+        match self {
+            Self::Create { kind, parent, name } => {
+                files::ExplorerOperation::create(*kind, root, parent, name)
+            }
+            Self::Rename { path, name } => files::ExplorerOperation::rename(root, path, name),
+            Self::Move { path, destination } => {
+                files::ExplorerOperation::move_into(root, path, destination)
+            }
+            Self::Trash {
+                path,
+                select_after,
+                inode,
+            } => files::ExplorerOperation::trash(root, path, select_after, *inode),
+        }
+    }
+}
+
+/// A change waiting behind the running one, with the checkout that was in
+/// front when it was asked: it runs only if that checkout is still in front
+/// when its turn comes.
+#[derive(Debug)]
+struct WaitingExplorerChange {
+    owner: Option<(String, String)>,
+    request: ExplorerRequest,
+}
+
+/// How many Explorer changes wait behind the running one. A drag and the
+/// keys that follow it queue one or two; past this the newest is refused.
+const EXPLORER_QUEUE_LIMIT: usize = 4;
+
 fn retarget_path(path: &str, source: &str, destination: &str) -> Option<String> {
     if path == source {
         return Some(destination.to_owned());
@@ -396,8 +479,8 @@ struct PendingViewFocus {
     /// Local pane controls settle by operation identity, never by target alone.
     pane_control_serial: Option<u64>,
     /// Whether the request has left for Herdr. A request still waiting its
-    /// turn on the control lane cannot be answered, so replacing it leaves no
-    /// late answer to explain, and its wait does not run out.
+    /// turn on the control lane cannot be answered yet, so replacing it
+    /// leaves no late answer until it leaves, and its wait does not run out.
     sent: bool,
     requested_at_unix_ms: u64,
 }
@@ -1528,6 +1611,7 @@ pub struct Runtime {
     /// row shows its fallback until the user tries Set purpose again.
     unconfirmed_created_purposes: HashMap<String, String>,
     next_explorer_operation_id: u64,
+    explorer_queue: VecDeque<WaitingExplorerChange>,
     delta: snapshot_delta::DeltaState,
     /// Each Workspace's presentation; present only in a shell that draws
     /// separate Agent and View areas (`CoreOptions::workspace_views_path`).
@@ -1909,6 +1993,7 @@ impl Runtime {
             created_purpose_writes_in_flight: HashMap::new(),
             unconfirmed_created_purposes: HashMap::new(),
             next_explorer_operation_id: 0,
+            explorer_queue: VecDeque::new(),
             delta: snapshot_delta::DeltaState::default(),
             workspace_views,
             workspace_actions: VecDeque::new(),
