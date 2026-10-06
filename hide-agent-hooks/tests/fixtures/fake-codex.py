@@ -8,8 +8,17 @@ and records what happened beside them: `fake-calls.log` (one method per line)
 and `fake-pid` (its own pid). `$CODEX_HOME/fake-mode` selects the behaviour:
 
   ok            (default) answers everything
-  unsupported   hooks/list is an unknown method (an older Codex)
+  unsupported   hooks/list is an unknown method, answered the way codex-cli
+                0.160.0 answers one (-32600, "unknown variant")
+  invalid       hooks/list is refused for its parameters (-32600, not unknown)
   hang          never answers hooks/list, and keeps a child running
+  noisy         sends a notification and a request of its own (with the id
+                of Hide's next request) before it answers hooks/list
+  flood         makes more requests of the client than any answer needs
+  big_line      prints one line longer than any caller reads
+  errors        lists no hooks and reports hooks.json as unusable
+  escape        answers normally and leaves a process outside its tree
+                holding its output open
   exit          ends right after initialize
   ignore_write  accepts config/batchWrite and stores nothing
   refuse_write  answers config/batchWrite with an error
@@ -115,10 +124,6 @@ with open(path("fake-pid"), "w") as f:
 with open(path("fake-cwd"), "w") as f:
     f.write(os.getcwd())
 MODE = mode()
-if MODE == "hang":
-    child = subprocess.Popen(["sleep", "600"])
-    with open(path("fake-child-pid"), "w") as f:
-        f.write(str(child.pid))
 
 for raw in sys.stdin:
     raw = raw.strip()
@@ -129,7 +134,7 @@ for raw in sys.stdin:
     rid = message.get("id")
     params = message.get("params") or {}
     with open(path("fake-calls.log"), "a") as log:
-        log.write(f"{method}\n")
+        log.write(f"{method if method else 'client-response'}\n")
     if method == "initialize":
         reply(rid, {"userAgent": "fake", "codexHome": HOME})
         if MODE == "exit":
@@ -138,15 +143,46 @@ for raw in sys.stdin:
         pass
     elif method == "hooks/list":
         if MODE == "unsupported":
-            error(rid, -32601, "Method not found")
+            error(rid, -32600, "Invalid request: unknown variant `hooks/list`, expected one of `initialize`, `thread/start`")
+        elif MODE == "invalid":
+            error(rid, -32600, "Invalid request: missing field `cwds`")
         elif MODE == "hang":
+            child = subprocess.Popen(["sleep", "600"])
+            with open(path("fake-child-pid"), "w") as f:
+                f.write(str(child.pid))
             while True:
                 sys.stdin.readline()
+        elif MODE == "flood":
+            for n in range(50):
+                send({"jsonrpc": "2.0", "id": 1000 + n, "method": "item/tool/requestUserInput", "params": {}})
+            while True:
+                sys.stdin.readline()
+        elif MODE == "big_line":
+            sys.stdout.write("y" * (2 * 1024 * 1024) + "\n")
+            sys.stdout.flush()
+        elif MODE == "errors":
+            reply(rid, {"data": [{"cwd": os.getcwd(), "hooks": [], "warnings": [],
+                                  "errors": [{"path": path("hooks.json"), "message": "invalid JSON"}]}]})
         elif MODE == "chatty":
             for _ in range(80):
                 sys.stdout.write("x" * 65536 + "\n")
             sys.stdout.flush()
         else:
+            if MODE == "noisy":
+                send({"jsonrpc": "2.0", "method": "remoteControl/status/changed", "params": {"status": "disabled"}})
+                send({"jsonrpc": "2.0", "id": rid, "method": "item/tool/requestUserInput", "params": {}})
+            if MODE == "escape":
+                if os.fork() == 0:
+                    os.setsid()
+                    if os.fork() == 0:
+                        with open(path("fake-escaped-pid"), "w") as f:
+                            f.write(str(os.getpid()))
+                        import time
+                        time.sleep(60)
+                    os._exit(0)
+                os.wait()
+                while not os.path.exists(path("fake-escaped-pid")):
+                    pass
             hooks = listed()
             if MODE == "project":
                 hooks += [dict(h, source="project", key=h["key"] + ":p") for h in hooks]

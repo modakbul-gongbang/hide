@@ -275,7 +275,8 @@ Hide computes no hash and writes no `config.toml`, so a change in how Codex hash
 The kit runs the check in every pass that finds the Codex hook part in place, whether the pass wrote it or found it current: at launch, when a device connects, and on Reinstall.
 A pass that finds every entry trusted writes nothing, so a repeat leaves `config.toml` as it was.
 An entry another tool's hook displaced is trusted at its new position by the next pass; a Codex started before that pass can still show the screen for Hide's entry.
-A Codex without hook trust (its app-server does not know `hooks/list`) and a machine with no Codex are left alone and show nothing new.
+A Codex without hook trust (its app-server does not know `hooks/list`, which codex-cli 0.160.0 shows as a `-32600` "unknown variant" error rather than JSON-RPC's `-32601`; both are read as unknown) and a machine with no Codex are left alone and show nothing new.
+Starting the app-server also makes Codex do its own bookkeeping in `~/.codex` (its databases, `installation_id`, `skills/`), which is Codex's and not Hide's.
 
 What is trusted is exactly the entry Hide wrote, and nothing else (`select_targets`):
 
@@ -284,12 +285,13 @@ What is trusted is exactly the entry Hide wrote, and nothing else (`select_targe
 - Codex does not trust it yet (`untrusted`, or `modified` after a change).
 
 Another tool's hook, an entry that carries Hide's marker over a different command, and any entry that is not like this are neither read nor changed: Codex still shows the review screen for them, and lists only them.
-Hide writes `trusted_hash` and never `enabled`, so a hook the operator switched off in Codex's hook list stays off, and switching Hide's hook off there is how the operator opts out of one.
+The usual such hook is Herdr's own integration entry (`herdr integration install codex`, which the kit runs in the same pass), so on a Mac or device where that entry is new Codex's first start still shows "Hooks need review" with one hook, Herdr's, while Hide's hooks are already trusted and run; approving that screen once covers Herdr's hook only.
+Hide writes `trusted_hash` and never `enabled`, so a hook the operator switched off in Codex's hook list stays off, and switching Hide's hook off there is how the operator opts out of one; switching Codex off in Settings, Agents takes Hide's entries out and Hide asks Codex for nothing.
 Removing Hide's hooks leaves its trust records in `config.toml`; each one matches only the same command and starts nothing by itself.
 Codex's `--dangerously-bypass-hook-trust` and `bypass_hook_trust` skip the review for every hook and are not used.
 
 The app-server is one child per check, started through the one spawn helper, bounded by a 15 second overall and 5 second per-request deadline, by caps on what it may print, and by the kit's stop flag, and ended with its whole process tree on success, failure and timeout alike; it runs on the kit worker or the device helper, never under the runtime lock.
-When Codex is there and the trust cannot be recorded, the Codex hook part reads Failed with one line, "Codex has not trusted Hide's hook: …; it will ask you to review it", the cause goes to the log as `codex_trust_failed`, the other parts are installed as usual, and the next pass tries again.
+When Codex is there and the trust cannot be recorded, the Codex hook part reads Failed with one line, "Codex has not trusted Hide's hook: …; it will ask you to review it", the cause class goes to the diagnostic log with the pass's record (`kit apply.completed` names each part's reason), Codex's own words go to the kit's standard error as `codex_trust_failed` (seen where the kit runs in a terminal, and in a device helper's log, but not from the packaged app's detached daemon), the other parts are installed as usual, and the next pass tries again.
 `status` runs every few seconds while Settings is open and starts no process, so it repeats what the last pass in this process found; a failure the operator fixed by approving the hook in Codex clears at the next pass or Reinstall, which Failed offers.
 `hide-agent-hooks/tests/codex_trust.rs` runs the module against a stand-in app-server (`tests/fixtures/fake-codex.py`), and `hide-kit`'s `codex_trust_cases` runs the passes.
 Codex's app-server interface is marked experimental; a method or field that changes ends as the Failed line above, and Codex shows its screen, never a wrong trust.

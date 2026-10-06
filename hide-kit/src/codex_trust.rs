@@ -16,7 +16,9 @@ use std::collections::BTreeMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-use hide_agent_hooks::codex_trust::{TrustFailure, TrustOutcome, trust_own_hooks};
+use hide_agent_hooks::codex_trust::{
+    TrustFailure, TrustFailureKind, TrustOutcome, trust_own_hooks,
+};
 
 use crate::KitTarget;
 
@@ -43,6 +45,11 @@ pub(crate) fn ensure(target: &KitTarget) -> Option<String> {
             &target.stop,
         ) {
             TrustOutcome::Unsupported | TrustOutcome::Trusted { .. } => None,
+            // Hide is quitting: the pass is abandoned, so nothing is said of
+            // the part and nothing is remembered.
+            TrustOutcome::Failed(failure) if failure.kind == TrustFailureKind::Stopped => {
+                return None;
+            }
             TrustOutcome::Failed(failure) => Some(reason(&target.home, &failure)),
         },
     };

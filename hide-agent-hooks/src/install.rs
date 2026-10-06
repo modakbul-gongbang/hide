@@ -842,6 +842,33 @@ mod tests {
     }
 
     #[test]
+    fn the_codex_command_the_trust_step_expects_is_what_install_writes() {
+        // Codex hashes the command string it finds in the file, so the trust
+        // step recognises Hide's entry by `codex_command` alone: on every
+        // system it must be exactly what `install` wrote for each event, with
+        // the matcher `hook_matcher` names.
+        let fixture = Fixture::new("codex-command");
+        let path = helper(&fixture);
+        install(AgentRuntime::Codex, fixture.home(), &path).unwrap();
+        let written = fixture.read(AgentRuntime::Codex);
+        for event in HookEvent::ALL {
+            let group = &written["hooks"][event.name()][0];
+            assert_eq!(
+                group["hooks"][0]["command"],
+                codex_command(&path, event),
+                "{}",
+                event.name()
+            );
+            assert_eq!(
+                group.get("matcher").and_then(Value::as_str),
+                hook_matcher(AgentRuntime::Codex, event),
+                "{}",
+                event.name()
+            );
+        }
+    }
+
+    #[test]
     fn a_file_that_does_not_parse_is_never_written() {
         let fixture = Fixture::new("unparsable");
         let broken = "{\"hooks\": {\"Stop\": [ } ";

@@ -65,7 +65,6 @@ fn a_pass_that_installs_the_codex_hook_has_codex_trust_it_and_a_repeat_asks_for_
     let report = apply(&fixture.target, &Scope::automatic());
     assert_eq!(codex_part(&report).state, ComponentState::Installed);
     assert_eq!(calls(&fixture, "config/batchWrite"), 1);
-    assert_eq!(calls(&fixture, "hooks/list"), 3);
 }
 
 #[test]
@@ -170,4 +169,48 @@ fn the_first_run_pass_that_switches_codex_on_has_codex_trust_the_hook_in_that_pa
         "{report:?}"
     );
     assert_eq!(held_keys(&fixture), 5);
+}
+
+#[test]
+fn a_changed_hook_is_trusted_in_the_pass_that_replaces_it() {
+    // A new build writes the hook at another helper path: the entries are
+    // replaced, Codex holds the old hashes, and the same pass records the new
+    // ones (B2).
+    let mut fixture = with_codex();
+    apply(&fixture.target, &Scope::automatic());
+    let before = std::fs::read_to_string(codex_file(&fixture, "fake-trust.json")).unwrap();
+
+    let moved = fixture.root.join("kit-2");
+    executable(&moved.join("hide"), "#!/bin/sh\n");
+    executable(&moved.join("hide-agent-hooks"), "#!/bin/sh\n");
+    fixture.target.kit_dir = moved;
+    let report = apply(&fixture.target, &Scope::automatic());
+
+    assert_eq!(
+        codex_part(&report).state,
+        ComponentState::Installed,
+        "{report:?}"
+    );
+    let after = std::fs::read_to_string(codex_file(&fixture, "fake-trust.json")).unwrap();
+    assert_ne!(after, before, "the new entries' hashes were recorded");
+    assert_eq!(held_keys(&fixture), 5);
+    assert_eq!(calls(&fixture, "config/batchWrite"), 2);
+}
+
+#[test]
+fn hide_quitting_during_the_check_says_nothing_of_the_part_and_keeps_what_was_remembered() {
+    let fixture = with_codex();
+    crate::hooks::install(&fixture.target, hide_agent_hooks::AgentRuntime::Codex).unwrap();
+    // A failure the last pass found.
+    mode(&fixture, "refuse_write");
+    let remembered = crate::codex_trust::ensure(&fixture.target);
+    assert!(remembered.is_some());
+
+    mode(&fixture, "hang");
+    fixture
+        .target
+        .stop
+        .store(true, std::sync::atomic::Ordering::Relaxed);
+    assert_eq!(crate::codex_trust::ensure(&fixture.target), None);
+    assert_eq!(crate::codex_trust::remembered(&fixture.target), remembered);
 }

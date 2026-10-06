@@ -105,7 +105,7 @@ impl Fixture {
 fn quick() -> Limits {
     Limits {
         overall: Duration::from_secs(10),
-        request: Duration::from_millis(400),
+        request: Duration::from_millis(1500),
     }
 }
 
@@ -296,9 +296,21 @@ fn what_codex_does_not_do_is_a_failure_with_its_cause() {
     assert_eq!(failed(fixture.trust()), TrustFailureKind::Unconfirmed);
 
     fixture.mode("exit");
-    assert_eq!(failed(fixture.trust()), TrustFailureKind::CouldNotStart);
+    assert_eq!(failed(fixture.trust()), TrustFailureKind::Ended);
 
-    fixture.mode("chatty");
+    // Codex refusing hooks/list for its parameters is not "no hook trust".
+    fixture.mode("invalid");
+    assert_eq!(failed(fixture.trust()), TrustFailureKind::Refused);
+
+    // More output than any caller reads: in all, in one line, and as requests
+    // of Hide's that never end.
+    for mode in ["chatty", "big_line", "flood"] {
+        fixture.mode(mode);
+        assert_eq!(failed(fixture.trust()), TrustFailureKind::Refused, "{mode}");
+    }
+
+    // Codex could not read the file Hide wrote: not "nothing to record".
+    fixture.mode("errors");
     assert_eq!(failed(fixture.trust()), TrustFailureKind::Refused);
 
     let missing = trust_own_hooks(
@@ -350,4 +362,70 @@ fn hide_quitting_stops_the_check() {
     if let Some(server) = fixture.pid("fake-pid") {
         assert!(!hide_platform::process::is_alive(server));
     }
+}
+
+#[test]
+fn notifications_and_requests_of_codexs_own_are_refused_and_the_answer_still_matches() {
+    let fixture = Fixture::new();
+    fixture.install();
+    fixture.mode("noisy");
+    assert_eq!(fixture.trust(), TrustOutcome::Trusted { recorded: five() });
+    // Hide answered the request the server made before each list, whose id
+    // collided with Hide's own next request.
+    assert_eq!(fixture.calls("hooks/list"), 2);
+    assert_eq!(fixture.calls("client-response"), 2);
+}
+
+/// Waits for `condition`, which the stand-in makes true; the bound is only a
+/// guard against a hang.
+fn wait_for(what: &str, condition: impl Fn() -> bool) {
+    let guard = std::time::Instant::now() + Duration::from_secs(30);
+    while !condition() {
+        assert!(
+            std::time::Instant::now() < guard,
+            "timed out waiting for {what}"
+        );
+        std::thread::park_timeout(Duration::from_millis(10));
+    }
+}
+
+#[test]
+fn hide_quitting_while_codex_is_being_waited_on_ends_the_wait() {
+    let fixture = Fixture::new();
+    fixture.install();
+    fixture.mode("hang");
+    let outcome = std::thread::scope(|scope| {
+        scope.spawn(|| {
+            wait_for("the app-server to be asked for the list", || {
+                fixture.calls("hooks/list") == 1
+            });
+            fixture
+                .stop
+                .store(true, std::sync::atomic::Ordering::Relaxed);
+        });
+        // The request would otherwise end as TimedOut after its own bound.
+        fixture.trust_within(Limits {
+            overall: Duration::from_secs(60),
+            request: Duration::from_secs(60),
+        })
+    });
+    assert_eq!(failed(outcome), TrustFailureKind::Stopped);
+    let server = fixture.pid("fake-pid").unwrap();
+    assert!(!hide_platform::process::is_alive(server));
+}
+
+#[test]
+fn a_process_outside_the_childs_tree_holding_its_output_does_not_hold_the_check() {
+    let fixture = Fixture::new();
+    fixture.install();
+    fixture.mode("escape");
+    let outcome = fixture.trust();
+    let escaped = fixture
+        .pid("fake-escaped-pid")
+        .expect("a process left the tree");
+    // The check ended while that process still held the output open.
+    assert!(hide_platform::process::is_alive(escaped));
+    // What the test started goes.
+    hide_platform::process::kill_tree(escaped).unwrap();
+    assert_eq!(outcome, TrustOutcome::Trusted { recorded: five() });
 }

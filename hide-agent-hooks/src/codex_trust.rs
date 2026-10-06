@@ -68,9 +68,27 @@ const POLL: Duration = Duration::from_millis(50);
 const LINE_CAP: usize = 1024 * 1024;
 const OUTPUT_CAP: usize = 4 * 1024 * 1024;
 
-/// JSON-RPC's "method not found", which Codex answers for a method its
-/// version does not have.
+/// JSON-RPC's "method not found".
 const METHOD_NOT_FOUND: i64 = -32601;
+
+/// What codex-cli 0.160.0 answers for a method outside its request list:
+/// `-32600` with "Invalid request: unknown variant `<method>`, expected one
+/// of ...". The same code answers a request whose parameters are wrong, so
+/// the message is what tells the two apart.
+const INVALID_REQUEST: i64 = -32600;
+
+/// The most requests of Hide's that a server may make before it is judged not
+/// to be answering the one Hide asked (each is refused with a write).
+const MAX_SERVER_REQUESTS: usize = 16;
+
+/// How long the child gets to be seen exiting after its tree was ended.
+const REAP_GRACE: Duration = Duration::from_secs(2);
+
+/// Whether `code` and `message` are Codex saying it has no `method`.
+fn method_unknown(method: &str, code: i64, message: &str) -> bool {
+    code == METHOD_NOT_FOUND
+        || (code == INVALID_REQUEST && message.contains(&format!("unknown variant `{method}`")))
+}
 
 /// What one check ended as.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -94,8 +112,11 @@ pub struct TrustFailure {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum TrustFailureKind {
-    /// The `codex` program could not be started, or ended before answering.
+    /// The `codex` program could not be started.
     CouldNotStart,
+    /// Codex started and its app-server ended or closed its output before it
+    /// answered.
+    Ended,
     /// Codex answered an error, or something Hide cannot read.
     Refused,
     /// Codex did not answer in time and was stopped.
@@ -111,6 +132,7 @@ impl TrustFailureKind {
     pub fn summary(self) -> &'static str {
         match self {
             Self::CouldNotStart => "it could not be started",
+            Self::Ended => "it ended before it answered",
             Self::Refused => "it refused",
             Self::TimedOut => "it did not answer in time",
             Self::Unconfirmed => "it did not keep the record",
@@ -264,6 +286,9 @@ fn select_targets(expected: &[Expected], listed: &[Listed], hooks_json: &Path) -
         .filter(|hook| hook.handler_type.as_deref() == Some("command"))
         .filter(|hook| matches!(hook.trust_status.as_str(), "untrusted" | "modified"))
         .filter(|hook| canonical_or_given(Path::new(&hook.source_path)) == wanted)
+        // Codex names an entry `<file>:<event>:<group>:<hook>`; a key that
+        // names another file is not this file's entry whatever else it says.
+        .filter(|hook| hook.key.starts_with(&format!("{}:", hook.source_path)))
         .filter(|hook| {
             hook.command.as_deref().is_some_and(|command| {
                 expected.iter().any(|wanted| {
@@ -396,17 +421,33 @@ impl<'a> Session<'a> {
         let answer = match self.request("hooks/list", json!({})) {
             Ok(answer) => answer,
             Err(Failed::Rejected {
-                code: METHOD_NOT_FOUND,
-                ..
-            }) => return Ok(Listing::Unsupported),
+                method,
+                code,
+                message,
+            }) if method_unknown(method, code, &message) => return Ok(Listing::Unsupported),
             Err(failed) => return Err(failed.into_failure()),
         };
-        let listed = hooks_of(&answer).map_err(|detail| {
+        let (listed, errors) = hooks_of(&answer).map_err(|detail| {
             TrustFailure::new(
                 TrustFailureKind::Refused,
                 format!("hooks/list answered something Hide cannot read: {detail}"),
             )
         })?;
+        // Codex could not read the file Hide wrote: its entries are not in the
+        // list, so "nothing to record" would be a wrong answer.
+        let wanted = canonical_or_given(hooks_json);
+        if let Some(error) = errors
+            .iter()
+            .find(|error| canonical_or_given(Path::new(&error.path)) == wanted)
+        {
+            return Err(TrustFailure::new(
+                TrustFailureKind::Refused,
+                format!(
+                    "codex reports {} as unusable: {}",
+                    error.path, error.message
+                ),
+            ));
+        }
         Ok(Listing::Targets(select_targets(
             expected, &listed, hooks_json,
         )))
@@ -456,6 +497,7 @@ impl<'a> Session<'a> {
         let id = self.next_id;
         self.write(&json!({"jsonrpc": "2.0", "id": id, "method": method, "params": params}))?;
         let request_end = Instant::now() + self.limits.request;
+        let mut refused = 0usize;
         loop {
             if self.stop.load(Ordering::Relaxed) {
                 return Err(Failed::Stopped);
@@ -498,6 +540,12 @@ impl<'a> Session<'a> {
             // A request the server makes of its client (an approval): Hide
             // serves none, and answering keeps the server from waiting on it.
             if let (Some(server_id), Some(_)) = (message.get("id"), message.get("method")) {
+                refused += 1;
+                if refused > MAX_SERVER_REQUESTS {
+                    return Err(Failed::Unreadable(format!(
+                        "codex app-server made more than {MAX_SERVER_REQUESTS} requests of Hide before it answered {method}"
+                    )));
+                }
                 let refusal = json!({
                     "jsonrpc": "2.0",
                     "id": server_id,
@@ -526,10 +574,37 @@ impl<'a> Session<'a> {
                 break;
             }
         }
-        let _ = self.child.kill_tree();
-        let _ = self.child.wait();
+        let killed = self.child.kill_tree().is_ok();
+        // Seen to exit, within a bound: a kill that failed leaves the child
+        // to `OwnedChild`'s own drop, never to a wait with no end.
+        let reaped = killed && self.reaped_within(REAP_GRACE);
+        // The reader ends at the end of the child's output. A process that
+        // left the child's tree can hold that output open, so the reader is
+        // joined only once it has finished, and let go of otherwise.
         if let Some(reader) = self.reader.take() {
-            let _ = reader.join();
+            let deadline = Instant::now() + REAP_GRACE;
+            while reaped && !reader.is_finished() && Instant::now() < deadline {
+                std::thread::park_timeout(POLL);
+            }
+            if reader.is_finished() {
+                let _ = reader.join();
+            }
+        }
+    }
+
+    fn reaped_within(&mut self, grace: Duration) -> bool {
+        let deadline = Instant::now() + grace;
+        loop {
+            match self.child.try_wait() {
+                Ok(Some(_)) => return true,
+                Ok(None) => {}
+                Err(_) => return false,
+            }
+            let now = Instant::now();
+            if now >= deadline {
+                return false;
+            }
+            std::thread::park_timeout(POLL.min(deadline - now));
         }
     }
 }
@@ -573,7 +648,7 @@ impl Failed {
                 format!("codex app-server did not answer {method} in time and was stopped"),
             ),
             Self::Unreadable(detail) => TrustFailure::new(TrustFailureKind::Refused, detail),
-            Self::Gone(detail) => TrustFailure::new(TrustFailureKind::CouldNotStart, detail),
+            Self::Gone(detail) => TrustFailure::new(TrustFailureKind::Ended, detail),
             Self::Stopped => TrustFailure::new(
                 TrustFailureKind::Stopped,
                 "codex app-server was stopped because Hide is quitting",
@@ -582,14 +657,31 @@ impl Failed {
     }
 }
 
-/// The hooks of a `hooks/list` answer, across every cwd it lists.
-fn hooks_of(answer: &Value) -> Result<Vec<Listed>, String> {
+/// A file Codex could not use, as `hooks/list` reports it.
+#[derive(Clone, Debug, Deserialize)]
+struct ListError {
+    path: String,
+    message: String,
+}
+
+/// The hooks and the errors of a `hooks/list` answer, across every cwd it
+/// lists.
+fn hooks_of(answer: &Value) -> Result<(Vec<Listed>, Vec<ListError>), String> {
     let entries = answer
         .get("data")
         .and_then(Value::as_array)
         .ok_or_else(|| "there is no data list".to_owned())?;
     let mut hooks = Vec::new();
+    let mut errors = Vec::new();
     for entry in entries {
+        if let Some(reported) = entry.get("errors").and_then(Value::as_array) {
+            for error in reported {
+                errors.push(
+                    serde_json::from_value::<ListError>(error.clone())
+                        .map_err(|error| error.to_string())?,
+                );
+            }
+        }
         let listed = entry
             .get("hooks")
             .and_then(Value::as_array)
@@ -601,7 +693,7 @@ fn hooks_of(answer: &Value) -> Result<Vec<Listed>, String> {
             );
         }
     }
-    Ok(hooks)
+    Ok((hooks, errors))
 }
 
 /// Feeds the child's lines to the session, stopping at the end of output or
@@ -647,15 +739,18 @@ mod tests {
         codex_command(Path::new(HELPER), event)
     }
 
+    const FILE: &str = "/home/.codex/hooks.json";
+
+    /// `key` is the entry's name within the file, as Codex's own key ends.
     fn listed(event: &str, command: &str, trust: &str, key: &str) -> Listed {
         Listed {
-            key: key.to_owned(),
+            key: format!("{FILE}:{key}"),
             event_name: event.to_owned(),
             handler_type: Some("command".to_owned()),
             command: Some(command.to_owned()),
             matcher: None,
             source: "user".to_owned(),
-            source_path: "/home/.codex/hooks.json".to_owned(),
+            source_path: FILE.to_owned(),
             is_managed: false,
             current_hash: format!("sha256:{key}"),
             trust_status: trust.to_owned(),
@@ -663,9 +758,14 @@ mod tests {
     }
 
     fn select(listed: &[Listed]) -> Vec<String> {
-        select_targets(&expected(), listed, Path::new("/home/.codex/hooks.json"))
+        select_targets(&expected(), listed, Path::new(FILE))
             .into_iter()
-            .map(|target| target.key)
+            .map(|target| {
+                target
+                    .key
+                    .trim_start_matches(&format!("{FILE}:"))
+                    .to_owned()
+            })
             .collect()
     }
 
@@ -721,7 +821,10 @@ mod tests {
             command.replace("/kit/", "/elsewhere/"),
             command.replace("--runtime codex", "--runtime claude-code"),
             command.replace("SessionStart", "Stop"),
-            command.replace("hide-subagents@6", "hide-subagents@5"),
+            command.replace(
+                &format!("hide-subagents@{}", crate::HOOK_VERSION),
+                &format!("hide-subagents@{}", crate::HOOK_VERSION - 1),
+            ),
             format!("{command} "),
             command.to_uppercase(),
         ] {
@@ -801,7 +904,7 @@ mod tests {
         let pick = |matcher: Option<&str>| {
             let mut hook = own("untrusted", "guarded");
             hook.matcher = matcher.map(str::to_owned);
-            select_targets(&expected, &[hook], Path::new("/home/.codex/hooks.json")).len()
+            select_targets(&expected, &[hook], Path::new(FILE)).len()
         };
         assert_eq!(pick(Some("Bash")), 1);
         assert_eq!(pick(None), 0);
@@ -826,8 +929,38 @@ mod tests {
             "enabled": true, "timeoutSec": 8, "displayOrder": 0,
         });
         let answer = json!({"data": [{"cwd": "/a", "hooks": [hook.clone()]}, {"cwd": "/b", "hooks": [hook]}]});
-        assert_eq!(hooks_of(&answer).unwrap().len(), 2);
+        assert_eq!(hooks_of(&answer).unwrap().0.len(), 2);
         assert!(hooks_of(&json!({})).is_err());
         assert!(hooks_of(&json!({"data": [{"cwd": "/a"}]})).is_err());
+    }
+
+    #[test]
+    fn a_key_that_names_another_file_is_not_a_target() {
+        let mut hook = own("untrusted", "k");
+        hook.key = "/elsewhere/hooks.json:session_start:0:0".to_owned();
+        assert!(select(&[hook]).is_empty());
+    }
+
+    #[test]
+    fn an_unknown_method_is_told_from_bad_parameters_by_its_message() {
+        // The shape codex-cli 0.160.0 answers for a method it does not have.
+        let unknown = "Invalid request: unknown variant `hooks/list`, expected one of `initialize`, `thread/start`";
+        assert!(method_unknown("hooks/list", INVALID_REQUEST, unknown));
+        assert!(method_unknown(
+            "hooks/list",
+            METHOD_NOT_FOUND,
+            "Method not found"
+        ));
+        assert!(!method_unknown(
+            "hooks/list",
+            INVALID_REQUEST,
+            "Invalid request: missing field `cwds`"
+        ));
+        assert!(!method_unknown(
+            "hooks/list",
+            INVALID_REQUEST,
+            "Invalid request: unknown variant `config/batchWrite`"
+        ));
+        assert!(!method_unknown("hooks/list", -32603, unknown));
     }
 }
