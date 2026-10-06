@@ -11,7 +11,7 @@ import { useUiStore, type FactoryPlace } from "../ui";
 import { taskRef, type FactoryCommand } from "./commands";
 import { StateMark } from "./FactoryCard";
 import { useTaskDetail } from "./FactoryScreen";
-import { ACTION_LABEL, OUTCOME_LABEL, STAGE_LABEL, TONE_TEXT, stateTone } from "./labels";
+import { ACTION_LABEL, GATE_LABEL, OUTCOME_LABEL, STAGE_LABEL, STOP_LABEL, TONE_TEXT, stateTone } from "./labels";
 import type { AttemptView, CardView, FactorySummary, FactoryView, Question, TaskDetail } from "./model";
 import { Refusal } from "./MyTurn";
 import { Revive } from "./FactoryBoard";
@@ -72,7 +72,7 @@ function TaskBody({ detail, factory, actions }: { detail: TaskDetail; factory: F
           <span className="flex items-center gap-xs rounded-full bg-muted px-sm py-xxs">
             <StateMark card={card} />
           </span>
-          {detail.stop ? <span className="text-caption text-warning" data-factory-stop="true">{detail.stop}</span> : null}
+          {detail.stop_code ? <span className="text-caption text-warning" data-factory-stop={detail.stop_code}>{t(STOP_LABEL[detail.stop_code])}</span> : null}
           <span className="flex-1" />
           <PageActions detail={detail} task={task} send={send} sending={request.state.phase === "sending"} actions={actions} />
         </div>
@@ -93,10 +93,10 @@ function TaskBody({ detail, factory, actions }: { detail: TaskDetail; factory: F
       {open.map((question) => (
         <OpenQuestion key={question.id} question={question} factory={factory.id} task={card.task} />
       ))}
-      {detail.gates.length > 0 ? (
-        <p className="flex items-center gap-xs text-body text-warning" data-factory-gates="true">
+      {detail.gate_codes.length > 0 ? (
+        <p className="flex items-center gap-xs text-body text-warning" data-factory-gates={detail.gate_codes.join(" ")}>
           <ListChecksIcon aria-hidden="true" className="size-(--size-icon) shrink-0" />
-          {detail.gates.join(" · ")}
+          {detail.gate_codes.map((gate) => t(GATE_LABEL[gate])).join(" · ")}
         </p>
       ) : null}
       <Chain factory={factory} card={card} before={chain.before} after={chain.after} canRemove={detail.allowed.includes("dep-remove")} send={send} />
@@ -144,7 +144,7 @@ function TaskBody({ detail, factory, actions }: { detail: TaskDetail; factory: F
           ) : null}
         </div>
         <div className="flex min-w-0 flex-col gap-lg">
-          <Progress detail={detail} actions={actions} />
+          <Progress factory={factory} detail={detail} actions={actions} />
           <Decisions detail={detail} />
         </div>
       </div>
@@ -287,7 +287,7 @@ function PageActions({ detail, task, send, sending, actions }: { detail: TaskDet
   );
 }
 
-function Progress({ detail, actions }: { detail: TaskDetail; actions: Actions }) {
+function Progress({ factory, detail, actions }: { factory: FactoryView; detail: TaskDetail; actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const card = detail.card;
   return (
@@ -302,9 +302,10 @@ function Progress({ detail, actions }: { detail: TaskDetail; actions: Actions })
             {!detail.pr.open ? <span className="text-caption text-muted-foreground">{t("factory.task.prClosed")}</span> : null}
           </span>
         ) : null}
-        <span className={cn("flex items-center gap-xs", card.failures > 0 && "text-warning")} data-factory-verification={detail.verification}>
+        {/* A Factory without verification shows 검증 없음 (D-60); else the engine's n/3. */}
+        <span className={cn("flex items-center gap-xs", card.failures > 0 && "text-warning")} data-factory-verification={factory.verification === "none" ? "none" : detail.verification}>
           <ListChecksIcon aria-hidden="true" className="size-(--size-icon) shrink-0" />
-          {t("factory.task.verification", { value: detail.verification })}
+          {factory.verification === "none" ? t("factory.task.noVerification") : t("factory.task.verification", { value: detail.verification })}
         </span>
         {card.external.length > 0 ? (
           <span className="text-caption text-muted-foreground [overflow-wrap:anywhere]" data-factory-external-wait="true">

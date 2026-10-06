@@ -9,6 +9,7 @@ import { act } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { afterEach, expect, it, vi } from "vitest";
 import { createActions } from "../actions";
+import { english } from "../i18n/catalogs";
 import { TooltipProvider } from "../components/ui/tooltip";
 import { useShellStore } from "../store";
 import { FACTORY_ENTRY, useUiStore, type FactoryPlace } from "../ui";
@@ -19,7 +20,7 @@ import type { CardView, FactorySummary, FactoryView, InboxItem, TaskDetail, Task
 const NOW = Date.now();
 
 function card(task: string, state: TaskState, patch: Partial<CardView> = {}): CardView {
-  return { task, display_id: task, column: null, title: `${task} 제목`, state, state_label: state, needs_person: false, waiting_for: null, priority: 0, since: NOW, unread: false, folded: false, archived: false, failures: 0, external: [], revive_until: null, worker_pane: null, ...patch };
+  return { task, display_id: task, column: null, title: `${task} 제목`, state, state_label: state, needs_person: false, waiting_for: null, waiting_code: null, waiting_on: [], env_hold: null, stop: null, priority: 0, since: NOW, unread: false, folded: false, archived: false, failures: 0, external: [], revive_until: null, worker_pane: null, ...patch };
 }
 
 function factory(patch: Partial<FactoryView> = {}): FactoryView {
@@ -34,7 +35,8 @@ function factory(patch: Partial<FactoryView> = {}): FactoryView {
 
 const MERGE: InboxItem = {
   group: "merge", kind: "merge", rank: 0, factory: "f1", task: "T-1", display_id: "#12", title: "T-1 제목", project: "fixture", question: null,
-  text: "병합할까요?", suggestion: "merge", result: "", default_action: null, choices: ["merge", "request-changes", "cancel"], deadline: null, remaining: null, waiting_since: NOW, waiting_days: 0,
+  text: "병합할까요?", suggestion: "merge", result: "", default_action: null, choices: ["merge", "request-changes", "cancel"], deadline: null, remaining: null, remaining_hours: null, waiting_since: NOW, waiting_days: 0,
+  result_code: "merge", unblocks: [], gates: ["manual_mode"], stop: null,
 };
 
 let root: Root | null = null;
@@ -74,24 +76,24 @@ it("turns the outside read the warning colour after three failed reads, and keep
   expect(container.querySelector("[data-factory-outside-read]")!.getAttribute("data-factory-outside-read")).toBe("fresh");
 });
 
-it("keeps a refused answer's item in place with the engine's next action (B10)", async () => {
+it("keeps a refused answer's item in place with its next action in the screen's language (B10, B24)", async () => {
   const { container, events } = await mount({ my_turn: 1, factories: [factory()], inbox: [MERGE] });
   const send = container.querySelector<HTMLButtonElement>("[data-factory-send]")!;
   await act(async () => send.click());
   const sent = events.at(-1) as unknown as { kind: string; payload: { request_id: string; command: { verb: string; task: string } } };
   expect(sent.kind).toBe("factory_action");
   expect(sent.payload.command).toEqual({ verb: "merge", task: "f1/T-1" });
-  await act(async () => useShellStore.setState({ factory: { summary: { my_turn: 1, factories: [factory()], inbox: [MERGE] }, actions: [{ request_id: sent.payload.request_id, answer: { ok: false, reason: "merge_refused", next_action: "충돌을 해결한 뒤 다시 병합하세요" } }] } }));
+  await act(async () => useShellStore.setState({ factory: { summary: { my_turn: 1, factories: [factory()], inbox: [MERGE] }, actions: [{ request_id: sent.payload.request_id, answer: { ok: false, reason: "main_dirty", next_action: "Commit or stash the changes in the main checkout, then merge" } }] } }));
   const refused = container.querySelector("[data-factory-refused]")!;
-  expect(refused.getAttribute("data-factory-refused")).toBe("merge_refused");
-  expect(refused.textContent).toContain("충돌을 해결한 뒤 다시 병합하세요");
+  expect(refused.getAttribute("data-factory-refused")).toBe("main_dirty");
+  expect(refused.textContent).toBe(english["factory.refusal.main_dirty"]);
   expect(container.querySelectorAll("[data-factory-item]")).toHaveLength(1);
 });
 
 function detail(state: TaskState, allowed: string[]): TaskDetail {
   return {
     card: card("T-1", state), factory: "f1", project: "/fixture", goal: "목표", criteria: [], out_of_scope: [], before: [], after: [], attachments: [], pr: null,
-    verification: "1/3", attempts: [], decisions: [], questions: [], discoveries: [], gates: [], allowed, stop: null, merge_sha: null, worker_name: null, worktree: null, branch: null,
+    verification: "1/3", attempts: [], decisions: [], questions: [], discoveries: [], gates: [], gate_codes: [], allowed, stop: null, stop_code: null, merge_sha: null, worker_name: null, worktree: null, branch: null,
   };
 }
 

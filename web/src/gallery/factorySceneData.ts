@@ -24,6 +24,7 @@ type CardSpec = {
   /** How long ago the Task last changed. */
   ago: number;
   needsPerson?: boolean;
+  /** The display id of the predecessor a waiting Task waits on. */
   waitingFor?: string;
   unread?: boolean;
   folded?: boolean;
@@ -47,6 +48,10 @@ function card(spec: CardSpec, now: number): CardView {
     state_label: spec.state,
     needs_person: spec.needsPerson ?? false,
     waiting_for: spec.waitingFor ?? null,
+    waiting_code: spec.waitingFor ? "predecessors" : spec.state === "waiting" ? "slot" : null,
+    waiting_on: spec.waitingFor ? [spec.waitingFor] : [],
+    env_hold: null,
+    stop: spec.state === "stopped" ? "verify_failed" : null,
     priority: spec.priority ?? 0,
     since: now - spec.ago,
     unread: spec.unread ?? false,
@@ -154,8 +159,13 @@ function inboxItem(item: Partial<InboxItem> & Pick<InboxItem, "group" | "kind" |
     choices: [],
     deadline: null,
     remaining: null,
+    remaining_hours: null,
     waiting_since: now - ago,
     waiting_days: Math.floor(ago / DAY),
+    result_code: "acknowledge",
+    unblocks: [],
+    gates: [],
+    stop: null,
     ...item,
   };
 }
@@ -220,7 +230,8 @@ export function factoryScene(content: SceneContent, now: number): FactorySceneFi
         text: "WS에 합치면 Task마다 snapshot이 약 2 KB 커지고, REST는 hided에 route가 하나 생깁니다.",
         suggestion: "WS snapshot에 합치기",
         choices: ["REST 엔드포인트"],
-        result: `worker를 깨워 이어갑니다 · 끝나면 ${issue(421)}이 풀립니다`,
+        result_code: "wake_worker",
+        unblocks: [issue(421)],
       },
       now,
       3 * DAY,
@@ -240,7 +251,7 @@ export function factoryScene(content: SceneContent, now: number): FactorySceneFi
         choices: ["번호순", "만든 순"],
         default_action: "최근 수정순",
         deadline: now + 21 * HOUR,
-        result: "최근 수정순으로 이어갑니다",
+        result_code: "apply_or_merge",
       },
       now,
       3 * HOUR,
@@ -260,7 +271,7 @@ export function factoryScene(content: SceneContent, now: number): FactorySceneFi
         choices: ["gate마다 한 줄"],
         default_action: "실패만",
         deadline: now + 5 * HOUR,
-        result: "실패한 gate만 요약합니다",
+        result_code: "apply_or_merge",
       },
       now,
       5 * HOUR,
@@ -277,7 +288,9 @@ export function factoryScene(content: SceneContent, now: number): FactorySceneFi
         text: "검증을 통과했고 manual 머지 대기입니다.",
         suggestion: "merge",
         choices: ["request-changes", "cancel"],
-        result: `머지하면 ${issue(405)}가 완료됩니다`,
+        result_code: "merge",
+        unblocks: [issue(405)],
+        gates: ["manual_mode", "risk_path"],
       },
       now,
       HOUR,
@@ -294,7 +307,8 @@ export function factoryScene(content: SceneContent, now: number): FactorySceneFi
         text: "web-e2e가 세 번 연속 실패했습니다.",
         suggestion: "retry",
         choices: ["cancel"],
-        result: "worker를 깨워 다시 시도합니다",
+        result_code: "restart_worker",
+        stop: "verify_failed",
       },
       now,
       40 * MINUTE,
@@ -334,9 +348,11 @@ export function factoryScene(content: SceneContent, now: number): FactorySceneFi
           ? [{ id: "q-default", origin: "worker", kind: { kind: "default" }, text: "보드를 처음 열 때 정렬 기본값은?", suggestion: "최근 수정순", default_action: "최근 수정순으로 진행", deadline: now + 21 * HOUR, asked_at: now - 3 * HOUR, choices: ["번호순", "만든 순"], answer: null, letter: null }]
           : [],
       discoveries: [],
-      gates: found.state === "merge_waiting" ? ["검증 통과", "리뷰 요청 없음"] : [],
+      gates: [],
+      gate_codes: found.state === "merge_waiting" ? ["manual_mode", "risk_path"] : [],
       allowed: running ? ["pause", "cancel"] : found.state === "merge_waiting" ? ["merge", "request-changes", "cancel"] : found.state === "stopped" ? ["retry", "cancel"] : found.state === "waiting" ? ["priority", "cancel"] : [],
-      stop: found.state === "stopped" ? "검증 3회 실패" : null,
+      stop: null,
+      stop_code: found.state === "stopped" ? "verify_failed" : null,
       merge_sha: null,
       worker_name: found.worker_pane ? `${found.task}-worker` : null,
       worktree: found.worker_pane ? `/work/herdr-ide.worktrees/${found.task}` : null,

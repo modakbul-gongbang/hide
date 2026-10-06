@@ -24,13 +24,12 @@ export type InitPreview = {
   /** Set when the chosen verification leaves auto unavailable. */
   auto_unavailable: string | null;
   default_runtime: string;
-  /** The GitHub account the Factory acts as, when the engine names it. */
-  account?: string | null;
-  /** The repository it reads and writes, when the engine names it. */
-  repo?: string | null;
-  reads?: string[];
-  writes: string[];
+  /** A GitHub Factory's account, repository and everything it reads and writes there; null for a local project (D-62). */
+  github: GithubPlan | null;
 };
+
+/** The engine words each line of the lists; they carry no code yet (Review question). */
+type GithubPlan = { account: string; repo: string; reads: string[]; writes: string[] };
 
 type Verification = { kind: "ci" } | { kind: "commands"; commands: string[] } | { kind: "none" };
 
@@ -114,7 +113,6 @@ function CreateForm({ actions, onClose }: { actions: Actions; onClose: () => voi
   const merge: MergeMode = autoBlocked ? "manual" : mode;
   const ready = path !== null && preview !== null && verification !== null && !probing && probe.state.phase !== "refused";
   const projectName = projects.find((row) => row.id === project)?.label ?? "";
-  const github = preview?.source === "github";
   return (
     <>
       <DialogBody className="flex flex-col gap-lg">
@@ -161,7 +159,7 @@ function CreateForm({ actions, onClose }: { actions: Actions; onClose: () => voi
             </RadioGroup>
           </Step>
         ) : null}
-        {github && preview ? <GithubStep preview={preview} /> : null}
+        {preview?.github ? <GithubStep plan={preview.github} /> : null}
         <Refusal state={create.state} />
         {create.state.phase === "refused" && typeof (create.state.answer?.detail as { stage?: unknown } | undefined)?.stage === "string" ? (
           <span className="text-caption text-muted-foreground" data-factory-create-stage="true">
@@ -250,35 +248,25 @@ function VerificationStep({ preview, value, onChange }: { preview: InitPreview; 
 }
 
 /** Everything the Factory will read and write on GitHub, written before the button (B5, D-62). */
-function GithubStep({ preview }: { preview: InitPreview }) {
+function GithubStep({ plan }: { plan: GithubPlan }) {
   const { t } = useInterfaceTranslation();
   return (
     <Step title={t("factory.create.github")}>
       <dl className="grid grid-cols-[auto_1fr] gap-x-md gap-y-xs text-body" data-factory-create-github="true">
-        {preview.account ? (
-          <>
-            <dt className="text-muted-foreground">{t("factory.create.account")}</dt>
-            <dd className="font-mono" data-factory-create-account="true">{preview.account}</dd>
-          </>
-        ) : null}
-        {preview.repo ? (
-          <>
-            <dt className="text-muted-foreground">{t("factory.create.repo")}</dt>
-            <dd className="font-mono" data-factory-create-repo="true">{preview.repo}</dd>
-          </>
-        ) : null}
-        {preview.reads && preview.reads.length > 0 ? (
-          <>
-            <dt className="text-muted-foreground">{t("factory.create.reads")}</dt>
-            <dd>
-              <ul className="flex flex-col gap-xxs">{preview.reads.map((line) => <li key={line} className="[overflow-wrap:anywhere]">{line}</li>)}</ul>
-            </dd>
-          </>
-        ) : null}
+        <dt className="text-muted-foreground">{t("factory.create.account")}</dt>
+        <dd className="font-mono [overflow-wrap:anywhere]" data-factory-create-account={plan.account}>{plan.account}</dd>
+        <dt className="text-muted-foreground">{t("factory.create.repo")}</dt>
+        <dd className="font-mono [overflow-wrap:anywhere]" data-factory-create-repo={plan.repo}>{plan.repo}</dd>
+        <dt className="text-muted-foreground">{t("factory.create.reads")}</dt>
+        <dd>
+          <ul className="flex flex-col gap-xxs" data-factory-create-reads={plan.reads.length}>
+            {plan.reads.map((line) => <li key={line} className="[overflow-wrap:anywhere]">{line}</li>)}
+          </ul>
+        </dd>
         <dt className="text-muted-foreground">{t("factory.create.writes")}</dt>
         <dd>
-          <ul className="flex flex-col gap-xxs" data-factory-create-writes={preview.writes.length}>
-            {preview.writes.map((line) => <li key={line} className="[overflow-wrap:anywhere]">{line}</li>)}
+          <ul className="flex flex-col gap-xxs" data-factory-create-writes={plan.writes.length}>
+            {plan.writes.map((line) => <li key={line} className="[overflow-wrap:anywhere]">{line}</li>)}
           </ul>
         </dd>
       </dl>

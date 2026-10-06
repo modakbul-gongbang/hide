@@ -5,7 +5,7 @@ import { boardColumns, factoryGraph, taskChain } from "./view";
 
 function card(task: string, patch: Partial<CardView> = {}): CardView {
   return {
-    task, display_id: task, column: "waiting", title: task, state: "waiting", state_label: "", needs_person: false, waiting_for: null,
+    task, display_id: task, column: "waiting", title: task, state: "waiting", state_label: "", needs_person: false, waiting_for: null, waiting_code: null, waiting_on: [], env_hold: null, stop: null,
     priority: 0, since: 0, unread: false, folded: false, archived: false, failures: 0, external: [], revive_until: null, worker_pane: null, ...patch,
   };
 }

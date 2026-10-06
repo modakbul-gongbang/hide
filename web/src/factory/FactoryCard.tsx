@@ -3,7 +3,7 @@ import { Elapsed } from "../components/elapsed";
 import { useInterfaceTranslation } from "../i18n/client";
 import { cn } from "../lib/utils";
 import { useUiStore } from "../ui";
-import { STATE_LABEL, TONE_TEXT, stateTone } from "./labels";
+import { STATE_LABEL, STOP_LABEL, TONE_TEXT, stateTone, waitingText } from "./labels";
 import type { CardView, FactoryView, TaskState } from "./model";
 
 const STATE_ICON: Partial<Record<TaskState, typeof CircleIcon>> = {
@@ -19,15 +19,16 @@ const STATE_ICON: Partial<Record<TaskState, typeof CircleIcon>> = {
   landed: CircleCheckIcon,
 };
 
-/** A Task's state as a mark and its word, in the tone the board and graph share (B15, B17). */
+/** A Task's state as a mark and its word, with a stopped card's reason, in the tone the board and graph share (B15, B17). */
 export function StateMark({ card, className }: { card: CardView; className?: string }) {
   const { t } = useInterfaceTranslation();
   const tone = stateTone(card.state, card.needs_person);
   const Icon = STATE_ICON[card.state] ?? CircleIcon;
+  const words = card.stop ? `${t(STATE_LABEL[card.state])} · ${t(STOP_LABEL[card.stop])}` : t(STATE_LABEL[card.state]);
   return (
-    <span className={cn("flex min-w-0 items-center gap-xxs text-caption", TONE_TEXT[tone], className)} data-factory-state={card.state}>
+    <span className={cn("flex min-w-0 items-center gap-xxs text-caption", TONE_TEXT[tone], className)} data-factory-state={card.state} data-factory-stop-reason={card.stop ?? undefined}>
       <Icon aria-hidden="true" className="size-(--size-icon-sm) shrink-0" />
-      <span className="truncate">{t(STATE_LABEL[card.state])}</span>
+      <span className="truncate">{words}</span>
     </span>
   );
 }
@@ -40,6 +41,7 @@ export function StateMark({ card, className }: { card: CardView; className?: str
  */
 export function TaskCardView({ factory, card, showProject, dim = false }: { factory: FactoryView; card: CardView; showProject: boolean; dim?: boolean }) {
   const { t } = useInterfaceTranslation();
+  const waiting = waitingText(card, t);
   return (
     <button
       type="button"
@@ -62,10 +64,10 @@ export function TaskCardView({ factory, card, showProject, dim = false }: { fact
       <span className="line-clamp-2 text-body [overflow-wrap:anywhere]">{card.title}</span>
       <span className="flex min-w-0 items-center gap-xs">
         <StateMark card={card} />
-        {card.waiting_for ? (
-          <span className="flex min-w-0 items-center gap-xxs text-caption text-muted-foreground" data-factory-waiting-for="true">
+        {waiting ? (
+          <span className="flex min-w-0 items-center gap-xxs text-caption text-muted-foreground" data-factory-waiting-for={card.waiting_code ?? undefined}>
             <LockIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0" />
-            <span className="truncate">{card.waiting_for}</span>
+            <span className="truncate">{waiting}</span>
           </span>
         ) : null}
         {card.external.length > 0 ? <span className="shrink-0 text-caption text-muted-foreground" data-factory-external="true">{t("factory.card.external")}</span> : null}

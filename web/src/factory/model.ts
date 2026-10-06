@@ -34,6 +34,26 @@ export type AttemptStage = (typeof ATTEMPT_STAGES)[number];
 export const ATTEMPT_OUTCOMES = ["passed", "failed", "environment", "running"] as const;
 export type AttemptOutcome = (typeof ATTEMPT_OUTCOMES)[number];
 
+/** `contracts/snapshot-wire-enums.json`: `factory_waiting_for`, what a card waits for. */
+export const WAITING_FOR = ["predecessors", "slot", "environment", "answer"] as const;
+export type WaitingFor = (typeof WAITING_FOR)[number];
+
+/** `contracts/snapshot-wire-enums.json`: `factory_env_hold`, why the machine holds new starts. */
+export const ENV_HOLDS = ["disk_floor", "disk_full", "memory_critical"] as const;
+export type EnvHold = (typeof ENV_HOLDS)[number];
+
+/** `contracts/snapshot-wire-enums.json`: `factory_stop_reason`. */
+export const STOP_REASONS = ["no_report", "stalled", "verify_failed", "new_task_cap", "environment_repeated", "worker_start", "publish_refused"] as const;
+export type StopReason = (typeof STOP_REASONS)[number];
+
+/** `contracts/snapshot-wire-enums.json`: `factory_gate`, why a merge waits for a person. */
+export const GATES = ["review_directly", "approved_scope_change", "breaking_change", "no_verification", "risk_path", "manual_mode", "open_question", "check_failed", "autonomy_diff", "dirty_main", "merge_refused"] as const;
+export type Gate = (typeof GATES)[number];
+
+/** `contracts/snapshot-wire-enums.json`: `factory_result_code`, what sending an item's suggestion does. */
+export const RESULT_CODES = ["wake_worker", "apply_or_merge", "ready", "split", "drafting", "new_task_cap_choice", "run_action", "acknowledge", "merge", "restart_worker"] as const;
+export type ResultCode = (typeof RESULT_CODES)[number];
+
 /** The inbox groups, in the order the engine ranks them. */
 export const INBOX_GROUPS = ["answer", "merge", "stopped", "notice"] as const;
 export type InboxGroup = (typeof INBOX_GROUPS)[number];
@@ -81,7 +101,14 @@ export type CardView = {
   state: TaskState;
   state_label: string;
   needs_person: boolean;
+  /** The engine's words; the screen labels `waiting_code` instead. */
   waiting_for: string | null;
+  waiting_code: WaitingFor | null;
+  /** The display ids of the predecessors it waits on. */
+  waiting_on: string[];
+  env_hold: EnvHold | null;
+  /** Why a stopped card stopped. */
+  stop: StopReason | null;
   priority: number;
   since: UnixMs;
   unread: boolean;
@@ -111,8 +138,16 @@ export type InboxItem = {
   choices: string[];
   deadline: UnixMs | null;
   remaining: string | null;
+  remaining_hours: number | null;
   waiting_since: UnixMs;
   waiting_days: number;
+  result_code: ResultCode;
+  /** The display ids of waiting Tasks this item frees once it is done. */
+  unblocks: string[];
+  /** Why a merge item waits for a person. */
+  gates: Gate[];
+  /** Why a stopped item stopped. */
+  stop: StopReason | null;
 };
 
 export type Attachment = { path: string; sha256: string; version: number; original: string };
@@ -160,10 +195,14 @@ export type TaskDetail = {
   decisions: DecisionRecord[];
   questions: Question[];
   discoveries: Discovery[];
+  /** The engine's words; the screen labels `gate_codes` instead. */
   gates: string[];
+  gate_codes: Gate[];
   /** The verbs this state allows a person. */
   allowed: string[];
+  /** The engine's words; the screen labels `stop_code` instead. */
   stop: string | null;
+  stop_code: StopReason | null;
   merge_sha: string | null;
   worker_name: string | null;
   worktree: string | null;

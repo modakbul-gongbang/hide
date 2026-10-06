@@ -10,7 +10,7 @@ import { cn } from "../lib/utils";
 import { useOverviewCount } from "../Overview";
 import { useUiStore } from "../ui";
 import { taskRef, type FactoryCommand } from "./commands";
-import { ACTION_LABEL, GROUP_LABEL, KIND_LABEL } from "./labels";
+import { ACTION_LABEL, GROUP_LABEL, KIND_LABEL, itemWhy, refusalText, resultText } from "./labels";
 import type { FactorySummary, InboxItem } from "./model";
 import { useFactoryRequest, type RequestState } from "./request";
 import { inboxKey, shownFactories, shownInbox } from "./view";
@@ -158,7 +158,7 @@ function ClosedItem({ item, onOpen }: { item: InboxItem; onOpen: () => void }) {
     >
       <KindIcon item={item} className="text-subtle-foreground" />
       <span className="min-w-0 shrink truncate text-body">{item.title}</span>
-      <span className="min-w-0 flex-1 truncate text-caption text-muted-foreground">{item.text}</span>
+      <span className="min-w-0 flex-1 truncate text-caption text-muted-foreground">{itemWhy(item, t)}</span>
       <Place item={item} />
       <TimeCue item={item} />
     </button>
@@ -210,7 +210,7 @@ function OpenItem({ item, actions }: { item: InboxItem; actions: Actions }) {
           <span className="text-body font-semibold [overflow-wrap:anywhere]">{item.title}</span>
           <span className="text-body text-subtle-foreground [overflow-wrap:anywhere]" data-factory-item-why="true">
             <span className="text-muted-foreground">{t(KIND_LABEL[item.kind])} · </span>
-            {item.text}
+            {itemWhy(item, t)}
           </span>
         </div>
         <Place item={item} />
@@ -240,9 +240,9 @@ function OpenItem({ item, actions }: { item: InboxItem; actions: Actions }) {
             {sending ? t("factory.turn.sending") : label}
           </Button>
         ) : null}
-        {choice && choice.value === item.suggestion && item.result ? (
-          <span className="min-w-0 text-caption text-subtle-foreground [overflow-wrap:anywhere]" data-factory-result="true">
-            {item.result}
+        {choice && choice.value === item.suggestion ? (
+          <span className="min-w-0 text-caption text-subtle-foreground [overflow-wrap:anywhere]" data-factory-result={item.result_code}>
+            {resultText(item, t)}
           </span>
         ) : null}
       </div>
@@ -315,7 +315,7 @@ function DefaultLine({ item }: { item: InboxItem }) {
 export function Refusal({ state }: { state: RequestState }) {
   const { t } = useInterfaceTranslation();
   if (state.phase !== "refused") return null;
-  const next = state.answer?.next_action ?? t("factory.noAnswer");
+  const next = refusalText(state.answer?.reason, t);
   return (
     <p role="alert" className="flex items-center gap-xxs pl-(--size-icon) text-caption text-destructive" data-factory-refused={state.answer?.reason ?? "no_answer"}>
       <CircleAlertIcon aria-hidden="true" className="size-(--size-icon-sm) shrink-0" />
