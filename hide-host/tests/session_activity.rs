@@ -32,6 +32,10 @@ fn command(executable: &Path, home: &Path) -> Command {
         .env("HOME", home)
         .env("USERPROFILE", home)
         .env("PATH", "")
+        // The helper asks the login shell for the account's PATH and logs a
+        // missing `SHELL`; a fixed one keeps the test from depending on the
+        // environment that runs it (a cleared one has none).
+        .env("SHELL", "/bin/sh")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());

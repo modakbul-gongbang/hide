@@ -895,7 +895,12 @@ test("browser CDP: controlled downloads are always canceled and log once after d
     expect(downloadRequests).toBe(MAX_DOWNLOAD_REQUESTS);
     expect(refusals()).toHaveLength(1);
     for (const key of ["url", "path", "filename", "token", "contents"]) expect(refusals()[0]).not.toHaveProperty(key);
-    expect(fs.readdirSync(downloadDir)).toEqual([]);
+    // Chromium starts a download in an unnamed intermediate file in the sink,
+    // and may write its first bytes there, before the refusal reaches it; the
+    // cancellation removes that file on Chromium's download thread after the
+    // witness has counted the refusal. The sink is read once that removal is
+    // done, and a write the refusal missed stays there.
+    await expect.poll(() => fs.readdirSync(downloadDir)).toEqual([]);
   } finally {
     await app.evaluate(() => {
       const root = globalThis as { cdpDownloadProbe?: { cleanup: () => void } };
