@@ -95,7 +95,7 @@ export function seedAgentFiles(home: string): { claude: AgentSettings; codex: Ag
  * once it may. The first-run dialog itself is covered by a component test, the
  * core's decision tests and the hide-kit hold tests, not by an e2e spec.
  */
-function seedKitRecord(home: string): void {
+export function seedKitRecord(home: string): void {
   const dir = path.join(home, ".hide", "kit");
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, "installed.json"), `${JSON.stringify({ format: 1, installed: [] })}\n`);

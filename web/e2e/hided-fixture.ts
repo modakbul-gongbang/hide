@@ -52,7 +52,9 @@ function bundledBinary(dir: string): string {
   fs.mkdirSync(resources, { recursive: true });
   for (const name of ["hided", "hide", "hide-agent-hooks"]) {
     const target = path.join(resources, fixtureExecutable(name));
-    fs.copyFileSync(path.resolve("..", "target", "debug", fixtureExecutable(name)), target);
+    const built = path.resolve("..", "target", "debug", fixtureExecutable(name));
+    if (!fs.existsSync(built)) throw new Error(`${built} is missing; the lane must build it (cargo build -p hided -p hide-agent-hooks)`);
+    fs.copyFileSync(built, target);
     fs.chmodSync(target, 0o755);
   }
   return path.join(resources, fixtureExecutable("hided"));
