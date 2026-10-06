@@ -422,11 +422,12 @@ fn render_status(answer: &Value) -> String {
 }
 
 fn render_show(task: &Value) -> String {
+    let card = &task["card"];
     let mut text = format!(
         "{} {} [{}]\n",
-        task["display_id"].as_str().unwrap_or("?"),
-        task["title"].as_str().unwrap_or(""),
-        task["state_label"].as_str().unwrap_or("?")
+        card["display_id"].as_str().unwrap_or("?"),
+        card["title"].as_str().unwrap_or(""),
+        card["state_label"].as_str().unwrap_or("?")
     );
     text.push_str(&format!("goal: {}\n", task["goal"].as_str().unwrap_or("")));
     for criterion in task["criteria"].as_array().into_iter().flatten() {
@@ -453,10 +454,10 @@ fn render_show(task: &Value) -> String {
     text.push_str(&format!(
         "chain: [{}] -> {} -> [{}]\n",
         chain("before"),
-        task["display_id"].as_str().unwrap_or("?"),
+        card["display_id"].as_str().unwrap_or("?"),
         chain("after")
     ));
-    if let Some(external) = task["external"]
+    if let Some(external) = card["external"]
         .as_array()
         .filter(|items| !items.is_empty())
     {
@@ -464,16 +465,32 @@ fn render_show(task: &Value) -> String {
         text.push_str(&format!("외부 대기: {}\n", names.join(", ")));
     }
     text.push_str(&format!(
-        "verification {}/{}",
-        task["failures"], task["failure_limit"]
+        "verification {}",
+        task["verification"].as_str().unwrap_or("?")
     ));
     if let Some(pr) = task["pr"]["url"].as_str() {
         text.push_str(&format!("  PR {pr}"));
     }
-    if let Some(pane) = task["worker"]["pane"].as_str() {
+    if let Some(pane) = card["worker_pane"].as_str() {
         text.push_str(&format!("  worker {pane}"));
     }
     text.push('\n');
+    for attempt in task["attempts"].as_array().into_iter().flatten() {
+        text.push_str(&format!(
+            "attempt {} {} {}{}\n",
+            attempt["number"],
+            attempt["stage"].as_str().unwrap_or("?"),
+            attempt["outcome"].as_str().unwrap_or("?"),
+            attempt["check"]
+                .as_str()
+                .map(|check| format!(": {check}"))
+                .unwrap_or_default()
+        ));
+    }
+    if let Some(gates) = task["gates"].as_array().filter(|g| !g.is_empty()) {
+        let names: Vec<_> = gates.iter().filter_map(Value::as_str).collect();
+        text.push_str(&format!("merge waits for: {}\n", names.join(", ")));
+    }
     for attachment in task["attachments"].as_array().into_iter().flatten() {
         text.push_str(&format!(
             "attachment v{} {} sha256:{}\n",
@@ -503,6 +520,10 @@ fn render_show(task: &Value) -> String {
             question["id"].as_str().unwrap_or("?"),
             question["text"].as_str().unwrap_or("")
         ));
+    }
+    if let Some(allowed) = task["allowed"].as_array() {
+        let names: Vec<_> = allowed.iter().filter_map(Value::as_str).collect();
+        text.push_str(&format!("allowed: {}\n", names.join(", ")));
     }
     text
 }

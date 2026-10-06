@@ -13,11 +13,14 @@ pub mod adapters;
 pub mod command;
 pub mod dag;
 pub mod engine;
+pub mod exec;
 pub mod judgment;
 pub mod model;
+pub mod project;
 pub mod role;
 pub mod store;
 pub mod summary;
+pub mod verify;
 
 pub use command::{Command, Refusal};
 pub use engine::{Engine, Inbound, Ports};

@@ -9,7 +9,11 @@ use std::collections::BTreeMap;
 use serde::{Deserialize, Serialize};
 
 use crate::dag;
-use crate::model::{Column, DAY_MS, Factory, QuestionKind, Task, TaskState, UnixMs};
+use crate::model::{
+    Attachment, AttemptOutcome, AttemptStage, Column, DAY_MS, DecisionRecord, Discovery, Factory,
+    MergeMode, PullRequest, Question, QuestionKind, SourceKind, Task, TaskState, UnixMs,
+    Verification,
+};
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FactorySummary {
@@ -25,6 +29,8 @@ pub struct FactoryView {
     pub project: String,
     pub project_name: String,
     pub source: String,
+    /// `ci`, `verify` or `none` (D-21).
+    pub verification: String,
     pub closed: bool,
     pub flow: Flow,
     pub my_turn: u32,
@@ -32,6 +38,9 @@ pub struct FactoryView {
     /// Off the board, revivable for the keep period (D-47).
     pub cancelled: Vec<CardView>,
     pub graph: Graph,
+    /// Every dependency edge `(predecessor, task)`; the graph's reduced
+    /// edges are a display step over this set (D-36).
+    pub dependencies: Vec<(String, String)>,
     pub outside_read_at: Option<UnixMs>,
     /// Three outside reads failed in a row (B65).
     pub stale: bool,
@@ -58,7 +67,9 @@ pub struct ColumnView {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct CardView {
     pub task: String,
+    /// `T-n` before Ready, the issue number after.
     pub display_id: String,
+    pub column: Option<String>,
     pub title: String,
     pub state: String,
     pub state_label: String,
@@ -69,9 +80,18 @@ pub struct CardView {
     pub since: UnixMs,
     /// A completion the person has not looked at (D-30).
     pub unread: bool,
-    /// Old completions fold (3 days) and old records fold (90 days).
+    /// A completion older than 3 days folds (D-47).
     pub folded: bool,
+    /// A finished Task older than 90 days leaves the folded group too; its
+    /// page still opens.
+    pub archived: bool,
     pub failures: u32,
+    /// Work in another repository it waits on (B64).
+    pub external: Vec<String>,
+    /// A cancelled Task can be revived until this time (B71).
+    pub revive_until: Option<UnixMs>,
+    /// The worker's pane, which stage 2 leaves out of the Overview counts.
+    pub worker_pane: Option<String>,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -87,6 +107,8 @@ pub struct Graph {
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct InboxItem {
     pub group: String,
+    /// The question kind, `merge` or `stopped`.
+    pub kind: String,
     pub rank: u8,
     pub factory: String,
     pub task: String,
@@ -94,13 +116,19 @@ pub struct InboxItem {
     pub title: String,
     pub project: String,
     pub question: Option<String>,
+    /// Why it is the person's turn, in the engine's words (stage 2 B9).
     pub text: String,
+    /// The preselected proposal.
     pub suggestion: String,
+    /// What sending the preselected answer does.
+    pub result: String,
     pub default_action: Option<String>,
     pub choices: Vec<String>,
     pub deadline: Option<UnixMs>,
     pub remaining: Option<String>,
     pub waiting_since: UnixMs,
+    /// Whole days a blocking question has waited.
+    pub waiting_days: u64,
 }
 
 pub fn build(factories: &[&Factory], tasks: &[&Task], now: UnixMs) -> FactorySummary {
@@ -190,13 +218,26 @@ fn factory_view(
             .collect(),
         edges: reduced,
     };
+    let dependencies = edges
+        .iter()
+        .flat_map(|(task, predecessors)| {
+            predecessors
+                .iter()
+                .map(move |predecessor| (predecessor.clone(), task.clone()))
+        })
+        .collect();
     FactoryView {
         id: factory.id.clone(),
         project: factory.project.clone(),
         project_name: factory.project_name.clone(),
         source: match factory.source {
-            crate::model::SourceKind::Github => "github".into(),
-            crate::model::SourceKind::Local => "local".into(),
+            SourceKind::Github => "github".into(),
+            SourceKind::Local => "local".into(),
+        },
+        verification: match factory.config.verification {
+            Verification::Ci { .. } => "ci".into(),
+            Verification::Commands { .. } => "verify".into(),
+            Verification::None => "none".into(),
         },
         closed: factory.closed,
         flow,
@@ -204,12 +245,13 @@ fn factory_view(
         columns,
         cancelled,
         graph,
+        dependencies,
         outside_read_at: factory.outside_read_at,
         stale: factory.outside_read_failures >= 3,
         main_broken: factory.main.broken,
         auto_merge_available: factory.config.verification.exists(),
         merge_mode: match factory.config.merge_mode {
-            crate::model::MergeMode::Auto if factory.config.verification.exists() => "auto".into(),
+            MergeMode::Auto if factory.config.verification.exists() => "auto".into(),
             _ => "manual".into(),
         },
     }
@@ -244,16 +286,24 @@ pub fn card_view(
         ),
         _ => None,
     };
+    let finished_at = match task.state {
+        TaskState::Done => task.done_at,
+        TaskState::Cancelled => task.cancelled_at,
+        _ => None,
+    };
     let folded = match task.state {
-        TaskState::Done => task
-            .done_at
-            .is_some_and(|at| now.saturating_sub(at) > factory.config.done_fold_ms),
+        TaskState::Done => {
+            finished_at.is_some_and(|at| now.saturating_sub(at) > factory.config.done_fold_ms)
+        }
         TaskState::Cancelled => task.purged,
         _ => false,
     };
+    let archived =
+        finished_at.is_some_and(|at| now.saturating_sub(at) > factory.config.archive_fold_ms);
     CardView {
         task: task.id.clone(),
         display_id: task.display_id(),
+        column: task.state.column().map(|column| column.as_str().to_owned()),
         title: task.card.title.clone(),
         state: task.state.as_str().to_owned(),
         state_label: task
@@ -267,7 +317,18 @@ pub fn card_view(
         since: task.state_since,
         unread: task.state == TaskState::Done && !task.seen,
         folded,
+        archived,
         failures: task.failures,
+        external: task.card.external.clone(),
+        revive_until: task
+            .cancelled_at
+            .filter(|_| task.state == TaskState::Cancelled && !task.purged)
+            .map(|at| at + factory.config.cancel_keep_ms),
+        worker_pane: task
+            .worker
+            .as_ref()
+            .filter(|_| !matches!(task.state, TaskState::Done | TaskState::Cancelled))
+            .and_then(|worker| worker.pane.clone()),
     }
 }
 
@@ -285,6 +346,7 @@ pub fn inbox_items(
         }
         let base = |group: &str, rank: u8, text: String, since: UnixMs| InboxItem {
             group: group.to_owned(),
+            kind: group.to_owned(),
             rank,
             factory: factory.id.clone(),
             task: task.id.clone(),
@@ -294,11 +356,13 @@ pub fn inbox_items(
             question: None,
             text,
             suggestion: String::new(),
+            result: String::new(),
             default_action: None,
             choices: Vec::new(),
             deadline: None,
             remaining: None,
             waiting_since: since,
+            waiting_days: 0,
         };
         for question in task.open_questions() {
             let (group, rank) = match question.kind {
@@ -308,6 +372,11 @@ pub fn inbox_items(
                 _ => ("answer", 1),
             };
             let mut item = base(group, rank, question.text.clone(), question.asked_at);
+            item.kind = question_kind(&question.kind).to_owned();
+            item.result = answer_result(task, &question.kind, tasks);
+            if matches!(question.kind, QuestionKind::Blocking) {
+                item.waiting_days = now.saturating_sub(question.asked_at) / DAY_MS;
+            }
             item.question = Some(question.id.clone());
             item.suggestion = question.suggestion.clone();
             item.default_action = question.default_action.clone();
@@ -341,6 +410,8 @@ pub fn inbox_items(
                     task.state_since,
                 );
                 item.choices = vec!["merge".into(), "request-changes".into(), "cancel".into()];
+                item.suggestion = "merge".into();
+                item.result = unblocks("머지", task, tasks);
                 items.push(item);
             }
             TaskState::Stopped
@@ -361,10 +432,203 @@ pub fn inbox_items(
                     task.state_since,
                 );
                 item.choices = vec!["retry".into(), "cancel".into()];
+                item.suggestion = "retry".into();
+                item.result = "같은 worktree에서 worker를 다시 시작".into();
                 items.push(item);
             }
             _ => {}
         }
     }
     items
+}
+
+fn question_kind(kind: &QuestionKind) -> &'static str {
+    match kind {
+        QuestionKind::Intake => "intake",
+        QuestionKind::Split { .. } => "split",
+        QuestionKind::Default => "default",
+        QuestionKind::Blocking => "blocking",
+        QuestionKind::ScopeChange => "scope_change",
+        QuestionKind::NewTaskCap => "new_task_cap",
+        QuestionKind::ProposedTask { .. } => "proposed_task",
+        QuestionKind::Action => "action",
+        QuestionKind::ConfirmCard => "confirm_card",
+        QuestionKind::Proposal { .. } => "proposal",
+        QuestionKind::Notice => "notice",
+    }
+}
+
+/// The result line next to the send button (stage 2 B9).
+fn answer_result(task: &Task, kind: &QuestionKind, tasks: &BTreeMap<String, Task>) -> String {
+    match kind {
+        QuestionKind::Blocking => unblocks("worker를 깨워 이어감", task, tasks),
+        QuestionKind::Default | QuestionKind::ScopeChange => {
+            "기본 행동과 다르면 worker가 반영, 같으면 머지로 감".into()
+        }
+        QuestionKind::Intake | QuestionKind::ConfirmCard => "남은 질문이 없으면 Ready".into(),
+        QuestionKind::Split { pieces } => format!("{}개 Task로 나눔", pieces.len()),
+        QuestionKind::ProposedTask { .. } => "승인하면 정리 중으로 들어감".into(),
+        QuestionKind::NewTaskCap => "고른 대로 쪼개기, 계속, 멈춤".into(),
+        QuestionKind::Action | QuestionKind::Proposal { .. } => "고른 행동을 실행".into(),
+        QuestionKind::Notice => "확인".into(),
+    }
+}
+
+/// `"<what> , 끝나면 #421이 풀림"` when a waiting Task depends on this one.
+fn unblocks(what: &str, task: &Task, tasks: &BTreeMap<String, Task>) -> String {
+    let waiting: Vec<String> = tasks
+        .values()
+        .filter(|other| other.card.depends_on.contains(&task.id))
+        .filter(|other| matches!(other.state, TaskState::Waiting | TaskState::Blocked))
+        .map(Task::display_id)
+        .collect();
+    if waiting.is_empty() {
+        what.to_owned()
+    } else {
+        format!("{what}, 끝나면 {}이 풀림", waiting.join(", "))
+    }
+}
+
+/// The Task page (stage 2 B18, B19): what `show` answers. Like the summary,
+/// a contract with stage 2: add fields, never rename or remove.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct TaskDetail {
+    pub card: CardView,
+    pub factory: String,
+    pub project: String,
+    pub goal: String,
+    pub criteria: Vec<String>,
+    pub out_of_scope: Vec<String>,
+    /// The small chain: predecessors, then the Tasks waiting on this one.
+    pub before: Vec<String>,
+    pub after: Vec<String>,
+    pub attachments: Vec<Attachment>,
+    pub pr: Option<PullRequest>,
+    /// `n/3`, or `검증 없음` for a Factory without verification.
+    pub verification: String,
+    pub attempts: Vec<AttemptView>,
+    pub decisions: Vec<DecisionRecord>,
+    pub questions: Vec<Question>,
+    pub discoveries: Vec<Discovery>,
+    /// Why merge waits for a person (D-25).
+    pub gates: Vec<String>,
+    /// The actions this state allows (Q29).
+    pub allowed: Vec<String>,
+    pub stop: Option<String>,
+    pub merge_sha: Option<String>,
+    pub worker_name: Option<String>,
+    pub worktree: Option<String>,
+    pub branch: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AttemptView {
+    pub number: u32,
+    pub stage: String,
+    pub started_at: UnixMs,
+    /// `passed`, `failed`, `environment` or `running`.
+    pub outcome: String,
+    pub check: Option<String>,
+    /// The CI run link or the log path.
+    pub link: Option<String>,
+    /// The end of the run's log.
+    pub log_tail: Option<String>,
+}
+
+const LOG_TAIL: usize = 4 * 1024;
+
+pub fn detail(
+    factory: &Factory,
+    task: &Task,
+    tasks: &BTreeMap<String, Task>,
+    allowed: Vec<&str>,
+    now: UnixMs,
+) -> TaskDetail {
+    let name = |id: &String| {
+        tasks
+            .get(id)
+            .map(Task::display_id)
+            .unwrap_or_else(|| id.clone())
+    };
+    let after = tasks
+        .values()
+        .filter(|other| other.card.depends_on.contains(&task.id))
+        .map(Task::display_id)
+        .collect();
+    let attempts = task
+        .attempts
+        .iter()
+        .map(|attempt| {
+            let (outcome, check, link) = match &attempt.outcome {
+                None => ("running", None, attempt.log.clone()),
+                Some(AttemptOutcome::Passed) => ("passed", None, attempt.log.clone()),
+                Some(AttemptOutcome::Failed { check, link }) => (
+                    "failed",
+                    Some(check.clone()),
+                    Some(link.clone())
+                        .filter(|l| !l.is_empty())
+                        .or_else(|| attempt.log.clone()),
+                ),
+                Some(AttemptOutcome::Environment { check, .. }) => {
+                    ("environment", Some(check.clone()), attempt.log.clone())
+                }
+            };
+            AttemptView {
+                number: attempt.number,
+                stage: match attempt.stage {
+                    AttemptStage::Task => "task".into(),
+                    AttemptStage::PreMerge => "pre_merge".into(),
+                },
+                started_at: attempt.started_at,
+                outcome: outcome.into(),
+                check,
+                log_tail: attempt.log.as_deref().and_then(log_tail),
+                link,
+            }
+        })
+        .collect();
+    TaskDetail {
+        card: card_view(factory, task, tasks, now),
+        factory: factory.id.clone(),
+        project: factory.project.clone(),
+        goal: task.card.goal.clone(),
+        criteria: task.card.criteria.clone(),
+        out_of_scope: task.card.out_of_scope.clone(),
+        before: task.card.depends_on.iter().map(name).collect(),
+        after,
+        attachments: task.attachments.clone(),
+        pr: task.pr.clone(),
+        verification: if factory.config.verification.exists() {
+            format!("{}/{}", task.failures, factory.config.verify_failure_limit)
+        } else {
+            "검증 없음".into()
+        },
+        attempts,
+        decisions: task.decisions.clone(),
+        questions: task.questions.clone(),
+        discoveries: task.discoveries.clone(),
+        gates: task
+            .gates
+            .iter()
+            .map(|gate| gate.reason().to_owned())
+            .collect(),
+        allowed: allowed.into_iter().map(str::to_owned).collect(),
+        stop: task.stop.map(|reason| reason.label().to_owned()),
+        merge_sha: task.merge_sha.clone(),
+        worker_name: task.worker.as_ref().map(|worker| worker.name.clone()),
+        worktree: task.worker.as_ref().map(|worker| worker.worktree.clone()),
+        branch: task.worker.as_ref().map(|worker| worker.branch.clone()),
+    }
+}
+
+/// The last few KiB of a local log; a link that is not a file has none.
+fn log_tail(path: &str) -> Option<String> {
+    use std::io::{Read, Seek, SeekFrom};
+    let mut file = std::fs::File::open(path).ok()?;
+    let length = file.metadata().ok()?.len();
+    file.seek(SeekFrom::Start(length.saturating_sub(LOG_TAIL as u64)))
+        .ok()?;
+    let mut bytes = Vec::new();
+    file.read_to_end(&mut bytes).ok()?;
+    Some(String::from_utf8_lossy(&bytes).into_owned())
 }

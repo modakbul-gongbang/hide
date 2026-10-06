@@ -958,6 +958,12 @@ impl Engine {
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_else(|| project.clone()),
             source,
+            repo: probe.repo.clone(),
+            default_branch: if probe.default_branch.is_empty() {
+                "main".into()
+            } else {
+                probe.default_branch.clone()
+            },
             config,
             closed: false,
             created_at: now,
@@ -1195,55 +1201,15 @@ impl Engine {
         let seq = factory.next_task;
         let id = format!("T-{seq}");
         let card = self.validate_card(&factory_id, Some(&id), &input, None)?;
-        let mut task = Task {
-            factory: factory_id.clone(),
-            id: id.clone(),
-            seq,
-            issue: issue_ref,
-            card,
-            human: HumanFields {
-                review_directly: input.review_directly,
-                priority: input.priority.unwrap_or(0),
-                merge_mode: input.merge_mode,
-                runtime: input.runtime,
-            },
-            state: TaskState::Drafting,
-            state_since: now,
-            created_at: now,
-            updated_at: now,
-            proposed_by: None,
-            autonomy: None,
-            attachments: Vec::new(),
-            questions: Vec::new(),
-            discoveries: Vec::new(),
-            decisions: Vec::new(),
-            flags: Vec::new(),
-            review: ReviewState::Pending,
-            producer_pane,
-            worker: None,
-            attempts: Vec::new(),
-            failures: 0,
-            environment_failures: 0,
-            pr: None,
-            merge_sha: None,
-            gates: Vec::new(),
-            stop: None,
-            breaking: false,
-            scope_approved: false,
-            new_tasks: 0,
-            new_task_cap_extended: false,
-            cancelled_at: None,
-            cancelled_from: None,
-            purged: false,
-            done_at: None,
-            seen: true,
-            last_report_at: None,
-            idle_since: None,
-            writes: BTreeSet::new(),
-            held: None,
-            label_path: false,
-            source_body_hash: None,
+        let mut task = Task::draft(&factory_id, &id, seq, card, now);
+        task.issue = issue_ref;
+        task.human = HumanFields {
+            review_directly: input.review_directly,
+            priority: input.priority.unwrap_or(0),
+            merge_mode: input.merge_mode,
+            runtime: input.runtime,
         };
+        task.producer_pane = producer_pane;
         if let Some(prd) = &input.prd {
             let attachment = self
                 .store
@@ -2023,50 +1989,9 @@ impl Engine {
             f.next_task += 1;
         }
         self.save_factory(factory);
-        let task = Task {
-            factory: factory.to_owned(),
-            id: id.clone(),
-            seq,
-            issue: None,
-            card,
-            human: HumanFields::default(),
-            state: TaskState::Drafting,
-            state_since: now,
-            created_at: now,
-            updated_at: now,
-            proposed_by,
-            autonomy,
-            attachments: Vec::new(),
-            questions: Vec::new(),
-            discoveries: Vec::new(),
-            decisions: Vec::new(),
-            flags: Vec::new(),
-            review: ReviewState::Pending,
-            producer_pane: None,
-            worker: None,
-            attempts: Vec::new(),
-            failures: 0,
-            environment_failures: 0,
-            pr: None,
-            merge_sha: None,
-            gates: Vec::new(),
-            stop: None,
-            breaking: false,
-            scope_approved: false,
-            new_tasks: 0,
-            new_task_cap_extended: false,
-            cancelled_at: None,
-            cancelled_from: None,
-            purged: false,
-            done_at: None,
-            seen: true,
-            last_report_at: None,
-            idle_since: None,
-            writes: BTreeSet::new(),
-            held: None,
-            label_path: false,
-            source_body_hash: None,
-        };
+        let mut task = Task::draft(factory, &id, seq, card, now);
+        task.proposed_by = proposed_by;
+        task.autonomy = autonomy;
         self.tasks
             .entry(factory.to_owned())
             .or_default()
@@ -3611,54 +3536,17 @@ impl Engine {
         Ok(serde_json::to_value(&summary).unwrap_or_default())
     }
 
-    fn show(&self, factory: &str, id: &str) -> Value {
-        let Some(task) = self.task(factory, id) else {
-            return Value::Null;
-        };
-        let config = self
-            .factories
-            .get(factory)
-            .map(|f| f.config.clone())
-            .unwrap_or_default();
-        let edges = dag::edges(self.tasks_of(factory));
-        let name = |tid: &String| {
-            self.task(factory, tid)
-                .map(Task::display_id)
-                .unwrap_or_else(|| tid.clone())
-        };
-        let after: Vec<String> = edges
-            .iter()
-            .filter(|(_, preds)| preds.contains(id))
-            .map(|(tid, _)| name(tid))
-            .collect();
-        json!({
-            "id": task.id,
-            "factory": task.factory,
-            "display_id": task.display_id(),
-            "title": task.card.title,
-            "state": task.state.as_str(),
-            "state_label": task.state.label(),
-            "stop": task.stop.map(|s| s.label()),
-            "goal": task.card.goal,
-            "criteria": task.card.criteria,
-            "out_of_scope": task.card.out_of_scope,
-            "before": task.card.depends_on.iter().map(name).collect::<Vec<_>>(),
-            "after": after,
-            "external": task.card.external,
-            "failures": task.failures,
-            "failure_limit": config.verify_failure_limit,
-            "pr": task.pr,
-            "worker": task.worker,
-            "attachments": task.attachments,
-            "decisions": task.decisions,
-            "questions": task.questions,
-            "discoveries": task.discoveries,
-            "gates": task.gates.iter().map(|g| g.reason()).collect::<Vec<_>>(),
-            "allowed": Self::allowed_actions(task),
-            "priority": task.human.priority,
-            "merge_sha": task.merge_sha,
-            "attempts": task.attempts,
-        })
+    pub fn show(&self, factory: &str, id: &str) -> Option<summary::TaskDetail> {
+        let factory = self.factories.get(factory)?;
+        let tasks = self.tasks.get(&factory.id)?;
+        let task = tasks.get(id)?;
+        Some(summary::detail(
+            factory,
+            task,
+            tasks,
+            Self::allowed_actions(task),
+            self.now(),
+        ))
     }
 
     // ------------------------------------------------------------------ letters
@@ -4431,6 +4319,11 @@ impl Engine {
             let Ok(head) = self.ports.merge.main_head(&factory) else {
                 continue;
             };
+            if !factory.main.broken && !self.main_seen.contains_key(&factory.id) {
+                // The head found at start is the baseline, not a push (B47).
+                self.main_seen.insert(factory.id.clone(), head);
+                continue;
+            }
             let known = factory
                 .main
                 .merges_since_green

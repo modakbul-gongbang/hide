@@ -25,6 +25,12 @@ pub struct Factory {
     /// A short name the inbox shows next to each item.
     pub project_name: String,
     pub source: SourceKind,
+    /// `owner/name` of a GitHub Factory.
+    #[serde(default)]
+    pub repo: Option<String>,
+    /// The branch Tasks merge into, read at init.
+    #[serde(default = "default_branch")]
+    pub default_branch: String,
     pub config: Config,
     pub closed: bool,
     pub created_at: UnixMs,
@@ -43,6 +49,10 @@ pub struct Factory {
     pub watch_day: u64,
     pub watch_sent_today: u32,
     pub watch_last_at: Option<UnixMs>,
+}
+
+fn default_branch() -> String {
+    "main".into()
 }
 
 /// Where Tasks come from and where they merge (D-04, B3).
@@ -794,6 +804,54 @@ pub enum ReviewResult {
 }
 
 impl Task {
+    /// A new Task in drafting, before its review (D-05).
+    pub fn draft(factory: &str, id: &str, seq: u32, card: Card, now: UnixMs) -> Self {
+        Self {
+            factory: factory.to_owned(),
+            id: id.to_owned(),
+            seq,
+            issue: None,
+            card,
+            human: HumanFields::default(),
+            state: TaskState::Drafting,
+            state_since: now,
+            created_at: now,
+            updated_at: now,
+            proposed_by: None,
+            autonomy: None,
+            attachments: Vec::new(),
+            questions: Vec::new(),
+            discoveries: Vec::new(),
+            decisions: Vec::new(),
+            flags: Vec::new(),
+            review: ReviewState::Pending,
+            producer_pane: None,
+            worker: None,
+            attempts: Vec::new(),
+            failures: 0,
+            environment_failures: 0,
+            pr: None,
+            merge_sha: None,
+            gates: Vec::new(),
+            stop: None,
+            breaking: false,
+            scope_approved: false,
+            new_tasks: 0,
+            new_task_cap_extended: false,
+            cancelled_at: None,
+            cancelled_from: None,
+            purged: false,
+            done_at: None,
+            seen: true,
+            last_report_at: None,
+            idle_since: None,
+            writes: BTreeSet::new(),
+            held: None,
+            label_path: false,
+            source_body_hash: None,
+        }
+    }
+
     pub fn display_id(&self) -> String {
         self.issue
             .as_ref()

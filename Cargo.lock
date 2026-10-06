@@ -1229,6 +1229,7 @@ dependencies = [
 name = "hide-factory"
 version = "0.1.0"
 dependencies = [
+ "hide-platform",
  "rusqlite",
  "serde",
  "serde_json",
