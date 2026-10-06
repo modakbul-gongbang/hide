@@ -164,7 +164,9 @@ export class BrowserViews {
   private cancelCycle(windowLost = false): void {
     const held = this.cycleInput;
     this.cycleInput = null;
-    if (held) this.emit({ kind: "cycle-cancel", cycleId: held.cycleId, workspace: held.page.workspace, id: held.page.id, windowLost });
+    if (!held) return;
+    this.log.event("browser.cycle_cancel", { window_lost: windowLost, window_focused: this.window?.isFocused() ?? false });
+    this.emit({ kind: "cycle-cancel", cycleId: held.cycleId, workspace: held.page.workspace, id: held.page.id, windowLost });
   }
 
   constructor(
@@ -222,7 +224,9 @@ export class BrowserViews {
       if (!page || !command) return;
       const contents = page.view.webContents;
       if (command === "focus") {
-        if (page.visible && this.window?.isFocused()) contents.focus();
+        const windowFocused = this.window?.isFocused() ?? false;
+        if (page.visible && windowFocused) contents.focus();
+        this.log.event("browser.focus_command", { page_visible: page.visible, window_focused: windowFocused, page_focused: contents.isFocused() });
       } else if (command === "back" && contents.navigationHistory.canGoBack()) contents.navigationHistory.goBack();
       else if (command === "forward" && contents.navigationHistory.canGoForward()) contents.navigationHistory.goForward();
       else if (command === "stop") contents.stop();
