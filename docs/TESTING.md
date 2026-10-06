@@ -353,17 +353,22 @@ The `plan` job's summary lists each lane with the paths that chose it.
 
 Playwright's `--shard` cuts the tests in file order into runs of equal count, and a test takes from 1 second to a minute, so with four shards one shard job took 11 minutes and another 6 (run `37402687007`, 2026-10-06).
 A shard of a lane with more than one shard therefore runs the tests `scripts/web-e2e-shard.py split` deals it: each listed test (`playwright test --list`) weighs its seconds in `web/e2e/shard-durations.json`, a test the table lacks weighs the table's median, and the longest test goes first into the shard with the least work so far.
-The same list and table always give the same shards, every listed test lands in exactly one shard, and a shard that would run no test fails its step instead of passing with none.
-The shard runs them with `--test-list`, so Playwright's retry, the flaky report and `--grep` work as before.
-`scripts/tests/test_web_e2e_shard.py` checks the split on a fixed list and that the committed table deals four shards within 5 % of each other.
+The same list and table always give the same shards, and every listed test lands in exactly one shard.
+The shard runs them with `--test-list`, so Playwright's retry, the flaky report and `--grep` work as before; the script reads and writes UTF-8, because a title holds `›` and a Windows runner's default encoding cannot write it.
 
-The table is the median over 20 runs of a passing test's duration on the Linux runner (2026-10-06); on that table the four shards plan 472 seconds each, where Playwright's count split planned 306 to 577.
-It does not need to be exact, only close enough that no shard is far above the others, and a new test is dealt by the median until the table learns it.
-Refresh it when a shard's time drifts from the others in a run, or after tests were added or renamed in bulk:
+Playwright counts a `--test-list` that matches nothing as a pass, so the step does not trust the file: `web-e2e-shard.py check` fails it unless `playwright test --list --test-list <shard file>` lists exactly the tests `split` planned, and a list, a table or a plan it cannot read is one line and a failed step.
+A `grep` that leaves fewer tests than shards leaves the extra shards no test; those steps end at once, which is what the old `--shard` did.
+A plan that finds tests the table lacks, or a heaviest shard more than 15 % over the mean, prints a `::warning::` on the first shard's step and still runs: the table is a recording, and refreshing it fixes the warning.
+`scripts/tests/test_web_e2e_shard.py` checks the split, the check, the encoding and the table's shape.
+
+The table is the median over 20 runs of a passing test's duration on the Linux runner (2026-10-06); on it the four shards plan 472 seconds each, where Playwright's count split planned 306 to 577.
+It is a Linux recording: the nightly's macOS and Windows shards deal by it too, and their balance is not measured, because per-test costs there differ (symlinks, process and terminal tests) and no table has been recorded from their logs.
+Refresh it when a shard's time drifts from the others in a run, when the plan warns, or after tests were added or renamed in bulk:
 
 1. Download the logs of the Linux `web e2e` shard jobs of about twenty recent successful runs (`gh api repos/<owner>/<repo>/actions/jobs/<job id>/logs`) into a directory outside the repository.
-2. `python3 scripts/web-e2e-shard.py durations <logs>... > table.json`, then keep only the tests `bash scripts/verify-web.sh web e2e --list --reporter=list` names.
-3. Commit `web/e2e/shard-durations.json`; the nightly's macOS and Windows shards use the same table, so their balance is the Linux one's.
+2. `bash scripts/verify-web.sh web e2e --list --reporter=list > list.txt`, then `python3 scripts/web-e2e-shard.py durations --list list.txt <logs>... > web/e2e/shard-durations.json`; it keeps only the listed tests, takes a passing retry as its test, and names the listed tests no log has a passing line for (they keep the median).
+3. Commit `web/e2e/shard-durations.json`.
+A table from a Windows or macOS runner's logs would need its own file and a lane that reads it; `durations` already reads their `ok` and `✓` marks.
 
 ## Flaky tests
 
