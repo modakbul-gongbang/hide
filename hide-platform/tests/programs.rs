@@ -137,3 +137,16 @@ fn a_second_home_does_not_make_the_first_ask_again() {
     programs::login_shell_path(&second, Some(&shell), &stop).unwrap();
     assert_eq!(starts(&started), 2, "both answers are still remembered");
 }
+
+#[test]
+fn the_path_a_program_runs_with_names_only_absolute_folders() {
+    let home = tempfile::tempdir().unwrap();
+    let shell_path = std::ffi::OsString::from("relative/bin::/shell/abs:");
+    let joined = programs::cli_path_with(home.path(), Some(&shell_path)).unwrap();
+    let folders: Vec<PathBuf> = std::env::split_paths(&joined).collect();
+    assert!(
+        folders.iter().all(|folder| folder.is_absolute()),
+        "a relative or empty folder would be searched from the child's working directory: {folders:?}"
+    );
+    assert!(folders.contains(&PathBuf::from("/shell/abs")));
+}

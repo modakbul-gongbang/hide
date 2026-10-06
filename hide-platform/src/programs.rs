@@ -169,7 +169,9 @@ const UNREAD_RETRY: Duration = Duration::from_secs(60);
 /// script starts its interpreter from the same `PATH` (pnpm's `codex` is a
 /// shell script that runs `node`), so a CLI found here is run with this
 /// value, never with the daemon's `PATH` alone. A folder named twice is
-/// searched once.
+/// searched once, and a folder that is not absolute (an empty segment, which a
+/// program reads as its working directory, or a relative one) is left out, as
+/// [`host::find_program`] leaves it out of the search.
 pub fn cli_path_with(home: &Path, shell_path: Option<&OsStr>) -> Option<OsString> {
     let inherited = host::login_path().unwrap_or_else(|_| "/usr/bin:/bin".into());
     let mut seen = std::collections::HashSet::new();
@@ -178,7 +180,7 @@ pub fn cli_path_with(home: &Path, shell_path: Option<&OsStr>) -> Option<OsString
         shell
             .chain(std::env::split_paths(&inherited))
             .chain(usual_install_folders(home))
-            .filter(|folder| seen.insert(folder.clone())),
+            .filter(|folder| folder.is_absolute() && seen.insert(folder.clone())),
     )
     .ok()
 }
