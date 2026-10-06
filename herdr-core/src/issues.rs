@@ -106,6 +106,11 @@ pub struct IssueSnapshot {
     pub blocked_by: Vec<IssueReference>,
     /// GitHub's sub-issues of this issue; empty `total` for an issue with none.
     pub sub_issues: SubIssuesSnapshot,
+    /// The issue's labels in GitHub's order, read with the list (or the
+    /// linked-issue query) itself. Kept in the saved answer, so a restart
+    /// shows them before the first read; an older saved answer has none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<crate::tasks::TaskLabel>,
 }
 
 /// An issue's sub-issues as GitHub counts them (`Issue.subIssuesSummary`) and
@@ -156,9 +161,17 @@ struct ListedIssue {
     state: String,
     #[serde(default)]
     project_items: Vec<ProjectItem>,
+    #[serde(default)]
+    labels: Vec<ListedLabel>,
     updated_at: Option<String>,
     created_at: Option<String>,
     closed_at: Option<String>,
+}
+#[derive(Deserialize)]
+struct ListedLabel {
+    name: String,
+    #[serde(default)]
+    color: Option<String>,
 }
 #[derive(Deserialize)]
 struct ProjectItem {
@@ -206,6 +219,11 @@ pub fn parse_issues(output: &str) -> Result<Vec<IssueSnapshot>, String> {
                     .and_then(crate::github::parse_rfc3339_ms),
                 blocked_by: Vec::new(),
                 sub_issues: SubIssuesSnapshot::default(),
+                labels: issue
+                    .labels
+                    .into_iter()
+                    .map(|label| crate::tasks::TaskLabel::from_source(label.name, label.color))
+                    .collect(),
             })
         })
         .collect()

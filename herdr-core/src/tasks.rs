@@ -10,7 +10,7 @@
 //! Every value is additive on the wire and none is a string enum an older
 //! reader decodes, so such a reader takes the snapshot exactly as before.
 
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 
 use crate::issues::{IssueReference, IssueSnapshot, ProjectIssuesSnapshot};
 use crate::local_issues::LocalIssueProject;
@@ -49,6 +49,11 @@ pub struct TaskSnapshot {
     /// The task's sub-issues with GitHub's own progress count; `None` for a
     /// task that has none, as every Local issue does.
     pub sub_issues: Option<TaskSubIssuesSnapshot>,
+    /// The source's labels in its order, read with the list itself so every
+    /// card shows them; empty for a source without labels, as Local is, and
+    /// then absent from the wire.
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub labels: Vec<TaskLabel>,
 }
 
 /// GitHub's `completed` of `total` sub-issues and the sub-issues themselves.
@@ -112,11 +117,24 @@ pub struct TaskDetail {
     pub comments: Vec<TaskComment>,
 }
 
-#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct TaskLabel {
     pub name: String,
     /// The source's colour as six hex digits, absent when it gave none.
     pub color: Option<String>,
+}
+
+impl TaskLabel {
+    /// A label as a source gave it. The colour is drawn from data, so only
+    /// six hex digits pass; anything else is no colour.
+    pub fn from_source(name: String, color: Option<String>) -> Self {
+        Self {
+            name,
+            color: color.filter(|color| {
+                color.len() == 6 && color.bytes().all(|byte| byte.is_ascii_hexdigit())
+            }),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -301,6 +319,7 @@ pub fn local_tasks(project_path: &str, read: LocalRead<'_>, chosen: bool) -> Pro
                         closed_at_unix_ms: issue.closed_at_unix_ms,
                         blocked_by: Vec::new(),
                         sub_issues: None,
+                        labels: Vec::new(),
                     })
                     .collect()
             })
@@ -353,6 +372,7 @@ fn github_task(issue: &IssueSnapshot, repository: Option<&str>) -> TaskSnapshot 
                 })
                 .collect(),
         }),
+        labels: issue.labels.clone(),
     }
 }
 
@@ -375,6 +395,7 @@ mod tests {
             closed_at_unix_ms: None,
             blocked_by: Vec::new(),
             sub_issues: Default::default(),
+            labels: Vec::new(),
         }
     }
 
