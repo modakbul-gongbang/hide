@@ -270,6 +270,8 @@ type UiStore = {
    * row shows until the next start or a click on the row (PRD home-device-rail B21).
    */
   homeStart: HomeStart | null;
+  /** The Factory secretary being started (PRD software-factory-ui B23). */
+  secretaryStart: import("./factory/secretary").SecretaryStart | null;
   /** The Explorer row the operator last touched; the core owns the opened
    * document's `selected_path`, and a reveal syncs that into here. */
   explorerSelection: string | null;
@@ -354,6 +356,7 @@ type UiStore = {
   setRelation: (relation: Relation | null) => void;
   setSidebarMode: (mode: SidebarMode) => void;
   setHomeStart: (homeStart: HomeStart | null) => void;
+  setSecretaryStart: (start: import("./factory/secretary").SecretaryStart | null) => void;
   toggleSidebarMode: () => void;
   toggleRaised: (group: string) => void;
   setExplorerSelection: (path: string | null) => void;
@@ -408,6 +411,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
   sidebarFocus: 0,
   raisedOpen: [],
   homeStart: null,
+  secretaryStart: null,
   explorerSelection: null,
   editorFindRequest: 0,
   editorFindDisplay: null,
@@ -462,6 +466,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
   setRelation: (relation) => set({ relation }),
   setSidebarMode: (sidebarMode) => set({ sidebarMode }),
   setHomeStart: (homeStart) => set({ homeStart }),
+  setSecretaryStart: (secretaryStart) => set({ secretaryStart }),
   toggleSidebarMode: () => {
     const index = SIDEBAR_MODES.indexOf(get().sidebarMode);
     set({ sidebarMode: SIDEBAR_MODES[(index + 1) % SIDEBAR_MODES.length] });

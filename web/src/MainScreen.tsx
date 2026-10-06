@@ -19,6 +19,7 @@ import { allProjectsStats, boardLabels, buildTasks, NO_FILTER, type AllProjectsS
 import { frontDeviceId } from "./devices";
 import { frontCheckout, type Device } from "./snapshot";
 import { useShellStore } from "./store";
+import { useFactoryWorkers } from "./factory/hooks";
 import { IssueFilterControl, TasksModeToggle } from "./TaskBoards";
 import { IssuesView, panelCard, type IssuesPage } from "./IssuesView";
 import { NO_REQUEST_LENS, toggledFold, useUiStore, type MainView, type RequestLens } from "./ui";
@@ -71,7 +72,8 @@ export function MainScreen({ actions }: { actions: Actions }) {
   const projects = useMemo(() => boardProjects(rest, agents, deviceId), [rest, agents, deviceId]);
   const tasks = useMemo(() => buildTasks(projects, "all", Date.now()), [projects]);
   const lensAgents = useMemo(() => scopeAgents(projects), [projects]);
-  const rows = useMemo(() => requestRows(lensAgents, projects.flatMap((project) => project.agents)), [lensAgents, projects]);
+  const workers = useFactoryWorkers();
+  const rows = useMemo(() => requestRows(lensAgents, projects.flatMap((project) => project.agents), workers), [lensAgents, projects, workers]);
   // The request view's expanded rows and fold, this screen's own page state.
   const requestLens = useUiStore((s) => s.overviewOpen ? s.overviewRequests : s.screen?.kind === "main" ? s.screen.requests ?? NO_REQUEST_LENS : NO_REQUEST_LENS);
   const onRequestLens = useCallback((patch: Partial<RequestLens>) => useUiStore.getState().setMainRequestLens(patch), []);

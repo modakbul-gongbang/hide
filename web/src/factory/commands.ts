@@ -24,4 +24,5 @@ export type FactoryCommand =
   | { verb: "cancel"; task: string }
   | { verb: "revive"; task: string }
   | { verb: "config"; project: string | null; set: [string, string][] }
-  | { verb: "close"; project: string | null };
+  | { verb: "close"; project: string | null }
+  | { verb: "check"; project: string | null; at: "intake" | "after_done" | "periodic"; instruction: string };

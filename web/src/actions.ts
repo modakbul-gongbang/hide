@@ -60,6 +60,7 @@ import { owningCheckout, probePaths, type FoundPath } from "./terminalLinkProvid
 import { useShellStore } from "./store";
 import { FACTORY_ENTRY, useUiStore, type FactoryPlace, type PendingClose, type SessionTarget, type SidebarMode } from "./ui";
 import type { FactoryCommand } from "./factory/commands";
+import { SECRETARY_PROMPT, paneListed } from "./factory/secretary";
 import type { DispatchFn } from "./ws";
 import { closeShortcutPolicy, drawnViews, keyboardOwner, newTabPolicy } from "./viewFocus";
 import {
@@ -131,6 +132,13 @@ export function createActions(send: DispatchFn) {
   const ui = () => useUiStore.getState();
 
   /** Remembers what was asked to come forward; `CenterScreen` shows it once it is in front. */
+  /** A new secretary in this machine's Home (B23); its pane is recorded when the start answers (`useSecretaryStart`). */
+  const startSecretary = (provider: "claude" | "codex") => {
+    const requestId = remoteRequestId();
+    ui().setSecretaryStart({ phase: "start", requestId });
+    dispatch({ schema_version: 2, kind: "agent_start_in_checkout", payload: { home: true, provider, prompt: SECRETARY_PROMPT, request_id: requestId } });
+  };
+
   const beginOpening = (target: OpenTarget) => {
     useUiStore.setState({ overviewOpen: false, overviewReturnFocus: ui().overviewOpen ? document.querySelector<HTMLElement>('[data-pane-view][data-focused="true"] .xterm-helper-textarea') : null, opening: { target, errorBefore: rest()?.status?.last_error?.occurred_at ?? null, failure: null } });
   };
@@ -1876,6 +1884,34 @@ export function createActions(send: DispatchFn) {
       const requestId = remoteRequestId();
       dispatch({ schema_version: 2, kind: "factory_action", payload: { request_id: requestId, command } });
       return requestId;
+    },
+
+    /**
+     * 비서에게 묻기 and the sidebar's 비서 row (B23): the secretary the core
+     * remembers while its pane is listed, else a new one in this machine's
+     * Home, started with the first open Factory's default runtime.
+     */
+    openSecretary() {
+      const pane = rest()?.ui_state?.factory_secretary_pane ?? null;
+      if (pane && paneListed(rest(), pane)) return this.openAgent(pane);
+      if (ui().secretaryStart) return;
+      const factory = useShellStore.getState().factory?.summary?.factories.find((view) => !view.closed) ?? null;
+      if (!factory) return startSecretary("claude");
+      ui().setSecretaryStart({ phase: "config", requestId: this.factoryAction({ verb: "config", project: factory.project, set: [] }) });
+    },
+
+    /** Records the pane a secretary start answered with, so the next press goes to it. */
+    factorySecretarySet(paneId: string) {
+      dispatch({ schema_version: 2, kind: "factory_secretary_set", payload: { pane_id: paneId } });
+    },
+
+    startSecretary,
+
+    /** The Overview of every project on its 요청 tab: the agents' own requests (B13). */
+    openRequests() {
+      ui().setOverviewProject(null);
+      ui().setScreen({ kind: "main" });
+      ui().setMainView("requests");
     },
 
     /** Asks the engine for a Task page's detail; it follows the engine in `factory_task` until closed. */

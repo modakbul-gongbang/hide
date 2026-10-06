@@ -11,6 +11,7 @@ import { ConnectionBadge } from "./badge";
 import { configureFileBytes } from "./fileBytes";
 import { installKeyboard, observeRecent, reconcileHeldCycle } from "./keyboard";
 import { OverviewModal, OverviewPage } from "./Overview";
+import { FactoryScreen } from "./factory/FactoryScreen";
 import { AgentCloseNotice, ConfirmClose, ConfirmTrash, CycleOverlay, NoticeBar } from "./Overlays";
 import { Palette } from "./Palette";
 import { installProbe, probeEnabled } from "./probe";
@@ -323,6 +324,7 @@ function CenterScreen({ actions }: { actions: Actions }) {
       </div>
     );
   }
+  if (screen.kind === "factory") return <FactoryScreen actions={actions} />;
   if (screen.kind === "workspace" && front && hasView) return <WorkspaceScreen actions={actions} />;
   return <OverviewPage actions={actions} />;
 }

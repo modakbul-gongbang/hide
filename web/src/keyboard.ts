@@ -247,6 +247,8 @@ export function installKeyboard(actions: Actions): () => void {
         return actions.toggleLeftSidebar();
       case "overview":
         return actions.toggleOverview();
+      case "factory_open":
+        return actions.openFactory();
       case "sidebar_projects":
         return actions.focusSidebarMode("projects");
       case "sidebar_agents":

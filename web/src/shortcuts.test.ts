@@ -73,6 +73,7 @@ describe("shortcut registry", () => {
       // ⌘E shows the Explorer in both hosts (issue 170); the macOS set keeps
       // it on the sidebar switch, which has no chord here until one is bound.
       overview: "⇧⌘O",
+      factory_open: "⇧⌘F",
       sidebar_projects: "⇧⌘P",
       sidebar_agents: "⇧⌘A",
       toggle_device_rail: "",
@@ -389,6 +390,7 @@ describe("Windows and Linux (operator decision 2026-10-03)", () => {
       open_file: "Ctrl+Shift+P",
       toggle_left_sidebar: "Ctrl+Shift+B",
       overview: "Alt+Shift+O",
+      factory_open: "Alt+Shift+F",
       sidebar_projects: "Alt+Shift+P",
       sidebar_agents: "Alt+Shift+A",
       toggle_device_rail: "",
