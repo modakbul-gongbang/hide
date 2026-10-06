@@ -35,6 +35,9 @@ pub struct SessionSnapshotPayload {
     pub panes: Vec<SessionPanePayload>,
     #[serde(default)]
     pub workspaces: Vec<SessionWorkspacePayload>,
+    /// The version of the Herdr that answered; the snapshot's own `version`.
+    #[serde(default)]
+    pub herdr_version: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]

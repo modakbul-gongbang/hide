@@ -3176,7 +3176,7 @@ fn a_restored_pane_the_session_no_longer_has_retargets_without_reporting() {
 }
 
 #[test]
-fn protocol_mismatch_exposes_typed_diagnostics_and_clears_them_on_recovery() {
+fn protocol_mismatch_exposes_typed_diagnostics_and_recovery_reports_the_connected_values() {
     let mut runtime = runtime();
     runtime.ingest_session(Err(SessionFetchError::Protocol {
         message: "incompatible runtime".to_owned(),
@@ -3191,12 +3191,16 @@ fn protocol_mismatch_exposes_typed_diagnostics_and_clears_them_on_recovery() {
     assert_eq!(mismatch.received_protocol, Some(22));
     assert_eq!(mismatch.received_version.as_deref(), Some("0.9.0"));
 
-    runtime.ingest_session(Ok(working_payload()));
+    let mut payload = working_payload();
+    payload.herdr_version = Some("0.9.1".to_owned());
+    runtime.ingest_session(Ok(payload));
     let connected = &runtime.snapshot().status.herdr;
     assert_eq!(connected.state, "connected");
-    assert_eq!(connected.expected_protocol, None);
-    assert_eq!(connected.received_protocol, None);
-    assert_eq!(connected.received_version, None);
+    // A healthy Herdr reports its real version and the revision that matched (B5).
+    let revision = u64::from(crate::herdr_contract::HERDR_PROTOCOL_REVISION);
+    assert_eq!(connected.expected_protocol, Some(revision));
+    assert_eq!(connected.received_protocol, Some(revision));
+    assert_eq!(connected.received_version.as_deref(), Some("0.9.1"));
 }
 
 /// AC11, R9, SC6. A checkout whose tabs come from two Herdr workspaces

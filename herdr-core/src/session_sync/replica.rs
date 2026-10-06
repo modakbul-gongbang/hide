@@ -276,6 +276,7 @@ impl SessionReplica {
                 &blocked,
                 |agent| agent.workspace_id.as_str(),
             ),
+            herdr_version: self.state.herdr_version.clone(),
         }
     }
 
