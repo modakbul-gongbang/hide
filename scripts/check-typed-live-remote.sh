@@ -1,7 +1,6 @@
 #!/bin/bash
 set -euo pipefail
 cd "$(dirname "$0")/.."
-export PATH="$HOME/.rustup/toolchains/stable-aarch64-apple-darwin/bin:$HOME/.cargo/bin:$PATH"
 # Reuse the machine's installed toolchain; rustup installs a private copy into an
 # empty $HOME/.rustup and still exits 0.
 . scripts/toolchain-env.sh
