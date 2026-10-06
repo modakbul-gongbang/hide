@@ -110,10 +110,10 @@ impl TrustFailureKind {
     /// The few words the part's reason line carries.
     pub fn summary(self) -> &'static str {
         match self {
-            Self::CouldNotStart => "Codex could not be started",
-            Self::Refused => "Codex refused",
-            Self::TimedOut => "Codex did not answer in time",
-            Self::Unconfirmed => "Codex did not keep it",
+            Self::CouldNotStart => "it could not be started",
+            Self::Refused => "it refused",
+            Self::TimedOut => "it did not answer in time",
+            Self::Unconfirmed => "it did not keep the record",
             Self::Stopped => "Hide was quitting",
         }
     }

@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 use super::*;
 
 mod agent_cases;
+mod codex_trust_cases;
 mod herdr_cases;
 mod retired_cases;
 
