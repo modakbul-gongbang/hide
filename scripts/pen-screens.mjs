@@ -3986,14 +3986,20 @@ function buildMenus(tokens) {
       screenMenuSeparator(`mn-devsep-${suffix}`),
       screenMenuItem(`mn-dev1-${suffix}`, '기기 추가…', {glyph: 'plus', state: 'highlighted'}),
     ]);
-    // ExplorerTree.tsx renders this as inline warning-colored text directly
-    // under the Explorer root row, not a filled banner with an icon.
-    const notice = frame(`mn-notice-${suffix}`, 'Explorer notice', {width: 360, layout: 'vertical', gap: '$--spacing-xxs'}, [
-      frame(`mn-noticeroot-${suffix}`, 'Root', {layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', width: 360}, [
-        text(`mn-noticeroott-${suffix}`, 'demo', {size: '$--text-caption', weight: '600', fill: '$--muted-foreground'}),
-        icon(`mn-noticerefresh-${suffix}`, 'refresh-cw', {size: 12, fill: '$--muted-foreground'}),
-      ]),
-      text(`mn-noticet-${suffix}`, 'Git status unavailable: ~/projects/sasu/demo is not inside a Git repository', {fill: '$--warning', size: '$--text-caption', width: 360}),
+    // ExplorerTree.tsx puts the Git status in the Explorer's root row, so its
+    // answer never moves a row (issue 570): a spinner while the first answer is on
+    // its way, the outline Badge in the warning color, whose tooltip says why,
+    // for a failure the operator can repair, and nothing for a current answer
+    // or a folder that is not a repository.
+    const gitRow = (key, mark) => frame(`mn-git${key}-${suffix}`, 'Explorer root row', {layout: 'horizontal', alignItems: 'center', gap: '$--spacing-xs', width: 360}, [
+      text(`mn-git${key}t-${suffix}`, 'demo', {size: '$--text-caption', weight: '600', fill: '$--muted-foreground', width: 'fill_container'}),
+      ...(mark ? [mark] : []),
+      icon(`mn-git${key}r-${suffix}`, 'refresh-cw', {size: 12, fill: '$--muted-foreground'}),
+    ]);
+    const notice = frame(`mn-notice-${suffix}`, 'Explorer Git status', {width: 360, layout: 'vertical', gap: '$--spacing-sm'}, [
+      gitRow('l', icon(`mn-gitls-${suffix}`, 'loader-circle', {size: 12, fill: '$--muted-foreground'})),
+      gitRow('u', themedXref(`mn-gitub-${suffix}`, 'eHAjc', '!', {...BADGE_VARIANTS.outline.overrides, stroke: '$--warning'}, {xXuNa: {enabled: false}, n8L5dm: {content: '!', fill: '$--warning'}})),
+      gitRow('n', null),
     ]);
     return [frame(`mn-wrap-${suffix}`, 'Wrap', {layout: 'vertical', gap: '$--spacing-lg'}, [
       frame(`mn-row-a-${suffix}`, 'Row', {layout: 'horizontal', gap: '$--spacing-lg', alignItems: 'start'}, [rowMenu, explorerCtx, deviceMenu]),
@@ -4001,7 +4007,7 @@ function buildMenus(tokens) {
       startPanels(suffix),
     ])];
   }
-  return screenSheet('screen-menus', 'Screen / Menus and Overlays', 'entry-menu.tsx EntryContextMenu, the sidebar footer’s device button menu (This Mac, 기기 추가…), the Explorer git-status notice and the ⌘N start panel (PRD home-device-rail D-18..D-20): overlays shown anchored in their real screen context rather than the abstract System gallery. The panel floats over the window like ⌘K with one line to write and three dropdowns, target, agent kind and model, and 시작 with ⏎. The target defaults to what is in front and its menu lists Home first, then the front device’s checkouts, then every other device’s Home, an unreachable one dimmed with 연결 안 됨; the kind menu is Claude and Codex, and the model menu follows the kind (Claude: haiku, sonnet, opus, fable; Codex: the list the CLI reports). The kind and each kind’s model are remembered; the target is not.', build, build);
+  return screenSheet('screen-menus', 'Screen / Menus and Overlays', 'entry-menu.tsx EntryContextMenu, the sidebar footer’s device button menu (This Mac, 기기 추가…), the Explorer root row’s Git status marks and the ⌘N start panel (PRD home-device-rail D-18..D-20): overlays shown anchored in their real screen context rather than the abstract System gallery. The panel floats over the window like ⌘K with one line to write and three dropdowns, target, agent kind and model, and 시작 with ⏎. The target defaults to what is in front and its menu lists Home first, then the front device’s checkouts, then every other device’s Home, an unreachable one dimmed with 연결 안 됨; the kind menu is Claude and Codex, and the model menu follows the kind (Claude: haiku, sonnet, opus, fable; Codex: the list the CLI reports). The kind and each kind’s model are remembered; the target is not.', build, build);
 }
 
 // -- Screen / Projects Sidebar -------------------------------------------------

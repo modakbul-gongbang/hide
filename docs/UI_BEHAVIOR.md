@@ -769,7 +769,11 @@ While the index is being built the tree says so, and a checkout whose files cann
 Git status decorates each row with one status mark: Modified, Added, Untracked, Renamed, and Conflict render as `M`, `A`, `U`, `R`, and `!` with a semantic color and a matching status name in tooltip and accessibility help.
 A folder with any changed descendant renders a dot mark; the mark describes derived folder state and never relabels the folder as a modified file.
 Deleted descendants still mark an existing ancestor folder but never create a file row that no longer exists.
-Clean and unavailable decoration both reserve the slot, while loading and failure are distinguished by a panel notice above the still-usable tree.
+Clean and unavailable decoration both reserve the slot.
+The checkout's Git status is a mark in the Explorer's root row, beside the refresh button, so its answer never moves a row the operator is aiming at.
+While the first answer is on its way the mark is a small spinner.
+When a read failed for a reason the operator can repair, such as a `git` that cannot run or a repository Git cannot read, or when the decorations are kept from an earlier read after the latest one failed, it is a warning `!` badge whose tooltip gives the reason.
+A folder that is not a repository has nothing to repair, so it draws no mark and the diagnostic log records it (`changes.unavailable`).
 The decoration is not a control and cannot intercept file open, disclosure, inline editing, drag, keyboard navigation, or the context menu.
 
 Git state comes from the root-scoped History projection.
