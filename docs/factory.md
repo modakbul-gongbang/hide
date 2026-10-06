@@ -268,7 +268,8 @@ Environment failures and merge conflicts do not count.
 `retry` resets the count.
 
 **CI.** The check runs of the worktree's head commit are read on each tick with `gh api`.
-With a list of names, every name must have a completed run; without one, every check run on the commit is read, and a commit with no check run yet reads as passed, so name the required checks in `--ci`.
+Every named check must have a completed run, and only named checks decide; a commit with no run of a named check yet is pending, never passed.
+`--ci` with no names takes the default branch's required checks from its protection, and `init` and `config ci=` refuse a Factory that would name no check (`ci_checks_required`).
 A completed run passes on `success` or `neutral`, decides nothing on `skipped`, `cancelled` or `stale` (still pending), and fails on any other conclusion with the run's link.
 A GitHub error that carries an environment signal is the environment's; any other read error stays pending.
 

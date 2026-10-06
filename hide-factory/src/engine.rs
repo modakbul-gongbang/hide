@@ -982,6 +982,20 @@ impl Engine {
                         "A project without GitHub verifies with --verify <command>",
                     ));
                 }
+                // A check named nowhere would let any finished run decide:
+                // the branch protection's required checks stand in, and with
+                // none the person names them (D-21, D-53).
+                let checks = if checks.is_empty() {
+                    probe.required_checks.clone()
+                } else {
+                    checks
+                };
+                if checks.is_empty() {
+                    return Err(refuse(
+                        "ci_checks_required",
+                        "The default branch requires no checks: name them with --ci <check,...>",
+                    ));
+                }
                 Verification::Ci { checks }
             }
             Some(VerificationChoice::Commands { commands }) => {
@@ -3759,14 +3773,19 @@ impl Engine {
                     };
                 }
                 "ci" => {
-                    config.verification = Verification::Ci {
-                        checks: value
-                            .split(',')
-                            .map(str::trim)
-                            .filter(|c| !c.is_empty())
-                            .map(str::to_owned)
-                            .collect(),
-                    };
+                    let checks: Vec<String> = value
+                        .split(',')
+                        .map(str::trim)
+                        .filter(|c| !c.is_empty())
+                        .map(str::to_owned)
+                        .collect();
+                    if checks.is_empty() {
+                        return Err(refuse(
+                            "ci_checks_required",
+                            "Name the checks that decide: ci=<check,...>",
+                        ));
+                    }
+                    config.verification = Verification::Ci { checks };
                 }
                 "no_verification" => config.verification = Verification::None,
                 "quick_check" => {

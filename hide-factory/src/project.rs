@@ -273,15 +273,16 @@ impl Projects {
             Verification::Ci { checks } => checks.clone(),
             _ => Vec::new(),
         };
+        // Only named checks decide; a Factory that names none never reads a
+        // pass from whichever run finished first.
         let runs: Vec<&Value> = value["check_runs"]
             .as_array()
             .into_iter()
             .flatten()
             .filter(|run| {
-                required.is_empty()
-                    || required
-                        .iter()
-                        .any(|name| run["name"].as_str() == Some(name))
+                required
+                    .iter()
+                    .any(|name| run["name"].as_str() == Some(name))
             })
             .collect();
         // No run yet is not a pass: CI has not answered for this commit.

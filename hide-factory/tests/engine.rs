@@ -1052,6 +1052,31 @@ fn github_factory(h: &mut Bench, mode: MergeMode) -> String {
 }
 
 #[test]
+fn ci_with_no_named_check_takes_the_required_checks_and_never_none() {
+    let mut h = Bench::new(true);
+    let created = h.op(Command::Init {
+        project: PROJECT.into(),
+        verification: Some(VerificationChoice::Ci { checks: vec![] }),
+        merge_mode: Some(MergeMode::Auto),
+        confirm: true,
+    });
+    assert_eq!(created["ok"], true, "{created}");
+    let factory = h.engine.factories().next().unwrap().clone();
+    assert_eq!(
+        factory.config.verification,
+        Verification::Ci {
+            checks: vec!["test".into()]
+        },
+        "the branch protection's required checks stand in"
+    );
+    let refused = h.op(Command::Config {
+        project: Some(PROJECT.into()),
+        set: vec![("ci".into(), " , ".into())],
+    });
+    assert_eq!(refused["reason"], "ci_checks_required", "{refused}");
+}
+
+#[test]
 fn each_github_report_pushes_before_its_checks_are_read_and_answers_at_once() {
     let mut h = Bench::new(true);
     let f = github_factory(&mut h, MergeMode::Auto);
