@@ -176,28 +176,11 @@ impl VerifyRunner {
             let Some(job) = self.queue.pop_front() else {
                 return;
             };
-            for step in &job.prepare {
-                let args: Vec<&str> = step.args.iter().map(String::as_str).collect();
-                if let Err(failure) = checked(
-                    runner,
-                    "verify.prepare",
-                    &step.program,
-                    &args,
-                    Some(&step.cwd),
-                ) {
-                    let poll = match failure.signal {
-                        Some(signal) => VerifyPoll::Environment {
-                            signal,
-                            check: format!("{} {}", step.program, step.args.join(" ")),
-                        },
-                        None => VerifyPoll::Failed {
-                            check: format!("{} {}", step.program, step.args.join(" ")),
-                            link: failure.detail,
-                        },
-                    };
-                    self.finish(&job.id, poll);
-                    continue;
-                }
+            // A failed step ends the run: the commands never run in a tree
+            // the step did not prepare.
+            if let Err(poll) = prepare(runner, &job.prepare) {
+                self.finish(&job.id, poll);
+                continue;
             }
             if job.commands.is_empty() {
                 self.finish(&job.id, VerifyPoll::Passed);
@@ -281,6 +264,30 @@ impl VerifyRunner {
     pub fn busy(&self) -> bool {
         self.running.is_some() || !self.queue.is_empty()
     }
+}
+
+/// Runs the steps in order and stops at the first failure.
+fn prepare(runner: &mut dyn Runner, steps: &[Prepare]) -> Result<(), VerifyPoll> {
+    for step in steps {
+        let args: Vec<&str> = step.args.iter().map(String::as_str).collect();
+        if let Err(failure) = checked(
+            runner,
+            "verify.prepare",
+            &step.program,
+            &args,
+            Some(&step.cwd),
+        ) {
+            let check = format!("{} {}", step.program, step.args.join(" "));
+            return Err(match failure.signal {
+                Some(signal) => VerifyPoll::Environment { signal, check },
+                None => VerifyPoll::Failed {
+                    check,
+                    link: failure.detail,
+                },
+            });
+        }
+    }
+    Ok(())
 }
 
 /// A failed command: exit 137 or a full disk in its output is the
@@ -463,6 +470,49 @@ mod tests {
             VerifyPoll::Failed { check, .. } => assert_eq!(check, "sleep 1 (timeout 0m)"),
             other => panic!("{other:?}"),
         }
+    }
+
+    struct FailingRunner;
+    impl Runner for FailingRunner {
+        fn run(
+            &mut self,
+            _program: &str,
+            _args: &[String],
+            _cwd: Option<&Path>,
+        ) -> Result<Output, Failure> {
+            Ok(Output {
+                code: Some(1),
+                stdout: String::new(),
+                stderr: "error: your local changes would be overwritten".into(),
+            })
+        }
+    }
+
+    #[test]
+    fn a_failed_prepare_step_ends_the_run_before_any_command() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut runner = VerifyRunner::new(dir.path().join("logs"));
+        let step = Prepare {
+            program: "git".into(),
+            args: vec!["checkout".into(), "--detach".into(), "abc".into()],
+            cwd: dir.path().to_owned(),
+        };
+        for (id, commands) in [("with", vec!["touch ran.txt"]), ("without", Vec::new())] {
+            let mut job = job(id, dir.path(), &commands, Duration::from_secs(60));
+            job.prepare = vec![step.clone()];
+            runner.submit(job).unwrap();
+            match runner.poll(&mut FailingRunner, id) {
+                VerifyPoll::Failed { check, .. } => assert_eq!(check, "git checkout --detach abc"),
+                other => panic!("{other:?}"),
+            }
+            assert!(!runner.busy(), "nothing runs after the failed step");
+            // The failure stays the answer.
+            assert!(matches!(
+                runner.poll(&mut FailingRunner, id),
+                VerifyPoll::Failed { .. }
+            ));
+        }
+        assert!(!dir.path().join("ran.txt").exists());
     }
 
     #[test]

@@ -609,12 +609,41 @@ impl TaskSource for SharedProjects {
                 _ => None,
             })
             .collect();
-        let labelled: BTreeMap<u64, &Value> = issues
+        let mut labelled: BTreeMap<u64, Value> = issues
             .as_array()
             .into_iter()
             .flatten()
-            .filter_map(|issue| issue["number"].as_u64().map(|n| (n, issue)))
+            .filter_map(|issue| issue["number"].as_u64().map(|n| (n, issue.clone())))
             .collect();
+        // The list holds the newest issues only, so a held issue missing from
+        // it is asked for by number before its label counts as removed.
+        for (number, task) in &held {
+            if labelled.contains_key(number)
+                || matches!(task.state, TaskState::Done | TaskState::Cancelled)
+            {
+                continue;
+            }
+            let issue = this.gh_json(
+                "github.observe",
+                &[
+                    "issue",
+                    "view",
+                    &number.to_string(),
+                    "--repo",
+                    &repo,
+                    "--json",
+                    "number,title,body,state,labels",
+                ],
+            )?;
+            let still = issue["labels"]
+                .as_array()
+                .into_iter()
+                .flatten()
+                .any(|label| label["name"].as_str() == Some(LABEL));
+            if still {
+                labelled.insert(*number, issue);
+            }
+        }
         for (number, issue) in &labelled {
             let issue_ref = IssueRef::Github { number: *number };
             let body = issue["body"].as_str().unwrap_or_default();
@@ -994,10 +1023,7 @@ impl MergeTarget for SharedProjects {
                     .ok_or_else(|| Failure::task("github.merge", "the Task has no pull request"))?;
                 let view = this.pr_view(factory, pr.number)?;
                 if view["state"].as_str() == Some("MERGED") {
-                    return Ok(view["mergeCommit"]["oid"]
-                        .as_str()
-                        .unwrap_or_default()
-                        .to_owned());
+                    return merge_commit("github.merge", &view);
                 }
                 // Pinned to the commit that passed verification: a push after
                 // it makes GitHub refuse the merge (B39).
@@ -1028,10 +1054,7 @@ impl MergeTarget for SharedProjects {
                     ],
                 )?;
                 let view = this.pr_view(factory, pr.number)?;
-                Ok(view["mergeCommit"]["oid"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_owned())
+                merge_commit("github.merge", &view)
             }
         }
     }
@@ -1206,10 +1229,7 @@ impl MergeTarget for SharedProjects {
                     )?;
                 }
                 let view = this.pr_view(factory, number)?;
-                Ok(view["mergeCommit"]["oid"]
-                    .as_str()
-                    .unwrap_or_default()
-                    .to_owned())
+                merge_commit("github.revert_merge", &view)
             }
             _ => {
                 let project = PathBuf::from(&factory.project);
@@ -1322,6 +1342,16 @@ impl Verifier for SharedProjects {
 }
 
 /// `prefix/**`, `*.ext` or an exact path.
+/// The merge commit of a merged pull request. GitHub can answer a merge
+/// before it names the commit (a merge queue, a lagging read): that is asked
+/// again rather than recorded as an empty commit.
+fn merge_commit(stage: &str, view: &Value) -> Result<String, Failure> {
+    match view["mergeCommit"]["oid"].as_str() {
+        Some(oid) if !oid.is_empty() => Ok(oid.to_owned()),
+        _ => Err(Failure::task(stage, "merge commit not named yet")),
+    }
+}
+
 fn path_matches(pattern: &str, path: &str) -> bool {
     if let Some(prefix) = pattern.strip_suffix("/**") {
         return path.starts_with(&format!("{prefix}/"));

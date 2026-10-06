@@ -22,6 +22,10 @@ struct Hub {
     checks: Vec<Value>,
     check_reads: usize,
     fail_next: Option<String>,
+    /// GitHub answers the merge before it names the merge commit.
+    commit_later: bool,
+    /// The most issues one list answers, newest first.
+    list_cap: Option<usize>,
 }
 
 #[derive(Clone, Default)]
@@ -75,8 +79,16 @@ impl Runner for FakeGh {
                 ok(Value::Array(found).to_string())
             }
             ["issue", "list", ..] => {
-                let all: Vec<Value> = hub.issues.iter().map(|(n, (title, body, state))| json!({"number": n, "title": title, "body": body, "state": state})).collect();
+                let all: Vec<Value> = hub.issues.iter().rev().take(hub.list_cap.unwrap_or(usize::MAX)).map(|(n, (title, body, state))| json!({"number": n, "title": title, "body": body, "state": state})).collect();
                 ok(Value::Array(all).to_string())
+            }
+            ["issue", "view", number, ..] => {
+                let number: u64 = number.parse().unwrap();
+                ok(match hub.issues.get(&number) {
+                    Some((title, body, state)) => json!({"number": number, "title": title, "body": body, "state": state, "labels": [{"name": "factory"}]}),
+                    None => json!({"number": number, "title": "", "body": "", "state": "OPEN", "labels": []}),
+                }
+                .to_string())
             }
             ["issue", "create", ..] => {
                 hub.next += 1;
@@ -106,9 +118,10 @@ impl Runner for FakeGh {
             ["pr", "merge", number, ..] => {
                 let number: u64 = number.parse().unwrap();
                 assert_eq!(flag(args, "--match-head-commit"), Some("headsha"), "the head SHA is pinned");
+                let later = hub.commit_later;
                 let pr = hub.prs.get_mut(&number).unwrap();
                 pr["state"] = json!("MERGED");
-                pr["mergeCommit"] = json!({"oid": format!("merge{number}")});
+                pr["mergeCommit"] = if later { Value::Null } else { json!({"oid": format!("merge{number}")}) };
                 hub.writes.push(format!("pr merge {number}"));
                 ok("")
             }
@@ -247,6 +260,33 @@ fn each_github_write_happens_once_when_retried() {
 }
 
 #[test]
+fn a_merge_without_its_commit_yet_is_asked_again_and_not_merged_twice() {
+    let gh = FakeGh::default();
+    gh.0.lock().unwrap().commit_later = true;
+    let mut p = projects(&gh);
+    let factory = factory();
+    let mut t = task("T-1", Some(1));
+    t.pr = p.open_pr(&factory, &t, "body").unwrap();
+    let number = t.pr.as_ref().unwrap().number;
+    let failure = p.merge(&factory, &t, MergeMethod::Merge).unwrap_err();
+    assert_eq!(failure.stage, "github.merge");
+    assert!(
+        p.merge(&factory, &t, MergeMethod::Merge).is_err(),
+        "still unnamed"
+    );
+    gh.0.lock().unwrap().prs.get_mut(&number).unwrap()["mergeCommit"] = json!({"oid": "m1"});
+    assert_eq!(p.merge(&factory, &t, MergeMethod::Merge).unwrap(), "m1");
+    let merges =
+        gh.0.lock()
+            .unwrap()
+            .writes
+            .iter()
+            .filter(|w| w.starts_with("pr merge"))
+            .count();
+    assert_eq!(merges, 1, "the merge is made once");
+}
+
+#[test]
 fn required_checks_decide_and_a_cancelled_run_is_asked_again() {
     let gh = FakeGh::default();
     let mut p = projects(&gh);
@@ -353,6 +393,35 @@ fn outside_work_is_read_from_issues_and_closing_pull_requests() {
     assert!(
         gh.0.lock().unwrap().writes.is_empty(),
         "reading writes nothing"
+    );
+}
+
+#[test]
+fn a_held_issue_past_the_list_limit_keeps_its_task() {
+    let gh = FakeGh::default();
+    let mut p = projects(&gh);
+    let factory = factory();
+    {
+        let mut hub = gh.0.lock().unwrap();
+        hub.issues.insert(
+            1,
+            (
+                "Old".into(),
+                "<!-- hide-factory: f-1/T-1 -->".into(),
+                "OPEN".into(),
+            ),
+        );
+        hub.issues
+            .insert(2, ("Newer".into(), "later".into(), "OPEN".into()));
+        hub.list_cap = Some(1);
+    }
+    let held = task("T-1", Some(1));
+    let events = p.observe(&factory, &[&held]).unwrap();
+    assert!(
+        !events.contains(&OutsideEvent::LabelRemoved {
+            issue: IssueRef::Github { number: 1 }
+        }),
+        "{events:?}"
     );
 }
 
