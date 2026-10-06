@@ -3409,6 +3409,12 @@ impl Runtime {
     /// Ends the wait on the tab focus for `tab_id` when Herdr has answered it
     /// and the session Hide last read already shows that tab, the one case
     /// in which no confirming event follows.
+    ///
+    /// While an earlier request to the same checkout is still unanswered,
+    /// that session is from before Herdr applied the earlier one: Herdr moves
+    /// through it and back, and reports this tab again after it. That report
+    /// is held as this request's late answer, so it is not followed after a
+    /// newer move has replaced it (#660).
     pub(super) fn confirm_tab_focus_already_shown(&mut self, tab_id: &str) {
         let confirmed = self.pending_tab_focus.as_ref().is_some_and(|pending| {
             pending.sent
@@ -3422,6 +3428,13 @@ impl Runtime {
                 "checkout_id": pending.scope_id,
                 "tab_id": pending.target_id,
             }));
+            if self
+                .superseded_tab_focus
+                .iter()
+                .any(|held| held.scope_id == pending.scope_id && held.target_id != tab_id)
+            {
+                self.supersede_tab_focus(pending);
+            }
         }
     }
     /// Remembers a tab notification Herdr will answer after Hide has moved
