@@ -269,11 +269,16 @@ export class BrowserViews {
       // it would after Escape, once it is shown: the overlay that covered it
       // goes away through the shell's next sync, which can land after the window returns.
       if (held) this.returnTo = held.page;
+      this.log.event("browser.window_blur", { held: held !== null, owed: this.returnTo !== null });
     });
     window.on("focus", () => {
       this.windowBack = true;
+      this.log.event("browser.window_focus", { owed: this.returnTo !== null, page_visible: this.returnTo?.visible ?? null });
       this.giveBack();
     });
+    // Where the keyboard goes after a window's return: the order of these, the
+    // page's blur and the shell's focus after `browser.window_return`, says what took it.
+    window.webContents.on("focus", () => this.log.event("browser.shell_focus", { window_focused: window.isFocused(), owed: this.returnTo !== null }));
     window.on("closed", () => {
       this.cancelCycle();
       for (const page of [...this.pages.values()]) this.destroy(page, "window_closed");
@@ -525,6 +530,7 @@ export class BrowserViews {
       this.log.event("browser.page_gone", { reason: details.reason });
       this.update(page, { loading: false, failure: this.words()("native.browser.stopped") });
     });
+    contents.on("blur", () => this.log.event("browser.page_blur", { window_focused: this.window?.isFocused() ?? false, owed: this.returnTo !== null }));
     contents.on("focus", () => {
       // Another page holding the keyboard settles the debt: it is not the page the hold began on.
       if (this.returnTo && this.returnTo !== page) this.returnTo = null;
