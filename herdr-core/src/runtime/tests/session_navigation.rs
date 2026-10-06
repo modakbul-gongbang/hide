@@ -1018,7 +1018,29 @@ fn view_authority_a_late_answer_to_a_superseded_switch_is_not_followed() {
     assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2")));
     assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t1")));
 
-    for answer in ["w-order:t1", "w-order:t2", "w-order:t1"] {
+    // The session from before the drop, then each request's answer, with the
+    // lane sending t1 once Herdr has answered t2.
+    for (step, answer) in ["w-order:t1", "w-order:t2", "w-order:t1"]
+        .into_iter()
+        .enumerate()
+    {
+        if step > 0 {
+            let sent = if step == 1 {
+                "w-order:t2"
+            } else {
+                "w-order:t1"
+            };
+            runtime.complete_lane_tab(
+                RemoteControlAction::FocusTab {
+                    tab_id: sent.to_owned(),
+                },
+                Ok(RemoteControlOutcome::Acknowledged {
+                    created_tab_id: None,
+                    created_pane_id: None,
+                }),
+                3,
+            );
+        }
         runtime.ingest_session(Ok(tab_order_payload(checkout_path, &tabs, &tabs, answer)));
         assert_eq!(
             checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
@@ -1129,11 +1151,12 @@ fn view_authority_a_tab_focus_that_leaves_after_its_wait_was_replaced_is_superse
     assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t1")));
     assert!(runtime.dispatch_json(&operator_focus_event("w-order:t3:p")));
     runtime.ingest_session(herdr_on("w-order:t3"));
-    // The lane sends t2, then t1.
+    // The lane sends t2, then t1, then the pane focus.
     runtime.complete_lane_tab(focus("w-order:t2"), acknowledged(), 3);
     runtime.complete_lane_tab(focus("w-order:t1"), acknowledged(), 3);
+    finish_running_pane_focus(&mut runtime, Ok(()));
 
-    for answer in ["w-order:t2", "w-order:t1"] {
+    for answer in ["w-order:t2", "w-order:t1", "w-order:t3"] {
         runtime.ingest_session(herdr_on(answer));
         assert_eq!(
             checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
@@ -1147,6 +1170,7 @@ fn view_authority_a_tab_focus_that_leaves_after_its_wait_was_replaced_is_superse
     }
     assert_eq!(diagnostic_count(&runtime, "tab.focus.followed"), 0);
     assert!(runtime.superseded_tab_focus.is_empty());
+    assert!(runtime.pending_tab_focus.is_none());
 
     // Each answer was consumed, so a tab Herdr focuses on its own is followed.
     runtime.ingest_session(herdr_on("w-order:t2"));
@@ -1155,6 +1179,124 @@ fn view_authority_a_tab_focus_that_leaves_after_its_wait_was_replaced_is_superse
         Some("w-order:t2")
     );
     assert_eq!(diagnostic_count(&runtime, "tab.focus.followed"), 1);
+}
+
+/// A pane focus still waiting on the lane is not confirmed by a session
+/// from before it, even one whose layout already names its pane: Herdr is
+/// about to move away for the tab focuses ahead of it, so the focus has to
+/// leave. Taking that session as its answer left Herdr on t1 while Hide
+/// showed t3 (#629).
+#[test]
+fn view_authority_a_pane_focus_that_has_not_left_is_not_confirmed_by_an_earlier_session() {
+    let checkout_path = "/private/tmp/hide-view-authority-unsent-pane";
+    let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
+    let tabs = ["w-order:t1", "w-order:t2", "w-order:t3"];
+    let herdr_on = |tab: &str| Ok(tab_order_payload(checkout_path, &tabs, &tabs, tab));
+    runtime.ingest_session(herdr_on("w-order:t3"));
+    let focus = |tab_id: &str| RemoteControlAction::FocusTab {
+        tab_id: tab_id.to_owned(),
+    };
+    let acknowledged = || {
+        Ok(RemoteControlOutcome::Acknowledged {
+            created_tab_id: None,
+            created_pane_id: None,
+        })
+    };
+
+    assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2")));
+    assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t1")));
+    assert!(runtime.dispatch_json(&operator_focus_event("w-order:t3:p")));
+    runtime.ingest_session(herdr_on("w-order:t3"));
+    runtime.complete_lane_tab(focus("w-order:t2"), acknowledged(), 3);
+    runtime.complete_lane_tab(focus("w-order:t1"), acknowledged(), 3);
+    assert_eq!(
+        runtime
+            .pane_focus_in_flight
+            .as_ref()
+            .map(|control| control.target_id.as_str()),
+        Some("w-order:t3:p"),
+        "the pane focus leaves after the tab focuses ahead of it"
+    );
+}
+
+/// A tab focus waiting on the lane is not confirmed by Herdr moving there on
+/// its own. Confirmed early, the request still left, and once it left it
+/// was remembered as superseded, so Herdr's next move to that tab within
+/// the deadline was consumed as its answer instead of followed.
+#[test]
+fn view_authority_a_tab_focus_that_has_not_left_is_not_confirmed_by_herdr_s_own_move() {
+    let checkout_path = "/private/tmp/hide-view-authority-unsent-tab";
+    let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
+    let tabs = ["w-order:t1", "w-order:t2", "w-order:t3"];
+    let herdr_on = |tab: &str| Ok(tab_order_payload(checkout_path, &tabs, &tabs, tab));
+    runtime.ingest_session(herdr_on("w-order:t1"));
+    let focus = |tab_id: &str| RemoteControlAction::FocusTab {
+        tab_id: tab_id.to_owned(),
+    };
+    let acknowledged = || {
+        Ok(RemoteControlOutcome::Acknowledged {
+            created_tab_id: None,
+            created_pane_id: None,
+        })
+    };
+
+    assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2")));
+    assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t3")));
+    // Herdr applies t2, then moves to t3 on its own while t3 still waits.
+    runtime.ingest_session(herdr_on("w-order:t2"));
+    runtime.ingest_session(herdr_on("w-order:t3"));
+    runtime.complete_lane_tab(focus("w-order:t2"), acknowledged(), 3);
+    runtime.complete_lane_tab(focus("w-order:t3"), acknowledged(), 3);
+
+    for outside in ["w-order:t1", "w-order:t3"] {
+        runtime.ingest_session(herdr_on(outside));
+        assert_eq!(
+            checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+            Some(outside),
+            "Herdr moving to {outside} on its own is followed"
+        );
+    }
+    assert_eq!(diagnostic_count(&runtime, "tab.focus.followed"), 2);
+}
+
+/// Herdr publishes no event for focusing the tab it already shows, so a tab
+/// focus that lands there is confirmed by Herdr's answer. Waiting for an
+/// event held every move Herdr made on its own until the deadline.
+#[test]
+fn view_authority_a_tab_focus_on_the_tab_herdr_shows_is_confirmed_by_its_answer() {
+    let checkout_path = "/private/tmp/hide-view-authority-shown-tab";
+    let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
+    let tabs = ["w-order:t1", "w-order:t2", "w-order:t3"];
+    let herdr_on = |tab: &str| Ok(tab_order_payload(checkout_path, &tabs, &tabs, tab));
+    runtime.ingest_session(herdr_on("w-order:t1"));
+
+    // t2 is refused, so Herdr stays on t1, where t1 then lands.
+    assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2")));
+    assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t1")));
+    runtime.complete_lane_tab(
+        RemoteControlAction::FocusTab {
+            tab_id: "w-order:t2".to_owned(),
+        },
+        Err(live::ControlFailure::Definite("tab.focus rejected".into())),
+        3,
+    );
+    runtime.complete_lane_tab(
+        RemoteControlAction::FocusTab {
+            tab_id: "w-order:t1".to_owned(),
+        },
+        Ok(RemoteControlOutcome::Acknowledged {
+            created_tab_id: None,
+            created_pane_id: None,
+        }),
+        3,
+    );
+
+    runtime.ingest_session(herdr_on("w-order:t3"));
+    assert_eq!(
+        checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+        Some("w-order:t3"),
+        "Herdr's own move is followed at once, not after the deadline"
+    );
 }
 
 /// The tab wait a pane focus arms always ends: Herdr refusing the focus

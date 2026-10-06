@@ -1402,17 +1402,19 @@ impl Runtime {
                                 })))
                     })
                     .map(str::to_owned);
-                let pending_tab = self
+                let pending = self
                     .pending_tab_focus
                     .as_ref()
-                    .filter(|pending| pending.scope_id == checkout.id)
-                    .map(|pending| pending.target_id.clone());
+                    .filter(|pending| pending.scope_id == checkout.id);
+                let pending_tab = pending.map(|pending| pending.target_id.clone());
                 // A tab focus is confirmed by the workspace that owns the
-                // tab showing it, whichever workspace Herdr's keyboard is in.
-                if pending_tab
-                    .as_deref()
-                    .is_some_and(|tab_id| herdr.is_active_in_its_workspace(tab_id))
-                {
+                // tab showing it, whichever workspace Herdr's keyboard is in,
+                // and only once it has left: a session that arrives before
+                // that is Herdr from before the request, whatever it shows,
+                // and the request still reaches Herdr afterwards (#629).
+                if pending.is_some_and(|pending| {
+                    pending.sent && herdr.is_active_in_its_workspace(&pending.target_id)
+                }) {
                     confirmed_pending = true;
                 }
                 // The tab holding the selected pane, when it is in this
@@ -2197,8 +2199,15 @@ impl Runtime {
         let pane_topology_changed = fetched
             .as_ref()
             .is_ok_and(|payload| self.observe_pane_operations(payload));
+        // Only a focus that has left can be confirmed: a layout that arrives
+        // before then is Herdr from before the request, and taking it as the
+        // answer kept the focus from ever being sent (#629).
         let session_confirms_pending_pane = fetched.as_ref().ok().is_some_and(|payload| {
-            let Some(pending) = self.pending_pane_focus.as_ref() else {
+            let Some(pending) = self
+                .pending_pane_focus
+                .as_ref()
+                .filter(|pending| pending.sent)
+            else {
                 return false;
             };
             let herdr_tabs = HerdrTabView::from_payload(payload);
@@ -3389,6 +3398,24 @@ impl Runtime {
             self.supersede_tab_focus(previous);
         }
     }
+    /// Ends the wait on the tab focus for `tab_id` when Herdr has answered it
+    /// and the session Hide last read already shows that tab, the one case
+    /// in which no confirming event follows.
+    pub(super) fn confirm_tab_focus_already_shown(&mut self, tab_id: &str) {
+        let confirmed = self.pending_tab_focus.as_ref().is_some_and(|pending| {
+            pending.sent
+                && pending.target_id == tab_id
+                && self.herdr_active_tab_ids.contains(tab_id)
+        });
+        if confirmed && let Some(pending) = self.pending_tab_focus.take() {
+            crate::diagnostic!(serde_json::json!({
+                "component": "view_state",
+                "kind": "tab.focus.confirmed_by_answer",
+                "checkout_id": pending.scope_id,
+                "tab_id": pending.target_id,
+            }));
+        }
+    }
     /// Remembers a tab notification Herdr will answer after Hide has moved
     /// on, so the answer is consumed rather than followed.
     pub(super) fn supersede_tab_focus(&mut self, held: PendingViewFocus) {
@@ -4546,6 +4573,14 @@ impl Runtime {
                     }
                     self.yield_surface_to_terminal();
                     self.persist_current_ui_state();
+                }
+                // Herdr publishes no event for focusing the tab it already
+                // shows, so a tab focus that lands where the session Hide last
+                // read already had Herdr is confirmed by this answer; waiting
+                // for an event would hold every move Herdr makes until the
+                // deadline. A late event of an earlier request is superseded.
+                if let RemoteControlAction::FocusTab { tab_id } = &action {
+                    self.confirm_tab_focus_already_shown(tab_id);
                 }
                 self.push_diagnostic(
                     "tab.control.ready",
