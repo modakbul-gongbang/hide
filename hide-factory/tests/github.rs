@@ -349,6 +349,33 @@ fn a_merge_without_a_verified_commit_is_refused() {
 }
 
 #[test]
+fn a_github_revert_is_one_pull_request_merged_once_at_its_commit() {
+    let gh = FakeGh::default();
+    let mut p = projects(&gh);
+    let factory = factory();
+    let t = task("T-1", Some(1));
+    let revert = p.revert(&factory, &t, "bad1").unwrap();
+    let number = revert.pr.expect("a revert pull request");
+    assert_eq!(revert.commit.as_deref(), Some("headsha"));
+    // Asked again after a lost answer: the open pull request is found.
+    let again = p.revert(&factory, &t, "bad1").unwrap();
+    assert_eq!(again.pr, Some(number));
+    let landed = p.merge_revert(&factory, &revert).unwrap();
+    assert_eq!(landed, format!("merge{number}"));
+    assert_eq!(p.merge_revert(&factory, &revert).unwrap(), landed);
+    let hub = gh.0.lock().unwrap();
+    assert_eq!(
+        hub.writes,
+        vec![format!("pr create {number}"), format!("pr merge {number}")]
+    );
+    assert!(
+        hub.pushes
+            .iter()
+            .all(|refspec| refspec == "HEAD:refs/heads/factory/revert-t-1")
+    );
+}
+
+#[test]
 fn required_checks_decide_and_a_cancelled_run_is_asked_again() {
     let gh = FakeGh::default();
     let mut p = projects(&gh);
