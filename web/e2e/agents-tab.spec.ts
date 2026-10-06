@@ -10,7 +10,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { enterWorkspace, screenshot } from "./wire";
+import { countSent, enterWorkspace, screenshot } from "./wire";
 
 // The kit writes POSIX hook files; the guidance hooks are not written on Windows.
 test.skip(process.platform === "win32", "the kit installs POSIX hooks");
@@ -46,6 +46,7 @@ async function openAgents(page: Page, daemon: Daemon) {
 test("lists the installed agents with a status and a switch, and folds the others under Not installed with an install link", async ({ page }) => {
   const { herdr, daemon } = await start("agents-list");
   try {
+    const sent = countSent(page);
     const list = await openAgents(page, daemon);
     // B8, B9: the programs the home holds are Installed, in the fixed order; the rest are folded.
     await expect(list.locator("[data-agent-row]")).toHaveCount(7, { timeout: 60_000 });
@@ -78,9 +79,12 @@ test("lists the installed agents with a status and a switch, and folds the other
     await expect(fold.locator('[data-agent-install="cursor"]')).toHaveAttribute("href", "https://cursor.com/docs/cli/installation");
     await screenshot(page, "agents-list");
 
-    // B10: Check again reads the machine again and the list stays as it was; the in-progress
-    // and failed states come from the kit snapshot's `checking` and `check_failed` (unit-tested).
+    // B10: Check again asks the kit to read the machine again (one `kit_check` frame on top of the one the open
+    // tab sent) and the list stays as it was; the in-progress and failed states come from the kit snapshot's
+    // `checking` and `check_failed`, which the runtime and component tests own.
+    const opened = sent.get("kit_check") ?? 0;
     await list.locator("[data-agents-check]").click();
+    await expect.poll(() => sent.get("kit_check") ?? 0).toBe(opened + 1);
     await expect(list.locator("[data-agents-check]")).toHaveAttribute("data-agents-check", "idle");
     await expect(list.locator("[data-agent-row]")).toHaveCount(7);
   } finally {

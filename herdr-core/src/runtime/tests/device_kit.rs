@@ -116,13 +116,15 @@ fn report(states: &[(ComponentId, ComponentState)]) -> KitReport {
     }
 }
 
-fn dispatch(shared: &Mutex<Runtime>, kind: &str, payload: serde_json::Value) {
+/// Dispatches one event and answers whether the core would announce a change
+/// to the shell for it.
+fn dispatch(shared: &Mutex<Runtime>, kind: &str, payload: serde_json::Value) -> bool {
     let event =
         serde_json::json!({"schema_version": SCHEMA_VERSION, "kind": kind, "payload": payload});
     shared
         .lock()
         .unwrap()
-        .dispatch_json(&serde_json::to_vec(&event).unwrap());
+        .dispatch_json(&serde_json::to_vec(&event).unwrap())
 }
 
 /// A registered device with the given consent, optionally connected to
@@ -927,22 +929,24 @@ fn a_failed_kit_call_on_an_unread_device_says_why() {
     );
 }
 
-/// B10: Check again shows a read under way until an answer lands; an answer
+/// B10: Check again shows a read under way until an answer lands, and the
+/// core announces that flip so the shell pulls it before the answer; an answer
 /// that is a failure leaves the report the device last gave and says only a
 /// code, and the next read that lands clears it.
 #[test]
-#[allow(clippy::disallowed_methods)] // a bounded poll inside the test: it sleeps between observations of a state, bounded by a deadline
 fn check_again_shows_a_read_under_way_and_a_failed_one_as_a_code_beside_the_last_report() {
     let (helper, release) =
         KitDevice::held(Ok(report(&[(ComponentId::Cli, ComponentState::Installed)])));
     let shared = with_consent(Some(Arc::clone(&helper)));
-    dispatch(&shared, "kit_check", serde_json::json!({}));
-    assert!(kit(&shared).checking, "the read is queued");
-    let deadline = Instant::now() + Duration::from_secs(5);
-    while helper.calls().is_empty() {
-        assert!(Instant::now() < deadline, "the read never started");
-        std::thread::sleep(Duration::from_millis(5));
-    }
+    let announced = dispatch(&shared, "kit_check", serde_json::json!({}));
+    assert!(
+        announced,
+        "the shell pulls a snapshot only when the core announces one, so the flip must be announced"
+    );
+    let queued = kit(&shared);
+    assert!(queued.checking, "the read is queued");
+    assert_eq!(serde_json::to_value(&queued).unwrap()["checking"], true);
+    wait_for("the device read to start", || !helper.calls().is_empty());
     assert!(kit(&shared).checking, "the read is still under way");
     release.send(()).unwrap();
     settle(&shared);

@@ -186,15 +186,18 @@ impl Runtime {
 
     /// A Settings tab showing the kit opened: this Mac and every connected
     /// device are read once. A machine that cannot run the kit has nothing
-    /// to read, and one with work queued answers with that work.
+    /// to read, and one with work queued answers with that work. True when a
+    /// machine's `checking` flipped, so the caller announces it: a slow read
+    /// over a device must show as under way before it answers (B10).
     pub(super) fn request_kit_check(&mut self) -> bool {
+        let mut changed = false;
         if self
             .kit_states
             .get(LOCAL_DEVICE_ID)
             .is_none_or(|state| state.unavailable.is_none())
         {
             self.local_kit_check_requested = true;
-            self.set_kit_checking(LOCAL_DEVICE_ID);
+            changed |= self.set_kit_checking(LOCAL_DEVICE_ID);
         }
         let ready = self
             .device_hosts
@@ -207,21 +210,21 @@ impl Runtime {
                 && !self.device_kit_running.contains(&device_id)
             {
                 self.queue_device_kit(&device_id, KitJob::Status);
-                self.set_kit_checking(&device_id);
+                changed |= self.set_kit_checking(&device_id);
             }
         }
-        false
+        changed
     }
 
     /// A read asked with Check again is on its way: the machine's row shows
     /// it until an answer lands, report or failure (B10). It publishes only
     /// the flip, so a re-read every few seconds adds nothing while Settings
-    /// is open.
-    fn set_kit_checking(&mut self, device_id: &str) {
+    /// is open. True when the snapshot changed.
+    fn set_kit_checking(&mut self, device_id: &str) -> bool {
         let mut state = self.kit_state(device_id);
         state.checking = true;
         state.check_failed = None;
-        self.set_kit_state(device_id, state);
+        self.set_kit_state(device_id, state)
     }
 
     /// Stores what a check or an install found on one machine. A report that
