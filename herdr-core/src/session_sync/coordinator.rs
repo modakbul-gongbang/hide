@@ -95,7 +95,14 @@ fn run_coordinator(
     let hook_home = context.is_local().then(|| home_path.clone()).flatten();
     let mut usage_reader = usage_paths.map(crate::usage::ProviderUsageReader::new);
     // A listening port is this machine's, so only the local coordinator looks.
-    let mut ports_reader = context.is_local().then(crate::ports::PortsReader::new);
+    let mut ports_reader = context
+        .is_local()
+        .then(|| {
+            context
+                .node()
+                .map(|node| crate::ports::PortsReader::new(Arc::clone(node)))
+        })
+        .flatten();
     // The three project-panel readers describe this machine's repositories:
     // its worktrees, its `gh` login's view of their pull requests, and one
     // checkout's size on this disk. All three run their subprocess on a worker

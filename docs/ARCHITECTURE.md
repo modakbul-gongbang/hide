@@ -622,7 +622,7 @@ Each shell and home pair has its own lock, held across the ask, so callers for t
 A CLI found by this search is run with it too, never with the daemon's `PATH` alone: the Memory version probe and every Hide AI child take `cli_path_with` or `account_path` (`hide-ai/src/program.rs`).
 Each refuses with `NotFound`, `InvalidInput` or `Unsupported` rather than guessing; hided's environment registry hands its own values to the `_from` forms, so the variables it depends on stay listed in `hided/src/env.rs`.
 The Windows check builds the whole workspace, tests included.
-`listeners` observes Windows TCP owners through the native IPv4 and IPv6 listener tables and reads each owner's cwd from bounded process-parameter memory, while the core's Unix reader retains `lsof`.
+`listeners` observes Windows TCP owners through the native IPv4 and IPv6 listener tables and reads each owner's cwd from bounded process-parameter memory, while the node's Unix reader (`hide-host/src/ports.rs`, the `listening_ports` call the core's `ports.rs` makes) retains `lsof`.
 Its `ObservedWorkingDirectory` is attribution data, never the kernel proof `process::cwd_of` promises, and cannot authenticate a pane or checkout caller; that API and its Windows `Unsupported` answer are unchanged.
 Each observed cwd is resolved with `fs::identity::canonical` before checkout ancestry is compared, so alternate case, junction and safely shortened verbatim spellings name the same directory.
 A resolution error other than `PermissionDenied`, or a retained verbatim form whose prefix cannot compare reliably with a shortened checkout path, makes the sample unavailable instead of making the checkout idle.

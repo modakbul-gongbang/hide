@@ -23,6 +23,7 @@ pub mod kit;
 pub mod list;
 pub mod mutate;
 pub mod pane_peer;
+pub mod ports;
 pub mod register;
 pub mod root;
 pub mod save;

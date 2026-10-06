@@ -236,6 +236,9 @@ pub enum Call {
         #[serde(default)]
         shared_git: Vec<String>,
     },
+    /// The machine's TCP listeners and where each was started
+    /// (`ports::ListeningPorts`).
+    ListeningPorts,
     /// Bytes free to an unprivileged writer on the volume holding `path`;
     /// `None` when the volume cannot say.
     VolumeFree {

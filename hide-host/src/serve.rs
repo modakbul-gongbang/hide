@@ -401,6 +401,7 @@ pub fn handle_with_progress(
                 }
             }))
         }
+        Call::ListeningPorts => to_value(crate::ports::read()),
         Call::VolumeFree { path } => to_value(crate::disk::volume_free_bytes(&absolute(&path)?)),
         Call::HookDiagnosis => {
             let home = env.home("HOME is not set, so the agent hooks have no account to read")?;

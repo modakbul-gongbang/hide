@@ -285,7 +285,7 @@ pub(crate) fn read_in_use(
 
 /// The in-use read against the live Herdr and the machine's listening ports.
 fn live_in_use(context: &LiveContext, checkouts: &[CheckoutFacts]) -> Result<InUseMap, String> {
-    let ports = crate::ports::read_now();
+    let ports = crate::ports::read_now(context.node.as_ref());
     let ports = match ports.unavailable_reason {
         Some(reason) => Err(format!("Listening ports could not be read: {reason}")),
         None => Ok(ports.entries),
