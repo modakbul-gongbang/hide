@@ -394,6 +394,17 @@ impl Runtime {
         let loading = self.snapshot.git_worktrees_loading && !current;
         let changed =
             self.worktree_catalog != catalog || self.snapshot.git_worktrees_loading != loading;
+        self.local_worktree_paths = catalog
+            .projects
+            .iter()
+            .map(|project| {
+                project
+                    .worktrees
+                    .iter()
+                    .map(|worktree| session::PathRules::Local.read(&worktree.path))
+                    .collect()
+            })
+            .collect();
         self.worktree_catalog = catalog;
         self.snapshot.git_worktrees_loading = loading;
         self.refresh_worktree_projection();
