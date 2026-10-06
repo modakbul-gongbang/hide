@@ -2073,15 +2073,23 @@ impl Engine {
                 }
                 _ => {}
             },
-            QuestionKind::Proposal { .. } => {
+            QuestionKind::Proposal { command, .. } => {
                 // A person runs a proposed command themselves; the Factory
-                // runs only its typed recovery actions (D-54).
+                // runs only its typed recovery actions, once approved (B61,
+                // D-54).
                 self.record(
                     factory,
                     Some(id),
                     "proposal.answered",
                     json!({"decision": decision}),
                 );
+                if decision == "approve"
+                    && let Some(action) = RecoveryAction::ALL
+                        .into_iter()
+                        .find(|action| action.as_str() == command)
+                {
+                    self.run_recovery(factory, action);
+                }
             }
             QuestionKind::Notice => {
                 if task.state == TaskState::Done {
@@ -5220,6 +5228,95 @@ impl Engine {
         }
     }
 
+    /// One action of the closed list (D-54), on this Factory's Tasks only.
+    fn run_recovery(&mut self, factory: &str, action: RecoveryAction) {
+        self.record(
+            factory,
+            None,
+            "recovery.run",
+            json!({"action": action.as_str()}),
+        );
+        match action {
+            RecoveryAction::RemoveFinishedWorktrees => self.remove_finished_worktrees(),
+            RecoveryAction::RetryReadsAndReconnect => {
+                self.github_backoff.clear();
+                self.hold_reason = None;
+            }
+            // A Task the environment stopped starts its worker again in the
+            // same worktree and session (B54).
+            RecoveryAction::RestartWorker => {
+                let stopped: Vec<String> = self
+                    .tasks_of(factory)
+                    .filter(|t| t.state == TaskState::Stopped)
+                    .filter(|t| {
+                        matches!(
+                            t.stop,
+                            Some(
+                                StopReason::WorkerStart
+                                    | StopReason::EnvironmentRepeated
+                                    | StopReason::NoReport
+                                    | StopReason::Stalled
+                            )
+                        )
+                    })
+                    .map(|t| t.id.clone())
+                    .collect();
+                for id in stopped {
+                    self.with_task(factory, &id, |task| task.environment_failures = 0);
+                    self.record(factory, Some(&id), "recovery.restart_worker", json!({}));
+                    self.set_state(factory, &id, TaskState::Waiting);
+                }
+            }
+            // A running worker waiting on input is put to sleep and woken
+            // in the same session with a note to carry on.
+            RecoveryAction::SleepWakeWorker => {
+                let stuck: Vec<(String, WorkerRef)> = self
+                    .tasks_of(factory)
+                    .filter(|t| t.state == TaskState::Running)
+                    .filter_map(|t| t.worker.clone().map(|w| (t.id.clone(), w)))
+                    .collect();
+                for (id, worker) in stuck {
+                    if self.ports.workers.status(&worker) != WorkerStatus::Blocked {
+                        continue;
+                    }
+                    self.record(factory, Some(&id), "recovery.sleep_wake_worker", json!({}));
+                    self.put_to_sleep(factory, &id);
+                    self.wake(
+                        factory,
+                        &id,
+                        "Factory: 환경 복구로 다시 깨웠습니다. 하던 일을 이어가고 끝나면 hide factory done 하세요.",
+                    );
+                }
+            }
+            // New starts of an unpinned Task leave the Factory's default
+            // runtime for an hour, while the other one is not limited.
+            RecoveryAction::SwitchRuntime => {
+                let Some(runtime) = self
+                    .factories
+                    .get(factory)
+                    .map(|f| f.config.default_runtime)
+                else {
+                    return;
+                };
+                let other = match runtime {
+                    Runtime::Claude => Runtime::Codex,
+                    Runtime::Codex => Runtime::Claude,
+                };
+                let now = self.now();
+                if self
+                    .runtime_blocked
+                    .get(&other)
+                    .is_some_and(|until| *until > now)
+                {
+                    return;
+                }
+                let until = now + HOUR_MS;
+                let entry = self.runtime_blocked.entry(runtime).or_insert(until);
+                *entry = (*entry).max(until);
+            }
+        }
+    }
+
     fn apply_diagnosis(&mut self, factory: &str, value: &Value) {
         let Ok(diagnosis) = judgment::parse_env(value) else {
             return;
@@ -5232,24 +5329,7 @@ impl Engine {
         let anchor = self.tasks_of(factory).last().map(|t| t.id.clone());
         match diagnosis.action {
             Some(action) if enabled.contains(&action) => {
-                self.record(
-                    factory,
-                    None,
-                    "recovery.run",
-                    json!({"action": action.as_str()}),
-                );
-                match action {
-                    RecoveryAction::RemoveFinishedWorktrees => self.remove_finished_worktrees(),
-                    RecoveryAction::RetryReadsAndReconnect => {
-                        self.github_backoff.clear();
-                        self.hold_reason = None;
-                    }
-                    RecoveryAction::RestartWorker
-                    | RecoveryAction::SleepWakeWorker
-                    | RecoveryAction::SwitchRuntime => {
-                        self.runtime_blocked.clear();
-                    }
-                }
+                self.run_recovery(factory, action);
             }
             Some(action) => {
                 if let Some(anchor) = anchor {

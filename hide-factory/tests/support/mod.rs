@@ -70,6 +70,8 @@ pub struct World {
     /// Scripted watch answers, oldest first; no warnings when empty.
     pub watch: VecDeque<Value>,
     pub judge_down: bool,
+    /// The environment diagnosis's answer; an unknown cause when absent.
+    pub env_diagnosis: Option<Value>,
     pub hold_judgments: bool,
     pub disk_free: Option<u64>,
     pub memory: Option<MemoryPressure>,
@@ -429,7 +431,10 @@ impl Judge for Shared {
                     .watch
                     .pop_front()
                     .unwrap_or_else(|| json!({"warnings": []})),
-                JudgmentInput::EnvDiagnosis { .. } => json!({"cause": "unknown", "action": "none"}),
+                JudgmentInput::EnvDiagnosis { .. } => world
+                    .env_diagnosis
+                    .clone()
+                    .unwrap_or_else(|| json!({"cause": "unknown", "action": "none"})),
             };
             answers.push(JudgmentAnswer {
                 id: judgment.id.clone(),

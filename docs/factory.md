@@ -403,17 +403,17 @@ An environment problem is not a Task's failure and is never counted against it.
 - **Cascade.** Three different Tasks failing the same check or command within 30 minutes are read as the environment: each failure is taken back, the Tasks go to `waiting`, and new starts halt for 30 minutes.
 - **If it does not clear.** A problem that outlasts 30 minutes asks `factory_env_diagnosis` once for a cause and either one action from the closed list or an exact command with its impact.
 
-The closed recovery list is the only set of actions the Factory runs without a person, and `recovery.<action>=on` turns each on; all are off.
+The closed recovery list is the only set of actions the Factory runs without a person, and `config --set recovery=<action>=on` turns each on; all are off. Each action touches only the diagnosed Factory's Tasks.
 
 | Action | Does |
 | --- | --- |
 | `remove_finished_worktrees` | Removes the worktree of a finished Task and of a cancelled Task past its keep period. |
-| `restart_worker` | Starts a worker again in the same worktree and session. |
-| `sleep_wake_worker` | Puts a worker to sleep or wakes it. |
-| `switch_runtime` | Moves an unpinned Task to the other runtime. |
+| `restart_worker` | A Task stopped by a refused start, a repeated environment failure, no report or a stall goes back to `waiting`, and its worker starts again in the same worktree and session. |
+| `sleep_wake_worker` | A running worker waiting on input is put to sleep and woken in the same session with a note to carry on. |
+| `switch_runtime` | New starts of unpinned Tasks leave the Factory's default runtime for an hour, while the other runtime is not limited. |
 | `retry_reads_and_reconnect` | Clears read back-offs and the start hold. |
 
-A diagnosis naming an action that is off, or any other command, becomes a proposal in the inbox with the exact command and impact, and a person runs or dismisses it.
+A diagnosis naming an action that is off becomes a proposal that the Factory runs once a person answers `approve`; any other command becomes a proposal with the exact command and impact, which a person runs themselves or dismisses.
 Logging in, deleting outside the Factory and installing tools are only ever proposals.
 A Task that alone repeats an environment failure three times is the Task's: it stops as "same environment failure repeated".
 

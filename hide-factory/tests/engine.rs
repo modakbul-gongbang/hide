@@ -1673,6 +1673,63 @@ fn a_low_disk_holds_new_starts_and_the_hold_clears_on_recheck() {
 }
 
 #[test]
+fn a_diagnosis_runs_an_enabled_recovery_and_an_approved_proposal_runs_too() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    h.world().spawn_failure = Some(Failure::task("worker.spawn", "refused"));
+    let stopped = h.ready("Refused", &[]);
+    assert_eq!(h.state(&f, &stopped), TaskState::Stopped);
+    h.world().spawn_failure = None;
+    h.world().disk_free = Some(1 << 30);
+    let _held = h.ready("Held", &[]);
+    let enabled = h.op(Command::Config {
+        project: Some(PROJECT.into()),
+        set: vec![("recovery".into(), "restart_worker=on".into())],
+    });
+    assert_eq!(enabled["ok"], true, "{enabled}");
+    h.world().env_diagnosis = Some(json!({"cause": "disk", "action": "restart_worker"}));
+    h.advance(31 * MINUTE_MS);
+    h.engine.tick();
+    h.engine.tick();
+    assert_ne!(
+        h.state(&f, &stopped),
+        TaskState::Stopped,
+        "the enabled action ran (B61)"
+    );
+
+    // An action outside the enabled scope is a proposal; approving runs it.
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    h.world().spawn_failure = Some(Failure::task("worker.spawn", "refused"));
+    let stopped = h.ready("Refused", &[]);
+    h.world().spawn_failure = None;
+    h.world().disk_free = Some(1 << 30);
+    let _held = h.ready("Held", &[]);
+    h.world().env_diagnosis = Some(json!({"cause": "disk", "action": "restart_worker"}));
+    h.advance(31 * MINUTE_MS);
+    h.engine.tick();
+    h.engine.tick();
+    assert_eq!(h.state(&f, &stopped), TaskState::Stopped);
+    let (owner, proposal) = h
+        .engine
+        .tasks_of(&f)
+        .find_map(|t| {
+            t.open_questions()
+                .find(|q| matches!(q.kind, QuestionKind::Proposal { .. }))
+                .map(|q| (t.id.clone(), q.id.clone()))
+        })
+        .expect("a proposal for a person");
+    let answered = h.op(Command::Answer {
+        task: owner,
+        question: Some(proposal),
+        choice: Some("approve".into()),
+        text: None,
+    });
+    assert_eq!(answered["ok"], true, "{answered}");
+    assert_ne!(h.state(&f, &stopped), TaskState::Stopped);
+}
+
+#[test]
 fn a_usage_limit_moves_new_starts_to_the_other_runtime() {
     let mut h = Bench::new(false);
     let f = h.factory(true);
