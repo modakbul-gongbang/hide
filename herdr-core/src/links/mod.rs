@@ -298,9 +298,13 @@ pub fn repository_of(url: &str) -> Option<String> {
     Some(format!("{owner}/{name}").to_ascii_lowercase())
 }
 
-/// A session's cwd lies in `path` or below it.
+/// A session's cwd lies in `path` or below it. The filesystem root holds
+/// every folder and so names no project's place: it matches nothing.
 pub fn within(cwd: &str, path: &str) -> bool {
     let path = path.trim_end_matches('/');
+    if path.is_empty() {
+        return false;
+    }
     cwd == path
         || cwd
             .strip_prefix(path)

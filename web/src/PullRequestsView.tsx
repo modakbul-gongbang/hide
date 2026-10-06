@@ -61,7 +61,13 @@ export function PullRequestsView({ board, project, lens, onLens, handlers, actio
   // A pull request the board does not list opens from the record (a session's
   // chip to an old one); one the record has not either closes again.
   const matching = record?.workspace_id === project.id && record.target.kind === "pr" && record.target.number === lens.panel ? record : null;
-  const unknown = lens.panel !== null && panelRow === null && !board.reading && matching !== null && !matching.loading && matching.pr === null;
+  // Only this open's read can say the record has no such PR: the record held
+  // when the panel opened is an earlier answer, and a failed read keeps the
+  // panel so it can say why and retry.
+  const [opened, setOpened] = useState({ panel: lens.panel, record: matching });
+  if (opened.panel !== lens.panel) setOpened({ panel: lens.panel, record: matching });
+  const answered = opened.panel === lens.panel && matching !== opened.record;
+  const unknown = lens.panel !== null && answered && panelRow === null && !board.reading && matching !== null && !matching.loading && matching.failure === null && matching.pr === null;
   useEffect(() => {
     if (unknown) onLens({ panel: null });
   }, [unknown, onLens]);

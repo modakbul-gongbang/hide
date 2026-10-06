@@ -209,10 +209,13 @@ pub enum Call {
     SessionActivity {
         request: hide_session::session_activity::SessionActivityRequest,
     },
-    /// The device's session files changed since a time, newest first and
-    /// capped (`hide_session::links::candidates`).
+    /// The device's session files changed since a time and, for a later
+    /// page, up to one, newest first and capped
+    /// (`hide_session::links::candidates`).
     LinkFiles {
         since_unix_ms: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        until_unix_ms: Option<u64>,
     },
     /// Link facts read from each file's checkpoint, a few files and one read
     /// budget each (`hide_session::links::read`). The answer carries branch

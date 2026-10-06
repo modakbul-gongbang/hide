@@ -210,7 +210,7 @@ fn home_with_claude() -> (tempfile::TempDir, PathBuf) {
 #[test]
 fn a_read_resumes_from_its_checkpoint_and_reads_only_what_was_appended() {
     let (home, file) = home_with_claude();
-    let listed = links::candidates(home.path(), 0).unwrap();
+    let listed = links::candidates(home.path(), 0, None).unwrap();
     assert_eq!(listed.len(), 1);
     assert_eq!(listed[0].agent, Agent::Claude);
 
@@ -267,5 +267,48 @@ fn a_read_refuses_a_file_outside_the_agent_roots() {
 fn a_listing_leaves_out_files_older_than_its_start() {
     let (home, _) = home_with_claude();
     let future = u64::MAX / 2;
-    assert!(links::candidates(home.path(), future).unwrap().is_empty());
+    assert!(
+        links::candidates(home.path(), future, None)
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[test]
+fn a_later_page_takes_only_files_at_or_before_its_end() {
+    let (home, _) = home_with_claude();
+    let modified = links::candidates(home.path(), 0, None).unwrap()[0].modified_unix_ms;
+    assert_eq!(
+        links::candidates(home.path(), 0, Some(modified))
+            .unwrap()
+            .len(),
+        1
+    );
+    assert!(
+        links::candidates(home.path(), 0, Some(modified - 1))
+            .unwrap()
+            .is_empty()
+    );
+}
+
+/// D-35: only a file that is not there reads as gone; a file the system
+/// refuses to open is a failure that keeps its rows.
+#[cfg(unix)]
+#[test]
+fn a_refused_file_is_unreadable_and_only_a_missing_one_is_gone() {
+    use std::os::unix::fs::PermissionsExt;
+    let (home, file) = home_with_claude();
+    let request = |path: &std::path::Path| ReadRequest {
+        agent: Agent::Claude,
+        path: path.to_string_lossy().into_owned(),
+        checkpoint: None,
+    };
+    fs::set_permissions(&file, fs::Permissions::from_mode(0o000)).unwrap();
+    let refused = links::read(home.path(), &[request(&file)]).remove(0);
+    fs::set_permissions(&file, fs::Permissions::from_mode(0o600)).unwrap();
+    assert_eq!(refused.error.as_deref(), Some("session_unreadable"));
+
+    fs::remove_file(&file).unwrap();
+    let gone = links::read(home.path(), &[request(&file)]).remove(0);
+    assert_eq!(gone.error.as_deref(), Some("session_file_missing"));
 }

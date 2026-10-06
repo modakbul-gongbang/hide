@@ -681,6 +681,7 @@ Under the pointer or the keyboard an ended line shows `대화 보기`, which ope
 An off button stays reachable and its tooltip says why: the worktree was cleaned up, the device is not connected, another device's conversation cannot be opened here yet (PRD link-graph D-41), an OpenCode session cannot resume (D-42), or the file is gone; a line whose file is gone is dim with `대화 파일 없음` and copies the path the file had.
 Six lines or more show the newest five with `이전 세션 N개`, which unfolds the rest; with none the section reads `이 PR에서 일한 세션이 없어요` with `▷ 맡기기`.
 While the record fills for the first time or the panel reads, a small spinner turns beside `세션 N` and the lines read before stay; a record that cannot be read puts one line of why and `다시 시도` in the section, and the rest of the panel stands.
+A pull request the list does not hold (an old one a session's chip asked for) is drawn from the record; while that read runs or after it failed the panel is only `#N`, × and the sessions section with its spinner or its failure, and it closes only once this open's read says the record has no such pull request.
 
 Until GitHub has answered the view is three skeleton rows and the tab has no number; when a read fails the last pull requests stay, the PRs tab carries ⚠ whose popover says `GitHub 읽기 실패 · N분 전 값 · 이유는 로그에`, and there is no banner.
 A repository with no GitHub remote has no pull requests, which is an answer: the tab reads 0.

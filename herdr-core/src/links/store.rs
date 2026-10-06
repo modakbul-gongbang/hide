@@ -57,7 +57,7 @@ CREATE TABLE session_parents(device TEXT NOT NULL, agent TEXT NOT NULL, id TEXT 
     PRIMARY KEY(device, agent, id));
 CREATE TABLE cursors(device TEXT NOT NULL, path TEXT NOT NULL, agent TEXT NOT NULL,
     stamp TEXT NOT NULL, checkpoint TEXT, session TEXT, last_branch TEXT,
-    PRIMARY KEY(device, path));
+    subagent INTEGER NOT NULL DEFAULT 0, PRIMARY KEY(device, path));
 CREATE TABLE meta(key TEXT PRIMARY KEY, value TEXT NOT NULL);
 ";
 
@@ -419,15 +419,26 @@ impl LinkStore {
             }
             return tx.commit().map_err(failed);
         }
-        let previous: Option<(Option<String>, Option<String>)> = tx
+        let previous: Option<CursorRow> = tx
             .query_row(
-                "SELECT checkpoint, last_branch FROM cursors WHERE device=?1 AND path=?2",
+                "SELECT checkpoint, last_branch, session, subagent FROM cursors \
+                 WHERE device=?1 AND path=?2",
                 [device, path],
-                |row| Ok((row.get(0)?, row.get(1)?)),
+                |row| {
+                    Ok(CursorRow {
+                        checkpoint: row.get(0)?,
+                        last_branch: row.get(1)?,
+                        session: row.get(2)?,
+                        subagent: row.get::<_, i64>(3)? != 0,
+                    })
+                },
             )
             .optional()
             .map_err(failed)?;
-        let continuing = !answer.rescanned && previous.as_ref().is_some_and(|(c, _)| c.is_some());
+        let continuing = !answer.rescanned
+            && previous
+                .as_ref()
+                .is_some_and(|row| row.checkpoint.is_some());
         if !continuing {
             // Read from the start: what this file said before is said again.
             tx.execute(
@@ -441,15 +452,28 @@ impl LinkStore {
             )
             .map_err(failed)?;
         }
-        let facts = &answer.facts;
+        let previous = previous.filter(|_| continuing);
+        // A Codex file names its session only in its first record: a later
+        // read of it belongs to the session the cursor recorded.
+        let mut owned = answer.facts.clone();
+        if owned.session_id.is_none()
+            && let Some(row) = previous.as_ref()
+        {
+            owned.session_id.clone_from(&row.session);
+            owned.subagent = row.subagent;
+        }
+        let facts = &owned;
         let agent = answer.agent.as_str();
-        let mut last_branch = previous
-            .and_then(|(_, branch)| branch)
-            .filter(|_| continuing);
+        let mut last_branch = previous.and_then(|row| row.last_branch);
         if let Some(id) = facts.session_id.as_deref() {
             upsert_session(&tx, device, agent, id, path, facts)?;
             for (index, span) in facts.spans.iter().enumerate() {
-                let Some(branch) = span.branch.as_deref() else {
+                let stated = if span.inherited {
+                    last_branch.clone()
+                } else {
+                    span.branch.clone()
+                };
+                let Some(branch) = stated.as_deref() else {
                     last_branch = None;
                     continue;
                 };
@@ -562,9 +586,10 @@ impl LinkStore {
             .map(|checkpoint| serde_json::to_string(checkpoint).unwrap_or_default());
         let stamp = if answer.has_more { "" } else { stamp };
         tx.execute(
-            "INSERT INTO cursors VALUES(?1,?2,?3,?4,?5,?6,?7) ON CONFLICT(device,path) DO UPDATE SET \
+            "INSERT INTO cursors VALUES(?1,?2,?3,?4,?5,?6,?7,?8) ON CONFLICT(device,path) DO UPDATE SET \
              agent=excluded.agent, stamp=excluded.stamp, checkpoint=excluded.checkpoint, \
-             session=COALESCE(excluded.session,session), last_branch=excluded.last_branch",
+             session=COALESCE(excluded.session,session), last_branch=excluded.last_branch, \
+             subagent=excluded.subagent",
             params![
                 device,
                 path,
@@ -572,7 +597,8 @@ impl LinkStore {
                 stamp,
                 checkpoint,
                 facts.session_id,
-                last_branch
+                last_branch,
+                facts.subagent
             ],
         )
         .map_err(failed)?;
@@ -707,8 +733,15 @@ impl LinkStore {
             let policy = project.and_then(|project| days(&project.key)).unwrap_or(90);
             let ended = session.ended_at.unwrap_or(0);
             let keep = if policy == 0 {
+                // An OpenCode session lives in OpenCode's database, not a
+                // file: its read marks it gone when the database drops it.
                 match session.path.as_deref() {
-                    Some(path) if session.key.device == local_device => file_exists(path),
+                    Some(path)
+                        if session.key.device == local_device
+                            && !path.starts_with(hide_session::links::OPENCODE_PREFIX) =>
+                    {
+                        file_exists(path)
+                    }
                     Some(_) => !session.file_gone,
                     None => true,
                 }
@@ -738,6 +771,13 @@ impl LinkStore {
             }
         }
         tx.commit().map_err(failed)?;
+        if !gone.is_empty() {
+            // `secure_delete` clears the main file's pages; the pruned text
+            // also leaves the write-ahead log only once it is checkpointed.
+            self.connection
+                .query_row("PRAGMA wal_checkpoint(TRUNCATE)", [], |_| Ok(()))
+                .map_err(failed)?;
+        }
         Ok(gone.len())
     }
 
@@ -796,22 +836,12 @@ impl LinkStore {
     /// printed one of its pull requests worked, on any device. The last keeps
     /// a removed worktree's sessions in the project after its checkout is
     /// gone, and joins a device's sessions to the project its repository is
-    /// registered as here (D-21).
+    /// registered as here (D-21). A learned folder that holds a registered
+    /// project's place (a home folder, `/`) or lies in another project's
+    /// would widen this project over sessions that are not its own, so it is
+    /// left out (D-23).
     fn project_paths(&self, project: &ProjectRow) -> Result<Vec<DevicePath>, String> {
-        let mut paths = vec![(project.device.clone(), project.root.clone())];
-        let mut statement = self
-            .connection
-            .prepare_cached("SELECT DISTINCT path FROM worktrees WHERE project=?1")
-            .map_err(failed)?;
-        let worktrees: Vec<String> = statement
-            .query_map([&project.key], |row| row.get(0))
-            .and_then(Iterator::collect)
-            .map_err(failed)?;
-        paths.extend(
-            worktrees
-                .into_iter()
-                .map(|path| (project.device.clone(), path)),
-        );
+        let mut paths = self.registered_paths(project)?;
         if let Some(repo) = project.repo.as_deref() {
             let mut statement = self
                 .connection
@@ -826,10 +856,47 @@ impl LinkStore {
                 .query_map([repo], |row| Ok((row.get(0)?, row.get(1)?)))
                 .and_then(Iterator::collect)
                 .map_err(failed)?;
-            paths.extend(learned);
+            if !learned.is_empty() {
+                let fences = self.fences(project)?;
+                paths.extend(learned.into_iter().filter(|place| fences.admit(place)));
+            }
         }
         paths.sort();
         paths.dedup();
+        Ok(paths)
+    }
+
+    fn fences(&self, project: &ProjectRow) -> Result<Fences, String> {
+        let mut fences = Fences {
+            every: self.registered_paths(project)?,
+            others: Vec::new(),
+        };
+        for other in self.projects()? {
+            if other.key != project.key {
+                let registered = self.registered_paths(&other)?;
+                fences.every.extend(registered.iter().cloned());
+                fences.others.extend(registered);
+            }
+        }
+        Ok(fences)
+    }
+
+    /// A project's own places: its root and the worktrees recorded for it.
+    fn registered_paths(&self, project: &ProjectRow) -> Result<Vec<DevicePath>, String> {
+        let mut paths = vec![(project.device.clone(), project.root.clone())];
+        let mut statement = self
+            .connection
+            .prepare_cached("SELECT DISTINCT path FROM worktrees WHERE project=?1")
+            .map_err(failed)?;
+        let worktrees: Vec<String> = statement
+            .query_map([&project.key], |row| row.get(0))
+            .and_then(Iterator::collect)
+            .map_err(failed)?;
+        paths.extend(
+            worktrees
+                .into_iter()
+                .map(|path| (project.device.clone(), path)),
+        );
         Ok(paths)
     }
 
@@ -962,9 +1029,15 @@ impl LinkStore {
         let start = self.window_start(pr)?;
         let end = pr.end().unwrap_or(u64::MAX);
         let mut paths = self.project_paths(project)?;
-        for key in printed.keys() {
-            if let Some(cwd) = self.session(key)?.and_then(|session| session.cwd) {
-                paths.push((key.device.clone(), cwd));
+        if !printed.is_empty() {
+            let fences = self.fences(project)?;
+            for key in printed.keys() {
+                if let Some(cwd) = self.session(key)?.and_then(|session| session.cwd) {
+                    let place = (key.device.clone(), cwd);
+                    if fences.admit(&place) {
+                        paths.push(place);
+                    }
+                }
             }
         }
         let mut worked: BTreeMap<SessionKey, BranchWork> = BTreeMap::new();
@@ -1559,6 +1632,14 @@ fn issues_open(
         .map_err(failed)
 }
 
+/// Where the last read of a file stopped, and what it knew of the file.
+struct CursorRow {
+    checkpoint: Option<String>,
+    last_branch: Option<String>,
+    session: Option<String>,
+    subagent: bool,
+}
+
 fn upsert_session(
     tx: &Transaction<'_>,
     device: &str,
@@ -1657,6 +1738,27 @@ impl SessionRow {
                 .iter()
                 .any(|(device, path)| *device == self.key.device && within(cwd, path))
         })
+    }
+}
+
+/// What keeps a learned place (a folder a session printed this project's
+/// pull request from) to this project: a folder holding any project's
+/// registered place, or lying inside another project's, is not this one's.
+struct Fences {
+    every: Vec<DevicePath>,
+    others: Vec<DevicePath>,
+}
+
+impl Fences {
+    fn admit(&self, (device, cwd): &DevicePath) -> bool {
+        !self
+            .every
+            .iter()
+            .any(|(at, path)| at == device && within(path, cwd))
+            && !self
+                .others
+                .iter()
+                .any(|(at, path)| at == device && within(cwd, path))
     }
 }
 

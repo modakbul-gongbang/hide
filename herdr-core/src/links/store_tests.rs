@@ -67,12 +67,16 @@ fn claude_file(
 
 /// Reads a file to its end through the worker's own path.
 fn ingest(store: &mut LinkStore, home: &Path, path: &str) {
+    ingest_as(store, home, Agent::Claude, path);
+}
+
+fn ingest_as(store: &mut LinkStore, home: &Path, agent: Agent, path: &str) {
     loop {
         let checkpoint = store.checkpoint(DEVICE, path).unwrap();
         let answer = links::read(
             home,
             &[ReadRequest {
-                agent: Agent::Claude,
+                agent,
                 path: path.to_owned(),
                 checkpoint,
             }],
@@ -376,6 +380,67 @@ fn a_print_run_and_a_session_outside_the_project_make_no_line() {
     ingest(&mut store, home.path(), &elsewhere);
 
     assert!(panel(&store, 7).is_empty());
+}
+
+#[test]
+fn a_printer_in_a_folder_holding_another_project_does_not_widen_this_one() {
+    let home = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    let mut store = open(state.path());
+    store
+        .apply_project(&project(vec![pr(7, "feat/x", T0, None)]), T0)
+        .unwrap();
+    store
+        .apply_project(
+            &ProjectFacts {
+                key: "project:other".into(),
+                root: "/work/other".into(),
+                repository: Some("acme/other".into()),
+                repository_id: Some("R_2".into()),
+                worktrees: Vec::new(),
+                ..project(Vec::new())
+            },
+            T0,
+        )
+        .unwrap();
+    // An agent started in the folder above both projects prints the address.
+    let printer = claude_file(
+        home.path(),
+        "s-above",
+        "/work",
+        "cli",
+        &[Turn {
+            at: T0 - MIN,
+            branch: "feat/x",
+            text: "PR 올려 줘",
+        }],
+        Some((7, T0 + 500)),
+    );
+    // The other project's session on a branch of the same name, while #7 lives.
+    let other = claude_file(
+        home.path(),
+        "s-other",
+        "/work/other",
+        "cli",
+        &[Turn {
+            at: T0 + MIN,
+            branch: "feat/x",
+            text: "다른 프로젝트 일",
+        }],
+        None,
+    );
+    ingest(&mut store, home.path(), &printer);
+    ingest(&mut store, home.path(), &other);
+
+    let ids: Vec<String> = panel(&store, 7).into_iter().map(|line| line.id).collect();
+    assert_eq!(ids, vec!["s-above".to_owned()]);
+    assert!(
+        store
+            .session_links(PROJECT, "s-other", Some(DEVICE))
+            .unwrap()
+            .is_none()
+    );
+    assert!(!crate::links::within("/work/app", "/"));
 }
 
 #[test]
@@ -717,4 +782,58 @@ fn a_session_that_continues_another_joins_its_line() {
     assert_eq!(lines[0].ids, vec!["s-a".to_owned(), "s-b".to_owned()]);
     assert_eq!(lines[0].id, "s-b");
     assert_eq!(lines[0].started_at_unix_ms, Some(T0));
+}
+
+fn codex_line(kind: &str, at: u64, payload: serde_json::Value) -> String {
+    serde_json::json!({"timestamp": iso(at), "type": kind, "payload": payload}).to_string() + "\n"
+}
+
+/// A Codex file names its session once, in its first line: what is appended
+/// later still belongs to that session, not to one without a name.
+#[test]
+fn what_a_codex_session_appends_later_stays_on_its_line() {
+    let home = tempfile::tempdir().unwrap();
+    let state = tempfile::tempdir().unwrap();
+    let mut store = open(state.path());
+    store
+        .apply_project(
+            &project(vec![pr(7, "feat/codex", T0 + 4 * MIN - 500, None)]),
+            T0,
+        )
+        .unwrap();
+    let dir = home.path().join(".codex/sessions/2026/10/03");
+    fs::create_dir_all(&dir).unwrap();
+    let path = dir.join("rollout-cx-1.jsonl");
+    let user = |text: &str| {
+        serde_json::json!({"type": "message", "role": "user",
+            "content": [{"type": "input_text", "text": text}]})
+    };
+    let mut contents = codex_line(
+        "session_meta",
+        T0 + MIN,
+        serde_json::json!({"id": "cx-1", "cwd": ROOT, "originator": "codex-tui",
+            "source": "cli", "git": {"branch": "feat/codex"}}),
+    ) + &codex_line("response_item", T0 + 2 * MIN, user("PR 올려 줘"));
+    fs::write(&path, &contents).unwrap();
+    let path = path.to_string_lossy().into_owned();
+    ingest_as(&mut store, home.path(), Agent::Codex, &path);
+
+    contents += &codex_line("response_item", T0 + 3 * MIN, user("CI도 봐 줘"));
+    contents += &codex_line(
+        "response_item",
+        T0 + 4 * MIN,
+        serde_json::json!({"type": "function_call_output", "call_id": "c",
+            "output": "https://github.com/acme/app/pull/7"}),
+    );
+    fs::write(&path, &contents).unwrap();
+    ingest_as(&mut store, home.path(), Agent::Codex, &path);
+
+    assert_eq!(rows(&store, "sessions"), 1);
+    let lines = panel(&store, 7);
+    assert_eq!(lines.len(), 1);
+    assert_eq!(
+        (lines[0].id.as_str(), lines[0].role),
+        ("cx-1", SessionRole::Created)
+    );
+    assert_eq!(lines[0].ended_at_unix_ms, Some(T0 + 4 * MIN));
 }

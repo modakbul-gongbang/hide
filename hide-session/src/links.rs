@@ -21,10 +21,14 @@ pub const REQUEST_CHARS: usize = 500;
 /// One stretch of records that ran on one branch.
 #[derive(Debug, Clone, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct BranchSpan {
-    /// The branch the records name, or `None` when this chunk did not say
-    /// (a Codex chunk after its `session_meta`): the span continues the
-    /// branch the session was last on.
+    /// The branch the records name, or `None` for a record on no branch
+    /// (a detached head) or one whose chunk did not say.
     pub branch: Option<String>,
+    /// The chunk had not stated a branch when these records came (a Codex
+    /// chunk read after its `session_meta`): the span is on the branch the
+    /// file was last read on, which only its reader's cursor knows.
+    #[serde(default)]
+    pub inherited: bool,
     pub first_at_unix_ms: u64,
     pub last_at_unix_ms: u64,
     /// The last operator request made inside this span.
@@ -102,14 +106,16 @@ impl LinkAccumulator {
         let facts = &mut self.facts;
         facts.first_at_unix_ms = Some(facts.first_at_unix_ms.map_or(at, |first| first.min(at)));
         facts.last_at_unix_ms = Some(facts.last_at_unix_ms.map_or(at, |last| last.max(at)));
+        let inherited = self.current.is_none();
         let branch = self.current.clone().unwrap_or(None);
         match self.facts.spans.last_mut() {
-            Some(span) if span.branch == branch => {
+            Some(span) if span.branch == branch && span.inherited == inherited => {
                 span.first_at_unix_ms = span.first_at_unix_ms.min(at);
                 span.last_at_unix_ms = span.last_at_unix_ms.max(at);
             }
             _ => self.facts.spans.push(BranchSpan {
                 branch,
+                inherited,
                 first_at_unix_ms: at,
                 last_at_unix_ms: at,
                 last_request: None,
@@ -354,16 +360,26 @@ pub struct ReadAnswer {
     pub error: Option<String>,
 }
 
-/// The session files under `home` modified at or after `since_unix_ms`,
-/// newest first, at most [`CANDIDATE_LIMIT`].
-pub fn candidates(home: &std::path::Path, since_unix_ms: u64) -> Result<Vec<Candidate>, String> {
+/// The session files under `home` modified at or after `since_unix_ms` and,
+/// with `until_unix_ms`, at or before it, newest first, at most
+/// [`CANDIDATE_LIMIT`]. A full page may hide older files: the caller asks
+/// again with `until_unix_ms` at the page's oldest time.
+pub fn candidates(
+    home: &std::path::Path,
+    since_unix_ms: u64,
+    until_unix_ms: Option<u64>,
+) -> Result<Vec<Candidate>, String> {
+    let window = Window {
+        since: since_unix_ms,
+        until: until_unix_ms.unwrap_or(u64::MAX),
+    };
     let mut found = Vec::new();
     let mut visited = 0_usize;
     walk(
         &home.join(".claude/projects"),
         crate::Agent::Claude,
         3,
-        since_unix_ms,
+        window,
         &mut found,
         &mut visited,
     )?;
@@ -371,11 +387,11 @@ pub fn candidates(home: &std::path::Path, since_unix_ms: u64) -> Result<Vec<Cand
         &home.join(".codex/sessions"),
         crate::Agent::Codex,
         4,
-        since_unix_ms,
+        window,
         &mut found,
         &mut visited,
     )?;
-    opencode_candidates(home, since_unix_ms, &mut found)?;
+    opencode_candidates(home, window, &mut found)?;
     found.sort_by(|left, right| {
         right
             .modified_unix_ms
@@ -386,6 +402,13 @@ pub fn candidates(home: &std::path::Path, since_unix_ms: u64) -> Result<Vec<Cand
     Ok(found)
 }
 
+/// The modification times one listing takes, both ends included.
+#[derive(Clone, Copy)]
+struct Window {
+    since: u64,
+    until: u64,
+}
+
 /// The most directory entries one listing visits.
 const VISIT_LIMIT: usize = 100_000;
 
@@ -393,7 +416,7 @@ fn walk(
     root: &std::path::Path,
     agent: crate::Agent,
     depth: usize,
-    since: u64,
+    window: Window,
     found: &mut Vec<Candidate>,
     visited: &mut usize,
 ) -> Result<(), String> {
@@ -414,7 +437,7 @@ fn walk(
         let path = entry.path();
         if kind.is_dir() {
             if depth > 0 {
-                walk(&path, agent, depth - 1, since, found, visited)?;
+                walk(&path, agent, depth - 1, window, found, visited)?;
             }
             continue;
         }
@@ -429,7 +452,7 @@ fn walk(
             continue;
         };
         let modified = modified_ms(&metadata);
-        if modified < since {
+        if modified < window.since || modified > window.until {
             continue;
         }
         found.push(Candidate {
@@ -454,11 +477,12 @@ fn modified_ms(metadata: &std::fs::Metadata) -> u64 {
     (modified_ns(metadata) / 1_000_000) as u64
 }
 
-const OPENCODE_PREFIX: &str = "opencode/";
+/// How an OpenCode session is named where a file path would be.
+pub const OPENCODE_PREFIX: &str = "opencode/";
 
 fn opencode_candidates(
     home: &std::path::Path,
-    since: u64,
+    window: Window,
     found: &mut Vec<Candidate>,
 ) -> Result<(), String> {
     let path = crate::opencode::database_path(home);
@@ -475,12 +499,17 @@ fn opencode_candidates(
     let rows = connection
         .prepare(
             "SELECT id, time_updated, (SELECT count(*) FROM message WHERE session_id = session.id) \
-             FROM session WHERE time_updated >= ?1 ORDER BY time_updated DESC LIMIT ?2",
+             FROM session WHERE time_updated >= ?1 AND time_updated <= ?2 \
+             ORDER BY time_updated DESC LIMIT ?3",
         )
         .and_then(|mut statement| {
             statement
                 .query_map(
-                    rusqlite::params![since as i64, CANDIDATE_LIMIT as i64],
+                    rusqlite::params![
+                        i64::try_from(window.since).unwrap_or(i64::MAX),
+                        i64::try_from(window.until).unwrap_or(i64::MAX),
+                        CANDIDATE_LIMIT as i64
+                    ],
                     |row| {
                         Ok((
                             row.get::<_, String>(0)?,
@@ -550,7 +579,22 @@ fn read_one(home: &std::path::Path, request: &ReadRequest) -> ReadAnswer {
             answer.checkpoint = Some(cursor.checkpoint());
             answer.has_more = cursor.has_more();
         }
-        Err(crate::SessionError::Io { .. }) => {
+        // Only a file that is not there is gone; a read the system refused
+        // is a failure, never a disappearance (D-35).
+        Err(crate::SessionError::Io { source, .. }) => {
+            let missing = source
+                .downcast_ref::<std::io::Error>()
+                .is_some_and(|error| error.kind() == std::io::ErrorKind::NotFound);
+            answer.error = Some(
+                if missing {
+                    "session_file_missing"
+                } else {
+                    "session_unreadable"
+                }
+                .to_owned(),
+            );
+        }
+        Err(crate::SessionError::SessionFileMissing) => {
             answer.error = Some("session_file_missing".to_owned());
         }
         Err(crate::SessionError::Capacity { .. }) => {
@@ -575,8 +619,13 @@ fn inside_root(
     };
     let root = hide_platform::fs::identity::canonical(&root)
         .map_err(|_| "links_session_outside_roots".to_owned())?;
-    let path = hide_platform::fs::identity::canonical(path)
-        .map_err(|_| "session_file_missing".to_owned())?;
+    let path = hide_platform::fs::identity::canonical(path).map_err(|error| {
+        if error.kind() == std::io::ErrorKind::NotFound {
+            "session_file_missing".to_owned()
+        } else {
+            "session_unreadable".to_owned()
+        }
+    })?;
     if path.starts_with(&root) && path != root {
         Ok(path)
     } else {

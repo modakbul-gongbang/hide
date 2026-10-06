@@ -62,7 +62,7 @@ function shownPr(row: PrRow | null, record: LinkPanel["pr"]): Shown | null {
 
 /** A GitHub task key's web address, for an issue the project's list no longer holds. */
 function issueUrl(key: string): string | null {
-  const match = /^github:([^/]+\/[^#]+)#(\d+)$/i.exec(key);
+  const match = /^github:([\w.-]+\/[\w.-]+)#(\d+)$/i.exec(key);
   return match ? `https://github.com/${match[1]}/issues/${match[2]}` : null;
 }
 
@@ -106,7 +106,38 @@ export function PrPanel({
   // Escape closes the panel first, then leaves the Overview (B2).
   useEscapeLayer(true, onClose);
   const pr = shownPr(row, record?.pr ?? null);
-  if (!pr) return null;
+  const panel: LinkPanel = record ?? { workspace_id: project.id, target: { kind: "pr", number }, loading: true, failure: null, pr: null, prs: [], sessions: [], total: 0 };
+  const retry = () => actions.openLinks(project.id, { kind: "pr", number });
+  // A pull request the board does not list, while the record is still being
+  // read or could not be: its number, and the sessions section with its
+  // spinner or its failure and Retry.
+  if (!pr) {
+    return (
+      <aside aria-label={t("links.panel", { number })} className="flex min-h-0 w-2/5 min-w-(--issue-panel-min-width) shrink-0 flex-col gap-md overflow-y-auto rounded-md border border-border bg-card p-lg" data-pr-panel={number} tabIndex={-1}>
+        <header className="flex min-w-0 items-center gap-xs text-caption">
+          <span className="font-mono text-muted-foreground">#{number}</span>
+          <span className="flex-1" />
+          <Hint label={t("common.close")} shortcut={<Kbd>Esc</Kbd>}>
+            <Button variant="ghost" size="icon-sm" onClick={onClose} data-pr-panel-close="true">
+              <XIcon aria-hidden="true" />
+            </Button>
+          </Hint>
+        </header>
+        <LinkSessions
+          panel={panel}
+          project={project}
+          branchOf={() => null}
+          onRetry={retry}
+          empty={
+            <p className="text-caption text-muted-foreground" data-link-none="true">
+              {t("links.noSessions")}
+            </p>
+          }
+          actions={actions}
+        />
+      </aside>
+    );
+  }
   const Glyph = CHECKOUT_KIND_ICON[pr.kind];
   const state = STATE_WORD[pr.kind];
   const checkout = row?.checkout && row.checkout.exists ? row.checkout : null;
@@ -120,7 +151,6 @@ export function PrPanel({
           ? t("links.updated", { age: relativeActivity(pr.at, now, t) ?? "" })
           : null;
   const delegate = row && pr.kind !== "pr_merged" && pr.kind !== "pr_closed" ? () => useUiStore.getState().setWorkspaceDialog({ kind: "pr_delegate", workspaceId: project.id, prNumber: pr.number }) : null;
-  const panel: LinkPanel = record ?? { workspace_id: project.id, target: { kind: "pr", number }, loading: true, failure: null, pr: null, prs: [], sessions: [], total: 0 };
   return (
     <aside
       aria-label={t("links.panel", { number: pr.number })}
@@ -200,7 +230,7 @@ export function PrPanel({
         panel={panel}
         project={project}
         branchOf={() => pr.branch}
-        onRetry={() => actions.openLinks(project.id, { kind: "pr", number })}
+        onRetry={retry}
         empty={
           <p className="flex items-center gap-sm text-caption text-muted-foreground" data-link-none="true">
             {t("links.noSessions")}
