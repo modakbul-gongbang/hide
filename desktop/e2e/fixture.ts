@@ -340,7 +340,7 @@ export async function focusPage(app: ElectronApplication, page: { url: string } 
  * window to the work area without saying so. It can keep a larger size until
  * the window is next ordered in (a `blur()` or `focus()` of the test's own)
  * and clamp it then, which changes the layout in the middle of a test (issue
- * 511), so every spec sizes its window here (`hide-e2e/window-size-through-fixture`).
+ * 511), so a spec sizes its window here (`hide-e2e/window-size-through-fixture`).
  * The width is the layout's and must be granted whole; the height is the work
  * area's when that is shorter. Returns the size macOS granted, so a spec
  * asserts its layout against it.
@@ -356,23 +356,6 @@ export async function fitWindow(app: ElectronApplication, wanted: { width: numbe
   expect(granted.width, `the screen's work area is ${area.width} wide and this layout needs ${wanted.width}`).toBe(wanted.width);
   expect(granted.height, "macOS granted a different height than the work area allows").toBe(Math.min(wanted.height, area.height));
   return granted;
-}
-
-/**
- * Lays the shell out `width` CSS pixels wide on any screen, for a layout wider
- * than a CI runner's: the window fits the primary work area as `fitWindow`
- * places it, at `width` or the work area's width when that is narrower, and
- * the page zooms out by the difference. Returns the zoom.
- */
-export async function fitCssWidth(app: ElectronApplication, width: number, height: number): Promise<number> {
-  return app.evaluate(({ BrowserWindow, screen }, size) => {
-    const work = screen.getPrimaryDisplay().workArea;
-    const window = BrowserWindow.getAllWindows()[0]!;
-    window.setBounds({ x: work.x, y: work.y, width: Math.min(size.width, work.width), height: Math.min(size.height, work.height) });
-    const zoom = window.getContentBounds().width / size.width;
-    window.webContents.setZoomFactor(zoom);
-    return zoom;
-  }, { width, height });
 }
 
 /**
