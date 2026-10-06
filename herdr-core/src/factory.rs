@@ -1662,6 +1662,61 @@ mod tests {
         assert!(state.lock().unwrap().starts.in_flight.is_empty());
     }
 
+    fn judgment(factory: &str, id: &str, priority: hide_factory::judgment::Priority) -> Judgment {
+        Judgment {
+            id: id.into(),
+            factory: factory.into(),
+            task: None,
+            priority,
+            input: hide_factory::judgment::JudgmentInput::Watch { board: json!({}) },
+        }
+    }
+
+    #[test]
+    fn intake_reviews_go_first_and_each_factory_queues_at_most_its_limit() {
+        use hide_factory::judgment::{Priority, QUEUE_LIMIT};
+        let shared = Arc::new(JudgeShared {
+            queue: Mutex::new(VecDeque::new()),
+            answers: Mutex::new(Vec::new()),
+            wake: std::sync::Condvar::new(),
+            stop: AtomicBool::new(false),
+            cancel: hide_ai::CancelToken::new(),
+        });
+        let mut port = JudgePort {
+            shared: Arc::clone(&shared),
+            alive: true,
+        };
+        port.submit(judgment("f-1", "watch", Priority::Factory))
+            .unwrap();
+        port.submit(judgment("f-1", "intake", Priority::Intake))
+            .unwrap();
+        port.submit(judgment("f-1", "drift", Priority::Factory))
+            .unwrap();
+        let order: Vec<String> = shared
+            .queue
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|j| j.id.clone())
+            .collect();
+        assert_eq!(order, vec!["intake", "watch", "drift"]);
+        for n in 3..QUEUE_LIMIT {
+            port.submit(judgment("f-1", &format!("j{n}"), Priority::Factory))
+                .unwrap();
+        }
+        let full = port
+            .submit(judgment("f-1", "one more", Priority::Intake))
+            .unwrap_err();
+        assert_eq!(full.detail, "the Factory's judgment queue is full");
+        port.submit(judgment("f-2", "another factory", Priority::Factory))
+            .expect("the limit is per Factory");
+        let mut dead = JudgePort {
+            shared,
+            alive: false,
+        };
+        assert!(dead.submit(judgment("f-3", "x", Priority::Intake)).is_err());
+    }
+
     #[test]
     fn a_busy_spawn_lock_is_asked_again_soon() {
         let busy = spawn_failure("spawn_busy");
