@@ -140,7 +140,7 @@ async function leaveApp(page: Page): Promise<string> {
   return app;
 }
 
-function draftId(hostId: string, root: string, file: string, device = "local"): string {
+function draftId(hostId: string, root: string, file: string, device: string): string {
   return [hostId, device, root, file].join("\u0000");
 }
 
@@ -761,7 +761,7 @@ test("the Explorer creates, renames, moves and trashes entries", { tag: "@platfo
     // file's stored draft follows it to the new path.
     const addedPath = `${repo}/src/added.ts`;
     await seedDraft(page, {
-      id: draftId(fixture.daemon.hostId, repo, addedPath), host: fixture.daemon.hostId, device: "local",
+      id: draftId(fixture.daemon.hostId, repo, addedPath, fixture.daemon.node), host: fixture.daemon.hostId, device: fixture.daemon.node,
       root: repo, path: addedPath, contents: "unsaved recovery copy", updated_at: Date.now(),
     });
     await page.locator(`[data-explorer-row="${repo}/src/added.ts"]`).click({ button: "right" });
@@ -884,9 +884,9 @@ test("a preview-only document closes without a save", async ({ page }) => {
     // A stale recovery buffer is exactly the trap: a preview-only document has
     // no draft the core would accept, so the restore must decline it rather
     // than hand it back as a close-save the core refuses (D-14).
-    const stale = draftId(fixture.daemon.hostId, repo, `${repo}/huge.txt`);
+    const stale = draftId(fixture.daemon.hostId, repo, `${repo}/huge.txt`, fixture.daemon.node);
     await seedDraft(page, {
-      id: stale, host: fixture.daemon.hostId, device: "local", root: repo, path: `${repo}/huge.txt`,
+      id: stale, host: fixture.daemon.hostId, device: fixture.daemon.node, root: repo, path: `${repo}/huge.txt`,
       contents: "stale draft\n", updated_at: Date.now(),
     });
     await page.locator(`[data-explorer-row="${repo}/huge.txt"]`).click();
@@ -1223,12 +1223,31 @@ test("an old draft is restored, never discarded for its age (S5.5 B12)", async (
   const { file, repo } = fixture;
   try {
     await seedDraft(page, {
-      id: draftId(fixture.daemon.hostId, repo, file), host: fixture.daemon.hostId, device: "local",
+      id: draftId(fixture.daemon.hostId, repo, file, fixture.daemon.node), host: fixture.daemon.hostId, device: fixture.daemon.node,
       root: repo, path: file, contents: "export const answer = 97;\n", updated_at: Date.now() - 400 * 24 * 60 * 60 * 1000,
     });
     await page.reload();
     await expect(page.locator('[data-editor-codemirror] .cm-content')).toContainText("answer = 97");
     await expect.poll(() => onDisk(file), { timeout: 20_000 }).toBe("export const answer = 97;\n");
+  } finally {
+    close(fixture);
+  }
+});
+
+test("a draft this host stored for its own machine under `local` moves to the node id and is restored (core-host-node D-21)", async ({ page }) => {
+  const fixture = await openCheckout(page);
+  const { file, repo } = fixture;
+  const host = fixture.daemon.hostId;
+  try {
+    await seedDraft(page, {
+      id: draftId(host, repo, file, "local"), host, device: "local",
+      root: repo, path: file, contents: "export const answer = 98;\n", updated_at: Date.now(),
+    });
+    await page.reload();
+    await expect(page.locator('[data-editor-codemirror] .cm-content')).toContainText("answer = 98");
+    const stored = await storedDrafts(page);
+    expect(stored.some((row) => row.device === "local")).toBe(false);
+    await expect.poll(() => onDisk(file), { timeout: 20_000 }).toBe("export const answer = 98;\n");
   } finally {
     close(fixture);
   }
@@ -1272,7 +1291,7 @@ test("a draft whose tab a daemon restart lost is kept for recovery and opens whe
     expect(fs.readFileSync(file, "utf8")).toBe(original);
     fs.chmodSync(file, 0o644);
     await page.locator("[data-draft-recovery-review]").click();
-    const id = encodeURIComponent(draftId(restarted.hostId, repo, file));
+    const id = encodeURIComponent(draftId(restarted.hostId, repo, file, restarted.node));
     const showCheckout = page.locator(`[data-draft-show-checkout="${id}"]`);
     if (await showCheckout.count()) await showCheckout.click();
     await expect(page.locator(`[data-draft-open="${id}"]`)).toBeVisible({ timeout: 10_000 });
@@ -1322,7 +1341,7 @@ test("a draft is discarded only when the operator confirms it (S5.5 B11)", async
   const fixture = await openCheckout(page);
   const { repo } = fixture;
   try {
-    const elsewhere = { id: draftId("host-another", repo, `${repo}/src/main.ts`), host: "host-another", device: "local", root: repo, path: `${repo}/src/main.ts`, contents: "other host\n", updated_at: 1 };
+    const elsewhere = { id: draftId("host-another", repo, `${repo}/src/main.ts`, "local"), host: "host-another", device: "local", root: repo, path: `${repo}/src/main.ts`, contents: "other host\n", updated_at: 1 };
     const unverified = { id: ["", "", "", "/old/path.ts"].join("\u0000"), host: null, device: null, root: "", path: "/old/path.ts", contents: "v1\n", updated_at: 2 };
     await seedDraft(page, elsewhere);
     await seedDraft(page, unverified);

@@ -14,7 +14,7 @@ import type { AddressInfo } from "node:net";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { countSent, enterWorkspace } from "../../web/e2e/wire";
-import { fitWindow, focusPage, hostLog, isolate, launch, NEEDS_FOCUS, relaunch, screenshot, shellPage, test, type Isolated } from "./fixture";
+import { fitWindow, focusPage, hostLog, isolate, launch, NEEDS_FOCUS, nodeOf, relaunch, screenshot, shellPage, test, type Isolated } from "./fixture";
 import { compositorPresents, quietFor } from "../../web/e2e/wait";
 
 test.describe.configure({ timeout: 240_000 });
@@ -213,7 +213,7 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
   // `hide browser open` from an agent's pane opens the page in that pane's
   // Workspace and answers with the core's receipt.
   const opened = await openFromCli(`${origin}/a.html`, ["--reveal", "--wait"]);
-  expect(opened).toMatchObject({ status: 0, ok: true, result: { context: { device_id: "local", checkout_path: checkout } }, page: { state: "loaded" } });
+  expect(opened).toMatchObject({ status: 0, ok: true, result: { context: { device_id: nodeOf(run!.env), checkout_path: checkout } }, page: { state: "loaded" } });
   expect(await cliFromPane(["view", "status", (opened.result as { view_id: string }).view_id])).toMatchObject({ status: 0, ok: true, view: { page: { state: "loaded" } } });
   const a = await displayIdOf(page, "Page A");
   let pageA = await viewOf(`${origin}/a.html`);
