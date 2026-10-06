@@ -1162,7 +1162,7 @@ pub fn project_pane_children_connected(
         .iter()
         .find(|agent| agent.pane_id == pane_id)
         .and_then(|agent| crate::agent_hooks::runtime_of(&agent.agent_kind));
-    children.connection = pane_connection(runtime, &children, codex_daemon_on);
+    children.connection = pane_connection(runtime, pane_id, &children, codex_daemon_on);
     Some(children)
 }
 
@@ -1174,6 +1174,7 @@ pub fn project_pane_children_connected(
 /// than naming one (B16).
 fn pane_connection(
     runtime: Option<hide_agent_hooks::AgentRuntime>,
+    pane_id: &str,
     children: &crate::model::PaneChildrenSnapshot,
     codex_daemon_on: bool,
 ) -> Option<crate::model::PaneConnectionSnapshot> {
@@ -1184,6 +1185,10 @@ fn pane_connection(
     let not_connected = |reason| {
         Some(PaneConnectionSnapshot {
             connected: false,
+            // Reopen restarts the session on this Mac's Herdr, so a pane on
+            // another device and a missing hook are not its to fix.
+            can_reopen: reason != PaneConnectionReason::SetupNeeded
+                && !crate::agent_hooks::is_remote_pane(pane_id),
             reason: Some(reason),
             reopen: None,
         })
@@ -1191,6 +1196,7 @@ fn pane_connection(
     if children.instrumented {
         return Some(PaneConnectionSnapshot {
             connected: true,
+            can_reopen: false,
             reason: None,
             reopen: None,
         });

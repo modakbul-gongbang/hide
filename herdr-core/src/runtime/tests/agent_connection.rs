@@ -3,7 +3,10 @@
 //! B28, D-23). Expected answers come from the PRD, not from the projector.
 
 use super::*;
-use crate::model::{PaneConnectionReason, PaneConnectionSnapshot};
+use crate::model::{
+    PaneConnectionReason, PaneConnectionSnapshot, PaneReopenFailure, PaneReopenSnapshot,
+};
+use crate::pane_reopen::ReopenFailure;
 use hide_agent_hooks::{AgentRuntime, HookStatus};
 
 /// One Herdr session with one pane per `(pane id, agent, hook token)`.
@@ -16,6 +19,7 @@ fn session(panes: &[(&str, &str, bool)]) -> serde_json::Value {
                 "id": format!("agent-{pane}"), "pane_id": pane, "agent": agent,
                 "agent_status": "idle", "state_change_seq": index + 1,
                 "cwd": "/fixture", "workspace_label": "Fixture",
+                "agent_session": {"kind": "id", "value": format!("session-{pane}")},
                 "tokens": {"task": format!("Task of {pane}")},
             })
         })
@@ -230,6 +234,7 @@ fn a_codex_pane_on_the_shared_server_says_so_and_one_started_earlier_says_that()
         connection_of(&runtime, "w1:p1"),
         Some(PaneConnectionSnapshot {
             connected: false,
+            can_reopen: true,
             reason: Some(PaneConnectionReason::CodexSharedServer),
             reopen: None,
         })
@@ -269,4 +274,176 @@ fn a_missing_hook_asks_for_setup_and_a_switched_off_agent_claims_nothing() {
         None,
         "B16: off has no state"
     );
+}
+
+fn with_live(runtime: &mut Runtime) {
+    // A worker started against this socket finds no Herdr and no runtime to
+    // answer, so each answer below is fed in the way a worker would.
+    let socket = std::env::temp_dir()
+        .join(format!("herdr-core-reopen-{}.sock", std::process::id()))
+        .to_string_lossy()
+        .into_owned();
+    runtime.live = Some(crate::live::LiveContext {
+        socket_path: socket.clone().into(),
+        herdr_bin: None,
+        runtime: std::sync::Weak::new(),
+        notifier: crate::handle::ChangeNotifier::noop(),
+        api_connector: Arc::new(hide_herdr_client::LocalSocketConnector::new(&socket)),
+    });
+}
+
+fn reopen(runtime: &mut Runtime, pane_id: &str) -> bool {
+    runtime.dispatch_json(
+        &serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "pane_reopen",
+            "payload": {"pane_id": pane_id}
+        }))
+        .unwrap(),
+    )
+}
+
+fn reopen_of(runtime: &Runtime, pane_id: &str) -> Option<PaneReopenSnapshot> {
+    connection_of(runtime, pane_id).and_then(|connection| connection.reopen)
+}
+
+/// B29: Reopen is pending while it runs, a second press is the same intent,
+/// a refusal leaves the pane as it was with a code, and a start that landed
+/// publishes nothing more once the session's own hook connects.
+#[test]
+fn reopen_runs_once_per_pane_and_a_refusal_leaves_the_pane_as_it_was() {
+    let mut runtime = runtime();
+    with_live(&mut runtime);
+    kit_rows(&mut runtime, Some(true));
+    runtime.ingest_hook_diagnosis(diagnosis(installed(), installed()));
+    feed(&mut runtime, &[("w1:p1", "codex", false)]);
+    assert_eq!(reopen_of(&runtime, "w1:p1"), None);
+
+    assert!(reopen(&mut runtime, "w1:p1"));
+    assert_eq!(
+        reopen_of(&runtime, "w1:p1"),
+        Some(PaneReopenSnapshot::Pending)
+    );
+    assert!(
+        !reopen(&mut runtime, "w1:p1"),
+        "a second press while one runs starts nothing"
+    );
+
+    assert!(runtime.ingest_pane_reopen(
+        "w1:p1",
+        Err(ReopenFailure {
+            code: PaneReopenFailure::EndRefused,
+            detail: "the agent did not hand the terminal back".into(),
+        }),
+    ));
+    assert_eq!(
+        reopen_of(&runtime, "w1:p1"),
+        Some(PaneReopenSnapshot::Failed {
+            reason: PaneReopenFailure::EndRefused
+        })
+    );
+    assert_eq!(
+        connection_of(&runtime, "w1:p1").map(|connection| connection.connected),
+        Some(false),
+        "the pane stays as it was"
+    );
+
+    // Pressing again after a refusal is a new attempt; a start that landed
+    // ends the attempt, and the pane's own hook ends the chip.
+    assert!(reopen(&mut runtime, "w1:p1"));
+    assert_eq!(
+        reopen_of(&runtime, "w1:p1"),
+        Some(PaneReopenSnapshot::Pending)
+    );
+    assert!(runtime.ingest_pane_reopen("w1:p1", Ok(())));
+    assert_eq!(reopen_of(&runtime, "w1:p1"), None);
+    feed(&mut runtime, &[("w1:p1", "codex", true)]);
+    assert_eq!(
+        connection_of(&runtime, "w1:p1"),
+        Some(PaneConnectionSnapshot {
+            connected: true,
+            can_reopen: false,
+            reason: None,
+            reopen: None,
+        })
+    );
+    assert!(
+        !reopen(&mut runtime, "w1:p1"),
+        "connected: nothing to reopen"
+    );
+    assert_eq!(runtime.pane_reopens.len(), 0, "no entry outlives its need");
+}
+
+/// A refusal known under the lock is published at once and starts no worker;
+/// each one is a code, never Herdr's words.
+#[test]
+fn reopen_refuses_what_it_cannot_do_with_a_code_and_never_for_a_missing_hook() {
+    let mut runtime = runtime();
+    with_live(&mut runtime);
+    kit_rows(&mut runtime, None);
+    runtime.ingest_hook_diagnosis(diagnosis(installed(), installed()));
+
+    // An agent working now is not ended.
+    let mut working = session(&[("w1:p1", "claude", false)]);
+    working["agents"][0]["agent_status"] = "working".into();
+    runtime.ingest_session(Ok(
+        crate::sidebar::owned_label_fixture(working).expect("session payload")
+    ));
+    assert!(reopen(&mut runtime, "w1:p1"));
+    assert_eq!(
+        reopen_of(&runtime, "w1:p1"),
+        Some(PaneReopenSnapshot::Failed {
+            reason: PaneReopenFailure::AgentBusy
+        })
+    );
+
+    // A Codex whose capability was never read does not know whether to leave
+    // the shared server, so it starts nothing.
+    let mut kit = runtime.kit_state(crate::workspace::LOCAL_DEVICE_ID);
+    kit.codex_daemon = None;
+    runtime.set_kit_state(crate::workspace::LOCAL_DEVICE_ID, kit);
+    feed(&mut runtime, &[("w1:p2", "codex", false)]);
+    assert!(reopen(&mut runtime, "w1:p2"));
+    assert_eq!(
+        reopen_of(&runtime, "w1:p2"),
+        Some(PaneReopenSnapshot::Failed {
+            reason: PaneReopenFailure::CodexUnread
+        })
+    );
+
+    // A session whose conversation Herdr never reported cannot be resumed.
+    let mut anonymous = session(&[("w1:p3", "claude", false)]);
+    anonymous["agents"][0]
+        .as_object_mut()
+        .unwrap()
+        .remove("agent_session");
+    runtime.ingest_session(Ok(
+        crate::sidebar::owned_label_fixture(anonymous).expect("session payload")
+    ));
+    assert!(reopen(&mut runtime, "w1:p3"));
+    assert_eq!(
+        reopen_of(&runtime, "w1:p3"),
+        Some(PaneReopenSnapshot::Failed {
+            reason: PaneReopenFailure::SessionGone
+        })
+    );
+
+    // A hook that is missing is Settings' to fix; Reopen would change nothing.
+    runtime.ingest_hook_diagnosis(diagnosis(
+        HookStatus::NotInstalled,
+        HookStatus::NotInstalled,
+    ));
+    feed(&mut runtime, &[("w1:p4", "claude", false)]);
+    assert_eq!(
+        connection_of(&runtime, "w1:p4"),
+        Some(PaneConnectionSnapshot {
+            connected: false,
+            can_reopen: false,
+            reason: Some(PaneConnectionReason::SetupNeeded),
+            reopen: None,
+        })
+    );
+    reopen(&mut runtime, "w1:p4");
+    assert_eq!(reopen_of(&runtime, "w1:p4"), None);
+    assert!(runtime.pane_reopens.is_empty());
 }

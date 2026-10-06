@@ -1,5 +1,14 @@
 use super::*;
 
+/// Which of this machine's panes the lineage pass saw, and how each one's
+/// connection stood, so a Reopen's published state ends with the need for it.
+#[derive(Default)]
+struct ReopenScope {
+    panes: HashSet<String>,
+    connected: HashSet<String>,
+    not_connected: HashSet<String>,
+}
+
 impl Runtime {
     pub(super) fn advance_remote_file_generation(&mut self) -> u64 {
         self.next_remote_file_generation = self.next_remote_file_generation.saturating_add(1);
@@ -1124,6 +1133,7 @@ impl Runtime {
             .get(crate::workspace::LOCAL_DEVICE_ID)
             .is_some_and(|kit| kit.codex_daemon_on == Some(true));
         let mut changed = false;
+        let mut reopen_scope = ReopenScope::default();
         let mut delegated_tabs_changed = false;
         // A tab is the operator's whenever it holds an agent they own. One
         // holding only delegated children is the pile this change exists to
@@ -1170,13 +1180,27 @@ impl Runtime {
                 .get(&pane.id)
                 .copied()
                 .unwrap_or_default();
-            let children = crate::sidebar::project_pane_children_connected(
+            let mut children = crate::sidebar::project_pane_children_connected(
                 &agents,
                 &pane.id,
                 tokens,
                 &status_of,
                 codex_daemon_on,
             );
+            reopen_scope.panes.insert(pane.id.clone());
+            match children
+                .as_mut()
+                .and_then(|children| children.connection.as_mut())
+            {
+                Some(connection) if connection.connected => {
+                    reopen_scope.connected.insert(pane.id.clone());
+                }
+                Some(connection) => {
+                    connection.reopen = self.pane_reopens.get(&pane.id).copied();
+                    reopen_scope.not_connected.insert(pane.id.clone());
+                }
+                None => {}
+            }
             let lineage_path = crate::sidebar::project_lineage_path(&agents, &pane.id);
             if pane.children != children {
                 pane.children = children;
@@ -1188,6 +1212,12 @@ impl Runtime {
             }
         }
         self.snapshot.navigator.agents = agents;
+        self.pane_reopens.retain(|pane_id, state| {
+            !reopen_scope.connected.contains(pane_id)
+                && (reopen_scope.not_connected.contains(pane_id)
+                    || (matches!(state, crate::model::PaneReopenSnapshot::Pending)
+                        && reopen_scope.panes.contains(pane_id)))
+        });
         let hooks = crate::model::AgentHooksSnapshot {
             last_report_failure: self
                 .hook_diagnosis

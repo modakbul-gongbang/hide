@@ -156,9 +156,13 @@ export type PaneConnectionReason = "codex_shared_server" | "started_before_hide"
 /** `PaneConnectionSnapshot`: `reason` is present exactly when `connected` is false; `reopen` is the last Reopen of the pane. */
 export type PaneConnection = {
   connected: boolean;
+  /** Whether the popover offers Reopen: false for `setup_needed` and for a pane on another device. */
+  can_reopen: boolean;
   reason: PaneConnectionReason | null;
-  reopen: { state: "pending" } | { state: "failed"; reason: "start_refused" | "session_gone" | "codex_unread" } | null;
+  reopen: { state: "pending" } | { state: "failed"; reason: PaneReopenFailure } | null;
 };
+
+export type PaneReopenFailure = "start_refused" | "session_gone" | "codex_unread" | "agent_busy" | "end_refused";
 
 /** One step of a pane's lineage, root first and ending at the pane itself. */
 export type LineageStep = { pane_id: string; label: string; siblings: AgentChip[] };

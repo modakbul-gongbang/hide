@@ -5,10 +5,10 @@
 //! cannot read it (openai/codex#48500). Every start Hide makes, a new agent,
 //! a start from an issue or PR, a reopen, a fork and a wake, goes through
 //! [`crate::wire::agent_start_params`], which takes the machine's answer here
-//! and puts the flag first. Whether the operator turned the kit's
-//! kit's setting does not matter: the kit no longer turns the daemon off by
-//! itself (PRD settings-cleanup D-14), and a machine where it was turned off
-//! earlier keeps it off.
+//! and puts the flag first. Whether the machine's shared server is on does
+//! not matter to the flag: the kit no longer turns the server off by itself
+//! (PRD settings-cleanup D-14), only the operator's own request does, and a
+//! machine where it was turned off earlier keeps it off.
 //!
 //! An older Codex has no daemon and refuses the flag, so the flag goes only
 //! where the machine's kit read a Codex that has the daemon setting; a

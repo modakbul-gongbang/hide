@@ -1243,6 +1243,7 @@ pub(super) enum Event {
     PaneInputSubmitted(PaneTargetPayload),
     PaneVisit(PaneTargetPayload),
     AgentWake(AgentWakePayload),
+    PaneReopen(PaneTargetPayload),
     AgentTreeToggle(PaneTargetPayload),
     RemoteControl(RemoteControlPayload),
     RemoteFileList(RemoteFileListPayload),
@@ -1446,6 +1447,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "pane_input_submitted" => decode!(PaneTargetPayload, PaneInputSubmitted),
         "pane_visit" => decode!(PaneTargetPayload, PaneVisit),
         "agent_wake" => decode!(AgentWakePayload, AgentWake),
+        "pane_reopen" => decode!(PaneTargetPayload, PaneReopen),
         "agent_tree_toggle" => decode!(PaneTargetPayload, AgentTreeToggle),
         "remote_control" => decode!(RemoteControlPayload, RemoteControl),
         "remote_file_list" => decode!(RemoteFileListPayload, RemoteFileList),
@@ -1630,6 +1632,7 @@ impl Runtime {
             }
             Event::PaneVisit(payload) => self.record_pane_visit(payload.pane_id),
             Event::AgentWake(payload) => self.request_agent_wake(payload),
+            Event::PaneReopen(payload) => self.request_pane_reopen(&payload.pane_id),
             Event::RefreshStatus => self.request_status_refresh(),
             Event::PetSetVisible(payload) => self.set_pet_visible(payload.visible),
             Event::PetToggleVisible => {

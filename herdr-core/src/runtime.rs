@@ -24,6 +24,7 @@ mod issues;
 mod kit;
 mod memory;
 mod operations;
+mod pane_reopen;
 mod project_sessions;
 mod projects;
 mod pull_requests;
@@ -1416,6 +1417,10 @@ pub struct Runtime {
     agent_sleep_backoff: HashMap<String, agent_sleep::Backoff>,
     /// Panes whose typed input was dropped while asleep, logged once each (B12).
     agent_sleep_dropped_input: HashSet<String>,
+    /// Panes with a Reopen running or just refused, until the pane connects,
+    /// leaves, or stops showing a connection chip (B29). One entry per pane,
+    /// so a second press while one runs starts nothing.
+    pane_reopens: HashMap<String, crate::model::PaneReopenSnapshot>,
     fork_sequence: u64,
     /// The machine's TCP listeners, refreshed on their own window by the
     /// session-sync coordinator. Held here rather than in the snapshot because
@@ -1861,6 +1866,7 @@ impl Runtime {
             agent_sleep_next_decision_unix_ms: 0,
             agent_sleep_backoff: HashMap::new(),
             agent_sleep_dropped_input: HashSet::new(),
+            pane_reopens: HashMap::new(),
             fork_sequence: 0,
             listening_ports: crate::model::ListeningPortsSnapshot::default(),
             worktree_catalog: crate::model::WorktreeCatalogSnapshot::default(),

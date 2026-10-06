@@ -38,6 +38,7 @@ mod labels;
 pub mod live;
 pub mod local_issues;
 mod model;
+mod pane_reopen;
 mod persistence;
 pub mod pet;
 mod ports;

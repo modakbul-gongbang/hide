@@ -1662,6 +1662,7 @@ fn the_settings_diagnosis_reports_each_runtime_and_the_sessions_that_predate_the
         connection(&runtime, "w1:p1"),
         Some(crate::model::PaneConnectionSnapshot {
             connected: true,
+            can_reopen: false,
             reason: None,
             reopen: None,
         })
@@ -1670,6 +1671,7 @@ fn the_settings_diagnosis_reports_each_runtime_and_the_sessions_that_predate_the
         connection(&runtime, "w1:p2"),
         Some(crate::model::PaneConnectionSnapshot {
             connected: false,
+            can_reopen: true,
             reason: Some(crate::model::PaneConnectionReason::StartedBeforeHide),
             reopen: None,
         })

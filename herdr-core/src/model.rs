@@ -1794,11 +1794,20 @@ pub enum PaneReopenFailure {
     /// The machine's Codex has not been read, so the start would not know
     /// whether to leave the shared server.
     CodexUnread,
+    /// The agent is working or waiting for the operator, so ending it to
+    /// start it again would lose what it is doing.
+    AgentBusy,
+    /// The agent did not hand the terminal back to its shell, or Herdr
+    /// refused the end; nothing was started.
+    EndRefused,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 pub struct PaneConnectionSnapshot {
     pub connected: bool,
+    /// Whether the popover offers Reopen: false for a session that Reopen
+    /// cannot fix (`setup_needed`) and for a pane on another device.
+    pub can_reopen: bool,
     /// Present exactly when `connected` is false.
     pub reason: Option<PaneConnectionReason>,
     /// Absent while no Reopen was asked or the last one ended well.
@@ -5047,12 +5056,16 @@ mod wire_enum_tests {
             PaneReopenFailure::StartRefused,
             PaneReopenFailure::SessionGone,
             PaneReopenFailure::CodexUnread,
+            PaneReopenFailure::AgentBusy,
+            PaneReopenFailure::EndRefused,
         ];
         for variant in reopen_failures {
             match variant {
                 PaneReopenFailure::StartRefused
                 | PaneReopenFailure::SessionGone
-                | PaneReopenFailure::CodexUnread => {}
+                | PaneReopenFailure::CodexUnread
+                | PaneReopenFailure::AgentBusy
+                | PaneReopenFailure::EndRefused => {}
             }
         }
         assert_wire(&contract, "pane_reopen_failure", &reopen_failures);
