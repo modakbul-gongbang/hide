@@ -16,7 +16,7 @@ import { SHOW_INACTIVE_SWITCH } from "../src/main/launchSwitches";
 export const DESKTOP_DIR = path.resolve(__dirname, "..");
 export const REPO = path.resolve(DESKTOP_DIR, "..");
 export const HIDE_CLI = path.join(REPO, "target", "debug", fixtureExecutable("hide"));
-const isolations = new Map<string, { cleanup: () => void; candidates: Set<ChildProcess>; launching: number; root: string; states: () => string[] }>();
+const isolations = new Map<string, { cleanup: () => void; candidates: Set<ChildProcess>; launching: number }>();
 const MAX_ISOLATIONS = 16;
 const MAX_CANDIDATES_PER_HOME = 16;
 
@@ -73,7 +73,7 @@ export function isolate(herdr: Pick<HerdrFixture, "socket" | "bin"> & Partial<Pi
   };
   // Every state folder a daemon of this home may have used: the one the app is given and the two `hide` falls back to.
   const states = () => [cleanupEnv.HIDE_STATE_DIR!, path.join(home, ".hide", "state"), path.join(home, ".local", "state", "hide")];
-  const owner = { cleanup: () => {}, candidates: new Set<ChildProcess>(), launching: 0, root, states };
+  const owner = { cleanup: () => {}, candidates: new Set<ChildProcess>(), launching: 0 };
   let cleaned = false;
   const cleanup = () => {
     if (cleaned) return;
@@ -87,6 +87,11 @@ export function isolate(herdr: Pick<HerdrFixture, "socket" | "bin"> & Partial<Pi
       if (!fs.existsSync(state)) continue;
       const stopped = spawnSync(HIDE_CLI, ["stop"], { env: { ...cleanupEnv, HIDE_STATE_DIR: state }, encoding: "utf8", timeout: 20_000 });
       if (stopped.error || stopped.status !== 0) errors.push(new Error(`private hided stop failed for ${state}: ${stopped.error?.message ?? (stopped.stderr || stopped.stdout || stopped.status)}`));
+    }
+    // A spec cleans up in its own hooks, before the test's outcome is final,
+    // so the logs are read here and the test fixture decides whether to keep them.
+    if (daemonLogs) {
+      try { daemonLogs.push(...daemonLogTails(states(), root, home)); } catch (error) { errors.push(error); }
     }
     if (errors.length) throw new AggregateError(errors, `fixture cleanup incomplete; preserve ${root} and resolve the reported stop/unload failure`);
     // Windows keeps a running executable and a process's folder locked: end what still runs from the root first.
@@ -179,6 +184,7 @@ export const test = base.extend<{ focusGuard: void }>({
     async ({}, use, testInfo) => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hide-e2e-focus-"));
       focusReports = { dir, apps: [] };
+      daemonLogs = [];
       const errors: unknown[] = [];
       try {
         await use();
@@ -193,12 +199,16 @@ export const test = base.extend<{ focusGuard: void }>({
             try { await app.close(); } catch (error) { errors.push(error); }
           }
         }
-        if (testInfo.status !== testInfo.expectedStatus) {
-          try { keepDaemonLogs(testInfo.outputPath()); } catch (error) { errors.push(error); }
-        }
         for (const { cleanup } of [...isolations.values()]) {
           try { cleanup(); } catch (error) { errors.push(error); }
         }
+        if (testInfo.status !== testInfo.expectedStatus) {
+          try {
+            fs.mkdirSync(testInfo.outputPath(), { recursive: true });
+            daemonLogs.forEach((text, index) => fs.writeFileSync(testInfo.outputPath(`hided-${index + 1}.jsonl`), text));
+          } catch (error) { errors.push(error); }
+        }
+        daemonLogs = null;
         const reports = fs.readdirSync(dir).flatMap((file) => fs.readFileSync(path.join(dir, file), "utf8").split("\n").filter(Boolean));
         focusReports = null;
         fs.rmSync(dir, { recursive: true, force: true });
@@ -216,40 +226,46 @@ export const test = base.extend<{ focusGuard: void }>({
 const KEPT_LOG_BYTES = 256 * 1024;
 
 /**
- * Copies the end of each private daemon's core log beside a failed attempt's
- * report, as `hided-<n>.jsonl`, before cleanup removes the run's folders: the
+ * The end of each private daemon log the running test's cleanups have read,
+ * written beside its report as `hided-<n>.jsonl` when the test fails: the
  * host log does not show the order of the core's focus, tab and pane records,
  * and without them a CI flake could only be classified by inference (issue
- * 629). The run's folders, the repository, the home and the temporary folder
- * are written as placeholders; the core log carries no token or credential.
+ * 629). Null outside a test from this module's `test`.
  */
-function keepDaemonLogs(into: string): void {
-  const placeholders: [string, string][] = [];
-  for (const [home, { root }] of isolations) placeholders.push([root, "<run>"], [home, "<run>/home"]);
-  placeholders.push([REPO, "<repo>"], [os.homedir(), "<home>"], [fs.realpathSync.native(os.tmpdir()), "<tmp>"], [os.tmpdir(), "<tmp>"]);
+let daemonLogs: string[] | null = null;
+
+/**
+ * The end of each core log under `states`, at most `KEPT_LOG_BYTES` of whole
+ * records, with the run's folders, the repository, the home and the
+ * temporary folder written as placeholders; the core log carries no token or
+ * credential.
+ */
+function daemonLogTails(states: string[], root: string, home: string): string[] {
+  const placeholders: [string, string][] = [
+    [home, "<run>/home"], [root, "<run>"], [REPO, "<repo>"], [os.homedir(), "<home>"],
+    [fs.realpathSync.native(os.tmpdir()), "<tmp>"], [os.tmpdir(), "<tmp>"],
+  ];
   // Paths reach the log as JSON strings, so a Windows path appears with its backslashes escaped.
   const spellings = placeholders
     .flatMap(([from, to]): [string, string][] => [[JSON.stringify(from).slice(1, -1), to], [from, to]])
     .sort(([a], [b]) => b.length - a.length);
-  let kept = 0;
-  for (const { states } of isolations.values()) {
-    for (const state of states()) {
-      const file = path.join(state, "Logs", "core.jsonl");
-      if (!fs.existsSync(file)) continue;
-      const size = fs.statSync(file).size;
-      const start = Math.max(0, size - KEPT_LOG_BYTES);
-      const handle = fs.openSync(file, "r");
-      const bytes = Buffer.alloc(size - start);
-      try { fs.readSync(handle, bytes, 0, bytes.length, start); } finally { fs.closeSync(handle); }
-      let text = bytes.toString("utf8");
-      // A cut record is dropped whole, so every kept line is JSON.
-      if (start > 0) text = text.slice(text.indexOf("\n") + 1);
-      for (const [from, to] of spellings) text = text.replaceAll(from, to);
-      const note = start > 0 ? `${JSON.stringify({ kind: "e2e.log_tail", kept_bytes: KEPT_LOG_BYTES, total_bytes: size })}\n` : "";
-      fs.mkdirSync(into, { recursive: true });
-      fs.writeFileSync(path.join(into, `hided-${(kept += 1)}.jsonl`), note + text);
-    }
+  const tails: string[] = [];
+  for (const state of states) {
+    const file = path.join(state, "Logs", "core.jsonl");
+    if (!fs.existsSync(file)) continue;
+    const size = fs.statSync(file).size;
+    const start = Math.max(0, size - KEPT_LOG_BYTES);
+    const handle = fs.openSync(file, "r");
+    const bytes = Buffer.alloc(size - start);
+    try { fs.readSync(handle, bytes, 0, bytes.length, start); } finally { fs.closeSync(handle); }
+    let text = bytes.toString("utf8");
+    // A cut record is dropped whole, so every kept line is JSON.
+    if (start > 0) text = text.slice(text.indexOf("\n") + 1);
+    for (const [from, to] of spellings) text = text.replaceAll(from, to);
+    const note = start > 0 ? `${JSON.stringify({ kind: "e2e.log_tail", kept_bytes: KEPT_LOG_BYTES, total_bytes: size })}\n` : "";
+    tails.push(note + text);
   }
+  return tails;
 }
 
 /** Starts the app with the focus guard preloaded, reporting into the running test's folder. */
