@@ -44,4 +44,20 @@ describe("operator focus numbering", () => {
     releaseOperatorFocus();
     expect(caughtUp(useShellStore.getState())).toBe(true);
   });
+
+  it("reads its own entry gone after it was seen as dropped by the core, not as still waiting", () => {
+    const { noteOperatorFocusSent, applyFrame } = useShellStore.getState();
+    // Before any answer, an absent entry only means the core has not applied one.
+    noteOperatorFocusSent(1);
+    applyFrame(snapshotFrame([{ client_id: "someone-else", sequence: 4 }]));
+    expect(caughtUp(useShellStore.getState())).toBe(false);
+    applyFrame(snapshotFrame([{ client_id: operatorFocusClientId, sequence: 1 }]));
+    expect(caughtUp(useShellStore.getState())).toBe(true);
+
+    // Later clicks are sent; the core then drops this page's entry (16 other pages spoke).
+    noteOperatorFocusSent(3);
+    expect(caughtUp(useShellStore.getState())).toBe(false);
+    applyFrame(snapshotFrame([{ client_id: "someone-else", sequence: 5 }]));
+    expect(caughtUp(useShellStore.getState())).toBe(true);
+  });
 });
