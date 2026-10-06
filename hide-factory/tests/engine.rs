@@ -1723,6 +1723,19 @@ fn the_inbox_orders_blocking_questions_first_then_answers_merges_and_stops() {
 // ------------------------------------------------------------ slow worker start
 
 #[test]
+fn a_start_carried_out_off_the_engine_is_asked_for_again_on_the_next_tick() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    h.world().spawn_failure = Some(Failure::start_pending("worker.spawn"));
+    let a = h.ready("A", &[]);
+    h.engine.tick();
+    assert_eq!(h.state(&f, &a), TaskState::Waiting);
+    h.world().spawn_failure = None;
+    h.engine.tick();
+    assert_eq!(h.state(&f, &a), TaskState::Running, "no 30-second wait");
+}
+
+#[test]
 fn a_worker_whose_agent_has_not_started_holds_its_slot_and_is_asked_again_later() {
     let mut h = Bench::new(false);
     let f = h.factory(true);

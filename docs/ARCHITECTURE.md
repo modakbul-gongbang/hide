@@ -856,7 +856,7 @@ Nothing runs under the runtime mutex: conversation reads run on the worker's rea
 
 ### The Factory host
 
-The Software Factory's engine runs on its own thread, `herdr-core-factory`, beside the delivery worker and the label analyzer, and its judgments run on a second thread, `herdr-core-factory-judge`, with a router of their own.
+The Software Factory's engine runs on its own thread, `herdr-core-factory`, beside the delivery worker and the label analyzer, its judgments run on a second thread, `herdr-core-factory-judge`, with a router of their own, and worker starts, which wait for Herdr, run on a third, `factory-starts`, so a start never holds a command or a worker's report.
 The engine is the `hide-factory` crate, which does not know the runtime or Herdr; the host in `herdr-core/src/factory.rs` gives it a clock, the project's git and `gh`, the verify runner, and a worker port, and `runtime/factory.rs` holds the few places that take `Mutex<Runtime>` to read owned data or hand the core a request.
 No file, SQLite, network or subprocess work happens under the runtime lock, and a command reaches the engine through a bounded queue instead of a call into the runtime.
 `hided` routes `hide factory` over the pane-capability socket and refuses a device caller.

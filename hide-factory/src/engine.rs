@@ -4107,6 +4107,7 @@ impl Engine {
                 .task(&factory, &id)
                 .is_none_or(|t| t.state != TaskState::Waiting)
             {
+                self.ports.workers.abandon_start(&factory, &id);
                 self.starting.remove(&(factory, id));
             }
         }
@@ -4376,7 +4377,8 @@ impl Engine {
                 now
             }
         };
-        self.starting.insert(key, (first, now + START_RETRY_MS));
+        let again = failure.again_in_ms.unwrap_or(START_RETRY_MS);
+        self.starting.insert(key, (first, now + again));
         if now.saturating_sub(first) >= START_NOTICE_MS {
             let name = self
                 .task(factory, id)

@@ -167,6 +167,59 @@ struct WorkerState {
     /// Woken workers whose agent has not come back yet, with the letters it
     /// gets once it has: a letter needs the agent's session to address.
     waking: BTreeMap<String, Woken>,
+    /// Worker starts, carried out on the starter thread so a start that
+    /// waits for Herdr never holds a command or a worker's report (B23).
+    starts: Starts,
+}
+
+/// Starts by `factory/task`: queued or running, finished and not yet asked
+/// for, and ones the engine gave up on while they ran.
+#[derive(Default)]
+struct Starts {
+    queue: Option<SyncSender<WorkerSpawn>>,
+    in_flight: BTreeSet<String>,
+    done: BTreeMap<String, Result<WorkerRef, Failure>>,
+    abandoned: BTreeSet<String>,
+}
+
+/// Starts waiting for the starter thread; one past it is asked again later.
+const START_QUEUE_LIMIT: usize = 16;
+
+fn start_key(factory: &str, task: &str) -> String {
+    format!("{factory}/{task}")
+}
+
+/// Runs queued worker starts one at a time until the host drops the queue.
+fn run_starts(
+    jobs: Receiver<WorkerSpawn>,
+    runtime: Weak<Mutex<Runtime>>,
+    state: Arc<Mutex<WorkerState>>,
+) {
+    for job in jobs {
+        let key = start_key(&job.factory, &job.task);
+        let result = start_worker(&runtime, &job);
+        let abandoned = {
+            let Ok(mut state) = state.lock() else { return };
+            state.starts.in_flight.remove(&key);
+            if state.starts.abandoned.remove(&key) {
+                true
+            } else {
+                state.starts.done.insert(key, result.clone());
+                false
+            }
+        };
+        if abandoned && let Ok(worker) = result {
+            let mut port = CoreWorkers {
+                runtime: runtime.clone(),
+                state: Arc::clone(&state),
+            };
+            if let Err(failure) = port.stop(&worker) {
+                crate::diagnostic!(
+                    json!({"component":"factory","kind":"worker.abandon_failed","task":job.task,"stage":failure.stage})
+                );
+            }
+        }
+    }
 }
 
 struct Woken {
@@ -189,6 +242,17 @@ fn run(
     stop: Arc<AtomicBool>,
 ) {
     let workers = Arc::new(Mutex::new(WorkerState::default()));
+    let (start_queue, start_jobs) = mpsc::sync_channel(START_QUEUE_LIMIT);
+    if let Ok(mut state) = workers.lock() {
+        state.starts.queue = Some(start_queue);
+    }
+    let starter = {
+        let runtime = runtime.clone();
+        let state = Arc::clone(&workers);
+        thread::Builder::new()
+            .name("factory-starts".into())
+            .spawn(move || run_starts(start_jobs, runtime, state))
+    };
     let runner_stop = Arc::clone(&stop);
     let mut engine: Option<Engine> = None;
     let mut judge: Option<JudgeThread> = None;
@@ -306,6 +370,15 @@ fn run(
     }
     drop(engine);
     drop(judge);
+    // Closing the queue ends the starter after the start it is running.
+    if let Ok(mut state) = workers.lock() {
+        state.starts.queue = None;
+    }
+    if let Ok(starter) = starter
+        && starter.join().is_err()
+    {
+        crate::diagnostic!(json!({"component":"factory","kind":"starts.join_failed"}));
+    }
 }
 
 fn owner_of(engine: &Engine, answer: &Value) -> Option<String> {
@@ -672,82 +745,68 @@ impl CoreWorkers {
 }
 
 impl WorkerRuntime for CoreWorkers {
+    /// Hands a finished start back, or queues one for the starter thread
+    /// and answers that it is pending.
     fn spawn(&mut self, request: &WorkerSpawn) -> Result<WorkerRef, Failure> {
+        let key = start_key(&request.factory, &request.task);
+        {
+            let mut state = self
+                .state
+                .lock()
+                .map_err(|_| Failure::task("worker.spawn", "state_unavailable"))?;
+            if let Some(result) = state.starts.done.remove(&key) {
+                return result;
+            }
+            if state.starts.in_flight.contains(&key) {
+                return Err(Failure::start_pending("worker.spawn"));
+            }
+        }
         let runtime = self.runtime()?;
         if request.runtime == hide_factory::model::Runtime::Codex
             && !guard(&runtime).factory_kit_read()
         {
             return Err(Failure::starting("worker.spawn", "kit_not_read"));
         }
-        let (client, authority, actor) = guard(&runtime)
-            .factory_delivery(&request.factory)
-            .map_err(|reason| Failure::task("worker.spawn", reason))?;
         drop(runtime);
-        let parent = crate::coordination::register_code_owned(&client, &authority, &actor)
-            .map_err(|reason| Failure::task("worker.spawn", reason))?;
-        let mut args = request.args.clone();
-        args.push(prompt_argument(&request.prompt, &request.task)?);
-        let (intent, path) = match &request.resume {
-            Some(previous) => {
-                if let Some(agent) = &previous.agent {
-                    let _ = crate::coordination::run(
-                        client.clone(),
-                        crate::delivery::worker::Authority {
-                            caller: authority.caller.clone(),
-                            context: authority.context.clone(),
-                        },
-                        actor.clone(),
-                        crate::coordination::Command::End {
-                            id: agent.clone(),
-                            actor: None,
-                        },
-                    );
-                }
-                (
-                    format!("factory-{}-{}-{}", request.factory, request.task, now_ms()),
-                    Some(previous.worktree.clone()),
-                )
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| Failure::task("worker.spawn", "state_unavailable"))?;
+        let queue = state
+            .starts
+            .queue
+            .clone()
+            .ok_or_else(|| Failure::task("worker.spawn", "starter_stopped"))?;
+        match queue.try_send(request.clone()) {
+            Ok(()) => {
+                state.starts.in_flight.insert(key);
             }
-            None if request.attempt == 0 => (
-                format!("factory-{}-{}", request.factory, request.task),
-                None,
-            ),
-            None => (
-                format!(
-                    "factory-{}-{}-a{}",
-                    request.factory, request.task, request.attempt
-                ),
-                None,
-            ),
+            Err(mpsc::TrySendError::Full(_)) => {}
+            Err(mpsc::TrySendError::Disconnected(_)) => {
+                return Err(Failure::task("worker.spawn", "starter_stopped"));
+            }
+        }
+        Err(Failure::start_pending("worker.spawn"))
+    }
+
+    fn abandon_start(&mut self, factory: &str, task: &str) {
+        let key = start_key(factory, task);
+        let finished = match self.state.lock() {
+            Ok(mut state) => {
+                if state.starts.in_flight.contains(&key) {
+                    state.starts.abandoned.insert(key.clone());
+                }
+                state.starts.done.remove(&key)
+            }
+            Err(_) => None,
         };
-        let view = crate::coordination::run(
-            client,
-            authority,
-            actor,
-            crate::coordination::Command::Spawn {
-                parent,
-                name: request.name.clone(),
-                intent,
-                kind: request.runtime.as_str().into(),
-                repo: request.project.clone(),
-                branch: request.branch.clone(),
-                path,
-                no_watch: false,
-                args,
-            },
-        )
-        .map_err(|reason| spawn_failure(&reason))?;
-        Ok(WorkerRef {
-            factory: request.factory.clone(),
-            agent: view["id"].as_str().map(str::to_owned),
-            name: request.name.clone(),
-            pane: view["pane"].as_str().map(str::to_owned),
-            runtime: request.runtime,
-            worktree: view["project"].as_str().unwrap_or_default().to_owned(),
-            branch: request.branch.clone(),
-            started_at: now_ms(),
-            asleep: false,
-        })
+        if let Some(Ok(worker)) = finished
+            && let Err(failure) = self.stop(&worker)
+        {
+            crate::diagnostic!(
+                json!({"component":"factory","kind":"worker.abandon_failed","task":task,"stage":failure.stage})
+            );
+        }
     }
 
     fn message(
@@ -953,6 +1012,85 @@ fn repository_root(runner: &mut SystemRunner, checkout: &Path) -> Result<PathBuf
         .filter(|_| common.file_name().is_some_and(|name| name == ".git"))
         .map(Path::to_path_buf)
         .ok_or_else(|| Failure::task("worktree.root", "the repository has no main checkout"))
+}
+
+/// One worker start through the coordination path, on the starter thread.
+fn start_worker(
+    runtime: &Weak<Mutex<Runtime>>,
+    request: &WorkerSpawn,
+) -> Result<WorkerRef, Failure> {
+    let runtime = runtime
+        .upgrade()
+        .ok_or_else(|| Failure::task("worker.spawn", "runtime_gone"))?;
+    let (client, authority, actor) = guard(&runtime)
+        .factory_delivery(&request.factory)
+        .map_err(|reason| Failure::task("worker.spawn", reason))?;
+    drop(runtime);
+    let parent = crate::coordination::register_code_owned(&client, &authority, &actor)
+        .map_err(|reason| Failure::task("worker.spawn", reason))?;
+    let mut args = request.args.clone();
+    args.push(prompt_argument(&request.prompt, &request.task)?);
+    let (intent, path) = match &request.resume {
+        Some(previous) => {
+            if let Some(agent) = &previous.agent {
+                let _ = crate::coordination::run(
+                    client.clone(),
+                    crate::delivery::worker::Authority {
+                        caller: authority.caller.clone(),
+                        context: authority.context.clone(),
+                    },
+                    actor.clone(),
+                    crate::coordination::Command::End {
+                        id: agent.clone(),
+                        actor: None,
+                    },
+                );
+            }
+            (
+                format!("factory-{}-{}-{}", request.factory, request.task, now_ms()),
+                Some(previous.worktree.clone()),
+            )
+        }
+        None if request.attempt == 0 => (
+            format!("factory-{}-{}", request.factory, request.task),
+            None,
+        ),
+        None => (
+            format!(
+                "factory-{}-{}-a{}",
+                request.factory, request.task, request.attempt
+            ),
+            None,
+        ),
+    };
+    let view = crate::coordination::run(
+        client,
+        authority,
+        actor,
+        crate::coordination::Command::Spawn {
+            parent,
+            name: request.name.clone(),
+            intent,
+            kind: request.runtime.as_str().into(),
+            repo: request.project.clone(),
+            branch: request.branch.clone(),
+            path,
+            no_watch: false,
+            args,
+        },
+    )
+    .map_err(|reason| spawn_failure(&reason))?;
+    Ok(WorkerRef {
+        factory: request.factory.clone(),
+        agent: view["id"].as_str().map(str::to_owned),
+        name: request.name.clone(),
+        pane: view["pane"].as_str().map(str::to_owned),
+        runtime: request.runtime,
+        worktree: view["project"].as_str().unwrap_or_default().to_owned(),
+        branch: request.branch.clone(),
+        started_at: now_ms(),
+        asleep: false,
+    })
 }
 
 fn spawn_failure(reason: &str) -> Failure {

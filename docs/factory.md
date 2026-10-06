@@ -177,6 +177,7 @@ Each open Factory is a code-owned recipient named `factory:<factory id>` in the 
 
 A worker starts when the Task may start.
 The engine asks the core to spawn it through coordination, the same path as `hide agent spawn`, under the Factory's own agent record as parent.
+The spawn runs on the host's starter thread, one at a time with at most 16 waiting, because it waits for Herdr to make the worktree and start the agent: the engine keeps the Task's slot, answers commands and worker reports meanwhile, and takes the started worker on the next tick. A Task cancelled or paused while its worker starts has that worker ended when it arrives.
 The record is registered when needed and converges on the existing one.
 
 - **Name, branch, intent.** The worker is named `factory-<project name>-<task id>` and works on `factory/<issue number>-<slug>` (`factory/l<number>-<slug>` for a local issue, `factory/<task id>` without a slug). The spawn intent is `factory-<factory id>-<task id>`, and each earlier refused start adds `-a<n>`, so a refused start never repeats a spawn that already failed and a retry of the same attempt converges.

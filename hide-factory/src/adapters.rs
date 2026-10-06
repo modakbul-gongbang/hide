@@ -32,6 +32,10 @@ pub struct Failure {
     /// The worker's pane exists but its agent has not shown a session yet
     /// (a first-run prompt, a slow start): not a failure, ask again later.
     pub starting: bool,
+    /// When a still-starting worker is asked about again; the engine's own
+    /// interval when absent.
+    #[serde(default)]
+    pub again_in_ms: Option<u64>,
 }
 
 impl Failure {
@@ -43,6 +47,16 @@ impl Failure {
             missing_scope: None,
             reset_at: None,
             starting: false,
+            again_in_ms: None,
+        }
+    }
+
+    /// A start the adapter is carrying out off the engine's thread: ask
+    /// again on the next tick.
+    pub fn start_pending(stage: &str) -> Self {
+        Self {
+            again_in_ms: Some(0),
+            ..Self::starting(stage, "start_in_flight")
         }
     }
 
@@ -61,6 +75,7 @@ impl Failure {
             missing_scope: None,
             reset_at: None,
             starting: false,
+            again_in_ms: None,
         }
     }
 }
@@ -314,6 +329,10 @@ pub enum WorkerStatus {
 /// Starts, messages, sleeps and wakes workers (D-14).
 pub trait WorkerRuntime {
     fn spawn(&mut self, request: &WorkerSpawn) -> Result<crate::model::WorkerRef, Failure>;
+    /// The engine no longer wants the worker a pending start makes (the
+    /// Task was cancelled or paused while it started); the adapter ends it
+    /// when it arrives.
+    fn abandon_start(&mut self, _factory: &str, _task: &str) {}
     /// Sends a reply or wake message through the mailbox.
     fn message(
         &mut self,
