@@ -240,6 +240,12 @@ jobs:
           if [ -n "$GREP" ]; then args+=(--grep "$GREP"); fi
           if [ "$RUNNER_OS" = Windows ]; then args+=(e2e/worktree-delete.spec.ts --repeat-each=10); fi
           bash scripts/verify-web.sh web e2e "${args[@]}"
+      - name: TEMP holders of a refused set-aside
+        if: ${{ always() }}
+        continue-on-error: true
+        run: |
+          echo "refusals:"; grep -h set_aside_refused "$RUNNER_TEMP"/hide-e2e/hided-*.log || echo none
+          echo "logs: $(ls "$RUNNER_TEMP"/hide-e2e/hided-*.log 2>/dev/null | wc -l)"
       - name: Report flaky tests
         # A test that failed and passed its retry becomes an issue with a
         # seven-day deadline, or a comment on the issue that tracks it. A
