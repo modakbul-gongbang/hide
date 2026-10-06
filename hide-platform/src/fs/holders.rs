@@ -75,29 +75,26 @@ mod imp {
     /// this one may duplicate a handle from, at most `limit` of them.
     pub fn holders_of(folder: &Path, limit: usize) -> std::io::Result<Vec<Holder>> {
         let wanted = normalized(&std::fs::canonicalize(folder)?.display().to_string());
+        // The table numbers each kind of object, and the numbers differ between
+        // Windows versions, so the number of a file is read off a file this
+        // process holds open while the table is read.
+        let probe = std::fs::File::open(std::env::current_exe()?)?;
         let table = read_table()?;
+        let file_type = file_type_index(&table, &probe)?;
+        drop(probe);
         let header = table.as_ptr().cast::<TableHeader>();
         // SAFETY: the table starts with the header the call wrote.
         let count = unsafe { (*header).count };
-        let entries = unsafe {
-            std::slice::from_raw_parts(
-                table
-                    .as_ptr()
-                    .add(std::mem::size_of::<TableHeader>())
-                    .cast::<TableEntry>(),
-                count.min(
-                    (table.len() - std::mem::size_of::<TableHeader>())
-                        / std::mem::size_of::<TableEntry>(),
-                ),
-            )
-        };
+        let entries = table_entries(&table, count);
         let mut owners: HashMap<usize, Option<HANDLE>> = HashMap::new();
         let mut found = Vec::new();
         for entry in entries {
             if found.len() >= limit {
                 break;
             }
-            if PIPE_ACCESS.contains(&entry.access) {
+            // Only a file or folder can hold a folder, and nothing else is
+            // duplicated: a handle of another kind is never asked anything.
+            if entry.type_index != file_type || PIPE_ACCESS.contains(&entry.access) {
                 continue;
             }
             let owner = *owners.entry(entry.pid).or_insert_with(|| {
@@ -124,6 +121,38 @@ mod imp {
             unsafe { CloseHandle(owner) };
         }
         Ok(found)
+    }
+
+    /// The table's number for a file or folder, taken from this process's own
+    /// handle on `probe`.
+    fn file_type_index(table: &[u8], probe: &std::fs::File) -> std::io::Result<u16> {
+        use std::os::windows::io::AsRawHandle;
+        let header = table.as_ptr().cast::<TableHeader>();
+        // SAFETY: the table starts with the header the call wrote.
+        let count = unsafe { (*header).count };
+        let entries = table_entries(table, count);
+        let mine = std::process::id() as usize;
+        let handle = probe.as_raw_handle() as usize;
+        entries
+            .iter()
+            .find(|entry| entry.pid == mine && entry.handle == handle)
+            .map(|entry| entry.type_index)
+            .ok_or_else(|| {
+                std::io::Error::other("this process's own file handle is not in the handle table")
+            })
+    }
+
+    fn table_entries(table: &[u8], count: usize) -> &[TableEntry] {
+        let header = std::mem::size_of::<TableHeader>();
+        let room = table.len().saturating_sub(header) / std::mem::size_of::<TableEntry>();
+        // SAFETY: the entries follow the header inside `table`, and `count` is
+        // held to what the buffer has room for.
+        unsafe {
+            std::slice::from_raw_parts(
+                table.as_ptr().add(header).cast::<TableEntry>(),
+                count.min(room),
+            )
+        }
     }
 
     fn read_table() -> std::io::Result<Vec<u8>> {
