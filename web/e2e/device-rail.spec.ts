@@ -28,7 +28,23 @@ const SIDEBAR_LABELS = SYSTEM === "mac" ? ["Projects⇧⌘P", "Agents⇧⌘A"] :
 async function openAddDeviceForm(page: Page): Promise<void> {
   await expect(page.locator('[data-settings="true"]')).toBeVisible();
   await expect(page.locator('[data-settings-tab="devices"]')).toHaveAttribute("data-state", "active");
+  // Every entry point opens Settings with the Add device dialog in front.
+  await expect(page.locator("[data-add-device-dialog]")).toBeVisible();
   await expect(page.locator("[data-add-device]")).toBeVisible();
+}
+
+/** Leaves Settings: the Add device dialog is in front, and either still is or closes itself once the device is listed. */
+async function leaveSettings(page: Page, dialog: "is open" | "closes itself"): Promise<void> {
+  if (dialog === "is open") await page.keyboard.press("Escape");
+  await expect(page.locator("[data-add-device-dialog]")).toHaveCount(0);
+  await page.keyboard.press("Escape");
+  await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
+}
+
+/** Closes the Add device dialog, leaving the Settings sheet it opened over. */
+async function closeAddDeviceDialog(page: Page): Promise<void> {
+  await page.keyboard.press("Escape");
+  await expect(page.locator("[data-add-device-dialog]")).toHaveCount(0);
 }
 
 test("the rail follows the registered devices; a device that cannot be reached is dimmed and offers Reconnect", async ({ page }) => {
@@ -77,8 +93,7 @@ test("the rail follows the registered devices; a device that cannot be reached i
     // B1: Add device… opens Settings > Devices > Add device.
     await deviceMenu.locator("[data-device-menu-add]").click();
     await openAddDeviceForm(page);
-    await page.keyboard.press("Escape");
-    await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
+    await leaveSettings(page, "is open");
     await page.locator("[data-sidebar-device-menu]").click();
     await page.locator("[data-device-menu-show-rail]").click();
     await expect(rail).toBeVisible();
@@ -96,8 +111,7 @@ test("the rail follows the registered devices; a device that cannot be reached i
     await page.locator("[data-device-label]").fill("연구실 빌드 서버 자동화 장비");
     await page.locator("[data-device-alias]").fill(ALIAS);
     await page.locator("[data-add-device]").click();
-    await page.keyboard.press("Escape");
-    await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
+    await leaveSettings(page, "closes itself");
     await expect(rail.locator("[data-rail-tile]")).toHaveCount(2, { timeout: 20_000 });
     await expect(page.locator("[data-sidebar-mode]")).toHaveText(SIDEBAR_LABELS);
     const ids = await rail.locator("[data-rail-tile]").evaluateAll((tiles) => tiles.map((tile) => tile.getAttribute("data-rail-tile")));
@@ -170,8 +184,10 @@ test("the rail follows the registered devices; a device that cannot be reached i
     // B13: the rail's + opens the same Add device form.
     await rail.locator("[data-rail-add]").click();
     await openAddDeviceForm(page);
+    await closeAddDeviceDialog(page);
 
     // B10: removing the only remote device leaves This Mac's rail, with This Mac in front.
+    await page.locator(`[data-device-menu="${ALIAS}"]`).click();
     await page.locator(`[data-device-remove="${ALIAS}"]`).click();
     await page.locator("[data-device-remove-go]").click();
     await expect(rail.locator("[data-rail-tile]")).toHaveCount(1, { timeout: 20_000 });

@@ -1,28 +1,20 @@
+import { PlusIcon } from "lucide-react";
 import { useEffect, useState } from "react";
 import type { Actions } from "../actions";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "../components/ui/alert-dialog";
 import { Button } from "../components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogFooter, DialogHeader, DialogTitle } from "../components/ui/dialog";
-import { Group, Note, Row, Status } from "../components/settings-rows";
+import { Group, Note, Row } from "../components/settings-rows";
 import { latestDraft } from "../editor/draft";
 import { useInterfaceTranslation } from "../i18n/client";
-import { formatDateTime } from "../i18n/format";
-import { requireInterfaceLanguage } from "../i18n/locale";
-import {
-  canRetryDevice,
-  deviceFacts,
-  deviceLine,
-  deviceProblemLine,
-  deviceRemovalLines,
-  draftExported,
-  hostLine,
-  kitRemovalLine,
-  unstoredDeviceDrafts,
-} from "../settings";
+import { deviceRemovalLines, draftExported, kitRemovalLine, unstoredDeviceDrafts } from "../settings";
 import type { Device } from "../snapshot";
 import { useShellStore } from "../store";
+import { useUiStore } from "../ui";
 import { AddDevice } from "./AddDevice";
-import { KitTerms, MachineKit } from "./MachineKit";
+import { DeviceDetails } from "./DeviceDetails";
+import { DeviceRow, type DeviceRowHandlers } from "./DeviceRow";
+import { KitTerms } from "./MachineKit";
 import { useErrorSince } from "./useErrorSince";
 
 export function DevicesTab({ actions }: { actions: Actions }) {
@@ -33,6 +25,9 @@ export function DevicesTab({ actions }: { actions: Actions }) {
   const [removing, setRemoving] = useState<Device | null>(null);
   const [allowing, setAllowing] = useState<Device | null>(null);
   const [revoking, setRevoking] = useState<Device | null>(null);
+  const [details, setDetails] = useState<Device | null>(null);
+  // The device count when the Add dialog opened: a new row means the device was added, which closes it.
+  const [adding, setAdding] = useState<number | null>(null);
   // The removal waits for the device's drafts to be stored (B26, B44).
   const [removalBusy, setRemovalBusy] = useState(false);
   const [actedAt, setActedAt] = useState<number | null>(null);
@@ -58,113 +53,53 @@ export function DevicesTab({ actions }: { actions: Actions }) {
     ? deviceRemovalLines(removing.id, registrations ?? [], editorTabs ?? [], recoveryDrafts, (tabId) => bufferWarnings.has(tabId) && released(tabId), t)
     : [];
   const unstored = removing ? unstoredDeviceDrafts(removing.id, editorTabs ?? [], bufferWarnings, released) : [];
+  // Settings opened to add a device (the rail's `+`): the dialog opens once.
+  const addRequested = useUiStore((s) => s.addDeviceRequested);
+  useEffect(() => {
+    if (!addRequested || devices === undefined) return;
+    useUiStore.getState().clearAddDeviceRequest();
+    setAdding(devices.length);
+  }, [addRequested, devices]);
+  useEffect(() => {
+    if (adding !== null && rows.length > adding) setAdding(null);
+  }, [adding, rows.length]);
+  const handlers: DeviceRowHandlers = {
+    onAct: () => setActedAt(Date.now()),
+    onDetails: setDetails,
+    onAllow: setAllowing,
+    onRevoke: setRevoking,
+    onRemove: setRemoving,
+  };
   return (
     <>
-      <Group title={t("settings.tabs.devices")} note={t("devices.description")}>
-        {rows.map((device) => {
-          const status = remote?.find((row) => row.target_id === device.id);
-          const line = deviceLine(device, status, t);
-          return (
-            <Row
-              key={device.id}
-              label={
-                <span className="flex min-w-0 flex-col">
-                  <span className="break-words font-semibold">{device.label}</span>
-                  <span className="break-all font-mono text-caption text-muted-foreground">{device.kind === "remote" ? device.ssh_alias : t("devices.localAlias")}</span>
-                </span>
-              }
-              detail={
-                <>
-                  <DeviceConnection device={device} facts={deviceFacts(device, status, t)} />
-                  {device.kind === "remote" ? <DeviceHelper device={device} /> : null}
-                  <MachineKit device={device} actions={actions} />
-                  {device.test ? <DeviceTest test={device.test} /> : null}
-                </>
-              }
-            >
-              <Status tone={line.tone} data-device-state={`${device.id}:${device.state}`}>
-                {line.text}
-              </Status>
-              {device.kit?.offers_reinstall && !device.kit.unavailable ? (
-                <Button
-                  variant="secondary"
-                  disabled={device.kit.busy}
-                  onClick={() => {
-                    setActedAt(Date.now());
-                    actions.reinstallKit(device.id);
-                  }}
-                  data-kit-reinstall={device.id}
-                >
-                  {device.kit.busy ? t("settings.reinstalling") : t("settings.reinstall")}
-                </Button>
-              ) : null}
-              {focused === device.id ? (
-                <Status tone="muted">{t("devices.selected")}</Status>
-              ) : (
-                <Button variant="ghost" onClick={() => actions.focusDevice(device.id)} data-device-select={device.id}>
-                  {t("common.select")}
-                </Button>
-              )}
-              {device.kind === "remote" ? (
-                <>
-                  <Button
-                    variant="secondary"
-                    disabled={device.test?.state === "running"}
-                    onClick={() => {
-                      setActedAt(Date.now());
-                      actions.testDevice(device.id);
-                    }}
-                    data-device-test={device.id}
-                  >
-                    {device.test?.state === "running" ? t("devices.testing") : t("devices.test")}
-                  </Button>
-                  {canRetryDevice(device, status) ? (
-                    <Button
-                      variant="secondary"
-                      onClick={() => {
-                        setActedAt(Date.now());
-                        actions.retryDevice(device.id);
-                      }}
-                      data-device-retry={device.id}
-                    >
-                      {t("common.retry")}
-                    </Button>
-                  ) : null}
-                  {device.host?.consent === "granted" && device.host.state !== "identity_changed" ? (
-                    <>
-                      {device.host.state === "unavailable" ? (
-                        <Button
-                          variant="secondary"
-                          onClick={() => {
-                            setActedAt(Date.now());
-                            actions.retryDeviceHost(device.id);
-                          }}
-                          data-device-host-retry={device.id}
-                        >
-                          {t("devices.retryHelper")}
-                        </Button>
-                      ) : null}
-                      <Button variant="ghost" onClick={() => setRevoking(device)} data-device-host-revoke={device.id}>
-                        {t("devices.revokeHelperMenu")}
-                      </Button>
-                    </>
-                  ) : (
-                    <Button variant="secondary" onClick={() => setAllowing(device)} data-device-host-allow={device.id}>
-                      {t("devices.allowInstallMenu")}
-                    </Button>
-                  )}
-                  <Button variant="ghost" onClick={() => setRemoving(device)} data-device-remove={device.id}>
-                    {t("devices.removeMenu")}
-                  </Button>
-                </>
-              ) : null}
-            </Row>
-          );
-        })}
+      <Group
+        title={t("settings.tabs.devices")}
+        action={
+          <Button variant="secondary" size="sm" onClick={() => setAdding(rows.length)} data-device-add-open="true">
+            <PlusIcon aria-hidden="true" />
+            {t("devices.addTitle")}
+          </Button>
+        }
+      >
+        {rows.map((device) => (
+          <DeviceRow key={device.id} device={device} status={remote?.find((row) => row.target_id === device.id)} focused={focused === device.id} actions={actions} handlers={handlers} />
+        ))}
         {remoteRows.length === 0 ? <Row label={<Note>{t("devices.noRemote")}</Note>} /> : null}
         {deviceError ? <Row label={<Note tone="error" data-device-error="true">{deviceError}</Note>} /> : null}
       </Group>
-      <AddDevice actions={actions} devices={rows} helperRoot={localRoot} cliDir={localCliDir} />
+      {adding !== null ? (
+        <Dialog open onOpenChange={(next) => { if (!next) setAdding(null); }}>
+          <DialogContent data-add-device-dialog="true">
+            <DialogHeader>
+              <DialogTitle>{t("devices.addTitle")}</DialogTitle>
+            </DialogHeader>
+            <DialogBody>
+              <AddDevice actions={actions} devices={rows} helperRoot={localRoot} cliDir={localCliDir} />
+            </DialogBody>
+          </DialogContent>
+        </Dialog>
+      ) : null}
+      {details ? <DeviceDetails device={rows.find((device) => device.id === details.id) ?? details} onClose={() => setDetails(null)} /> : null}
       {allowing ? (
         <Dialog open onOpenChange={(next) => { if (!next) setAllowing(null); }}>
           <DialogContent data-device-host-allow-confirm={allowing.id}>
@@ -267,82 +202,5 @@ export function DevicesTab({ actions }: { actions: Actions }) {
         </AlertDialog>
       ) : null}
     </>
-  );
-}
-
-/**
- * What the device itself reported: its Herdr version and helper platform, and
- * when the connection failed, which step refused it and what to do (B36, B38).
- */
-function DeviceConnection({ device, facts }: { device: Device; facts: string[] }) {
-  const { t } = useInterfaceTranslation();
-  if (device.kind !== "remote") return null;
-  const problem = device.state !== "ready" ? deviceProblemLine(device.problem, device.ssh_alias, t) : null;
-  return (
-    <>
-      {facts.length > 0 ? (
-        <p className="break-words font-mono text-caption text-muted-foreground" data-device-facts={device.id}>
-          {facts.join(" · ")}
-        </p>
-      ) : null}
-      {problem ? (
-        <div className="mt-xxs space-y-xxs" data-device-problem={`${device.id}:${device.problem}`}>
-          <Status tone="warn">{problem.headline}</Status>
-          <Note tone="warn">{problem.action}</Note>
-        </div>
-      ) : null}
-      {device.state !== "ready" && device.message ? (
-        problem ? (
-          <p className="break-words font-mono text-caption text-muted-foreground">{device.message}</p>
-        ) : (
-          <Note tone="warn">{device.message}</Note>
-        )
-      ) : null}
-    </>
-  );
-}
-
-/** Whether file and Git work may run on a device, where its helper lives, and the identity the consent is bound to. */
-function DeviceHelper({ device }: { device: Device }) {
-  const { t } = useInterfaceTranslation();
-  const host = device.host;
-  const line = hostLine(host, t);
-  return (
-    <div className="mt-xs space-y-xxs" data-device-host={`${device.id}:${host?.state ?? "unknown"}`}>
-      <Status tone={line.tone}>{line.text}</Status>
-      {host?.consent === "granted" && host.helper_root ? <p className="break-all font-mono text-caption text-muted-foreground">{t("devices.installsTo", { path: host.helper_root })}</p> : null}
-      {host?.bound_identity ? <p className="break-all font-mono text-caption text-muted-foreground">{t("devices.boundTo", { identity: host.bound_identity })}</p> : null}
-      {host && host.state !== "ready" && host.message ? <Note tone={line.tone === "muted" ? "muted" : "warn"}>{host.message}</Note> : null}
-    </div>
-  );
-}
-
-function DeviceTest({ test }: { test: NonNullable<Device["test"]> }) {
-  const { t, i18n } = useInterfaceTranslation();
-  const language = requireInterfaceLanguage(i18n.language);
-  const tone = test.state === "running" ? "pending" : test.state === "passed" ? "ok" : "warn";
-  // A finished test names when it ran: it is that attempt's result, and it
-  // stays beside the row after the connection itself has changed.
-  const time = test.checked_at_unix_ms === null ? null : formatDateTime(language, test.checked_at_unix_ms, { timeStyle: "medium" });
-  const headline =
-    test.state === "running"
-      ? t("devices.testRunning")
-      : test.state === "passed"
-        ? time === null ? t("devices.testPassed") : t("devices.testPassedAt", { time })
-        : time === null ? t("devices.testFailed") : t("devices.testFailedAt", { time });
-  return (
-    <div className="mt-xs space-y-xxs" data-device-test-state={test.state}>
-      <Status tone={tone}>{headline}</Status>
-      {test.stages.map((stage) => (
-        <div key={stage.stage} className="flex gap-xs text-caption">
-          <span className={stage.state === "passed" ? "text-success" : stage.state === "pending" ? "text-muted-foreground" : "text-warning"} aria-hidden="true">
-            {stage.state === "passed" ? "✓" : stage.state === "pending" ? "…" : "✕"}
-          </span>
-          <span className="sr-only">{stage.state === "passed" ? t("devices.stage.passed") : stage.state === "pending" ? t("devices.stage.notRun") : t("devices.stage.failed")}</span>
-          <span className="w-[var(--size-device-test-stage-col)] shrink-0 font-mono text-foreground">{stage.stage}</span>
-          <span className="min-w-0 break-words text-subtle-foreground">{stage.detail}</span>
-        </div>
-      ))}
-    </div>
   );
 }

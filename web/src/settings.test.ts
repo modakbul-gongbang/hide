@@ -4,7 +4,7 @@ import { initializeInterfaceI18n } from "./i18n/instance";
 import {
   ACCENT_CHOICES,
   canRetryDevice,
-  deviceFacts as deviceFactsIn,
+  deviceSubtitle as deviceSubtitleIn,
   deviceIdFor,
   deviceProblemLine as deviceProblemLineIn,
   deviceRemovalLines as deviceRemovalLinesIn,
@@ -21,6 +21,8 @@ import {
   kitAgentSwitch,
   kitPartLine as kitPartLineIn,
   kitPartNeedsReinstall,
+  kitPartText as kitPartTextIn,
+  kitProblems,
   redact,
   shownIn,
   sleepAfterLabel,
@@ -35,7 +37,7 @@ import type { Device, DeviceHost, KitAgent, KitComponent, RemoteStatus } from ".
 // The English strings are what the sheet shipped with; the rules read the same under them.
 const t = initializeInterfaceI18n("en").getFixedT(null, "translation");
 const korean = initializeInterfaceI18n("ko").getFixedT(null, "translation");
-const deviceFacts = (device: Device, remote: RemoteStatus | undefined) => deviceFactsIn(device, remote, t);
+const deviceSubtitle = (device: Device, remote: RemoteStatus | undefined) => deviceSubtitleIn(device, remote, t);
 const deviceProblemLine = (problem: string | null | undefined, alias: string | null) => deviceProblemLineIn(problem, alias, t);
 const deviceRemovalLines = (deviceId: string, registrations: Parameters<typeof deviceRemovalLinesIn>[1], tabs: Parameters<typeof deviceRemovalLinesIn>[2], drafts: Parameters<typeof deviceRemovalLinesIn>[3], onlyExported: (tabId: string) => boolean = () => false) =>
   deviceRemovalLinesIn(deviceId, registrations, tabs, drafts, onlyExported, t);
@@ -46,6 +48,7 @@ const herdrLine = (herdr: Parameters<typeof herdrLineIn>[0]) => herdrLineIn(herd
 const herdrProtocolText = (herdr: Parameters<typeof herdrProtocolTextIn>[0]) => herdrProtocolTextIn(herdr, t);
 const hostLine = (host: DeviceHost | undefined) => hostLineIn(host, t);
 const kitPartLine = (part: KitComponent) => kitPartLineIn(part, t);
+const kitPartText = (part: Pick<KitComponent, "state" | "reason">) => kitPartTextIn(part, t);
 const kitAgentLine = (agent: KitAgent) => kitAgentLineIn(agent, t);
 const socketProblem = (path: string) => socketProblemIn(path, t);
 
@@ -62,13 +65,13 @@ const device = (patch: Partial<Device>): Device => ({
 });
 
 describe("where settings live and what a device reported", () => {
-  it("shows only facts the device reported", () => {
-    expect(deviceFacts(device({}), undefined)).toEqual([]);
+  it("names a device by its alias, its platform and its Herdr version, and only as far as the device reported them", () => {
+    expect(deviceSubtitle(device({}), undefined)).toBe("studio");
     const host = { state: "ready", platform: "macos aarch64" } as DeviceHost;
     const status = { target_id: "studio", state: "connected", message: null, herdr_version: "0.9.1" };
-    expect(deviceFacts(device({ host }), status)).toEqual(["Herdr 0.9.1", "helper on macos aarch64"]);
-    expect(deviceFacts(device({ host: { ...host, state: "connecting" } }), status)).toEqual(["Herdr 0.9.1"]);
-    expect(deviceFacts(device({ kind: "local", host }), status)).toEqual([]);
+    expect(deviceSubtitle(device({ host }), status)).toBe("studio · macos aarch64 · Herdr 0.9.1");
+    expect(deviceSubtitle(device({ host: { ...host, state: "connecting" } }), status)).toBe("studio · Herdr 0.9.1");
+    expect(deviceSubtitle(device({ kind: "local", host }), status)).toBe("local, no SSH alias");
   });
 
   it("tells a changed host key, an unknown one and a refused sign-in apart", () => {
@@ -219,9 +222,9 @@ describe("settings rules", () => {
     for (const named of ["/opt/hide", "/opt/bin", "hook helper", "old records preserved", "~/.claude/settings.json", "~/.codex/hooks.json"]) {
       expect(terms).toContain(named);
     }
-    expect(lines).toHaveLength(6);
-    // The Codex part says once what it changes (PRD overview-request-view B33).
-    expect(lines.filter((line) => line.includes("turns off Codex's background daemon"))).toHaveLength(1);
+    // The kit no longer touches Codex's daemon setting (PRD settings-cleanup D-12), so the consent says nothing of it.
+    expect(lines).toHaveLength(5);
+    expect(terms).not.toMatch(/daemon_auto_start|per pane/);
     expect(terms).toContain("~/hide");
     expect(terms).not.toContain("changes no hook");
     expect(socketProblem("")).toBeNull();
@@ -255,6 +258,17 @@ describe("the install kit rows (PRD device-parity B7, B8, B27)", () => {
     expect(offered).toEqual(["outdated", "not_installed", "removed", "failed"]);
     expect(kitPartLine(part("coordination_retirement", "removed"))).toEqual({ text: "Removed", tone: "warn" });
     expect(kitPartLine(part("coordination_retirement", "absent")).tone).toBe("muted");
+  });
+
+  it("mentions only the parts that need the operator, and a part that is not on the machine says so once", () => {
+    const withReason = (id: KitComponent["id"], state: KitComponent["state"], reason: string | null): KitComponent => ({ ...part(id, state), reason });
+    const healthy = kit([part("cli", "installed"), withReason("codex_hook", "absent", "Codex is not set up on this machine"), part("claude_code_hook", "off")]);
+    expect(kitProblems(healthy)).toEqual([]);
+    const broken = kit([part("cli", "installed"), withReason("codex_hook", "failed", "settings.json is not valid JSON"), part("claude_code_hook", "removed")]);
+    expect(kitProblems(broken).map((problem) => problem.id)).toEqual(["codex_hook", "claude_code_hook"]);
+    expect(kitProblems(kit([part("cli", "failed")], "A daemon outside the package installs nothing"))).toEqual([]);
+    expect(kitPartText(withReason("codex_hook", "absent", "Codex is not set up on this machine"))).toBe("Not on this machine");
+    expect(kitPartText(withReason("codex_hook", "failed", "settings.json is not valid JSON"))).toBe("Failed: settings.json is not valid JSON");
   });
 
   it("reads an off part as neutral", () => {

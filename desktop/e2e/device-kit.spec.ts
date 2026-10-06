@@ -181,9 +181,15 @@ test("a device gets this Mac's kit, keeps a part the operator removed out until 
     await page.locator("[data-open-settings]").click();
     await expect(page.locator('[data-settings="true"]')).toBeVisible();
     await page.locator('[data-settings-tab="devices"]').click();
+    // PRD settings-cleanup B54: a healthy kit is not on the row; Connection details lists every part.
+    await page.locator(`[data-device-menu="${DEVICE}"]`).click();
+    await page.locator(`[data-device-details="${DEVICE}"]`).click();
     for (const id of PARTS) await expect(page.locator(`[data-kit-part="${DEVICE}:${id}:installed"]`)).toBeVisible();
-    await expect(page.locator(`[data-kit-reinstall="${DEVICE}"]`)).toHaveCount(0);
     await screenshot(page, "device-kit-installed");
+    await page.keyboard.press("Escape");
+    await expect(page.locator(`[data-device-details-dialog="${DEVICE}"]`)).toHaveCount(0);
+    await expect(page.locator(`[data-kit-problem="${DEVICE}"]`)).toHaveCount(0);
+    await expect(page.locator(`[data-kit-reinstall="${DEVICE}"]`)).toHaveCount(0);
     await page.locator('[data-settings-tab="agents"]').click();
     await expect(page.locator('[data-settings-tab="agents"]')).toHaveAttribute("data-state", "active");
     await screenshot(page, "agents-hooks-per-machine");
@@ -198,18 +204,23 @@ test("a device gets this Mac's kit, keeps a part the operator removed out until 
     // D-26, B8: an entry the operator deleted stays deleted until Reinstall, which puts back only that part.
     fs.writeFileSync(claudeSettings(home), `${JSON.stringify(withoutHide(readSettings(claudeSettings(home)), hooks), null, 2)}\n`);
     await page.locator('[data-settings-tab="devices"]').click();
-    await expect(page.locator(`[data-kit-part="${DEVICE}:claude_code_hook:removed"]`)).toBeVisible({ timeout: 60_000 });
+    await expect(page.locator(`[data-kit-problem="${DEVICE}"]`)).toContainText("Claude Code hook", { timeout: 60_000 });
     await expect(page.locator(`[data-kit-reinstall="${DEVICE}"]`)).toBeVisible();
     await screenshot(page, "device-kit-removed-part");
     expect(withoutHerdr(readSettings(claudeSettings(home)))).toEqual(original.claude);
     const reinstalls = applied().length;
     await page.locator(`[data-kit-reinstall="${DEVICE}"]`).click();
-    await expect(page.locator(`[data-kit-part="${DEVICE}:claude_code_hook:installed"]`)).toBeVisible({ timeout: 60_000 });
+    await expect(page.locator(`[data-kit-problem="${DEVICE}"]`)).toHaveCount(0, { timeout: 60_000 });
     await expect(page.locator(`[data-kit-reinstall="${DEVICE}"]`)).toHaveCount(0);
+    await page.locator(`[data-device-menu="${DEVICE}"]`).click();
+    await page.locator(`[data-device-details="${DEVICE}"]`).click();
+    await expect(page.locator(`[data-kit-part="${DEVICE}:claude_code_hook:installed"]`)).toBeVisible({ timeout: 60_000 });
+    await page.keyboard.press("Escape");
     expect(applied().length).toBeGreaterThan(reinstalls);
     hideCommand(readSettings(claudeSettings(home)), "SessionStart", hooks);
 
     // B22, B23: removal says what comes off and what stays, then takes only Hide's parts off.
+    await page.locator(`[data-device-menu="${DEVICE}"]`).click();
     await page.locator(`[data-device-remove="${DEVICE}"]`).click();
     await expect(page.locator(`[data-device-remove-confirm="${DEVICE}"]`)).toBeVisible();
     await expect(page.locator(`[data-device-remove-kit="${DEVICE}"]`)).toContainText("records in ~/.hide stay");

@@ -192,16 +192,17 @@ export function deviceLine(device: Device, remote: RemoteStatus | undefined, t: 
 }
 
 /**
- * The facts a device reported about itself (B36): its Herdr version and the
- * platform its helper runs on. Nothing here is read on this machine, so a
- * fact the device has not reported is left out rather than filled in.
+ * The line under a device's name (B54): its SSH alias, the platform its helper
+ * runs on and the Herdr version it reported, in that order. Nothing here is
+ * read on this machine, so a fact the device has not reported is left out
+ * rather than filled in; this machine has no alias to show.
  */
-export function deviceFacts(device: Device, remote: RemoteStatus | undefined, t: Translate): string[] {
-  if (device.kind !== "remote") return [];
-  const facts: string[] = [];
-  if (remote?.herdr_version) facts.push(`Herdr ${remote.herdr_version}`);
-  if (device.host?.state === "ready" && device.host.platform) facts.push(t("devices.helperPlatform", { platform: device.host.platform }));
-  return facts;
+export function deviceSubtitle(device: Device, remote: RemoteStatus | undefined, t: Translate): string {
+  if (device.kind !== "remote") return t("devices.localAlias");
+  const parts: string[] = [device.ssh_alias ?? device.label];
+  if (device.host?.state === "ready" && device.host.platform) parts.push(device.host.platform);
+  if (remote?.herdr_version) parts.push(`Herdr ${remote.herdr_version}`);
+  return parts.join(" · ");
 }
 
 /**
@@ -252,7 +253,6 @@ export function kitConsentTerms(helperRoot: string | null, cliDir: string | null
   return [
     t("devices.terms.copy", { root: helperRoot ?? t("devices.helperFolder") }),
     t("devices.terms.configure", { cliDir: cliDir ?? t("devices.commandFolder") }),
-    t("devices.terms.codex"),
     t("devices.terms.runtime"),
     t("devices.terms.confirm"),
     t("devices.terms.remove"),
@@ -300,6 +300,28 @@ export function kitPartLine(part: Pick<KitComponent, "state">, t: Translate): { 
 /** Whether Reinstall would change this part: the same four states the core repairs (B8). */
 export function kitPartNeedsReinstall(part: Pick<KitComponent, "state">): boolean {
   return part.state === "outdated" || part.state === "not_installed" || part.state === "removed" || part.state === "failed";
+}
+
+/**
+ * A part as the details list words it: its state, and why when the reason says
+ * something the state does not. A part that is not on the machine because its
+ * agent is not there says so once ("Not on this machine"), never again as a
+ * reason that repeats it.
+ */
+export function kitPartText(part: Pick<KitComponent, "state" | "reason">, t: Translate): string {
+  const line = kitPartLine(part, t);
+  return part.reason && part.state !== "absent" && part.state !== "installed" ? `${line.text}: ${part.reason}` : line.text;
+}
+
+/**
+ * The parts of a machine's kit that need the operator, which are the only ones
+ * a device row mentions (B54): the four states Reinstall repairs. A healthy kit,
+ * a part whose agent is not on the machine and one the operator switched off
+ * are not problems and say nothing.
+ */
+export function kitProblems(kit: Device["kit"]): KitComponent[] {
+  if (!kit || kit.unavailable) return [];
+  return kit.components.filter((part) => kitPartNeedsReinstall(part));
 }
 
 /** The pieces of an agent Hide manages: its skill, and its hook when it has one. */

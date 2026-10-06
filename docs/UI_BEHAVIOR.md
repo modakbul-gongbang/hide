@@ -1152,7 +1152,7 @@ The counts come from the device's own agents in the snapshot (`deviceAgents()` a
 A device that is not connected dims its glyph and wears a `×` at the bottom-right, with no mark, since its last counts are not current; selected, its sidebar shows only its name, `연결 안 됨` and `다시 연결`, which retries the connection in place, and never the tree it last reported.
 Selecting a device tile sends `focus_device`, and the sidebar becomes that device's Projects | Agents; no row there names the device.
 Every tile is a button reached with Tab and chosen with Enter or Space, named for assistive technology by the device, its connection and each count it marks (`mini, 연결 안 됨`, `This Mac, Needs You 2, Done 1`).
-`기기 추가` opens Settings › Devices at its Add device form, as the hidden rail's `기기 추가…` and the Add a project dialog's host list do.
+`기기 추가` opens Settings › Devices with the Add device dialog in front, as the hidden rail's `기기 추가…` and the Add a project dialog's host list do.
 Removing the device in front moves the front to This Mac; that device's agents and its `~/hide` stay on it, and the rail stays.
 
 A right-click on the rail offers `레일 숨기기`.
@@ -1285,6 +1285,7 @@ A child on another device adds the server-glyph device chip with that device's r
 Ownership is drawn as emphasis, not as a new color or container: the operator's own rows are bright, delegated rows are subdued, and nothing new is introduced, because a delegated row is simply never emphasized.
 A child's question or completion reaches the operator through its ancestors: the ancestor row turns unread and its descendant badge changes, and the ancestor's own group does not move.
 An uninstrumented mark (agent detected but its subagents not visible to Hide) is drawn only where an agent was detected, is a mark plus an accessible name and never a color alone, and its subagent count sits beside it as a badge; a count Hide cannot read is drawn as unknown and never as a zero, because a zero claims the agent is working alone.
+A Claude Code or Codex pane whose session Hide does not hear wears a Not connected chip in its header, whose popover offers Reopen (and, for a Codex on the shared server, the link that turns the shared server off); `PaneChildren.connection` carries the reason, whether Reopen is offered, and a Reopen's pending or refused state as a code, and `docs/status-model.md`, Not connected and what fixes it, owns what each one means.
 An Overview agent row reuses the same agent identity and state presentation as the sidebar and relationship sheet; a missing row means the current live projection has no agent there, and an uninstrumented mark never means zero.
 The header wash marks the pane Hide is showing, while the neutral split-pane outline marks the terminal that owns keyboard focus; moving keyboard focus into Overview keeps the shown wash and removes the terminal outline.
 Keys typed after a click go to the pane clicked last, whatever order snapshots arrive in: the header may briefly follow an older snapshot, but keyboard focus does not leave the last-clicked pane until the core has answered that click, and a focus move the core makes afterwards (Herdr's own move, or a refused click) is followed.
@@ -1315,17 +1316,22 @@ The selector remains available while connected, so a concurrent choice from anot
 An explicit choice is shared by connected shell windows; Use system language resolves separately in each client, with English for unsupported languages.
 [LOCALIZATION.md](LOCALIZATION.md) owns the policy and the remaining integration surfaces.
 
-Settings > Devices shows This Mac and every device in the same form: under each machine's connection and helper lines, one line per part of Hide's kit (the `hide` command, the Claude Code hook, the Codex hook, the one-release coordination retirement stage, `Codex를 pane마다 실행`), with a mark, the part, and where it is when installed or its state and reason when not (PRD device-parity B7).
-The retirement row shows completion, or the failed step and recovery action; Reinstall retries that stage.
-A retirement preflight with active runs, open requests, active watches or uninspectable state shows its reason before changing anything; this stage creates no new screen.
-Installed is ✓, not on this machine is –, turned off is ○ with `꺼짐`, outdated, not installed or removed is !, and failed is ✕; the state is also read out, since the mark is hidden from assistive technology.
-`Codex를 pane마다 실행` reads – where the machine's Codex has no shared daemon (none, or an older one), carries `새로 여는 Codex부터 적용` under its installed row while a Codex daemon still runs, and is the one row with a switch at its end: off gives Codex its daemon back and the row reads `꺼짐` with no Reinstall and nothing asking to turn it on again, and on applies it again (PRD overview-request-view B33..B36).
-Reinstall sits on a machine's row only while one of its parts needs it, repairs only those parts, and reads Reinstalling… while the machine's kit work runs (B8); nothing else on the screen reacts, and the detail of every install goes to the diagnostic log (B18).
-A machine whose kit does not run says why in that place instead of its parts: a daemon outside the installed app, a device not allowed yet, a device that must be allowed again, or a platform this build does not carry (B11, B17, B21).
-A device not read yet reads that its kit is checked when it connects; the tab reads every machine once when it opens.
-The add form has one Add button and lists, once, what the kit puts on the device and where (B12); a device registered earlier without the helper offers Allow and install on its row, with the same list.
+Settings > Devices lists This Mac and every device, one row each (PRD settings-cleanup B54, B55, B56): the name, a line with the SSH alias, the platform its helper runs on and the Herdr version it reported, and the connection state, with Test (a device) and a ⋯ menu at the end.
+`+ Add device` is one button above the list on the right; the Add dialog is on the page only after it is pressed, and every other way in (the rail's `+`, the hidden rail's `기기 추가…`, Add a project's host list) opens Settings › Devices with that dialog in front.
+The dialog closes by itself once the device is listed.
+The ⋯ menu offers Select, Connection details…, Allow and install… (a device whose helper is not allowed) or Revoke helper… (one that is), and, after a separator, Remove…; This Mac's menu has Select and Connection details… only.
+Revoke helper… and Remove… ask before they act, with the same confirmations and events as before; no button is focused when a confirmation opens.
+Connection details is a dialog with the helper's state and folder, the helper program, the folder of the `hide` command and the SSH host key the consent is bound to, then every part of Hide's kit with a mark, its name and where it is when installed or its state and reason when not.
+Installed is ✓, not on this machine is –, turned off is ○, outdated, not installed or removed is !, and failed is ✕; the state is also read out, since the mark is hidden from assistive technology, and a part that is not on the machine says so once, without repeating its reason.
+A healthy kit is on no row.
+A line grows under a device only when something needs the operator: a refused connection with the step and what to do, a helper that is not running (Retry helper) or not allowed (Allow and install…) while the connection is fine, a part of Hide's kit that failed or was removed, outdated or never installed, as one line naming it with Reinstall, or the result of a test they asked for.
+Reinstall repairs only the parts the line names, reads Reinstalling… while the machine's kit work runs (B8), and the line goes when the parts are whole again; nothing else on the screen reacts, and the detail of every install goes to the diagnostic log (B18).
+A machine whose kit does not run says why in that place: a daemon outside the installed app, a device not allowed yet, a device that must be allowed again, or a platform this build does not carry (B11, B17, B21).
+The first install reads Installing Hide's kit… under the device; the tab reads every machine once when it opens.
+The add form has one Add button and lists, once, what the kit puts on the device and where (B12); a device registered earlier without the helper offers Allow and install… in its menu, with the same list.
 Removing a device asks once, names in one line what comes off that device (with its helper folder, `~/.hide/host-helper` by default) and that the records in `~/.hide` stay, or, when its helper is not connected, that the kit stays there; no button is focused when the confirmation opens (B22).
 When another registered device reaches the same account on that machine, such as a second Herdr server there, the line says the kit stays for it instead.
+The page has no per-device agents line, no coordination retirement row and no Codex per pane row: the kit no longer turns Codex's shared daemon off, and a machine's agents are on the Agents tab.
 
 Settings > Agents lists, for every machine, This Mac first and then each device in the Devices order, one row per agent that is installed there or is on: its name, one line saying what its switch puts there (a skill and a session hook, or the skill only), its state, and the switch.
 An agent that is off reads `Off` with nothing else, an agent that is on reads the state of its worst piece with that piece's reason when it is not installed, and Reinstall sits on an agent's row only while that agent is on and one of its pieces needs it.
@@ -1333,7 +1339,6 @@ An agent is installed on a machine when its program is found there ([agent-hooks
 An agent installed on the machine keeps its switch whatever the system, as long as one of its pieces (the skill, the hook) works there, so one switched off can be switched on again; a hook that cannot be written (Kiro below 3.0, a version Hide cannot read) shows its reason beside the skill's `Installed`.
 An agent that is on and whose program is no longer found keeps its row and its switch, reads `Not on this machine` with the reason that its program is not found, and offers no Reinstall; what Hide put down for it stays until the operator switches it off, and it is whole again once the program is back.
 The agents Hide knows that are not installed on the machine are one muted line, with no switch and no row each, so a machine with two agents shows two rows and not twenty.
-Settings > Devices shows the same agents on a machine's kit rows, each with its switch.
 
 The first-run agent choice is a dialog over the shell, PRD agent-adapters-onboarding, shown when this Mac's kit has never run and stays until it is answered.
 It lists the seven agents Hide supports, Claude Code, Codex, Gemini CLI, Grok, OpenCode, Pi and Cursor in that order, as tiles in a grid, each with the agent's own mark (or a two-letter monogram where no official mark is bundled, `docs/BRAND.md`) and its state: the agents installed here are on and show a check, an agent not installed is dimmed and has no switch, and a tile is a switch (`role="switch"`) pressed with Space or Enter.

@@ -7,11 +7,19 @@ import { ChevronRightIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "../lib/utils";
 
-/** A card whose rows are separated by hairlines, like `HideSettingsGroup`; titled unless it stands alone, like the Hide AI switch. */
-export function Group({ title, note, children, ...data }: { title?: string; note?: ReactNode; children: ReactNode } & Record<`data-${string}`, string>) {
+/**
+ * A card whose rows are separated by hairlines, like `HideSettingsGroup`; titled unless it stands alone, like the Hide AI switch.
+ * An `action` sits at the title's right edge, for the one button that adds to the list below (Add device).
+ */
+export function Group({ title, note, action, children, ...data }: { title?: string; note?: ReactNode; action?: ReactNode; children: ReactNode } & Record<`data-${string}`, string>) {
   return (
     <section className="mb-lg" {...data}>
-      {title ? <h3 className="mb-sm text-body font-semibold text-subtle-foreground">{title}</h3> : null}
+      {title || action ? (
+        <div className="mb-sm flex items-center justify-between gap-md">
+          {title ? <h3 className="text-body font-semibold text-subtle-foreground">{title}</h3> : <span />}
+          {action}
+        </div>
+      ) : null}
       <div className="divide-y divide-border rounded-md border border-border bg-card">{children}</div>
       {note ? <p className="mt-sm text-body text-muted-foreground">{note}</p> : null}
     </section>

@@ -1065,9 +1065,9 @@ export function createActions(send: DispatchFn) {
       dispatch({ schema_version: 2, kind: "focus_device", payload: { device_id: deviceId } });
     },
 
-    /** Every entry point of Add device (the rail's `+`, the hidden rail's menu, Add project's Host list) opens the one form (D-11). */
+    /** Every entry point of Add device (the rail's `+`, the hidden rail's menu, Add project's Host list) opens the one dialog (D-11). */
     openAddDevice() {
-      ui().openSettings("devices");
+      ui().openAddDevice();
     },
 
     /**

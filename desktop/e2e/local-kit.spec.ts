@@ -76,9 +76,14 @@ test("the app's daemon installs this Mac's kit into its HOME at launch and chang
     await page.locator("[data-open-settings]").click();
     await expect(page.locator('[data-settings="true"]')).toBeVisible();
     await page.locator('[data-settings-tab="devices"]').click();
+    // PRD settings-cleanup B54: the healthy kit is on request in Connection details, never on the row.
+    await page.locator('[data-device-menu="local"]').click();
+    await page.locator('[data-device-details="local"]').click();
     for (const id of PARTS) await expect(page.locator(`[data-kit-part="local:${id}:installed"]`)).toBeVisible();
-    await expect(page.locator('[data-kit-reinstall="local"]')).toHaveCount(0);
     await screenshot(page, "this-mac-kit-installed");
+    await page.keyboard.press("Escape");
+    await expect(page.locator('[data-device-details-dialog="local"]')).toHaveCount(0);
+    await expect(page.locator('[data-kit-reinstall="local"]')).toHaveCount(0);
     await page.locator('[data-settings-tab="agents"]').click();
     await expect(page.locator('[data-settings-tab="agents"]')).toHaveAttribute("data-state", "active");
     await screenshot(page, "this-mac-hooks");

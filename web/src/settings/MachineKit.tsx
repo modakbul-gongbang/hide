@@ -1,8 +1,8 @@
 import type { Actions } from "../actions";
-import { Switch } from "../components/ui/switch";
+import { Button } from "../components/ui/button";
 import { Note, Status } from "../components/settings-rows";
 import { useInterfaceTranslation } from "../i18n/client";
-import { kitAgentLine, kitAgentSwitch, kitConsentTerms, kitPartLine } from "../settings";
+import { kitConsentTerms, kitPartLine, kitPartText, kitProblems } from "../settings";
 import type { Device } from "../snapshot";
 
 export function KitTerms({ helperRoot, cliDir }: { helperRoot: string | null; cliDir: string | null }) {
@@ -17,78 +17,86 @@ export function KitTerms({ helperRoot, cliDir }: { helperRoot: string | null; cl
 }
 
 /**
- * Each part of Hide's kit on one machine, in the same form for This Mac and
- * every device (PRD device-parity B7): a mark, the part, and where it is or
- * why it is not. A machine whose kit does not run says why instead.
+ * What a machine's row says about Hide's kit (PRD settings-cleanup B54, B56):
+ * nothing while it is in place. Only a part that needs the operator shows, as
+ * one line under the machine with Reinstall, and the line goes when the
+ * Reinstall lands. A machine whose kit does not run says why, and the first
+ * install says it is under way.
  */
-export function MachineKit({ device, actions }: { device: Device; actions: Actions }) {
+export function KitProblem({ device, actions, onAct }: { device: Device; actions: Actions; onAct: () => void }) {
   const { t } = useInterfaceTranslation();
   const kit = device.kit;
   if (!kit) return null;
   if (kit.unavailable) {
     return (
-      <div className="mt-xs" data-machine-kit={`${device.id}:unavailable`}>
+      <div data-machine-kit={`${device.id}:unavailable`}>
         <Note>{kit.unavailable}</Note>
       </div>
     );
   }
-  if (kit.components.length === 0) {
-    return (
-      <div className="mt-xs" data-machine-kit={`${device.id}:${kit.busy ? "busy" : "unread"}`}>
-        <Status tone="pending">{kit.busy ? t("devices.installingKit") : t("devices.kitOnConnection")}</Status>
+  const problems = kitProblems(kit);
+  if (problems.length === 0) {
+    return kit.busy ? (
+      <div data-machine-kit={`${device.id}:busy`}>
+        <Status tone="pending">{t("devices.installingKit")}</Status>
       </div>
-    );
+    ) : null;
   }
+  const worst = problems.some((part) => part.state === "failed") ? "error" : "warn";
   return (
-    <div className="mt-xs grid grid-cols-[auto_auto_minmax(0,1fr)_auto] gap-x-xs gap-y-xxs" data-machine-kit={`${device.id}:${kit.busy ? "busy" : "read"}`}>
+    <div className="flex flex-wrap items-center gap-x-sm gap-y-xs" data-kit-problem={device.id} data-machine-kit={`${device.id}:${kit.busy ? "busy" : "attention"}`}>
+      <Status tone={worst}>{t("devices.kitProblem", { parts: problems.map((part) => `${part.label}: ${kitPartText(part, t)}`).join("; ") })}</Status>
+      {kit.offers_reinstall ? (
+        <Button
+          variant="secondary"
+          size="sm"
+          disabled={kit.busy}
+          onClick={() => {
+            onAct();
+            actions.reinstallKit(device.id);
+          }}
+          data-kit-reinstall={device.id}
+        >
+          {kit.busy ? t("settings.reinstalling") : t("settings.reinstall")}
+        </Button>
+      ) : null}
+    </div>
+  );
+}
+
+/**
+ * Each part of Hide's kit on one machine, in the same form for This Mac and
+ * every device (PRD device-parity B7): a mark, the part, and where it is or
+ * why it is not. It lives in Connection details, so a healthy kit is
+ * answerable on request and never on the row.
+ */
+export function KitParts({ device }: { device: Device }) {
+  const { t } = useInterfaceTranslation();
+  const kit = device.kit;
+  if (!kit) return null;
+  if (kit.unavailable) return <Note>{kit.unavailable}</Note>;
+  if (kit.components.length === 0) return <Status tone="pending">{kit.busy ? t("devices.installingKit") : t("devices.kitOnConnection")}</Status>;
+  return (
+    <div className="grid grid-cols-[auto_auto_minmax(0,1fr)] gap-x-xs gap-y-xxs" data-machine-kit={`${device.id}:${kit.busy ? "busy" : "read"}`}>
       {kit.components.map((part) => {
         const line = kitPartLine(part, t);
         const mark = part.state === "installed" ? "✓" : part.state === "absent" ? "–" : part.state === "off" ? "○" : part.state === "failed" ? "✕" : "!";
         const markTone = line.tone === "ok" ? "text-success" : line.tone === "muted" ? "text-muted-foreground" : line.tone === "error" ? "text-destructive" : "text-warning";
         return (
-          <div key={part.id} className="col-span-4 grid grid-cols-subgrid text-caption" data-kit-part={`${device.id}:${part.id}:${part.state}`}>
+          <div key={part.id} className="col-span-3 grid grid-cols-subgrid text-caption" data-kit-part={`${device.id}:${part.id}:${part.state}`}>
             <span className={markTone} aria-hidden="true">
               {mark}
             </span>
             <span className="whitespace-nowrap text-foreground">{part.label}</span>
             {part.state === "installed" ? <span className="sr-only">{line.text}</span> : null}
             <span className="min-w-0 break-words text-subtle-foreground">
-              {part.state === "installed" ? <span className="break-all font-mono">{part.location}</span> : `${line.text}${part.reason ? `: ${part.reason}` : ""}`}
+              {part.state === "installed" ? <span className="break-all font-mono">{part.location}</span> : kitPartText(part, t)}
               {/* An installed part can still carry a reason, such as a setting that applies to newly opened sessions. */}
               {part.state === "installed" && part.reason ? <span className="block text-muted-foreground" data-kit-part-note="">{part.reason}</span> : null}
             </span>
-            <span aria-hidden="true" />
           </div>
         );
       })}
-      {kit.agents
-        .filter((agent) => kitAgentSwitch(agent) !== null)
-        .map((agent) => {
-          const line = kitAgentLine(agent, t);
-          const switched = kitAgentSwitch(agent);
-          const mark = !agent.enabled ? "○" : line.tone === "ok" ? "✓" : line.tone === "error" ? "✕" : "!";
-          const markTone = line.tone === "ok" ? "text-success" : line.tone === "muted" ? "text-muted-foreground" : line.tone === "error" ? "text-destructive" : "text-warning";
-          return (
-            <div key={agent.id} className="col-span-4 grid grid-cols-subgrid text-caption" data-kit-agent={`${device.id}:${agent.id}:${agent.enabled ? "on" : "off"}`}>
-              <span className={markTone} aria-hidden="true">
-                {mark}
-              </span>
-              <span className="whitespace-nowrap text-foreground">{agent.label}</span>
-              <span className="min-w-0 break-words text-subtle-foreground">{`${line.text}${line.reason ? `: ${line.reason}` : ""}`}</span>
-              {switched ? (
-                <Switch
-                  checked={switched.on}
-                  disabled={kit.busy}
-                  onCheckedChange={(checked) => actions.setKitAgent(device.id, agent.id, checked)}
-                  aria-label={t(switched.on ? "devices.kitSwitchOff" : "devices.kitSwitchOn", { part: agent.label })}
-                  data-kit-agent-switch={`${device.id}:${agent.id}:${switched.on ? "on" : "off"}`}
-                />
-              ) : (
-                <span aria-hidden="true" />
-              )}
-            </div>
-          );
-        })}
     </div>
   );
 }
