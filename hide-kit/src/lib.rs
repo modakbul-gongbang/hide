@@ -21,6 +21,7 @@
 mod agent_kit;
 pub mod agents;
 mod cli;
+mod codex_trust;
 mod coordination_retirement;
 mod device;
 mod herdr_integration;
@@ -532,13 +533,21 @@ pub fn status(target: &KitTarget) -> KitReport {
     let components: Vec<ComponentReport> = ComponentId::ALL
         .into_iter()
         .map(|id| {
+            let observed = observe(id, target);
+            // `status` starts no process, so Codex's trust is what the last
+            // pass found (`codex_trust`).
+            let failure = (id == ComponentId::CodexHook
+                && matches!(observed, Observed::Current)
+                && !switched_off(id))
+            .then(|| codex_trust::remembered(target))
+            .flatten();
             report(
                 id,
                 target,
-                observe(id, target),
+                observed,
                 recorded(id),
                 switched_off(id),
-                None,
+                failure,
             )
         })
         .collect();
@@ -728,6 +737,18 @@ fn apply_scope(target: &KitTarget, scope: &Scope) -> KitReport {
         } else {
             observed
         };
+        // The entries are in place for an agent that is on: have Codex trust
+        // them, whether this pass wrote them or found them (PRD
+        // codex-hook-trust D-05). A failure here is the part's, and the
+        // other parts go on.
+        if id == ComponentId::CodexHook
+            && failure.is_none()
+            && !turning_off
+            && !agent_off
+            && matches!(after, Observed::Current)
+        {
+            failure = codex_trust::ensure(target);
+        }
         // A part the operator turned off is recorded too, so the next pass
         // reads it as theirs rather than as never installed.
         let applied = matches!(after, Observed::Current)

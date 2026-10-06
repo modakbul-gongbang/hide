@@ -19,6 +19,7 @@
 //! or polls.
 
 pub mod codex_daemon;
+pub mod codex_trust;
 pub mod counters;
 pub mod delivery;
 pub mod diagnosis;
