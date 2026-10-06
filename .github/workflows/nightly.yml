@@ -2,8 +2,9 @@
 # macOS and its `@platform` tests on Linux and Windows, and package checks nightly,
 # and `verify` (pr.yml) with every lane on main. A push to main runs every lane
 # too, but a lane it fails opens no issue; here it opens the nightly issue, and
-# a lane that breaks with no merge (a runner image, a toolchain, a service a
-# test reaches) is found within a day.
+# a lane that breaks with no merge (a runner image, a service a test reaches)
+# is found within a day. The Rust toolchain is not one of those: its version is
+# the one `rust-toolchain.toml` names, so a new image cannot change it.
 # A test fails this run only when it fails its retry too (CI retries a failed
 # test once); a test that passes the retry is flaky, and
 # scripts/ci-flaky-report.py files it as an issue, as in pr.yml.
