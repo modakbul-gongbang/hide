@@ -13,7 +13,8 @@ export function useHideAiWords() {
   const state = (provider: AiProvider): { tone: Tone; text: string } => {
     switch (providerReason(provider)) {
       case "ready":
-        return { tone: "ok", text: t("hideAi.state.ready") };
+        // An agent with no sign-in check is ready only because its program was found, so it does not claim to be signed in.
+        return provider.login_checked === false ? { tone: "muted", text: t("hideAi.state.loginUnchecked") } : { tone: "ok", text: t("hideAi.state.ready") };
       case "needs_login":
         return { tone: "warn", text: t("hideAi.state.needsLogin") };
       case "usage_limited":

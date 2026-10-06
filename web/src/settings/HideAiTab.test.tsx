@@ -135,3 +135,16 @@ it("shows no fallback group before an agent is chosen, since there is nothing to
   expect(q('[data-settings-group="hide-ai-fallback"]')).toBeNull();
   await unmount();
 });
+
+it("does not call an agent with no sign-in check signed in: it says the check happens on the first request (B66)", async () => {
+  const gemini = provider("gemini", "Gemini CLI", { agent: "gemini-cli", login_checked: false });
+  const { q, unmount } = await mount(snapshot({ provider: "gemini", providers: [provider("claude", "Claude Code"), gemini] }));
+  expect(q("[data-ai-state='gemini:ready']")?.textContent).toContain("Sign-in is only checked on the first request");
+  expect(q("[data-ai-state='gemini:ready']")?.textContent).not.toContain("Signed in");
+  await unmount();
+
+  // An agent that does check, and an older daemon that sends no field, still read Signed in.
+  const checked = await mount(snapshot({}));
+  expect(checked.q("[data-ai-state='claude:ready']")?.textContent).toContain("Signed in");
+  await checked.unmount();
+});

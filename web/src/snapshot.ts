@@ -1144,6 +1144,8 @@ export type AiProvider = {
   selectable: boolean;
   /** When a usage limit ends (unix ms), when the agent said. */
   retry_at_ms: number | null;
+  /** False when the agent has no sign-in check (Gemini CLI): `ready` then only means its program was found; absent from an older daemon. */
+  login_checked?: boolean;
   /** The model it is asked for; empty is the CLI's own default. */
   model: string;
   models: string[];
