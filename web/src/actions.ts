@@ -1219,7 +1219,7 @@ export function createActions(send: DispatchFn) {
       return catalogObserver.acquire();
     },
 
-    /** A new issue in the project's source (Settings › Issues); the core answers in `issue_work.create`. */
+    /** A new issue in the project's source (the project row's Issue source menu); the core answers in `issue_work.create`. */
     createIssue(workspaceId: string, title: string, body: string) {
       dispatch({ schema_version: 2, kind: "issue_create", payload: { workspace_id: workspaceId, title, body } });
     },

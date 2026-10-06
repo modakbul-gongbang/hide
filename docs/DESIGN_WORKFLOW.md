@@ -182,8 +182,9 @@ It draws the Project Overview on its Sessions tab: the Overview's header over th
 Its web files are `web/src/ProjectOverview.tsx` and `web/src/ProjectSessions.tsx`.
 
 Settings is `Screen / Settings`.
-It draws the seven tabs (General, Appearance, Agents, Issues, Devices, Performance, Shortcuts) and the Group/Row layout a tab renders, shown on the Appearance tab.
-The Mobile tab sits after Devices; its strip and content are drawn on `Screen / Mobile`, and this sheet's strip does not carry it yet.
+It draws the seven tabs the sheet had before the settings cleanup (General, Appearance, Agents, Issues, Devices, Performance, Shortcuts) and the Group/Row layout a tab renders, shown on the Appearance tab.
+The shipped sheet has six tabs (General, Agents, Hide AI, Devices, Mobile, Shortcuts); the Pen screen has not been redrawn to match, so the code and `docs/UI_BEHAVIOR.md` own the tab list.
+The Mobile tab's strip and content are drawn on `Screen / Mobile`.
 Its web files are `web/src/SettingsSheet.tsx` and `web/src/settings.ts`.
 
 Palette is `Screen / Palette`.

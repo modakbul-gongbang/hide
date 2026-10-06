@@ -17,7 +17,7 @@ import { openProjectOverview } from "./overview-entry";
 // none (B1-B4), the issue panel beside the board with its read, failure and
 // retry (B10-B16, B19), the keyboard (B20), the preview and quiet hover (B6-B8,
 // B22), the filter (B21), a Local issue made with C and edited in its panel
-// (B18), List and Dependencies, Settings › Issues, and an issue started into a
+// (B18), List and Dependencies, the project row's Issue source menu, and an issue started into a
 // worktree (B23). Light and Dark captures land in HIDE_E2E_SCREENSHOT_DIR.
 
 import { expect, test, type Locator, type Page } from "@playwright/test";

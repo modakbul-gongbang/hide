@@ -45,7 +45,7 @@ The mobile web icons in `web/public/m/` are size derivatives of the full square 
 
 ## Third-party agent marks
 
-The first-run agent choice and nothing else draws other vendors' marks, each on a fixed light plate (`--logo-plate`) so a dark-filled mark stays legible in both themes.
+The first-run agent choice, the Agents tab and Hide AI's agent selects and Add menu are the only places that draw other vendors' marks (`web/src/components/agent-mark.tsx`), each on a fixed light plate (`--logo-plate`) so a dark-filled mark stays legible in both themes.
 `web/src/assets/agents/manifest.json` is the only list: a bundled file names its source URL, licence, any modification and the date it was taken, and an agent without an official source mark is a monogram with the reason written beside it.
 `scripts/check-agent-logos.mjs` (run by `check-design-contract`) fails a bundled file the manifest does not list, an adapter with no entry, and an entry without its source and licence.
 Marks are shown as the vendor published them: never recoloured, redrawn or approximated (design principle 10), and a mark whose source cannot be confirmed becomes a monogram rather than a guess.
