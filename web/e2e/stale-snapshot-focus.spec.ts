@@ -2,12 +2,19 @@ import { expect, test, type Page } from "@playwright/test";
 import { herdrHasFocus, startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { enterWorkspace } from "./wire";
+import { chord } from "./chords";
 
 type Operator = { client_id: string; sequence: number };
 type Frame = { type?: string; payload?: { rest?: { focused?: { pane_id?: string; operator_focus?: Operator[] } } } };
 
 /** Two frames on: the passive effect that follows a snapshot's focused pane has run by then. */
 const settle = (page: Page) => page.evaluate(() => new Promise<void>((done) => requestAnimationFrame(() => requestAnimationFrame(() => done()))));
+
+/** The page's socket has read every frame handed to it, and the effects that follow have run. */
+async function read(page: Page, net: { handed: () => number }) {
+  await expect.poll(() => page.evaluate(() => window.__hideProbe?.arrivals())).toBe(net.handed());
+  await settle(page);
+}
 
 /**
  * The page's socket with the daemon's frames held back until the test hands
@@ -18,10 +25,14 @@ async function holdSnapshots(page: Page) {
   const frames: string[] = [];
   const sent: Operator[] = [];
   let holding = false;
+  let handed = 0;
   let toPage: ((message: string | Buffer) => void) | undefined;
   await page.routeWebSocket(/\/ws$/, (socket) => {
     const server = socket.connectToServer();
-    toPage = (message) => socket.send(message);
+    toPage = (message) => {
+      handed += 1;
+      socket.send(message);
+    };
     socket.onMessage((message) => {
       if (typeof message === "string") {
         const event = JSON.parse(message) as { kind?: string; payload?: Partial<Operator> };
@@ -31,7 +42,7 @@ async function holdSnapshots(page: Page) {
     });
     server.onMessage((message) => {
       if (holding) frames.push(message as string);
-      else socket.send(message);
+      else toPage?.(message);
     });
   });
   const applied = (frame: string, client: string) =>
@@ -39,6 +50,8 @@ async function holdSnapshots(page: Page) {
   return {
     hold: () => { holding = true; },
     sent: () => sent,
+    /** Frames handed to the page so far; the page's probe counts the ones its socket has read. */
+    handed: () => handed,
     /** Held frames that already include operator focus number `sequence`. */
     includes: (sequence: number) => frames.filter((frame) => applied(frame, sent[0]?.client_id ?? "") >= sequence).length,
     /** Hands the page every held frame before the first one that includes `sequence`; with none given, all of them. */
@@ -89,6 +102,91 @@ test("a snapshot older than the last click does not take the keys back, and the 
     await expect(panes[0]).toHaveAttribute("data-focused", "true");
     await settle(page);
     await expect(keys[0]).toBeFocused();
+  } finally {
+    daemon?.stop();
+    herdr.stop();
+  }
+});
+
+test("the answer to a click on the focused pane leaves the keys where the operator took them since", { tag: "@platform" }, async ({ page }) => {
+  const herdr = await startHerdr();
+  let daemon: Daemon | undefined;
+  try {
+    daemon = await startHided(herdr, "stale-snapshot-answer");
+    const net = await holdSnapshots(page);
+    await page.goto(`${daemon.origin}/?probe=1#token=${daemon.token}`);
+    await enterWorkspace(page, "fixture");
+    const pane = page.locator(`[data-pane-view="${herdr.panes[0]}"]`);
+    const keys = pane.locator(".xterm-helper-textarea");
+    const agents = page.locator('nav[data-sidebar="agents"]');
+    const sidebarHasKeys = () => agents.evaluate((node) => node.contains(document.activeElement));
+    await expect(pane).toHaveAttribute("data-transport", "controlling");
+    await expect.poll(() => herdrHasFocus(herdr, herdr.panes[0])).toBe(true);
+    await page.keyboard.press(chord("sidebar_agents"));
+    await expect.poll(sidebarHasKeys).toBe(true);
+
+    // A click back into the pane that is already focused is still a click the
+    // core answers; the operator leaves for the sidebar before the answer lands.
+    net.hold();
+    const box = (await pane.boundingBox())!;
+    await page.mouse.click(box.x + 100, box.y + 100);
+    await expect(keys).toBeFocused();
+    await expect.poll(() => net.sent().length).toBe(1);
+    await expect.poll(() => net.includes(1)).toBeGreaterThan(0);
+    await page.keyboard.press(chord("sidebar_agents"));
+    await expect.poll(sidebarHasKeys).toBe(true);
+
+    // The answer moves no pane, so it moves no keys.
+    net.deliver();
+    await read(page, net);
+    expect(await sidebarHasKeys()).toBe(true);
+    await expect(pane).toHaveAttribute("data-focused", "true");
+  } finally {
+    daemon?.stop();
+    herdr.stop();
+  }
+});
+
+test("a focus move that waited for the last click is dropped once the operator takes the keys elsewhere", { tag: "@platform" }, async ({ page }) => {
+  const herdr = await startHerdr();
+  let daemon: Daemon | undefined;
+  try {
+    daemon = await startHided(herdr, "stale-snapshot-waited");
+    const net = await holdSnapshots(page);
+    await page.goto(`${daemon.origin}/?probe=1#token=${daemon.token}`);
+    await enterWorkspace(page, "fixture");
+    const panes = herdr.panes.map((pane) => page.locator(`[data-pane-view="${pane}"]`));
+    const keys = panes[1].locator(".xterm-helper-textarea");
+    const agents = page.locator('nav[data-sidebar="agents"]');
+    const sidebarHasKeys = () => agents.evaluate((node) => node.contains(document.activeElement));
+    for (const pane of panes) await expect(pane).toHaveAttribute("data-transport", "controlling");
+    await expect.poll(() => herdrHasFocus(herdr, herdr.panes[0])).toBe(true);
+    const box = (await panes[1].boundingBox())!;
+
+    // Two clicks on the other pane, with a visit to the sidebar between them
+    // so the second one is sent too.
+    net.hold();
+    await page.mouse.click(box.x + 100, box.y + 100);
+    await expect.poll(() => net.includes(1)).toBeGreaterThan(0);
+    await page.keyboard.press(chord("sidebar_agents"));
+    await expect.poll(sidebarHasKeys).toBe(true);
+    await page.mouse.click(box.x + 100, box.y + 100);
+    await expect(keys).toBeFocused();
+    await expect.poll(() => net.includes(2)).toBeGreaterThan(0);
+
+    // The answer to the first click moves the focus onto the pane while the
+    // second is still unanswered, so the move waits; the operator leaves for
+    // the sidebar, and the answer to the second click finds the keys gone.
+    net.deliver(2);
+    await read(page, net);
+    await expect(panes[1]).toHaveAttribute("data-focused", "true");
+    await expect(keys).toBeFocused();
+    await page.keyboard.press(chord("sidebar_agents"));
+    await expect.poll(sidebarHasKeys).toBe(true);
+    net.deliver();
+    await read(page, net);
+    expect(await sidebarHasKeys()).toBe(true);
+    await expect(panes[1]).toHaveAttribute("data-focused", "true");
   } finally {
     daemon?.stop();
     herdr.stop();
