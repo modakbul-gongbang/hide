@@ -202,6 +202,7 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
             let record = serde_json::json!({
                 "component": "hided",
                 "kind": "node_migration.refused",
+                "pid": std::process::id(),
                 "node": node.as_str(),
                 "file": refusal.file.display().to_string(),
                 "reason": &refusal.reason,
@@ -215,17 +216,20 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         },
     )?;
     if !converted.files.is_empty() {
-        eprintln!(
-            "{}",
-            serde_json::json!({
-                "component": "hided",
-                "kind": "node_migration.converted",
-                "node": node.as_str(),
-                "files": converted.files,
-                "projects": converted.projects,
-                "search_rows": converted.search_rows,
-            })
-        );
+        let record = serde_json::json!({
+            "component": "hided",
+            "kind": "node_migration.converted",
+            "node": node.as_str(),
+            "files": converted.files,
+            "projects": converted.projects,
+            "search_rows": converted.search_rows,
+            "search_rows_dropped": converted.search_rows_dropped,
+        });
+        if let Err(error) =
+            herdr_core::diagnostics::record_now(&env.state_dir.join("core-state.json"), record)
+        {
+            eprintln!("the conversion could not be logged: {error}");
+        }
     }
     let host_id = state_file::host_id(&env.state_dir)
         .map_err(|error| format!("the daemon host id could not be read or written: {error}"))?;

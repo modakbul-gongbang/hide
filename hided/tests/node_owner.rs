@@ -85,3 +85,47 @@ fn a_folder_owned_by_another_node_stops_the_daemon_and_logs_why() {
         registrations
     );
 }
+
+/// What the desktop host shows (B2): `hide connect` answers at once, not
+/// after its health wait, with the file the daemon refused.
+#[test]
+fn hide_connect_names_the_file_a_refused_start_stopped_on() {
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("home");
+    let state = root.path().join("state");
+    std::fs::create_dir_all(&home).unwrap();
+    std::fs::create_dir_all(&state).unwrap();
+    std::fs::write(
+        state.join("node.json"),
+        r#"{"version":1,"node":"another-node"}"#,
+    )
+    .unwrap();
+
+    let started = std::time::Instant::now();
+    let output = Command::new(env!("CARGO_BIN_EXE_hide"))
+        .env_clear()
+        .env("PATH", "/usr/bin:/bin:/usr/sbin:/sbin")
+        .env("HOME", &home)
+        .env("HIDE_STATE_DIR", &state)
+        .env("HIDE_TAILSCALE_BIN", home.join("no-tailscale"))
+        .stdin(Stdio::null())
+        .arg("connect")
+        .output()
+        .expect("hide connect runs");
+    assert!(!output.status.success());
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "the refusal waited for the health bound: {:?}",
+        started.elapsed()
+    );
+    let line: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+    assert_eq!(line["reason"], "state_refused", "{line}");
+    assert!(
+        line["file"].as_str().unwrap().ends_with("node.json"),
+        "{line}"
+    );
+    assert!(
+        line["detail"].as_str().unwrap().contains("another-node"),
+        "{line}"
+    );
+}

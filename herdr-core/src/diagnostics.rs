@@ -145,6 +145,19 @@ pub fn record_now(state_path: &Path, record: serde_json::Value) -> io::Result<()
     RotatingLog::open(directory, FILE_LIMIT)?.append(&line)
 }
 
+/// The newest record in the Logs file beside `state_path` that `wanted`
+/// accepts, so a process that started another can read why it stopped.
+pub fn newest_record(
+    state_path: &Path,
+    wanted: impl Fn(&serde_json::Value) -> bool,
+) -> Option<serde_json::Value> {
+    let text = fs::read_to_string(state_path.parent()?.join("Logs").join("core.jsonl")).ok()?;
+    text.lines()
+        .rev()
+        .filter_map(|line| serde_json::from_str(line).ok())
+        .find(|record| wanted(record))
+}
+
 fn sink_slot() -> &'static Mutex<Option<DiagnosticSink>> {
     SINK.get_or_init(|| Mutex::new(None))
 }
