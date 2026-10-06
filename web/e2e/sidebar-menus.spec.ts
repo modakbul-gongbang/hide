@@ -68,7 +68,7 @@ async function openMenu(page: Page, row: Locator, name: string): Promise<Locator
 async function chooseTheme(page: Page, theme: "light" | "dark"): Promise<void> {
   await page.keyboard.press(chord("settings"));
   await expect(page.locator('[data-settings="true"]')).toBeVisible();
-  await page.locator('[data-settings-tab="appearance"]').click();
+  await page.locator('[data-settings-tab="general"]').click();
   await page.locator(`[data-theme-option="${theme}"]`).click();
   await expect(page.locator("html")).toHaveClass(new RegExp(`\\b${theme}\\b`));
   await page.keyboard.press("Escape");
@@ -129,7 +129,7 @@ test("the project row's menu lists the board's items, and Pin registers and pins
     // its reveal is absent; a row Herdr shows without a registration still
     // offers Pin and Remove project….
     let menu = await openMenu(page, projectRow, "repo actions");
-    expect(await menuLines(menu)).toEqual(["New worktree…", `New tab in main ${commandLabel("new_tab")}`, "─", "Copy path", "─", "Pin", "Remove project…"]);
+    expect(await menuLines(menu)).toEqual(["New worktree…", `New tab in main ${commandLabel("new_tab")}`, "─", "Copy path", "Issue source", "─", "Pin", "Remove project…"]);
     await screenshot(page, "sidebar-menus-project-dark");
     await menu.locator('[data-menu-item="pin"]').click();
     await expect(menu).toHaveCount(0);
@@ -140,6 +140,83 @@ test("the project row's menu lists the board's items, and Pin registers and pins
     await expect(menu.locator('[data-menu-item="unpin"]')).toHaveText(/Unpin/);
     await page.keyboard.press("Escape");
   } finally { stop(); }
+});
+
+// B7, D-04: the project's issue source is a submenu of the row's menu; the
+// choice is the one the old Settings tab sent and the stored value comes back
+// as the checked item, by pointer and by keyboard.
+test("the project row's Issue source submenu shows the stored choice and changes it", async ({ page }) => {
+  const { projectRow, stop } = await startMenus(page);
+  try {
+    let menu = await openMenu(page, projectRow, "repo actions");
+    await menu.locator('[data-menu-item="issue_source"]').click();
+    const choices = page.getByRole("menu", { name: "Issue source" });
+    await expect(choices).toBeVisible();
+    // Automatic is in force until the operator chooses; it names what it resolved to.
+    await expect(choices.getByRole("menuitemradio")).toHaveText([/^Automatic \(/, /^GitHub/, /^Local$/]);
+    await expect(choices.getByRole("menuitemradio", { name: /^Automatic/ })).toHaveAttribute("aria-checked", "true");
+    await screenshot(page, "sidebar-menus-issue-source-dark");
+    await choices.getByRole("menuitemradio", { name: /^Local$/ }).click();
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    // The stored choice comes back checked the next time the menu opens.
+    menu = await openMenu(page, projectRow, "repo actions");
+    await menu.locator('[data-menu-item="issue_source"]').click();
+    await expect(page.getByRole("menu", { name: "Issue source" }).getByRole("menuitemradio", { name: /^Local$/ })).toHaveAttribute("aria-checked", "true");
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
+    // The keyboard reaches it too: menu key on the row, ArrowRight into the submenu, Enter on a choice.
+    await projectRow.locator("[data-project-row]").focus();
+    await page.keyboard.press("Shift+F10");
+    const keyed = page.getByRole("menu", { name: "repo actions" });
+    await expect(keyed).toBeVisible();
+    await keyed.locator('[data-menu-item="issue_source"]').focus();
+    await page.keyboard.press("ArrowRight");
+    const submenu = page.getByRole("menu", { name: "Issue source" });
+    await expect(submenu).toBeVisible();
+    await submenu.getByRole("menuitemradio", { name: /^Automatic/ }).focus();
+    await page.keyboard.press("Enter");
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    menu = await openMenu(page, projectRow, "repo actions");
+    await menu.locator('[data-menu-item="issue_source"]').click();
+    await expect(page.getByRole("menu", { name: "Issue source" }).getByRole("menuitemradio", { name: /^Automatic/ })).toHaveAttribute("aria-checked", "true");
+    await page.keyboard.press("Escape");
+  } finally { stop(); }
+});
+
+// B7: a plain folder is its own checkout and has one row, built from the
+// project's menu and the checkout's; that row's Issue source reads the stored
+// choice too, so a choice made there is still checked when the menu reopens.
+test("a plain folder's row shows the stored Issue source, not Automatic", async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  const herdr = await startHerdr();
+  let daemon: Awaited<ReturnType<typeof startHided>> | null = null;
+  try {
+    const folder = path.join(herdr.root, "notes");
+    fs.mkdirSync(folder);
+    fs.writeFileSync(path.join(folder, "todo.txt"), "write\n");
+    await workspaceAt(herdr, folder, "메모 정리");
+    daemon = await startHided(herdr, "sidebar-menus-folder");
+    await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+    await expect(page.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
+    await page.locator('[data-sidebar-mode="projects"]').click();
+    const row = page.locator("[data-project]").filter({ has: page.locator("[data-project-menu]") }).locator("[data-project-menu]").first();
+    await expect(row).toBeVisible({ timeout: 30_000 });
+    let menu = await openMenu(page, row, "notes actions");
+    await menu.locator('[data-menu-item="issue_source"]').click();
+    const choices = page.getByRole("menu", { name: "Issue source" });
+    await expect(choices.getByRole("menuitemradio")).toHaveText([/^Automatic/, /^Local$/]);
+    await expect(choices.getByRole("menuitemradio", { name: /^Automatic/ })).toHaveAttribute("aria-checked", "true");
+    await choices.getByRole("menuitemradio", { name: /^Local$/ }).click();
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    menu = await openMenu(page, row, "notes actions");
+    await menu.locator('[data-menu-item="issue_source"]').click();
+    await expect(page.getByRole("menu", { name: "Issue source" }).getByRole("menuitemradio", { name: /^Local$/ })).toHaveAttribute("aria-checked", "true");
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
+  } finally {
+    daemon?.stop();
+    herdr.stop();
+  }
 });
 
 test("a checkout row's menu offers worktree actions, and the default checkout cannot be set again", async ({ page }) => {

@@ -18,8 +18,19 @@ use crate::{
 /// A request whose completion is unknown is never attempted again.
 #[derive(Clone, Debug)]
 pub struct RouterConfig {
-    /// Order used when more than one provider is connected.
+    /// The providers a request may be asked of, in the order they are tried:
+    /// the operator's choice first, then the fallback list. A provider that is
+    /// registered but not listed here is never asked a request (D-16); it is
+    /// only inspected, for the Settings screen.
     pub priority: Vec<ProviderId>,
+    /// Use Hide AI. Off, `execute` returns [`AiError::Disabled`] without
+    /// asking any provider anything (B33).
+    pub enabled: bool,
+    /// One request may spend at most its own deadline times this on every
+    /// provider it is moved through, never more than `overall_deadline_cap`
+    /// and never less than its own deadline (B43).
+    pub overall_deadline_factor: u32,
+    pub overall_deadline_cap: Duration,
     pub availability_ttl: Duration,
     pub backoff_base: Duration,
     pub max_transient_attempts: u8,
@@ -51,7 +62,10 @@ pub struct RouterConfig {
 impl Default for RouterConfig {
     fn default() -> Self {
         Self {
-            priority: vec![ProviderId::Codex, ProviderId::Claude],
+            priority: vec![crate::PROVIDERS[0]],
+            enabled: true,
+            overall_deadline_factor: 2,
+            overall_deadline_cap: Duration::from_secs(90),
             availability_ttl: Duration::from_secs(30),
             backoff_base: Duration::from_secs(5),
             max_transient_attempts: 4,
@@ -91,6 +105,22 @@ pub struct Degraded {
     /// What remains of an account-wide cooldown. `None` when the reason has
     /// no end the provider told us about, such as a missing login.
     pub until: Option<Duration>,
+}
+
+/// One registered provider as the Settings screen needs it: whether the
+/// operator can choose it, and why not when they cannot.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ProviderStatus {
+    pub provider: ProviderId,
+    /// What the provider answered, or the cooldown it is parked in.
+    pub availability: Availability,
+    /// The agent can be chosen: its CLI is installed, it is logged in, it has
+    /// a backend and the call it makes is read-only (D-15, B35). A provider
+    /// parked in a usage cooldown is still selectable: it was logged in and
+    /// will answer again.
+    pub selectable: bool,
+    /// What remains of an account-wide usage cooldown (B41).
+    pub parked_for: Option<Duration>,
 }
 
 /// What selection decided about one provider.
@@ -192,6 +222,23 @@ struct Rollup {
     counts: HashMap<(ProviderId, &'static str), u64>,
 }
 
+/// What a backend measured of its own process during a turn, and whether it
+/// is one that can be measured at all.
+#[derive(Clone, Copy)]
+struct Measured {
+    measurement: ProcessMeasurement,
+    measurable: bool,
+}
+
+impl Measured {
+    fn none() -> Self {
+        Self {
+            measurement: ProcessMeasurement::Unavailable,
+            measurable: false,
+        }
+    }
+}
+
 struct State {
     in_flight: HashMap<DedupKey, Arc<InFlight>>,
     /// Distinct intents running at once, for the concurrency cap. Joiners of an
@@ -208,6 +255,11 @@ struct State {
     /// for, so entering and leaving failover are each announced once rather
     /// than on every request.
     announced_degraded: Option<ProviderId>,
+    /// The reason each provider's model list was last unavailable, so a read
+    /// that fails the same way again is not logged again.
+    models_unavailable: HashMap<ProviderId, String>,
+    /// The provider that answered the most recent request.
+    last_answered: Option<ProviderId>,
     rollup: Rollup,
 }
 
@@ -255,6 +307,8 @@ impl AiRouter {
                 cooldown_until: HashMap::new(),
                 availability: HashMap::new(),
                 announced_degraded: None,
+                models_unavailable: HashMap::new(),
+                last_answered: None,
                 rollup: Rollup {
                     day: utc_day(),
                     counts: HashMap::new(),
@@ -275,7 +329,7 @@ impl AiRouter {
     /// cached answer is older than the configured window. A provider parked
     /// by an account-wide cooldown reports that park instead of being asked.
     pub fn availability(&self) -> Vec<(ProviderId, Availability)> {
-        self.select()
+        self.select_among(self.inspected_backends())
             .into_iter()
             .map(|(backend, selection)| (backend.id(), selection.availability()))
             .collect()
@@ -289,7 +343,7 @@ impl AiRouter {
     /// refresh a stale availability answer, which is what makes the return
     /// to the selected provider visible once its cooldown has expired.
     pub fn provider_state(&self) -> Option<ProviderState> {
-        let selection = self.select();
+        let selection = self.select_among(self.candidates());
         let (first, chosen) = selection.first()?;
         let selected = first.id();
         Some(ProviderState {
@@ -304,10 +358,72 @@ impl AiRouter {
     /// a model list is not part of a selection decision and has no window of
     /// its own; the caller decides how often to ask.
     pub fn models(&self) -> Vec<(ProviderId, ModelCatalog)> {
-        self.ordered_backends()
+        let catalogs: Vec<(ProviderId, ModelCatalog)> = self
+            .inspected_backends()
             .into_iter()
             .map(|backend| (backend.id(), backend.models()))
+            .collect();
+        self.log_unreadable_catalogs(&catalogs);
+        catalogs
+    }
+
+    /// The screen shows only that a list is unavailable and a code for it
+    /// (design rule 13); what the operator or a maintainer needs to find the
+    /// cause is here. Written when a provider's reason first appears or
+    /// changes, not on every read, which the open tab repeats every few
+    /// seconds, and again if the list comes back and fails later.
+    fn log_unreadable_catalogs(&self, catalogs: &[(ProviderId, ModelCatalog)]) {
+        let mut announced = Vec::new();
+        {
+            let mut state = self.lock();
+            for (provider, catalog) in catalogs {
+                match catalog.unknown_reason() {
+                    Some(reason) => {
+                        if state.models_unavailable.get(provider).map(String::as_str)
+                            != Some(reason)
+                        {
+                            state
+                                .models_unavailable
+                                .insert(*provider, reason.to_owned());
+                            announced.push((*provider, reason.to_owned()));
+                        }
+                    }
+                    None => {
+                        state.models_unavailable.remove(provider);
+                    }
+                }
+            }
+        }
+        for (provider, reason) in announced {
+            let mut event = AiLogEvent::new("ai.models.unavailable");
+            event.provider = Some(provider);
+            event.detail = Some(format!("reason={reason}"));
+            self.sink.log(event);
+        }
+    }
+
+    /// Every registered provider's standing for the Settings screen: which can
+    /// be chosen, and what remains of a usage cooldown. Asks like
+    /// [`Self::availability`].
+    pub fn statuses(&self) -> Vec<ProviderStatus> {
+        self.select_among(self.inspected_backends())
+            .into_iter()
+            .map(|(backend, selection)| ProviderStatus {
+                provider: backend.id(),
+                selectable: matches!(selection, Selection::Ready | Selection::Parked(_)),
+                parked_for: match selection {
+                    Selection::Parked(remaining) => Some(remaining),
+                    _ => None,
+                },
+                availability: selection.availability(),
+            })
             .collect()
+    }
+
+    /// The provider that answered the most recent request, which is what
+    /// "Using Codex" is said of while the chosen provider cannot answer (B41).
+    pub fn last_answered(&self) -> Option<ProviderId> {
+        self.lock().last_answered
     }
 
     /// Forces the next selection to ask each provider again, for a caller
@@ -333,6 +449,9 @@ impl AiRouter {
     /// answer with the provider that produced it. Every failure is typed;
     /// see [`AiError`] for which ones the router retries or moves.
     pub fn execute(&self, request: &AiRequest, cancel: &CancelToken) -> Result<AiResult, AiError> {
+        if !self.config.enabled {
+            return Err(AiError::Disabled);
+        }
         let key = DedupKey {
             feature_id: request.feature_id,
             subject_id: request.subject_id.clone(),
@@ -474,9 +593,10 @@ impl AiRouter {
         cancel: &CancelToken,
     ) -> Result<AiResult, AiError> {
         let started = (self.now)();
+        let limit = started + self.overall_deadline(request);
         // Availability is read once per request, and a parked provider is
-        // not read at all.
-        let selection = self.select();
+        // not read at all. Only the providers the operator listed are asked.
+        let selection = self.select_among(self.candidates());
         self.announce_degradation(request, &selection);
         let connected: Vec<&Arc<dyn AiBackend>> = selection
             .iter()
@@ -514,7 +634,7 @@ impl AiRouter {
                 &Err(error.clone()),
                 started,
                 0,
-                ProcessMeasurement::Unavailable,
+                Measured::none(),
             );
             return Err(error);
         }
@@ -523,6 +643,12 @@ impl AiRouter {
         let mut previous: Option<ProviderId> = None;
         for backend in connected {
             let provider = backend.id();
+            // A refusal that took time leaves the next provider what remains
+            // of the request's overall deadline, and nothing once it is gone
+            // (B43): the request then ends with the refusal that was seen.
+            if previous.is_some() && limit.saturating_duration_since((self.now)()).is_zero() {
+                break;
+            }
             if let Some(from) = previous {
                 self.log(request, |event| {
                     event.event = "ai.fallback";
@@ -530,12 +656,16 @@ impl AiRouter {
                     event.detail = Some(format!("from={from};to={provider}"));
                 });
             }
-            let outcome = self.execute_on(backend.as_ref(), request, cancel);
+            let outcome = self.execute_on(backend.as_ref(), request, cancel, limit);
             // The measurement the backend took during the turn goes on this
             // request's finished line, whichever way it ended.
-            let measurement = backend.last_measurement();
+            let measurement = Measured {
+                measurement: backend.last_measurement(),
+                measurable: backend.measurable(),
+            };
             match outcome {
                 Ok((value, attempt)) => {
+                    self.lock().last_answered = Some(provider);
                     let result = AiResult { provider, value };
                     self.finish(
                         request,
@@ -583,6 +713,7 @@ impl AiRouter {
         backend: &dyn AiBackend,
         request: &AiRequest,
         cancel: &CancelToken,
+        limit: Instant,
     ) -> Result<(Value, u8), (AiError, u8)> {
         let provider = backend.id();
         let mut attempt: u8 = 0;
@@ -591,10 +722,25 @@ impl AiRouter {
             if cancel.is_cancelled() {
                 return Err((AiError::Cancelled, attempt));
             }
-            let result = backend.execute(request, cancel).and_then(|response| {
-                schema::validate(&request.output_schema, &response.value)?;
-                Ok(response)
-            });
+            // Each attempt may take what is left of the request's overall
+            // deadline, no more than its own deadline.
+            let remaining = limit.saturating_duration_since((self.now)());
+            let bounded;
+            let attempt_request = if remaining < request.deadline {
+                bounded = AiRequest {
+                    deadline: remaining,
+                    ..request.clone()
+                };
+                &bounded
+            } else {
+                request
+            };
+            let result = backend
+                .execute(attempt_request, cancel)
+                .and_then(|response| {
+                    schema::validate(&request.output_schema, &response.value)?;
+                    Ok(response)
+                });
             match result {
                 Ok(response) => {
                     self.log(request, |event| {
@@ -619,7 +765,7 @@ impl AiRouter {
                         event.outcome_class = Some(error.class());
                         event.attempt = Some(attempt);
                     });
-                    let limit = match &error {
+                    let attempts = match &error {
                         AiError::Transient(_) => self.config.max_transient_attempts,
                         AiError::InvalidOutput(_) => self.config.max_invalid_output_attempts,
                         // Submitted, fate unknown: a second attempt could be
@@ -654,12 +800,18 @@ impl AiRouter {
                         | AiError::Unsupported(_)
                         | AiError::OverBudget { .. }
                         | AiError::NoProvider(_)
+                        | AiError::Disabled
                         | AiError::Internal(_) => 0,
                     };
-                    if attempt >= limit {
+                    if attempt >= attempts {
                         return Err((error, attempt));
                     }
                     let backoff = self.config.backoff_base * 4u32.pow(u32::from(attempt - 1));
+                    // A retry that would start after the overall deadline is
+                    // not started: the request ends with the failure in hand.
+                    if (self.now)() + backoff >= limit {
+                        return Err((error, attempt));
+                    }
                     (self.sleep)(backoff);
                 }
             }
@@ -670,8 +822,11 @@ impl AiRouter {
     /// anything. A provider under a live cooldown is skipped rather than
     /// probed: that skip is what makes a failover sticky, because the reason
     /// it stepped aside outlives the request that discovered it.
-    fn select(&self) -> Vec<(Arc<dyn AiBackend>, Selection)> {
-        self.ordered_backends()
+    fn select_among(
+        &self,
+        backends: Vec<Arc<dyn AiBackend>>,
+    ) -> Vec<(Arc<dyn AiBackend>, Selection)> {
+        backends
             .into_iter()
             .map(|backend| {
                 let selection = match self.cooldown_remaining(backend.id()) {
@@ -730,13 +885,29 @@ impl AiRouter {
         }
     }
 
-    fn ordered_backends(&self) -> Vec<Arc<dyn AiBackend>> {
+    /// The providers a request may be asked of, in the order they are tried:
+    /// the configured priority, each once, and only those that are
+    /// registered. A registered provider outside the priority is never in
+    /// this list, however many are installed (D-16).
+    fn candidates(&self) -> Vec<Arc<dyn AiBackend>> {
         let mut ordered: Vec<Arc<dyn AiBackend>> = Vec::new();
         for provider in &self.config.priority {
+            if ordered.iter().any(|b| b.id() == *provider) {
+                continue;
+            }
             if let Some(backend) = self.backends.iter().find(|b| b.id() == *provider) {
                 ordered.push(Arc::clone(backend));
             }
         }
+        ordered
+    }
+
+    /// Every registered provider: the candidates in their order, then the
+    /// rest. This is what Settings asks about, so an agent that is not in use
+    /// can still be offered, or shown with the reason it cannot be; it is
+    /// never what a request is run on.
+    fn inspected_backends(&self) -> Vec<Arc<dyn AiBackend>> {
+        let mut ordered = self.candidates();
         for backend in &self.backends {
             if !ordered.iter().any(|b| b.id() == backend.id()) {
                 ordered.push(Arc::clone(backend));
@@ -745,12 +916,33 @@ impl AiRouter {
         ordered
     }
 
+    /// What one request may spend across every provider it is moved through:
+    /// its own deadline times the configured factor, capped, and never less
+    /// than its own deadline.
+    fn overall_deadline(&self, request: &AiRequest) -> Duration {
+        request.deadline.max(
+            request
+                .deadline
+                .saturating_mul(self.config.overall_deadline_factor)
+                .min(self.config.overall_deadline_cap),
+        )
+    }
+
     fn cached_availability(&self, backend: &dyn AiBackend) -> Availability {
         let provider = backend.id();
-        if let Some((state, checked)) = self.lock().availability.get(&provider)
-            && (self.now)().saturating_duration_since(*checked) < self.config.availability_ttl
-        {
-            return state.clone();
+        if let Some((state, checked)) = self.lock().availability.get(&provider) {
+            // A sign-in failure on an agent whose sign-in cannot be checked
+            // is only ever learned by asking it, and its next probe would say
+            // "ready" again: it is kept for the cooldown, so a request is not
+            // repeated at it every few seconds.
+            let ttl = if matches!(state, Availability::NeedsLogin) && !provider.login_probe() {
+                self.config.default_cooldown
+            } else {
+                self.config.availability_ttl
+            };
+            if (self.now)().saturating_duration_since(*checked) < ttl {
+                return state.clone();
+            }
         }
         let state = backend.availability();
         self.lock()
@@ -781,8 +973,12 @@ impl AiRouter {
         result: &Result<AiResult, AiError>,
         started: Instant,
         attempt: u8,
-        measurement: ProcessMeasurement,
+        measured: Measured,
     ) {
+        let Measured {
+            measurement,
+            measurable,
+        } = measured;
         let class = match result {
             Ok(_) => "ok",
             Err(error) => error.class(),
@@ -808,9 +1004,10 @@ impl AiRouter {
                     event.descendants = Some(descendants);
                     event.rss_bytes = Some(rss_bytes);
                 }
-                // A codex request whose process could not be measured says so
-                // rather than logging a zero that reads as a healthy tree.
-                ProcessMeasurement::Unavailable if provider == Some(ProviderId::Codex) => {
+                // A resident-process provider whose process could not be
+                // measured says so rather than logging a zero that reads as a
+                // healthy tree.
+                ProcessMeasurement::Unavailable if measurable => {
                     detail.push("measurement=unavailable".to_owned());
                 }
                 ProcessMeasurement::Unavailable => {}
@@ -955,6 +1152,8 @@ mod tests {
         probes: AtomicUsize,
         outcomes: Mutex<VecDeque<Result<Value, AiError>>>,
         calls: AtomicUsize,
+        /// Why `models()` cannot list, while it cannot.
+        models_unreadable: Mutex<Option<String>>,
     }
 
     impl Scripted {
@@ -965,6 +1164,7 @@ mod tests {
                 probes: AtomicUsize::new(0),
                 outcomes: Mutex::new(outcomes.into()),
                 calls: AtomicUsize::new(0),
+                models_unreadable: Mutex::new(None),
             })
         }
 
@@ -975,6 +1175,7 @@ mod tests {
                 probes: AtomicUsize::new(0),
                 outcomes: Mutex::new(VecDeque::new()),
                 calls: AtomicUsize::new(0),
+                models_unreadable: Mutex::new(None),
             })
         }
 
@@ -984,6 +1185,10 @@ mod tests {
 
         fn probes(&self) -> usize {
             self.probes.load(Ordering::SeqCst)
+        }
+
+        fn set_models_unreadable(&self, reason: Option<&str>) {
+            *self.models_unreadable.lock().unwrap() = reason.map(str::to_owned);
         }
 
         fn set_availability(&self, state: Availability) {
@@ -999,12 +1204,20 @@ mod tests {
         fn id(&self) -> ProviderId {
             self.id
         }
+        /// Stands in for codex's resident app-server, the one backend that
+        /// owns a process the router measures.
+        fn measurable(&self) -> bool {
+            self.id == ProviderId::CODEX
+        }
         fn availability(&self) -> Availability {
             self.probes.fetch_add(1, Ordering::SeqCst);
             self.availability.lock().unwrap().clone()
         }
         fn models(&self) -> ModelCatalog {
-            ModelCatalog::Offered(vec![format!("{}-model", self.id)])
+            match self.models_unreadable.lock().unwrap().clone() {
+                Some(reason) => ModelCatalog::Unknown { reason },
+                None => ModelCatalog::Offered(vec![format!("{}-model", self.id)]),
+            }
         }
         fn execute(&self, _: &AiRequest, _: &CancelToken) -> Result<AiResponse, AiError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
@@ -1088,7 +1301,7 @@ mod tests {
 
     impl AiBackend for Held {
         fn id(&self) -> ProviderId {
-            ProviderId::Codex
+            ProviderId::CODEX
         }
         fn availability(&self) -> Availability {
             Availability::Ready
@@ -1144,8 +1357,11 @@ mod tests {
         }
     }
 
+    /// The priority is the order the backends are given in: the first is the
+    /// operator's choice and the rest are its fallback list.
     fn make_router(backends: Vec<Arc<dyn AiBackend>>, sink: Arc<Recorder>) -> AiRouter {
         let config = RouterConfig {
+            priority: backends.iter().map(|backend| backend.id()).collect(),
             backoff_base: Duration::from_millis(1),
             ..RouterConfig::default()
         };
@@ -1159,21 +1375,21 @@ mod tests {
     #[test]
     fn a_single_connected_provider_is_used_and_its_answer_validated() {
         let sink = Arc::new(Recorder::default());
-        let codex = Scripted::new(ProviderId::Codex, vec![ok("a")]);
+        let codex = Scripted::new(ProviderId::CODEX, vec![ok("a")]);
         let router = make_router(vec![codex.clone()], sink.clone());
         let result = router
             .execute(&request("p1", "x"), &CancelToken::new())
             .unwrap();
         assert_eq!(result.value["summary"], "a");
-        assert_eq!(result.provider, ProviderId::Codex);
+        assert_eq!(result.provider, ProviderId::CODEX);
         let finished = sink.events("ai.request.finished");
         assert_eq!(finished.len(), 1);
-        assert_eq!(finished[0].provider, Some(ProviderId::Codex));
+        assert_eq!(finished[0].provider, Some(ProviderId::CODEX));
         assert_eq!(finished[0].outcome_class, Some("ok"));
         assert_eq!(finished[0].request_id.as_deref(), Some("r-p1"));
-        // A codex request whose process the scripted backend cannot measure
-        // records that on the line rather than a zero (B9); a real codex on
-        // macOS carries the descendant fields instead.
+        // A measurable backend whose process cannot be measured records that
+        // on the line rather than a zero (B9); a real codex on macOS carries
+        // the descendant fields instead.
         assert_eq!(
             finished[0].detail.as_deref(),
             Some("measurement=unavailable")
@@ -1185,14 +1401,14 @@ mod tests {
     fn a_schema_mismatch_is_invalid_output_after_two_attempts_and_never_falls_back() {
         let sink = Arc::new(Recorder::default());
         let codex = Scripted::new(
-            ProviderId::Codex,
+            ProviderId::CODEX,
             vec![
                 Ok(json!({"other": 1})),
                 Ok(json!({"summary": 5})),
                 ok("never"),
             ],
         );
-        let claude = Scripted::new(ProviderId::Claude, vec![ok("claude")]);
+        let claude = Scripted::new(ProviderId::CLAUDE, vec![ok("claude")]);
         let router = make_router(vec![codex.clone(), claude.clone()], sink);
         let error = router
             .execute(&request("p1", "x"), &CancelToken::new())
@@ -1211,8 +1427,8 @@ mod tests {
             AiError::CompletionUnknown("app_server_exited:signal".to_owned()),
         ] {
             let sink = Arc::new(Recorder::default());
-            let codex = Scripted::new(ProviderId::Codex, vec![Err(error.clone()), ok("again")]);
-            let claude = Scripted::new(ProviderId::Claude, vec![ok("claude")]);
+            let codex = Scripted::new(ProviderId::CODEX, vec![Err(error.clone()), ok("again")]);
+            let claude = Scripted::new(ProviderId::CLAUDE, vec![ok("claude")]);
             let router = make_router(vec![codex.clone(), claude.clone()], sink.clone());
             assert_eq!(
                 router.execute(&request("p1", "x"), &CancelToken::new()),
@@ -1241,7 +1457,7 @@ mod tests {
     fn a_transient_refusal_retries_the_same_provider_and_never_runs_elsewhere() {
         let sink = Arc::new(Recorder::default());
         let codex = Scripted::new(
-            ProviderId::Codex,
+            ProviderId::CODEX,
             vec![
                 Err(AiError::Transient("rpc_error:thread/start:-1".to_owned())),
                 Err(AiError::Transient(
@@ -1250,7 +1466,7 @@ mod tests {
                 ok("third"),
             ],
         );
-        let claude = Scripted::new(ProviderId::Claude, vec![ok("claude")]);
+        let claude = Scripted::new(ProviderId::CLAUDE, vec![ok("claude")]);
         let router = make_router(vec![codex.clone(), claude.clone()], sink.clone());
         let result = router
             .execute(&request("p1", "x"), &CancelToken::new())
@@ -1261,10 +1477,10 @@ mod tests {
         assert!(sink.events("ai.fallback").is_empty());
 
         let exhausted = Scripted::new(
-            ProviderId::Codex,
+            ProviderId::CODEX,
             vec![Err(AiError::Transient("busy".to_owned())); 4],
         );
-        let claude = Scripted::new(ProviderId::Claude, vec![ok("claude")]);
+        let claude = Scripted::new(ProviderId::CLAUDE, vec![ok("claude")]);
         let router = make_router(vec![exhausted.clone(), claude.clone()], sink);
         assert!(matches!(
             router.execute(&request("p2", "x"), &CancelToken::new()),
@@ -1279,16 +1495,16 @@ mod tests {
     #[test]
     fn a_result_names_the_provider_that_answered_after_a_fallback() {
         let sink = Arc::new(Recorder::default());
-        let codex = Scripted::with_availability(ProviderId::Codex, Availability::NeedsLogin);
-        let claude = Scripted::new(ProviderId::Claude, vec![ok("claude")]);
+        let codex = Scripted::with_availability(ProviderId::CODEX, Availability::NeedsLogin);
+        let claude = Scripted::new(ProviderId::CLAUDE, vec![ok("claude")]);
         let router = make_router(vec![codex.clone(), claude.clone()], sink.clone());
         let result = router
             .execute(&request("p1", "x"), &CancelToken::new())
             .unwrap();
-        assert_eq!(result.provider, ProviderId::Claude);
+        assert_eq!(result.provider, ProviderId::CLAUDE);
         assert_eq!(result.value["summary"], "claude");
         let finished = sink.events("ai.request.finished");
-        assert_eq!(finished[0].provider, Some(ProviderId::Claude));
+        assert_eq!(finished[0].provider, Some(ProviderId::CLAUDE));
     }
 
     /// A leader that panics must not strand its joiners or its key.
@@ -1301,7 +1517,7 @@ mod tests {
         }
         impl AiBackend for Panicking {
             fn id(&self) -> ProviderId {
-                ProviderId::Codex
+                ProviderId::CODEX
             }
             fn availability(&self) -> Availability {
                 Availability::Ready
@@ -1372,16 +1588,16 @@ mod tests {
     fn provider_unavailable_falls_back_in_priority_order_with_a_logged_event() {
         let sink = Arc::new(Recorder::default());
         let codex = Scripted::new(
-            ProviderId::Codex,
+            ProviderId::CODEX,
             vec![Err(AiError::ProviderUnavailable("gone".to_owned()))],
         );
-        let claude = Scripted::new(ProviderId::Claude, vec![ok("claude")]);
+        let claude = Scripted::new(ProviderId::CLAUDE, vec![ok("claude")]);
         let router = make_router(vec![codex.clone(), claude.clone()], sink.clone());
         let result = router
             .execute(&request("p1", "x"), &CancelToken::new())
             .unwrap();
         assert_eq!(result.value["summary"], "claude");
-        assert_eq!(result.provider, ProviderId::Claude);
+        assert_eq!(result.provider, ProviderId::CLAUDE);
         let fallback = sink.events("ai.fallback");
         assert_eq!(fallback.len(), 1);
         assert_eq!(fallback[0].detail.as_deref(), Some("from=codex;to=claude"));
@@ -1398,20 +1614,20 @@ mod tests {
     fn an_unsupported_provider_is_reported_and_never_selected() {
         let sink = Arc::new(Recorder::default());
         let claude = Scripted::with_availability(
-            ProviderId::Claude,
+            ProviderId::CLAUDE,
             Availability::Unsupported {
                 reason: "gap".to_owned(),
             },
         );
-        let codex = Scripted::with_availability(ProviderId::Codex, Availability::NeedsLogin);
+        let codex = Scripted::with_availability(ProviderId::CODEX, Availability::NeedsLogin);
         let router = make_router(vec![codex.clone(), claude.clone()], sink);
         let error = router
             .execute(&request("p1", "x"), &CancelToken::new())
             .unwrap_err();
         match error {
             AiError::NoProvider(states) => {
-                assert_eq!(states[0], (ProviderId::Codex, Availability::NeedsLogin));
-                assert_eq!(states[1].0, ProviderId::Claude);
+                assert_eq!(states[0], (ProviderId::CODEX, Availability::NeedsLogin));
+                assert_eq!(states[1].0, ProviderId::CLAUDE);
                 assert_eq!(states[1].1.class(), "unsupported");
             }
             other => panic!("{other:?}"),
@@ -1423,7 +1639,7 @@ mod tests {
     fn a_usage_limit_parks_the_provider_account_wide_until_it_resets() {
         let sink = Arc::new(Recorder::default());
         let codex = Scripted::new(
-            ProviderId::Codex,
+            ProviderId::CODEX,
             vec![
                 Err(AiError::UsageLimited {
                     retry_after: Some(Duration::from_millis(200)),
@@ -1470,7 +1686,7 @@ mod tests {
     fn not_authenticated_is_not_retried_until_availability_changes() {
         let sink = Arc::new(Recorder::default());
         let codex = Scripted::new(
-            ProviderId::Codex,
+            ProviderId::CODEX,
             vec![Err(AiError::NotAuthenticated), ok("logged in")],
         );
         let router = make_router(vec![codex.clone()], sink);
@@ -1490,6 +1706,91 @@ mod tests {
                 .unwrap()
                 .value["summary"],
             "logged in"
+        );
+    }
+
+    /// An agent with a sign-in check is asked again once the availability
+    /// window passes, because its probe will say whether the login came. One
+    /// without a check (Gemini CLI) would answer "ready" to that probe, so a
+    /// request would be made at it every window: its failure is kept for the
+    /// cooldown instead.
+    #[test]
+    fn a_sign_in_failure_of_an_agent_with_no_check_is_kept_for_the_cooldown() {
+        let window = RouterConfig::default().availability_ttl;
+        let cooldown = RouterConfig::default().default_cooldown;
+        let tried_after = |provider: ProviderId, wait: Duration| {
+            let agent = Scripted::new(
+                provider,
+                vec![Err(AiError::NotAuthenticated), ok("signed in")],
+            );
+            let clock = ManualClock::new();
+            let router = make_router(vec![agent.clone()], Arc::new(Recorder::default()))
+                .with_clock(clock.source());
+            assert_eq!(
+                router.execute(&request("p1", "x"), &CancelToken::new()),
+                Err(AiError::NotAuthenticated)
+            );
+            clock.advance(wait);
+            let _ = router.execute(&request("p2", "y"), &CancelToken::new());
+            agent.calls()
+        };
+
+        assert_eq!(
+            tried_after(ProviderId::CODEX, window + Duration::from_secs(1)),
+            2,
+            "a probed agent is asked again when the window passes"
+        );
+        assert_eq!(
+            tried_after(ProviderId::GEMINI, window + Duration::from_secs(1)),
+            1,
+            "an unprobed agent is not asked again every window"
+        );
+        assert_eq!(
+            tried_after(ProviderId::GEMINI, cooldown + Duration::from_secs(1)),
+            2,
+            "and is asked once the cooldown has passed"
+        );
+    }
+
+    /// The screen shows a code only; the cause of a list that could not be
+    /// read is in the log, once per change rather than on every read the open
+    /// tab repeats (B68).
+    #[test]
+    fn a_model_list_that_could_not_be_read_is_logged_once_with_its_reason() {
+        let sink = Arc::new(Recorder::default());
+        let grok = Scripted::new(ProviderId::GROK, vec![]);
+        let router = make_router(vec![grok.clone()], sink.clone());
+
+        router.models();
+        assert!(sink.events("ai.models.unavailable").is_empty());
+
+        grok.set_models_unreadable(Some("grok_models_unreadable"));
+        router.models();
+        router.models();
+        let logged = sink.events("ai.models.unavailable");
+        assert_eq!(logged.len(), 1, "a repeated failure is not logged again");
+        assert_eq!(logged[0].provider, Some(ProviderId::GROK));
+        assert_eq!(
+            logged[0].detail.as_deref(),
+            Some("reason=grok_models_unreadable")
+        );
+
+        grok.set_models_unreadable(Some("grok_not_authenticated"));
+        router.models();
+        assert_eq!(
+            sink.events("ai.models.unavailable").len(),
+            2,
+            "a new cause is"
+        );
+
+        grok.set_models_unreadable(None);
+        router.models();
+        grok.set_models_unreadable(Some("grok_not_authenticated"));
+        router.models();
+        assert_eq!(
+            sink.events("ai.models.unavailable").len(),
+            3,
+            "a failure after the list came back is a new one"
         );
     }
 
@@ -1527,6 +1828,7 @@ mod tests {
     /// not a cache window that happens to be open.
     fn make_sticky_router(backends: Vec<Arc<dyn AiBackend>>, sink: Arc<Recorder>) -> AiRouter {
         let config = RouterConfig {
+            priority: backends.iter().map(|backend| backend.id()).collect(),
             availability_ttl: Duration::ZERO,
             backoff_base: Duration::from_millis(1),
             ..RouterConfig::default()
@@ -1539,14 +1841,14 @@ mod tests {
     #[test]
     fn provider_state_names_the_active_provider_and_why_the_selected_one_stepped_aside() {
         let sink = Arc::new(Recorder::default());
-        let codex = Scripted::with_availability(ProviderId::Codex, Availability::Ready);
-        let claude = Scripted::new(ProviderId::Claude, vec![ok("claude")]);
+        let codex = Scripted::with_availability(ProviderId::CODEX, Availability::Ready);
+        let claude = Scripted::new(ProviderId::CLAUDE, vec![ok("claude")]);
         let router = make_sticky_router(vec![codex.clone(), claude.clone()], sink);
         assert_eq!(
             router.provider_state().unwrap(),
             ProviderState {
-                selected: ProviderId::Codex,
-                active: Some(ProviderId::Codex),
+                selected: ProviderId::CODEX,
+                active: Some(ProviderId::CODEX),
                 degraded: None,
             }
         );
@@ -1554,10 +1856,10 @@ mod tests {
         assert_eq!(
             router.provider_state().unwrap(),
             ProviderState {
-                selected: ProviderId::Codex,
-                active: Some(ProviderId::Claude),
+                selected: ProviderId::CODEX,
+                active: Some(ProviderId::CLAUDE),
                 degraded: Some(Degraded {
-                    provider: ProviderId::Codex,
+                    provider: ProviderId::CODEX,
                     reason: Availability::NeedsLogin,
                     until: None,
                 }),
@@ -1582,19 +1884,19 @@ mod tests {
     fn a_usage_limit_is_sticky_and_stops_asking_the_parked_provider_anything() {
         let sink = Arc::new(Recorder::default());
         let codex = Scripted::new(
-            ProviderId::Codex,
+            ProviderId::CODEX,
             vec![Err(AiError::UsageLimited {
                 retry_after: Some(Duration::from_secs(600)),
             })],
         );
-        let claude = Scripted::new(ProviderId::Claude, vec![ok("claude")]);
+        let claude = Scripted::new(ProviderId::CLAUDE, vec![ok("claude")]);
         let router = make_sticky_router(vec![codex.clone(), claude.clone()], sink.clone());
         assert_eq!(
             router
                 .execute(&request("p1", "x"), &CancelToken::new())
                 .unwrap()
                 .provider,
-            ProviderId::Claude
+            ProviderId::CLAUDE
         );
         let probes_after_park = codex.probes();
         for subject in ["p2", "p3", "p4"] {
@@ -1603,7 +1905,7 @@ mod tests {
                     .execute(&request(subject, subject), &CancelToken::new())
                     .unwrap()
                     .provider,
-                ProviderId::Claude
+                ProviderId::CLAUDE
             );
         }
         // One request spent on the parked provider, and nothing since.
@@ -1611,10 +1913,10 @@ mod tests {
         assert_eq!(codex.probes(), probes_after_park, "the park was re-probed");
 
         let state = router.provider_state().unwrap();
-        assert_eq!(state.selected, ProviderId::Codex);
-        assert_eq!(state.active, Some(ProviderId::Claude));
+        assert_eq!(state.selected, ProviderId::CODEX);
+        assert_eq!(state.active, Some(ProviderId::CLAUDE));
         let degraded = state.degraded.expect("the reason stays queryable");
-        assert_eq!(degraded.provider, ProviderId::Codex);
+        assert_eq!(degraded.provider, ProviderId::CODEX);
         assert!(degraded.until.expect("a cooldown ends") > Duration::from_secs(500));
         assert_eq!(degraded.reason.class(), "unavailable");
         assert_eq!(codex.probes(), probes_after_park);
@@ -1626,12 +1928,12 @@ mod tests {
     fn an_expired_cooldown_re_reads_availability_once_and_returns_to_the_selected_provider() {
         let sink = Arc::new(Recorder::default());
         let codex = Scripted::new(
-            ProviderId::Codex,
+            ProviderId::CODEX,
             vec![Err(AiError::UsageLimited {
                 retry_after: Some(Duration::from_millis(200)),
             })],
         );
-        let claude = Scripted::new(ProviderId::Claude, vec![ok("claude")]);
+        let claude = Scripted::new(ProviderId::CLAUDE, vec![ok("claude")]);
         let clock = ManualClock::new();
         let router = make_sticky_router(vec![codex.clone(), claude.clone()], sink.clone())
             .with_clock(clock.source());
@@ -1643,7 +1945,7 @@ mod tests {
         codex.queue(vec![ok("codex is back")]);
 
         let state = router.provider_state().unwrap();
-        assert_eq!(state.active, Some(ProviderId::Codex));
+        assert_eq!(state.active, Some(ProviderId::CODEX));
         assert_eq!(state.degraded, None);
         assert_eq!(
             codex.probes(),
@@ -1665,9 +1967,9 @@ mod tests {
     #[test]
     fn every_provider_degraded_is_reported_and_claims_no_active_provider() {
         let sink = Arc::new(Recorder::default());
-        let codex = Scripted::with_availability(ProviderId::Codex, Availability::NeedsLogin);
+        let codex = Scripted::with_availability(ProviderId::CODEX, Availability::NeedsLogin);
         let claude = Scripted::new(
-            ProviderId::Claude,
+            ProviderId::CLAUDE,
             vec![Err(AiError::UsageLimited {
                 retry_after: Some(Duration::from_secs(600)),
             })],
@@ -1679,12 +1981,12 @@ mod tests {
         ));
 
         let state = router.provider_state().unwrap();
-        assert_eq!(state.selected, ProviderId::Codex);
+        assert_eq!(state.selected, ProviderId::CODEX);
         assert_eq!(state.active, None, "no provider can answer");
         assert_eq!(
             state.degraded,
             Some(Degraded {
-                provider: ProviderId::Codex,
+                provider: ProviderId::CODEX,
                 reason: Availability::NeedsLogin,
                 until: None,
             })
@@ -1716,10 +2018,10 @@ mod tests {
     fn entering_and_leaving_failover_each_leave_their_own_event() {
         let sink = Arc::new(Recorder::default());
         let codex = Scripted::new(
-            ProviderId::Codex,
+            ProviderId::CODEX,
             vec![Err(AiError::ProviderUnavailable("gone".to_owned()))],
         );
-        let claude = Scripted::new(ProviderId::Claude, vec![ok("claude"), ok("claude again")]);
+        let claude = Scripted::new(ProviderId::CLAUDE, vec![ok("claude"), ok("claude again")]);
         // The availability cache is the mechanism here: an outage discovered
         // during a request is what keeps the next one off that provider.
         let router = make_router(vec![codex.clone(), claude.clone()], sink.clone());
@@ -1739,7 +2041,7 @@ mod tests {
             .unwrap();
         let degraded = sink.events("ai.provider.degraded");
         assert_eq!(degraded.len(), 1);
-        assert_eq!(degraded[0].provider, Some(ProviderId::Claude));
+        assert_eq!(degraded[0].provider, Some(ProviderId::CLAUDE));
         let detail = degraded[0].detail.clone().expect("a reason");
         assert!(detail.contains("selected=codex"), "{detail}");
         assert!(detail.contains("active=claude"), "{detail}");
@@ -1764,14 +2066,14 @@ mod tests {
         );
         let recovered = sink.events("ai.provider.recovered");
         assert_eq!(recovered.len(), 1);
-        assert_eq!(recovered[0].provider, Some(ProviderId::Codex));
+        assert_eq!(recovered[0].provider, Some(ProviderId::CODEX));
         assert_eq!(recovered[0].outcome_class, Some("ready"));
     }
 
     #[test]
     fn log_events_carry_identifiers_and_classes_but_no_content() {
         let sink = Arc::new(Recorder::default());
-        let codex = Scripted::new(ProviderId::Codex, vec![ok("secret summary text")]);
+        let codex = Scripted::new(ProviderId::CODEX, vec![ok("secret summary text")]);
         let router = make_router(vec![codex], sink.clone());
         let mut req = request("p1", "the user's private transcript");
         req.system = "confidential prompt".to_owned();
@@ -1807,7 +2109,7 @@ mod tests {
 
     impl AiBackend for Measuring {
         fn id(&self) -> ProviderId {
-            ProviderId::Codex
+            ProviderId::CODEX
         }
         fn availability(&self) -> Availability {
             Availability::Ready
@@ -1867,8 +2169,9 @@ mod tests {
     #[test]
     fn requests_past_the_per_minute_cap_are_over_budget() {
         let sink = Arc::new(Recorder::default());
-        let codex = Scripted::new(ProviderId::Codex, vec![ok("a"), ok("b")]);
+        let codex = Scripted::new(ProviderId::CODEX, vec![ok("a"), ok("b")]);
         let config = RouterConfig {
+            priority: vec![ProviderId::CODEX],
             max_per_minute: 2,
             backoff_base: Duration::from_millis(1),
             ..RouterConfig::default()
@@ -1944,6 +2247,254 @@ mod tests {
             AiError::OverBudget { cap, .. } => assert_eq!(cap, "app_server_descendants"),
             other => panic!("{other:?}"),
         }
+    }
+
+    /// The provider the operator did not list is registered, so Settings can
+    /// still show it, and it is never asked a request (D-16, B40).
+    #[test]
+    fn a_provider_outside_the_priority_is_inspected_but_never_asked_a_request() {
+        let sink = Arc::new(Recorder::default());
+        let chosen = Scripted::new(
+            ProviderId::CLAUDE,
+            vec![Err(AiError::ProviderUnavailable("down".to_owned()))],
+        );
+        let unlisted = Scripted::new(ProviderId::CODEX, vec![ok("never asked")]);
+        let config = RouterConfig {
+            priority: vec![ProviderId::CLAUDE],
+            backoff_base: Duration::from_millis(1),
+            ..RouterConfig::default()
+        };
+        let router = AiRouter::with_sleep(
+            vec![chosen.clone(), unlisted.clone()],
+            config,
+            sink,
+            Box::new(|_| {}),
+        );
+        let error = router
+            .execute(&request("p1", "x"), &CancelToken::new())
+            .unwrap_err();
+        assert_eq!(error, AiError::ProviderUnavailable("down".to_owned()));
+        assert_eq!(
+            unlisted.calls(),
+            0,
+            "an installed, signed-in agent outside the list is not used"
+        );
+        let inspected: Vec<_> = router
+            .availability()
+            .into_iter()
+            .map(|(id, _)| id)
+            .collect();
+        assert_eq!(
+            inspected,
+            vec![ProviderId::CLAUDE, ProviderId::CODEX],
+            "Settings still sees every registered provider"
+        );
+        assert_eq!(router.models().len(), 2);
+        assert_eq!(
+            router.provider_state().unwrap().selected,
+            ProviderId::CLAUDE
+        );
+    }
+
+    #[test]
+    fn the_fallback_list_is_tried_in_its_order_once_each() {
+        let sink = Arc::new(Recorder::default());
+        let first = Scripted::new(ProviderId::CLAUDE, vec![Err(AiError::NotAuthenticated)]);
+        let second = Scripted::new(
+            ProviderId::PI,
+            vec![Err(AiError::UsageLimited { retry_after: None })],
+        );
+        let third = Scripted::new(ProviderId::CODEX, vec![ok("third")]);
+        let config = RouterConfig {
+            // The chosen agent listed again behind the others is still one hop.
+            priority: vec![
+                ProviderId::CLAUDE,
+                ProviderId::PI,
+                ProviderId::CODEX,
+                ProviderId::CLAUDE,
+            ],
+            backoff_base: Duration::from_millis(1),
+            ..RouterConfig::default()
+        };
+        let router = AiRouter::with_sleep(
+            vec![first.clone(), second.clone(), third.clone()],
+            config,
+            sink,
+            Box::new(|_| {}),
+        );
+        let result = router
+            .execute(&request("p1", "x"), &CancelToken::new())
+            .unwrap();
+        assert_eq!(result.provider, ProviderId::CODEX);
+        assert_eq!((first.calls(), second.calls(), third.calls()), (1, 1, 1));
+        assert_eq!(router.last_answered(), Some(ProviderId::CODEX));
+    }
+
+    /// B33: Use Hide AI off means no model is asked anything, not even for
+    /// availability.
+    #[test]
+    fn a_disabled_router_asks_no_provider_anything() {
+        let sink = Arc::new(Recorder::default());
+        let codex = Scripted::new(ProviderId::CODEX, vec![ok("a")]);
+        let config = RouterConfig {
+            priority: vec![ProviderId::CODEX],
+            enabled: false,
+            ..RouterConfig::default()
+        };
+        let router = AiRouter::with_sleep(vec![codex.clone()], config, sink, Box::new(|_| {}));
+        assert_eq!(
+            router
+                .execute(&request("p1", "x"), &CancelToken::new())
+                .unwrap_err(),
+            AiError::Disabled
+        );
+        assert_eq!((codex.calls(), codex.probes()), (0, 0));
+    }
+
+    #[test]
+    fn a_provider_that_cannot_be_chosen_says_why_and_a_parked_one_still_can() {
+        let sink = Arc::new(Recorder::default());
+        let ready = Scripted::new(ProviderId::CLAUDE, vec![]);
+        let parked = Scripted::new(
+            ProviderId::CODEX,
+            vec![Err(AiError::UsageLimited {
+                retry_after: Some(Duration::from_secs(3600)),
+            })],
+        );
+        let unsupported = Scripted::with_availability(
+            ProviderId::CURSOR,
+            Availability::Unsupported {
+                reason: "cannot_guarantee_read_only".to_owned(),
+            },
+        );
+        let signed_out = Scripted::with_availability(ProviderId::GROK, Availability::NeedsLogin);
+        let router = AiRouter::with_sleep(
+            vec![parked.clone(), ready, unsupported, signed_out],
+            RouterConfig {
+                priority: vec![ProviderId::CODEX, ProviderId::CLAUDE],
+                backoff_base: Duration::from_millis(1),
+                ..RouterConfig::default()
+            },
+            sink,
+            Box::new(|_| {}),
+        );
+        router
+            .execute(&request("p1", "x"), &CancelToken::new())
+            .unwrap();
+        let statuses = router.statuses();
+        let by = |id| {
+            statuses
+                .iter()
+                .find(|status| status.provider == id)
+                .unwrap()
+        };
+        assert!(by(ProviderId::CLAUDE).selectable);
+        assert!(
+            by(ProviderId::CODEX).selectable,
+            "out of usage is not a reason to hide it"
+        );
+        assert!(by(ProviderId::CODEX).parked_for.is_some());
+        assert!(!by(ProviderId::CURSOR).selectable);
+        assert_eq!(
+            by(ProviderId::CURSOR).availability,
+            Availability::Unsupported {
+                reason: "cannot_guarantee_read_only".to_owned()
+            }
+        );
+        assert!(!by(ProviderId::GROK).selectable);
+        assert_eq!(router.last_answered(), Some(ProviderId::CLAUDE));
+        let state = router.provider_state().unwrap();
+        assert_eq!(state.selected, ProviderId::CODEX);
+        assert_eq!(state.active, Some(ProviderId::CLAUDE));
+        assert!(state.degraded.unwrap().until.is_some());
+    }
+
+    /// A provider that takes the time it takes and then refuses, on the
+    /// router's own clock.
+    struct Spending {
+        id: ProviderId,
+        clock: ManualClock,
+        spend: Duration,
+        refusal: AiError,
+        deadlines: Mutex<Vec<Duration>>,
+    }
+
+    impl Spending {
+        fn new(id: ProviderId, clock: &ManualClock, spend: Duration) -> Arc<Self> {
+            Arc::new(Self {
+                id,
+                clock: clock.clone(),
+                spend,
+                refusal: AiError::ProviderUnavailable(format!("{id}_down")),
+                deadlines: Mutex::new(Vec::new()),
+            })
+        }
+
+        fn deadlines(&self) -> Vec<Duration> {
+            self.deadlines.lock().unwrap().clone()
+        }
+    }
+
+    impl AiBackend for Spending {
+        fn id(&self) -> ProviderId {
+            self.id
+        }
+        fn availability(&self) -> Availability {
+            Availability::Ready
+        }
+        fn models(&self) -> ModelCatalog {
+            ModelCatalog::Offered(Vec::new())
+        }
+        fn execute(&self, request: &AiRequest, _: &CancelToken) -> Result<AiResponse, AiError> {
+            self.deadlines.lock().unwrap().push(request.deadline);
+            self.clock.advance(self.spend);
+            Err(self.refusal.clone())
+        }
+    }
+
+    /// B43: three providers that each refuse slowly cannot hold one request
+    /// past its overall deadline; the last one is never asked, and the request
+    /// ends with the refusal that was seen.
+    #[test]
+    fn a_request_moved_through_slow_refusals_ends_inside_its_overall_deadline() {
+        let clock = ManualClock::new();
+        let first = Spending::new(ProviderId::CLAUDE, &clock, Duration::from_secs(45));
+        let second = Spending::new(ProviderId::CODEX, &clock, Duration::from_secs(20));
+        let third = Spending::new(ProviderId::PI, &clock, Duration::from_secs(1));
+        let router = make_router(
+            vec![first.clone(), second.clone(), third.clone()],
+            Arc::new(Recorder::default()),
+        )
+        .with_clock(clock.source());
+        // 30 s per attempt, so 60 s overall.
+        let mut ask = request("p1", "x");
+        ask.deadline = Duration::from_secs(30);
+        let error = router.execute(&ask, &CancelToken::new()).unwrap_err();
+        assert_eq!(error, AiError::ProviderUnavailable("codex_down".to_owned()));
+        assert_eq!(first.deadlines(), vec![Duration::from_secs(30)]);
+        assert_eq!(
+            second.deadlines(),
+            vec![Duration::from_secs(15)],
+            "the second provider gets what remains of the 60 seconds"
+        );
+        assert!(third.deadlines().is_empty(), "nothing is left for a third");
+    }
+
+    #[test]
+    fn the_overall_deadline_is_twice_the_request_capped_and_never_below_the_request() {
+        let router = make_router(Vec::new(), Arc::new(Recorder::default()));
+        let with = |seconds| {
+            let mut ask = request("p", "x");
+            ask.deadline = Duration::from_secs(seconds);
+            router.overall_deadline(&ask)
+        };
+        assert_eq!(with(30), Duration::from_secs(60));
+        assert_eq!(with(60), Duration::from_secs(90));
+        assert_eq!(
+            with(120),
+            Duration::from_secs(120),
+            "a request that asked for more than the cap keeps its own deadline"
+        );
     }
 
     fn rand_input() -> u64 {

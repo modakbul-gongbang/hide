@@ -38,7 +38,18 @@ use crate::root::RootIdentity;
 /// 18: `link_files` lists the device's session files changed since a time
 /// and `link_read` reads their link facts from a checkpoint (PRD link-graph
 /// D-21); a helper on 17 would refuse both as unknown.
-pub const PROTOCOL_VERSION: u32 = 18;
+/// 19: the kit has seven agents, each with a Herdr integration piece in its
+/// report, retires the other thirteen once, and no longer carries
+/// `codex_per_pane`; `reinstall` has no `turn_off` and a report names the
+/// Codex daemon capability itself (PRD settings-cleanup D-06, D-13, D-14). A
+/// helper on 18 would still turn the Codex daemon off and know none of it.
+/// 20: a `reinstall` can carry `codex_daemon_off`, the operator's own request
+/// to turn Codex's shared server off on that device, and the report that
+/// answers it carries `codex_daemon_off` (PRD settings-cleanup B27). A helper
+/// on 19 would run the pass and silently ignore the request. An agent row
+/// of the report carries `chosen`, the operator's own choice on record (PRD
+/// settings-cleanup B9, D-07); a report without it reads as no choice.
+pub const PROTOCOL_VERSION: u32 = 20;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Request {
@@ -236,18 +247,18 @@ pub enum KitAction {
     /// what is outdated.
     Apply,
     /// The operator's choice on the machine's row: Reinstall of these
-    /// parts, or a part turned on (`components`) or off (`turn_off`), or an
-    /// agent switched on (`agents_on`, which is also Reinstall of an agent
-    /// that is on) or off (`agents_off`). The agent lists are additive: a
-    /// helper that predates them ignores them.
+    /// parts, or an agent switched on (`agents_on`, which is also Reinstall
+    /// of an agent that is on) or off (`agents_off`).
     Reinstall {
         components: Vec<hide_kit::ComponentId>,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        turn_off: Vec<hide_kit::ComponentId>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         agents_on: Vec<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         agents_off: Vec<String>,
+        /// Turn Codex's shared server off on this device (the operator's own
+        /// request, never part of a pass).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        codex_daemon_off: bool,
     },
     Status,
     /// The device is being removed from Hide: Hide's parts come off, then
@@ -330,6 +341,41 @@ pub struct RevisionNow {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An older caller's `reinstall` has no `codex_daemon_off` and means
+    /// "leave the shared server alone"; the request is on the wire only when
+    /// it is made.
+    #[test]
+    fn a_reinstall_asks_to_turn_the_codex_server_off_only_when_it_says_so() {
+        let plain = serde_json::json!({"kind": "reinstall", "components": ["cli"]});
+        let KitAction::Reinstall {
+            codex_daemon_off, ..
+        } = serde_json::from_value(plain).unwrap()
+        else {
+            panic!("a reinstall");
+        };
+        assert!(!codex_daemon_off);
+        let asked = KitAction::Reinstall {
+            components: Vec::new(),
+            agents_on: Vec::new(),
+            agents_off: Vec::new(),
+            codex_daemon_off: true,
+        };
+        assert_eq!(
+            serde_json::to_value(&asked).unwrap(),
+            serde_json::json!({"kind": "reinstall", "components": [], "codex_daemon_off": true})
+        );
+        let unasked = KitAction::Reinstall {
+            components: Vec::new(),
+            agents_on: Vec::new(),
+            agents_off: Vec::new(),
+            codex_daemon_off: false,
+        };
+        assert_eq!(
+            serde_json::to_value(&unasked).unwrap(),
+            serde_json::json!({"kind": "reinstall", "components": []})
+        );
+    }
 
     #[test]
     fn machine_identity_reports_unavailability_and_refuses_invalid_ids() {

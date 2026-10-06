@@ -104,23 +104,27 @@ fn report(states: &[(ComponentId, ComponentState)]) -> KitReport {
                 state: *state,
                 reason: None,
                 location: Some(format!("/home/me/{}", id.code())),
-                codex_daemon: None,
             })
             .collect(),
         agents: Vec::new(),
         held_for_onboarding: false,
         labels_retirement: Default::default(),
         legacy_retirement: Default::default(),
+        codex_daemon: None,
+        codex_daemon_on: None,
+        codex_daemon_off: None,
     }
 }
 
-fn dispatch(shared: &Mutex<Runtime>, kind: &str, payload: serde_json::Value) {
+/// Dispatches one event and answers whether the core would announce a change
+/// to the shell for it.
+fn dispatch(shared: &Mutex<Runtime>, kind: &str, payload: serde_json::Value) -> bool {
     let event =
         serde_json::json!({"schema_version": SCHEMA_VERSION, "kind": kind, "payload": payload});
     shared
         .lock()
         .unwrap()
-        .dispatch_json(&serde_json::to_vec(&event).unwrap());
+        .dispatch_json(&serde_json::to_vec(&event).unwrap())
 }
 
 /// A registered device with the given consent, optionally connected to
@@ -286,9 +290,9 @@ fn reinstall_on_a_device_retries_failed_retirement_and_restores_removed_hooks() 
                 ComponentId::ClaudeCodeHook,
                 ComponentId::CoordinationRetirement
             ],
-            turn_off: Vec::new(),
             agents_on: Vec::new(),
             agents_off: Vec::new(),
+            codex_daemon_off: false,
         }
     );
 }
@@ -309,8 +313,10 @@ fn agent_report(
         label: id.to_owned(),
         availability,
         enabled,
+        chosen: false,
         skill: piece(skill),
         hook: None,
+        herdr: None,
         doc_url: "https://example.test/skills".to_owned(),
     }
 }
@@ -325,7 +331,7 @@ fn an_agent_switch_on_a_device_sends_the_agent_and_repeats_nothing() {
     let mut answer = report(&[(ComponentId::Cli, ComponentState::Installed)]);
     answer.agents = vec![
         agent_report("gemini-cli", Available, false, ComponentState::Off),
-        agent_report("qwen-code", NotInstalled, false, ComponentState::Off),
+        agent_report("grok", NotInstalled, false, ComponentState::Off),
         agent_report("codex", Available, true, ComponentState::Removed),
     ];
     let helper = KitDevice::answering(Ok(answer));
@@ -351,7 +357,7 @@ fn an_agent_switch_on_a_device_sends_the_agent_and_repeats_nothing() {
     dispatch(
         &shared,
         "kit_agent_set",
-        serde_json::json!({ "device_id": DEVICE, "agent": "qwen-code", "enabled": true }),
+        serde_json::json!({ "device_id": DEVICE, "agent": "grok", "enabled": true }),
     );
     dispatch(
         &shared,
@@ -369,9 +375,9 @@ fn an_agent_switch_on_a_device_sends_the_agent_and_repeats_nothing() {
     let actions: Vec<KitAction> = helper.calls().into_iter().map(|call| call.0).collect();
     let agents = |on: &[&str]| KitAction::Reinstall {
         components: Vec::new(),
-        turn_off: Vec::new(),
         agents_on: on.iter().map(|id| (*id).to_owned()).collect(),
         agents_off: Vec::new(),
+        codex_daemon_off: false,
     };
     assert_eq!(
         actions,
@@ -384,6 +390,39 @@ fn an_agent_switch_on_a_device_sends_the_agent_and_repeats_nothing() {
         ],
         "{actions:?}"
     );
+}
+
+/// PRD settings-cleanup D-13: a device's Herdr integration for an agent is a
+/// piece of that agent's row, a failed one offers Reinstall for that agent
+/// alone, and an agent without one (Gemini CLI) carries none.
+#[test]
+fn a_failed_herdr_integration_shows_on_its_agent_and_offers_reinstall() {
+    use hide_kit::Availability::Available;
+    let mut pi = agent_report("pi", Available, true, ComponentState::Installed);
+    pi.herdr = Some(hide_kit::PieceReport {
+        state: ComponentState::Failed,
+        reason: Some("`herdr integration install pi` failed: disk full".to_owned()),
+        location: Some("/home/me/.pi/agent".to_owned()),
+    });
+    let gemini = agent_report("gemini-cli", Available, true, ComponentState::Installed);
+    let mut answer = report(&[(ComponentId::Cli, ComponentState::Installed)]);
+    answer.agents = vec![pi, gemini];
+    let shared = with_consent(Some(KitDevice::answering(Ok(answer))));
+    shared
+        .lock()
+        .unwrap()
+        .queue_device_kit(DEVICE, KitJob::Status);
+    settle(&shared);
+
+    let kit = kit(&shared);
+
+    let piece = kit.agents[0].herdr.as_ref().expect("pi has an integration");
+    assert_eq!(piece.state, ComponentState::Failed);
+    assert!(piece.reason.as_deref().unwrap().contains("disk full"));
+    assert!(kit.agents[0].needs_attention());
+    assert!(kit.agents[1].herdr.is_none());
+    assert!(!kit.agents[1].needs_attention());
+    assert!(kit.offers_reinstall);
 }
 
 /// A pass that ran: it lists the agents, which a refused or failed pass never does.
@@ -455,9 +494,9 @@ fn the_first_run_choice_is_asked_once_applied_everywhere_and_remembered_for_late
         device_calls,
         vec![KitAction::Reinstall {
             components: Vec::new(),
-            turn_off: Vec::new(),
             agents_on: vec!["claude-code".to_owned(), "codex".to_owned()],
             agents_off: Vec::new(),
+            codex_daemon_off: false,
         }]
     );
     let local = shared.lock().unwrap().local_kit_pending.clone().unwrap();
@@ -887,6 +926,58 @@ fn a_failed_kit_call_on_an_unread_device_says_why() {
     );
 }
 
+/// B10: Check again shows a read under way until an answer lands, and the
+/// core announces that flip so the shell pulls it before the answer; an answer
+/// that is a failure leaves the report the device last gave and says only a
+/// code, and the next read that lands clears it.
+#[test]
+fn check_again_shows_a_read_under_way_and_a_failed_one_as_a_code_beside_the_last_report() {
+    let (helper, release) =
+        KitDevice::held(Ok(report(&[(ComponentId::Cli, ComponentState::Installed)])));
+    let shared = with_consent(Some(Arc::clone(&helper)));
+    let announced = dispatch(&shared, "kit_check", serde_json::json!({}));
+    assert!(
+        announced,
+        "the shell pulls a snapshot only when the core announces one, so the flip must be announced"
+    );
+    let queued = kit(&shared);
+    assert!(queued.checking, "the read is queued");
+    assert_eq!(serde_json::to_value(&queued).unwrap()["checking"], true);
+    wait_for("the device read to start", || !helper.calls().is_empty());
+    assert!(kit(&shared).checking, "the read is still under way");
+    release.send(()).unwrap();
+    settle(&shared);
+    let read = kit(&shared);
+    assert!(!read.checking && read.check_failed.is_none(), "{read:?}");
+    assert_eq!(read.components.len(), 1);
+
+    *helper.answer.lock().unwrap() = Err("The device did not answer in time".to_owned());
+    dispatch(&shared, "kit_check", serde_json::json!({}));
+    settle(&shared);
+    let failed = kit(&shared);
+    assert!(!failed.checking, "{failed:?}");
+    assert_eq!(
+        failed.check_failed,
+        Some(crate::model::KitCheckFailure::ReadFailed)
+    );
+    assert_eq!(failed.components, read.components, "the last report stays");
+    assert!(
+        failed.unavailable.is_none(),
+        "a list exists, so no blanket reason"
+    );
+    let wire = serde_json::to_value(&failed).unwrap();
+    assert_eq!(wire["check_failed"], "read_failed");
+    assert!(
+        !wire.to_string().contains("did not answer"),
+        "words stay in the log"
+    );
+
+    *helper.answer.lock().unwrap() = Ok(report(&[(ComponentId::Cli, ComponentState::Installed)]));
+    dispatch(&shared, "kit_check", serde_json::json!({}));
+    settle(&shared);
+    assert!(kit(&shared).check_failed.is_none());
+}
+
 fn registered(shared: &Mutex<Runtime>) -> bool {
     shared
         .lock()
@@ -1260,5 +1351,122 @@ fn an_existing_macs_agents_become_the_saved_choice_a_later_device_receives() {
             .map(String::as_str)
             .collect::<Vec<_>>(),
         ["claude-code", "codex"]
+    );
+}
+
+fn with_daemon(on: bool) -> KitReport {
+    let mut answer = report(&[(ComponentId::Cli, ComponentState::Installed)]);
+    answer.codex_daemon = Some(true);
+    answer.codex_daemon_on = Some(on);
+    answer
+}
+
+/// B27: Turn off Codex's shared server on a device rides one `reinstall`
+/// call to its helper, is pending until that call answers, and the answer
+/// is what the pane's popover shows; a second request while it runs is the
+/// same intent and a machine already off has nothing to turn off.
+#[test]
+fn turning_a_devices_codex_shared_server_off_is_one_helper_call_with_its_own_answer() {
+    let helper = KitDevice::answering(Ok(with_daemon(true)));
+    let shared = with_consent(Some(Arc::clone(&helper)));
+    shared
+        .lock()
+        .unwrap()
+        .queue_device_kit(DEVICE, KitJob::Status);
+    settle(&shared);
+    assert_eq!(kit(&shared).codex_daemon_on, Some(true));
+
+    let mut done = with_daemon(false);
+    done.codex_daemon_off = Some(hide_kit::CodexDaemonOff::Done);
+    *helper.answer.lock().unwrap() = Ok(done);
+    dispatch(
+        &shared,
+        "codex_daemon_disable",
+        serde_json::json!({ "device_id": DEVICE }),
+    );
+    assert_eq!(
+        kit(&shared).codex_daemon_off,
+        Some(crate::model::CodexDaemonOffSnapshot::Pending)
+    );
+    settle(&shared);
+
+    let calls = helper.calls();
+    assert_eq!(calls.len(), 2, "{calls:?}");
+    assert_eq!(
+        calls[1].0,
+        KitAction::Reinstall {
+            components: Vec::new(),
+            agents_on: Vec::new(),
+            agents_off: Vec::new(),
+            codex_daemon_off: true,
+        }
+    );
+    let after = kit(&shared);
+    assert_eq!(
+        after.codex_daemon_off,
+        Some(crate::model::CodexDaemonOffSnapshot::Done)
+    );
+    assert_eq!(after.codex_daemon_on, Some(false));
+
+    // Already off: nothing to turn off, so no second call.
+    dispatch(
+        &shared,
+        "codex_daemon_disable",
+        serde_json::json!({ "device_id": DEVICE }),
+    );
+    settle(&shared);
+    assert_eq!(helper.calls().len(), 2);
+}
+
+#[test]
+fn a_refused_or_unanswered_request_ends_as_a_code_and_a_later_read_does_not_erase_it() {
+    let helper = KitDevice::answering(Ok(with_daemon(true)));
+    let shared = with_consent(Some(Arc::clone(&helper)));
+    shared
+        .lock()
+        .unwrap()
+        .queue_device_kit(DEVICE, KitJob::Status);
+    settle(&shared);
+
+    let mut refused = with_daemon(true);
+    refused.codex_daemon_off = Some(hide_kit::CodexDaemonOff::Failed {
+        reason: hide_kit::CodexDaemonOffFailure::CodexRefused,
+        detail: "config.toml is locked".to_owned(),
+    });
+    *helper.answer.lock().unwrap() = Ok(refused);
+    dispatch(
+        &shared,
+        "codex_daemon_disable",
+        serde_json::json!({ "device_id": DEVICE }),
+    );
+    settle(&shared);
+    let failed = crate::model::CodexDaemonOffSnapshot::Failed {
+        reason: hide_kit::CodexDaemonOffFailure::CodexRefused,
+    };
+    assert_eq!(kit(&shared).codex_daemon_off, Some(failed));
+    assert_eq!(kit(&shared).codex_daemon_on, Some(true), "left as it was");
+
+    // A plain read says nothing about the request, so it keeps the answer.
+    *helper.answer.lock().unwrap() = Ok(with_daemon(true));
+    shared
+        .lock()
+        .unwrap()
+        .queue_device_kit(DEVICE, KitJob::Status);
+    settle(&shared);
+    assert_eq!(kit(&shared).codex_daemon_off, Some(failed));
+
+    // A call that never ran to a report is the machine not being reachable.
+    *helper.answer.lock().unwrap() = Err("the helper went away".to_owned());
+    dispatch(
+        &shared,
+        "codex_daemon_disable",
+        serde_json::json!({ "device_id": DEVICE }),
+    );
+    settle(&shared);
+    assert_eq!(
+        kit(&shared).codex_daemon_off,
+        Some(crate::model::CodexDaemonOffSnapshot::Failed {
+            reason: hide_kit::CodexDaemonOffFailure::Unreachable
+        })
     );
 }

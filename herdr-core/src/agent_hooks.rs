@@ -69,6 +69,14 @@ pub fn runtime_of(agent_kind: &str) -> Option<AgentRuntime> {
     }
 }
 
+/// The kit adapter whose switch governs `runtime`'s hook.
+pub fn adapter_id(runtime: AgentRuntime) -> &'static str {
+    match runtime {
+        AgentRuntime::ClaudeCode => "claude-code",
+        AgentRuntime::Codex => "codex",
+    }
+}
+
 /// The prefix every pane id on a remote target carries.
 ///
 /// It is the same rule the read-record ledger scopes itself by. A remote pane
@@ -172,7 +180,6 @@ mod tests {
                 state,
                 reason: None,
                 location: None,
-                codex_daemon: None,
             }],
             ..Default::default()
         };
@@ -192,6 +199,20 @@ mod tests {
             ),
             Some(hide_agent_hooks::HookStatus::NotInstalled)
         );
+    }
+
+    #[test]
+    fn each_runtime_names_the_kit_adapter_whose_switch_governs_its_hook() {
+        for runtime in AgentRuntime::ALL {
+            let adapter = hide_kit::agents::adapter(adapter_id(runtime)).unwrap();
+            assert_eq!(
+                adapter.hook,
+                hide_kit::HookSupport::Part(match runtime {
+                    AgentRuntime::ClaudeCode => hide_kit::ComponentId::ClaudeCodeHook,
+                    AgentRuntime::Codex => hide_kit::ComponentId::CodexHook,
+                })
+            );
+        }
     }
 
     #[test]

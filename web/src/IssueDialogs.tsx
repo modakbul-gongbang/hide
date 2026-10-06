@@ -21,6 +21,7 @@ import { Note, Status } from "./components/settings-rows";
 import { defaultWorktreeName, firstPrompt, namePrefix } from "./issueStart";
 import { cn } from "./lib/utils";
 import type { IssueSettings, Task, Workspace } from "./snapshot";
+import { hideAiCanAnswer } from "./hideAi";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 import { branchProblem, taskFor } from "./workspaceManage";
@@ -216,6 +217,9 @@ function NameNote({
 export function StartIssueDialog({ actions, workspace, task, onClose }: { actions: Actions; workspace: Workspace; task: Task; onClose: () => void }) {
   const { t } = useInterfaceTranslation();
   const settings = useShellStore((s) => s.rest?.ui_state?.issue_settings) ?? DEFAULT_SETTINGS;
+  const hideAi = useShellStore((s) => s.rest?.status?.background_ai);
+  // The AI names the worktree only when it is on and something can answer; otherwise the dialog keeps its default name and does not wait.
+  const aiNames = settings.ai_worktree_name && hideAiCanAnswer(hideAi);
   const git = workspace.is_git === true;
   const branches = workspace.branches ?? [];
   const requestId = useMemo(() => `start-${task.key}-${Date.now()}`, [task.key]);
@@ -245,10 +249,10 @@ export function StartIssueDialog({ actions, workspace, task, onClose }: { action
   }, [bodyKnown, detail?.body, task, settings.closes_instruction, t]);
   // The AI names the worktree once the body is known, so the name can use it.
   useEffect(() => {
-    if (!git || !settings.ai_worktree_name || !bodyKnown || asked.current) return;
+    if (!git || !aiNames || !bodyKnown || asked.current) return;
     asked.current = true;
     actions.suggestWorktreeName(requestId, namePrefix(task), task.title, detail?.body ?? "");
-  }, [actions, git, settings.ai_worktree_name, bodyKnown, detail?.body, requestId, task]);
+  }, [actions, git, aiNames, bodyKnown, detail?.body, requestId, task]);
   useEffect(() => {
     if (nameAnswer?.phase === "ready" && nameAnswer.name && !edited) setName(nameAnswer.name);
   }, [nameAnswer, edited]);
@@ -315,7 +319,7 @@ export function StartIssueDialog({ actions, workspace, task, onClose }: { action
                   label={t("issue.worktreeBranch")}
                   aside={
                     <NameNote
-                      ai={settings.ai_worktree_name}
+                      ai={aiNames}
                       answer={nameAnswer}
                       edited={edited}
                       onRestore={() => {

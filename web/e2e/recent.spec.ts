@@ -56,7 +56,6 @@ test("Recent Panels crosses checkouts onto a display and a tab; Recent Projects 
     await page.locator('[data-settings-tab="shortcuts"]').click();
     await page.locator('[data-shortcut-record="recent_panel"]').click();
     await page.keyboard.press("Alt+KeyG");
-    await page.locator('[data-shortcut-apply="recent_panel"]').click();
     await expect(page.locator('[data-shortcut-effective="recent_panel"]')).toHaveText(label({ code: "KeyG", alt: true }));
     await page.keyboard.press("Escape");
 

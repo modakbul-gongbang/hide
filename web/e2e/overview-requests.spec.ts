@@ -263,7 +263,7 @@ test("the request view: what each agent was asked, what came of it, and what is 
     // session's own or the provider's, and the request stays as written.
     const summary = async (on: boolean) => {
       await page.keyboard.press(chord("settings"));
-      await page.locator('[data-settings-tab="agents"]').click();
+      await page.locator('[data-settings-tab="hideAi"]').click();
       const toggle = page.locator("[data-ai-agent-summary]");
       await expect(toggle).toHaveAttribute("data-ai-agent-summary", String(!on));
       await toggle.click();

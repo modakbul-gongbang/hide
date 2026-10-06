@@ -389,44 +389,7 @@ pub fn find_binary(name: &str, home: &Path) -> Option<PathBuf> {
 /// (pnpm's `codex` is a shell script that runs `node`), so a CLI found here
 /// is run with this value, never with the daemon's `PATH` alone.
 pub fn cli_path(home: &Path) -> Option<OsString> {
-    cli_path_with(home, None)
-}
-
-/// [`cli_path`] with the folders the account's login shell puts on its
-/// `PATH` in front, in the shell's order, which is the order the operator's
-/// terminal searches: an installer that adds its own folder in `~/.zshrc`
-/// (`~/.grok/bin`, `~/.kilo/bin`, `~/.opencode/bin`) reaches no other place
-/// this search looks. Asking the shell is a subprocess with a deadline, so
-/// only the install kit asks (`hide_platform::host::login_shell_path`) and
-/// hands the answer in here; a folder named twice is searched once.
-pub fn cli_path_with(home: &Path, shell_path: Option<&OsStr>) -> Option<OsString> {
-    let inherited = hide_platform::host::login_path().unwrap_or_else(|_| "/usr/bin:/bin".into());
-    let mut seen = std::collections::HashSet::new();
-    let shell = shell_path.map(std::env::split_paths).into_iter().flatten();
-    std::env::join_paths(
-        shell
-            .chain(std::env::split_paths(&inherited))
-            .chain(usual_install_folders(home))
-            .filter(|folder| seen.insert(folder.clone())),
-    )
-    .ok()
-}
-
-/// The folders installers put a CLI in that a daemon's `PATH` may not reach.
-fn usual_install_folders(home: &Path) -> [PathBuf; 8] {
-    [
-        home.join(".local/bin"),
-        // pnpm's global bin folder: `$PNPM_HOME` up to pnpm 10 and
-        // `$PNPM_HOME/bin` from pnpm 11, with `$PNPM_HOME` defaulting to
-        // `~/Library/pnpm` on macOS and `~/.local/share/pnpm` on Linux.
-        home.join("Library/pnpm"),
-        home.join("Library/pnpm/bin"),
-        home.join(".local/share/pnpm"),
-        home.join(".local/share/pnpm/bin"),
-        home.join(".npm-global/bin"),
-        PathBuf::from("/opt/homebrew/bin"),
-        PathBuf::from("/usr/local/bin"),
-    ]
+    hide_platform::programs::cli_path_with(home, None)
 }
 
 /// The version a program reports for `--version`, run with `path` (the

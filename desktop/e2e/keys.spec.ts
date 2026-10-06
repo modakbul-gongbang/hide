@@ -102,10 +102,12 @@ test("pane chords: the macOS app's set comes across, runs once, and Settings edi
   await page.locator("[data-open-settings]").click();
   await page.locator('[data-settings-tab="shortcuts"]').click();
   await expect(page.locator('[data-shortcut-effective="toggle_zoom"]')).toHaveText("⇧⌘↩");
+  // The numbered chords are fixed, and each row says which key to hold to see its numbers.
+  const fixed = page.locator('[data-settings-group="numbered-chords"]');
+  await expect(fixed).toContainText("Hold ⌘ to see the numbers");
+  await expect(fixed).toContainText("Hold ⌥ to see the numbers");
   await page.locator('[data-shortcut-record="split_right"]').click();
   await page.keyboard.press("Meta+Alt+KeyR");
-  await expect(page.locator('[data-shortcut-draft="split_right"]')).toHaveText("⌥⌘R");
-  await page.locator('[data-shortcut-apply="split_right"]').click();
   await expect(page.locator('[data-shortcut-effective="split_right"]')).toHaveText("⌥⌘R");
   const saved = lastSent.get("ui_state_update")?.shortcut_bindings as Record<string, string> | undefined;
   expect(saved).toMatchObject({ split_right: "command+option+r", toggle_zoom: "command+shift+return" });

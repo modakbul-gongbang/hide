@@ -87,7 +87,7 @@ async function capture(page: Page, app: ElectronApplication, name: string): Prom
   const source = await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.getMediaSourceId());
   for (const theme of ["dark", "light"] as const) {
     await page.locator("[data-open-settings]").click();
-    await page.locator('[data-settings-tab="appearance"]').click();
+    await page.locator('[data-settings-tab="general"]').click();
     await page.locator(`[data-theme-option="${theme}"]`).click();
     await expect(page.locator("html")).toHaveClass(new RegExp(`\\b${theme}\\b`));
     await page.keyboard.press("Escape");

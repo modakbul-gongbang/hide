@@ -121,7 +121,7 @@ test("⌘K lists results by kind with a detail beside them, and the sidebar Sear
     // Light: the same palette on the Light tokens. Opening the agent put its
     // Workspace on screen, so an empty ⌘K lists what is connected to it.
     await page.keyboard.press(chord("settings"));
-    await page.locator('[data-settings-tab="appearance"]').click();
+    await page.locator('[data-settings-tab="general"]').click();
     await page.locator('[data-theme-option="light"]').click();
     await expect(page.locator("html")).toHaveClass(/(^|\s)light(\s|$)/);
     await page.keyboard.press("Escape");

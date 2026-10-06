@@ -97,6 +97,12 @@ impl Record {
         self.agents.insert(id.to_owned(), on) != Some(on)
     }
 
+    /// Drops the choice recorded for an agent Hide no longer knows; true when
+    /// there was one.
+    pub(crate) fn forget_agent_choice(&mut self, id: &str) -> bool {
+        self.agents.remove(id).is_some()
+    }
+
     pub(crate) fn owns_cli(&self, destination: &Path) -> bool {
         self.cli_destination.as_deref().is_some_and(|known| {
             known == destination

@@ -3,13 +3,23 @@
 // a state or note line. They mirror the native HideSettingsGroup/Row so a web
 // sheet reads like the one it replaces; the controls inside are System parts.
 
+import { ChevronRightIcon } from "lucide-react";
 import type { ReactNode } from "react";
+import { cn } from "../lib/utils";
 
-/** A titled card whose rows are separated by hairlines, like `HideSettingsGroup`. */
-export function Group({ title, note, children, ...data }: { title: string; note?: ReactNode; children: ReactNode } & Record<`data-${string}`, string>) {
+/**
+ * A card whose rows are separated by hairlines, like `HideSettingsGroup`; titled unless it stands alone, like the Hide AI switch.
+ * An `action` sits at the title's right edge, for the one button that adds to the list below (Add device).
+ */
+export function Group({ title, note, action, children, ...data }: { title?: string; note?: ReactNode; action?: ReactNode; children: ReactNode } & Record<`data-${string}`, string>) {
   return (
     <section className="mb-lg" {...data}>
-      <h3 className="mb-sm text-body font-semibold text-subtle-foreground">{title}</h3>
+      {title || action ? (
+        <div className="mb-sm flex items-center justify-between gap-md">
+          {title ? <h3 className="text-body font-semibold text-subtle-foreground">{title}</h3> : <span />}
+          {action}
+        </div>
+      ) : null}
       <div className="divide-y divide-border rounded-md border border-border bg-card">{children}</div>
       {note ? <p className="mt-sm text-body text-muted-foreground">{note}</p> : null}
     </section>
@@ -17,9 +27,9 @@ export function Group({ title, note, children, ...data }: { title: string; note?
 }
 
 /** One row: its label on the left, whatever the row is about on the right; wraps on a narrow sheet. */
-export function Row({ label, children, detail }: { label: ReactNode; children?: ReactNode; detail?: ReactNode }) {
+export function Row({ label, children, detail, className, ...data }: { label: ReactNode; children?: ReactNode; detail?: ReactNode; className?: string } & Record<`data-${string}`, string>) {
   return (
-    <div className="px-md py-sm">
+    <div className={cn("px-md py-sm", className)} {...data}>
       <div className="flex flex-wrap items-center gap-x-md gap-y-xs">
         <div className="min-w-[min(100%,var(--size-settings-control-w))] flex-1 text-subhead text-foreground">{label}</div>
         {children ? <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-sm">{children}</div> : null}
@@ -29,9 +39,32 @@ export function Row({ label, children, detail }: { label: ReactNode; children?: 
   );
 }
 
+/**
+ * A folded list inside a group: one summary row that names what is inside and
+ * says how much of it matters, with the rows below when opened (design 8, 9).
+ * A native `details`, so the keyboard, the expanded state and the screen
+ * reader announcement come with it; the rows stay hidden until it is opened.
+ */
+export function Disclosure({ title, summary, children, ...data }: { title: ReactNode; summary?: ReactNode; children: ReactNode } & Record<`data-${string}`, string>) {
+  return (
+    <details className="group/fold" {...data}>
+      <summary className="flex cursor-pointer list-none items-center gap-x-sm px-md py-sm text-subhead text-foreground outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+        <ChevronRightIcon aria-hidden="true" className="size-(--size-icon) shrink-0 text-muted-foreground transition-transform group-open/fold:rotate-90" />
+        <span className="min-w-0 flex-1">{title}</span>
+        {summary ? <span className="min-w-0 text-body text-muted-foreground">{summary}</span> : null}
+      </summary>
+      <div className="divide-y divide-border border-t border-border">{children}</div>
+    </details>
+  );
+}
+
 /** A value a row reports; long paths break anywhere rather than overflow the sheet. */
-export function Value({ children, mono = true }: { children: ReactNode; mono?: boolean }) {
-  return <span className={`min-w-0 break-all text-right text-body text-subtle-foreground ${mono ? "font-mono" : ""}`}>{children}</span>;
+export function Value({ children, mono = true, ...data }: { children: ReactNode; mono?: boolean } & Record<`data-${string}`, string>) {
+  return (
+    <span className={`min-w-0 break-all text-right text-body text-subtle-foreground ${mono ? "font-mono" : ""}`} {...data}>
+      {children}
+    </span>
+  );
 }
 
 export type Tone = "ok" | "warn" | "error" | "pending" | "local" | "muted";
@@ -62,7 +95,7 @@ export function Status({ tone, children, ...data }: { tone: Tone; children: Reac
 /** One line a row carries about itself: a failure, a warning, or what happens next. */
 export function Note({ tone = "muted", children, ...data }: { tone?: Tone; children: ReactNode } & Record<`data-${string}`, string>) {
   return (
-    <p role={tone === "error" ? "alert" : undefined} className={`break-words text-body ${TONE_TEXT[tone]}`} {...data}>
+    <p role={tone === "error" ? "alert" : undefined} className={`break-words break-keep text-body ${TONE_TEXT[tone]}`} {...data}>
       {children}
     </p>
   );

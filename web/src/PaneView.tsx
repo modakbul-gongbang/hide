@@ -7,6 +7,7 @@ import { AgentMark } from "./AgentMark";
 import { StatusMark } from "./components/status-mark";
 import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
+import { PaneConnectionChip } from "./PaneConnection";
 import { ChildChipRow, ReturnToParent, usePaneMenu, type TerminalMenuContext } from "./PaneRelations";
 import { chordLabel, commandLabel } from "./shortcutLabels";
 import { keySystem } from "./host";
@@ -300,6 +301,7 @@ export const PaneView = memo(function PaneView({
           {title}
         </span>
         </Hint>
+        <PaneConnectionChip pane={pane} actions={actions} local={local} />
         {zoomed ? (
           <Hint label={zoomChord ? t("panes.unzoomChord", { chord: zoomChord }) : t("panes.unzoom")}>
             <Button

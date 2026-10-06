@@ -222,10 +222,10 @@ export const REGISTRY: readonly Command[] = [
   ...numberedEntries(NUMBERED_FAMILIES[0]!),
   { id: "new_workspace", title: "Add project", group: "Navigate", browser: null, electron: { code: "KeyN", meta: true, shift: true }, moved: false },
   { id: "start_agent", title: "Start agent", group: "Navigate", browser: null, electron: { code: "KeyN", meta: true }, moved: false },
-  { id: "recent_area_tab", title: "Next recent Agent pane or View tab", group: "Navigate", browser: { code: "Backquote", alt: true }, electron: { code: "Tab", ctrl: true }, moved: true },
-  { id: "previous_recent_area_tab", title: "Previous recent Agent pane or View tab", group: "Navigate", browser: { code: "Backquote", alt: true, shift: true }, electron: { code: "Tab", ctrl: true, shift: true }, moved: true },
-  { id: "recent_panel", title: "Next global recent panel", group: "Navigate", browser: null, electron: null, moved: false },
-  { id: "previous_recent_panel", title: "Previous global recent panel", group: "Navigate", browser: null, electron: null, moved: false },
+  { id: "recent_area_tab", title: "Next recent tab", group: "Navigate", browser: { code: "Backquote", alt: true }, electron: { code: "Tab", ctrl: true }, moved: true },
+  { id: "previous_recent_area_tab", title: "Previous recent tab", group: "Navigate", browser: { code: "Backquote", alt: true, shift: true }, electron: { code: "Tab", ctrl: true, shift: true }, moved: true },
+  { id: "recent_panel", title: "Next panel (all projects)", group: "Navigate", browser: null, electron: null, moved: false },
+  { id: "previous_recent_panel", title: "Previous panel (all projects)", group: "Navigate", browser: null, electron: null, moved: false },
   { id: "recent_project", title: "Next recent project", group: "Navigate", browser: { code: "Tab", alt: true }, electron: { code: "Tab", alt: true }, moved: false },
   { id: "previous_recent_project", title: "Previous recent project", group: "Navigate", browser: { code: "Tab", alt: true, shift: true }, electron: { code: "Tab", alt: true, shift: true }, moved: false },
   ...numberedEntries(NUMBERED_FAMILIES[1]!),
@@ -716,6 +716,14 @@ export function displayChord(chord: Chord, system: KeySystem): string {
     return [chord.ctrl && "Ctrl", chord.alt && "Alt", chord.shift && "Shift", chord.meta && "Win", keyName(chord.code, PC_NAMES)].filter(Boolean).join("+");
   }
   return `${chord.ctrl ? "⌃" : ""}${chord.alt ? "⌥" : ""}${chord.shift ? "⇧" : ""}${chord.meta ? "⌘" : ""}${keyName(chord.code, MAC_GLYPHS)}`;
+}
+
+/** The modifiers alone as `system` presses them ("⌘", "Ctrl+Shift"): what a hold hint asks the operator to hold. */
+export function modifierLabel(modifiers: Omit<Chord, "code">, system: KeySystem): string {
+  if (system === "pc") {
+    return [modifiers.ctrl && "Ctrl", modifiers.alt && "Alt", modifiers.shift && "Shift", modifiers.meta && "Win"].filter(Boolean).join("+");
+  }
+  return `${modifiers.ctrl ? "⌃" : ""}${modifiers.alt ? "⌥" : ""}${modifiers.shift ? "⇧" : ""}${modifiers.meta ? "⌘" : ""}`;
 }
 
 /** A command's chord on `host` in `registry` (the keys `system` presses) as the operator reads it, or "" when it has none. */

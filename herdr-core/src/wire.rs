@@ -188,6 +188,7 @@ fn convert_snapshot(snapshot: res::SessionSnapshot) -> ProjectionState {
         panes: snapshot.panes.into_iter().map(Into::into).collect(),
         layouts: snapshot.layouts.into_iter().map(Into::into).collect(),
         agents: snapshot.agents.into_iter().map(Into::into).collect(),
+        herdr_version: Some(snapshot.version),
     }
 }
 
