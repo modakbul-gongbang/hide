@@ -1437,6 +1437,38 @@ fn pause_resume_cancel_and_revive_keep_the_same_worker_and_pull_request() {
 }
 
 #[test]
+fn judgment_bodies_and_letters_are_kept_with_their_task() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let t = h.ready("Kept", &[]);
+    h.engine.letter(Inbound {
+        id: "letter-9".into(),
+        factory: f.clone(),
+        sender_pane: h.task(&f, &t).worker.unwrap().pane.unwrap(),
+        kind: "request".into(),
+        body: "Factory: which name? please".into(),
+    });
+    let kinds: Vec<(String, String)> = h
+        .engine
+        .records(&f, &t, 50)
+        .into_iter()
+        .map(|r| (r.kind, r.reference))
+        .collect();
+    assert!(
+        kinds.iter().any(|(k, _)| k == "judgment.input"),
+        "{kinds:?}"
+    );
+    assert!(
+        kinds.iter().any(|(k, _)| k == "judgment.output"),
+        "{kinds:?}"
+    );
+    assert!(
+        kinds.contains(&("letter.in".into(), "letter-9".into())),
+        "{kinds:?}"
+    );
+}
+
+#[test]
 fn a_cancelled_task_leaves_no_question_for_a_person_or_a_deadline() {
     let mut h = Bench::new(false);
     let f = h.factory(true);

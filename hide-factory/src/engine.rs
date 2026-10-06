@@ -19,7 +19,7 @@ use crate::dag;
 use crate::judgment::{self, Judgment, JudgmentInput, JudgmentOutcome, OtherTask, Priority};
 use crate::model::*;
 use crate::role::{ROLE_NOT_ALLOWED, Role};
-use crate::store::{Event, Store, StoreError, sha256_hex};
+use crate::store::{Event, Record, Store, StoreError, sha256_hex};
 use crate::summary::{self, FactorySummary};
 
 /// The world the engine acts on.
@@ -343,6 +343,39 @@ impl Engine {
         };
         // A failed diagnostic write never changes a decision.
         let _ = self.store.append_event(&event);
+    }
+
+    /// Keeps a judgment or letter body with its Task (D-58); like an event,
+    /// a failed write never changes a decision.
+    fn keep(&self, factory: &str, task: Option<&str>, kind: &str, reference: &str, body: &str) {
+        let record = Record {
+            factory: factory.to_owned(),
+            task: task.map(str::to_owned),
+            at: self.now(),
+            kind: kind.to_owned(),
+            reference: reference.to_owned(),
+            body: body.to_owned(),
+        };
+        if let Err(error) = self.store.keep_record(&record) {
+            self.record(
+                factory,
+                task,
+                "store.failed",
+                json!({"stage": "record", "error": error.0}),
+            );
+        }
+    }
+
+    /// Every judgment's input is kept before it is queued (D-58).
+    fn submit_judgment(&mut self, judgment: Judgment) -> Result<(), Failure> {
+        self.keep(
+            &judgment.factory,
+            judgment.task.as_deref(),
+            "judgment.input",
+            &judgment.id,
+            &judgment.render_input(),
+        );
+        self.ports.judge.submit(judgment)
     }
 
     fn save_factory(&mut self, id: &str) {
@@ -1543,7 +1576,7 @@ impl Engine {
         self.with_task(factory, id, |task| {
             task.review = ReviewState::Requested { at: now }
         });
-        match self.ports.judge.submit(judgment) {
+        match self.submit_judgment(judgment) {
             Ok(()) => {
                 self.judgments.insert(
                     judgment_id,
@@ -1565,7 +1598,7 @@ impl Engine {
                     diff: None,
                 },
             };
-            if self.ports.judge.submit(judgment).is_ok() {
+            if self.submit_judgment(judgment).is_ok() {
                 self.judgments.insert(
                     check_id,
                     (factory.to_owned(), Some(id.to_owned()), Purpose::Check),
@@ -2464,7 +2497,7 @@ impl Engine {
                 decisions,
             },
         };
-        match self.ports.judge.submit(drift.clone()) {
+        match self.submit_judgment(drift.clone()) {
             Ok(()) => {
                 self.judgments.insert(
                     drift.id,
@@ -2492,7 +2525,7 @@ impl Engine {
                     diff: Some(diff.clone()),
                 },
             };
-            match self.ports.judge.submit(judgment.clone()) {
+            match self.submit_judgment(judgment.clone()) {
                 Ok(()) => {
                     self.judgments.insert(
                         judgment.id,
@@ -3284,6 +3317,7 @@ impl Engine {
         let Some(worker) = self.task(factory, id).and_then(|t| t.worker.clone()) else {
             return;
         };
+        self.keep(factory, Some(id), "letter.out", "wake", body);
         let result = if worker.asleep {
             self.ports.workers.wake(&worker, body)
         } else {
@@ -3318,6 +3352,13 @@ impl Engine {
             return;
         }
         let intent = format!("factory-{id}-reply-{}", self.now());
+        self.keep(
+            factory,
+            Some(id),
+            "letter.out",
+            letter.unwrap_or(&intent),
+            body,
+        );
         if let Err(failure) = self.ports.workers.message(&worker, &intent, letter, body) {
             self.external_failure(factory, Some(id), &failure);
         }
@@ -3668,6 +3709,11 @@ impl Engine {
         Ok(serde_json::to_value(&summary).unwrap_or_default())
     }
 
+    /// A Task's kept judgment and letter bodies, oldest first (D-58).
+    pub fn records(&self, factory: &str, id: &str, limit: usize) -> Vec<Record> {
+        self.store.records(factory, id, limit).unwrap_or_default()
+    }
+
     pub fn show(&self, factory: &str, id: &str) -> Option<summary::TaskDetail> {
         let factory = self.factories.get(factory)?;
         let tasks = self.tasks.get(&factory.id)?;
@@ -3712,6 +3758,7 @@ impl Engine {
             )
             .to_json();
         }
+        self.keep(&factory, Some(&task), "letter.in", &letter.id, &letter.body);
         let role = Role::Worker {
             factory: factory.clone(),
             task: task.clone(),
@@ -3851,6 +3898,17 @@ impl Engine {
             let Some((factory, task, purpose)) = self.judgments.remove(&answer.id) else {
                 continue;
             };
+            let output = match &answer.outcome {
+                JudgmentOutcome::Answered { value } => value.to_string(),
+                JudgmentOutcome::Failed { reason } => json!({"failed": reason}).to_string(),
+            };
+            self.keep(
+                &factory,
+                task.as_deref(),
+                "judgment.output",
+                &answer.id,
+                &output,
+            );
             match (&answer.outcome, purpose, task) {
                 (JudgmentOutcome::Answered { value }, Purpose::Intake, Some(task)) => {
                     self.apply_intake(&factory, &task, value)
@@ -4890,7 +4948,7 @@ impl Engine {
                 actions: RecoveryAction::ALL.to_vec(),
             },
         };
-        if self.ports.judge.submit(judgment.clone()).is_ok() {
+        if self.submit_judgment(judgment.clone()).is_ok() {
             self.judgments
                 .insert(judgment.id, (factory.id.clone(), None, Purpose::Env));
         }
@@ -5008,7 +5066,7 @@ impl Engine {
             f.watch_last_at = Some(now);
         }
         self.save_factory(factory_id);
-        if self.ports.judge.submit(judgment.clone()).is_ok() {
+        if self.submit_judgment(judgment.clone()).is_ok() {
             self.judgments
                 .insert(judgment.id, (factory_id.to_owned(), None, Purpose::Watch));
         }
@@ -5049,7 +5107,7 @@ impl Engine {
                         diff: None,
                     },
                 };
-                match self.ports.judge.submit(judgment.clone()) {
+                match self.submit_judgment(judgment.clone()) {
                     Ok(()) => {
                         self.judgments.insert(
                             judgment.id,

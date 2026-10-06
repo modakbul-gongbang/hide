@@ -46,6 +46,7 @@ Both are private to the user: the file is mode 0600 and the folder 0700 on Unix.
 | `tasks` | One JSON record per Task, with indexed state, issue, priority and times. The record carries the card, questions, discoveries, decisions, attempts, worker, pull request and gates. |
 | `dependencies` | One row per dependency edge, rewritten with its Task. |
 | `events` | Ids-and-stage records of transitions, external calls and failures, never card text or secrets. |
+| `records` | Each judgment's input and output and each letter's body to or from a worker, kept with its Task and cut at 256 KiB (D-58). |
 | `meta` | The machine-wide worker limit and the ids of the last 4,096 applied letters. |
 
 `PRAGMA user_version` carries the schema version, now 1.
@@ -59,11 +60,12 @@ The engine opens the store when a store file already exists at start, or on the 
 A run's log keeps only its last 1 MiB when the run ends.
 
 The Factory deletes no Task, question, decision, discovery, attempt or attachment.
-It removes a worker's worktree and pane when the Task is done and main verification has passed, when a cancelled Task passes its keep period, and, only under disk pressure, for finished Tasks.
-The worktree removal leaves the Task's branch in place, and the Factory never deletes a remote branch.
+It removes a worker's worktree and pane when the Task is done and main verification has passed or an outside pull request merged it, when a cancelled Task or one an outside pull request took passes its keep period, and, only under disk pressure, for finished Tasks.
+The removal runs from the repository's main checkout through the host's guarded worktree removal.
+A finished Task keeps its branch; a cancelled or outside Task loses its local branch with its worktree, and the Factory never deletes a remote branch.
 A finished Task folds out of the board's Done column after 3 days and out of every list after 90 days; its page still opens.
 Each Factory keeps its newest 20,000 events and drops older ones.
-Judgment inputs and answers are not stored; the questions and flags they produce are, and the core's diagnostic log records each judgment's feature, ids, outcome and duration.
+Judgment inputs and answers and letter bodies are kept in `records` and never deleted automatically; `Engine::records` reads a Task's, and the core's diagnostic log records each judgment's feature, ids, outcome and duration.
 
 ## Tasks, states and the DAG
 
@@ -244,7 +246,7 @@ A failed watch or diagnosis changes no Task and is logged.
 The Factory has its own judgment queue on its own router (see [AI_PROVIDERS.md](AI_PROVIDERS.md#the-factorys-judgments)): one request in flight, intake reviews before every other judgment, and 16 waiting judgments per Factory.
 A judgment submitted to a full queue fails like a provider failure and is escalated the way above.
 Natural-language checks are added with `hide factory check --at intake|after-done|periodic`.
-A `periodic` check is stored with the others, and no timer runs it yet.
+A `periodic` check runs over each running Task's card whenever the watch interval comes due; like an after-done check it only adds questions or marks, it never holds a merge, and one that cannot be queued is logged and asked again at the next interval.
 
 ## Verification
 
@@ -348,9 +350,9 @@ Its kind decides what an answer does.
 | `split` | The review | `split` splits the Task, `proceed` clears it. |
 | `default` | A worker `ask`, a drift or check finding | The default keeps going; a different answer wakes the worker. After the deadline the default is the answer. |
 | `blocking` | A worker `block` | Wakes the worker through a reply; the Task waits for a slot and resumes its session. No deadline decides it. |
-| `scope_change` | A worker, a re-add, an edited issue | `approve` records approval and adds a gate; `reject` keeps the scope. After the deadline it is rejected. |
+| `scope_change` | A worker, a re-add, an edited issue | `approve` records approval and adds a gate, and a re-added card and PRD become the Task's, sent to the worker in the reply; `reject` keeps the scope. After the deadline it is rejected. A newer re-add replaces a pending one. |
 | `new_task_cap` | The Task reached the new-Task limit | `continue` lets it create more; any other choice leaves it stopped with a notice. |
-| `proposed_task` | A prerequisite proposal outside autonomy | `approve` drafts the Task. |
+| `proposed_task` | A prerequisite proposal outside autonomy | `approve` drafts the Task, and the proposer depends on it and gives its slot back until it lands. |
 | `action` | A stop, a failed review, a main break | The listed choice runs: `retry`, `retry-review`, `cancel`, `resume-auto`, `retry-revert`, `revert <task>`. |
 | `confirm_card` | A label-path card, a fix-Task draft | `confirm` lets the Task become Ready. |
 | `proposal` | An environment diagnosis | Records the answer; a person runs the command. |
@@ -404,7 +406,7 @@ A Task that alone repeats an environment failure three times is the Task's: it s
 ## The watch
 
 The watch reads a Factory's board for what a person cannot already see in the inbox, such as work that stopped moving, a chain held by one wait, or a pattern of failures.
-It runs when a Task finishes, when main breaks, and every `watch_interval_minutes` (30 by default, at least 5) for a Factory that has Tasks.
+It runs when a Task finishes, when main breaks, when a Task reaches its new-Task limit, and every `watch_interval_minutes` (30 by default, at least 5) for a Factory that has Tasks.
 It asks `factory_watch` with the Factory's board summary.
 A warning without a proposed action goes to the diagnostic log only.
 A warning with an action becomes a notice on the Task it names, or on the Factory's last Task, and counts against `watch_daily_limit` (5) per Factory per UTC day; a warning past the limit is logged as capped.
@@ -569,7 +571,7 @@ Fields are added and never renamed or removed.
 
 The inbox lists each open question, each `merge_waiting` Task, and each stopped Task that has no action question, in order of rank and, within a rank, the item waiting longest first.
 That puts blocking questions first, then other answers, merge waits, stops and notices, so what has waited the longest to be unblocked is at the top.
-A cancelled Task inside its keep period still lists its open questions.
+Cancelling a Task answers its open questions as `cancel`, so a cancelled Task lists none and no deadline applies a default to it.
 
 A Task's board column comes from its state: `drafting`, `waiting` and `done` have their own, every other state except `cancelled` is in `running`, and `cancelled` is off the board.
 Inside a column the cards a person must look at (blocked, stopped, merge waiting, or holding an open question) come first, oldest first, then the rest by priority and age.
@@ -626,6 +628,6 @@ With Factories, each two-second tick does bounded work:
 - It walks each Factory's Tasks a few times to move them, with one external call at most per Task step.
 - It settles pending sleeps and wakes and republishes the open Factories as recipients.
 
-The work is bounded: 32 queued commands, 16 waiting judgments per Factory, one judgment in flight, 256 queued verify runs and one running, 16 held letters per woken worker, 4,096 remembered letters, 20,000 events and 5,000 Tasks per Factory, a 6 KiB prompt, a 48 KiB judgment input, a 256 KiB request and a 4 MiB attachment.
+The work is bounded: 32 queued commands, 16 waiting judgments per Factory, one judgment in flight, 256 queued verify runs and one running, 16 held letters per woken worker, 4,096 remembered letters, 20,000 events and 5,000 Tasks per Factory, a 256 KiB kept record, a 6 KiB prompt, a 48 KiB judgment input, a 256 KiB request and a 4 MiB attachment.
 Crossing a cap is a reported failure and never a larger number.
 A judgment and a worker start are the only places the engine waits on a provider or on Herdr, and each retries on a timer and never on a loop.

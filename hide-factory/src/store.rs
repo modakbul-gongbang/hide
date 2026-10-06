@@ -16,12 +16,12 @@ use sha2::{Digest, Sha256};
 use crate::model::{Attachment, Factory, Task, UnixMs};
 
 pub const SCHEMA_VERSION: i64 = 1;
-/// A verify or CI log copy keeps at most its last 1 MiB per attempt (D-58).
-pub const LOG_TAIL_LIMIT: usize = 1024 * 1024;
 /// A PRD attachment larger than this is refused.
 pub const ATTACHMENT_LIMIT: u64 = 4 * 1024 * 1024;
 /// Events kept per Factory; the oldest are dropped past it.
 pub const EVENT_LIMIT: i64 = 20_000;
+/// A kept judgment or letter body is cut to its first this many bytes.
+pub const RECORD_LIMIT: usize = 256 * 1024;
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS factories (
@@ -59,6 +59,16 @@ CREATE TABLE IF NOT EXISTS events (
     detail TEXT NOT NULL
 );
 CREATE INDEX IF NOT EXISTS events_factory ON events(factory, seq);
+CREATE TABLE IF NOT EXISTS records (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    factory TEXT NOT NULL,
+    task TEXT,
+    at INTEGER NOT NULL,
+    kind TEXT NOT NULL,
+    reference TEXT NOT NULL,
+    body TEXT NOT NULL
+);
+CREATE INDEX IF NOT EXISTS records_task ON records(factory, task, seq);
 CREATE TABLE IF NOT EXISTS meta (
     key TEXT PRIMARY KEY,
     value TEXT NOT NULL
@@ -101,6 +111,19 @@ pub struct Event {
     pub at: UnixMs,
     pub kind: String,
     pub detail: serde_json::Value,
+}
+
+/// A judgment's input or output, or a letter body, kept with its Task.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Record {
+    pub factory: String,
+    pub task: Option<String>,
+    pub at: UnixMs,
+    /// `judgment.input`, `judgment.output`, `letter.in` or `letter.out`.
+    pub kind: String,
+    /// The judgment or letter id.
+    pub reference: String,
+    pub body: String,
 }
 
 pub struct Store {
@@ -333,22 +356,47 @@ impl Store {
         })
     }
 
-    /// Keeps the last [`LOG_TAIL_LIMIT`] bytes of a log for one attempt.
-    pub fn keep_log(
+    /// Keeps a judgment's input or output or a letter's body (D-58); none
+    /// is deleted automatically.
+    pub fn keep_record(&self, record: &Record) -> Result<(), StoreError> {
+        self.connection.execute(
+            "INSERT INTO records (factory, task, at, kind, reference, body) VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+            params![
+                record.factory,
+                record.task,
+                record.at as i64,
+                record.kind,
+                record.reference,
+                crate::judgment::cut(&record.body, RECORD_LIMIT)
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// A Task's kept records, oldest first, at most `limit` of the newest.
+    pub fn records(
         &self,
         factory: &str,
         task: &str,
-        attempt: u32,
-        stage: &str,
-        bytes: &[u8],
-    ) -> Result<PathBuf, StoreError> {
-        let folder = self.files.join(factory).join(task).join("logs");
-        fs::create_dir_all(&folder)?;
-        private_dir(&folder)?;
-        let tail = &bytes[bytes.len().saturating_sub(LOG_TAIL_LIMIT)..];
-        let path = folder.join(format!("attempt-{attempt}-{stage}.log"));
-        write_private(&path, tail)?;
-        Ok(path)
+        limit: usize,
+    ) -> Result<Vec<Record>, StoreError> {
+        let mut statement = self.connection.prepare(
+            "SELECT factory, task, at, kind, reference, body FROM records
+             WHERE factory = ?1 AND task = ?2 ORDER BY seq DESC LIMIT ?3",
+        )?;
+        let rows = statement.query_map(params![factory, task, limit as i64], |row| {
+            Ok(Record {
+                factory: row.get(0)?,
+                task: row.get(1)?,
+                at: row.get::<_, i64>(2)? as u64,
+                kind: row.get(3)?,
+                reference: row.get(4)?,
+                body: row.get(5)?,
+            })
+        })?;
+        let mut records = rows.collect::<Result<Vec<_>, _>>()?;
+        records.reverse();
+        Ok(records)
     }
 }
 
@@ -442,19 +490,31 @@ mod tests {
     }
 
     #[test]
-    fn a_log_copy_keeps_only_its_last_mebibyte() {
+    fn records_are_kept_per_task_and_a_long_body_is_cut() {
         let folder = tempfile::tempdir().unwrap();
         let store = Store::open(
             &folder.path().join("factory.sqlite3"),
             &folder.path().join("factory-files"),
         )
         .unwrap();
-        let mut bytes = vec![b'a'; LOG_TAIL_LIMIT];
-        bytes.extend_from_slice(b"tail");
-        let path = store.keep_log("f", "T-1", 1, "task", &bytes).unwrap();
-        let kept = fs::read(path).unwrap();
-        assert_eq!(kept.len(), LOG_TAIL_LIMIT);
-        assert!(kept.ends_with(b"tail"));
+        let record = |task: &str, body: String| Record {
+            factory: "f".into(),
+            task: Some(task.into()),
+            at: 1,
+            kind: "letter.in".into(),
+            reference: "letter-1".into(),
+            body,
+        };
+        store.keep_record(&record("T-1", "first".into())).unwrap();
+        store.keep_record(&record("T-2", "other".into())).unwrap();
+        store
+            .keep_record(&record("T-1", "x".repeat(RECORD_LIMIT + 10)))
+            .unwrap();
+        let kept = store.records("f", "T-1", 10).unwrap();
+        assert_eq!(kept.len(), 2);
+        assert_eq!(kept[0].body, "first");
+        assert!(kept[1].body.len() <= RECORD_LIMIT + 32);
+        assert!(kept[1].body.ends_with("[cut 10 bytes]"));
     }
 
     #[test]
