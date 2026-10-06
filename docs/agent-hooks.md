@@ -237,7 +237,8 @@ Claude Code and Codex are the only agents whose sessions Hide reads, so only the
 
 An agent is a row only when its documentation confirms where it reads skills and the name of the program it installs.
 The other thirteen agents earlier builds supported are no longer rows (see Retired agents below).
-Hide does not write an agent's `AGENTS.md` or `CLAUDE.md`, its MCP configuration, its model settings, or its Codex hook trust review, and it runs no installer for an agent.
+Hide does not write an agent's `AGENTS.md` or `CLAUDE.md`, its MCP configuration or its model settings, and it runs no installer for an agent.
+The one thing it records in an agent's own state is Codex's trust for Hide's own hooks, below.
 
 ### Herdr's integration for an agent
 
@@ -260,6 +261,38 @@ The shared skill stub stays while a supported agent that reads it is on and inst
 Its record entry is what is retried, so a stub that could not be removed (a folder the account cannot write to) is removed by a later pass even after the retired agents that owned it have left the record.
 `hide-agent-hooks` keeps the layouts of the six retired guidance hooks only so this removal can find them, and a hook entry that an earlier build left behind prints nothing and writes nothing when it runs.
 This is a transition path: it goes with the release after the one that ships it.
+
+### Codex trusts Hide's own hooks
+
+Codex keeps a content hash for every entry of `~/.codex/hooks.json` in `~/.codex/config.toml` (`hooks.state`) and starts no entry whose hash it does not hold.
+A new or changed entry opens a "Hooks need review" screen at the next start, and until the operator approves it Hide hears nothing from that Codex: no session, no letters, no subagents, and no mark on the pane saying so.
+That happened on a machine's first install, whenever Hide's hook changed, and whenever another tool put a hook in front of Hide's and moved its position, which is part of the key.
+
+Installing Hide is the operator's agreement to Hide's hooks, so Hide records Codex's trust for them itself (PRD codex-hook-trust D-01).
+It does it through Codex's own interface and never by hand: `hide_agent_hooks::codex_trust` starts `codex app-server` over stdio for one short check, reads the entries with `hooks/list` (each entry's key, its hash and its status) and stores `trusted_hash` for the ones that need it with one `config/batchWrite` to `hooks.state`, then reads the list again and counts a write Codex did not keep as a failure.
+Hide computes no hash and writes no `config.toml`, so a change in how Codex hashes is followed, and every other setting in that file stays as Codex wrote it.
+
+The kit runs the check in every pass that finds the Codex hook part in place, whether the pass wrote it or found it current: at launch, when a device connects, and on Reinstall.
+A pass that finds every entry trusted writes nothing, so a repeat leaves `config.toml` as it was.
+An entry another tool's hook displaced is trusted at its new position by the next pass; a Codex started before that pass can still show the screen for Hide's entry.
+A Codex without hook trust (its app-server does not know `hooks/list`) and a machine with no Codex are left alone and show nothing new.
+
+What is trusted is exactly the entry Hide wrote, and nothing else (`select_targets`):
+
+- Codex lists it from this account's `~/.codex/hooks.json` as a user hook that is not managed, so a project's hook, a plugin's and a managed one with the same command are not it;
+- its event is one Hide registers, its `command` is byte for byte the command Hide writes for that event with this kit's helper, and its matcher is the one Hide writes for it (none today; the writer and this check read it from one function);
+- Codex does not trust it yet (`untrusted`, or `modified` after a change).
+
+Another tool's hook, an entry that carries Hide's marker over a different command, and any entry that is not like this are neither read nor changed: Codex still shows the review screen for them, and lists only them.
+Hide writes `trusted_hash` and never `enabled`, so a hook the operator switched off in Codex's hook list stays off, and switching Hide's hook off there is how the operator opts out of one.
+Removing Hide's hooks leaves its trust records in `config.toml`; each one matches only the same command and starts nothing by itself.
+Codex's `--dangerously-bypass-hook-trust` and `bypass_hook_trust` skip the review for every hook and are not used.
+
+The app-server is one child per check, started through the one spawn helper, bounded by a 15 second overall and 5 second per-request deadline, by caps on what it may print, and by the kit's stop flag, and ended with its whole process tree on success, failure and timeout alike; it runs on the kit worker or the device helper, never under the runtime lock.
+When Codex is there and the trust cannot be recorded, the Codex hook part reads Failed with one line, "Codex has not trusted Hide's hook: …; it will ask you to review it", the cause goes to the log as `codex_trust_failed`, the other parts are installed as usual, and the next pass tries again.
+`status` runs every few seconds while Settings is open and starts no process, so it repeats what the last pass in this process found; a failure the operator fixed by approving the hook in Codex clears at the next pass or Reinstall, which Failed offers.
+`hide-agent-hooks/tests/codex_trust.rs` runs the module against a stand-in app-server (`tests/fixtures/fake-codex.py`), and `hide-kit`'s `codex_trust_cases` runs the passes.
+Codex's app-server interface is marked experimental; a method or field that changes ends as the Failed line above, and Codex shows its screen, never a wrong trust.
 
 ## Judging what is installed
 

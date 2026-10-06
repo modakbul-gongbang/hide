@@ -207,6 +207,7 @@ The one exception is a Mac the kit has never run on: it holds Claude Code's and 
 
 - `~/.local/bin/hide`, a link to the app's `hide` command, unless a `hide` that is not Hide's is already there;
 - Hide's entries in `~/.claude/settings.json` and `~/.codex/hooks.json`, for each of Claude Code and Codex whose folder (`~/.claude`, `~/.codex`) is on this Mac, next to whatever other tools put there;
+- Codex's trust for those Codex entries: Codex asks for a review of every new or changed hook, so Hide takes installing it as your agreement to its own hooks and has Codex record them as trusted (through `codex app-server`, never by editing `~/.codex/config.toml`), only for an entry whose command is exactly the one Hide wrote; another tool's hook still opens Codex's review screen, and switching Hide's hook off in Codex's hook list keeps it off ([agent-hooks.md](agent-hooks.md#codex-trusts-hides-own-hooks));
 - A one-release retirement stage removes the former coordination installation after its read-only preflight succeeds; see Coordination retirement below;
 - for each of the seven supported agents that is on and installed (Claude Code, Codex, Gemini CLI, Grok, OpenCode, Pi and Cursor), Herdr's own integration, installed with the bundled Herdr (`herdr integration install <agent>`) so Herdr learns the agent's session; one the operator installed before is left as it is, and Hide removes only what it installed;
 - a one-time removal of what an earlier Hide put down for thirteen agents it no longer supports (GitHub Copilot CLI, Amp, Factory Droid, Kiro, Qwen Code, Goose, Cline, Kilo Code, Crush, Junie, Augment, Kimi Code and Mistral Vibe): only its marked skill and hook entries come out, and a file you wrote stays;
@@ -310,7 +311,7 @@ Each packaged launch replaces an outdated part of the kit on this machine, and e
 Quit hide and move `/Applications/hide.app` to the Trash.
 This removes the application but keeps `~/.hide` and `~/Library/Application Support/hide-desktop`.
 Delete both directories only when you deliberately want to reset hide's saved state.
-Hide's hook entries stay in `~/.claude/settings.json` and `~/.codex/hooks.json` and do nothing once the app is gone; delete the entries whose command carries `hide-subagents@` to take them out.
+Hide's hook entries stay in `~/.claude/settings.json` and `~/.codex/hooks.json` and do nothing once the app is gone; delete the entries whose command carries `hide-subagents@` to take them out; Codex's trust records for them stay in `~/.codex/config.toml` and match only that same command.
 `~/.local/bin/hide` stays as well until you remove it.
 On Windows or Linux, delete the unpacked package folder after quitting and running its `resources/hide[.exe] stop`.
 The hook entries and home state likewise remain; remove `~/.local/bin/hide` on Linux, or `%USERPROFILE%\.local\bin\hide.cmd` and the `.hide-kit` junction beside it on Windows.
