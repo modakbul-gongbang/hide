@@ -9,6 +9,10 @@ use hide_agent_hooks::guidance::{GUIDANCE_LINE, GuidanceAgent};
 use hide_platform::process::OwnedChild;
 
 fn run(home: &Path, runtime: &str, event: &str) -> String {
+    run_with(home, runtime, event, &[])
+}
+
+fn run_with(home: &Path, runtime: &str, event: &str, extra: &[(&str, &str)]) -> String {
     let mut command = Command::new(env!("CARGO_BIN_EXE_hide-agent-hooks"));
     command
         .args(["hook", "--runtime", runtime, "--event", event])
@@ -19,6 +23,7 @@ fn run(home: &Path, runtime: &str, event: &str) -> String {
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    command.envs(extra.iter().copied());
     for (key, _) in std::env::vars_os() {
         let name = key.to_string_lossy();
         if ["HERDR_", "HIDE_", "HCOORD_"]
@@ -45,7 +50,16 @@ fn every_agent_gets_the_guidance_in_its_own_field_at_session_start() {
         assert!(stdout.contains("hide browser help"), "{agent:?}: {stdout}");
         match agent {
             GuidanceAgent::Kiro => assert!(stdout.starts_with("When you create a worktree")),
-            GuidanceAgent::Copilot => {
+            GuidanceAgent::Cursor => {
+                let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
+                assert!(
+                    value["additional_context"]
+                        .as_str()
+                        .unwrap()
+                        .contains(GUIDANCE_LINE)
+                );
+            }
+            GuidanceAgent::Copilot | GuidanceAgent::Junie => {
                 let value: serde_json::Value = serde_json::from_str(&stdout).unwrap();
                 assert!(
                     value["additionalContext"]
@@ -87,5 +101,17 @@ fn a_session_started_twice_gets_the_same_guidance_and_changes_no_state() {
         let second = run(home.path(), agent.id(), "SessionStart");
         assert_eq!(first, second, "{agent:?}");
     }
+    assert!(std::fs::read_dir(home.path()).unwrap().next().is_none());
+}
+
+/// Cursor loads Claude Code's hooks from `~/.claude/settings.json` and runs
+/// them beside its own, so under Cursor Claude Code's hook says nothing and
+/// Cursor's own guidance hook is the one voice; outside Cursor it speaks.
+#[test]
+fn claude_codes_hook_stays_out_under_cursor() {
+    let home = tempfile::tempdir().unwrap();
+    let args = |extra: &[(&str, &str)]| run_with(home.path(), "claude-code", "SessionStart", extra);
+    assert!(args(&[]).contains("hookSpecificOutput"));
+    assert_eq!(args(&[("CURSOR_VERSION", "2.0.0")]), "");
     assert!(std::fs::read_dir(home.path()).unwrap().next().is_none());
 }

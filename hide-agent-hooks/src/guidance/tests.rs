@@ -201,6 +201,61 @@ fn kiro_writes_its_own_v1_file_with_an_action() {
 
 #[cfg(unix)]
 #[test]
+fn cursor_augment_and_junie_write_the_shapes_their_documentation_gives() {
+    let fixture = Fixture::new(GuidanceAgent::Cursor);
+    install(GuidanceAgent::Cursor, fixture.home(), &fixture.helper).unwrap();
+    assert!(
+        GuidanceAgent::Cursor
+            .config_path(fixture.home())
+            .ends_with(".cursor/hooks.json")
+    );
+    let cursor = fixture.read(GuidanceAgent::Cursor);
+    assert_eq!(cursor["version"], 1);
+    let entry = &cursor["hooks"]["sessionStart"][0];
+    assert_eq!(entry["timeout"], 8, "Cursor counts seconds");
+    // Cursor does not say a shell parses `command`, so it is the helper and
+    // its arguments with no shell syntax.
+    let command = entry["command"].as_str().unwrap();
+    assert!(command.contains("--runtime cursor"));
+    assert!(
+        command.starts_with(fixture.helper.to_str().unwrap()),
+        "{command}"
+    );
+    assert!(
+        !command.contains("if [") && !command.contains('\''),
+        "{command}"
+    );
+    assert_eq!(
+        installed_helper_path(GuidanceAgent::Cursor, fixture.home()).as_deref(),
+        Some(fixture.helper.to_str().unwrap())
+    );
+
+    let fixture = Fixture::new(GuidanceAgent::Augment);
+    install(GuidanceAgent::Augment, fixture.home(), &fixture.helper).unwrap();
+    assert!(
+        GuidanceAgent::Augment
+            .config_path(fixture.home())
+            .ends_with(".augment/settings.json")
+    );
+    let hook = &fixture.read(GuidanceAgent::Augment)["hooks"]["SessionStart"][0]["hooks"][0];
+    assert_eq!(hook["type"], "command");
+    assert_eq!(hook["timeout"], 8000, "Augment counts milliseconds");
+
+    let fixture = Fixture::new(GuidanceAgent::Junie);
+    install(GuidanceAgent::Junie, fixture.home(), &fixture.helper).unwrap();
+    assert!(
+        GuidanceAgent::Junie
+            .config_path(fixture.home())
+            .ends_with(".junie/config.json")
+    );
+    let hook = &fixture.read(GuidanceAgent::Junie)["hooks"]["SessionStart"][0]["hooks"][0];
+    // A synchronous SessionStart hook's context is ignored; async is delivered with the next prompt.
+    assert_eq!(hook["async"], true);
+    assert_eq!(hook["timeout"], 8, "Junie counts seconds");
+}
+
+#[cfg(unix)]
+#[test]
 fn another_tools_entries_survive_install_and_remove_in_every_shared_file() {
     for (agent, theirs) in [
         (
@@ -222,6 +277,18 @@ fn another_tools_entries_survive_install_and_remove_in_every_shared_file() {
         (
             GuidanceAgent::Kiro,
             r#"{"version":"v1","hooks":[{"name":"theirs","trigger":"SessionStart","action":{"type":"command","command":"/theirs.sh"}}]}"#,
+        ),
+        (
+            GuidanceAgent::Cursor,
+            r#"{"version":1,"hooks":{"sessionStart":[{"command":"/theirs.sh"}]},"theme":"x"}"#,
+        ),
+        (
+            GuidanceAgent::Augment,
+            r#"{"model":"x","hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"/theirs.sh"}]}]}}"#,
+        ),
+        (
+            GuidanceAgent::Junie,
+            r#"{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"/theirs.sh"}]}]},"theme":1}"#,
         ),
     ] {
         let fixture = Fixture::new(agent);
@@ -265,14 +332,11 @@ fn a_second_install_changes_nothing_and_a_removal_leaves_no_trace_of_an_own_file
             status(agent, fixture.home()),
             HookStatus::NotInstalled
         ));
-        if matches!(
-            agent,
-            GuidanceAgent::Copilot | GuidanceAgent::Kiro | GuidanceAgent::Droid
-        ) {
-            // Hide's own file is gone, and so is Droid's hooks.json, which held
-            // only Hide's event.
-            assert!(!agent.config_path(fixture.home()).exists(), "{agent:?}");
-        }
+        // Every file here was created by the install and holds nothing else,
+        // so the removal leaves no file: Hide's own file, Droid's
+        // `hooks.json`, Cursor's scaffolding, and a settings file that would
+        // otherwise stay as `{"hooks":{}}`.
+        assert!(!agent.config_path(fixture.home()).exists(), "{agent:?}");
     }
 }
 
@@ -363,6 +427,16 @@ fn each_agent_reads_context_in_the_field_its_documentation_names() {
     let copilot: Value = serde_json::from_str(&stdout(GuidanceAgent::Copilot, &context)).unwrap();
     assert_eq!(copilot, json!({ "additionalContext": context }));
     assert_eq!(stdout(GuidanceAgent::Kiro, &context), context);
+    let augment: Value = serde_json::from_str(&stdout(GuidanceAgent::Augment, &context)).unwrap();
+    assert_eq!(
+        augment["hookSpecificOutput"]["hookEventName"],
+        "SessionStart"
+    );
+    assert_eq!(augment["hookSpecificOutput"]["additionalContext"], context);
+    let junie: Value = serde_json::from_str(&stdout(GuidanceAgent::Junie, &context)).unwrap();
+    assert_eq!(junie, json!({ "additionalContext": context }));
+    let cursor: Value = serde_json::from_str(&stdout(GuidanceAgent::Cursor, &context)).unwrap();
+    assert_eq!(cursor, json!({ "additional_context": context }));
 }
 
 #[test]
@@ -395,6 +469,14 @@ fn another_tools_hook_in_the_same_group_survives_a_reinstall_and_a_removal() {
         (
             GuidanceAgent::Droid,
             r#"{"SessionStart":[{"hooks":[{"type":"command","command":"/theirs.sh"}]}]}"#,
+        ),
+        (
+            GuidanceAgent::Augment,
+            r#"{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"/theirs.sh"}]}]}}"#,
+        ),
+        (
+            GuidanceAgent::Junie,
+            r#"{"hooks":{"SessionStart":[{"hooks":[{"type":"command","command":"/theirs.sh"}]}]}}"#,
         ),
     ] {
         let fixture = Fixture::new(agent);
@@ -464,4 +546,43 @@ fn removing_hide_from_droids_own_hooks_file_deletes_the_file_it_would_leave_empt
         commands(&fixture.read(GuidanceAgent::Droid)),
         vec!["/theirs.sh".to_owned()]
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn a_cursor_file_without_a_version_gets_one_and_keeps_the_operators_hooks() {
+    let fixture = Fixture::new(GuidanceAgent::Cursor);
+    fixture.write(
+        GuidanceAgent::Cursor,
+        r#"{"hooks":{"sessionStart":[{"command":"/theirs.sh"}]}}"#,
+    );
+    install(GuidanceAgent::Cursor, fixture.home(), &fixture.helper).unwrap();
+    let document = fixture.read(GuidanceAgent::Cursor);
+    assert_eq!(document["version"], 1, "Cursor requires it");
+    assert_eq!(commands(&document).len(), 2);
+
+    // A version the operator wrote is theirs.
+    let fixture = Fixture::new(GuidanceAgent::Cursor);
+    fixture.write(
+        GuidanceAgent::Cursor,
+        r#"{"version":2,"hooks":{"sessionStart":[]}}"#,
+    );
+    install(GuidanceAgent::Cursor, fixture.home(), &fixture.helper).unwrap();
+    assert_eq!(fixture.read(GuidanceAgent::Cursor)["version"], 2);
+}
+
+#[cfg(unix)]
+#[test]
+fn a_settings_file_that_holds_another_key_keeps_it_when_hides_hook_goes() {
+    for agent in [
+        GuidanceAgent::Augment,
+        GuidanceAgent::Junie,
+        GuidanceAgent::Gemini,
+    ] {
+        let fixture = Fixture::new(agent);
+        fixture.write(agent, r#"{"model":"x"}"#);
+        install(agent, fixture.home(), &fixture.helper).unwrap();
+        remove(agent, fixture.home()).unwrap();
+        assert_eq!(fixture.read(agent), json!({ "model": "x" }), "{agent:?}");
+    }
 }

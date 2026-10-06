@@ -483,11 +483,9 @@ fn switching_factory_droid_off_finds_its_entry_in_either_file() {
 
     apply(&fixture.target, &Scope::agents([], ["factory-droid"]));
 
-    assert!(
-        !std::fs::read_to_string(&settings)
-            .unwrap()
-            .contains("hide-guidance")
-    );
+    // Its entry was found there, and the file held nothing but an empty
+    // `hooks` Hide had filled, so the file goes with it.
+    assert!(!settings.exists());
 }
 
 #[test]
@@ -605,4 +603,34 @@ fn the_switch_works_while_either_the_skill_or_the_hook_does_here() {
         availability(true, false, false),
         Availability::UnsupportedSystem
     );
+}
+
+#[cfg(unix)]
+#[test]
+fn cursor_augment_and_junie_get_the_guidance_hook_with_the_switch_and_lose_it_with_it() {
+    for (id, folder, file) in [
+        ("cursor", ".cursor", ".cursor/hooks.json"),
+        ("augment", ".augment", ".augment/settings.json"),
+        ("junie", ".junie", ".junie/config.json"),
+    ] {
+        let fixture = Fixture::new();
+        set_up(&fixture, folder);
+
+        let report = apply(&fixture.target, &Scope::agents([id], []));
+
+        let hook = agent(&report, id).hook.as_ref().unwrap();
+        assert_eq!(hook.state, ComponentState::Installed, "{id}: {hook:?}");
+        let written = std::fs::read_to_string(fixture.home().join(file)).unwrap();
+        assert!(written.contains("hide-guidance@1"), "{id}");
+
+        let report = apply(&fixture.target, &Scope::agents([], [id]));
+
+        assert_eq!(
+            agent(&report, id).hook.as_ref().unwrap().state,
+            ComponentState::Off,
+            "{id}"
+        );
+        // Hide created the file and nothing else was in it, so the file goes.
+        assert!(!fixture.home().join(file).exists(), "{id}");
+    }
 }
