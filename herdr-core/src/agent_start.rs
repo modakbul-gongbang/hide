@@ -12,6 +12,12 @@
 //! a shell that never reaches its prompt is a start that did not happen, with
 //! nothing typed into the pane.
 //!
+//! A start that puts an agent back under the name of the one just ended in
+//! the same pane (a wake, a Reopen) also meets `agent_name_taken` until
+//! Herdr has forgotten the ended agent; [`start_at_shell_reusing_name`] sends
+//! that start again on exactly that refusal, inside a bounded wait. The other
+//! starts take that refusal as the answer, since their name is someone else's.
+//!
 //! Every call here runs on a worker thread, never under `Mutex<Runtime>`.
 
 use std::thread;
@@ -30,6 +36,11 @@ pub(crate) const SHELL_WAIT: Duration = Duration::from_secs(30);
 const POLL_INTERVAL: Duration = Duration::from_millis(100);
 const READ_TIMEOUT: Duration = Duration::from_secs(5);
 const PANE_BUSY: &str = "agent_pane_busy";
+const NAME_TAKEN: &str = "agent_name_taken";
+/// How long Herdr gets to let go of the name of an agent that was just
+/// ended: it forgets the agent a moment after its process is gone, and
+/// refuses `agent.start` under that name until it has.
+pub(crate) const NAME_RELEASE_WAIT: Duration = Duration::from_secs(10);
 
 /// Why a start did not settle with Herdr's answer to `agent.start`.
 #[derive(Debug)]
@@ -57,9 +68,32 @@ pub(crate) fn start_at_shell(
         params,
         answer_timeout,
         SHELL_WAIT,
+        Duration::ZERO,
     )
 }
 
+/// [`start_at_shell`] for an agent that goes back under the name of the one
+/// just ended in this pane: `agent_name_taken` is answered by sending the
+/// start again until Herdr has released the name, within [`NAME_RELEASE_WAIT`].
+pub(crate) fn start_at_shell_reusing_name(
+    connector: &dyn ApiConnector,
+    correlation_id: &str,
+    pane_id: &str,
+    params: Value,
+    answer_timeout: Duration,
+) -> Result<Value, StartError> {
+    start_within(
+        connector,
+        correlation_id,
+        pane_id,
+        params,
+        answer_timeout,
+        SHELL_WAIT,
+        NAME_RELEASE_WAIT,
+    )
+}
+
+#[allow(clippy::disallowed_methods)] // a production wait, not test code
 fn start_within(
     connector: &dyn ApiConnector,
     correlation_id: &str,
@@ -67,9 +101,11 @@ fn start_within(
     params: Value,
     answer_timeout: Duration,
     wait: Duration,
+    name_release_wait: Duration,
 ) -> Result<Value, StartError> {
     let started = Instant::now();
     let deadline = started + wait;
+    let name_deadline = started + name_release_wait;
     loop {
         wait_for_shell(connector, correlation_id, pane_id, started, deadline)?;
         match request_with_correlation_id(
@@ -85,6 +121,14 @@ fn start_within(
             // same deadline.
             Err(ApiError::Remote { code, .. })
                 if code == PANE_BUSY && Instant::now() < deadline => {}
+            // Herdr has not yet forgotten the agent this start replaces. It
+            // refused before typing anything, so the same start is sent again
+            // until it has, inside the name wait.
+            Err(ApiError::Remote { code, .. })
+                if code == NAME_TAKEN && Instant::now() < name_deadline =>
+            {
+                thread::sleep(POLL_INTERVAL);
+            }
             answer => return answer.map_err(StartError::Herdr),
         }
     }
@@ -174,6 +218,19 @@ mod tests {
             json!({"pane_id": "w1:p1"}),
             Duration::from_secs(5),
             wait,
+            Duration::ZERO,
+        )
+    }
+
+    fn start_reusing_name(herdr: &FakeHerdr, name_wait: Duration) -> Result<Value, StartError> {
+        start_within(
+            &herdr.connector(),
+            "test:start",
+            "w1:p1",
+            json!({"pane_id": "w1:p1"}),
+            Duration::from_secs(5),
+            Duration::from_secs(5),
+            name_wait,
         )
     }
 
@@ -260,5 +317,55 @@ mod tests {
         };
         assert_eq!(code, "agent_name_taken");
         assert_eq!(herdr.methods(), ["pane.process_info", "agent.start"]);
+    }
+
+    /// Herdr forgets an ended agent a moment after its process is gone, so a
+    /// start under the same name is refused until then and must be sent
+    /// again, once the refusal is gone, and not before.
+    #[test]
+    fn a_start_under_the_ended_agents_name_is_sent_again_until_herdr_lets_go() {
+        let starts = Arc::new(AtomicUsize::new(0));
+        let seen = Arc::clone(&starts);
+        let herdr =
+            FakeHerdr::start_with_errors("agent-start-name", move |method, _| match method {
+                "pane.process_info" => Ok(process_info(SHELL, &[SHELL])),
+                "agent.start" if seen.fetch_add(1, Ordering::SeqCst) < 2 => {
+                    Err((NAME_TAKEN.into(), "agent name two is already used".into()))
+                }
+                "agent.start" => Ok(started()),
+                other => panic!("unexpected {other}"),
+            });
+        assert!(start_reusing_name(&herdr, Duration::from_secs(5)).is_ok());
+        assert_eq!(starts.load(Ordering::SeqCst), 3);
+    }
+
+    /// The wait is bounded, and an ordinary start never waits for a name: it
+    /// belongs to someone else.
+    #[test]
+    fn a_name_that_is_never_released_is_herdrs_answer_and_an_ordinary_start_does_not_wait() {
+        let herdr =
+            FakeHerdr::start_with_errors("agent-start-name-held", |method, _| match method {
+                "pane.process_info" => Ok(process_info(SHELL, &[SHELL])),
+                "agent.start" => Err((NAME_TAKEN.into(), "agent name two is already used".into())),
+                other => panic!("unexpected {other}"),
+            });
+        let Err(StartError::Herdr(ApiError::Remote { code, .. })) =
+            start_reusing_name(&herdr, Duration::from_millis(300))
+        else {
+            panic!("a name that is never released is refused");
+        };
+        assert_eq!(code, NAME_TAKEN);
+        let before = herdr.methods().len();
+        let Err(StartError::Herdr(ApiError::Remote { code, .. })) =
+            start(&herdr, Duration::from_secs(5))
+        else {
+            panic!("an ordinary start takes the refusal as the answer");
+        };
+        assert_eq!(code, NAME_TAKEN);
+        assert_eq!(
+            herdr.methods().len() - before,
+            2,
+            "one process read and one start, nothing sent again"
+        );
     }
 }

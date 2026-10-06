@@ -4,6 +4,8 @@ import { cleanupCatalogs, cleanupEnglish } from "./resources/cleanup";
 import { commonCatalogs, commonEnglish } from "./resources/common";
 import { agentPresentationCatalogs, agentPresentationEnglish } from "./resources/agentPresentation";
 import { devicesCatalogs, devicesEnglish } from "./resources/devices";
+import { agentsCatalogs, agentsEnglish } from "./resources/agents";
+import { hideAiCatalogs, hideAiEnglish } from "./resources/hideAi";
 import { issueSettingsCatalogs, issueSettingsEnglish } from "./resources/issueSettings";
 import { historyCatalogs, historyEnglish } from "./resources/history";
 import { explorerCatalogs, explorerEnglish } from "./resources/explorer";
@@ -46,6 +48,8 @@ export const english = {
   ...mobileSetupEnglish,
   ...workspaceEnglish,
   ...issueSettingsEnglish,
+  ...hideAiEnglish,
+  ...agentsEnglish,
   ...requestsEnglish,
   ...issuesEnglish,
   ...prWorkEnglish,
@@ -79,6 +83,8 @@ export const catalogs = {
     ...mobileSetupCatalogs.ko,
     ...workspaceCatalogs.ko,
     ...issueSettingsCatalogs.ko,
+    ...hideAiCatalogs.ko,
+    ...agentsCatalogs.ko,
     ...requestsCatalogs.ko,
     ...issuesCatalogs.ko,
     ...prWorkCatalogs.ko,
@@ -107,6 +113,8 @@ export const catalogs = {
     ...mobileSetupCatalogs["zh-CN"],
     ...workspaceCatalogs["zh-CN"],
     ...issueSettingsCatalogs["zh-CN"],
+    ...hideAiCatalogs["zh-CN"],
+    ...agentsCatalogs["zh-CN"],
     ...requestsCatalogs["zh-CN"],
     ...issuesCatalogs["zh-CN"],
     ...prWorkCatalogs["zh-CN"],
@@ -135,6 +143,8 @@ export const catalogs = {
     ...mobileSetupCatalogs.ja,
     ...workspaceCatalogs.ja,
     ...issueSettingsCatalogs.ja,
+    ...hideAiCatalogs.ja,
+    ...agentsCatalogs.ja,
     ...requestsCatalogs.ja,
     ...issuesCatalogs.ja,
     ...prWorkCatalogs.ja,

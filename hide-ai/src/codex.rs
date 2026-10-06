@@ -12,6 +12,7 @@
 //! measurement the router's cap is enforced against.
 
 use std::collections::VecDeque;
+use std::ffi::OsString;
 use std::io::{BufRead, BufReader, Write};
 use std::path::{Path, PathBuf};
 use std::process::{ChildStdin, Command, Stdio};
@@ -28,6 +29,7 @@ use crate::log::AiLogEvent;
 use hide_platform::process::{self as platform, OwnedChild};
 
 use crate::process::{self, ProcessMeasurement};
+use crate::program::Program;
 use crate::{
     AiBackend, AiError, AiLogSink, AiRequest, AiResponse, AiUsage, Availability, CancelToken,
     ModelCatalog, ProviderId,
@@ -97,6 +99,11 @@ pub struct CodexConfig {
     /// Working directory handed to every thread. A neutral directory keeps a
     /// project's own AGENTS.md out of the prompt.
     pub cwd: PathBuf,
+    /// The `PATH` the CLI is looked for on and run with. `None` is this
+    /// account's search (`hide_platform::programs`); a caller that has to
+    /// choose it, such as a test with a stand-in login shell, gives one built
+    /// by `hide_platform::programs::cli_path_with`.
+    pub search_path: Option<OsString>,
 }
 
 impl Default for CodexConfig {
@@ -105,6 +112,7 @@ impl Default for CodexConfig {
             binary: PathBuf::from("codex"),
             model: DEFAULT_MODEL.to_owned(),
             cwd: std::env::temp_dir(),
+            search_path: None,
         }
     }
 }
@@ -177,8 +185,8 @@ impl CodexAppServerBackend {
         args
     }
 
-    fn resolved_binary(&self) -> Option<PathBuf> {
-        resolve_binary(&self.config.binary)
+    fn resolved_binary(&self) -> Option<Program> {
+        Program::resolve(&self.config.binary, self.config.search_path.as_deref())
     }
 
     fn lock(&self) -> MutexGuard<'_, Option<Session>> {
@@ -350,7 +358,13 @@ impl CodexAppServerBackend {
 
 impl AiBackend for CodexAppServerBackend {
     fn id(&self) -> ProviderId {
-        ProviderId::Codex
+        ProviderId::CODEX
+    }
+
+    /// The app-server is resident, so its descendants and size are measured
+    /// after each turn and held to the router's caps.
+    fn measurable(&self) -> bool {
+        true
     }
 
     fn availability(&self) -> Availability {
@@ -535,7 +549,7 @@ fn spawn_idle_reaper(
                     // hold requests.
                     drop(active);
                     let mut event = AiLogEvent::new("ai.app_server.idle_exit");
-                    event.provider = Some(ProviderId::Codex);
+                    event.provider = Some(ProviderId::CODEX);
                     event.app_server_pid = Some(pid);
                     event.detail = Some(format!("idle_s={}", IDLE_TIMEOUT.as_secs()));
                     sink.log(event);
@@ -587,9 +601,10 @@ impl RequestFailure {
 }
 
 impl Session {
-    fn spawn(binary: &Path, cwd: &Path) -> Result<Self, AiError> {
+    fn spawn(program: &Program, cwd: &Path) -> Result<Self, AiError> {
         let home = CodexHome::create()?;
-        let mut command = Command::new(binary);
+        let mut command = Command::new(program.path());
+        program.apply(&mut command);
         command
             .args(CodexAppServerBackend::spawn_arguments())
             .current_dir(cwd)
@@ -847,14 +862,4 @@ impl Drop for Session {
     fn drop(&mut self) {
         self.terminate();
     }
-}
-
-/// Shared by every backend that starts a user-installed CLI, and by the core
-/// before it asks Herdr to start one in a pane.
-pub fn resolve_binary(binary: &Path) -> Option<PathBuf> {
-    if binary.components().count() > 1 {
-        return binary.is_file().then(|| binary.to_path_buf());
-    }
-    let path = hide_platform::host::login_path().ok()?;
-    hide_platform::host::find_program(&path, binary.to_str()?)
 }

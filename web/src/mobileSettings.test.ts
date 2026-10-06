@@ -1,11 +1,11 @@
 import { describe, expect, it } from "vitest";
 import { initializeInterfaceI18n } from "./i18n/instance";
-import { checklistRows as checklistRowsIn, codeCountdown, exposureLine as exposureLineIn, phoneLine as phoneLineIn, type MobileState, type PhoneRow } from "./mobileSettings";
+import { checklistView as checklistViewIn, codeCountdown, exposureLine as exposureLineIn, phoneLine as phoneLineIn, type MobileState, type PhoneRow } from "./mobileSettings";
 
 // Korean is the wording Settings > Mobile shipped with; the rules read the same under it.
 const t = initializeInterfaceI18n("ko").getFixedT(null, "translation");
 const english = initializeInterfaceI18n("en").getFixedT(null, "translation");
-const checklistRows = (value: MobileState) => checklistRowsIn(value, t);
+const checklistView = (value: MobileState) => checklistViewIn(value, t);
 const exposureLine = (value: MobileState) => exposureLineIn(value, t);
 const phoneLine = (phone: PhoneRow, nowMs: number) => phoneLineIn(phone, nowMs, t, "ko");
 
@@ -31,24 +31,31 @@ function state(overrides: Partial<MobileState>): MobileState {
   };
 }
 
-describe("checklistRows", () => {
-  it("puts the action on the first failing step and leaves the rest waiting", () => {
-    const rows = checklistRows(state({}));
-    expect(rows.map((row) => row.state)).toEqual(["ok", "failed", "waiting", "waiting"]);
-    expect(rows.filter((row) => row.action !== null).map((row) => row.id)).toEqual(["logged_in"]);
+describe("checklistView", () => {
+  it("shows only the failing steps, each with its fix, and nothing for steps that passed or still wait", () => {
+    const view = checklistView(state({}));
+    expect(view.kind).toBe("failed");
+    if (view.kind !== "failed") return;
+    expect(view.steps.map((step) => step.id)).toEqual(["logged_in"]);
+    expect(view.steps[0]?.action).toBeTruthy();
   });
 
   it("links the download page when Tailscale is missing and the admin console when HTTPS is off", () => {
-    const missing = checklistRows(state({ checklist: { installed: "failed", logged_in: "waiting", https: "waiting", host_name: null } }));
-    expect(missing[0]?.link?.href).toBe("https://tailscale.com/download");
-    const https = checklistRows(state({ checklist: { installed: "ok", logged_in: "ok", https: "failed", host_name: "mac" } }));
-    expect(https[1]?.title).toContain("mac");
-    expect(https[2]?.link?.href).toBe("https://login.tailscale.com/admin/dns");
+    const missing = checklistView(state({ checklist: { installed: "failed", logged_in: "waiting", https: "waiting", host_name: null } }));
+    const https = checklistView(state({ checklist: { installed: "ok", logged_in: "ok", https: "failed", host_name: "mac" } }));
+    expect(missing.kind === "failed" && missing.steps[0]?.link?.href).toBe("https://tailscale.com/download");
+    expect(https.kind === "failed" && https.steps.map((step) => [step.id, step.link?.href])).toEqual([["https", "https://login.tailscale.com/admin/dns"]]);
   });
 
-  it("marks the phone step done once the QR shows", () => {
-    const rows = checklistRows(state({ exposure: "exposed", qr: "https://mac.ts.net/m/#pair=x", checklist: { installed: "ok", logged_in: "ok", https: "ok", host_name: "mac" } }));
-    expect(rows.every((row) => row.state === "ok")).toBe(true);
+  it("collapses to one ready line once every Mac step passed, whatever the QR is doing", () => {
+    const passed = { installed: "ok", logged_in: "ok", https: "ok", host_name: "mac" } as const;
+    expect(checklistView(state({ exposure: "exposed", checklist: passed })).kind).toBe("ready");
+    expect(checklistView(state({ exposure: "exposed", qr: "https://mac.ts.net/m/#pair=x", checklist: passed })).kind).toBe("ready");
+  });
+
+  it("shows nothing while a step is still being read", () => {
+    expect(checklistView(state({ checklist: { installed: "ok", logged_in: "waiting", https: "waiting", host_name: null } })).kind).toBe("pending");
+    expect(checklistView(state({ checklist: null })).kind).toBe("pending");
   });
 });
 
@@ -61,8 +68,10 @@ describe("exposureLine", () => {
     expect(exposureLine(state({ exposure: "failed", failure: { step: "funnel", message: "Funnel을 끄면 이어집니다." } }))?.text).toContain("Funnel이 켜져 있어요");
   });
 
-  it("is empty while the QR shows", () => {
+  it("is empty once exposed, with or without a QR, and while blocked on a Tailscale step", () => {
     expect(exposureLine(state({ exposure: "exposed", qr: "q" }))).toBeNull();
+    expect(exposureLine(state({ exposure: "exposed" }))).toBeNull();
+    expect(exposureLine(state({ exposure: "blocked" }))).toBeNull();
   });
 });
 
@@ -91,13 +100,9 @@ describe("phoneLine", () => {
 describe("in English", () => {
   const phone: PhoneRow = { id: "p", name: "iPhone", last_seen_ms: 0, connected: false, notifications: "on", revoke_at_ms: 7 * DAY };
 
-  it("words the checklist, the foreign entry and the phone row without Korean", () => {
-    expect(checklistRowsIn(state({}), english).map((row) => row.title)).toEqual([
-      "Tailscale installed on this Mac",
-      "Not signed in to Tailscale",
-      "MagicDNS and HTTPS are on for the tailnet",
-      "Install Tailscale on your phone too and sign in with the same account",
-    ]);
+  it("words the failing step, the foreign entry and the phone row without Korean", () => {
+    const view = checklistViewIn(state({}), english);
+    expect(view.kind === "failed" && view.steps.map((step) => step.title)).toEqual(["Not signed in to Tailscale"]);
     expect(exposureLineIn(state({ exposure: "foreign", foreign_target: null }), english)?.text).toBe(
       "Not exposed · tailscale serve HTTPS 443 on this Mac has an entry hide didn't create: Unknown target. hide will not change it.",
     );

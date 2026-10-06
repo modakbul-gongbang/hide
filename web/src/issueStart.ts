@@ -52,7 +52,7 @@ export function defaultWorktreeName(task: Task): string {
 
 /**
  * The agent's first prompt: which issue to solve, its title and body, and,
- * for a GitHub issue when Settings › Issues asks for it, to open a pull
+ * for a GitHub issue when the project row's Issue source menu asks for it, to open a pull
  * request that closes it. The operator edits it before starting.
  */
 export function firstPrompt(task: Task, body: string | null, closes: boolean, t: TFunction<"translation">): string {

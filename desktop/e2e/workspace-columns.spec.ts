@@ -310,7 +310,7 @@ test("Workspace columns preserve geometry, dock once on release and show native 
       await expect(page.locator("[data-view-tab-bar]")).toContainText(longName);
       for (const theme of ["dark", "light"] as const) {
         await page.locator("[data-open-settings]").click();
-        await page.locator('[data-settings-tab="appearance"]').click();
+        await page.locator('[data-settings-tab="general"]').click();
         await page.locator(`[data-theme-option="${theme}"]`).click();
         await expect(page.locator("html")).toHaveClass(new RegExp(`\\b${theme}\\b`));
         await page.keyboard.press("Escape");
@@ -663,7 +663,7 @@ test("a Workspace switch cancels its column drag without changing another Worksp
       await expect(row("fixture")).toHaveAttribute("aria-current", "true");
       await openNotes();
       await page.locator("[data-open-settings]").click();
-      await page.locator('[data-settings-tab="appearance"]').click();
+      await page.locator('[data-settings-tab="general"]').click();
       await page.locator(`[data-theme-option="${theme}"]`).click();
       await expect(page.locator("html")).toHaveClass(new RegExp(`\\b${theme}\\b`));
       await page.keyboard.press("Escape");

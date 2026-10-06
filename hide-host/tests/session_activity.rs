@@ -188,12 +188,14 @@ fn serve_preserves_kit_protocol_alongside_activity() {
     let helper = build.join(Path::new(HELPER).file_name().unwrap());
     fs::copy(HELPER, &helper).unwrap();
     let reinstall = json!({"op":"kit", "action":{
-        "kind":"reinstall", "components":["codex_per_pane"], "turn_off":["codex_per_pane"]
+        "kind":"reinstall", "components":["cli"], "agents_on":["pi"], "agents_off":["cursor"]
     }, "cli_dir":"relative-refused", "herdr_socket":null});
     let parsed: Call = serde_json::from_value(reinstall.clone()).unwrap();
     assert!(
-        matches!(parsed, Call::Kit {action: KitAction::Reinstall {ref components, ref turn_off, ..}, ..}
-        if components == &[hide_kit::ComponentId::CodexPerPane] && turn_off == components)
+        matches!(parsed, Call::Kit {action: KitAction::Reinstall {ref components, ref agents_on, ref agents_off, ..}, ..}
+        if components == &[hide_kit::ComponentId::Cli]
+            && agents_on == &["pi"]
+            && agents_off == &["cursor"])
     );
     let mut reinstall_request = reinstall;
     reinstall_request["id"] = json!(6);
@@ -222,7 +224,11 @@ fn serve_preserves_kit_protocol_alongside_activity() {
     );
     assert_activity(&answers[&3], &codex);
     let components = answers[&17]["ok"]["components"].as_array().unwrap();
-    assert!(components.iter().any(|part| part["id"] == "codex_per_pane"));
+    assert!(components.iter().any(|part| part["id"] == "cli"));
+    assert!(
+        !components.iter().any(|part| part["id"] == "codex_per_pane"),
+        "the kit no longer carries a Codex daemon part"
+    );
     // A recognized reinstall reaches path validation; it is not an unknown operation.
     assert_eq!(answers[&6]["error"]["code"], "invalid_path");
 }

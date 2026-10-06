@@ -42,7 +42,7 @@ test('shared Overview covers native pages, retains work and restores the keyboar
     await setFixtureLifecycle(herdr,herdr.panes[0],'blocked');
     await expect(page.locator('[data-overview-dot]')).toBeVisible();
     await page.locator('[data-open-settings]').click();
-    await page.locator('[data-settings-tab="appearance"]').click();
+    await page.locator('[data-settings-tab="general"]').click();
     await page.locator('[data-theme-option="light"]').click();
     await expect(page.locator('html')).toHaveClass(/\blight\b/);
     await page.keyboard.press('Escape');

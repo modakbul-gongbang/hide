@@ -66,11 +66,12 @@ impl Runtime {
             .flat_map(|checkout| checkout.tabs.iter_mut())
             .flat_map(|tab| tab.panes.iter_mut())
         {
-            pane.children = crate::sidebar::project_pane_children(
+            pane.children = crate::sidebar::project_pane_children_connected(
                 agents,
                 &pane.id,
                 tokens.get(&pane.id).copied().unwrap_or_default(),
                 &status_of,
+                kit.codex_daemon_on == Some(true),
             );
         }
     }
@@ -116,6 +117,7 @@ impl Runtime {
             changed |= self.snapshot.status.remote[index].session != before;
         }
         if changed {
+            self.refresh_agent_sessions();
             self.prune_device_view_bookmarks(target);
             self.repoint_device_editor_tabs(target);
             // A device Workspace in front waited for its catalog to bring

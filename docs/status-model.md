@@ -350,6 +350,41 @@ The mark appears in three places, and only on panes where an agent was detected:
 That third position exists because an empty agent line has to distinguish "nobody is working here" from "Hide cannot see into this worktree".
 A count Hide cannot read is reported as unknown and never as zero, because a zero is a claim that the agent is working alone.
 
+### Not connected, and what fixes it
+
+A Claude Code or Codex pane whose session Hide does not hear also carries a connection (`PaneChildrenSnapshot.connection`), read from the same observation as the mark above so the header and the Agents tab cannot disagree about which sessions Hide hears (PRD settings-cleanup D-09, D-11, B16, B26 to B31).
+It is judged by `sidebar::pane_connection` from `uninstrumented_code`, and by nothing else:
+
+| Instrumentation | Connection |
+| --- | --- |
+| instrumented | `connected: true` |
+| `session_predates_install`, a Codex and the machine's shared server on | `codex_shared_server` |
+| `session_predates_install`, any other | `started_before_hide` |
+| `hooks_not_installed`, `config_unreadable`, `hook_outdated` | `setup_needed` (fix it in the agent's row in Settings; Reopen would change nothing) |
+| `hooks_switched_off`, `unknown`, or an agent with no hook | no connection, so no chip |
+
+`can_reopen` is false for `setup_needed` and for a pane on another device, because a Reopen restarts the session through this Mac's Herdr.
+The shared server's setting is the machine's last kit read (`KitSnapshot.codex_daemon_on`): a read that says it is on is what turns a Codex pane's reason into the shared server, and a later read that says it is off turns it back into `started_before_hide` at once.
+
+Reopen is one event, `pane_reopen { pane_id }`, and reuses the session-sleep path rather than a second one: the agent is ended the way sleep ends it and started again in the same pane with its own resume arguments, a Codex with `--no-daemon` first (`herdr-core/src/pane_reopen.rs`).
+Everything knowable before the agent is touched is refused before it is touched, so a refusal known at that point leaves the pane as it was: an agent that is working or waiting (`agent_busy`), a session Herdr never reported an id for or one with no resume arguments (`session_gone`), a Codex whose capability was never read (`codex_unread`), and a folder that is gone (`start_refused`).
+The agent is read again just before it is signalled, because the list the decision used can be a second old: one that has started working or is waiting since is `agent_busy` too, with nothing signalled.
+Any other end Herdr or the agent refuses is `end_refused`, and a start Herdr refuses after the end is `start_refused`.
+The pinned Herdr keeps an ended agent's name for a moment, and refuses `agent.start` under it as `agent_name_taken` until it lets go; a Reopen, and a wake after a sleep, send the same start again on exactly that refusal for at most ten seconds (`agent_start::start_at_shell_reusing_name`), never before the end has been confirmed, and a name that is still held then is `start_refused`.
+Every other start takes that refusal as Herdr's answer, because its name is someone else's.
+The core keeps one entry per pane, so a second press while one runs starts nothing; the pane's `connection.reopen` is `{"state":"pending"}` while it runs and `{"state":"failed","reason":<code>}` after a refusal, and the entry goes with the need for it: when the pane connects, when it leaves, or when it shows no chip.
+A start that lands publishes nothing more by itself: the session's own hook reaching Hide is what turns the chip off.
+A start refused after the end leaves the pane without an agent, so there is no chip to carry the failure: when the pane then has no agent row, the snapshot's `last_error` says once, as `pane_reopen.not_restarted`, that the agent was ended and could not be started again and that its conversation is kept; Herdr's words stay in the diagnostic, and the shell raises the failure as a notice that outlives `last_error` (`web/src/errorNotice.ts`, [UI_BEHAVIOR.md](UI_BEHAVIOR.md) on Reopen).
+It is not started a second time, because the wait for the ended agent's name above is the one retry a start has, and a second identical start would learn nothing.
+Herdr's words for a refusal go to the diagnostic log (`pane_reopen.answered`), never to the screen.
+
+The Codex shared server is turned off by one more event, `codex_daemon_disable { device_id }` (`local` for this Mac), and only by it: no install pass ever does.
+It rides the machine's kit queue as `Scope::codex_daemon_off`, and the pass that carries it runs `codex features disable daemon_auto_start`, reads the setting back, and answers in its report; `KitSnapshot.codex_daemon_off` is `{"state":"pending"}` from the request until that report, then `{"state":"done"}` or `{"state":"failed","reason":<code>}` with `codex_missing`, `codex_refused`, `timed_out` or `unreachable`.
+A failure leaves the setting as it was, a plain read of the kit says nothing about the request and keeps the last answer, and a machine that is already off, or whose Codex has no such setting, has nothing to turn off.
+A running daemon is never stopped, so sessions already on it stay there until they are reopened.
+
+Regression owners: `runtime::tests::agent_connection` (the connection per reason, Reopen coalescing and refusals, the request's lifecycle), `pane_reopen::tests` (the order of end and start against `FakeHerdr`), and `hide-kit`'s `the_operators_request_turns_the_shared_daemon_off_once_and_says_so`.
+
 ## GitHub status in the Workspace row
 
 The PR icon is independent of agent status and Workspace disclosure.
@@ -433,7 +468,7 @@ Nothing publishes a session `name`, reads Codex's first human turn as a title, o
 
 The label is made by the core, not by a plugin and not through pane tokens: `herdr-core/src/labels/` reads each Claude, Codex or OpenCode pane's conversation, asks the background AI for the session's goal, one line for the turn and how the turn ended (`context_label.v5`), and keeps the answer per pane (the architecture is in [ARCHITECTURE.md](ARCHITECTURE.md#agent-labels-in-the-core)).
 `LabelOverlay::apply` lays that label onto an agent just before the runtime projects it, as `task` (the goal), `expected_reply` (the line when the turn ended on a question), `progress` (the line otherwise) and `question` (a question end on an agent that is not running), and `sidebar.rs::project_agent` reads those four.
-With Settings › Background AI `에이전트 요약` off nothing of the label is laid: the row is titled by the session's own title or the provider, and has no sentence and no written question (D-11).
+With Settings › Hide AI › Features › Agent summaries off nothing of the label is laid: the row is titled by the session's own title or the provider, and has no sentence and no written question (D-11).
 A label is shown only for the session it was proven for.
 The record keeps the provider's native session owner, proven from transcript metadata, and the Herdr reference it was proven under; the label is applied only while the pane's current provider and session reference equal that owner or that reference (`PaneRecord::proven_for`).
 A new session, a reused pane, a provider change and an A to B to A switch therefore show the provider's name and no question until the new session is proven, and returning to A restores A's label.

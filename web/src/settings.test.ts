@@ -4,7 +4,7 @@ import { initializeInterfaceI18n } from "./i18n/instance";
 import {
   ACCENT_CHOICES,
   canRetryDevice,
-  deviceFacts as deviceFactsIn,
+  deviceSubtitle as deviceSubtitleIn,
   deviceIdFor,
   deviceProblemLine as deviceProblemLineIn,
   deviceRemovalLines as deviceRemovalLinesIn,
@@ -13,15 +13,12 @@ import {
   kitConsentTerms as kitConsentTermsIn,
   kitRemovalLine as kitRemovalLineIn,
   herdrLine as herdrLineIn,
+  herdrProtocolText as herdrProtocolTextIn,
   hostLine as hostLineIn,
-  kitAgentLine as kitAgentLineIn,
-  kitAgentMachines,
-  kitAgentNeedsReinstall,
-  kitAgentSwitch,
   kitPartLine as kitPartLineIn,
   kitPartNeedsReinstall,
-  kitPartSwitch,
-  offeredModels,
+  kitPartText as kitPartTextIn,
+  kitProblems,
   redact,
   shownIn,
   sleepAfterLabel,
@@ -31,12 +28,12 @@ import {
   usableFontSize,
   unstoredDeviceDrafts,
 } from "./settings";
-import type { AiProvider, Device, DeviceHost, KitAgent, KitComponent, RemoteStatus } from "./snapshot";
+import type { Device, DeviceHost, KitComponent, RemoteStatus } from "./snapshot";
 
 // The English strings are what the sheet shipped with; the rules read the same under them.
 const t = initializeInterfaceI18n("en").getFixedT(null, "translation");
 const korean = initializeInterfaceI18n("ko").getFixedT(null, "translation");
-const deviceFacts = (device: Device, remote: RemoteStatus | undefined) => deviceFactsIn(device, remote, t);
+const deviceSubtitle = (device: Device, remote: RemoteStatus | undefined) => deviceSubtitleIn(device, remote, t);
 const deviceProblemLine = (problem: string | null | undefined, alias: string | null) => deviceProblemLineIn(problem, alias, t);
 const deviceRemovalLines = (deviceId: string, registrations: Parameters<typeof deviceRemovalLinesIn>[1], tabs: Parameters<typeof deviceRemovalLinesIn>[2], drafts: Parameters<typeof deviceRemovalLinesIn>[3], onlyExported: (tabId: string) => boolean = () => false) =>
   deviceRemovalLinesIn(deviceId, registrations, tabs, drafts, onlyExported, t);
@@ -44,9 +41,10 @@ const deviceLine = (device: Device, remote: RemoteStatus | undefined) => deviceL
 const kitConsentTerms = (helperRoot: string | null, cliDir: string | null) => kitConsentTermsIn(helperRoot, cliDir, t);
 const kitRemovalLine = (device: Device) => kitRemovalLineIn(device, t);
 const herdrLine = (herdr: Parameters<typeof herdrLineIn>[0]) => herdrLineIn(herdr, t);
+const herdrProtocolText = (herdr: Parameters<typeof herdrProtocolTextIn>[0]) => herdrProtocolTextIn(herdr, t);
 const hostLine = (host: DeviceHost | undefined) => hostLineIn(host, t);
 const kitPartLine = (part: KitComponent) => kitPartLineIn(part, t);
-const kitAgentLine = (agent: KitAgent) => kitAgentLineIn(agent, t);
+const kitPartText = (part: Pick<KitComponent, "state" | "reason">) => kitPartTextIn(part, t);
 const socketProblem = (path: string) => socketProblemIn(path, t);
 
 const device = (patch: Partial<Device>): Device => ({
@@ -62,13 +60,13 @@ const device = (patch: Partial<Device>): Device => ({
 });
 
 describe("where settings live and what a device reported", () => {
-  it("shows only facts the device reported", () => {
-    expect(deviceFacts(device({}), undefined)).toEqual([]);
+  it("names a device by its alias, its platform and its Herdr version, and only as far as the device reported them", () => {
+    expect(deviceSubtitle(device({}), undefined)).toBe("studio");
     const host = { state: "ready", platform: "macos aarch64" } as DeviceHost;
     const status = { target_id: "studio", state: "connected", message: null, herdr_version: "0.9.1" };
-    expect(deviceFacts(device({ host }), status)).toEqual(["Herdr 0.9.1", "helper on macos aarch64"]);
-    expect(deviceFacts(device({ host: { ...host, state: "connecting" } }), status)).toEqual(["Herdr 0.9.1"]);
-    expect(deviceFacts(device({ kind: "local", host }), status)).toEqual([]);
+    expect(deviceSubtitle(device({ host }), status)).toBe("studio · macos aarch64 · Herdr 0.9.1");
+    expect(deviceSubtitle(device({ host: { ...host, state: "connecting" } }), status)).toBe("studio · Herdr 0.9.1");
+    expect(deviceSubtitle(device({ kind: "local", host }), status)).toBe("local, no SSH alias");
   });
 
   it("tells a changed host key, an unknown one and a refused sign-in apart", () => {
@@ -154,18 +152,10 @@ describe("settings rules", () => {
     expect(herdrLine(undefined).text).toBe("unavailable");
   });
 
-  it("keeps the configured model among the offered ones", () => {
-    const provider: AiProvider = {
-      id: "claude",
-      label: "Claude",
-      state: "ready",
-      headline: "Ready",
-      message: null,
-      model: "custom-model",
-      models: ["opus", "sonnet"],
-      models_unavailable_reason: null,
-    };
-    expect(offeredModels(provider)).toEqual(["custom-model", "opus", "sonnet"]);
+  it("shows the protocol as one real number while it matches, and both numbers only when it does not (B5)", () => {
+    expect(herdrProtocolText({ state: "connected", expected_protocol: 22, received_protocol: 22 })).toEqual({ text: "22", matches: true });
+    expect(herdrProtocolText({ state: "protocol_mismatch", expected_protocol: 23, received_protocol: 22 })).toEqual({ text: "22 (expects 23)", matches: false });
+    expect(herdrProtocolText({ state: "socket_missing" })).toEqual({ text: "unavailable", matches: true });
   });
 
   it("copies diagnostics without the page token or any secret-shaped value", () => {
@@ -227,9 +217,9 @@ describe("settings rules", () => {
     for (const named of ["/opt/hide", "/opt/bin", "hook helper", "old records preserved", "~/.claude/settings.json", "~/.codex/hooks.json"]) {
       expect(terms).toContain(named);
     }
-    expect(lines).toHaveLength(6);
-    // The Codex part says once what it changes (PRD overview-request-view B33).
-    expect(lines.filter((line) => line.includes("turns off Codex's background daemon"))).toHaveLength(1);
+    // The kit no longer touches Codex's daemon setting (PRD settings-cleanup D-12), so the consent says nothing of it.
+    expect(lines).toHaveLength(5);
+    expect(terms).not.toMatch(/daemon_auto_start|per pane/);
     expect(terms).toContain("~/hide");
     expect(terms).not.toContain("changes no hook");
     expect(socketProblem("")).toBeNull();
@@ -254,9 +244,7 @@ describe("unstoredDeviceDrafts (S5.5 B26, B44)", () => {
 
 describe("the install kit rows (PRD device-parity B7, B8, B27)", () => {
   const part = (id: KitComponent["id"], state: KitComponent["state"]): KitComponent => ({ id, label: id, state, reason: null, location: null });
-  const kit = (components: KitComponent[], unavailable: string | null = null, agents: KitAgent[] = []) => ({ unavailable, busy: false, components, agents, offers_reinstall: false, shares_account_with: null });
-  const piece = (state: KitComponent["state"], reason: string | null = null) => ({ state, reason, location: null });
-  const agent = (id: string, patch: Partial<KitAgent> = {}): KitAgent => ({ id, label: id, availability: "available", enabled: true, skill: piece("installed"), hook: null, doc_url: "https://example.test", ...patch });
+  const kit = (components: KitComponent[], unavailable: string | null = null) => ({ unavailable, busy: false, components, agents: [], offers_reinstall: false, shares_account_with: null });
 
   it("offers Reinstall only for a part a reinstall would change", () => {
     const offered = (["installed", "outdated", "not_installed", "removed", "failed", "absent", "off"] as const).filter((state) => kitPartNeedsReinstall(part("cli", state)));
@@ -265,45 +253,19 @@ describe("the install kit rows (PRD device-parity B7, B8, B27)", () => {
     expect(kitPartLine(part("coordination_retirement", "absent")).tone).toBe("muted");
   });
 
-  it("gives the Codex part a switch while it has a setting to switch, and reads off as neutral (PRD overview-request-view B36)", () => {
-    expect(kitPartSwitch(part("codex_per_pane", "installed"))).toEqual({ on: true });
-    expect(kitPartSwitch(part("codex_per_pane", "off"))).toEqual({ on: false });
-    expect(kitPartSwitch(part("codex_per_pane", "absent"))).toBeNull();
-    expect(kitPartSwitch(part("codex_per_pane", "failed"))).toBeNull();
-    expect(kitPartSwitch(part("cli", "installed"))).toBeNull();
-    expect(kitPartLine(part("codex_per_pane", "off"))).toEqual({ text: "Off", tone: "muted" });
+  it("mentions only the parts that need the operator, and a part that is not on the machine says so once", () => {
+    const withReason = (id: KitComponent["id"], state: KitComponent["state"], reason: string | null): KitComponent => ({ ...part(id, state), reason });
+    const healthy = kit([part("cli", "installed"), withReason("codex_hook", "absent", "Codex is not set up on this machine"), part("claude_code_hook", "off")]);
+    expect(kitProblems(healthy)).toEqual([]);
+    const broken = kit([part("cli", "installed"), withReason("codex_hook", "failed", "settings.json is not valid JSON"), part("claude_code_hook", "removed")]);
+    expect(kitProblems(broken).map((problem) => problem.id)).toEqual(["codex_hook", "claude_code_hook"]);
+    expect(kitProblems(kit([part("cli", "failed")], "A daemon outside the package installs nothing"))).toEqual([]);
+    expect(kitPartText(withReason("codex_hook", "absent", "Codex is not set up on this machine"))).toBe("Not on this machine");
+    expect(kitPartText(withReason("codex_hook", "failed", "settings.json is not valid JSON"))).toBe("Failed: settings.json is not valid JSON");
   });
 
-  it("lists This Mac first and then each device, with the agents that are installed and the labels of the rest", () => {
-    const set = [agent("codex", { hook: piece("installed") }), agent("gemini-cli", { enabled: false, skill: piece("off") }), agent("cursor", { availability: "not_installed", enabled: false, skill: piece("off") })];
-    const local = device({ id: "local", label: "mini", kind: "local", state: "ready", ssh_alias: null, kit: kit([part("cli", "installed")], null, set) });
-    const studio = device({ kit: kit([], "Allow the helper to install Hide on Studio") });
-    const unchecked = device({ id: "box", label: "Box" });
-    const machines = kitAgentMachines([local, studio, unchecked]);
-    expect(machines.map((machine) => machine.device.id)).toEqual(["local", "studio", "box"]);
-    expect(machines[0]?.listed.map((row) => row.id)).toEqual(["codex", "gemini-cli"]);
-    expect(machines[0]?.others).toEqual(["cursor"]);
-    expect(machines[1]).toMatchObject({ listed: [], others: [], unavailable: "Allow the helper to install Hide on Studio" });
-    expect(machines[2]).toMatchObject({ listed: [], unavailable: null });
-  });
-
-  it("words an agent by its switch and its worst piece, and switches only what can be switched (issue #517)", () => {
-    expect(kitAgentLine(agent("a", { enabled: false, skill: piece("off") }))).toEqual({ text: "Off", tone: "muted", reason: null });
-    expect(kitAgentLine(agent("a"))).toEqual({ text: "Installed", tone: "ok", reason: null });
-    // Skill installed, hook not written here: the row keeps Installed and says why.
-    expect(kitAgentLine(agent("a", { hook: piece("absent", "Hide could not read Kiro's version") }))).toEqual({ text: "Installed", tone: "ok", reason: "Hide could not read Kiro's version" });
-    // A switch-off whose removal did not finish is not Off.
-    expect(kitAgentLine(agent("a", { enabled: false, skill: piece("failed", "still there") }))).toEqual({ text: "Failed", tone: "error", reason: "still there" });
-    expect(kitAgentLine(agent("a", { hook: piece("failed", "needs 3.0.0") }))).toEqual({ text: "Failed", tone: "error", reason: "needs 3.0.0" });
-    expect(kitAgentLine(agent("a", { skill: piece("removed"), hook: piece("outdated") })).text).toBe("Removed");
-    expect(kitAgentSwitch(agent("a"))).toEqual({ on: true });
-    expect(kitAgentSwitch(agent("a", { enabled: false }))).toEqual({ on: false });
-    expect(kitAgentSwitch(agent("a", { availability: "not_installed", enabled: false }))).toBeNull();
-    // An agent that is on keeps its switch even where its program is no longer found.
-    expect(kitAgentSwitch(agent("a", { availability: "not_installed" }))).toEqual({ on: true });
-    expect(kitAgentNeedsReinstall(agent("a", { hook: piece("removed") }))).toBe(true);
-    expect(kitAgentNeedsReinstall(agent("a", { enabled: false, skill: piece("removed") }))).toBe(false);
-    expect(kitAgentNeedsReinstall(agent("a"))).toBe(false);
+  it("reads an off part as neutral", () => {
+    expect(kitPartLine(part("cli", "off"))).toEqual({ text: "Off", tone: "muted" });
   });
 
   it("says in one line what removing a device takes off it and what stays (B22, B24)", () => {

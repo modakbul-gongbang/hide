@@ -304,7 +304,6 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
   await page.locator('[data-settings-tab="shortcuts"]').click();
   await page.locator('[data-shortcut-record="recent_panel"]').click();
   await page.keyboard.press("Control+KeyG");
-  await page.locator('[data-shortcut-apply="recent_panel"]').click();
   await expect(page.locator('[data-shortcut-effective="recent_panel"]')).toHaveText("⌃G");
   await page.keyboard.press("Escape");
 
@@ -863,12 +862,12 @@ test("area cycle native: page input previews one exact area, releases once and c
   await page.locator("[data-open-settings]").click();
   await page.locator('[data-settings-tab="shortcuts"]').click();
   await page.locator('[data-shortcut-record="recent_area_tab"]').click();
-  await page.keyboard.press("Control+Alt+Tab");
   // A native page's hold starts from the host's copy of the chords, which
   // the shell reports after the core stores the binding; the host takes it
   // and then rebuilds the menu in one call, so a new menu means it has it.
+  // The chord applies as it is pressed, so the menu is read first.
   await app.evaluate(({ Menu }) => { (globalThis as { menuBeforeRebind?: unknown }).menuBeforeRebind = Menu.getApplicationMenu(); });
-  await page.locator('[data-shortcut-apply="recent_area_tab"]').click();
+  await page.keyboard.press("Control+Alt+Tab");
   await expect(page.locator('[data-shortcut-effective="recent_area_tab"]')).toHaveText("⌃⌥⇥");
   await expect.poll(() => app!.evaluate(({ Menu }) => Menu.getApplicationMenu() !== (globalThis as { menuBeforeRebind?: unknown }).menuBeforeRebind)).toBe(true);
   await page.keyboard.press("Escape");

@@ -4,6 +4,10 @@ use std::time::Duration;
 use crate::fake_herdr::FakeHerdr;
 
 mod agent_areas;
+#[path = "tests/agent_connection.rs"]
+mod agent_connection;
+#[path = "tests/agent_features.rs"]
+mod agent_features;
 #[path = "tests/agent_sleep.rs"]
 mod agent_sleep;
 #[path = "tests/agents_settings_remote.rs"]
@@ -62,6 +66,9 @@ mod session_navigation;
 mod shortcut_import;
 #[path = "tests/snapshot_delta.rs"]
 mod snapshot_delta;
+#[cfg(unix)]
+#[path = "tests/ssh_hosts.rs"]
+mod ssh_hosts_list;
 #[path = "tests/terminal.rs"]
 mod terminal;
 #[path = "tests/tree_close.rs"]

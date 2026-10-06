@@ -42,6 +42,8 @@ const DEVICE_READ_TIMEOUT: Duration = Duration::from_secs(15);
 pub(crate) struct LabelServices {
     pub(crate) store: Arc<LabelStore>,
     pub(crate) analyzer: Arc<LabelAnalyzer>,
+    /// How the agent Hide AI runs on stood at the analyzer's last job.
+    pub(crate) standing: Arc<crate::ai::AiStanding>,
     /// The operator's submits the runtime records for every worker.
     pub(crate) input: Arc<input::OperatorInput>,
     /// Wakes this Mac's worker, for news that reaches the runtime rather
@@ -65,12 +67,15 @@ impl LabelServices {
     ) -> Result<Self, String> {
         let store = Arc::new(LabelStore::open(state_dir, home.as_deref()));
         let settings_home = home.clone();
-        let analyzer = LabelAnalyzer::spawn(Box::new(move || {
-            analysis_settings(&runtime, settings_home.as_deref())
-        }))?;
+        let standing = Arc::new(crate::ai::AiStanding::default());
+        let analyzer = LabelAnalyzer::spawn(
+            Box::new(move || analysis_settings(&runtime, settings_home.as_deref())),
+            Arc::clone(&standing),
+        )?;
         Ok(Self {
             store,
             analyzer: Arc::new(analyzer),
+            standing,
             input: Arc::default(),
             local_wake: Mutex::new(None),
             home,

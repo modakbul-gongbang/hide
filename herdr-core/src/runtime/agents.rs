@@ -1,5 +1,14 @@
 use super::*;
 
+/// Which of this machine's panes the lineage pass saw, and how each one's
+/// connection stood, so a Reopen's published state ends with the need for it.
+#[derive(Default)]
+struct ReopenScope {
+    panes: HashSet<String>,
+    connected: HashSet<String>,
+    not_connected: HashSet<String>,
+}
+
 impl Runtime {
     pub(super) fn advance_remote_file_generation(&mut self) -> u64 {
         self.next_remote_file_generation = self.next_remote_file_generation.saturating_add(1);
@@ -1119,12 +1128,13 @@ impl Runtime {
                 .and_then(|diagnosis| diagnosis.status_of(runtime))
                 .cloned()
         };
+        let codex_daemon_on = self
+            .kit_states
+            .get(crate::workspace::LOCAL_DEVICE_ID)
+            .is_some_and(|kit| kit.codex_daemon_on == Some(true));
         let mut changed = false;
+        let mut reopen_scope = ReopenScope::default();
         let mut delegated_tabs_changed = false;
-        // Collected on the same walk as the pane children, so the Settings
-        // diagnosis and the pane's own mark can never disagree about which
-        // sessions predate the install (PRD B27, D-61).
-        let mut predating: Vec<crate::model::AgentHookPaneSnapshot> = Vec::new();
         // A tab is the operator's whenever it holds an agent they own. One
         // holding only delegated children is the pile this change exists to
         // take off the strip (PRD B1).
@@ -1170,24 +1180,26 @@ impl Runtime {
                 .get(&pane.id)
                 .copied()
                 .unwrap_or_default();
-            let children =
-                crate::sidebar::project_pane_children(&agents, &pane.id, tokens, &status_of);
-            if let Some(children) = children.as_ref()
-                && children.uninstrumented_code.as_deref()
-                    == Some(
-                        hide_agent_hooks::diagnosis::UninstrumentedReason::SessionPredatesInstall
-                            .code(),
-                    )
+            let mut children = crate::sidebar::project_pane_children_connected(
+                &agents,
+                &pane.id,
+                tokens,
+                &status_of,
+                codex_daemon_on,
+            );
+            reopen_scope.panes.insert(pane.id.clone());
+            match children
+                .as_mut()
+                .and_then(|children| children.connection.as_mut())
             {
-                predating.push(crate::model::AgentHookPaneSnapshot {
-                    pane_id: pane.id.clone(),
-                    label: agents
-                        .iter()
-                        .find(|agent| agent.pane_id == pane.id)
-                        .map(|agent| agent.identity_label.clone())
-                        .unwrap_or_else(|| pane.id.clone()),
-                    message: children.uninstrumented_reason.clone().unwrap_or_default(),
-                });
+                Some(connection) if connection.connected => {
+                    reopen_scope.connected.insert(pane.id.clone());
+                }
+                Some(connection) => {
+                    connection.reopen = self.pane_reopens.get(&pane.id).copied();
+                    reopen_scope.not_connected.insert(pane.id.clone());
+                }
+                None => {}
             }
             let lineage_path = crate::sidebar::project_lineage_path(&agents, &pane.id);
             if pane.children != children {
@@ -1200,8 +1212,13 @@ impl Runtime {
             }
         }
         self.snapshot.navigator.agents = agents;
+        self.pane_reopens.retain(|pane_id, state| {
+            !reopen_scope.connected.contains(pane_id)
+                && (reopen_scope.not_connected.contains(pane_id)
+                    || (matches!(state, crate::model::PaneReopenSnapshot::Pending)
+                        && reopen_scope.panes.contains(pane_id)))
+        });
         let hooks = crate::model::AgentHooksSnapshot {
-            sessions_predating_install: predating,
             last_report_failure: self
                 .hook_diagnosis
                 .as_ref()
@@ -1222,6 +1239,7 @@ impl Runtime {
             &mut self.snapshot.navigator.workspaces,
             &self.snapshot.navigator.agents,
         );
+        changed |= self.refresh_agent_sessions();
         changed | delegated_tabs_changed | self.refresh_inactive_groups()
     }
 
@@ -1380,38 +1398,76 @@ impl Runtime {
             return true;
         }
 
+        let mut next = self.ai_settings.clone().unwrap_or_default();
+        if let Some(on) = payload.enabled {
+            next.enabled = on;
+        }
+        if let Some(on) = payload.agent_summary {
+            next.agent_summary = on;
+        }
         if let Some(id) = payload.provider.as_deref() {
-            let Some(provider) = hide_ai::ProviderId::from_id(id) else {
-                self.set_error(
-                    "ai_settings.unknown_provider",
-                    format!("Hide has no background AI provider called {id}"),
-                    false,
-                );
+            let Some(provider) = self.ai_provider_named(id) else {
                 return true;
             };
-            let mut settings = self.ai_settings.clone().unwrap_or_default();
-            // Naming a model keeps the current selection; naming only a
-            // provider selects it. Choosing a model for the provider that is
-            // already selected does both, which is the same thing.
             match payload.model {
-                Some(model) => settings.set_model(provider, model),
-                None => settings.provider = provider,
-            }
-            if self.ai_settings.as_ref() != Some(&settings) {
-                self.ai_settings = Some(settings.clone());
-                self.pending_ai_settings_save = Some(settings);
-                changed = true;
+                // A model names the agent it is for: Runs on, or an agent in
+                // the fallback list, which keeps its own model. Choosing a
+                // model for the agent that is already selected is also
+                // choosing it, which is what a first choice by model means.
+                Some(model) => {
+                    if next.fallback.iter().any(|entry| entry.provider == provider) {
+                        next.set_fallback_model(provider, Some(model));
+                    } else {
+                        if provider == next.provider && !next.chosen {
+                            next.set_provider(provider);
+                        }
+                        next.set_model(provider, model);
+                    }
+                }
+                None => {
+                    if provider != next.provider || !next.chosen {
+                        if !self.ai_selectable(provider) {
+                            self.refuse_unselectable(provider);
+                            return true;
+                        }
+                        next.set_provider(provider);
+                    }
+                }
             }
         }
-
-        if let Some(on) = payload.agent_summary {
-            let mut settings = self.ai_settings.clone().unwrap_or_default();
-            settings.agent_summary = on;
-            if self.ai_settings.as_ref() != Some(&settings) {
-                self.ai_settings = Some(settings.clone());
-                self.pending_ai_settings_save = Some(settings);
-                changed = true;
+        if let Some(id) = payload.fallback_add.as_deref() {
+            let Some(provider) = self.ai_provider_named(id) else {
+                return true;
+            };
+            if !self.ai_selectable(provider) {
+                self.refuse_unselectable(provider);
+                return true;
             }
+            if let Err(refusal) = next.add_fallback(provider, None) {
+                let (kind, message) = match refusal {
+                    hide_ai::FallbackRefusal::IsRunsOn => (
+                        "ai_settings.fallback_is_runs_on",
+                        "The agent Hide AI runs on is not its own fallback",
+                    ),
+                    hide_ai::FallbackRefusal::AlreadyListed => (
+                        "ai_settings.fallback_listed",
+                        "That agent is already in the fallback list",
+                    ),
+                };
+                self.set_error(kind, message, false);
+                return true;
+            }
+        }
+        if let Some(id) = payload.fallback_remove.as_deref() {
+            let Some(provider) = self.ai_provider_named(id) else {
+                return true;
+            };
+            next.remove_fallback(provider);
+        }
+        if self.ai_settings.as_ref() != Some(&next) {
+            self.ai_settings = Some(next.clone());
+            self.pending_ai_settings_save = Some(next);
+            changed = true;
         }
 
         if changed {
@@ -1420,27 +1476,105 @@ impl Runtime {
         true
     }
 
-    /// Whether agent labels are asked of a provider and shown (D-11). On
-    /// until the settings say otherwise.
+    /// Whether agent labels are asked of a provider and shown (D-11): the
+    /// switch is on, Hide AI is on and an agent is chosen to run on (B33,
+    /// B47). A turn that is not asked is not lost: the row shows the session's
+    /// own text and the label is made once this is true again.
     pub(crate) fn agent_summary(&self) -> bool {
         self.ai_settings
             .as_ref()
-            .is_none_or(|settings| settings.agent_summary)
+            .is_some_and(|settings| settings.agent_summary && self.ai_active())
+    }
+
+    /// Whether Hide makes any model call: Use Hide AI is on and an agent is
+    /// chosen (B33, B47). Worktree names, Memory analysis and agent labels
+    /// each fall back to their own non-AI behavior while this is false.
+    pub(crate) fn ai_active(&self) -> bool {
+        self.ai_settings
+            .as_ref()
+            .is_some_and(|settings| settings.enabled && settings.chosen)
+    }
+
+    /// The agent a first-run or `provider` event names, or the refusal that
+    /// says Hide has no such agent.
+    fn ai_provider_named(&mut self, id: &str) -> Option<hide_ai::ProviderId> {
+        let provider = hide_ai::ProviderId::from_id(id);
+        if provider.is_none() {
+            self.set_error(
+                "ai_settings.unknown_provider",
+                format!("Hide has no background AI provider called {id}"),
+                false,
+            );
+        }
+        provider
+    }
+
+    /// Whether the last read says `provider` can be chosen (D-15): its CLI
+    /// is installed, it is signed in, it has a backend and its call cannot
+    /// change files. A provider not read yet cannot.
+    fn ai_selectable(&self, provider: hide_ai::ProviderId) -> bool {
+        self.background_ai_providers
+            .iter()
+            .any(|row| row.id == provider.as_str() && row.selectable)
+    }
+
+    fn refuse_unselectable(&mut self, provider: hide_ai::ProviderId) {
+        self.set_error(
+            "ai_settings.provider_not_selectable",
+            format!(
+                "{} cannot be chosen for Hide AI: it is not installed, not signed in, or cannot be asked without risk to files",
+                provider.label()
+            ),
+            false,
+        );
     }
 
     /// What the provider probe should ask, and whether it should ask at all.
     ///
-    /// An empty answer while the group is off screen is intentional, the same
-    /// way an empty disk request is: an idle Hide must never start a provider
-    /// process.
+    /// An empty answer while the tab is off screen and an agent is chosen is
+    /// intentional, the same way an empty disk request is: an idle Hide must
+    /// never start a provider process. With nobody chosen it asks only the
+    /// agents that are switched on, for their sign-in, so the first one that
+    /// is signed in can be chosen by itself (D-18, D-27).
     pub fn ai_request(&self) -> crate::ai::AiRequest {
         let settings = self.ai_settings.clone().unwrap_or_default();
+        let selecting = if self.ai_settings.is_some() && settings.enabled && !settings.chosen {
+            self.kit_state(crate::workspace::LOCAL_DEVICE_ID)
+                .agents
+                .iter()
+                .filter(|row| {
+                    row.enabled && !matches!(row.availability, hide_kit::Availability::NotInstalled)
+                })
+                .filter_map(|row| {
+                    hide_ai::PROVIDERS
+                        .iter()
+                        .find(|provider| provider.descriptor().agent == row.id)
+                        .copied()
+                })
+                .collect()
+        } else {
+            std::collections::BTreeSet::new()
+        };
+        let kit = self.kit_state(crate::workspace::LOCAL_DEVICE_ID);
+        // The kit's own answer to "is this agent's program on this Mac"; none
+        // until it has read, so no agent is called missing from no reading.
+        let cli_found = (!kit.agents.is_empty()).then(|| {
+            kit.agents
+                .iter()
+                .filter(|row| !matches!(row.availability, hide_kit::Availability::NotInstalled))
+                .filter_map(|row| {
+                    hide_ai::PROVIDERS
+                        .iter()
+                        .find(|provider| provider.descriptor().agent == row.id)
+                        .copied()
+                })
+                .collect()
+        });
         crate::ai::AiRequest {
             observing: self.ai_observing || self.ai_start_observing,
-            models: hide_ai::PROVIDERS
-                .iter()
-                .map(|provider| (*provider, settings.model(*provider).to_owned()))
-                .collect(),
+            models: settings.models_by_provider(),
+            selecting,
+            cli_found,
         }
     }
 
@@ -1465,17 +1599,14 @@ impl Runtime {
     pub(crate) fn ingest_ai_settings(
         &mut self,
         settings: hide_ai::AiSettings,
-        chosen: bool,
         unavailable_reason: Option<String>,
     ) -> bool {
         let same = self.ai_settings.as_ref() == Some(&settings)
-            && self.snapshot.status.background_ai.chosen == chosen
             && self.snapshot.status.background_ai.unavailable_reason == unavailable_reason;
         if same {
             return false;
         }
         self.ai_settings = Some(settings);
-        self.snapshot.status.background_ai.chosen = chosen;
         self.snapshot.status.background_ai.unavailable_reason = unavailable_reason;
         self.refresh_background_ai();
         true
@@ -1486,11 +1617,68 @@ impl Runtime {
         &mut self,
         read: crate::model::BackgroundAiSnapshot,
     ) -> bool {
-        if self.background_ai_providers == read.providers {
+        // A read that asked only the agents being selected from knows
+        // nothing of the others: their rows stay as they were.
+        let mut providers = if self.background_ai_providers.is_empty() {
+            crate::model::BackgroundAiSnapshot::unread().providers
+        } else {
+            self.background_ai_providers.clone()
+        };
+        for row in read.providers {
+            if row.state != "unread"
+                && let Some(old) = providers.iter_mut().find(|old| old.id == row.id)
+            {
+                *old = row;
+            }
+        }
+        let selected = self.choose_first_run_provider(&providers);
+        if self.background_ai_providers == providers && !selected {
             return false;
         }
-        self.background_ai_providers = read.providers;
+        self.background_ai_providers = providers;
         self.refresh_background_ai();
+        true
+    }
+
+    /// The first run's choice (D-18, D-27): while nobody has chosen, the first
+    /// agent of the fixed order that is switched on in this Mac's kit and
+    /// signed in becomes Runs on, with its default model, and the choice is
+    /// stored. A stored choice is never replaced, and with no agent signed in
+    /// nothing is chosen and Hide features run without a model (B47).
+    fn choose_first_run_provider(
+        &mut self,
+        providers: &[crate::model::BackgroundAiProviderSnapshot],
+    ) -> bool {
+        let Some(settings) = self.ai_settings.as_ref() else {
+            return false;
+        };
+        if settings.chosen || !settings.enabled {
+            return false;
+        }
+        let on: Vec<String> = self
+            .kit_state(crate::workspace::LOCAL_DEVICE_ID)
+            .agents
+            .iter()
+            .filter(|row| row.enabled)
+            .map(|row| row.id.clone())
+            .collect();
+        let ready: Vec<(hide_ai::ProviderId, hide_ai::Availability)> = providers
+            .iter()
+            .filter(|row| row.state == "ready")
+            .filter_map(|row| {
+                let provider = hide_ai::ProviderId::from_id(&row.id)?;
+                on.iter()
+                    .any(|agent| agent == provider.descriptor().agent)
+                    .then_some((provider, hide_ai::Availability::Ready))
+            })
+            .collect();
+        let Some(provider) = hide_ai::AiSettings::provider_for_first_run(&ready) else {
+            return false;
+        };
+        let mut next = settings.clone();
+        next.set_provider(provider);
+        self.ai_settings = Some(next.clone());
+        self.pending_ai_settings_save = Some(next);
         true
     }
 
@@ -1516,19 +1704,90 @@ impl Runtime {
     /// which is what the probe was run with.
     pub(super) fn refresh_background_ai(&mut self) {
         let settings = self.ai_settings.clone().unwrap_or_default();
+        self.stop_memory_analysis_if_ai_moved(&settings);
         let mut providers = if self.background_ai_providers.is_empty() {
             crate::model::BackgroundAiSnapshot::unread().providers
         } else {
             self.background_ai_providers.clone()
         };
+        let models = settings.models_by_provider();
         for row in &mut providers {
             if let Some(provider) = hide_ai::ProviderId::from_id(&row.id) {
-                row.model = settings.model(provider).to_owned();
+                row.model = models
+                    .get(&provider)
+                    .cloned()
+                    .unwrap_or_else(|| settings.model(provider).to_owned());
             }
         }
-        self.snapshot.status.background_ai.provider = settings.provider.as_str().to_owned();
-        self.snapshot.status.background_ai.agent_summary = settings.agent_summary;
-        self.snapshot.status.background_ai.providers = providers;
+        let refusal = self.ai_refusal(&settings);
+        let snapshot = &mut self.snapshot.status.background_ai;
+        snapshot.enabled = settings.enabled;
+        snapshot.chosen = settings.chosen;
+        snapshot.provider = settings
+            .chosen
+            .then(|| settings.provider.as_str().to_owned());
+        snapshot.agent_summary = settings.agent_summary;
+        snapshot.fallback = settings
+            .fallback
+            .iter()
+            .map(|entry| crate::model::BackgroundAiFallbackSnapshot {
+                provider: entry.provider.as_str().to_owned(),
+                model: models.get(&entry.provider).cloned().unwrap_or_default(),
+            })
+            .collect();
+        snapshot.providers = providers;
+        snapshot.refusal = refusal;
+    }
+
+    /// A Memory analysis builds its router once, so it would keep asking an
+    /// agent the operator has since turned off, removed from the fallback
+    /// list or replaced. It is stopped when Hide AI is no longer active or the
+    /// agents and models it may ask changed; the stored Memory is untouched
+    /// and Retry starts a run on the new choice (B33).
+    fn stop_memory_analysis_if_ai_moved(&mut self, settings: &hide_ai::AiSettings) {
+        let (Some(cancel), Some(started)) = (&self.memory_cancel, &self.memory_analysis_settings)
+        else {
+            return;
+        };
+        let active = settings.enabled && settings.chosen;
+        if !active || !started.routes_like(settings) {
+            cancel.cancel();
+        }
+    }
+
+    /// What the label analyzer last found about Runs on (B41, B42): shown
+    /// only while it is the chosen agent that cannot answer.
+    fn ai_refusal(
+        &self,
+        settings: &hide_ai::AiSettings,
+    ) -> Option<crate::model::BackgroundAiRefusalSnapshot> {
+        if !settings.chosen || !settings.enabled {
+            return None;
+        }
+        let standing = self
+            .label_services
+            .as_ref()
+            .and_then(|services| services.standing.current())?;
+        (standing.selected == settings.provider).then(|| {
+            crate::model::BackgroundAiRefusalSnapshot {
+                provider: standing.selected.as_str().to_owned(),
+                reason: standing.reason.to_owned(),
+                retry_at_ms: standing.retry_at_ms,
+                using: standing.using.map(|using| using.as_str().to_owned()),
+            }
+        })
+    }
+
+    /// Republishes the refusal when the analyzer's standing moved since the
+    /// snapshot last said. One mutex read per coordinator wake, no provider.
+    pub(crate) fn refresh_ai_standing(&mut self) -> bool {
+        let settings = self.ai_settings.clone().unwrap_or_default();
+        let next = self.ai_refusal(&settings);
+        if self.snapshot.status.background_ai.refusal == next {
+            return false;
+        }
+        self.snapshot.status.background_ai.refusal = next;
+        true
     }
 
     pub(crate) fn ingest_hook_diagnosis(

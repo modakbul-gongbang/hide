@@ -113,11 +113,13 @@ export async function chooseColumn(page: Page, column: "views" | "tools"): Promi
 export async function bindChordlessCommand(page: Page, id: string, keys: string): Promise<void> {
   await page.keyboard.press(chord("settings"));
   await page.locator('[data-settings-tab="shortcuts"]').click();
+  // The area commands sit in a fold that starts closed.
+  const fold = page.locator('[data-settings-fold="area-commands"]');
+  if (await fold.locator(`[data-shortcut-record="${id}"]`).count() > 0 && !(await fold.evaluate((node) => (node as HTMLDetailsElement).open))) await fold.locator("summary").click();
   await expect(page.locator(`[data-shortcut-effective="${id}"]`)).toHaveText("-");
   await page.locator(`[data-shortcut-record="${id}"]`).click();
   await page.keyboard.press(keys);
   await expect(page.locator(`[data-shortcut-problem="${id}"]`)).toHaveCount(0);
-  await page.locator(`[data-shortcut-apply="${id}"]`).click();
   await expect(page.locator(`[data-shortcut-effective="${id}"]`)).not.toHaveText("-");
   await page.locator("[data-settings-close]").click();
   await expect(page.locator("[data-settings]")).toHaveCount(0);
@@ -217,11 +219,11 @@ export async function registerFolder(page: Page, daemon: { origin: string; token
   await sendEvent(page, daemon, "create_workspace", { path: folder, label: path.basename(folder), initialize_git: false });
 }
 
-/** Chooses Light or Dark in Settings > Appearance, closes Settings and waits for the colors to settle. */
+/** Chooses Light or Dark in Settings > General, closes Settings and waits for the colors to settle. */
 export async function chooseTheme(page: Page, theme: "light" | "dark"): Promise<void> {
   await page.keyboard.press(chord("settings"));
   await expect(page.locator('[data-settings="true"]')).toBeVisible();
-  await page.locator('[data-settings-tab="appearance"]').click();
+  await page.locator('[data-settings-tab="general"]').click();
   await page.locator(`[data-theme-option="${theme}"]`).click();
   await expect(page.locator("html")).toHaveClass(new RegExp(`\\b${theme}\\b`));
   await page.keyboard.press("Escape");
