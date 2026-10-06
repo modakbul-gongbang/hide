@@ -141,7 +141,6 @@ pub(super) fn runtime_with_home() -> Runtime {
         workspace_views_path: None,
         shortcut_import_path: None,
         local_issues_path: None,
-        kit_dir: None,
     };
     let mut runtime = Runtime::new(
         options,

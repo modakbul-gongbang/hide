@@ -6,10 +6,12 @@
 
 use std::fs::File;
 use std::path::PathBuf;
+use std::sync::Arc;
+use std::sync::atomic::Ordering;
 use std::time::Duration;
 
 use cap_std::fs::Dir;
-use hide_host::serve::Env;
+use hide_host::serve::{Env, KitPlace};
 use hide_node_link::RootIdentity;
 use hide_node_link::protocol::Call;
 use hide_node_link::{LinkAnswer, LinkError, NodeLink};
@@ -24,9 +26,23 @@ pub struct Local {
 impl Local {
     /// The core's own node, answering for `home`: the home the core was
     /// configured with, which is not the process's for a daemon started with
-    /// a private one.
+    /// a private one. It installs no kit until [`Local::bundled`] says where
+    /// the parts are.
     pub fn new(home: Option<PathBuf>) -> Self {
-        Self { env: Env { home } }
+        Self {
+            env: Env {
+                home,
+                kit: KitPlace::Standalone,
+                stop: Arc::default(),
+            },
+        }
+    }
+
+    /// The node runs from a desktop package whose resources folder,
+    /// `kit_dir`, holds the kit's parts (`hide_kit::bundled_kit_dir`).
+    pub fn bundled(mut self, kit_dir: PathBuf) -> Self {
+        self.env.kit = KitPlace::Bundled(kit_dir);
+        self
     }
 
     /// This process's own account, as a device's helper answers.
@@ -70,6 +86,12 @@ impl NodeLink for Local {
 
     fn in_process(&self) -> bool {
         true
+    }
+
+    /// The core is going away: a kit step still running ends the child it
+    /// waits on rather than keep the process alive after the core.
+    fn close(&self, _reason: &str) {
+        self.env.stop.store(true, Ordering::Relaxed);
     }
 }
 

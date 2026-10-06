@@ -215,6 +215,9 @@ pub enum Call {
         #[serde(default)]
         retirement_projects: Vec<String>,
     },
+    /// Whether the node's account has Hide's agent hooks in place, read from
+    /// that account's own configuration (`hide_agent_hooks::Diagnosis`).
+    HookDiagnosis,
     /// One bounded read of a pane's conversation for its label, from the
     /// checkpoint the caller kept (`hide_session::label_transcript::read`).
     /// The helper keeps nothing between reads; it answers events and the

@@ -547,9 +547,14 @@ impl Runtime {
     /// device answers through its helper, and an unavailable helper on a
     /// consented device is asked for again here, so the next action finds it
     /// ready.
+    /// The link to the machine this core runs on.
+    pub(crate) fn own_node(&self) -> Arc<dyn NodeLink> {
+        Arc::clone(&self.own_node)
+    }
+
     pub(crate) fn node_link(&mut self, device_id: &str) -> Result<Arc<dyn NodeLink>, String> {
         if device_id == self.node.as_str() {
-            return Ok(Arc::clone(&self.own_node));
+            return Ok(self.own_node());
         }
         match self.device_hosts.get(device_id).map(|host| &host.phase) {
             Some(HostPhase::Ready { host, .. }) if host.closed_reason().is_none() => {

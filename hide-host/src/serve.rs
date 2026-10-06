@@ -4,6 +4,7 @@
 
 use std::io::{self, BufRead, Read, Write};
 use std::path::{Path, PathBuf};
+use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
@@ -202,19 +203,40 @@ pub fn session_activity(
 }
 
 /// What a node answers from besides the request: the account home its
-/// sessions, kit and Home folder live in. A helper reads it from its process
-/// once; the core's own node is given the home the core was configured with,
-/// so a daemon running with a private home never answers from the
-/// operator's.
+/// sessions, kit and Home folder live in, and where its kit's parts come
+/// from. A helper reads them from its process once; the core's own node is
+/// given the home the core was configured with, so a daemon running with a
+/// private home never answers from the operator's.
 #[derive(Clone, Debug)]
 pub struct Env {
     pub home: Option<PathBuf>,
+    pub kit: KitPlace,
+    /// Raised when the node's owner goes away: a kit step still running
+    /// ends the child it waits on, and no further part starts.
+    pub stop: Arc<AtomicBool>,
+}
+
+/// Where a node's install kit takes its parts from, which decides the
+/// target it installs into.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum KitPlace {
+    /// A helper Hide installed under a helper root: the root the running
+    /// executable sits in (`kit::handle`).
+    Installed,
+    /// The resources folder of the desktop package the node runs from
+    /// (`hide_kit::bundled_kit_dir`).
+    Bundled(PathBuf),
+    /// A development or standalone daemon, which installs nothing
+    /// (`hide_kit::STANDALONE_REASON`).
+    Standalone,
 }
 
 impl Env {
     pub fn of_process() -> Self {
         Self {
             home: std::env::var_os("HOME").map(PathBuf::from),
+            kit: KitPlace::Installed,
+            stop: crate::kit::process_stop(),
         }
     }
 
@@ -341,8 +363,12 @@ pub fn handle_in(call: Call, env: &Env) -> HostResult<Value> {
             &cli_dir,
             herdr_socket.as_deref(),
             &retirement_projects,
-            env.home.as_deref(),
+            env,
         ),
+        Call::HookDiagnosis => {
+            let home = env.home("HOME is not set, so the agent hooks have no account to read")?;
+            to_value(hide_agent_hooks::Diagnosis::read(&home))
+        }
         Call::LabelTranscript { request } => {
             let home = env.home("label_session_home_unavailable")?;
             label_transcript(Path::new(&home), &request)

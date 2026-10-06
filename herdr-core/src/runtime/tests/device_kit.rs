@@ -1489,6 +1489,39 @@ fn wait_for_calls(helper: &KitDevice, count: usize) {
     }
 }
 
+/// This machine's row: the kit of the core's own node, read from the
+/// snapshot as the screen reads it.
+fn own_kit(shared: &Mutex<Runtime>) -> crate::model::KitSnapshot {
+    let runtime = shared.lock().unwrap();
+    let node = runtime.node.clone();
+    runtime
+        .snapshot()
+        .navigator
+        .devices
+        .iter()
+        .find(|device| device.id == node.as_str())
+        .expect("this machine's row")
+        .kit
+        .clone()
+}
+
+/// Waits until this machine's kit is no longer busy.
+#[allow(clippy::disallowed_methods)] // a polling helper: it sleeps between observations of a state, bounded by a deadline
+fn settle_own(shared: &Mutex<Runtime>) -> crate::model::KitSnapshot {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    loop {
+        let kit = own_kit(shared);
+        if !kit.busy {
+            return kit;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "this machine's kit worker never finished"
+        );
+        std::thread::sleep(Duration::from_millis(5));
+    }
+}
+
 /// A device's kit read with its Codex shared server on and, when given, the
 /// answer to a turn-off.
 fn shared_server(running: bool, off: Option<hide_kit::CodexDaemonOff>) -> KitReport {
@@ -1666,4 +1699,69 @@ fn a_late_answer_for_a_turn_off_run_that_settled_changes_nothing() {
         Some(run),
     );
     assert_eq!(kit(&shared).codex_daemon_off, Some(Off::Done));
+}
+
+/// PRD core-host-node D-21: this machine's kit runs on the core's own node,
+/// asked with the command folder in its home and the embedder's Herdr
+/// socket, and its row shows what the node answered.
+#[test]
+fn this_machines_kit_runs_on_its_own_node() {
+    let shared = device_runtime(None, None);
+    let node = KitDevice::answering(Ok(report(&[(ComponentId::Cli, ComponentState::Installed)])));
+    shared.lock().unwrap().queue_local_kit_launch();
+    let pump = crate::kit::KitPump::spawn(
+        shared.weak(),
+        crate::handle::ChangeNotifier::noop(),
+        Arc::clone(&node) as Arc<dyn NodeLink>,
+        Some("/run/herdr.sock".to_owned()),
+        shared.lock().unwrap().node.clone(),
+    )
+    .unwrap();
+
+    let kit = settle_own(&shared);
+    drop(pump);
+    assert_eq!(
+        node.calls(),
+        vec![(
+            KitAction::Apply,
+            "~/.local/bin".to_owned(),
+            Some("/run/herdr.sock".to_owned())
+        )]
+    );
+    assert_eq!(kit.unavailable, None);
+    assert!(
+        kit.components
+            .iter()
+            .any(|part| part.id == ComponentId::Cli && part.state == ComponentState::Installed),
+        "{kit:?}"
+    );
+}
+
+/// B11: a node outside the desktop package installs nothing, and this
+/// machine's row says why with the node's own reason.
+#[test]
+fn a_standalone_own_node_installs_nothing_and_says_why() {
+    let shared = device_runtime(None, None);
+    let home = tempfile::tempdir().unwrap();
+    shared.lock().unwrap().queue_local_kit_launch();
+    let pump = crate::kit::KitPump::spawn(
+        shared.weak(),
+        crate::handle::ChangeNotifier::noop(),
+        Arc::new(hide_node::Local::new(Some(home.path().to_path_buf()))),
+        None,
+        shared.lock().unwrap().node.clone(),
+    )
+    .unwrap();
+
+    let kit = settle_own(&shared);
+    drop(pump);
+    assert_eq!(
+        kit.unavailable.as_deref(),
+        Some(hide_kit::STANDALONE_REASON)
+    );
+    assert_eq!(
+        std::fs::read_dir(home.path()).unwrap().count(),
+        0,
+        "nothing is written into the node's home"
+    );
 }

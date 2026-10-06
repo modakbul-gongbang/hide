@@ -74,16 +74,22 @@ fn run_coordinator(
         None
     };
     // The hook-install state is two small file reads of this machine's own
-    // configuration, so the local coordinator takes it once before the first
-    // connect. It is not a poll: it changes only when the kit installs or the
-    // operator removes, and the kit worker republishes it after each install
-    // (PRD B36). The install itself is the kit's (`crate::kit`).
-    if context.is_local()
-        && let Some(home) = home_path.as_deref()
+    // configuration, which its node makes, so the local coordinator takes it
+    // once before the first connect. It is not a poll: it changes only when
+    // the kit installs or the operator removes, and the kit worker
+    // republishes it after each install (PRD B36). The install itself is the
+    // kit's (`crate::kit`).
+    let hook_node = context
+        .is_local()
+        .then(|| context.node().map(Arc::clone))
+        .flatten();
+    if let Some(node) = hook_node.as_deref()
+        && let Some(diagnosis) = crate::kit::hook_diagnosis(node, context.log_target())
     {
-        publish_hook_diagnosis(&context, hide_agent_hooks::Diagnosis::read(home));
+        publish_hook_diagnosis(&context, diagnosis);
     }
-    // Kept for the counter sweep below, which runs on a fresh snapshot.
+    // Kept for the AI settings and the counter sweep below, which read this
+    // machine's files themselves.
     let hook_home = context.is_local().then(|| home_path.clone()).flatten();
     let mut usage_reader = usage_paths.map(crate::usage::ProviderUsageReader::new);
     // A listening port is this machine's, so only the local coordinator looks.
@@ -415,7 +421,7 @@ fn run_coordinator(
                 }
             }
 
-            if let Some(home) = hook_home.as_deref() {
+            if let Some(node) = hook_node.as_deref() {
                 // While the Settings agents tab is on screen the diagnosis is
                 // read back once a second, because the hook helper records a
                 // report it could not deliver from its own process and that
@@ -429,10 +435,9 @@ fn run_coordinator(
                         return;
                     };
                     if observed
-                        && !publish_hook_diagnosis(
-                            &context,
-                            hide_agent_hooks::Diagnosis::read(home),
-                        )
+                        && let Some(diagnosis) =
+                            crate::kit::hook_diagnosis(node, context.log_target())
+                        && !publish_hook_diagnosis(&context, diagnosis)
                     {
                         stop_subscription(&mut subscription);
                         return;

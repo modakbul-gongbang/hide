@@ -406,13 +406,22 @@ fn owner_loop(
 ) {
     // The core's own node answers for the home the core reads and writes
     // for: the configured one, else the process's, as the core decides.
-    let own_node = hide_node::Local::new(
+    let mut own_node = hide_node::Local::new(
         options
             .home
             .as_ref()
             .map(std::path::PathBuf::from)
             .or_else(|| std::env::var_os("HOME").map(std::path::PathBuf::from)),
     );
+    // The install kit's parts ship beside this binary in the app bundle; a
+    // daemon anywhere else installs nothing (PRD device-parity D-19).
+    if let Some(kit_dir) = std::env::current_exe()
+        .ok()
+        .as_deref()
+        .and_then(hide_kit::bundled_kit_dir)
+    {
+        own_node = own_node.bundled(kit_dir);
+    }
     let Some(core) = Core::create(options, std::sync::Arc::new(own_node)) else {
         let _ = ready.send(Err(
             "herdr-core create failed (check schema_version and paths)".to_owned(),

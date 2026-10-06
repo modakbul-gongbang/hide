@@ -53,11 +53,6 @@ pub struct CoreOptions {
     /// Absent keeps them in memory for the session only, as a test core does.
     #[serde(default)]
     pub local_issues_path: Option<String>,
-    /// The running app bundle's `Contents/Resources`, whose parts the install
-    /// kit puts on this Mac (PRD device-parity D-19). Absent for a daemon
-    /// outside the app, which installs nothing and says why.
-    #[serde(default)]
-    pub kit_dir: Option<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]

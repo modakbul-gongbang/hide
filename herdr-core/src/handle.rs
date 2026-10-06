@@ -83,6 +83,7 @@ pub struct Core {
     _links: Option<crate::links::worker::LinkWorker>,
     labels: Option<Arc<crate::labels::LabelServices>>,
     factory: Option<crate::factory::FactoryHost>,
+    own_node: Arc<dyn crate::node_access::NodeLink>,
     runtime: Arc<Mutex<Runtime>>,
     notifier: ChangeNotifier,
     owner_thread: ThreadId,
@@ -106,6 +107,9 @@ impl Drop for Core {
         if let Some(labels) = self.labels.take() {
             labels.analyzer.shutdown();
         }
+        // A kit step running on this machine's node ends the child it waits
+        // on, so the kit worker below is joined without waiting it out.
+        self.own_node.close("core stopping");
         self._session_search.take();
         self._links.take();
         self._terminal_maintenance.take();
@@ -169,7 +173,9 @@ impl Core {
     #[cfg(test)]
     pub(crate) fn for_runtime_fixture(runtime: Arc<Mutex<Runtime>>) -> (Self, ChangeNotifier) {
         let notifier = ChangeNotifier::new();
+        let own_node = lock_recover(&runtime).own_node();
         let core = Self {
+            own_node,
             _terminal_maintenance: None,
             _changes: None,
             _kit: None,
@@ -334,7 +340,7 @@ impl Core {
             live::install(
                 &runtime,
                 notifier.clone(),
-                own_node,
+                Arc::clone(&own_node),
                 socket_path,
                 options.herdr_bin_path.as_deref(),
                 usage_paths,
@@ -373,51 +379,23 @@ impl Core {
                     None
                 }
             };
-        // This Mac's install kit runs whether or not Herdr answers; only
-        // retiring the old labels plugin needs it (PRD labels-in-hided D-12).
-        // Without a socket from the embedder it is the one Herdr would use
-        // for the core's home.
-        let herdr_socket = options
-            .herdr_socket_path
-            .as_ref()
-            .map(std::path::PathBuf::from)
-            .or_else(|| {
-                let home = environment_home.clone()?;
-                let variables = |name: &str| {
-                    if name == hide_platform::host::HOME_VARIABLE {
-                        Some(home.clone().into_os_string())
-                    } else {
-                        std::env::var_os(name)
-                    }
-                };
-                hide_platform::host::herdr_socket_default_from(&variables).ok()
-            })
-            .unwrap_or_default();
-        let kit = match crate::kit::local_target(
-            options.kit_dir.as_deref(),
-            environment_home,
-            herdr_socket,
-            std::sync::Arc::default(),
+        // This machine's install kit runs on its own node whether or not
+        // Herdr answers; only retiring the old labels plugin needs it (PRD
+        // labels-in-hided D-12). Without a socket from the embedder the node
+        // uses the one Herdr would for its home.
+        lock_recover(&runtime).queue_local_kit_launch();
+        let kit = match crate::kit::KitPump::spawn(
+            Arc::downgrade(&runtime),
+            notifier.clone(),
+            Arc::clone(&own_node),
+            options.herdr_socket_path.clone(),
+            options.node_id.clone(),
         ) {
-            Ok(target) => {
-                lock_recover(&runtime).queue_local_kit_launch();
-                match crate::kit::KitPump::spawn(
-                    Arc::downgrade(&runtime),
-                    notifier.clone(),
-                    target,
-                    options.node_id.clone(),
-                ) {
-                    Ok(pump) => Some(pump),
-                    Err(error) => {
-                        lock_recover(&runtime).set_local_kit_unavailable(&format!(
-                            "Hide could not start its installer: {error}"
-                        ));
-                        None
-                    }
-                }
-            }
-            Err(reason) => {
-                lock_recover(&runtime).set_local_kit_unavailable(&reason);
+            Ok(pump) => Some(pump),
+            Err(error) => {
+                lock_recover(&runtime).set_local_kit_unavailable(&format!(
+                    "Hide could not start its installer: {error}"
+                ));
                 None
             }
         };
@@ -426,6 +404,7 @@ impl Core {
             _terminal_maintenance: maintenance,
             _changes: changes,
             _kit: kit,
+            own_node,
             _session_sync: session_sync,
             _session_search: session_search,
             _links: links,

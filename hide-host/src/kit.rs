@@ -23,6 +23,7 @@ use serde_json::Value;
 
 use crate::error::{ErrorCode, HostError, HostResult};
 use crate::protocol::{KitAction, KitRemoved};
+use crate::serve::{Env, KitPlace};
 
 static STOP: LazyLock<Arc<AtomicBool>> = LazyLock::new(|| Arc::new(AtomicBool::new(false)));
 
@@ -31,17 +32,43 @@ pub(crate) fn stop() {
     STOP.store(true, Ordering::Relaxed);
 }
 
+/// The flag [`stop`] raises, which a helper's [`Env`] carries.
+pub(crate) fn process_stop() -> Arc<AtomicBool> {
+    Arc::clone(&STOP)
+}
+
 pub use hide_kit::is_build_name;
 
-/// Answers one `kit` request for the helper root the running helper was
-/// installed under.
+/// Answers one `kit` request for the node `env` describes: the helper root
+/// the running helper was installed under, or the desktop package the core's
+/// own node runs from.
 pub fn handle(
     action: KitAction,
     cli_dir: &str,
     herdr_socket: Option<&str>,
     retirement_projects: &[String],
-    home: Option<&Path>,
+    env: &Env,
 ) -> HostResult<Value> {
+    match &env.kit {
+        KitPlace::Installed => {}
+        KitPlace::Bundled(kit_dir) => {
+            return bundled(
+                kit_dir,
+                env,
+                action,
+                cli_dir,
+                herdr_socket,
+                retirement_projects,
+            );
+        }
+        KitPlace::Standalone => {
+            return Err(HostError::new(
+                ErrorCode::Unsupported,
+                hide_kit::STANDALONE_REASON,
+            ));
+        }
+    }
+    let home = env.home.as_deref();
     let executable = std::env::current_exe().map_err(|error| {
         HostError::new(
             ErrorCode::Io,
@@ -65,8 +92,42 @@ pub fn handle(
         cli_dir,
         herdr_socket,
         retirement_projects,
-        Arc::clone(&STOP),
+        Arc::clone(&env.stop),
     )
+}
+
+/// The kit of the machine whose desktop package holds the parts: they stay
+/// where the package put them, so nothing is pointed or pruned, and the
+/// machine itself is never removed from Hide.
+fn bundled(
+    kit_dir: &Path,
+    env: &Env,
+    action: KitAction,
+    cli_dir: &str,
+    herdr_socket: Option<&str>,
+    retirement_projects: &[String],
+) -> HostResult<Value> {
+    let home = env.home.clone().ok_or_else(|| {
+        HostError::new(
+            ErrorCode::Unsupported,
+            "HOME is not set, so Hide cannot tell where to install",
+        )
+    })?;
+    let inputs = Inputs::read(&home, cli_dir, herdr_socket, retirement_projects)?;
+    let mut target =
+        hide_kit::local_target(kit_dir, &home, &inputs.herdr_socket, Arc::clone(&env.stop));
+    target.cli_dir = inputs.cli_dir;
+    target.retirement_projects = inputs.projects;
+    match action {
+        KitAction::Apply | KitAction::Reinstall { .. } => {
+            to_value(hide_kit::apply(&target, &scope_of(action)))
+        }
+        KitAction::Status => to_value(hide_kit::status(&target)),
+        KitAction::Remove => Err(HostError::new(
+            ErrorCode::Unsupported,
+            "The core's own machine is not removed from Hide",
+        )),
+    }
 }
 
 /// Where the running helper was installed.
@@ -121,30 +182,11 @@ fn run_for_projects(
     stop: Arc<AtomicBool>,
 ) -> HostResult<Value> {
     let home = &placement.home;
-    let projects = retirement_projects
-        .iter()
-        .map(|project| expand(project, home))
-        .collect::<HostResult<Vec<_>>>()?;
-    let cli_dir = expand(cli_dir, home)?;
-    let herdr_socket = match herdr_socket {
-        Some(socket) => expand(socket, home)?,
-        // Herdr's default for this placement's home, in Herdr's own order.
-        None => {
-            let variables = |name: &str| {
-                if name == hide_platform::host::HOME_VARIABLE {
-                    Some(home.as_os_str().to_owned())
-                } else {
-                    std::env::var_os(name)
-                }
-            };
-            hide_platform::host::herdr_socket_default_from(&variables).map_err(|error| {
-                HostError::new(
-                    ErrorCode::Unsupported,
-                    format!("Herdr's default socket has no location: {error}"),
-                )
-            })?
-        }
-    };
+    let Inputs {
+        projects,
+        cli_dir,
+        herdr_socket,
+    } = Inputs::read(home, cli_dir, herdr_socket, retirement_projects)?;
     let target = || {
         let mut target = hide_kit::device_target(
             &placement.root,
@@ -164,27 +206,7 @@ fn run_for_projects(
             }
             point_current(&placement.root, &placement.version)?;
             remove_other_builds(&placement.root, &placement.version);
-            let scope = match action {
-                KitAction::Reinstall {
-                    components,
-                    agents_on,
-                    agents_off,
-                    codex_daemon_off,
-                } => {
-                    let scope =
-                        hide_kit::Scope::reinstall(components).merge(hide_kit::Scope::agents(
-                            agents_on.iter().map(String::as_str),
-                            agents_off.iter().map(String::as_str),
-                        ));
-                    if codex_daemon_off {
-                        scope.merge(hide_kit::Scope::codex_daemon_off())
-                    } else {
-                        scope
-                    }
-                }
-                _ => hide_kit::Scope::automatic(),
-            };
-            to_value(hide_kit::apply(&target(), &scope))
+            to_value(hide_kit::apply(&target(), &scope_of(action)))
         }
         KitAction::Status => to_value(hide_kit::status(&target())),
         KitAction::Remove => {
@@ -194,6 +216,75 @@ fn run_for_projects(
                 helper_root: remove_root(&placement.root),
             })
         }
+    }
+}
+
+/// The paths a `kit` request names, expanded under the node's home.
+struct Inputs {
+    projects: Vec<PathBuf>,
+    cli_dir: PathBuf,
+    herdr_socket: PathBuf,
+}
+
+impl Inputs {
+    fn read(
+        home: &Path,
+        cli_dir: &str,
+        herdr_socket: Option<&str>,
+        retirement_projects: &[String],
+    ) -> HostResult<Self> {
+        let projects = retirement_projects
+            .iter()
+            .map(|project| expand(project, home))
+            .collect::<HostResult<Vec<_>>>()?;
+        let cli_dir = expand(cli_dir, home)?;
+        let herdr_socket = match herdr_socket {
+            Some(socket) => expand(socket, home)?,
+            // Herdr's default for this home, in Herdr's own order.
+            None => {
+                let variables = |name: &str| {
+                    if name == hide_platform::host::HOME_VARIABLE {
+                        Some(home.as_os_str().to_owned())
+                    } else {
+                        std::env::var_os(name)
+                    }
+                };
+                hide_platform::host::herdr_socket_default_from(&variables).map_err(|error| {
+                    HostError::new(
+                        ErrorCode::Unsupported,
+                        format!("Herdr's default socket has no location: {error}"),
+                    )
+                })?
+            }
+        };
+        Ok(Self {
+            projects,
+            cli_dir,
+            herdr_socket,
+        })
+    }
+}
+
+/// What an `apply` or `reinstall` asks the kit to do.
+fn scope_of(action: KitAction) -> hide_kit::Scope {
+    match action {
+        KitAction::Reinstall {
+            components,
+            agents_on,
+            agents_off,
+            codex_daemon_off,
+        } => {
+            let scope = hide_kit::Scope::reinstall(components).merge(hide_kit::Scope::agents(
+                agents_on.iter().map(String::as_str),
+                agents_off.iter().map(String::as_str),
+            ));
+            if codex_daemon_off {
+                scope.merge(hide_kit::Scope::codex_daemon_off())
+            } else {
+                scope
+            }
+        }
+        _ => hide_kit::Scope::automatic(),
     }
 }
 
@@ -210,7 +301,8 @@ fn to_value(value: impl serde::Serialize) -> HostResult<Value> {
 fn expand(path: &str, home: &Path) -> HostResult<PathBuf> {
     let expanded = match path.strip_prefix("~/") {
         Some(rest) => home.join(rest),
-        None if path.starts_with('/') => PathBuf::from(path),
+        // The core's own node on Windows names its own folders natively.
+        None if path.starts_with('/') || Path::new(path).is_absolute() => PathBuf::from(path),
         None => {
             return Err(HostError::new(
                 ErrorCode::InvalidPath,
