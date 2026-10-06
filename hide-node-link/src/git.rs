@@ -41,6 +41,8 @@ impl BranchConfigKey {
 pub enum GitCommand {
     /// Every uncommitted change, untracked files included.
     Status,
+    /// The absolute path of the repository's shared `.git` folder.
+    CommonDir,
     /// The branch the worktree has checked out.
     CurrentBranch,
     Checkout {
@@ -72,6 +74,7 @@ impl GitCommand {
         let owned = |args: &[&str]| args.iter().map(|arg| (*arg).to_owned()).collect();
         match self {
             Self::Status => owned(&["status", "--porcelain=v1", "--untracked-files=all"]),
+            Self::CommonDir => owned(&["rev-parse", "--path-format=absolute", "--git-common-dir"]),
             Self::CurrentBranch => owned(&["symbolic-ref", "--quiet", "--short", "HEAD"]),
             Self::Checkout { branch } => owned(&["checkout", "--no-overwrite-ignore", branch]),
             Self::HasLocalBranch { branch } => owned(&[

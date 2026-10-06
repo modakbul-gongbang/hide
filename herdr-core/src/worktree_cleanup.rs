@@ -527,6 +527,7 @@ fn verified_merge(
 /// limits the checks to those paths, so a confirmation rereads what it is
 /// about to remove and nothing else.
 fn inspect(
+    node: &dyn crate::node_access::NodeLink,
     root: &Path,
     current: Option<&Path>,
     panes: Result<PanePaths, String>,
@@ -534,7 +535,7 @@ fn inspect(
     only: Option<&[String]>,
 ) -> Result<CleanupSnapshot, String> {
     inspect_with_merge_proofs(root, current, panes, usage, only, |branch| {
-        github::merged_pull_request_proofs(root, branch)
+        github::merged_pull_request_proofs(node, root, branch)
     })
 }
 
@@ -950,7 +951,14 @@ pub fn spawn_review(context: LiveContext, id: u64, input: ReviewInput) -> Result
                 Some(message) => Err(message.clone()),
             };
             let usage = Usage::of(in_use, &input.checkouts);
-            let answer = match inspect(&input.root, input.current.as_deref(), panes, &usage, None) {
+            let answer = match inspect(
+                context.node.as_ref(),
+                &input.root,
+                input.current.as_deref(),
+                panes,
+                &usage,
+                None,
+            ) {
                 Ok(value) => CleanupSnapshot {
                     id,
                     workspace_id: input.workspace_id.clone(),
@@ -1374,6 +1382,7 @@ pub fn spawn_confirm(
                     panes: HashMap::from([(PathBuf::from(path), panes)]),
                 };
                 inspect(
+                    context.node.as_ref(),
                     &root,
                     input.current.as_deref(),
                     pane_paths(&context),

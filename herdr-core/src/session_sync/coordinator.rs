@@ -110,7 +110,14 @@ fn run_coordinator(
     let mut worktree_reader = context
         .node()
         .map(|node| crate::worktrees::WorktreeReader::new(Arc::clone(node)));
-    let mut github_reader = context.is_local().then(crate::github::GithubReader::new);
+    let mut github_reader = context
+        .is_local()
+        .then(|| {
+            context
+                .node()
+                .map(|node| crate::github::GithubReader::new(Arc::clone(node)))
+        })
+        .flatten();
     let mut disk_reader = context
         .is_local()
         .then(|| {

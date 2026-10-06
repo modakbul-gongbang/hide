@@ -3506,28 +3506,7 @@ pub struct PullRequestSnapshot {
     pub cross_repository: bool,
 }
 
-/// Why a GitHub read failed, as a code the screen words (the reason stays
-/// `gh`'s own stderr, which is data).
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum GithubFailureCategory {
-    NotInstalled,
-    NotLoggedIn,
-    NoGithubRemote,
-    NetworkOrRateLimit,
-}
-
-impl GithubFailureCategory {
-    /// The words for diagnostics and the errors a command reports.
-    pub fn english(self) -> &'static str {
-        match self {
-            Self::NotInstalled => "not installed",
-            Self::NotLoggedIn => "not logged in",
-            Self::NoGithubRemote => "no GitHub remote",
-            Self::NetworkOrRateLimit => "network or rate limit",
-        }
-    }
-}
+pub use hide_node_link::gh::GithubFailureCategory;
 
 /// How a repository's `gh` lookup is doing, independent of what it found.
 ///

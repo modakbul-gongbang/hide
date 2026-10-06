@@ -13,6 +13,7 @@ pub mod bytes;
 pub mod disk;
 pub mod document;
 pub mod error;
+pub mod gh;
 pub mod git;
 pub mod home;
 pub mod index;

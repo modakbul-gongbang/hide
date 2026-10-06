@@ -756,9 +756,10 @@ impl Runtime {
             crate::tasks::SourceKind::Github => {
                 let root = PathBuf::from(&workspace.path);
                 let project_path = workspace.path.clone();
+                let node = self.own_node();
                 let spawned = self.spawn_issue_worker(
                     "issue-create",
-                    move || crate::github::create_issue(&root, &title, &body),
+                    move || crate::github::create_issue(node.as_ref(), &root, &title, &body),
                     move |runtime, result| runtime.ingest_created_issue(id, &project_path, result),
                 );
                 if let Err(message) = spawned {
@@ -856,9 +857,10 @@ impl Runtime {
             Some(crate::model::IssueDetailSnapshot::reading(key.clone()));
         let root = PathBuf::from(&workspace.path);
         let worker_key = key.clone();
+        let node = self.own_node();
         if let Err(message) = self.spawn_issue_worker(
             "issue-detail",
-            move || crate::github::issue_detail(&root, &reference),
+            move || crate::github::issue_detail(node.as_ref(), &root, &reference),
             move |runtime, result| runtime.ingest_issue_detail(&worker_key, result),
         ) {
             self.snapshot.issue_work.detail = Some(crate::model::IssueDetailSnapshot::answered(
@@ -1038,13 +1040,14 @@ impl Runtime {
         ));
         let query = request.query.clone();
         self.github_search.active = Some(ActiveSearch { run, request, note });
+        let node = self.own_node();
         let spawned = self.spawn_issue_worker(
             "github-search",
             move || {
                 // A worker that unwound would leave the one search slot taken
                 // for good, so a panic is a failed search like any other.
                 std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    crate::github::search(&targets, &query)
+                    crate::github::search(node.as_ref(), &targets, &query)
                 }))
                 .unwrap_or_else(|_| Err("the search worker panicked".to_owned()))
             },

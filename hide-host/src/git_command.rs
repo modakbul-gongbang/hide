@@ -22,6 +22,7 @@ pub fn run(root: &Path, command: &GitCommand) -> HostResult<String> {
             crate::worktrees::git(root, &args).map_err(failed)
         }
         GitCommand::Status
+        | GitCommand::CommonDir
         | GitCommand::CurrentBranch
         | GitCommand::Checkout { .. }
         | GitCommand::SetBranchConfig { .. }

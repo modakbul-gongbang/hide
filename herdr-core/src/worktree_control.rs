@@ -820,6 +820,7 @@ pub fn spawn_issue_write(
                         .map_err(IssueWriteFailure::unchanged)?;
                     Some(
                         crate::github::read_linked_issue(
+                            context.node.as_ref(),
                             Path::new(&request.repository_root),
                             &reference,
                         )

@@ -236,6 +236,13 @@ pub enum Call {
         #[serde(default)]
         shared_git: Vec<String>,
     },
+    /// One `gh` command with the operator's login, in `cwd` when named
+    /// (`gh::allowed` names the command lines; any other is refused unrun).
+    /// Answers `gh::GhAnswer`.
+    Gh {
+        cwd: Option<String>,
+        args: Vec<String>,
+    },
     /// The machine's TCP listeners and where each was started
     /// (`ports::ListeningPorts`).
     ListeningPorts,

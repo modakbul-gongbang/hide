@@ -15,6 +15,9 @@ pub mod clone;
 pub mod disk;
 pub mod disk_layers;
 pub mod document;
+#[cfg(all(test, unix))]
+mod executable_fixture;
+pub mod gh;
 pub mod git;
 pub mod git_command;
 pub mod home;
