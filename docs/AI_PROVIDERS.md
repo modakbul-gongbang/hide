@@ -130,7 +130,7 @@ Grok's `--tools ""` giving a tool-free run, where the validated object sits in G
 Which agent answers, and which of its models, is a setting.
 It lives in `~/Library/Application Support/hide/ai.json`, a sibling of Hide's own `state.json`, and `hide-ai/src/settings.rs` owns the path, the schema and the rule that turns a choice into a `RouterConfig`.
 
-Hide writes it: the Settings `Background AI` group dispatches one `ai_settings` event, the core applies it to the snapshot at once and queues the write, and the session-sync coordinator performs the write off the runtime mutex.
+Hide writes it: the Settings Hide AI tab (`web/src/settings/HideAiTab.tsx`, rules in `web/src/hideAi.ts`) dispatches one `ai_settings` event per intent, the core applies it to the snapshot at once and queues the write, and the session-sync coordinator performs the write off the runtime mutex.
 The core reads the file once, when this Mac's session-sync coordinator starts, and from then on holds the choice in the runtime, so a file edited by hand while `hided` runs is read at the next start.
 The core's label analyzer reads the runtime's choice before each analysis, so a choice made in Settings reaches the next label without restarting anything, and an analysis already running finishes on the choice it started with.
 A changed choice rebuilds the router, because a backend is constructed with its model; an unchanged one leaves the router and its sticky failover state alone.
@@ -153,7 +153,7 @@ Off, `AiRouter::execute` returns `AiError::Disabled` at once and asks no provide
 A provider the registry does not know is ignored wherever it appears, so a file written by a newer Hide still reads, and `models` keeps the keys it does not know.
 `AiSettings` is the one owner of the rules: `set_provider` removes the chosen provider from `fallback` and adopts the model it had there, `add_fallback` refuses the chosen provider and a duplicate (`FallbackRefusal`), `remove_fallback` and `set_fallback_model` edit one entry, and `models_by_provider()` is the model of every provider for building backends.
 
-`agent_summary` is the Settings › Background AI `에이전트 요약` switch (PRD overview-request-view D-11), on when the field is absent.
+`agent_summary` is the Settings › Hide AI › Features Agent summaries switch (PRD overview-request-view D-11), on when the field is absent.
 Off, the label analyzer asks nothing and cancels the request it is running, and no surface shows a label; worktree naming and Project Memory keep their own switches.
 Turning it does not rebuild the router, because it is not part of the router's choice.
 
@@ -165,10 +165,10 @@ A stored choice is never replaced by that rule, an agent that is not switched on
 A file Hide wrote before this default changed names `haiku` for claude like any other choice, so it keeps haiku until the operator picks a model in Settings.
 A file that is not there means nobody has chosen, so the defaults stand and nothing is reported.
 A field that is missing takes its default and a field the crate does not know is ignored, so an older Hide reads a file a newer one wrote.
-A file that exists and cannot be read is never taken as the defaults in silence: Hide states the reason on the Settings group and writes an `ai_settings` `settings.unreadable` record to its diagnostic log, and only then do the defaults apply.
-A write that fails says so on the same group, because a choice the operator made and the file on disk must not silently disagree.
-A write that succeeds marks the choice as chosen at once, so the group stops calling it the default without waiting for the next launch to read the file back.
-A session with no home directory to write to reports that on the group for the same reason: the choice has already left the runtime, so it cannot be dropped quietly.
+A file that exists and cannot be read is never taken as the defaults in silence: Hide states the reason on the Hide AI tab and writes an `ai_settings` `settings.unreadable` record to its diagnostic log, and only then do the defaults apply.
+A write that fails says so on the same tab, because a choice the operator made and the file on disk must not silently disagree.
+A write that succeeds marks the choice as chosen at once, so the tab stops calling it the default without waiting for the next launch to read the file back.
+A session with no home directory to write to reports that on the tab for the same reason: the choice has already left the runtime, so it cannot be dropped quietly.
 
 Choosing a provider changes which provider is asked first and nothing else.
 Every feature, Project Memory included, asks the chosen provider and then the fallback list under the policy below, while the router's retry, cooldown, cancellation, duplicate-suppression, process, and budget rules apply to all of them.

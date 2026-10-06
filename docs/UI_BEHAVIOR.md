@@ -491,7 +491,7 @@ The facts line's right end carries the chosen view's controls: the status chips,
 The request view is one row per agent of the scope: what the operator asked it, what came of it, and what is the operator's to do now.
 Its groups stand in this order, each headed `name count`, a group with no row not drawn: 답할 것, 고칠 것, 리뷰·머지, 멈춤, 결과 볼 것, 일하는 중, 기다리는 중, and 쉬는 중, which is one folded line `쉬는 중 N · 펼치기` until its head opens it.
 A row's group is the verb the core gives it; the web only sorts and draws.
-멈춤 holds a row whose turn the agent label read as unfinished, and a wait the label read on something other than a pull request is 기다리는 중; without the label (Settings › Background AI `에이전트 요약` off, no provider, a failed analysis) no row stops, a written question is a finished turn like any other, and the view stands in the same shape with no warning.
+멈춤 holds a row whose turn the agent label read as unfinished, and a wait the label read on something other than a pull request is 기다리는 중; without the label (Settings › Hide AI › Features › Agent summaries off, no provider, a failed analysis) no row stops, a written question is a finished turn like any other, and the view stands in the same shape with no warning.
 A to-do group puts the row that has waited longest first and shows how long it has held that verb; the other groups put the most recent activity first and show the time since it.
 A delegated child is not a row of its own while its parent is in the scope: the parent's row carries `자식 N · 일하는 중 M`, with a warning `질문 K` when descendants ask, and a child whose parent is gone is a row.
 On the Home Overview each row carries its project's name.
@@ -1336,7 +1336,7 @@ The agents Hide knows that are not installed on the machine are one muted line, 
 Settings > Devices shows the same agents on a machine's kit rows, each with its switch.
 
 The first-run agent choice is a dialog over the shell, PRD agent-adapters-onboarding, shown when this Mac's kit has never run and stays until it is answered.
-It lists all twenty agents Hide knows as tiles in a grid, each with the agent's own mark (or a two-letter monogram where no official mark is bundled, `docs/BRAND.md`) and its state: the agents installed here are on and show a check, an agent not installed is dimmed and has no switch, and a tile is a switch (`role="switch"`) pressed with Space or Enter.
+It lists the seven agents Hide supports, Claude Code, Codex, Gemini CLI, Grok, OpenCode, Pi and Cursor in that order, as tiles in a grid, each with the agent's own mark (or a two-letter monogram where no official mark is bundled, `docs/BRAND.md`) and its state: the agents installed here are on and show a check, an agent not installed is dimmed and has no switch, and a tile is a switch (`role="switch"`) pressed with Space or Enter.
 Claude Code and Codex are on when they are installed; every other installed agent is on too, since the operator chose the full set, and `Apply` installs what is left on.
 `Apply` is the only button and the only way out: Escape, a click outside and a close button do nothing, so a stray key cannot finish a choice that leaves Claude Code and Codex off with no hooks; with every tile off, Apply installs nothing and ends the question.
 The question belongs to the kit record (`awaiting_choice` in `~/.hide/kit/installed.json`), not to the window: closing the app, reloading the page or a failed save leaves it asked, and the next launch asks again until Apply has saved.
@@ -1345,8 +1345,28 @@ A Mac whose kit has already run (an existing install) never sees it, and nothing
 Until the choice is made the kit puts nothing for Claude Code or Codex on a fresh Mac either, so the hooks wait for Apply or for Settings, Agents.
 A device whose own record waits gets the saved choice once per run, by what is installed there, as soon as it reports (also after it was not connected when Apply was pressed); with nothing chosen it is told that, so its record stops waiting, and nothing is installed for agents.
 A device that still waits after it was sent the choice is logged once (`first_run_choice.unanswered`) and not sent it again until it reconnects.
+Under `Apply`, one line names the agent Hide AI will use: the first agent in that fixed order that is switched on in the dialog and signed in (`firstRunAgent` in `web/src/hideAi.ts`, "Hide AI uses Claude Code"), read from `status.background_ai.providers[].state`, which the dialog asks the core to probe while it is open; with no such agent the line is absent, and it follows each flip of a tile (PRD settings-cleanup D-18, B45, B46).
 An agent installed later appears in these rows off and is never turned on by a pass.
-Its Background AI group ends with `에이전트 요약`, a switch on by default and kept on this Mac across launches (PRD overview-request-view D-11, B21): off, no agent label is asked for, the one being made is dropped, and every surface names each agent by its session's own title or its provider with no AI line or written question; on again, the kept labels return at once and each pane's current turn is asked for.
+
+### Hide AI
+
+Settings > Hide AI is the agent Hide runs behind the scenes (labels, worktree names, Project Memory analysis), separate from the agents the operator runs (PRD settings-cleanup D-14 to D-18, B33 to B47).
+Every value is the core's `status.background_ai`; the tab sends `ai_settings` events, one per intent, and an edit is pending until the snapshot carries it, so a choice the core refused simply returns to what the snapshot says.
+
+- **Use Hide AI** is a switch on its own at the top.
+  Off, Hide makes no model call: agent titles show each session's own text, worktree names are typed, and Project Memory analysis waits while saved Memory search keeps working.
+  Everything below it dims and is out of reach (`inert`), and the stored values stay as they were, so turning it on resumes with them.
+- **Runs on** has an Agent select and a Model select.
+  The Agent select lists only agents the core would accept (`selectable`: installed, signed in, a Hide AI backend, a call that cannot change files) with each official mark, and the chosen agent stays in it with its state even when it has a problem; the same row shows its state as symbol and words (Signed in, Not signed in, Out of usage until 3:10 PM).
+  The Model select lists what the agent reported, with `CLI default` first where the agent can be asked without a model, and a marker "Fixed list" for an agent whose list cannot be asked (Gemini CLI); the stored model is always offered, and a list that failed to load leaves it in place with one line.
+- **If <Runs on> can't answer** lists the agents the operator added, in the order added, each with a number, its mark and state, its own model select and a remove ×; there is no switch and no reordering, so an empty list is no fallback and a different order is a remove and an add.
+  `+ Add agent` opens a menu of selectable agents not yet used; installed agents Hide AI cannot use yet are listed under "Hide AI can't use these yet", dimmed, each with its reason (not signed in, can't guarantee it only reads, not supported yet), and an agent that is not installed is not listed.
+  With nothing to offer the button is disabled.
+  Choosing a listed agent as Runs on takes it off the list.
+- While another agent answers, one line under Runs on reads "Using Codex · Claude Code is out of usage until 3:10 PM" and disappears when Runs on answers again.
+  With the list empty and Runs on unable to answer, the Agent row says why and that Hide AI is paused; nothing else on screen changes, and a failure the operator cannot act on stays in the diagnostic log.
+- With no agent signed in, one line says "Sign in to <first agent that is on> to use Hide AI" (or to turn an agent on in Agents when none is); it appears only after every agent has been probed, and Hide's other features keep working without AI.
+- **Features** holds Agent summaries (the `agent_summary` switch of `ai_settings`: off, no agent label is asked for, the one being made is dropped, and every surface names each agent by its session's own title or its provider with no AI line or written question; on again, the kept labels return at once and each pane's current turn is asked for) and Worktree names (the same `issue_settings` value the Issues tab held).
 
 ## Mobile companion
 

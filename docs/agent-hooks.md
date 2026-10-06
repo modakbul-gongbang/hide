@@ -120,7 +120,7 @@ A hook that fails must never be what breaks the operator's agent.
 Exiting zero is not the same as saying nothing.
 The outcome of every report is recorded in `~/.hide/agent-hooks/last-report-failure.json`: a failure writes the pane, the event, the socket and Herdr's answer, and the next success removes the file, so it describes the hook's current state rather than its history.
 `Diagnosis` reads it back as `last_report_failure`, `doctor` prints it as a `Last report failed:` line, and the Settings group shows it as an error note above the restart advice, because with a refused report on record a restart is not the fix.
-The Settings screen learns of it because the coordinator re-reads the diagnosis once a second while the Settings agents tab is on screen (`settings_observed`, the same flag the Background AI group sets), and reads nothing while it is not.
+The Settings screen learns of it because the coordinator re-reads the diagnosis once a second while the Settings agents tab is on screen (`settings_observed`, the same flag the Hide AI tab sets), and reads nothing while it is not.
 
 ## Other agents: skill and guidance hook
 

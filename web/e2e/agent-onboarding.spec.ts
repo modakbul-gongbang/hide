@@ -5,6 +5,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
+import { screenshot } from "./wire";
 
 // The guidance hooks Apply writes are not written on Windows (their documentation names no shell there).
 test.skip(process.platform === "win32", "the first-run choice installs POSIX hooks");
@@ -46,8 +47,14 @@ test("a Mac with no kit record is asked once, the installed agents are on, and A
     expect(read(path.join(home, ".claude", "settings.json"))).not.toContain("hide-subagents@");
     expect(fs.existsSync(path.join(home, ".gemini", "settings.json"))).toBe(false);
 
+    // B46: under Apply, the agent Hide AI will use (the fixture's signed-in Claude Code, first in the fixed order).
+    await expect(page.locator("[data-onboarding-hide-ai]")).toHaveText("Hide AI uses Claude Code");
+    await screenshot(page, "hide-ai-first-run");
+
     await tile(page, "claude-code", "on").click();
     await expect(tile(page, "claude-code", "off")).toHaveAttribute("aria-checked", "false");
+    // Turned off, nothing chosen is signed in (the fixture has no Gemini CLI login), so the line goes (B46).
+    await expect(page.locator("[data-onboarding-hide-ai]")).toHaveCount(0);
     await page.locator("[data-onboarding-apply]").click();
     await expect(modal(page)).toHaveCount(0);
     await expect.poll(() => read(path.join(home, ".gemini", "settings.json")), { timeout: 60_000 }).toContain("hide-guidance@");

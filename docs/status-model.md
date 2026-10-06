@@ -433,7 +433,7 @@ Nothing publishes a session `name`, reads Codex's first human turn as a title, o
 
 The label is made by the core, not by a plugin and not through pane tokens: `herdr-core/src/labels/` reads each Claude, Codex or OpenCode pane's conversation, asks the background AI for the session's goal, one line for the turn and how the turn ended (`context_label.v5`), and keeps the answer per pane (the architecture is in [ARCHITECTURE.md](ARCHITECTURE.md#agent-labels-in-the-core)).
 `LabelOverlay::apply` lays that label onto an agent just before the runtime projects it, as `task` (the goal), `expected_reply` (the line when the turn ended on a question), `progress` (the line otherwise) and `question` (a question end on an agent that is not running), and `sidebar.rs::project_agent` reads those four.
-With Settings › Background AI `에이전트 요약` off nothing of the label is laid: the row is titled by the session's own title or the provider, and has no sentence and no written question (D-11).
+With Settings › Hide AI › Features › Agent summaries off nothing of the label is laid: the row is titled by the session's own title or the provider, and has no sentence and no written question (D-11).
 A label is shown only for the session it was proven for.
 The record keeps the provider's native session owner, proven from transcript metadata, and the Herdr reference it was proven under; the label is applied only while the pane's current provider and session reference equal that owner or that reference (`PaneRecord::proven_for`).
 A new session, a reused pane, a provider change and an A to B to A switch therefore show the provider's name and no question until the new session is proven, and returning to A restores A's label.
