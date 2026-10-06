@@ -4,7 +4,7 @@
 import fs from "node:fs";
 import path from "node:path";
 import { execFileSync } from "node:child_process";
-import { copyFixtureShim } from "./shims/build";
+import { copyFixtureShim, fixtureShimPath } from "./shims/build";
 
 export const fixtureExecutable = (name: string): string => `${name}${process.platform === "win32" ? ".exe" : ""}`;
 
@@ -142,19 +142,11 @@ export function windowsTcpSummary(): string[] {
  * stops the server and ends what is left with `endWindowsProcesses`.
  */
 export function windowsProcessTree(pid: number): WindowsProcess[] {
-  const listed = powershell(`
-    $all = @(Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,CreationDate)
-    $owned = @($all | Where-Object { $_.ProcessId -eq ${pid} })
-    $frontier = $owned
-    while ($frontier.Count -gt 0) {
-      if ($owned.Count -gt 256) { throw 'fixture process tree exceeded 256 processes' }
-      $ids = @($owned | ForEach-Object { $_.ProcessId })
-      $frontier = @($all | Where-Object { $child = $_; $ids -notcontains $child.ProcessId -and @($frontier | Where-Object { $_.ProcessId -eq $child.ParentProcessId -and $child.CreationDate -ge $_.CreationDate }).Count -gt 0 })
-      $owned += $frontier
-    }
-    ConvertTo-Json -Compress -InputObject @($owned | ForEach-Object { @{ id = $_.ProcessId; created = $_.CreationDate.ToFileTimeUtc().ToString() } })
-  `);
-  return JSON.parse(listed) as WindowsProcess[];
+  const listed = execFileSync(fixtureShimPath("hide-processes"), ["tree", String(pid)], { encoding: "utf8", timeout: 30_000, windowsHide: true });
+  return listed.split(/\r?\n/).filter(Boolean).map((line) => {
+    const [id, created] = line.split(" ");
+    return { id: Number(id), created: created! };
+  });
 }
 
 /**
@@ -189,53 +181,13 @@ export function endVctip(): number[] {
  * after five seconds.
  */
 export function endWindowsProcesses(owned: WindowsProcess[], root?: string): void {
-  powershell(`
-    $owned = @($env:FIXTURE_OWNED | ConvertFrom-Json | ForEach-Object { $_ } | ForEach-Object { [pscustomobject]@{ id = [uint32]$_.id; created = [int64]$_.created } })
-    $prefix = if ($env:FIXTURE_ROOT) { $env:FIXTURE_ROOT.TrimEnd('\\') + '\\' } else { $null }
-    $live = {
-      $rows = @(Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,CreationDate,ExecutablePath | ForEach-Object {
-        [pscustomobject]@{ id = [uint32]$_.ProcessId; parent = [uint32]$_.ParentProcessId; created = $_.CreationDate.ToFileTimeUtc(); path = $_.ExecutablePath }
-      })
-      $holders = @{}
-      $children = @{}
-      foreach ($row in $rows) {
-        $holders[$row.id] = $row
-        if (-not $children.ContainsKey($row.parent)) { $children[$row.parent] = @() }
-        $children[$row.parent] += $row
-      }
-      # The owned processes and what they started, alive or not: a child names
-      # its parent's pid and started after it, and a live process holding that
-      # pid that started before the child is its parent instead.
-      $tree = @{}
-      foreach ($process in $owned) { $tree["$($process.id)/$($process.created)"] = $true }
-      $frontier = $owned
-      while ($frontier.Count -gt 0) {
-        if ($tree.Count -gt 512) { throw 'fixture process tree exceeded 512 processes' }
-        $next = @()
-        foreach ($parent in $frontier) {
-          $holder = $holders[$parent.id]
-          foreach ($row in @($children[$parent.id])) {
-            if (-not $row -or $row.created -lt $parent.created -or $tree.ContainsKey("$($row.id)/$($row.created)")) { continue }
-            if ($holder -and $holder.created -ne $parent.created -and $holder.created -le $row.created) { continue }
-            $tree["$($row.id)/$($row.created)"] = $true
-            $next += $row
-          }
-        }
-        $frontier = $next
-      }
-      @($rows | Where-Object {
-        $tree.ContainsKey("$($_.id)/$($_.created)") -or
-          ($prefix -and $_.path -and $_.path.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase))
-      })
-    }
-    $until = [DateTime]::UtcNow.AddSeconds(5)
-    do {
-      $remaining = @(& $live)
-      if ($remaining.Count -eq 0) { exit 0 }
-      # A process an owned one started while it was ending is found on a later pass.
-      foreach ($process in $remaining) { Stop-Process -Id $process.id -Force -ErrorAction SilentlyContinue }
-      Start-Sleep -Milliseconds 100
-    } while ([DateTime]::UtcNow -lt $until)
-    throw "fixture processes still running after 5 s: $(($remaining | ForEach-Object { "$($_.id) $($_.path)" }) -join ', ')"
-  `, { FIXTURE_OWNED: JSON.stringify(owned), FIXTURE_ROOT: root ?? "" });
+  // The folder's trailing separator keeps a sibling whose name starts the same from matching.
+  const folder = root ? `${root.replace(/[\\/]+$/, "")}\\` : "-";
+  try {
+    execFileSync(fixtureShimPath("hide-processes"), ["end", folder, ...owned.map((item) => `${item.id}:${item.created}`)], { encoding: "utf8", timeout: 30_000, windowsHide: true });
+  } catch (error) {
+    // The program names the survivors on stderr, which is the reason.
+    const stderr = String((error as { stderr?: unknown }).stderr ?? "").trim();
+    throw new Error(stderr || String(error), { cause: error });
+  }
 }
