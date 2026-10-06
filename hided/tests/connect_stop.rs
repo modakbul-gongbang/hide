@@ -122,3 +122,133 @@ fn connect_starts_the_daemon_beside_the_cli_and_stop_ends_it() {
     let (_, after) = json(isolated(&home, &state).args(["status", "--json"]));
     assert_eq!(after["running"], false, "{after}");
 }
+
+/// Runs `hide` to the end and returns its exit status and what it printed on
+/// each stream.
+fn finished(command: &mut Command) -> (Option<i32>, String, String) {
+    let output = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .output()
+        .expect("hide runs");
+    (
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout).into_owned(),
+        String::from_utf8_lossy(&output.stderr).into_owned(),
+    )
+}
+
+/// An invalid value for a key none of `stop` and `status` read: an opener
+/// that is no file, a port that is no number, a keep-alive that is no flag.
+fn unrelated_invalid(command: &mut Command, home: &Path) {
+    command
+        .env("HIDE_OPEN_COMMAND", home.join("no-opener"))
+        .env("HIDE_PORT", "abc")
+        .env("HIDE_KEEP_ALIVE", "maybe");
+}
+
+#[test]
+fn stop_and_status_json_ignore_a_key_they_do_not_read() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let state = dir.path().join("state");
+    std::fs::create_dir_all(&home).unwrap();
+    let _stop = StopOnDrop {
+        home: &home,
+        state: &state,
+    };
+    let (ok, connected) = json(isolated(&home, &state).arg("connect"));
+    assert!(ok, "hide connect failed: {connected}");
+    let pid = connected["pid"].as_u64().expect("a daemon pid") as u32;
+    let started = hide_platform::process::start_time(pid).expect("the daemon is running");
+
+    let mut status = isolated(&home, &state);
+    status.args(["status", "--json"]);
+    unrelated_invalid(&mut status, &home);
+    let (code, out, err) = finished(&mut status);
+    assert_eq!(code, Some(0), "status --json refused: {err}");
+    let running: Value = serde_json::from_str(out.trim()).expect("one JSON line");
+    assert_eq!(running["running"], true, "{running}");
+    assert_eq!(running["pid"], connected["pid"], "{running}");
+
+    let mut stop = isolated(&home, &state);
+    stop.arg("stop");
+    unrelated_invalid(&mut stop, &home);
+    let (code, _, err) = finished(&mut stop);
+    assert_eq!(code, Some(0), "hide stop refused: {err}");
+    assert_ne!(
+        hide_platform::process::start_time(pid).ok(),
+        Some(started),
+        "hide stop ended the daemon"
+    );
+}
+
+#[test]
+fn status_reads_the_idle_time_and_names_it_when_invalid() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let state = dir.path().join("state");
+    std::fs::create_dir_all(&home).unwrap();
+
+    let mut ignored = isolated(&home, &state);
+    ignored.arg("status");
+    unrelated_invalid(&mut ignored, &home);
+    let (code, out, err) = finished(&mut ignored);
+    assert_eq!(code, Some(0), "status refused: {err}");
+    assert_eq!(out.trim(), "hided is not running");
+
+    let mut refused = isolated(&home, &state);
+    refused.arg("status").env("HIDE_IDLE_SECS", "0");
+    let (code, out, err) = finished(&mut refused);
+    assert_eq!(code, Some(2), "{out}");
+    assert_eq!(err.trim(), "HIDE_IDLE_SECS: invalid");
+}
+
+#[test]
+fn an_invalid_state_folder_key_is_refused_by_its_name() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let state = dir.path().join("state");
+    std::fs::create_dir_all(&home).unwrap();
+
+    for args in [&["stop"][..], &["status", "--json"][..], &["status"][..]] {
+        let mut empty = isolated(&home, &state);
+        empty.args(args).env("HIDE_STATE_DIR", "");
+        let (code, out, err) = finished(&mut empty);
+        assert_eq!(code, Some(2), "{args:?}: {out}");
+        assert_eq!(err.trim(), "HIDE_STATE_DIR: empty", "{args:?}");
+
+        let mut homeless = isolated(&home, &state);
+        homeless
+            .args(args)
+            .env_remove(hide_platform::host::HOME_VARIABLE);
+        unrelated_invalid(&mut homeless, &home);
+        let (code, out, err) = finished(&mut homeless);
+        assert_eq!(code, Some(2), "{args:?}: {out}");
+        assert_eq!(
+            err.trim(),
+            format!("{}: missing", hide_platform::host::HOME_VARIABLE),
+            "{args:?}: only the key the command reads is named"
+        );
+    }
+}
+
+#[test]
+fn a_command_on_the_daemons_whole_configuration_still_refuses_any_invalid_key() {
+    let dir = tempfile::tempdir().unwrap();
+    let home = dir.path().join("home");
+    let state = dir.path().join("state");
+    std::fs::create_dir_all(&home).unwrap();
+
+    let mut connect = isolated(&home, &state);
+    connect.arg("connect");
+    unrelated_invalid(&mut connect, &home);
+    let (code, _, err) = finished(&mut connect);
+    assert_eq!(code, Some(2), "{err}");
+    for key in ["HIDE_OPEN_COMMAND", "HIDE_PORT", "HIDE_KEEP_ALIVE"] {
+        assert!(
+            err.contains(&format!("{key}: invalid")),
+            "{key} unreported: {err}"
+        );
+    }
+}

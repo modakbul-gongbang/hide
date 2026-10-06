@@ -24,6 +24,9 @@ const KEPT: &[&str] = &[
 /// messages, so the count never drops one a command reads; the byte bound
 /// keeps a page that logs large values from growing the client.
 const MAX_EVENTS: usize = 4096;
+/// Calls one round of `call_all` keeps in flight: the gateway's pending cap
+/// per client (`MAX_PENDING` in `browserCdp.ts`).
+const MAX_BATCH: usize = 32;
 const MAX_EVENT_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Debug)]
@@ -34,6 +37,16 @@ pub enum CdpError {
     Timeout,
     /// The relay or the gateway closed the connection.
     Closed { code: u16, reason: String },
+}
+
+/// What one answer message says: its result, or the page's protocol error.
+fn answer(value: &Value) -> Result<Value, CdpError> {
+    match value.get("error") {
+        Some(error) => Err(CdpError::Protocol(
+            error["message"].as_str().unwrap_or("").to_owned(),
+        )),
+        None => Ok(value.get("result").cloned().unwrap_or(Value::Null)),
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -101,6 +114,78 @@ impl Cdp {
         timeout: Duration,
         stop_on_dialog: bool,
     ) -> Result<Option<Value>, CdpError> {
+        let id = self.send(method, params, session).await?;
+        let deadline = Instant::now() + timeout;
+        loop {
+            let (value, bytes) = self.next_message(deadline).await?;
+            if value["id"].as_u64() == Some(id) {
+                return Ok(Some(answer(&value)?));
+            }
+            if self.note(&value, bytes) && stop_on_dialog {
+                return Ok(None);
+            }
+        }
+    }
+
+    /// Sends every call before reading any answer and reads them under one
+    /// deadline, so calls the page holds cost one timeout between them, not
+    /// one each. A call with no answer by the deadline is `Timeout`; the
+    /// connection ending is the error of the whole batch.
+    pub async fn call_all(
+        &mut self,
+        calls: &[(&str, Value, &str)],
+        timeout: Duration,
+    ) -> Result<Vec<Result<Value, CdpError>>, CdpError> {
+        // The gateway keeps `MAX_PENDING` (32) commands in flight per client
+        // and answers each as its page does, not in order, so a batch is one
+        // round of concurrent calls, each under the same deadline from the
+        // moment it was sent; a larger one goes in rounds of that size.
+        let mut answers = Vec::with_capacity(calls.len());
+        for chunk in calls.chunks(MAX_BATCH) {
+            answers.extend(self.call_round(chunk, timeout).await?);
+        }
+        Ok(answers)
+    }
+
+    async fn call_round(
+        &mut self,
+        calls: &[(&str, Value, &str)],
+        timeout: Duration,
+    ) -> Result<Vec<Result<Value, CdpError>>, CdpError> {
+        let mut ids = Vec::with_capacity(calls.len());
+        for (method, params, session) in calls {
+            ids.push(self.send(method, params.clone(), Some(session)).await?);
+        }
+        let mut answers: Vec<Option<Result<Value, CdpError>>> = ids.iter().map(|_| None).collect();
+        let deadline = Instant::now() + timeout;
+        while answers.iter().any(Option::is_none) {
+            let (value, bytes) = match self.next_message(deadline).await {
+                Ok(message) => message,
+                Err(CdpError::Timeout) => break,
+                Err(error) => return Err(error),
+            };
+            match value["id"]
+                .as_u64()
+                .and_then(|id| ids.iter().position(|sent| *sent == id))
+            {
+                Some(index) => answers[index] = Some(answer(&value)),
+                None => {
+                    self.note(&value, bytes);
+                }
+            }
+        }
+        Ok(answers
+            .into_iter()
+            .map(|answer| answer.unwrap_or(Err(CdpError::Timeout)))
+            .collect())
+    }
+
+    async fn send(
+        &mut self,
+        method: &str,
+        params: Value,
+        session: Option<&str>,
+    ) -> Result<u64, CdpError> {
         self.next_id += 1;
         let id = self.next_id;
         let mut message = json!({"id": id, "method": method, "params": params});
@@ -111,7 +196,12 @@ impl Cdp {
             .send(Message::Text(message.to_string().into()))
             .await
             .map_err(|_| self.closed_error())?;
-        let deadline = Instant::now() + timeout;
+        Ok(id)
+    }
+
+    /// The next JSON message the socket carries, with its size, or `Timeout`
+    /// at the deadline.
+    async fn next_message(&mut self, deadline: Instant) -> Result<(Value, usize), CdpError> {
         loop {
             let frame = tokio::time::timeout_at(deadline, self.socket.next())
                 .await
@@ -133,38 +223,35 @@ impl Cdp {
                 Some(Ok(_)) => continue,
                 Some(Err(_)) | None => return Err(self.closed_error()),
             };
-            let Ok(value) = serde_json::from_str::<Value>(&text) else {
-                continue;
-            };
-            if value["id"].as_u64() == Some(id) {
-                if let Some(error) = value.get("error") {
-                    return Err(CdpError::Protocol(
-                        error["message"].as_str().unwrap_or("").to_owned(),
-                    ));
-                }
-                return Ok(Some(value.get("result").cloned().unwrap_or(Value::Null)));
-            }
-            if let Some(method) = value["method"].as_str()
-                && (method == "Page.javascriptDialogOpening" || KEPT.contains(&method))
-            {
-                let event = Event {
-                    method: method.to_owned(),
-                    params: value.get("params").cloned().unwrap_or(Value::Null),
-                    session: value["sessionId"].as_str().map(str::to_owned),
-                };
-                if event.method == "Page.javascriptDialogOpening" {
-                    self.dialog = Some(json!({
-                        "type": event.params["type"],
-                        "message": event.params["message"].as_str().unwrap_or("").chars().take(300).collect::<String>(),
-                    }));
-                    if stop_on_dialog {
-                        return Ok(None);
-                    }
-                    continue;
-                }
-                self.push(event, text.len());
+            if let Ok(value) = serde_json::from_str::<Value>(&text) {
+                return Ok((value, text.len()));
             }
         }
+    }
+
+    /// Keeps the events a command reads; true when the message was a
+    /// JavaScript dialog opening.
+    fn note(&mut self, value: &Value, bytes: usize) -> bool {
+        let Some(method) = value["method"].as_str() else {
+            return false;
+        };
+        if method != "Page.javascriptDialogOpening" && !KEPT.contains(&method) {
+            return false;
+        }
+        let event = Event {
+            method: method.to_owned(),
+            params: value.get("params").cloned().unwrap_or(Value::Null),
+            session: value["sessionId"].as_str().map(str::to_owned),
+        };
+        if event.method == "Page.javascriptDialogOpening" {
+            self.dialog = Some(json!({
+                "type": event.params["type"],
+                "message": event.params["message"].as_str().unwrap_or("").chars().take(300).collect::<String>(),
+            }));
+            return true;
+        }
+        self.push(event, bytes);
+        false
     }
 
     fn push(&mut self, event: Event, bytes: usize) {

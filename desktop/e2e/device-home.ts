@@ -84,7 +84,21 @@ export function seedAgentFiles(home: string): { claude: AgentSettings; codex: Ag
     fs.writeFileSync(file, `${JSON.stringify(settings, null, 2)}\n`);
   }
   seedCodex(home);
+  seedKitRecord(home);
   return { claude, codex };
+}
+
+/**
+ * An empty kit record, so this HOME reads as a machine the kit has run on. A
+ * machine with no record is held for the first-run agent choice and gets no
+ * hook until the operator answers it; these specs prove what the kit installs
+ * once it may. The first-run dialog itself is covered by a component test, the
+ * core's decision tests and the hide-kit hold tests, not by an e2e spec.
+ */
+export function seedKitRecord(home: string): void {
+  const dir = path.join(home, ".hide", "kit");
+  fs.mkdirSync(dir, { recursive: true });
+  fs.writeFileSync(path.join(dir, "installed.json"), `${JSON.stringify({ format: 1, installed: [] })}\n`);
 }
 
 /**

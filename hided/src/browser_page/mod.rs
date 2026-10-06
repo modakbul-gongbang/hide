@@ -5,6 +5,8 @@
 
 mod actions;
 mod cdp;
+#[cfg(test)]
+mod fake_gateway;
 mod page;
 
 use std::time::Duration;
@@ -422,6 +424,9 @@ pub struct Failure {
     pub reason: String,
     pub detail: Option<String>,
     pub next_action: Option<String>,
+    /// The page was asked and gave no answer in time, as against a closed
+    /// connection or a protocol error; only silence says a frame is held.
+    pub silent: bool,
 }
 
 impl Failure {
@@ -430,6 +435,7 @@ impl Failure {
             reason: reason.to_owned(),
             detail,
             next_action: None,
+            silent: false,
         }
     }
 
@@ -461,6 +467,7 @@ fn next_action(reason: &str, display: &str) -> String {
         "key_unsupported" => "Press one of the listed keys".to_owned(),
         "invalid_selector" => "Use a valid CSS selector or an @ref".to_owned(),
         "drag_across_frames" => "Drag between two points of the same frame".to_owned(),
+        "drag_carries_files" => "The drag carries local files, which hide browser never drops on a page; do not retry it (--mode pointer would start a native drag the gateway cannot see), and ask the operator if the page needs them".to_owned(),
         "display_busy" => "Another CDP client or hide browser command holds this display; close it (agent-browser, Playwright) or let it finish, then retry".to_owned(),
         "display_hidden" => format!(
             "The display is not in front; ask the operator to show it, or run hide view select {display} --reveal, then retry"
@@ -602,6 +609,7 @@ async fn execute(env: &Env, command: Command) -> Result<Output, Failure> {
             reason,
             detail: None,
             next_action,
+            silent: false,
         })?;
     let mut page = page::Page::attach(cdp::Cdp::new(socket), &display, selected).await?;
     let outcome = actions::run(&mut page, command).await;

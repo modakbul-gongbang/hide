@@ -39758,6 +39758,32 @@
     "--size-file-views-min": {
       "type": "number",
       "value": 360
+    },
+    "--logo-plate": {
+      "type": "color",
+      "value": [
+        {
+          "value": "#FFFFFF"
+        },
+        {
+          "value": "#FFFFFF",
+          "theme": {
+            "Mode": "Dark"
+          }
+        }
+      ]
+    },
+    "--size-agent-logo": {
+      "type": "number",
+      "value": 40
+    },
+    "--size-onboarding-dialog-w": {
+      "type": "number",
+      "value": 640
+    },
+    "--size-onboarding-tile": {
+      "type": "number",
+      "value": 120
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4"

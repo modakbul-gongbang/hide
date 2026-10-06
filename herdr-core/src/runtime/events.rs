@@ -1116,6 +1116,11 @@ pub(super) struct EditorTextScalePayload {
 }
 
 #[derive(Debug, Deserialize)]
+pub(super) struct AgentOnboardingApplyPayload {
+    pub(super) agents: Vec<String>,
+}
+
+#[derive(Debug, Deserialize)]
 pub(super) struct InterfaceLanguageSetPayload {
     // Required, including an explicit null to return to system language.
     #[serde(deserialize_with = "serde_json::Value::deserialize")]
@@ -1281,6 +1286,7 @@ pub(super) enum Event {
     EditorTextScale(EditorTextScalePayload),
     ThemeSet(ThemeSetPayload),
     InterfaceLanguageSet(InterfaceLanguageSetPayload),
+    AgentOnboardingApply(AgentOnboardingApplyPayload),
     ChangesSelect(ChangesSelectPayload),
     GitWorktreeOpen(GitWorktreeOpenPayload),
     GitWorktreeSetBase(GitWorktreeSetBasePayload),
@@ -1488,6 +1494,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "editor_text_scale" => decode!(EditorTextScalePayload, EditorTextScale),
         "theme_set" => decode!(ThemeSetPayload, ThemeSet),
         "interface_language_set" => decode!(InterfaceLanguageSetPayload, InterfaceLanguageSet),
+        "agent_onboarding_apply" => decode!(AgentOnboardingApplyPayload, AgentOnboardingApply),
         "changes_select" => decode!(ChangesSelectPayload, ChangesSelect),
         "git_worktree_open" => decode!(GitWorktreeOpenPayload, GitWorktreeOpen),
         "git_worktree_set_base" => decode!(GitWorktreeSetBasePayload, GitWorktreeSetBase),
@@ -3280,6 +3287,7 @@ impl Runtime {
                 self.persist_ui_state();
                 true
             }
+            Event::AgentOnboardingApply(payload) => self.apply_agent_onboarding(payload.agents),
             Event::InterfaceLanguageSet(payload) => {
                 if !payload.language.is_null()
                     && serde_json::from_value::<crate::model::InterfaceLanguage>(
@@ -3521,6 +3529,9 @@ impl Runtime {
                     // `theme_set` owns the theme; a shared UI-state save carries it through.
                     theme: current.theme,
                     interface_language: current.interface_language,
+                    // `agent_onboarding_*` events own the first-run choice.
+                    agent_onboarding: current.agent_onboarding,
+                    agent_onboarding_agents: current.agent_onboarding_agents,
                     // A width outside the drag's range keeps the last one; the
                     // shell never sends it, so there is nothing to show.
                     sidebar_width: match payload.sidebar_width {

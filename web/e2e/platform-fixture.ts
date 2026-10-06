@@ -158,30 +158,65 @@ export function endVctip(): number[] {
 }
 
 /**
- * Ends `owned` and, given `root`, every process started from an executable
- * under it (the fixture's shims, which hided also runs), and returns once
- * none is left, so the caller can delete `root`. Throws naming the survivors
+ * Ends `owned`, every process they started, and, given `root`, every process
+ * started from an executable under it (the fixture's shims, which hided also
+ * runs), and returns once none is left, so the caller can delete `root`.
+ * What an owned process started is found from its identity, so a child it
+ * started after `owned` was listed is ended even once its parent is gone: an
+ * owner killed while it starts a child leaves that child behind, and on
+ * Windows a child started suspended and not yet in its job object (hided's
+ * `OwnedChild::spawn`) stays suspended for good and keeps its executable
+ * locked, where the path check did not find it. Throws naming the survivors
  * after five seconds.
  */
 export function endWindowsProcesses(owned: WindowsProcess[], root?: string): void {
   powershell(`
-    $owned = @($env:FIXTURE_OWNED | ConvertFrom-Json | ForEach-Object { $_ })
+    $owned = @($env:FIXTURE_OWNED | ConvertFrom-Json | ForEach-Object { $_ } | ForEach-Object { [pscustomobject]@{ id = [uint32]$_.id; created = [int64]$_.created } })
     $prefix = if ($env:FIXTURE_ROOT) { $env:FIXTURE_ROOT.TrimEnd('\\') + '\\' } else { $null }
     $live = {
-      $all = @(Get-CimInstance Win32_Process -Property ProcessId,CreationDate,ExecutablePath)
-      @($all | Where-Object {
-        $process = $_
-        ($prefix -and $process.ExecutablePath -and $process.ExecutablePath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) -or
-          @($owned | Where-Object { $_.id -eq $process.ProcessId -and $_.created -eq $process.CreationDate.ToFileTimeUtc().ToString() }).Count -gt 0
+      $rows = @(Get-CimInstance Win32_Process -Property ProcessId,ParentProcessId,CreationDate,ExecutablePath | ForEach-Object {
+        [pscustomobject]@{ id = [uint32]$_.ProcessId; parent = [uint32]$_.ParentProcessId; created = $_.CreationDate.ToFileTimeUtc(); path = $_.ExecutablePath }
+      })
+      $holders = @{}
+      $children = @{}
+      foreach ($row in $rows) {
+        $holders[$row.id] = $row
+        if (-not $children.ContainsKey($row.parent)) { $children[$row.parent] = @() }
+        $children[$row.parent] += $row
+      }
+      # The owned processes and what they started, alive or not: a child names
+      # its parent's pid and started after it, and a live process holding that
+      # pid that started before the child is its parent instead.
+      $tree = @{}
+      foreach ($process in $owned) { $tree["$($process.id)/$($process.created)"] = $true }
+      $frontier = $owned
+      while ($frontier.Count -gt 0) {
+        if ($tree.Count -gt 512) { throw 'fixture process tree exceeded 512 processes' }
+        $next = @()
+        foreach ($parent in $frontier) {
+          $holder = $holders[$parent.id]
+          foreach ($row in @($children[$parent.id])) {
+            if (-not $row -or $row.created -lt $parent.created -or $tree.ContainsKey("$($row.id)/$($row.created)")) { continue }
+            if ($holder -and $holder.created -ne $parent.created -and $holder.created -le $row.created) { continue }
+            $tree["$($row.id)/$($row.created)"] = $true
+            $next += $row
+          }
+        }
+        $frontier = $next
+      }
+      @($rows | Where-Object {
+        $tree.ContainsKey("$($_.id)/$($_.created)") -or
+          ($prefix -and $_.path -and $_.path.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase))
       })
     }
-    foreach ($process in & $live) { Stop-Process -Id $process.ProcessId -Force -ErrorAction SilentlyContinue }
     $until = [DateTime]::UtcNow.AddSeconds(5)
     do {
       $remaining = @(& $live)
       if ($remaining.Count -eq 0) { exit 0 }
+      # A process an owned one started while it was ending is found on a later pass.
+      foreach ($process in $remaining) { Stop-Process -Id $process.id -Force -ErrorAction SilentlyContinue }
       Start-Sleep -Milliseconds 100
     } while ([DateTime]::UtcNow -lt $until)
-    throw "fixture processes still running after 5 s: $(($remaining | ForEach-Object { "$($_.ProcessId) $($_.ExecutablePath)" }) -join ', ')"
+    throw "fixture processes still running after 5 s: $(($remaining | ForEach-Object { "$($_.id) $($_.path)" }) -join ', ')"
   `, { FIXTURE_OWNED: JSON.stringify(owned), FIXTURE_ROOT: root ?? "" });
 }

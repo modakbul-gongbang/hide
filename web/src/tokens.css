@@ -95,6 +95,7 @@
   --color-terminal-bright-cyan: var(--terminal-bright-cyan);
   --color-terminal-bright-white: var(--terminal-bright-white);
   --color-terminal-selection: var(--terminal-selection);
+  --color-logo-plate: var(--logo-plate);
 }
 
 :root {
@@ -269,6 +270,9 @@
   --size-icon: 14px;
   --size-icon-sm: 12px;
   --size-icon-lg: 20px;
+  --size-onboarding-dialog-w: 640px;
+  --size-onboarding-tile: 120px;
+  --size-agent-logo: 40px;
 }
 
 .interface-scale-exempt {
@@ -353,6 +357,7 @@
   --terminal-bright-cyan: #3192aa;
   --terminal-bright-white: #8c959f;
   --terminal-selection: #d0d7de;
+  --logo-plate: #ffffff;
 }
 
 .dark {
@@ -425,4 +430,5 @@
   --terminal-bright-cyan: #34e2e2;
   --terminal-bright-white: #eeeeec;
   --terminal-selection: #34373b;
+  --logo-plate: #ffffff;
 }

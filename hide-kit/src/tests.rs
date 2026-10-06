@@ -158,7 +158,15 @@ struct Fixture {
 }
 
 impl Fixture {
+    /// A machine that already has a kit record, as every machine has after
+    /// its first pass; [`Fixture::fresh`] is one that has never had one.
     fn new() -> Self {
+        let fixture = Self::fresh();
+        record::save(fixture.home(), &record::Record::default()).unwrap();
+        fixture
+    }
+
+    fn fresh() -> Self {
         // The private HOME must leave room for the legacy daemon's nested
         // socket under SUN_LEN, even when the harness gives TMPDIR a long
         // spelling. TempDir owns this unique private short-root fixture.
@@ -1007,6 +1015,36 @@ fn the_first_pass_turns_the_codex_daemon_off_once_and_then_converges() {
 }
 
 #[test]
+fn a_fresh_machine_leaves_codexs_config_alone_until_codex_is_chosen() {
+    let mut fixture = Fixture::fresh();
+    fake_codex(&mut fixture, "true");
+
+    let report = apply(&fixture.target, &Scope::automatic());
+
+    assert!(report.held_for_onboarding);
+    assert_eq!(
+        state(&report, ComponentId::CodexPerPane),
+        ComponentState::Off,
+        "{report:?}"
+    );
+    assert_eq!(fixture.daemon_setting(), "true");
+    assert!(fixture.codex_writes().is_empty());
+    // The Codex launch reads the daemon from this row: it is switched off
+    // here, never installed by Hide, and still says the daemon is there.
+    let part = report.component(ComponentId::CodexPerPane).unwrap();
+    assert_eq!(part.codex_daemon, Some(true), "{part:?}");
+
+    // The operator's choice to have Codex on is what lets the setting be written.
+    let report = apply(&fixture.target, &Scope::agents(["codex"], []));
+    assert_eq!(
+        state(&report, ComponentId::CodexPerPane),
+        ComponentState::Installed,
+        "{report:?}"
+    );
+    assert_eq!(fixture.daemon_setting(), "false");
+}
+
+#[test]
 fn a_codex_already_running_per_pane_is_not_written_to() {
     let mut fixture = Fixture::new();
     fake_codex(&mut fixture, "false");
@@ -1774,7 +1812,7 @@ fn identified_sasu_run_with_unknown_status_blocks_and_other_artifacts_do_not() {
 #[test]
 fn intermediate_kit_links_refuse_before_services_status_or_any_mutation() {
     for linked_component in [".hide", ".hide/kit"] {
-        let mut fixture = Fixture::new();
+        let mut fixture = Fixture::fresh();
         let outside = fixture.root.join("outside-owned-folder");
         let copy = if linked_component == ".hide" {
             outside.join("kit/hcoord")

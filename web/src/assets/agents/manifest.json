@@ -1,0 +1,119 @@
+{
+  "retrieved": "2026-10-06",
+  "logos": [
+    {
+      "id": "opencode",
+      "file": "opencode.svg",
+      "source_url": "https://raw.githubusercontent.com/anomalyco/opencode/dev/packages/identity/mark.svg",
+      "license": "MIT (repository license); the vendor's own identity mark",
+      "modification": "as published",
+      "retrieved": "2026-10-06"
+    },
+    {
+      "id": "cursor",
+      "file": "cursor.svg",
+      "source_url": "https://raw.githubusercontent.com/simple-icons/simple-icons/develop/icons/cursor.svg",
+      "license": "simple-icons file, CC0; data source is the vendor's brand page https://cursor.com/brand; trademark rights stay with Cursor",
+      "modification": "as published",
+      "retrieved": "2026-10-06"
+    },
+    {
+      "id": "qwen-code",
+      "file": "qwen-code.svg",
+      "source_url": "https://raw.githubusercontent.com/QwenLM/qwen-code/main/packages/desktop/bootstrap/qwen-code-logo.svg",
+      "license": "Apache-2.0 (repository license) covers the file, grants no trademark rights",
+      "modification": "as published",
+      "retrieved": "2026-10-06"
+    },
+    {
+      "id": "goose",
+      "file": "goose.svg",
+      "source_url": "https://raw.githubusercontent.com/aaif-goose/goose/main/documentation/static/img/goose.svg",
+      "license": "Apache-2.0 (repository license) covers the file; the vendor asks that its mark not imply endorsement",
+      "modification": "as published",
+      "retrieved": "2026-10-06"
+    },
+    {
+      "id": "cline",
+      "file": "cline.svg",
+      "source_url": "https://raw.githubusercontent.com/cline/cline/main/apps/cline-hub/src/webview/public/icon.svg",
+      "license": "Apache-2.0 (repository license) covers the file, grants no trademark rights",
+      "modification": "as published",
+      "retrieved": "2026-10-06"
+    },
+    {
+      "id": "kilo-code",
+      "file": "kilo-code.svg",
+      "source_url": "https://raw.githubusercontent.com/Kilo-Org/kilocode/main/packages/kilo-console/public/kilo-logo.svg",
+      "license": "MIT (repository license)",
+      "modification": "as published",
+      "retrieved": "2026-10-06"
+    },
+    {
+      "id": "mistral-vibe",
+      "file": "mistral-vibe.svg",
+      "source_url": "https://raw.githubusercontent.com/mistralai/mistral-vibe/main/distribution/zed/icons/mistral_vibe.svg",
+      "license": "Apache-2.0 (repository license) covers the file, grants no trademark rights",
+      "modification": "as published",
+      "retrieved": "2026-10-06"
+    }
+  ],
+  "existing": [
+    {
+      "id": "claude-code",
+      "file": "../agent-claude.png",
+      "note": "the artwork the app already bundles for the provider; kept"
+    },
+    {
+      "id": "codex",
+      "file": "../agent-codex.png",
+      "note": "the artwork the app already bundles for the provider; kept"
+    }
+  ],
+  "monogram": [
+    {
+      "id": "gemini-cli",
+      "reason": "the vendor's terms ask for its permission before a third-party product uses the mark, and no official brand page was reachable"
+    },
+    {
+      "id": "factory-droid",
+      "reason": "the only candidate is a file in a repository with no license; no brand page"
+    },
+    {
+      "id": "kiro",
+      "reason": "the only candidate is a PNG in a repository with no license, copyright Amazon.com"
+    },
+    {
+      "id": "crush",
+      "reason": "FSL-1.1-MIT withholds trademark rights; no brand page"
+    },
+    {
+      "id": "junie",
+      "reason": "JetBrains permits its logos only as a secondary brand beside the third party's own; commercial use needs permission"
+    },
+    {
+      "id": "augment",
+      "reason": "the vendor's logos are offered only in a download archive with no terms, which was not extracted"
+    },
+    {
+      "id": "grok",
+      "reason": "the vendor's brand terms ask for logos exactly as provided in an archive that was not extracted"
+    },
+    {
+      "id": "kimi-code",
+      "reason": "the vendor's branding guide states all rights reserved and grants no use"
+    },
+    {
+      "id": "pi",
+      "reason": "the vendor's site states MIT only in its page footer and gives no grant for the logo (https://pi.dev/press-kit); an unclear grant is a monogram"
+    },
+    {
+      "id": "amp",
+      "reason": "the press kit offers the mark for press coverage and states no licence for a third-party tool listing it (https://ampcode.com/press-kit); an unclear grant is a monogram"
+    },
+    {
+      "id": "copilot-cli",
+      "reason": "the only published file is a GitHub Octicon, whose README says to follow the GitHub logo guidelines for GitHub logos; it is not a granted brand logo, so a monogram"
+    }
+  ]
+}

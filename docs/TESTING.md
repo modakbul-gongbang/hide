@@ -108,6 +108,8 @@ When the behavior depends on the order of two events, the test fixes that order;
   An unconfirmed candidate exit, stop or cleanup failure fails teardown and retains the home for recovery; the error names the retained path and recovery action.
   When candidate exit is unconfirmed, close only the recorded owned candidate, confirm its exit, then call that fixture's `cleanup()` again.
   `desktop/e2e/fixture-cleanup.unit.ts` injects Electron close failures at the external boundary and checks real home retention, confirmed-exit deletion and recovery without starting native processes.
+  On Windows `endWindowsProcesses` also ends what the owned processes started, found from their pid and start time after they are gone: an owner killed while it starts a child leaves that child out of the tree listed before the kill, and a child hided started suspended and had not yet put in its job stays suspended, keeping its executable locked.
+  `desktop/e2e/windows-processes.unit.ts` checks that against real processes in the Windows check lane.
 - Set `terminal.default_shell` in the private Herdr config, because Windows Herdr does not select its shell from `SHELL`.
   The fixture uses `/bin/zsh` with its private `.zshrc` on Unix and the native `ComSpec` cmd shell with a controlled `PROMPT` on Windows.
   A missing native shell fails fixture setup before starting the server.
@@ -116,6 +118,10 @@ When the behavior depends on the order of two events, the test fixes that order;
   A refusal as `agent_pane_busy` typed nothing, so the fixture goes back to waiting within the same ten-second bound; any other answer is the start's.
   A pane's shell that never gets there fails with the last process info and, on Windows, the children the shell still has, listed by the compiled `hide-children.exe` (a child count of zero is not the condition: a shell can keep a resident child).
   On Windows `globalSetup` ends every `vctip.exe` after the run's last compile and prints the pids it ended (`endVctip`): MSVC's compiler and linker leave that telemetry helper running, still naming as its parent a linker whose pid Windows can give a pane's shell, and the pinned Herdr counts a shell's children by parent pid alone, so it would refuse that pane as busy for as long as the helper ran.
+  A process Windows started at boot can do the same and cannot be ended: `csrss.exe` names as its parent the `smss.exe` that started it and exited, and a pane's shell can be given that pid.
+  So on Windows `startHerdr` lists, for each of its two shells, the processes that started before the shell yet name it as their parent (`hide-children.exe` compares start times; the name does not matter).
+  When there is one, it logs a line, opens the two panes again in a new workspace while the claimed shells still hold their pids, and closes the claimed workspace; a replacement that is claimed too fails setup with each process's pid, start time and name.
+  Herdr's `agent start` takes no start time into account (an upstream candidate), so a product pane given such a pid refuses agents the same way.
 - Use `fixtureHomeEnv` from `web/e2e/platform-fixture.ts` to move `HOME`, provider config homes and, on Windows, `USERPROFILE`, `APPDATA` and `LOCALAPPDATA` together into the private fixture.
   The fixtures run a compiled `claude` shim instead, which proves the pipeline and not an agent or physical IME.
   On Windows the interactive shim writes its readiness line after console setup; provider/auth replies return before that line, and input logs record only received input.
@@ -177,7 +183,7 @@ A piece that another open change is still building is marked as pending with the
 1. **Start from the fixture, one stack per test.**
    `web/e2e/herdr-fixture.ts` starts a private Herdr and `web/e2e/hided-fixture.ts` a private `hided`; `desktop/e2e/fixture.ts` takes a started Herdr fixture and gives the packaged window its own `HOME` and `hided` state.
    Why: a test that shares a server with another inherits its panes, focus and timers, and its failure cannot be read alone.
-   The config runs one worker (`web/playwright.config.ts`) so a timing assertion does not compete with a neighbour for cores; CI deals tests out across runners with `--shard`.
+   The config runs one worker (`web/playwright.config.ts`) so a timing assertion does not compete with a neighbour for cores; CI deals tests out across runners by their recorded durations (`scripts/web-e2e-shard.py`, [Balancing the web e2e shards](#balancing-the-web-e2e-shards)).
 2. **Wait for a product signal, never for time.**
    The signals a spec waits on, in order of preference:
    - A DOM state the product exports as a data attribute: `data-pane-view` and `data-focused` for pane focus, `data-checkout-kind` for a checkout row, `data-tab`, `data-sidebar-mode`.
@@ -308,6 +314,10 @@ Marking the pull request ready (`ready_for_review`) starts the run that plans an
 `verify` fails on a draft instead of being skipped because a skipped required check counts as passed, and `verify` is not started until its lanes finish: a skipped `verify` from the draft run would otherwise be the only check on the commit for the minutes after it is marked ready.
 Keep `ready_for_review` in `pr.yml`'s `types`, and keep `verify` running on a draft; `scripts/tests/test_ci_plan.py` reads the workflow for both.
 A hand run of `nightly.yml` takes a `lane` (`all`, `linux`, `macos`, `windows`): one system's web and desktop suites and the remote mailbox lane, with `verify` and `package` for `all` only; the schedule runs everything.
+The nightly runs the `@platform` web tests on macOS and Windows (`web e2e (<system> @platform)`) and the desktop suite whole on macOS and only its `@platform` tests on Linux and Windows (`desktop e2e (<system> @platform)`); the whole web suite runs in the pull request and in the `verify` job a scheduled nightly calls, so Linux has no web job there and these two do not repeat it.
+Tag a `desktop/e2e` test `{ tag: "@platform" }`, with a comment saying what differs, when it checks what the desktop host does differently on another system: its processes and local stream (including whether closing the last window ends the app), the CLI's name and places, the path it hands the wire, the file manager's reveal, the accelerators it registers for the system (one test reads them through `web/e2e/chords.ts`).
+Choose by that difference, not by whether the test passes on Linux or Windows; a tagged test that fails there is fixed (its fixture or the product), never skipped, retried on a deadline or marked `@flaky`.
+A test for a macOS-only behavior, or one that checks no OS difference, carries no tag and runs on macOS only; `CONTRIBUTING.md` lists what the tag covers.
 A push to main plans every lane, and so does a plan that cannot be computed: a missing base, a checkout that is not the merge commit, a diff that does not parse, or a crate graph `cargo metadata` cannot read.
 Main's full run is the net under a pull request that left out a lane it needed; main's runs queue rather than cancel each other.
 Nightly calls `verify` on main with every lane too: a lane it fails opens the nightly issue, which a failed push run does not, and a lane that breaks with no merge is found within a day.
@@ -336,7 +346,7 @@ A run that plans every lane a pull request can plan starts at most 17 jobs, down
 | --- | --- | --- |
 | `plan`, `policy`, `rust`, `checks`, `windows check`, `verify` | 6 | `checks` merges `web checks` and `desktop checks`: both install the same dependencies, run for a minute or two and start a runner each |
 | `windows e2e` | 1 | the reusable workflow no longer starts a `plan` job that only fanned the shard numbers out; a matrix picks its list by index |
-| `web e2e` (Linux) | 5 | one build, which also downloads the zsh packages the `fetch zsh` job used to, and four shards instead of six; fewer jobs queue at the 20-job limit, and a shard's time at four is measured after merge |
+| `web e2e` (Linux) | 5 | one build, which also downloads the zsh packages the `fetch zsh` job used to, and four shards instead of six, dealt by recorded durations; fewer jobs queue at the 20-job limit, and a shard's time at four is measured after merge |
 | `os contract` (Linux, Windows), `os contract (macOS)` | 3 | one job per system, the macOS leg planned only for its two crates |
 | `remote mailbox` | 1 | the lane that was the tail of the macOS `@platform` job, now on Linux and, in the nightly, on macOS |
 | `desktop e2e` | 1 | the only macOS job of the desktop app's own changes |
@@ -344,6 +354,22 @@ A run that plans every lane a pull request can plan starts at most 17 jobs, down
 The common runs are smaller: a `herdr-core` or `hided` change starts 14 jobs and none on macOS, a web shell change 10, a desktop-only change 5 with one on macOS, a `hide-platform` change 15 with one on macOS, and a documentation change 3.
 The median wall time, the share of runs whose Linux shards waited more than 10 minutes, and each shard's time at four shards come from a measurement of the pull request runs after this change merges, taken the way issue #561 took its baseline; they are not in this guide because a pull request cannot prove them.
 The `plan` job's summary lists each lane with the paths that chose it.
+
+### Balancing the web e2e shards
+
+Playwright's `--shard` cuts the tests in file order into runs of equal count, and a test takes from 1 second to a minute, so with four shards one shard job took 11 minutes and another 6 (run `37402687007`, 2026-10-06).
+A shard of a lane with more than one shard therefore runs the tests `scripts/web-e2e-shard.py split` deals it: each listed test (`playwright test --list`) weighs its seconds in `web/e2e/shard-durations.json`, a test the table lacks weighs the table's median, and the longest test goes first into the shard with the least work so far.
+The same list and table always give the same shards, every listed test lands in exactly one shard, and a shard that would run no test fails its step instead of passing with none.
+The shard runs them with `--test-list`, so Playwright's retry, the flaky report and `--grep` work as before.
+`scripts/tests/test_web_e2e_shard.py` checks the split on a fixed list and that the committed table deals four shards within 5 % of each other.
+
+The table is the median over 20 runs of a passing test's duration on the Linux runner (2026-10-06); on that table the four shards plan 472 seconds each, where Playwright's count split planned 306 to 577.
+It does not need to be exact, only close enough that no shard is far above the others, and a new test is dealt by the median until the table learns it.
+Refresh it when a shard's time drifts from the others in a run, or after tests were added or renamed in bulk:
+
+1. Download the logs of the Linux `web e2e` shard jobs of about twenty recent successful runs (`gh api repos/<owner>/<repo>/actions/jobs/<job id>/logs`) into a directory outside the repository.
+2. `python3 scripts/web-e2e-shard.py durations <logs>... > table.json`, then keep only the tests `bash scripts/verify-web.sh web e2e --list --reporter=list` names.
+3. Commit `web/e2e/shard-durations.json`; the nightly's macOS and Windows shards use the same table, so their balance is the Linux one's.
 
 ## Flaky tests
 

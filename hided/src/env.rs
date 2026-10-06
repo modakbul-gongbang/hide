@@ -214,11 +214,57 @@ impl std::fmt::Display for EnvError {
 
 impl std::error::Error for EnvError {}
 
+/// The keys that decide which state folder a command acts on: `HOME` (the
+/// default folder is under it), `HIDE_STATE_DIR` and `XDG_STATE_HOME`.
+/// `hide stop` and `hide status --json` read nothing else.
+pub const STATE_FOLDER_KEYS: &[&str] = &[HOME, HIDE_STATE_DIR, XDG_STATE_HOME];
+
+/// What `hide status` reads: the state folder, and `HIDE_IDLE_SECS`, which it
+/// prints as the idle time when the daemon's `/health` gives none.
+pub const STATUS_KEYS: &[&str] = &[HOME, HIDE_STATE_DIR, XDG_STATE_HOME, HIDE_IDLE_SECS];
+
+/// Every key, checked: the daemon and every command that acts on its whole
+/// configuration refuse on any invalid key, all reported at once.
 pub fn load() -> Result<Env, Vec<EnvError>> {
     load_from(|key| std::env::var(key).ok())
 }
 
-pub fn load_from(mut read: impl FnMut(&str) -> Option<String>) -> Result<Env, Vec<EnvError>> {
+/// Only `keys` are checked, for a command that reads nothing else (the sets
+/// above). A key outside the set is not looked at, so the command must read
+/// only the fields those keys fill; an invalid key inside the set refuses,
+/// named, and is never replaced by its default.
+pub fn load_for(keys: &[&str]) -> Result<Env, Vec<EnvError>> {
+    load_for_from(keys, |key| std::env::var(key).ok())
+}
+
+pub fn load_for_from(
+    keys: &[&str],
+    read: impl FnMut(&str) -> Option<String>,
+) -> Result<Env, Vec<EnvError>> {
+    let (env, errors) = resolve(read);
+    let errors: Vec<EnvError> = errors
+        .into_iter()
+        .filter(|error| keys.contains(&error.key))
+        .collect();
+    if errors.is_empty() {
+        Ok(env)
+    } else {
+        Err(errors)
+    }
+}
+
+pub fn load_from(read: impl FnMut(&str) -> Option<String>) -> Result<Env, Vec<EnvError>> {
+    let (env, errors) = resolve(read);
+    if errors.is_empty() {
+        Ok(env)
+    } else {
+        Err(errors)
+    }
+}
+
+/// Reads every key once: the environment, and what was wrong with each key
+/// that was invalid (whose field then holds a placeholder no caller may use).
+fn resolve(mut read: impl FnMut(&str) -> Option<String>) -> (Env, Vec<EnvError>) {
     let mut errors = Vec::new();
     let home = match read(HOME) {
         Some(value) if !value.is_empty() => PathBuf::from(value),
@@ -409,10 +455,7 @@ pub fn load_from(mut read: impl FnMut(&str) -> Option<String>) -> Result<Env, Ve
         None => None,
     };
     let search_path = read(PATH).filter(|value| !value.is_empty());
-    if !errors.is_empty() {
-        return Err(errors);
-    }
-    Ok(Env {
+    let env = Env {
         home,
         herdr_socket_path,
         herdr_bin_path,
@@ -430,7 +473,8 @@ pub fn load_from(mut read: impl FnMut(&str) -> Option<String>) -> Result<Env, Ve
         workspace_bridge_dir,
         tailscale_bin,
         search_path,
-    })
+    };
+    (env, errors)
 }
 
 /// A helper root names a folder on another machine, so it is checked for
@@ -510,6 +554,91 @@ mod tests {
             .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
             .collect();
         load_from(move |key| map.get(key).cloned())
+    }
+
+    fn scoped(keys: &[&str], pairs: &[(&str, &str)]) -> Result<Env, Vec<EnvError>> {
+        let map: HashMap<String, String> = pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_owned(), (*v).to_owned()))
+            .collect();
+        load_for_from(keys, move |key| map.get(key).cloned())
+    }
+
+    /// An invalid value for every key outside the state folder.
+    const UNRELATED_INVALID: &[(&str, &str)] = &[
+        (HIDE_PORT, "abc"),
+        (HIDE_OPEN_COMMAND, "relative-opener"),
+        (HIDE_KEEP_ALIVE, "maybe"),
+        (HIDE_VITE_ORIGIN, "http://example.com:1"),
+        (HERDR_SOCKET_PATH, ""),
+        (HERDR_PANE_ID, ""),
+        (HIDE_HOST_HELPER_ROOT, "relative"),
+        (HIDE_TAILSCALE_BIN, "relative"),
+    ];
+
+    #[test]
+    fn the_state_folder_is_all_stop_and_status_json_ask_for() {
+        let mut pairs = vec![(HOME, "/Users/example"), (HIDE_IDLE_SECS, "0")];
+        pairs.extend_from_slice(UNRELATED_INVALID);
+        assert!(from_map(&pairs).is_err(), "the whole set is invalid");
+        let env = scoped(STATE_FOLDER_KEYS, &pairs).unwrap();
+        assert_eq!(env.state_dir, PathBuf::from("/Users/example/.hide/state"));
+    }
+
+    #[test]
+    fn an_invalid_state_folder_key_is_refused_by_name_not_defaulted() {
+        let err = scoped(
+            STATE_FOLDER_KEYS,
+            &[(HOME, "/Users/example"), (HIDE_STATE_DIR, "")],
+        )
+        .unwrap_err();
+        assert_eq!(
+            err.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            [format!("{HIDE_STATE_DIR}: empty")]
+        );
+        let err = scoped(STATE_FOLDER_KEYS, UNRELATED_INVALID).unwrap_err();
+        assert_eq!(
+            err.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            [format!("{HOME}: missing")],
+            "only the key the command reads is named"
+        );
+    }
+
+    #[test]
+    fn status_reads_the_idle_time_as_well() {
+        let mut pairs = vec![(HOME, "/Users/example")];
+        pairs.extend_from_slice(UNRELATED_INVALID);
+        let env = scoped(STATUS_KEYS, &pairs).unwrap();
+        assert_eq!(env.idle_secs, 600);
+        pairs.push((HIDE_IDLE_SECS, "0"));
+        let err = scoped(STATUS_KEYS, &pairs).unwrap_err();
+        assert_eq!(
+            err.iter().map(ToString::to_string).collect::<Vec<_>>(),
+            [format!("{HIDE_IDLE_SECS}: invalid")]
+        );
+    }
+
+    #[test]
+    fn a_command_set_names_only_registered_keys() {
+        for key in STATE_FOLDER_KEYS.iter().chain(STATUS_KEYS) {
+            assert!(
+                REGISTRY.iter().any(|entry| entry.key == *key),
+                "{key} is not in REGISTRY"
+            );
+        }
+    }
+
+    #[test]
+    fn the_daemon_check_still_reports_every_invalid_key_at_once() {
+        let mut pairs = vec![(HOME, "/Users/example")];
+        pairs.extend_from_slice(UNRELATED_INVALID);
+        let err = from_map(&pairs).unwrap_err();
+        for (key, _) in UNRELATED_INVALID {
+            assert!(
+                err.iter().any(|error| error.key == *key),
+                "{key} unreported"
+            );
+        }
     }
 
     #[test]
