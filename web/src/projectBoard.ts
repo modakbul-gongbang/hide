@@ -464,73 +464,106 @@ export function stageCards(board: TasksBoard, stage: Stage): TaskCard[] {
 /** One arrow of the Dependencies mode: from the blocker's card to the card it blocks. */
 export type DependencyEdge = { from: string; to: string };
 
-export type DependencyGraph = {
-  /** The tasks that wait on or block another in scope, in columns left to right by how many blockers precede them. */
-  layers: TaskCard[][];
-  edges: DependencyEdge[];
-  /** The tasks with no relation in scope, gathered below the graph (D-09). */
-  unrelated: TaskCard[];
-};
+/** The tasks that wait on or block another in scope, in columns left to right by how many blockers precede them, and the tasks with no relation in scope, gathered below the graph (D-09). */
+export type DependencyGraph = LayeredGraph<TaskCard>;
 
 /**
  * The Dependencies mode (D-09, D-10): the Board's task cards, laid out left
- * to right. A card's column is the longest chain of blockers before it, and
- * each column is ordered by the mean row of the blockers it hangs from, so
- * arrows mostly run straight. Keys name tasks across projects, so a blocker in
- * another project of the scope is an arrow too; one outside the scope is only
- * the lock line. A cycle, which a source
- * should not allow, drops the arrow that closes it rather than looping.
+ * to right (`layerDependencies`). Keys name tasks across projects, so a
+ * blocker in another project of the scope is an arrow too; one outside the
+ * scope is only the lock line.
  */
 export function buildDependencies(board: TasksBoard): DependencyGraph {
   const byKey = new Map<string, TaskCard>();
   for (const value of board.cards) if (!byKey.has(value.task.key)) byKey.set(value.task.key, value);
-  const nodes = [...byKey.values()];
-  const blockers = new Map<string, TaskCard[]>();
+  return layerDependencies([...byKey.values()], (value) => value.id, (value) =>
+    value.blockedBy.flatMap((blocker) => {
+      const from = byKey.get(blocker.key);
+      return from && from !== value ? [from] : [];
+    }));
+}
+
+/** Nodes laid out by what they wait on: the layers left to right, the arrows between them, and the nodes with no relation. */
+export type LayeredGraph<T> = { layers: T[][]; edges: DependencyEdge[]; unrelated: T[] };
+
+/**
+ * The layered dependency layout the Issues view and the Factory graph share:
+ * a node's column is the longest chain of blockers before it, and each
+ * column is ordered by the mean row of the blockers it hangs from, so arrows
+ * mostly run straight. A cycle, which a source should not allow, drops the
+ * arrow that closes it rather than looping.
+ */
+export function layerDependencies<T>(nodes: readonly T[], idOf: (node: T) => string, blockersOf: (node: T) => readonly T[]): LayeredGraph<T> {
+  const blockers = new Map<string, readonly T[]>();
   const edges: DependencyEdge[] = [];
   const related = new Set<string>();
   for (const value of nodes) {
-    const before = value.blockedBy.flatMap((blocker) => {
-      const from = byKey.get(blocker.key);
-      return from && from !== value ? [from] : [];
-    });
-    blockers.set(value.id, before);
+    const before = blockersOf(value);
+    blockers.set(idOf(value), before);
     for (const from of before) {
-      edges.push({ from: from.id, to: value.id });
-      related.add(from.id);
-      related.add(value.id);
+      edges.push({ from: idOf(from), to: idOf(value) });
+      related.add(idOf(from));
+      related.add(idOf(value));
     }
   }
   const depth = new Map<string, number>();
   const visiting = new Set<string>();
-  const depthOf = (value: TaskCard): number => {
-    const known = depth.get(value.id);
+  const depthOf = (value: T): number => {
+    const id = idOf(value);
+    const known = depth.get(id);
     if (known !== undefined) return known;
-    if (visiting.has(value.id)) return -1;
-    visiting.add(value.id);
-    const found = Math.max(-1, ...(blockers.get(value.id) ?? []).map(depthOf)) + 1;
-    visiting.delete(value.id);
-    depth.set(value.id, found);
+    if (visiting.has(id)) return -1;
+    visiting.add(id);
+    const found = Math.max(-1, ...(blockers.get(id) ?? []).map(depthOf)) + 1;
+    visiting.delete(id);
+    depth.set(id, found);
     return found;
   };
-  const layers: TaskCard[][] = [];
+  const layers: T[][] = [];
   for (const value of nodes) {
-    if (!related.has(value.id)) continue;
+    if (!related.has(idOf(value))) continue;
     const layer = depthOf(value);
     (layers[layer] ??= []).push(value);
   }
   const row = new Map<string, number>();
   const dense = layers.filter((layer) => layer !== undefined);
   for (const layer of dense) {
-    const weight = (value: TaskCard) => {
-      const rows = (blockers.get(value.id) ?? []).flatMap((from) => (row.has(from.id) ? [row.get(from.id) as number] : []));
+    const weight = (value: T) => {
+      const rows = (blockers.get(idOf(value)) ?? []).flatMap((from) => (row.has(idOf(from)) ? [row.get(idOf(from)) as number] : []));
       return rows.length > 0 ? rows.reduce((sum, at) => sum + at, 0) / rows.length : Number.POSITIVE_INFINITY;
     };
     const ordered = layer.map((value, index) => ({ value, index, weight: weight(value) })).sort((a, b) => a.weight - b.weight || a.index - b.index);
     layer.splice(0, layer.length, ...ordered.map(({ value }) => value));
-    layer.forEach((value, index) => row.set(value.id, index));
+    layer.forEach((value, index) => row.set(idOf(value), index));
   }
   const forward = edges.filter((edge) => (depth.get(edge.from) ?? 0) < (depth.get(edge.to) ?? 0));
-  return { layers: dense, edges: forward, unrelated: nodes.filter((value) => !related.has(value.id)) };
+  return { layers: dense, edges: forward, unrelated: nodes.filter((value) => !related.has(idOf(value))) };
+}
+
+/**
+ * The arrows left once every arrow implied by a longer path is dropped
+ * (PRD software-factory-ui D-08): with A→B→C, A→C is not drawn. The data
+ * keeps every edge; this is a drawing step, used by the Factory graph only.
+ * An edge on a cycle is kept, since no other path stands for it.
+ */
+export function transitiveReduction(edges: readonly DependencyEdge[]): DependencyEdge[] {
+  const next = new Map<string, string[]>();
+  for (const edge of edges) next.set(edge.from, [...(next.get(edge.from) ?? []), edge.to]);
+  // Whether `to` is reachable from `from` by a path of two or more arrows.
+  const longer = (from: string, to: string) => {
+    const seen = new Set<string>();
+    const stack = (next.get(from) ?? []).filter((step) => step !== to);
+    while (stack.length > 0) {
+      const at = stack.pop()!;
+      if (at === to) return true;
+      if (seen.has(at) || at === from) continue;
+      seen.add(at);
+      stack.push(...(next.get(at) ?? []));
+    }
+    return false;
+  };
+  const unique = edges.filter((edge, index) => edges.findIndex((other) => other.from === edge.from && other.to === edge.to) === index);
+  return unique.filter((edge) => !longer(edge.from, edge.to));
 }
 
 export type BoardStats = {

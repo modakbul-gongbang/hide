@@ -58,7 +58,8 @@ import { fileUrl } from "./browserViews";
 import { requestLine } from "./editor/lineRequest";
 import { owningCheckout, probePaths, type FoundPath } from "./terminalLinkProvider";
 import { useShellStore } from "./store";
-import { useUiStore, type PendingClose, type SessionTarget, type SidebarMode } from "./ui";
+import { FACTORY_ENTRY, useUiStore, type FactoryPlace, type PendingClose, type SessionTarget, type SidebarMode } from "./ui";
+import type { FactoryCommand } from "./factory/commands";
 import type { DispatchFn } from "./ws";
 import { closeShortcutPolicy, drawnViews, keyboardOwner, newTabPolicy } from "./viewFocus";
 import {
@@ -1853,6 +1854,37 @@ export function createActions(send: DispatchFn) {
     closeOverview() {
       if (ui().overviewOpen) return ui().setOverviewOpen(false);
       if (frontCheckout(rest()) && rest()?.workspace_view) ui().setScreen({ kind: "workspace" });
+    },
+
+    /**
+     * Opens the Factory screen (PRD software-factory-ui B1, B2): on 내 차례,
+     * or where `place` says; it is a page, so an Overview layer closes.
+     */
+    openFactory(place?: Partial<FactoryPlace>) {
+      const state = ui();
+      if (state.overlay === "search") state.closeOverlay();
+      const current = state.screen?.kind === "factory" ? state.screen.place : FACTORY_ENTRY;
+      state.setScreen({ kind: "factory", place: { ...(place ? { ...FACTORY_ENTRY, factory: current.factory } : current), ...place } });
+    },
+
+    /**
+     * One screen action (B10, B19, B22): the stage-1 command, which the engine
+     * runs as the operator with the screen as relay. The answer lands in the
+     * `factory` section's `actions` under the returned request id.
+     */
+    factoryAction(command: FactoryCommand): string {
+      const requestId = remoteRequestId();
+      dispatch({ schema_version: 2, kind: "factory_action", payload: { request_id: requestId, command } });
+      return requestId;
+    },
+
+    /** Asks the engine for a Task page's detail; it follows the engine in `factory_task` until closed. */
+    factoryTaskOpen(factory: string, task: string) {
+      dispatch({ schema_version: 2, kind: "factory_task_open", payload: { factory, task } });
+    },
+
+    factoryTaskClose() {
+      dispatch({ schema_version: 2, kind: "factory_task_close", payload: {} });
     },
 
     showSidebarMode,

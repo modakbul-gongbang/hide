@@ -54,7 +54,37 @@ export type PendingClose = {
  * (PRD home-device-rail D-13): `deviceId` names the device, and without one it
  * is the device in front.
  */
-export type Screen = { kind: "main"; deviceId?: string; requests?: RequestLens } | { kind: "workspace" };
+export type Screen = { kind: "main"; deviceId?: string; requests?: RequestLens } | { kind: "workspace" } | { kind: "factory"; place: FactoryPlace };
+
+/** The Factory screen's tabs, left to right; it opens on 내 차례 (PRD software-factory-ui B7). */
+export type FactoryTab = "turn" | "board" | "graph" | "settings";
+
+export const FACTORY_TABS: readonly FactoryTab[] = ["turn", "board", "graph", "settings"];
+
+/**
+ * The Factory screen's page state (PRD software-factory-ui B7, B15-B19): the
+ * tab, the project filter every tab follows, the board's flow-bar column and
+ * cancelled filters, the Task page open over the tabs, the inbox item to
+ * expand, and the create sheet. Like an Overview's lens it is this page's
+ * own; every value it draws is the engine's.
+ */
+export type FactoryPlace = {
+  tab: FactoryTab;
+  /** The Factory the screen is filtered to, by id; null shows every Factory. */
+  factory: string | null;
+  /** The flow-bar cell the board is filtered to. */
+  column: import("./factory/model").Column | null;
+  /** The board shows the cancelled Tasks instead (B16). */
+  cancelled: boolean;
+  /** The Task page open over the tabs. */
+  task: { factory: string; task: string } | null;
+  /** The inbox item to expand, by `inboxKey`. */
+  focus: string | null;
+  /** The create sheet is open (B3). */
+  create: boolean;
+};
+
+export const FACTORY_ENTRY: FactoryPlace = { tab: "turn", factory: null, column: null, cancelled: false, task: null, focus: null, create: false };
 
 /**
  * How All projects is looked at: every Project's tasks, every agent, or the
@@ -311,6 +341,8 @@ type UiStore = {
   tooltips: (() => void)[];
   /** A way into a screen; Home from another screen opens its Agents graph. */
   setScreen: (screen: Screen) => void;
+  /** Changes the Factory screen's page state; a no-op off the Factory screen. */
+  setFactoryPlace: (patch: Partial<FactoryPlace>) => void;
   /** A screen brought back as it was left (Recent Panels): Home keeps the view it had. */
   restoreScreen: (screen: Screen) => void;
   setMainView: (view: MainView) => void;
@@ -403,6 +435,7 @@ export const useUiStore = create<UiStore>((set, get) => ({
   tooltips: [],
   // Moving by hand drops an open still waiting for its Workspace, so a late
   // answer does not pull the screen away from where the operator went.
+  setFactoryPlace: (patch) => set((state) => (state.screen?.kind === "factory" ? { screen: { kind: "factory", place: { ...state.screen.place, ...patch } } } : {})),
   setScreen: (screen) => set((state) => (screen.kind === "main" && state.screen?.kind !== "main" ? { screen, opening: null, overviewOpen: false, mainView: "agents" } : { screen, opening: null, overviewOpen: false })),
   restoreScreen: (screen) => set({ screen, opening: null, overviewOpen: false }),
   setMainView: (mainView) => set({ mainView }),

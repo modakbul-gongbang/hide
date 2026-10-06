@@ -61,7 +61,7 @@ import {
   type BoardRow,
   type BoardScope,
   type CardSubIssues,
-  type DependencyGraph,
+  type LayeredGraph,
   type IssueFilter,
   type LoosePullRequest,
   type LooseWorktree,
@@ -1246,8 +1246,13 @@ export function DependenciesView({ board, page, actions, handlers }: { board: Ta
   );
 }
 
-/** The layered graph: one column per depth of blockers, and the arrows drawn over it from each card's right middle to the next one's left middle. */
-function DependencyGraphView({ graph, draw }: { graph: DependencyGraph; draw: (value: TaskCard) => ReactNode }) {
+/**
+ * The layered graph: one column per depth of blockers, and the arrows drawn
+ * over it from each card's right middle to the next one's left middle. Each
+ * drawn node carries `data-dependency-node` with its id; the Factory graph
+ * draws its own cards the same way (PRD software-factory-ui D-08).
+ */
+export function DependencyGraphView<T>({ graph, draw }: { graph: LayeredGraph<T>; draw: (value: T) => ReactNode }) {
   const box = useRef<HTMLDivElement>(null);
   const marker = `dependency-arrow-${useId()}`;
   const arrows = useMeasuredPaths(
