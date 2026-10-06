@@ -1363,7 +1363,7 @@ fn view_authority_the_screen_stays_on_the_last_request_whatever_order_herdr_answ
         Deadline,
     }
     use Step::*;
-    let cases: [(&str, &[Step]); 10] = [
+    let cases: [(&str, &[Step]); 11] = [
         (
             "in order",
             &[
@@ -1436,6 +1436,16 @@ fn view_authority_the_screen_stays_on_the_last_request_whatever_order_herdr_answ
                 Click("t2"),
                 Answer("t2"),
                 Herdr(&["t1"]),
+                Herdr(&["t2"]),
+            ],
+        ),
+        (
+            "a burst's second request for the same tab moves nothing and settles on its answer",
+            &[
+                Click("t2"),
+                Click("t2"),
+                Answer("t2"),
+                Answer("t2"),
                 Herdr(&["t2"]),
             ],
         ),
@@ -1611,6 +1621,54 @@ fn view_authority_dropped_moves_fall_back_to_the_tabs_newly_active() {
         runtime.ingest_session(Ok(herdr.after(&[], herdr_on("w-order:t4"))));
     });
     assert_eq!(gaps(&records), 0, "{records:?}");
+}
+
+/// A snapshot read outside the event stream (a close's or a creation's
+/// fresh projection, the editor's status answer) has no place in Herdr's
+/// order and carries no moves: one that already shows the tab Hide asked
+/// for answers nothing, and the stream's next session, carrying the move,
+/// does.
+#[test]
+fn view_authority_a_snapshot_read_outside_the_stream_answers_no_request() {
+    let checkout_path = "/private/tmp/hide-view-authority-raw-snapshot";
+    let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
+    let tabs = ["w-order:t1", "w-order:t2"];
+    let herdr_on = |tab: &str| tab_order_payload(checkout_path, &tabs, &tabs, tab);
+    let mut herdr = HerdrMoves::new();
+    runtime.ingest_session(Ok(herdr.after(&[], herdr_on("w-order:t1"))));
+    assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2")));
+    runtime.complete_lane_tab(
+        RemoteControlAction::FocusTab {
+            tab_id: "w-order:t2".to_owned(),
+        },
+        Ok(RemoteControlOutcome::Acknowledged {
+            created_tab_id: None,
+            created_pane_id: None,
+        }),
+        3,
+    );
+    assert_eq!(sent_tab_moves(&runtime), ["w-order:t2"]);
+
+    let read_outside = herdr_on("w-order:t2");
+    assert!(read_outside.tab_moves.is_none());
+    runtime.ingest_session(Ok(read_outside));
+    assert_eq!(
+        sent_tab_moves(&runtime),
+        ["w-order:t2"],
+        "a snapshot outside the stream answers nothing"
+    );
+    assert_eq!(
+        checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+        Some("w-order:t2")
+    );
+
+    runtime.ingest_session(Ok(herdr.after(&["w-order:t2"], herdr_on("w-order:t2"))));
+    assert!(sent_tab_moves(&runtime).is_empty());
+    assert_eq!(
+        checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+        Some("w-order:t2")
+    );
+    assert_eq!(diagnostic_count(&runtime, "tab.focus.followed"), 0);
 }
 
 /// The tab wait a pane focus arms always ends: Herdr refusing the focus
