@@ -792,8 +792,7 @@ test("area cycle native: page input previews one exact area, releases once and c
   const sent = countSent(page);
   // TEMP_CLAMP reproduces the old opening: wider than the work area, so macOS can clamp it later.
   // TEMP_CLAMP lays the shell out 1280 CSS pixels wide, as the unclamped 1280x800 window did.
-  if (process.env.TEMP_CLAMP) await app.evaluate(({ BrowserWindow, screen }) => { const work = screen.getPrimaryDisplay().workArea; const w = BrowserWindow.getAllWindows()[0]!; w.setBounds({ x: work.x, y: work.y, width: 1024, height: Math.min(800, work.height) }); w.webContents.setZoomFactor(1024 / 1280); });
-  else await fitWindow(app, WINDOW);
+  await fitWindow(app, WINDOW);
   await enterWorkspace(page, "fixture");
   const outside = `${origin}/a.html`;
   const previous = `${origin}/b.html`;
@@ -882,6 +881,12 @@ test("area cycle native: page input previews one exact area, releases once and c
   await capture("area-native-readable");
   console.log(JSON.stringify({ ts: new Date().toISOString(), event: "temp.capture_end" }));
 
+  // TEMP_CLAMP: the window is 1280x800, wider than the work area, when the blur orders it out and in, as an unclamped window was.
+  if (process.env.TEMP_CLAMP) {
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1280, 800));
+    await expect.poll(() => page.evaluate(() => innerWidth)).toBe(1280);
+    await focus(current, originalId);
+  }
   // A native-window blur cancels a fresh hold; a later release cannot commit it.
   nativeKeys(pid, ["control down", "tab"]);
   console.log(JSON.stringify({ ts: new Date().toISOString(), event: "temp.keys_posted" }));
@@ -889,8 +894,6 @@ test("area cycle native: page input previews one exact area, releases once and c
   console.log(JSON.stringify({ ts: new Date().toISOString(), event: "temp.cycle_visible", bounds: await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.getContentBounds()) }));
   // TEMP_CLAMP: what macOS does to that window when the blur orders it out and back, made certain.
   console.log(JSON.stringify({ ts: new Date().toISOString(), event: "temp.active_in_hold", active: await page.evaluate(() => document.activeElement?.getAttribute("aria-label") ?? document.activeElement?.tagName ?? null) }));
-  // TEMP_CLAMP: the body narrows to 1024 CSS pixels in the hold, as macOS's clamp at the blur made it.
-  if (process.env.TEMP_CLAMP) await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.setZoomFactor(1));
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.blur());
   await expect(page.locator("[data-cycle]")).toHaveCount(0);
   // The window coming back gives the keyboard to the page that started the hold.
