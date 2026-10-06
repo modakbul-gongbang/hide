@@ -8,7 +8,8 @@ const { t } = initializeInterfaceI18n("en");
 const ko = initializeInterfaceI18n("ko").t;
 const agentMenu = (agent: Parameters<typeof manage.agentMenu>[0], chord: string) => manage.agentMenu(agent, chord, t);
 const checkoutMenu = (workspace: Workspace, checkout: Checkout, host: Parameters<typeof manage.checkoutMenu>[2], purposeProblem: string | null = null) => manage.checkoutMenu(workspace, checkout, host, t, purposeProblem);
-const folderMenu = (workspace: Workspace, checkout: Checkout, host: Parameters<typeof manage.folderMenu>[2], purposeProblem: string | null = null) => manage.folderMenu(workspace, checkout, host, t, purposeProblem);
+const folderMenu = (workspace: Workspace, checkout: Checkout, host: Parameters<typeof manage.folderMenu>[2], purposeProblem: string | null = null, issueSource?: string) =>
+  manage.folderMenu(workspace, checkout, host, t, purposeProblem, issueSource);
 const projectMenu = (workspace: Workspace, host: Parameters<typeof manage.projectMenu>[1], issueSource?: string) => manage.projectMenu(workspace, host, t, issueSource);
 const deletionFacts = (checkout: Checkout, panes: number) => manage.deletionFacts(checkout, panes, t);
 const projectRemovalFacts = (workspace: Workspace) => manage.projectRemovalFacts(workspace, t);
@@ -136,6 +137,15 @@ describe("row menus", () => {
     expect(projectMenu({ ...read, remote_target_id: "studio", device_id: "studio" }, desktop).some((item) => item.id === "issue_source")).toBe(false);
     expect(projectMenu({ ...read, is_home: true }, desktop).some((item) => item.id === "issue_source")).toBe(false);
     expect(projectMenu(workspace({ checkouts: [primary()] }), desktop).some((item) => item.id === "issue_source")).toBe(false);
+  });
+
+  it("checks the stored Issue source on a plain folder's one row too, not Automatic (B7)", () => {
+    const folderCheckout = primary();
+    const source = { kind: "local", label: "Local", name: null, reading: false, failure: null, last_read_at_unix_ms: null };
+    const folder = workspace({ is_git: false, checkouts: [folderCheckout], tasks: { source, tasks: [] } as unknown as Workspace["tasks"] });
+    const checked = (stored?: string) => folderMenu(folder, folderCheckout, desktop, null, stored).find((item) => item.id === "issue_source")?.choices?.filter((choice) => choice.checked).map((choice) => choice.id);
+    expect(checked()).toEqual(["issue_source_auto"]);
+    expect(checked("local")).toEqual(["issue_source_local"]);
   });
 
   it("offers Pin and Remove on a row Herdr shows without a registration (B3, D-14)", () => {

@@ -183,6 +183,42 @@ test("the project row's Issue source submenu shows the stored choice and changes
   } finally { stop(); }
 });
 
+// B7: a plain folder is its own checkout and has one row, built from the
+// project's menu and the checkout's; that row's Issue source reads the stored
+// choice too, so a choice made there is still checked when the menu reopens.
+test("a plain folder's row shows the stored Issue source, not Automatic", async ({ page }) => {
+  await page.setViewportSize({ width: 1400, height: 900 });
+  const herdr = await startHerdr();
+  let daemon: Awaited<ReturnType<typeof startHided>> | null = null;
+  try {
+    const folder = path.join(herdr.root, "notes");
+    fs.mkdirSync(folder);
+    fs.writeFileSync(path.join(folder, "todo.txt"), "write\n");
+    await workspaceAt(herdr, folder, "메모 정리");
+    daemon = await startHided(herdr, "sidebar-menus-folder");
+    await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+    await expect(page.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
+    await page.locator('[data-sidebar-mode="projects"]').click();
+    const row = page.locator("[data-project]").filter({ has: page.locator("[data-project-menu]") }).locator("[data-project-menu]").first();
+    await expect(row).toBeVisible({ timeout: 30_000 });
+    let menu = await openMenu(page, row, "notes actions");
+    await menu.locator('[data-menu-item="issue_source"]').click();
+    const choices = page.getByRole("menu", { name: "Issue source" });
+    await expect(choices.getByRole("menuitemradio")).toHaveText([/^Automatic/, /^Local$/]);
+    await expect(choices.getByRole("menuitemradio", { name: /^Automatic/ })).toHaveAttribute("aria-checked", "true");
+    await choices.getByRole("menuitemradio", { name: "Local" }).click();
+    await expect(page.getByRole("menu")).toHaveCount(0);
+    menu = await openMenu(page, row, "notes actions");
+    await menu.locator('[data-menu-item="issue_source"]').click();
+    await expect(page.getByRole("menu", { name: "Issue source" }).getByRole("menuitemradio", { name: "Local" })).toHaveAttribute("aria-checked", "true");
+    await page.keyboard.press("Escape");
+    await page.keyboard.press("Escape");
+  } finally {
+    daemon?.stop();
+    herdr.stop();
+  }
+});
+
 test("a checkout row's menu offers worktree actions, and the default checkout cannot be set again", async ({ page }) => {
   const { main, feature, stop } = await startMenus(page, { pinned: true });
   try {

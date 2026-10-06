@@ -1167,7 +1167,7 @@ const FolderRowView = memo(function FolderRowView({
     <li data-project={workspace.id} data-checkout-open={open ? "true" : undefined} className={cn(inset, open && "rounded-sm bg-muted py-xs")}>
       <EntryContextMenu
         label={t("common.entryActions", { name: workspace.label })}
-        items={() => folderMenu(workspace, checkout, menuHost(), t, purposeProblem)}
+        items={() => folderMenu(workspace, checkout, menuHost(), t, purposeProblem, useShellStore.getState().rest?.ui_state?.project_issue_sources?.[workspace.path])}
         onSelect={(item) => (FOLDER_CHECKOUT_ITEMS.has(item) ? runCheckoutItem(actions, workspace, checkout, item) : runProjectItem(actions, workspace, item))}
         className="group flex items-stretch"
         data-project-menu={workspace.id}

@@ -196,9 +196,17 @@ export const FOLDER_CHECKOUT_ITEMS: ReadonlySet<MenuItem["id"]> = new Set<MenuIt
  * checkout, so its new tab, path and reveal items are the project's, and it
  * has no other checkout to make the default.
  */
-export function folderMenu(workspace: Workspace, checkout: Checkout, host: MenuHost, t: TFunction<"translation">, purposeProblem: string | null = null): MenuItem[] {
+export function folderMenu(
+  workspace: Workspace,
+  checkout: Checkout,
+  host: MenuHost,
+  t: TFunction<"translation">,
+  purposeProblem: string | null = null,
+  storedIssueSource?: string,
+): MenuItem[] {
+  const project = projectMenu(workspace, host, t, storedIssueSource);
   const [first, ...rest] = checkoutMenu(workspace, checkout, host, t, purposeProblem).filter((item) => FOLDER_CHECKOUT_ITEMS.has(item.id));
-  return first ? [...projectMenu(workspace, host, t), { ...first, separated: true }, ...rest.map((item) => ({ ...item, separated: false }))] : projectMenu(workspace, host, t);
+  return first ? [...project, { ...first, separated: true }, ...rest.map((item) => ({ ...item, separated: false }))] : project;
 }
 
 /**
