@@ -152,6 +152,56 @@ fn every_applied_tab_focus_is_one_move_and_the_latest_are_kept() {
     );
 }
 
+/// A move into a workspace still waiting for its layout publishes nothing by
+/// itself: the held state lacks the workspace the creation worker already
+/// projected, and publishing it retired that workspace's pane before its
+/// terminal attached (Windows CI). The move arrives with the publish that
+/// releases the workspace.
+#[test]
+fn a_move_into_a_held_workspace_rides_on_the_publish_that_releases_it() {
+    let created: Value = serde_json::from_str(&snapshot().to_string().replace("w1", "w2")).unwrap();
+    let mut replica = SessionReplica::from_snapshot(&snapshot()).expect("snapshot");
+    let mut apply = |kind: &str, data: Value| {
+        replica
+            .apply(event(kind, data), ApplyMode::Strict)
+            .unwrap_or_else(|error| panic!("{kind}: {error:?}"))
+            .publish
+    };
+    apply(
+        "workspace_created",
+        json!({"type": "workspace_created", "workspace": created["workspaces"][0]}),
+    );
+    apply(
+        "tab_created",
+        json!({"type": "tab_created", "tab": created["tabs"][0]}),
+    );
+    assert!(
+        !apply(
+            "tab_focused",
+            json!({"type": "tab_focused", "workspace_id": "w2", "tab_id": "w2:t1"}),
+        ),
+        "the move waits for the workspace it moved into"
+    );
+    apply(
+        "pane_created",
+        json!({"type": "pane_created", "workspace_id": "w2", "tab_id": "w2:t1", "pane": created["panes"][0]}),
+    );
+    assert!(apply(
+        "layout_updated",
+        json!({"type": "layout_updated", "layout": created["layouts"][0]}),
+    ));
+    let published = replica.project();
+    assert!(
+        published
+            .workspaces
+            .iter()
+            .any(|workspace| workspace.workspace_id == "w2")
+    );
+    let moves = published.tab_moves.expect("a replica keeps its moves");
+    assert_eq!(moves.applied, 1);
+    assert_eq!(moves.recent, ["w2:t1"]);
+}
+
 #[test]
 fn creation_focus_cause_is_retired_when_another_workspace_takes_focus() {
     let mut value = two_tab_snapshot();
