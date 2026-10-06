@@ -21,7 +21,7 @@ import path from "node:path";
 import { linkCandidates } from "../../web/src/terminalLinks";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { countSent, enterWorkspace } from "../../web/e2e/wire";
-import { hostLog, isolate, launch, screenshot, shellPage, test, type Isolated } from "./fixture";
+import { fitWindow, hostLog, isolate, launch, screenshot, shellPage, test, type Isolated } from "./fixture";
 import { measureFor, quietFor } from "../../web/e2e/wait";
 
 test.describe.configure({ timeout: 240_000 });
@@ -208,7 +208,7 @@ test("links: a pane's URLs and paths open in the Workspace on a click and in mac
   // Views beside the pane, and for Tools too once a folder link shows the
   // Explorer, with the pane still wide enough that no printed line wraps
   // (UI_BEHAVIOR, Narrow windows; PRD three-column-panel D-02, D-07).
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1024, 681));
+  await fitWindow(app, { width: 1024, height: 681 });
   const page = await shellPage(app);
   // Counted from the reload on, so the socket it opens is heard.
   const sent = countSent(page);
@@ -371,7 +371,7 @@ test("Korean prose links only the real path and opens that file", async () => {
   fs.mkdirSync(path.join(checkout, "docs"), { recursive: true });
   fs.writeFileSync(path.join(checkout, "docs/README.md"), "# issue 271 exact file");
   ({ app } = await launch(run.env));
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1024, 681));
+  await fitWindow(app, { width: 1024, height: 681 });
   const page = await shellPage(app);
   await withProbe(page);
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.setZoomFactor(0.4));
@@ -525,7 +525,7 @@ test("dense terminal path hover measures cold and warm native work", async () =>
     fs.writeFileSync(path.join(checkout, "dense/f" + String(index).padStart(2, "0") + ".md"), "# dense file " + index);
   }
   ({ app } = await launch(run.env));
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1600, 681));
+  await fitWindow(app, { width: 1024, height: 681 });
   const page = await shellPage(app);
   await withProbe(page);
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.setZoomFactor(0.3));

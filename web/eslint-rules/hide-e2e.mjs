@@ -111,6 +111,37 @@ const reopenAfterRestartThroughBlank = {
   },
 };
 
+const WINDOW_SIZING = new Set(["setSize", "setBounds", "setContentSize", "setContentBounds"]);
+
+/**
+ * macOS keeps a window larger than the screen's work area until the window is next ordered in (a `blur()` or
+ * `focus()` of the test's own) and clamps it then, so the layout changes in the middle of the test (issue 511).
+ * A desktop spec sizes its window through `fitWindow` in `desktop/e2e/fixture.ts`, the one place that keeps it inside
+ * the work area; a spec that needs a window larger than the screen says why in a line allow.
+ */
+const windowSizeThroughFixture = {
+  meta: {
+    type: "problem",
+    schema: [],
+    messages: {
+      fixture: "Size the window with `fitWindow` from desktop/e2e/fixture.ts, not `{{method}}`: macOS clamps a window larger than the work area when it is next ordered in, which changes the layout mid-test (docs/TESTING.md, Writing a Playwright e2e test, step 1).",
+    },
+  },
+  create(context) {
+    if (context.filename.replaceAll("\\", "/").endsWith("/desktop/e2e/fixture.ts")) return {};
+    return {
+      CallExpression(node) {
+        const method = name(node.callee?.property);
+        if (node.callee?.type === "MemberExpression" && WINDOW_SIZING.has(method)) context.report({ node, messageId: "fixture", data: { method } });
+      },
+    };
+  },
+};
+
 export default {
-  rules: { "no-action-in-poll": noActionInPoll, "reopen-after-restart-through-blank": reopenAfterRestartThroughBlank },
+  rules: {
+    "no-action-in-poll": noActionInPoll,
+    "reopen-after-restart-through-blank": reopenAfterRestartThroughBlank,
+    "window-size-through-fixture": windowSizeThroughFixture,
+  },
 };

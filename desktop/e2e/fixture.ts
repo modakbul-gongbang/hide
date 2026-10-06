@@ -337,9 +337,13 @@ export async function focusPage(app: ElectronApplication, page: { url: string } 
  * Sizes the first window to what a layout needs, within the primary work
  * area: a CI runner's screen is 1024 points wide and its usable height
  * differs by runner (681 on one, 700 or more on another), and macOS clamps a
- * window to the work area without saying so. The width is the layout's and
- * must be granted whole; the height is the work area's when that is shorter.
- * Returns the size macOS granted, so a spec asserts its layout against it.
+ * window to the work area without saying so. It can keep a larger size until
+ * the window is next ordered in (a `blur()` or `focus()` of the test's own)
+ * and clamp it then, which changes the layout in the middle of a test (issue
+ * 511), so a spec sizes its window here (`hide-e2e/window-size-through-fixture`).
+ * The width is the layout's and must be granted whole; the height is the work
+ * area's when that is shorter. Returns the size macOS granted, so a spec
+ * asserts its layout against it.
  */
 export async function fitWindow(app: ElectronApplication, wanted: { width: number; height: number }): Promise<{ width: number; height: number }> {
   const { granted, area } = await app.evaluate(({ BrowserWindow, screen }, size) => {

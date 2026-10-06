@@ -49,6 +49,7 @@ async function bodyWidth(app: ElectronApplication, page: Page, width: number): P
   const inset = await page.evaluate(() => innerWidth - document.querySelector<HTMLElement>("[data-column-row=true]")!.clientWidth);
   await app.evaluate(({ BrowserWindow }, width) => {
     const window = BrowserWindow.getAllWindows()[0]!;
+    // eslint-disable-next-line hide-e2e/window-size-through-fixture -- these bodies are wider than a CI screen and their columns are asserted in whole CSS pixels, which a zoomed page does not give; nothing here orders the window out and in, so macOS keeps the size.
     window.setSize(width, window.getSize()[1]!);
     // macOS can clamp to a small CI screen. Preserve the requested CSS body
     // width with the granted content size, and record zoom in native evidence.
@@ -118,7 +119,7 @@ test("Workspace columns preserve geometry, dock once on release and show native 
     await page.goto(url.href);
     await expect.poll(() => page.evaluate(() => typeof (window as unknown as { __hideProbe?: Probe }).__hideProbe)).toBe("object");
     await enterWorkspace(page, "fixture");
-    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1440, 900));
+    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1440, 900)); // eslint-disable-line hide-e2e/window-size-through-fixture -- the first Tools call is made in a wide body, wider than a CI screen; nothing here orders the window out and in.
     const workspace = page.locator("[data-workspace-screen]");
     await expect(workspace).toHaveAttribute("data-file-views", "off");
     await expect(workspace).toHaveAttribute("data-tools", "off");
