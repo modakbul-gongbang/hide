@@ -139,17 +139,22 @@ impl FileStatus {
 /// repository, a root that is not the repository's top level, a scope that
 /// is not a real folder of the checkout, and a failed Git read are errors,
 /// never an empty answer, so a failure is not shown as a clean tree.
+/// `Unsupported` is only the folder Git finds no repository for, which is
+/// nothing to repair; a `git` that cannot run or did not finish is `Io`, the
+/// operator's to act on.
 pub fn changes(root: &Root, query: &ChangesQuery) -> HostResult<Changes> {
     let native_scope = crate::root::relative_path(&query.scope)?;
     let scope = &RelPath::parse(&query.scope).expect("relative_path parsed the scope");
     require_real_folder(root, &native_scope)?;
     let git = GitDirectory::of(root);
-    let toplevel = git_line(git, &["rev-parse", "--show-toplevel"]).map_err(|_| {
-        HostError::new(
+    let found = git_output(git, &["rev-parse", "--show-toplevel"])?;
+    let toplevel = String::from_utf8_lossy(&found.stdout).trim().to_owned();
+    if !found.status.success() || toplevel.is_empty() {
+        return Err(HostError::new(
             ErrorCode::Unsupported,
             format!("{} is not inside a Git repository", root.path().display()),
-        )
-    })?;
+        ));
+    }
     if hide_platform::fs::identity::canonical(Path::new(&toplevel))
         .ok()
         .as_deref()

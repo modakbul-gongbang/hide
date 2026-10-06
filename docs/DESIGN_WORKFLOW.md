@@ -196,7 +196,7 @@ It draws every Dialog and AlertDialog surface the shell opens: New worktree, Del
 Its web files are `web/src/WorkspaceDialogs.tsx`, `web/src/AddProjectDialog.tsx`, `web/src/DraftRecovery.tsx`, `web/src/ShortcutSheet.tsx`, and `web/src/IssueDialogs.tsx`.
 
 Menus and Overlays is `Screen / Menus and Overlays`.
-It draws the sidebar row menu, the Explorer context menu, the hidden rail's device menu (the devices, Add device, Show rail), and the Explorer git-status notice, each anchored in its real screen context.
+It draws the sidebar row menu, the Explorer context menu, the hidden rail's device menu (the devices, Add device, Show rail), and the Explorer root row's Git status marks (loading, a failure the operator can repair, none), each anchored in its real screen context.
 Below them it draws the ⌘N start panel floating over the window as ⌘K does: one line to write, the target, agent kind and model dropdowns, and the start button with its Enter key.
 The panel is drawn at rest and with each dropdown open: the target menu (Home first, the front device's checkouts, then each other device's Home, an unreachable one dimmed with `연결 안 됨`), the kind menu (Claude, Codex), and the model menu for Claude and for Codex.
 Its web files are `web/src/entry-menu.tsx` and the start panel under `web/src/`.

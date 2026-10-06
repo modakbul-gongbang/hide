@@ -18,6 +18,7 @@ use std::sync::{Arc, Mutex, Weak, mpsc};
 use std::thread;
 use std::time::Duration;
 
+use hide_host::ErrorCode;
 use hide_host::git::{ChangedFile, Changes, DiffTarget, FileStatus};
 use hide_host::protocol::Call;
 use hide_platform::path;
@@ -289,6 +290,14 @@ pub fn read(request: &ChangesRequest) -> ChangesSnapshot {
     );
     let changes = match answer {
         Ok(changes) => changes,
+        // The host answers `Unsupported` only for a folder Git finds no
+        // repository for (`hide_host::git::changes`).
+        Err(HostCallError::Refused(error)) if error.code == ErrorCode::Unsupported => {
+            return ChangesSnapshot {
+                not_a_repository: true,
+                ..unavailable(error.message)
+            };
+        }
         Err(error) => return unavailable(reason(error)),
     };
     let project = |files: Vec<ChangedFile>| {
@@ -335,6 +344,7 @@ pub fn read(request: &ChangesRequest) -> ChangesSnapshot {
         diff,
         diffs,
         unavailable_reason: None,
+        not_a_repository: false,
         stale_reason: None,
     }
 }
@@ -498,6 +508,34 @@ mod tests {
         let projected = read(&request(&folder, &folder, None));
         assert!(projected.unavailable_reason.is_some());
         assert_eq!(projected.root_path.as_deref(), folder.to_str());
+    }
+
+    #[test]
+    fn only_a_folder_git_finds_no_repository_for_is_not_a_repository() {
+        let temporary = tempfile::tempdir().unwrap();
+        let folder = temporary.path().canonicalize().unwrap();
+        let mut unready = request(&folder, &folder, None);
+        unready.channel = Err("The device helper is not ready".to_owned());
+        assert!(!read(&unready).not_a_repository);
+
+        // A `.git` pointing nowhere, whatever contains the temporary directory.
+        std::fs::write(folder.join(".git"), "gitdir: /nonexistent\n").unwrap();
+        assert!(read(&request(&folder, &folder, None)).not_a_repository);
+
+        // Git finds this repository and then fails on its index: the
+        // operator's to repair.
+        std::fs::remove_file(folder.join(".git")).unwrap();
+        git(&folder, &["init", "-q"]);
+        std::fs::write(folder.join(".git/index"), "not an index").unwrap();
+        let broken = read(&request(&folder, &folder, None));
+        assert!(
+            broken
+                .unavailable_reason
+                .as_deref()
+                .is_some_and(|reason| reason.starts_with("git status failed")),
+            "{broken:?}"
+        );
+        assert!(!broken.not_a_repository);
     }
 
     #[test]

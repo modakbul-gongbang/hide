@@ -3022,6 +3022,11 @@ pub struct ChangesSnapshot {
     /// Why there is nothing to list. Present whenever the reader could not
     /// produce entries, so an empty list is never mistaken for "no changes".
     pub unavailable_reason: Option<String>,
+    /// The reason above is only that Git finds no repository for this
+    /// folder: nothing for the operator to repair, so the Explorer draws no
+    /// mark for it and the reason goes to the diagnostic log (issue 570).
+    #[serde(skip_serializing_if = "std::ops::Not::not")]
+    pub not_a_repository: bool,
     /// Why the latest read of this checkout failed while the entries above,
     /// from the last read that succeeded, are still shown: they may be out of
     /// date, and the next read replaces them (S5.5 B22).

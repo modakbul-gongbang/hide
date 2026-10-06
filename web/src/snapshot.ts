@@ -876,6 +876,8 @@ export type ChangesSnapshot = {
   /** One bounded patch per visible diff display of the front Workspace (S7 contract 3.2); absent when none shows. */
   diffs?: DiffSnapshot[];
   unavailable_reason: string | null;
+  /** The reason is only that Git finds no repository here: nothing to repair, so the Explorer draws no mark (issue 570). Absent when false. */
+  not_a_repository?: boolean;
   /** Why the latest read failed while these entries, from the last good read, are still shown (S5.5 B22). */
   stale_reason?: string | null;
 };

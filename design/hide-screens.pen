@@ -119373,7 +119373,7 @@
           "type": "text",
           "id": "screen-menus-spec",
           "name": "entry-menu.tsx EntryContextM",
-          "content": "entry-menu.tsx EntryContextMenu, the sidebar footer’s device button menu (This Mac, 기기 추가…), the Explorer git-status notice and the ⌘N start panel (PRD home-device-rail D-18..D-20): overlays shown anchored in their real screen context rather than the abstract System gallery. The panel floats over the window like ⌘K with one line to write and three dropdowns, target, agent kind and model, and 시작 with ⏎. The target defaults to what is in front and its menu lists Home first, then the front device’s checkouts, then every other device’s Home, an unreachable one dimmed with 연결 안 됨; the kind menu is Claude and Codex, and the model menu follows the kind (Claude: haiku, sonnet, opus, fable; Codex: the list the CLI reports). The kind and each kind’s model are remembered; the target is not.",
+          "content": "entry-menu.tsx EntryContextMenu, the sidebar footer’s device button menu (This Mac, 기기 추가…), the Explorer root row’s Git status marks and the ⌘N start panel (PRD home-device-rail D-18..D-20): overlays shown anchored in their real screen context rather than the abstract System gallery. The panel floats over the window like ⌘K with one line to write and three dropdowns, target, agent kind and model, and 시작 with ⏎. The target defaults to what is in front and its menu lists Home first, then the front device’s checkouts, then every other device’s Home, an unreachable one dimmed with 연결 안 됨; the kind menu is Claude and Codex, and the model menu follows the kind (Claude: haiku, sonnet, opus, fable; Codex: the list the CLI reports). The kind and each kind’s model are remembered; the target is not.",
           "fill": "$--muted-foreground",
           "fontFamily": "$--font-ui",
           "fontSize": "$--text-caption",
@@ -119745,26 +119745,39 @@
                 {
                   "type": "frame",
                   "id": "mn-notice-l",
-                  "name": "Explorer notice",
+                  "name": "Explorer Git status",
                   "children": [
                     {
                       "type": "frame",
-                      "id": "mn-noticeroot-l",
-                      "name": "Root",
+                      "id": "mn-gitl-l",
+                      "name": "Explorer root row",
                       "children": [
                         {
                           "type": "text",
-                          "id": "mn-noticeroott-l",
+                          "id": "mn-gitlt-l",
                           "name": "demo",
                           "content": "demo",
                           "fill": "$--muted-foreground",
                           "fontFamily": "$--font-ui",
                           "fontSize": "$--text-caption",
-                          "fontWeight": "600"
+                          "fontWeight": "600",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container"
                         },
                         {
                           "type": "icon",
-                          "id": "mn-noticerefresh-l",
+                          "id": "mn-gitls-l",
+                          "name": "Glyph",
+                          "enabled": true,
+                          "width": 12,
+                          "height": 12,
+                          "icon": "loader-circle",
+                          "library": "lucide",
+                          "fill": "$--muted-foreground"
+                        },
+                        {
+                          "type": "icon",
+                          "id": "mn-gitlr-l",
                           "name": "Glyph",
                           "enabled": true,
                           "width": 12,
@@ -119775,26 +119788,100 @@
                         }
                       ],
                       "layout": "horizontal",
-                      "justifyContent": "space_between",
                       "alignItems": "center",
+                      "gap": "$--spacing-xs",
                       "width": 360
                     },
                     {
-                      "type": "text",
-                      "id": "mn-noticet-l",
-                      "name": "Git status unavailable: ~/pr",
-                      "content": "Git status unavailable: ~/projects/sasu/demo is not inside a Git repository",
-                      "fill": "$--warning",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "400",
-                      "textGrowth": "fixed-width",
+                      "type": "frame",
+                      "id": "mn-gitu-l",
+                      "name": "Explorer root row",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "mn-gitut-l",
+                          "name": "demo",
+                          "content": "demo",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "600",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container"
+                        },
+                        {
+                          "id": "mn-gitub-l",
+                          "type": "ref",
+                          "ref": "hideui:eHAjc",
+                          "name": "!",
+                          "stroke": "$--warning",
+                          "fill": "#00000000",
+                          "descendants": {
+                            "hideui:xXuNa": {
+                              "fill": "$--subtle-foreground",
+                              "enabled": false
+                            },
+                            "hideui:n8L5dm": {
+                              "fill": "$--warning",
+                              "content": "!"
+                            }
+                          }
+                        },
+                        {
+                          "type": "icon",
+                          "id": "mn-gitur-l",
+                          "name": "Glyph",
+                          "enabled": true,
+                          "width": 12,
+                          "height": 12,
+                          "icon": "refresh-cw",
+                          "library": "lucide",
+                          "fill": "$--muted-foreground"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "alignItems": "center",
+                      "gap": "$--spacing-xs",
+                      "width": 360
+                    },
+                    {
+                      "type": "frame",
+                      "id": "mn-gitn-l",
+                      "name": "Explorer root row",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "mn-gitnt-l",
+                          "name": "demo",
+                          "content": "demo",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "600",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container"
+                        },
+                        {
+                          "type": "icon",
+                          "id": "mn-gitnr-l",
+                          "name": "Glyph",
+                          "enabled": true,
+                          "width": 12,
+                          "height": 12,
+                          "icon": "refresh-cw",
+                          "library": "lucide",
+                          "fill": "$--muted-foreground"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "alignItems": "center",
+                      "gap": "$--spacing-xs",
                       "width": 360
                     }
                   ],
                   "width": 360,
                   "layout": "vertical",
-                  "gap": "$--spacing-xxs"
+                  "gap": "$--spacing-sm"
                 },
                 {
                   "type": "frame",
@@ -122904,26 +122991,39 @@
                 {
                   "type": "frame",
                   "id": "mn-notice-d",
-                  "name": "Explorer notice",
+                  "name": "Explorer Git status",
                   "children": [
                     {
                       "type": "frame",
-                      "id": "mn-noticeroot-d",
-                      "name": "Root",
+                      "id": "mn-gitl-d",
+                      "name": "Explorer root row",
                       "children": [
                         {
                           "type": "text",
-                          "id": "mn-noticeroott-d",
+                          "id": "mn-gitlt-d",
                           "name": "demo",
                           "content": "demo",
                           "fill": "$--muted-foreground",
                           "fontFamily": "$--font-ui",
                           "fontSize": "$--text-caption",
-                          "fontWeight": "600"
+                          "fontWeight": "600",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container"
                         },
                         {
                           "type": "icon",
-                          "id": "mn-noticerefresh-d",
+                          "id": "mn-gitls-d",
+                          "name": "Glyph",
+                          "enabled": true,
+                          "width": 12,
+                          "height": 12,
+                          "icon": "loader-circle",
+                          "library": "lucide",
+                          "fill": "$--muted-foreground"
+                        },
+                        {
+                          "type": "icon",
+                          "id": "mn-gitlr-d",
                           "name": "Glyph",
                           "enabled": true,
                           "width": 12,
@@ -122934,26 +123034,100 @@
                         }
                       ],
                       "layout": "horizontal",
-                      "justifyContent": "space_between",
                       "alignItems": "center",
+                      "gap": "$--spacing-xs",
                       "width": 360
                     },
                     {
-                      "type": "text",
-                      "id": "mn-noticet-d",
-                      "name": "Git status unavailable: ~/pr",
-                      "content": "Git status unavailable: ~/projects/sasu/demo is not inside a Git repository",
-                      "fill": "$--warning",
-                      "fontFamily": "$--font-ui",
-                      "fontSize": "$--text-caption",
-                      "fontWeight": "400",
-                      "textGrowth": "fixed-width",
+                      "type": "frame",
+                      "id": "mn-gitu-d",
+                      "name": "Explorer root row",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "mn-gitut-d",
+                          "name": "demo",
+                          "content": "demo",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "600",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container"
+                        },
+                        {
+                          "id": "mn-gitub-d",
+                          "type": "ref",
+                          "ref": "hideui:eHAjc",
+                          "name": "!",
+                          "stroke": "$--warning",
+                          "fill": "#00000000",
+                          "descendants": {
+                            "hideui:xXuNa": {
+                              "fill": "$--subtle-foreground",
+                              "enabled": false
+                            },
+                            "hideui:n8L5dm": {
+                              "fill": "$--warning",
+                              "content": "!"
+                            }
+                          }
+                        },
+                        {
+                          "type": "icon",
+                          "id": "mn-gitur-d",
+                          "name": "Glyph",
+                          "enabled": true,
+                          "width": 12,
+                          "height": 12,
+                          "icon": "refresh-cw",
+                          "library": "lucide",
+                          "fill": "$--muted-foreground"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "alignItems": "center",
+                      "gap": "$--spacing-xs",
+                      "width": 360
+                    },
+                    {
+                      "type": "frame",
+                      "id": "mn-gitn-d",
+                      "name": "Explorer root row",
+                      "children": [
+                        {
+                          "type": "text",
+                          "id": "mn-gitnt-d",
+                          "name": "demo",
+                          "content": "demo",
+                          "fill": "$--muted-foreground",
+                          "fontFamily": "$--font-ui",
+                          "fontSize": "$--text-caption",
+                          "fontWeight": "600",
+                          "textGrowth": "fixed-width",
+                          "width": "fill_container"
+                        },
+                        {
+                          "type": "icon",
+                          "id": "mn-gitnr-d",
+                          "name": "Glyph",
+                          "enabled": true,
+                          "width": 12,
+                          "height": 12,
+                          "icon": "refresh-cw",
+                          "library": "lucide",
+                          "fill": "$--muted-foreground"
+                        }
+                      ],
+                      "layout": "horizontal",
+                      "alignItems": "center",
+                      "gap": "$--spacing-xs",
                       "width": 360
                     }
                   ],
                   "width": 360,
                   "layout": "vertical",
-                  "gap": "$--spacing-xxs"
+                  "gap": "$--spacing-sm"
                 },
                 {
                   "type": "frame",
