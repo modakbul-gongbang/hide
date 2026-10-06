@@ -474,6 +474,50 @@ fn an_older_hook_is_replaced_on_the_next_apply() {
 }
 
 #[test]
+fn a_first_apply_writes_the_spawn_guard_entry_and_the_next_pass_adds_it_to_an_earlier_install() {
+    let fixture = Fixture::new();
+    apply(&fixture.target, &Scope::automatic());
+    let document: Value = serde_json::from_str(&fixture.settings()).unwrap();
+    let guard = &document["hooks"]["PreToolUse"][0];
+    assert_eq!(guard["matcher"], "Bash", "{document}");
+    assert!(
+        guard["hooks"][0]["command"]
+            .as_str()
+            .unwrap()
+            .contains("--event PreToolUse"),
+        "{document}"
+    );
+
+    // A machine whose install predates the guard has the five earlier events.
+    let mut earlier = document.clone();
+    earlier["hooks"]
+        .as_object_mut()
+        .unwrap()
+        .remove("PreToolUse");
+    std::fs::write(
+        fixture.home().join(".claude/settings.json"),
+        serde_json::to_string_pretty(&earlier).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(
+        state(&status(&fixture.target), ComponentId::ClaudeCodeHook),
+        ComponentState::Outdated
+    );
+
+    let report = apply(&fixture.target, &Scope::automatic());
+
+    assert_eq!(
+        state(&report, ComponentId::ClaudeCodeHook),
+        ComponentState::Installed
+    );
+    let healed: Value = serde_json::from_str(&fixture.settings()).unwrap();
+    assert_eq!(
+        healed["hooks"]["PreToolUse"],
+        document["hooks"]["PreToolUse"]
+    );
+}
+
+#[test]
 fn a_hook_file_that_does_not_parse_is_left_byte_for_byte() {
     let fixture = Fixture::new();
     let broken = "{ \"hooks\": [ not json\n";

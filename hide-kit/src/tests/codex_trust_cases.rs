@@ -58,7 +58,7 @@ fn a_pass_that_installs_the_codex_hook_has_codex_trust_it_and_a_repeat_asks_for_
         "{report:?}"
     );
     assert_eq!(codex_part(&report).reason, None);
-    assert_eq!(held_keys(&fixture), 5);
+    assert_eq!(held_keys(&fixture), hide_agent_hooks::HookEvent::ALL.len());
     assert_eq!(calls(&fixture, "config/batchWrite"), 1);
 
     // The same pass again checks, and writes nothing (B7).
@@ -101,7 +101,7 @@ fn a_failure_is_the_codex_parts_reason_only_and_status_keeps_it_until_a_pass_suc
     assert_eq!(codex_part(&report).reason, None);
     let read = status(&fixture.target);
     assert_eq!(codex_part(&read).state, ComponentState::Installed);
-    assert_eq!(held_keys(&fixture), 5);
+    assert_eq!(held_keys(&fixture), hide_agent_hooks::HookEvent::ALL.len());
 }
 
 #[test]
@@ -176,7 +176,7 @@ fn the_first_run_pass_that_switches_codex_on_has_codex_trust_the_hook_in_that_pa
         ComponentState::Installed,
         "{report:?}"
     );
-    assert_eq!(held_keys(&fixture), 5);
+    assert_eq!(held_keys(&fixture), hide_agent_hooks::HookEvent::ALL.len());
 }
 
 #[test]
@@ -201,7 +201,7 @@ fn a_changed_hook_is_trusted_in_the_pass_that_replaces_it() {
     );
     let after = std::fs::read_to_string(codex_file(&fixture, "fake-trust.json")).unwrap();
     assert_ne!(after, before, "the new entries' hashes were recorded");
-    assert_eq!(held_keys(&fixture), 5);
+    assert_eq!(held_keys(&fixture), hide_agent_hooks::HookEvent::ALL.len());
     assert_eq!(calls(&fixture, "config/batchWrite"), 2);
 }
 
