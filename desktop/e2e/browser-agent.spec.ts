@@ -75,8 +75,10 @@ async function openDisplay(url: string): Promise<string> {
   const command = `HIDE_STATE_DIR=${quote(run.env.HIDE_STATE_DIR!)} ${[HIDE_CLI, "browser", "open", url, "--reveal", "--wait"].map(quote).join(" ")} > ${quote(`${stem}.json`)}; printf '%s' "$?" > ${quote(`${stem}.status`)}\n`;
   expect(spawnSync(herdr.bin, ["pane", "send-text", herdr.panes[0]!, command], { env: herdr.env, encoding: "utf8", timeout: 10_000 }).status).toBe(0);
   await expect.poll(() => fs.existsSync(`${stem}.status`), { timeout: 30_000 }).toBe(true);
-  const answer = JSON.parse(fs.readFileSync(`${stem}.json`, "utf8").trim().split("\n").at(-1)!) as { result: { view_id: string } };
-  return answer.result.view_id;
+  const answer = JSON.parse(fs.readFileSync(`${stem}.json`, "utf8").trim().split("\n").at(-1)!) as { reason?: string; page?: unknown; result?: { view_id: string } };
+  // The reason and page state only: a successful answer carries the display's control URLs.
+  expect(fs.readFileSync(`${stem}.status`, "utf8"), `hide browser open refused: ${answer.reason} ${JSON.stringify(answer.page)}`).toBe("0");
+  return answer.result!.view_id;
 }
 /** Reads the display's own document through the main process, outside CDP. */
 async function inDisplay<T>(url: string, expression: string): Promise<T> {
