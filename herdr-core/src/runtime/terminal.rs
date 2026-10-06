@@ -1447,31 +1447,6 @@ impl Runtime {
         self.clear_terminal_projection();
         self.select_terminal_pane(pane_id);
     }
-    /// A launcher result is a local projection anchor, not a Herdr focus
-    /// request. Keep it authoritative over an older terminal pane while the
-    /// next event-stream projection catches up, and make the missing layout
-    /// visible instead of retaining unrelated same-cwd content.
-    pub(super) fn apply_selected_pane_anchor(&mut self, pane_id: Option<String>) {
-        let layout_contains_pane = pane_id
-            .as_deref()
-            .is_some_and(|selected_pane_id| self.layout_holding_pane(selected_pane_id).is_some());
-        self.snapshot.terminal.pane_id = pane_id.clone();
-        self.snapshot.focused.surface = Surface::Terminal;
-        self.snapshot.focused.pane_id = pane_id.clone();
-        if !layout_contains_pane {
-            self.clear_terminal_projection();
-            if let Some(pane_id) = pane_id.as_deref() {
-                self.set_error(
-                    "pane.projection_unavailable",
-                    format!(
-                        "Selected pane {pane_id} is not present in the Herdr session; terminal projection is waiting"
-                    ),
-                    true,
-                );
-            }
-        }
-        self.sync_focused_terminal_projection();
-    }
     /// Opens or focuses the file tab for one path in a checkout Hide is
     /// already showing. The caller owns the context check and the persistence,
     /// because a reveal has already made that decision by the time it gets
