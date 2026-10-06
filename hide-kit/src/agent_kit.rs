@@ -169,7 +169,7 @@ fn observe_guidance(
             helper(target).display()
         ));
     }
-    match version_gate(adapter, detection) {
+    match version_gate(adapter, detection, &target.home) {
         Ok(()) => observed,
         // Nothing a Reinstall can change: the agent is too old, or its
         // version cannot be read, so the row says why and is not repairable.
@@ -179,11 +179,13 @@ fn observe_guidance(
 
 /// An agent with a documented minimum version gets the hook only when its
 /// CLI answers a version at or above it; one with none has no gate.
-fn version_gate(adapter: &AgentAdapter, detection: &Detection) -> Result<(), String> {
+fn version_gate(adapter: &AgentAdapter, detection: &Detection, home: &Path) -> Result<(), String> {
     let Some(minimum) = adapter.min_version else {
         return Ok(());
     };
-    let version = detection.executable(adapter).and_then(program_version);
+    let version = detection
+        .executable(adapter)
+        .and_then(|binary| program_version(binary, home));
     match version {
         Some(version) if hide_agent_hooks::version_at_least(&version, minimum) => Ok(()),
         Some(version) => Err(format!(
