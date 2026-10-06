@@ -1,0 +1,18 @@
+[package]
+name = "hide-node-link"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# The contract between the core and a node: the `NodeLink` trait and the
+# shapes that cross it. Nothing here touches a machine (PRD core-host-node
+# D-21), so the core depends on it without reaching one. The session and
+# kit request shapes are still defined by `hide-session` and `hide-kit`, used
+# here for their types only; each moves here with its family in layer 2a.
+
+[dependencies]
+hide-kit = { path = "../hide-kit" }
+hide-session = { path = "../hide-session" }
+libc = "=0.2.189"
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = { version = "=1.0.151", features = ["raw_value"] }

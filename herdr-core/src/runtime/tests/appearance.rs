@@ -24,6 +24,7 @@ fn runtime_at(path: &std::path::Path) -> Runtime {
             home_path: None,
             codex_home: None,
         },
+        std::sync::Arc::new(hide_node::Local),
     )
 }
 

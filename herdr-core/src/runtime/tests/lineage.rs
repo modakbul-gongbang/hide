@@ -388,6 +388,7 @@ fn lineage_expansion_persists_without_attention_opening_it_and_prunes_on_disappe
             home_path: None,
             codex_home: None,
         },
+        std::sync::Arc::new(hide_node::Local),
     );
     assert_eq!(
         restarted.snapshot.ui_state.expanded_agent_pane_ids,

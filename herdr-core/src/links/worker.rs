@@ -10,7 +10,7 @@
 
 use super::store::{IssueLinks, LinkStore, Opened, PrLinks};
 use super::{BACKFILL_MS, PaneFact, ParentFact, ProjectFacts, ProjectLinkSummary, now_ms};
-use crate::host_access::{HostCallError, HostChannel, call_as};
+use crate::node_access::{LinkError, NodeLink, call_as};
 use hide_host::protocol::Call;
 use hide_session::links::{self, Candidate, ReadRequest};
 use std::collections::{BTreeMap, HashMap, VecDeque};
@@ -57,7 +57,7 @@ pub trait Sink: Send + 'static {
     /// Whether the first fill or a listing's reads are running (B24).
     fn filling(&self, filling: bool);
     /// The devices whose helper is connected now (D-21).
-    fn devices(&self) -> Vec<(String, Arc<dyn HostChannel>)>;
+    fn devices(&self) -> Vec<(String, Arc<dyn NodeLink>)>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -730,7 +730,7 @@ fn device_turn(store: &mut LinkStore, sink: &impl Sink, state: &mut State) {
 fn read_device(
     store: &mut LinkStore,
     device: &str,
-    channel: &dyn HostChannel,
+    channel: &dyn NodeLink,
     entry: &mut DeviceQueue,
     write_failure: &mut Option<String>,
 ) {
@@ -798,7 +798,7 @@ fn read_device(
 fn list_device(
     store: &LinkStore,
     device: &str,
-    channel: &dyn HostChannel,
+    channel: &dyn NodeLink,
     entry: &mut DeviceQueue,
 ) -> Result<(), String> {
     if entry.listing.is_none() {
@@ -853,16 +853,16 @@ fn finish_device(store: &LinkStore, device: &str, entry: &mut DeviceQueue) {
     }
 }
 
-fn device_code(error: &HostCallError) -> String {
+fn device_code(error: &LinkError) -> String {
     match error {
-        HostCallError::NotConnected(_) => "device_helper_not_connected".to_owned(),
-        HostCallError::Busy => "device_helper_busy".to_owned(),
-        HostCallError::Unknown(_) => "device_helper_unknown".to_owned(),
+        LinkError::NotConnected(_) => "device_helper_not_connected".to_owned(),
+        LinkError::Busy => "device_helper_busy".to_owned(),
+        LinkError::Unknown(_) => "device_helper_unknown".to_owned(),
         // A helper older than protocol 18 does not know the call.
-        HostCallError::Refused(error) if error.code == hide_host::ErrorCode::InvalidRequest => {
+        LinkError::Refused(error) if error.code == hide_host::ErrorCode::InvalidRequest => {
             "device_helper_unsupported".to_owned()
         }
-        HostCallError::Refused(error) => error.message.clone(),
+        LinkError::Refused(error) => error.message.clone(),
     }
 }
 
@@ -951,8 +951,8 @@ fn answer_panel(store: &LinkStore, paths: &Paths, state: &mut State, sink: &impl
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::host_access::HostAnswer;
     use crate::links::{FileState, PrFact, ProjectFacts, SessionRole, WorktreeFact};
+    use crate::node_access::LinkAnswer;
     use std::sync::atomic::{AtomicBool, Ordering};
 
     const CREATED: u64 = 1_790_000_000_000;
@@ -964,10 +964,10 @@ mod tests {
         connected: AtomicBool,
     }
 
-    impl HostChannel for Device {
-        fn call(&self, call: Call, _timeout: Duration) -> Result<HostAnswer, HostCallError> {
+    impl NodeLink for Device {
+        fn call(&self, call: Call, _timeout: Duration) -> Result<LinkAnswer, LinkError> {
             if !self.connected.load(Ordering::SeqCst) {
-                return Err(HostCallError::NotConnected("gone".into()));
+                return Err(LinkError::NotConnected("gone".into()));
             }
             let value = match call {
                 Call::LinkFiles {
@@ -981,7 +981,7 @@ mod tests {
                 }
                 other => panic!("unexpected call {other:?}"),
             };
-            Ok(HostAnswer::Parsed(value.unwrap()))
+            Ok(LinkAnswer::Parsed(value.unwrap()))
         }
     }
 
@@ -1004,11 +1004,8 @@ mod tests {
             self.seen.lock().unwrap().panel = Some(answer);
         }
         fn filling(&self, _filling: bool) {}
-        fn devices(&self) -> Vec<(String, Arc<dyn HostChannel>)> {
-            vec![(
-                "mini".to_owned(),
-                self.device.clone() as Arc<dyn HostChannel>,
-            )]
+        fn devices(&self) -> Vec<(String, Arc<dyn NodeLink>)> {
+            vec![("mini".to_owned(), self.device.clone() as Arc<dyn NodeLink>)]
         }
     }
 
@@ -1051,9 +1048,9 @@ mod tests {
 
     struct Refusing;
 
-    impl HostChannel for Refusing {
-        fn call(&self, _call: Call, _timeout: Duration) -> Result<HostAnswer, HostCallError> {
-            Err(HostCallError::NotConnected("gone".into()))
+    impl NodeLink for Refusing {
+        fn call(&self, _call: Call, _timeout: Duration) -> Result<LinkAnswer, LinkError> {
+            Err(LinkError::NotConnected("gone".into()))
         }
     }
 

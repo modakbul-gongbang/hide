@@ -9,8 +9,8 @@
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
+use crate::RootIdentity;
 use crate::error::HostError;
-use crate::root::RootIdentity;
 
 /// Bumped when a request or an answer changes shape. The core refuses a
 /// helper that reports another version and installs the one it carries.

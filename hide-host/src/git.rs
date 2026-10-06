@@ -43,13 +43,7 @@ pub struct ChangesQuery {
     pub diffs: Vec<DiffTarget>,
 }
 
-/// A file whose diff a View display shows, relative to the scope like every
-/// path in the answer, and the group it is taken in.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct DiffTarget {
-    pub path: String,
-    pub committed: bool,
-}
+pub use hide_node_link::git::DiffTarget;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Changes {

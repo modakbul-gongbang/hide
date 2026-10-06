@@ -4,14 +4,15 @@
 //! read back rather than resent when its answer is lost.
 //!
 //! The device is a double of the helper connection behind the same
-//! `HostChannel` boundary: it answers with the helper's own dispatch, so the
+//! `NodeLink` boundary: it answers with the helper's own dispatch, so the
 //! file work is real, and it can hold a request or lose an answer.
 
 use super::*;
-use crate::host_access::{HostAnswer, HostCallError, HostChannel, InProcessHost};
 use crate::model::{ViewDisplayState, ViewNodeSnapshot};
+use crate::node_access::{LinkAnswer, LinkError, NodeLink};
 use crate::view_layout::{DisplayKind, Edge};
 use hide_host::protocol::Call;
+use hide_node::Local as InProcessHost;
 use serde_json::Value;
 use std::sync::Condvar;
 
@@ -99,7 +100,7 @@ impl FakeDevice {
     }
 }
 
-impl HostChannel for FakeDevice {
+impl NodeLink for FakeDevice {
     fn close(&self, _reason: &str) {
         self.closes.lock().unwrap().push("close");
     }
@@ -108,7 +109,7 @@ impl HostChannel for FakeDevice {
         self.closes.lock().unwrap().push("when_idle");
     }
 
-    fn call(&self, call: Call, timeout: Duration) -> Result<HostAnswer, HostCallError> {
+    fn call(&self, call: Call, timeout: Duration) -> Result<LinkAnswer, LinkError> {
         {
             let read = match &call {
                 Call::OpenDocument { path, .. } => Some(path.as_str()),
@@ -127,28 +128,28 @@ impl HostChannel for FakeDevice {
             self.saves.lock().unwrap().push(contents.clone());
         }
         match answer {
-            Answer::Unreachable => Err(HostCallError::NotConnected(
+            Answer::Unreachable => Err(LinkError::NotConnected(
                 "The device helper is not connected".to_owned(),
             )),
             Answer::UnreachableOnce => {
                 *self.answer.lock().unwrap() = Answer::Normally;
-                Err(HostCallError::NotConnected(
+                Err(LinkError::NotConnected(
                     "The device helper is not connected".to_owned(),
                 ))
             }
-            Answer::LoseBeforeEffect if is_save => Err(HostCallError::Unknown(
+            Answer::LoseBeforeEffect if is_save => Err(LinkError::Unknown(
                 "The connection ended before the device answered".to_owned(),
             )),
             Answer::LoseAfterEffectThenDrop if is_save => {
                 let _ = InProcessHost.call(call, timeout);
                 *self.answer.lock().unwrap() = Answer::Unreachable;
-                Err(HostCallError::Unknown(
+                Err(LinkError::Unknown(
                     "The connection ended before the device answered".to_owned(),
                 ))
             }
             Answer::LoseAfterEffect if is_save => {
                 let _ = InProcessHost.call(call, timeout);
-                Err(HostCallError::Unknown(
+                Err(LinkError::Unknown(
                     "The connection ended before the device answered".to_owned(),
                 ))
             }
@@ -819,7 +820,7 @@ fn a_slow_local_read_blocks_nothing_and_a_reveal_moves_only_when_it_lands() {
     runtime.snapshot.navigator.root_path = Some(root_text.clone());
     runtime.snapshot.ui_state.right_panel_visible = false;
     let disk = FakeDevice::new();
-    runtime.local_host = disk.clone();
+    runtime.own_node = disk.clone();
     let shared = SharedRuntime::new(runtime);
     shared
         .lock()
@@ -1028,7 +1029,7 @@ fn a_device_folder_replaced_after_it_was_listed_takes_no_change_or_open() {
     std::fs::write(root.join("a.txt"), "first").unwrap();
     let device = FakeDevice::new();
     let root_text = root.to_string_lossy().into_owned();
-    crate::host_access::list_folder(device.as_ref(), &root_text, "").unwrap();
+    crate::node_access::list_folder(device.as_ref(), &root_text, "").unwrap();
 
     std::fs::rename(&root, dir.path().join("moved")).unwrap();
     std::fs::create_dir(&root).unwrap();

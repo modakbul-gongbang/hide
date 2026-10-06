@@ -20,7 +20,7 @@ const HOST_REMOVE_TIMEOUT: Duration = Duration::from_secs(120);
 #[derive(Clone)]
 pub struct WorktreeTarget {
     connector: Arc<dyn ApiConnector>,
-    host: Arc<dyn crate::host_access::HostChannel>,
+    host: Arc<dyn crate::node_access::NodeLink>,
     runtime: Weak<Mutex<Runtime>>,
     notifier: ChangeNotifier,
     /// This machine: a purpose is mirrored into the branch description, and
@@ -31,7 +31,7 @@ pub struct WorktreeTarget {
 impl WorktreeTarget {
     pub(crate) fn local(
         context: &LiveContext,
-        host: Arc<dyn crate::host_access::HostChannel>,
+        host: Arc<dyn crate::node_access::NodeLink>,
     ) -> Self {
         Self {
             connector: Arc::clone(&context.api_connector),
@@ -44,7 +44,7 @@ impl WorktreeTarget {
 
     pub(crate) fn device(
         context: &RemoteControlContext,
-        host: Arc<dyn crate::host_access::HostChannel>,
+        host: Arc<dyn crate::node_access::NodeLink>,
     ) -> Self {
         Self {
             connector: Arc::clone(&context.api_connector),
@@ -103,7 +103,7 @@ pub fn spawn_worktree_preflight(
             Err(_) => return,
         };
         let Some(removal) = request else { return; };
-        let result = crate::host_access::call_as::<()>(target.host.as_ref(),
+        let result = crate::node_access::call_as::<()>(target.host.as_ref(),
             hide_host::protocol::Call::WorktreeRemovalCheck { removal }, HOST_REMOVE_TIMEOUT)
             .map_err(|error| format!("{}. No panes were closed.", error.to_string().trim_end_matches('.')));
         crate::diagnostic!(serde_json::json!({"component":"worktree_removal", "kind":"preflight_finished", "id":id, "accepted":result.is_ok()}));
@@ -191,18 +191,18 @@ pub fn spawn_worktree_close(
 /// Runs the confirmed removal on the repository's own host. An answer that
 /// never came leaves the removal's effect unknown, which is not a success.
 fn remove_on_host(
-    host: &dyn crate::host_access::HostChannel,
+    host: &dyn crate::node_access::NodeLink,
     removal: hide_host::worktrees::ConfirmedRemoval,
 ) -> Result<String, String> {
     let path = removal.checkout_path.clone();
-    match crate::host_access::call_as::<hide_host::worktrees::RemovalOutcome>(
+    match crate::node_access::call_as::<hide_host::worktrees::RemovalOutcome>(
         host,
         hide_host::protocol::Call::WorktreeRemove { removal },
         HOST_REMOVE_TIMEOUT,
     ) {
         Ok(outcome) if outcome.removed => Ok(outcome.message),
         Ok(outcome) => Err(outcome.message),
-        Err(crate::host_access::HostCallError::Unknown(reason)) => Err(format!(
+        Err(crate::node_access::LinkError::Unknown(reason)) => Err(format!(
             "The removal of {path} was sent but its result is unknown ({reason}). Review the worktree again before retrying."
         )),
         Err(error) => Err(format!(
@@ -214,11 +214,11 @@ fn remove_on_host(
 /// Asks the repository's host whether `branch` may be created; nothing is
 /// created by the question.
 fn check_new_branch(
-    host: &dyn crate::host_access::HostChannel,
+    host: &dyn crate::node_access::NodeLink,
     repository_root: &str,
     branch: &str,
 ) -> Result<(), String> {
-    crate::host_access::call_as::<()>(
+    crate::node_access::call_as::<()>(
         host,
         hide_host::protocol::Call::BranchCheck {
             path: repository_root.to_owned(),
@@ -233,10 +233,10 @@ fn check_new_branch(
 /// when there is none there. A host that did not answer is an error, never a
 /// missing folder: a real worktree is not rolled back for a helper hiccup.
 fn host_directory(
-    host: &dyn crate::host_access::HostChannel,
+    host: &dyn crate::node_access::NodeLink,
     path: &str,
 ) -> Result<Option<String>, String> {
-    crate::host_access::call_as::<Option<String>>(
+    crate::node_access::call_as::<Option<String>>(
         host,
         hide_host::protocol::Call::Directory {
             path: path.to_owned(),
@@ -1136,7 +1136,7 @@ pub struct HomeStartRequest {
     pub id: u64,
     pub device_id: String,
     pub projects: Vec<String>,
-    pub host: Arc<dyn crate::host_access::HostChannel>,
+    pub host: Arc<dyn crate::node_access::NodeLink>,
 }
 
 /// Brings the device's Home in step with its projects, then opens a tab in
@@ -1176,7 +1176,7 @@ pub fn spawn_home_link_sync(
     runtime: Weak<Mutex<Runtime>>,
     device_id: String,
     projects: Vec<String>,
-    host: Arc<dyn crate::host_access::HostChannel>,
+    host: Arc<dyn crate::node_access::NodeLink>,
 ) -> Result<(), String> {
     thread::Builder::new()
         .name("herdr-core-home-link-sync".into())
@@ -1193,10 +1193,10 @@ pub fn spawn_home_link_sync(
 }
 
 fn sync_home(
-    host: &dyn crate::host_access::HostChannel,
+    host: &dyn crate::node_access::NodeLink,
     projects: &[String],
-) -> Result<hide_host::home::HomeSynced, crate::host_access::HostCallError> {
-    crate::host_access::call_as(
+) -> Result<hide_host::home::HomeSynced, crate::node_access::LinkError> {
+    crate::node_access::call_as(
         host,
         hide_host::protocol::Call::HomeSync {
             projects: projects.to_vec(),
@@ -1238,13 +1238,19 @@ fn create_checkout_tab(
 
 pub fn spawn_branch_migration(
     context: LiveContext,
+    host: Arc<dyn crate::node_access::NodeLink>,
     request: WorktreeTaskRequest,
 ) -> Result<(), String> {
     thread::Builder::new()
         .name("herdr-core-branch-migrate".into())
         .spawn(move || {
             let runner = SystemGit;
-            let result = migrate_branch(context.api_connector.as_ref(), &runner, &request);
+            let result = migrate_branch(
+                context.api_connector.as_ref(),
+                host.as_ref(),
+                &runner,
+                &request,
+            );
             if let Some(runtime) = context.runtime.upgrade() {
                 if let Ok(mut guard) = runtime.lock() {
                     guard.ingest_task_operation_result(request.id, result);
@@ -1260,7 +1266,7 @@ pub fn spawn_branch_migration(
 
 fn create_worktree(
     connector: &dyn ApiConnector,
-    host: &dyn crate::host_access::HostChannel,
+    host: &dyn crate::node_access::NodeLink,
     local: bool,
     request: &WorktreeTaskRequest,
 ) -> Result<WorktreeTaskOutcome, String> {
@@ -1269,7 +1275,7 @@ fn create_worktree(
 
 fn create_worktree_observing_purpose(
     connector: &dyn ApiConnector,
-    host: &dyn crate::host_access::HostChannel,
+    host: &dyn crate::node_access::NodeLink,
     local: bool,
     request: &WorktreeTaskRequest,
     on_purpose_write: impl FnOnce(&str, &str),
@@ -1579,6 +1585,7 @@ fn write_created_purpose(
 
 fn migrate_branch(
     connector: &dyn ApiConnector,
+    host: &dyn crate::node_access::NodeLink,
     git: &dyn GitCommands,
     request: &WorktreeTaskRequest,
 ) -> Result<WorktreeTaskOutcome, String> {
@@ -1614,12 +1621,7 @@ fn migrate_branch(
         issue: None,
         ..request.clone()
     };
-    match create_worktree(
-        connector,
-        &crate::host_access::InProcessHost,
-        true,
-        &create_request,
-    ) {
+    match create_worktree(connector, host, true, &create_request) {
         Ok(outcome) => Ok(outcome),
         Err(create_error) => match git.run(
             &request.repository_root,
@@ -2793,13 +2795,8 @@ mod tests {
             json!({"result":{"type":"ok"}}),
             worktree_list(missing, "other"),
         ]);
-        let error = create_worktree(
-            &server,
-            &crate::host_access::InProcessHost,
-            true,
-            &task("feature"),
-        )
-        .unwrap_err();
+        let error =
+            create_worktree(&server, &hide_node::Local, true, &task("feature")).unwrap_err();
         assert!(error.contains("rolled back"));
         assert!(!Path::new(missing).exists());
         let methods = server
@@ -2825,14 +2822,13 @@ mod tests {
     #[test]
     fn an_unanswered_folder_check_keeps_the_created_worktree() {
         struct Busy;
-        impl crate::host_access::HostChannel for Busy {
+        impl crate::node_access::NodeLink for Busy {
             fn call(
                 &self,
                 _call: hide_host::protocol::Call,
                 _timeout: std::time::Duration,
-            ) -> Result<crate::host_access::HostAnswer, crate::host_access::HostCallError>
-            {
-                Err(crate::host_access::HostCallError::Unknown(
+            ) -> Result<crate::node_access::LinkAnswer, crate::node_access::LinkError> {
+                Err(crate::node_access::LinkError::Unknown(
                     "The device did not answer in time".to_owned(),
                 ))
             }
@@ -2876,13 +2872,7 @@ mod tests {
             worktree_list(&listed_path, "feature"),
         ]);
 
-        let outcome = create_worktree(
-            &server,
-            &crate::host_access::InProcessHost,
-            true,
-            &task("feature"),
-        )
-        .unwrap();
+        let outcome = create_worktree(&server, &hide_node::Local, true, &task("feature")).unwrap();
         assert_eq!(outcome.path, response_path);
         assert_eq!(
             server
@@ -2900,7 +2890,7 @@ mod tests {
     fn migrate_branch_blocked_when_dirty() {
         let git = ScriptedGit::new(vec![Ok(" M file")]);
         let server = server(vec![]);
-        let error = migrate_branch(&server, &git, &task("feature")).unwrap_err();
+        let error = migrate_branch(&server, &hide_node::Local, &git, &task("feature")).unwrap_err();
         assert!(error.contains("uncommitted changes"));
         assert!(server.requests.lock().unwrap().is_empty());
     }
@@ -2915,7 +2905,7 @@ mod tests {
             worktree_list(&path, "feature"),
         ]);
         let git = ScriptedGit::new(vec![Ok(""), Ok("feature"), Ok("")]);
-        let outcome = migrate_branch(&server, &git, &task("feature")).unwrap();
+        let outcome = migrate_branch(&server, &hide_node::Local, &git, &task("feature")).unwrap();
         assert_eq!(outcome.path, path);
         assert_eq!(
             git.calls.lock().unwrap()[2],
@@ -2938,7 +2928,7 @@ mod tests {
             json!({"error":{"code":"injected","message":"pane creation failed"}}),
         ]);
         let git = ScriptedGit::new(vec![Ok(""), Ok("feature"), Ok(""), Ok("")]);
-        let error = migrate_branch(&server, &git, &task("feature")).unwrap_err();
+        let error = migrate_branch(&server, &hide_node::Local, &git, &task("feature")).unwrap_err();
         assert!(error.contains("restored the main worktree to feature"));
         assert_eq!(
             git.calls.lock().unwrap()[3],
@@ -2962,7 +2952,7 @@ mod tests {
         let server = server(vec![
             json!({"error":{"code":"injected","message":"create failed"}}),
         ]);
-        let _ = migrate_branch(&server, &git, &task("feature"));
+        let _ = migrate_branch(&server, &hide_node::Local, &git, &task("feature"));
         assert!(
             server
                 .requests
@@ -2981,7 +2971,7 @@ mod tests {
         ]);
         let git = ScriptedGit::new(vec![Ok(""), Ok("feature"), Ok(""), Ok("")]);
 
-        let error = migrate_branch(&server, &git, &task("feature")).unwrap_err();
+        let error = migrate_branch(&server, &hide_node::Local, &git, &task("feature")).unwrap_err();
 
         assert!(error.contains("restored the main worktree to feature"));
         assert_eq!(
@@ -3005,7 +2995,7 @@ mod tests {
             Err("injected checkout failure"),
         ]);
         let server = server(vec![]);
-        let error = migrate_branch(&server, &git, &task("feature")).unwrap_err();
+        let error = migrate_branch(&server, &hide_node::Local, &git, &task("feature")).unwrap_err();
         assert!(error.contains("checkout base branch"));
         assert_eq!(git.calls.lock().unwrap().len(), 3);
         assert!(server.requests.lock().unwrap().is_empty());
@@ -3049,7 +3039,7 @@ mod tests {
             base_branch: Some("main".into()),
             ..task("feature")
         };
-        let error = migrate_branch(&server, &SystemGit, &request).unwrap_err();
+        let error = migrate_branch(&server, &hide_node::Local, &SystemGit, &request).unwrap_err();
 
         assert!(error.contains("checkout base branch"));
         assert_eq!(
@@ -3078,7 +3068,7 @@ mod tests {
             Err("injected restore failure"),
             Ok("main"),
         ]);
-        let error = migrate_branch(&server, &git, &task("feature")).unwrap_err();
+        let error = migrate_branch(&server, &hide_node::Local, &git, &task("feature")).unwrap_err();
         assert!(error.contains("main worktree is now on main"));
         assert!(error.contains("open the repository at /fixture/repo and check out feature"));
     }

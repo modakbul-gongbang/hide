@@ -203,8 +203,8 @@ async fn run(
         let relatives: Vec<String> = pairs.iter().map(|(_, relative)| relative.clone()).collect();
         let core = Arc::clone(&core);
         let answer = tokio::task::spawn_blocking(move || {
-            let channel = core.device_channel(&asked.device_id)?;
-            herdr_core::host_access::folder_stamps(channel.as_ref(), &asked.root, &relatives)
+            let channel = core.node_link(&asked.device_id)?;
+            herdr_core::node_access::folder_stamps(channel.as_ref(), &asked.root, &relatives)
                 .map_err(|error| error.to_string())
         })
         .await

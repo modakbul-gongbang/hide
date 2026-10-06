@@ -4,7 +4,7 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::sync::{Arc, Mutex};
 use std::thread::{self, JoinHandle};
 
-use herdr_core::host_access::HostChannel;
+use herdr_core::node_access::NodeLink;
 use herdr_core::workspace_control::{
     Action, ActionMaterial, ActionPreparation, ActionResult, Context, Query, QueryResult, Refusal,
 };
@@ -45,7 +45,7 @@ enum Command {
     },
     DeviceChannel {
         device_id: String,
-        reply: Sender<Result<Arc<dyn HostChannel>, String>>,
+        reply: Sender<Result<Arc<dyn NodeLink>, String>>,
     },
     WorkspaceRemoteRoutes {
         reply: Sender<Vec<herdr_core::WorkspaceRemoteRoute>>,
@@ -210,8 +210,8 @@ impl CoreHandle {
             .map_err(|_| "core owner thread dropped dispatch reply".to_owned())?
     }
 
-    /// Where a device's file work runs; see `Core::device_channel`.
-    pub fn device_channel(&self, device_id: &str) -> Result<Arc<dyn HostChannel>, String> {
+    /// Where a device's file work runs; see `Core::node_link`.
+    pub fn node_link(&self, device_id: &str) -> Result<Arc<dyn NodeLink>, String> {
         let (reply, rx) = mpsc::channel();
         self.commands
             .send(Command::DeviceChannel {
@@ -404,7 +404,7 @@ fn owner_loop(
     ready: Sender<Result<(), String>>,
     notify: broadcast::Sender<()>,
 ) {
-    let Some(core) = Core::create(options) else {
+    let Some(core) = Core::create(options, std::sync::Arc::new(hide_node::Local)) else {
         let _ = ready.send(Err(
             "herdr-core create failed (check schema_version and paths)".to_owned(),
         ));
@@ -460,7 +460,7 @@ fn owner_loop(
                 let _ = reply.send(Ok(()));
             }
             Command::DeviceChannel { device_id, reply } => {
-                let _ = reply.send(core.device_channel(&device_id));
+                let _ = reply.send(core.node_link(&device_id));
             }
             Command::WorkspaceRemoteRoutes { reply } => {
                 let _ = reply.send(core.workspace_remote_routes());

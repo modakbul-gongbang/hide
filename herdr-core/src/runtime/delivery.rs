@@ -593,7 +593,7 @@ impl Runtime {
                     crate::delivery::worker::ActivitySource::Device {
                         channel: observation
                             .is_some()
-                            .then(|| self.device_channel(&watch.target.device_id).ok())
+                            .then(|| self.node_link(&watch.target.device_id).ok())
                             .flatten(),
                     }
                 };
@@ -712,6 +712,7 @@ pub(crate) mod tests {
                 home_path: Some(root.to_owned()),
                 codex_home: None,
             },
+            std::sync::Arc::new(hide_node::Local),
         );
         let payload: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[
             {"id":"sender","pane_id":"sender","agent":"codex","agent_status":"working","state_change_seq":1,"lineage_session":"sender-session"},

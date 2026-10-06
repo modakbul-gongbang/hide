@@ -19,6 +19,7 @@ cap-std = "=4.0.3"
 hide-project = { path = "../hide-project" }
 hide-herdr-client = { path = "../hide-herdr-client" }
 hide-kit = { path = "../hide-kit" }
+hide-node-link = { path = "../hide-node-link" }
 hide-platform = { path = "../hide-platform" }
 hide-session = { path = "../hide-session" }
 ignore = "=0.4.33"

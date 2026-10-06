@@ -8,7 +8,7 @@
 
 use super::*;
 use crate::fake_herdr::FakeHerdr;
-use crate::host_access::{HostAnswer, HostCallError, HostChannel};
+use crate::node_access::{LinkAnswer, LinkError, NodeLink};
 use hide_host::protocol::Call;
 use serde_json::{Value, json};
 
@@ -21,15 +21,15 @@ struct HomeHost {
     writing: Arc<std::sync::atomic::AtomicUsize>,
 }
 
-impl HostChannel for HomeHost {
-    fn call(&self, call: Call, _timeout: Duration) -> Result<HostAnswer, HostCallError> {
+impl NodeLink for HomeHost {
+    fn call(&self, call: Call, _timeout: Duration) -> Result<LinkAnswer, LinkError> {
         use std::sync::atomic::Ordering;
         self.writing.fetch_add(1, Ordering::SeqCst);
         let answer = match call {
             Call::HomeSync { projects } => hide_host::home::sync(&self.user_home, &projects)
-                .map(|synced| HostAnswer::Parsed(serde_json::to_value(synced).unwrap()))
-                .map_err(HostCallError::Refused),
-            other => Err(HostCallError::Unknown(format!("not faked: {other:?}"))),
+                .map(|synced| LinkAnswer::Parsed(serde_json::to_value(synced).unwrap()))
+                .map_err(LinkError::Refused),
+            other => Err(LinkError::Unknown(format!("not faked: {other:?}"))),
         };
         self.writing.fetch_sub(1, Ordering::SeqCst);
         answer
@@ -193,7 +193,7 @@ fn device_runtime(herdr: &FakeHerdr, machine: &Machine) -> SharedRuntime {
 /// The same for this machine: its own Herdr and in-process helper.
 fn local_runtime(herdr: &FakeHerdr, machine: &Machine) -> SharedRuntime {
     let mut runtime = runtime();
-    runtime.local_host = machine.helper();
+    runtime.own_node = machine.helper();
     let shared = SharedRuntime::new(runtime);
     let mut runtime = shared.lock().unwrap();
     runtime.live = Some(live::LiveContext {

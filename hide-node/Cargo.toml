@@ -1,0 +1,12 @@
+[package]
+name = "hide-node"
+version = "0.1.0"
+edition = "2024"
+publish = false
+
+# The machine side of Hide (PRD core-host-node D-21): the work a node does on
+# the machine it runs on, answered through `hide_node_link::NodeLink`.
+
+[dependencies]
+hide-host = { path = "../hide-host" }
+hide-node-link = { path = "../hide-node-link" }

@@ -13,7 +13,6 @@
 pub mod bytes;
 pub mod clone;
 pub mod document;
-pub mod error;
 pub mod git;
 pub mod home;
 pub mod index;
@@ -21,7 +20,6 @@ pub mod kit;
 pub mod list;
 pub mod mutate;
 pub mod pane_peer;
-pub mod protocol;
 pub mod register;
 pub mod root;
 pub mod save;
@@ -29,5 +27,6 @@ pub mod serve;
 pub mod workspace_bridge;
 pub mod worktrees;
 
-pub use error::{ErrorCode, HostError, HostResult};
+pub use hide_node_link::{ErrorCode, HostError, HostResult};
+pub use hide_node_link::{error, protocol};
 pub use root::{Root, RootIdentity};

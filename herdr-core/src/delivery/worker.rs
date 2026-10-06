@@ -226,7 +226,7 @@ pub(crate) enum ActivitySource {
         home: Option<PathBuf>,
     },
     Device {
-        channel: Option<Arc<dyn crate::host_access::HostChannel>>,
+        channel: Option<Arc<dyn crate::node_access::NodeLink>>,
     },
 }
 
@@ -262,16 +262,16 @@ fn read_activity(work: WatchWork) -> watch::Reading {
             }
             ActivitySource::Device { channel } => {
                 let channel = channel.ok_or("helper_unavailable")?;
-                crate::host_access::call_as::<hide_session::session_activity::SessionActivity>(
+                crate::node_access::call_as::<hide_session::session_activity::SessionActivity>(
                     channel.as_ref(),
                     hide_host::protocol::Call::SessionActivity { request },
                     Duration::from_secs(5),
                 )
                 .map_err(|error| match error {
-                    crate::host_access::HostCallError::NotConnected(_) => "helper_unavailable",
-                    crate::host_access::HostCallError::Busy => "helper_busy",
-                    crate::host_access::HostCallError::Refused(_) => "session_activity_refused",
-                    crate::host_access::HostCallError::Unknown(_) => "helper_timeout_or_format",
+                    crate::node_access::LinkError::NotConnected(_) => "helper_unavailable",
+                    crate::node_access::LinkError::Busy => "helper_busy",
+                    crate::node_access::LinkError::Refused(_) => "session_activity_refused",
+                    crate::node_access::LinkError::Unknown(_) => "helper_timeout_or_format",
                 })
             }
         }
@@ -925,12 +925,12 @@ mod tests {
     }
 
     struct ActivityPeer(std::sync::atomic::AtomicU64);
-    impl crate::host_access::HostChannel for ActivityPeer {
+    impl crate::node_access::NodeLink for ActivityPeer {
         fn call(
             &self,
             call: hide_host::protocol::Call,
             timeout: Duration,
-        ) -> Result<crate::host_access::HostAnswer, crate::host_access::HostCallError> {
+        ) -> Result<crate::node_access::LinkAnswer, crate::node_access::LinkError> {
             assert!(matches!(
                 call,
                 hide_host::protocol::Call::SessionActivity { .. }
@@ -961,7 +961,7 @@ mod tests {
         let first = watch::start(&mut ledger, &parent("one"), &target, 1).unwrap();
         let second = watch::start(&mut ledger, &parent("two"), &target, 1).unwrap();
         let peer = Arc::new(ActivityPeer(std::sync::atomic::AtomicU64::new(0)));
-        let channel: Arc<dyn crate::host_access::HostChannel> = peer.clone();
+        let channel: Arc<dyn crate::node_access::NodeLink> = peer.clone();
         let observed = Observation {
             actor: target,
             raw_pane_id: "target".into(),

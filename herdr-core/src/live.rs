@@ -1428,7 +1428,7 @@ pub fn spawn_file_reopen(
     notifier: ChangeNotifier,
     request: ReopenRequest,
     root: crate::files::DocumentRoot,
-    channel: std::sync::Arc<dyn crate::host_access::HostChannel>,
+    channel: std::sync::Arc<dyn crate::node_access::NodeLink>,
 ) -> Result<(), String> {
     thread::Builder::new()
         .name("herdr-core-file-reopen".to_owned())
@@ -1460,7 +1460,7 @@ pub enum FileReopenResultOrHerdr {
 }
 
 fn run_file_reopen(
-    channel: &dyn crate::host_access::HostChannel,
+    channel: &dyn crate::node_access::NodeLink,
     root: &crate::files::DocumentRoot,
     path: &str,
 ) -> FileReopenResultOrHerdr {
@@ -4176,7 +4176,7 @@ mod tests {
             .expect("deny traversal");
 
         let result = run_file_reopen(
-            &crate::host_access::InProcessHost,
+            &hide_node::Local,
             &crate::files::DocumentRoot {
                 device_id: crate::node::TEST_NODE.to_owned(),
                 path: root.to_string_lossy().into_owned(),

@@ -67,7 +67,7 @@ impl Sink for RuntimeSink {
         self.apply(move |runtime| runtime.ingest_link_filling(filling));
     }
 
-    fn devices(&self) -> Vec<(String, Arc<dyn crate::host_access::HostChannel>)> {
+    fn devices(&self) -> Vec<(String, Arc<dyn crate::node_access::NodeLink>)> {
         self.runtime
             .upgrade()
             .and_then(|runtime| {

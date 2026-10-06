@@ -1113,7 +1113,7 @@ pub struct Runtime {
     /// (`hide_host::worktrees`); the device's rows carry them.
     device_worktrees: HashMap<String, crate::device_catalog::DeviceWorktrees>,
     /// This machine's file host: the helper's dispatch, run in place.
-    local_host: Arc<dyn crate::host_access::HostChannel>,
+    own_node: Arc<dyn crate::node_access::NodeLink>,
     /// Where each open file tab's saves go.
     document_places: HashMap<String, crate::files::DocumentPlace>,
     /// Each file tab's save in flight, the newest draft waiting behind it,
@@ -1643,7 +1643,11 @@ struct RuntimeWorkerContext {
 }
 
 impl Runtime {
-    pub fn new(options: CoreOptions, environment: environment::EnvironmentReport) -> Self {
+    pub fn new(
+        options: CoreOptions,
+        environment: environment::EnvironmentReport,
+        own_node: Arc<dyn crate::node_access::NodeLink>,
+    ) -> Self {
         let state_path = PathBuf::from(&options.app_state_path);
         let delivery_path =
             hide_kit::layout::delivery_ledger(state_path.parent().unwrap_or(Path::new(".")));
@@ -1811,7 +1815,7 @@ impl Runtime {
             device_facts: HashMap::new(),
             device_recent_tabs: HashMap::new(),
             device_worktrees: HashMap::new(),
-            local_host: Arc::new(crate::host_access::InProcessHost),
+            own_node,
             document_places: HashMap::new(),
             document_saves: HashMap::new(),
             document_opens: HashMap::new(),

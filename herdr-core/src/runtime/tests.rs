@@ -465,6 +465,7 @@ pub(super) fn runtime() -> Runtime {
             home_path: None,
             codex_home: None,
         },
+        std::sync::Arc::new(hide_node::Local),
     );
     runtime.test_dirs.push(state);
     runtime

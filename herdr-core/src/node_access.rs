@@ -1,109 +1,29 @@
-//! Where a device's file work runs (PRD S5.5 D-05).
+//! How the core reads a node's files (PRD S5.5 D-05, core-host-node D-21).
 //!
 //! Every document open, save and revision read, on this machine or on an SSH
-//! device, is one `hide_host` request answered by the same dispatch: this
-//! process runs it in place for the machine hided runs on, and
-//! `hide-host-helper` runs it on a device at the other end of an SSH channel.
-//! The callers see one interface and one failure vocabulary, so a local path
-//! and a remote one cannot drift apart in what they refuse.
+//! device, is one request to that node's [`NodeLink`]: the core's own node
+//! answers in this process, and a device's node at the other end of an SSH
+//! channel. The callers see one interface and one failure vocabulary, so a
+//! local path and a remote one cannot drift apart in what they refuse. What
+//! the core adds here is its own distrust of an answer: names and paths that
+//! leave the root, and entries past a cap, never reach the page.
 
-use std::fmt;
 use std::time::Duration;
 
+use hide_host::ErrorCode;
 use hide_host::list::Listing;
 use hide_host::protocol::{Call, RootOpened, RootRef};
-use hide_host::{ErrorCode, RootIdentity};
-use serde_json::Value;
-
-#[derive(Debug)]
-pub enum HostCallError {
-    /// No helper connection; nothing was sent.
-    NotConnected(String),
-    /// Four requests run and thirty-two wait; nothing was sent.
-    Busy,
-    /// The host answered and refused, or the operation failed there.
-    Refused(hide_host::HostError),
-    /// The request may have reached the host and its effect is unknown.
-    Unknown(String),
-}
-
-impl fmt::Display for HostCallError {
-    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self {
-            Self::NotConnected(reason) => write!(formatter, "{reason}"),
-            Self::Busy => formatter.write_str(
-                "The device is busy with other file work; nothing was sent. Try again in a moment",
-            ),
-            Self::Refused(error) => write!(formatter, "{}", error.message),
-            Self::Unknown(reason) => write!(formatter, "{reason}"),
-        }
-    }
-}
-
-/// A helper's answer before it is decoded into the type the call expects.
-/// A device's answer stays the raw JSON text it sent: materializing an
-/// untrusted line as a generic `Value` costs tens of times its size, so it is
-/// decoded once, straight into the typed answer (`call_as`).
-#[derive(Debug)]
-pub enum HostAnswer {
-    Parsed(Value),
-    Raw(Box<serde_json::value::RawValue>),
-}
-
-impl From<Value> for HostAnswer {
-    fn from(value: Value) -> Self {
-        HostAnswer::Parsed(value)
-    }
-}
-
-/// One device's answerer for `hide_host` requests.
-pub trait HostChannel: Send + Sync {
-    /// Sends one request and waits at most `timeout` for its answer. Blocks,
-    /// on this machine's disk as on a device; never call it under the
-    /// runtime lock.
-    fn call(&self, call: Call, timeout: Duration) -> Result<HostAnswer, HostCallError>;
-
-    /// Whether the answer is computed in this process, so a path the
-    /// operator spelled through a link to the checkout can be resolved on
-    /// this machine's filesystem (`files::open_document`).
-    fn in_process(&self) -> bool {
-        false
-    }
-
-    /// Why the connection ended, once it has; `None` while it takes requests.
-    fn closed_reason(&self) -> Option<String> {
-        None
-    }
-
-    /// Ends the connection; requests still waiting become `Unknown`.
-    fn close(&self, _reason: &str) {}
-
-    /// Ends the connection once the requests already admitted have answered,
-    /// so work in flight settles to its real result (B52). The caller has
-    /// already stopped handing the channel out.
-    fn close_when_idle(&self, reason: &str) {
-        self.close(reason);
-    }
-
-    /// The identity this channel pinned for `root`, if any. A device pins a
-    /// checkout root the first time a connection touches it, so a folder
-    /// swapped in at that path later is refused rather than listed.
-    fn pinned(&self, _root: &str) -> Option<RootIdentity> {
-        None
-    }
-
-    fn pin(&self, _root: &str, _identity: Option<RootIdentity>) {}
-}
+pub use hide_node_link::{LinkAnswer, LinkError, NodeLink, call_as};
 
 const LIST_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// `root` as the channel's requests name it: its pinned identity, or the one
 /// a fresh `root_open` reports, which is then pinned.
 pub fn pinned_root(
-    channel: &(impl HostChannel + ?Sized),
+    channel: &(impl NodeLink + ?Sized),
     root: &str,
     timeout: Duration,
-) -> Result<RootRef, HostCallError> {
+) -> Result<RootRef, LinkError> {
     let identity = match channel.pinned(root) {
         Some(identity) => identity,
         None => {
@@ -128,10 +48,10 @@ pub fn pinned_root(
 /// refused and unpinned, so the operator's next explicit read adopts the
 /// folder now at that path.
 pub fn list_folder(
-    channel: &(impl HostChannel + ?Sized),
+    channel: &(impl NodeLink + ?Sized),
     root: &str,
     relative: &str,
-) -> Result<Listing, HostCallError> {
+) -> Result<Listing, LinkError> {
     let root_ref = pinned_root(channel, root, LIST_TIMEOUT)?;
     let result = call_as(
         channel,
@@ -141,7 +61,7 @@ pub fn list_folder(
         },
         LIST_TIMEOUT,
     );
-    if let Err(HostCallError::Refused(error)) = &result
+    if let Err(LinkError::Refused(error)) = &result
         && error.code == ErrorCode::RootReplaced
     {
         channel.pin(root, None);
@@ -159,7 +79,7 @@ pub fn list_folder(
         }
         if listing.entries.len() < answered.min(hide_host::list::LIST_CAP) {
             crate::diagnostic!(serde_json::json!({
-                "component": "host_access", "kind": "host.listing_names_refused",
+                "component": "node_access", "kind": "host.listing_names_refused",
                 "root": root, "refused": answered - listing.entries.len(),
             }));
         }
@@ -174,10 +94,10 @@ const STAMPS_TIMEOUT: Duration = Duration::from_secs(5);
 /// device Explorer's watch. A replaced root is refused and stays pinned: only
 /// an explicit read by the operator adopts the folder now at that path.
 pub fn folder_stamps(
-    channel: &(impl HostChannel + ?Sized),
+    channel: &(impl NodeLink + ?Sized),
     root: &str,
     folders: &[String],
-) -> Result<Vec<Option<String>>, HostCallError> {
+) -> Result<Vec<Option<String>>, LinkError> {
     let root_ref = pinned_root(channel, root, STAMPS_TIMEOUT)?;
     call_as(
         channel,
@@ -191,12 +111,12 @@ pub fn folder_stamps(
 
 /// One range of a device file's bytes (`hide_host::bytes::read`).
 pub fn read_bytes(
-    channel: &(impl HostChannel + ?Sized),
+    channel: &(impl NodeLink + ?Sized),
     root: &str,
     relative: &str,
     offset: u64,
     length: u64,
-) -> Result<hide_host::bytes::Range, HostCallError> {
+) -> Result<hide_host::bytes::Range, LinkError> {
     let root_ref = pinned_root(channel, root, LIST_TIMEOUT)?;
     let result = call_as(
         channel,
@@ -208,7 +128,7 @@ pub fn read_bytes(
         },
         LIST_TIMEOUT,
     );
-    if let Err(HostCallError::Refused(error)) = &result
+    if let Err(LinkError::Refused(error)) = &result
         && error.code == ErrorCode::RootReplaced
     {
         channel.pin(root, None);
@@ -222,12 +142,12 @@ const INDEX_TIMEOUT: Duration = Duration::from_secs(120);
 /// Every file of a pinned root the ignore files admit, capped, from the host
 /// that holds it (`hide_host::index::walk`).
 pub fn index_root(
-    channel: &(impl HostChannel + ?Sized),
+    channel: &(impl NodeLink + ?Sized),
     root: &str,
-) -> Result<hide_host::index::Walked, HostCallError> {
+) -> Result<hide_host::index::Walked, LinkError> {
     let root_ref = pinned_root(channel, root, LIST_TIMEOUT)?;
     let result = call_as(channel, Call::Index { root: root_ref }, INDEX_TIMEOUT);
-    if let Err(HostCallError::Refused(error)) = &result
+    if let Err(LinkError::Refused(error)) = &result
         && error.code == ErrorCode::RootReplaced
     {
         channel.pin(root, None);
@@ -247,47 +167,16 @@ pub fn index_root(
     })
 }
 
-pub fn call_as<T: serde::de::DeserializeOwned>(
-    channel: &(impl HostChannel + ?Sized),
-    call: Call,
-    timeout: Duration,
-) -> Result<T, HostCallError> {
-    let decoded = match channel.call(call, timeout)? {
-        HostAnswer::Parsed(value) => serde_json::from_value(value),
-        HostAnswer::Raw(raw) => serde_json::from_str(raw.get()),
-    };
-    decoded.map_err(|error| {
-        HostCallError::Unknown(format!(
-            "The device helper answered in an unexpected shape: {error}"
-        ))
-    })
-}
-
-/// The machine hided runs on: the helper's own dispatch, called in place.
-#[derive(Debug, Default)]
-pub struct InProcessHost;
-
-impl HostChannel for InProcessHost {
-    fn call(&self, call: Call, _timeout: Duration) -> Result<HostAnswer, HostCallError> {
-        hide_host::serve::handle(call)
-            .map(HostAnswer::Parsed)
-            .map_err(HostCallError::Refused)
-    }
-
-    fn in_process(&self) -> bool {
-        true
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
+    use hide_host::RootIdentity;
 
     /// A device helper that answers whatever it likes.
     struct Hostile;
 
-    impl HostChannel for Hostile {
-        fn call(&self, call: Call, _timeout: Duration) -> Result<HostAnswer, HostCallError> {
+    impl NodeLink for Hostile {
+        fn call(&self, call: Call, _timeout: Duration) -> Result<LinkAnswer, LinkError> {
             let entry =
                 |name: &str| serde_json::json!({"name": name, "is_directory": false, "inode": 1});
             Ok(match call {

@@ -14,7 +14,7 @@ use axum::extract::State;
 use axum::http::{StatusCode, Uri};
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
-use herdr_core::host_access::{self, HostChannel};
+use herdr_core::node_access::{self, NodeLink};
 use herdr_core::remote::RemoteLocalForward;
 use herdr_core::workspace_control::BrowserRouteSource;
 use percent_encoding::{NON_ALPHANUMERIC, percent_decode_str, utf8_percent_encode};
@@ -544,7 +544,7 @@ struct FileRoute {
     key: Key,
     owner_started: u64,
     source: BrowserRouteSource,
-    channel: Arc<dyn HostChannel>,
+    channel: Arc<dyn NodeLink>,
     secret: String,
     entry: String,
     allowed: Arc<Mutex<HashMap<String, Asset>>>,
@@ -599,7 +599,7 @@ async fn serve_file(State(route): State<FileRoute>, uri: Uri) -> Response {
         let mut bytes = Vec::new();
         let mut stamp = None;
         loop {
-            let range = host_access::read_bytes(
+            let range = node_access::read_bytes(
                 channel.as_ref(),
                 &key.checkout,
                 &decoded,

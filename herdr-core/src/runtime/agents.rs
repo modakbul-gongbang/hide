@@ -126,7 +126,7 @@ impl Runtime {
         // folders: the same confinement to the checkout's opened root on
         // either shell (PRD S5.5 D-05). A device without a ready helper
         // lists nothing and says why.
-        let channel = match self.device_channel(&target_id) {
+        let channel = match self.node_link(&target_id) {
             Ok(channel) => channel,
             Err(message) => {
                 let generation = self.advance_remote_file_generation();
@@ -178,7 +178,7 @@ impl Runtime {
             .name(format!("herdr-core-remote-files-{target_id}"))
             .spawn(move || {
                 let result =
-                    crate::host_access::list_folder(channel.as_ref(), &worker_root_path, "")
+                    crate::node_access::list_folder(channel.as_ref(), &worker_root_path, "")
                         .map_err(|error| error.to_string());
                 let Some(runtime) = context.runtime.upgrade() else {
                     return;

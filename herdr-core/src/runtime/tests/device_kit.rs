@@ -3,7 +3,7 @@
 //! consent a device needs first, a call that fails, and removal.
 
 use super::*;
-use crate::host_access::{HostAnswer, HostCallError, HostChannel};
+use crate::node_access::{LinkAnswer, LinkError, NodeLink};
 use hide_host::protocol::{Call, KitAction};
 use hide_kit::{ComponentId, ComponentReport, ComponentState, KitReport};
 use std::sync::{Arc, Mutex};
@@ -47,8 +47,8 @@ impl KitDevice {
     }
 }
 
-impl HostChannel for KitDevice {
-    fn call(&self, call: Call, _timeout: Duration) -> Result<HostAnswer, HostCallError> {
+impl NodeLink for KitDevice {
+    fn call(&self, call: Call, _timeout: Duration) -> Result<LinkAnswer, LinkError> {
         let Call::Kit {
             action,
             cli_dir,
@@ -56,7 +56,7 @@ impl HostChannel for KitDevice {
             retirement_projects,
         } = call
         else {
-            return Err(HostCallError::NotConnected("kit calls only".to_owned()));
+            return Err(LinkError::NotConnected("kit calls only".to_owned()));
         };
         let removing = action == KitAction::Remove;
         self.retirement_projects
@@ -78,11 +78,11 @@ impl HostChannel for KitDevice {
                 },
                 helper_root: hide_kit::RemoveOutcome::Removed,
             };
-            return Ok(HostAnswer::Parsed(serde_json::to_value(removed).unwrap()));
+            return Ok(LinkAnswer::Parsed(serde_json::to_value(removed).unwrap()));
         }
         match &*self.answer.lock().unwrap() {
-            Ok(report) => Ok(HostAnswer::Parsed(serde_json::to_value(report).unwrap())),
-            Err(reason) => Err(HostCallError::Unknown(reason.clone())),
+            Ok(report) => Ok(LinkAnswer::Parsed(serde_json::to_value(report).unwrap())),
+            Err(reason) => Err(LinkError::Unknown(reason.clone())),
         }
     }
 

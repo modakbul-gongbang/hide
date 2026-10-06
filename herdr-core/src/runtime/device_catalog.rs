@@ -8,7 +8,7 @@
 
 use super::*;
 use crate::device_catalog::{self, DeviceFacts, Fact};
-use crate::host_access::{HostCallError, call_as};
+use crate::node_access::{LinkError, call_as};
 use hide_project::ProjectFacts;
 use std::time::Duration;
 
@@ -318,7 +318,7 @@ impl Runtime {
         if self.device_host_connecting(target) {
             return self.refresh_device_catalog(target);
         }
-        let channel = match self.device_channel(target) {
+        let channel = match self.node_link(target) {
             Ok(channel) => channel,
             Err(_) if self.device_host_connecting(target) => {
                 return self.refresh_device_catalog(target);
@@ -439,7 +439,7 @@ impl Runtime {
         if wanted.is_empty() {
             return false;
         }
-        let Ok(channel) = self.device_channel(target) else {
+        let Ok(channel) = self.node_link(target) else {
             return false;
         };
         let generation = self.device_host_generation(target);
@@ -544,7 +544,7 @@ const WORKTREES_TIMEOUT: Duration = Duration::from_secs(60);
 /// Reads each repository in turn; a refusal is that repository's answer (no
 /// rows), a connection failure stops the batch with the reason.
 fn ask_worktrees(
-    channel: &dyn crate::host_access::HostChannel,
+    channel: &dyn crate::node_access::NodeLink,
     roots: &[String],
 ) -> (
     Vec<(String, Option<crate::model::ProjectWorktreesSnapshot>)>,
@@ -564,7 +564,7 @@ fn ask_worktrees(
             Ok(facts) => {
                 answers.push((root.clone(), facts.map(crate::worktrees::project_snapshot)))
             }
-            Err(HostCallError::Refused(error)) => {
+            Err(LinkError::Refused(error)) => {
                 answers.push((
                     root.clone(),
                     Some(crate::model::ProjectWorktreesSnapshot {
@@ -584,7 +584,7 @@ fn ask_worktrees(
 /// connection failure stops the batch, and the directories not reached stay
 /// unanswered with the reason.
 fn ask_facts(
-    channel: &dyn crate::host_access::HostChannel,
+    channel: &dyn crate::node_access::NodeLink,
     paths: &[String],
 ) -> (FactAnswers, Option<String>) {
     let mut answers = Vec::new();
@@ -595,7 +595,7 @@ fn ask_facts(
             FACTS_TIMEOUT,
         ) {
             Ok(facts) => answers.push((path.clone(), Fact::Known(facts))),
-            Err(HostCallError::Refused(error)) => {
+            Err(LinkError::Refused(error)) => {
                 answers.push((path.clone(), Fact::Refused(error.message)));
             }
             Err(error) => return (answers, Some(error.to_string())),
@@ -617,7 +617,7 @@ impl Runtime {
         path: String,
         label: String,
     ) -> bool {
-        let channel = match self.device_channel(device) {
+        let channel = match self.node_link(device) {
             Ok(channel) => channel,
             Err(message) => {
                 self.set_error(
@@ -635,7 +635,7 @@ impl Runtime {
                 REGISTRABLE_TIMEOUT,
             )
             .map_err(|error| match error {
-                HostCallError::Refused(error) => error.message,
+                LinkError::Refused(error) => error.message,
                 other => other.to_string(),
             })
         };

@@ -29,7 +29,7 @@ use std::time::Duration;
 use hide_host::protocol::Call;
 use hide_session::label_transcript::{LabelTranscript, LabelTranscriptRequest};
 
-use crate::host_access::{HostCallError, HostChannel, call_as};
+use crate::node_access::{LinkError, NodeLink, call_as};
 use crate::runtime::Runtime;
 use analyzer::LabelAnalyzer;
 use store::LabelStore;
@@ -179,7 +179,7 @@ pub(crate) fn analysis_settings(
 /// The device helper's channel when it has one, or the stable reason it does
 /// not (no connection yet, a helper still starting).
 pub(crate) type ChannelSource =
-    Box<dyn Fn() -> Result<Arc<dyn HostChannel>, &'static str> + Send + Sync>;
+    Box<dyn Fn() -> Result<Arc<dyn NodeLink>, &'static str> + Send + Sync>;
 
 /// A device's conversations, read by its helper and brought here in memory
 /// only (PRD D-03); nothing of them is stored.
@@ -200,7 +200,7 @@ impl DeviceTranscripts {
             let runtime = runtime.upgrade().ok_or("runtime_gone")?;
             let mut guard = runtime.lock().map_err(|_| "runtime_poisoned")?;
             guard
-                .device_channel(&device_id)
+                .node_link(&device_id)
                 .map_err(|_| "device_helper_not_ready")
         }))
     }
@@ -218,19 +218,17 @@ impl TranscriptSource for DeviceTranscripts {
             DEVICE_READ_TIMEOUT,
         )
         .map_err(|error| match error {
-            HostCallError::NotConnected(_) => {
+            LinkError::NotConnected(_) => {
                 ReadFailure::Unavailable("device_helper_not_connected".to_owned())
             }
-            HostCallError::Busy => ReadFailure::Unavailable("device_helper_busy".to_owned()),
-            HostCallError::Unknown(_) => {
-                ReadFailure::Unavailable("device_helper_unknown".to_owned())
-            }
+            LinkError::Busy => ReadFailure::Unavailable("device_helper_busy".to_owned()),
+            LinkError::Unknown(_) => ReadFailure::Unavailable("device_helper_unknown".to_owned()),
             // A helper older than protocol 12 does not know the call; the
             // device's kit status already offers the reinstall (B15).
-            HostCallError::Refused(error) if error.code == hide_host::ErrorCode::InvalidRequest => {
+            LinkError::Refused(error) if error.code == hide_host::ErrorCode::InvalidRequest => {
                 ReadFailure::Refused("device_helper_unsupported".to_owned())
             }
-            HostCallError::Refused(error) => ReadFailure::Refused(error.message),
+            LinkError::Refused(error) => ReadFailure::Refused(error.message),
         })
     }
 }

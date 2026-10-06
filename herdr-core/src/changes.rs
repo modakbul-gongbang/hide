@@ -1,7 +1,7 @@
 //! The right panel's changes view: one checkout's Git working-tree state, read
 //! by the host that holds the checkout (PRD S5.5 B19-B22).
 //!
-//! The read is `hide_host::git` behind the checkout's `HostChannel`: this
+//! The read is `hide_host::git` behind the checkout's `NodeLink`: this
 //! machine's in process, a device's through its helper, so a local and a
 //! device checkout answer one contract. It runs on a reader thread, never
 //! under the runtime mutex and never on a Herdr session's coordinator: a
@@ -25,11 +25,11 @@ use hide_platform::path;
 
 use crate::files::DocumentRoot;
 use crate::handle::ChangeNotifier;
-use crate::host_access::{HostCallError, HostChannel, call_as};
 use crate::model::{
     ChangedFileDiffSnapshot, ChangedFileSnapshot, ChangedFileStatus, ChangesSnapshot,
     ViewDiffSnapshot,
 };
+use crate::node_access::{LinkError, NodeLink, call_as};
 use crate::reader::BackgroundRead;
 use crate::runtime::Runtime;
 
@@ -51,7 +51,7 @@ const READ_TIMEOUT: Duration = Duration::from_secs(30);
 /// The host a request reads through, compared by identity: a reconnect gives
 /// a device a new channel, which is a new request and reads again.
 #[derive(Clone)]
-pub struct ChannelRef(pub Arc<dyn HostChannel>);
+pub struct ChannelRef(pub Arc<dyn NodeLink>);
 
 impl PartialEq for ChannelRef {
     fn eq(&self, other: &Self) -> bool {
@@ -292,7 +292,7 @@ pub fn read(request: &ChangesRequest) -> ChangesSnapshot {
         Ok(changes) => changes,
         // The host answers `Unsupported` only for a folder Git finds no
         // repository for (`hide_host::git::changes`).
-        Err(HostCallError::Refused(error)) if error.code == ErrorCode::Unsupported => {
+        Err(LinkError::Refused(error)) if error.code == ErrorCode::Unsupported => {
             return ChangesSnapshot {
                 not_a_repository: true,
                 ..unavailable(error.message)
@@ -349,9 +349,9 @@ pub fn read(request: &ChangesRequest) -> ChangesSnapshot {
     }
 }
 
-fn reason(error: HostCallError) -> String {
+fn reason(error: LinkError) -> String {
     match error {
-        HostCallError::Refused(error) => error.message,
+        LinkError::Refused(error) => error.message,
         other => other.to_string(),
     }
 }
@@ -383,7 +383,7 @@ fn snapshot_of(root_path: &str, file: ChangedFile) -> ChangedFileSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::host_access::InProcessHost;
+    use hide_node::Local as InProcessHost;
 
     fn git(directory: &std::path::Path, arguments: &[&str]) {
         let output = std::process::Command::new("git")

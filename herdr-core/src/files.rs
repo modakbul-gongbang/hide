@@ -11,8 +11,8 @@ use hide_host::{ErrorCode, RootIdentity};
 use hide_platform::fs::identity;
 use hide_platform::path::{self, PathError, RelPath};
 
-use crate::host_access::{HostCallError, HostChannel, call_as};
 use crate::model::EditorDocumentSnapshot;
+use crate::node_access::{LinkError, NodeLink, call_as};
 
 /// Opened checkout roots supplied by the daemon after its registration check.
 /// Each root's identity pins the folder every host request names; the opened
@@ -163,7 +163,7 @@ fn local_relative(root: &str, absolute: &str) -> Result<RelPath, String> {
 /// The host's checkout-relative path rule, including macOS root aliases
 /// such as `/var` and `/private/var` for local reads.
 pub fn relative_in_root(
-    channel: &dyn HostChannel,
+    channel: &dyn NodeLink,
     root: &str,
     absolute: &str,
 ) -> Result<RelPath, String> {
@@ -177,7 +177,7 @@ pub fn relative_in_root(
 /// Opens the document at `absolute` in `root`, as a snapshot and the place
 /// its saves go to. Blocks on the channel.
 pub fn open_document(
-    channel: &dyn HostChannel,
+    channel: &dyn NodeLink,
     root: &DocumentRoot,
     absolute: &str,
 ) -> Result<(EditorDocumentSnapshot, DocumentPlace), OpenFailure> {
@@ -198,7 +198,7 @@ pub fn open_document(
     // An open is an explicit read, like a listing: a replaced root is
     // refused once and unpinned, so the operator's next open adopts the
     // folder now at that path.
-    if let Err(HostCallError::Refused(error)) = &document
+    if let Err(LinkError::Refused(error)) = &document
         && error.code == ErrorCode::RootReplaced
         && root.identity.is_none()
     {
@@ -208,10 +208,10 @@ pub fn open_document(
     Ok((document_snapshot(absolute, document), place))
 }
 
-fn open_failure(error: HostCallError) -> OpenFailure {
+fn open_failure(error: LinkError) -> OpenFailure {
     match error {
-        HostCallError::Refused(error) if error.code == ErrorCode::NotFound => OpenFailure::Missing,
-        HostCallError::Refused(error) => {
+        LinkError::Refused(error) if error.code == ErrorCode::NotFound => OpenFailure::Missing,
+        LinkError::Refused(error) => {
             OpenFailure::Failed(format!("The file could not be opened: {}", error.message))
         }
         other => OpenFailure::Failed(format!("The file could not be opened: {other}")),
@@ -261,7 +261,7 @@ pub fn check_editable(editor: &EditorDocumentSnapshot, consequence: &str) -> Res
 /// Saves `contents` at `place` if the file there still holds `expected`.
 /// Blocks on the channel.
 pub fn save_document(
-    channel: &dyn HostChannel,
+    channel: &dyn NodeLink,
     place: &DocumentPlace,
     contents: &str,
     expected: &str,
@@ -277,27 +277,27 @@ pub fn save_document(
         SAVE_TIMEOUT,
     ) {
         Ok(saved) => SaveOutcome::Saved(saved),
-        Err(HostCallError::Refused(error)) if error.code == ErrorCode::Conflict => {
+        Err(LinkError::Refused(error)) if error.code == ErrorCode::Conflict => {
             SaveOutcome::Conflict {
                 disk_revision: error.actual_revision,
                 message: error.message,
             }
         }
-        Err(HostCallError::Refused(error)) => SaveOutcome::Refused(error.message),
-        Err(HostCallError::NotConnected(reason)) => SaveOutcome::Refused(format!(
+        Err(LinkError::Refused(error)) => SaveOutcome::Refused(error.message),
+        Err(LinkError::NotConnected(reason)) => SaveOutcome::Refused(format!(
             "{reason}; nothing was sent and the draft was preserved"
         )),
-        Err(error @ HostCallError::Busy) => SaveOutcome::Refused(error.to_string()),
-        Err(HostCallError::Unknown(reason)) => SaveOutcome::Unknown(reason),
+        Err(error @ LinkError::Busy) => SaveOutcome::Refused(error.to_string()),
+        Err(LinkError::Unknown(reason)) => SaveOutcome::Unknown(reason),
     }
 }
 
 /// The file's revision now, or `None` when it is gone; read after any save
 /// in its folder has finished. Blocks on the channel.
 pub fn revision_now(
-    channel: &dyn HostChannel,
+    channel: &dyn NodeLink,
     place: &DocumentPlace,
-) -> Result<Option<String>, HostCallError> {
+) -> Result<Option<String>, LinkError> {
     match call_as::<RevisionNow>(
         channel,
         Call::Revision {
@@ -307,7 +307,7 @@ pub fn revision_now(
         REVISION_TIMEOUT,
     ) {
         Ok(now) => Ok(Some(now.revision)),
-        Err(HostCallError::Refused(error)) if error.code == ErrorCode::NotFound => Ok(None),
+        Err(LinkError::Refused(error)) if error.code == ErrorCode::NotFound => Ok(None),
         Err(error) => Err(error),
     }
 }
@@ -499,16 +499,13 @@ fn relative_or_root(root: &str, absolute: &str) -> Result<String, String> {
 /// pinned, or the one the channel pinned when it first touched the root, so
 /// a device folder replaced after it was listed is refused rather than
 /// opened or changed in its place.
-pub(crate) fn root_ref(
-    channel: &dyn HostChannel,
-    root: &DocumentRoot,
-) -> Result<RootRef, HostCallError> {
+pub(crate) fn root_ref(channel: &dyn NodeLink, root: &DocumentRoot) -> Result<RootRef, LinkError> {
     match root.identity {
         Some(identity) => Ok(RootRef {
             path: root.path.clone(),
             identity,
         }),
-        None => crate::host_access::pinned_root(channel, &root.path, OPEN_TIMEOUT),
+        None => crate::node_access::pinned_root(channel, &root.path, OPEN_TIMEOUT),
     }
 }
 
@@ -519,7 +516,7 @@ pub(crate) fn root_ref(
 /// request whose answer was lost is reported as an unknown result, which the
 /// tree settles by reading the folder again.
 pub fn apply_explorer_operation(
-    channel: &dyn HostChannel,
+    channel: &dyn NodeLink,
     root: &DocumentRoot,
     operation: &ExplorerOperation,
 ) -> Result<(), String> {
@@ -570,12 +567,12 @@ fn file_name(path: &RelPath) -> Result<String, String> {
         .ok_or_else(|| "The checkout root has no name".to_owned())
 }
 
-fn change_failure(operation: &ExplorerOperation, error: HostCallError) -> String {
+fn change_failure(operation: &ExplorerOperation, error: LinkError) -> String {
     match error {
-        HostCallError::Refused(error) => error.message,
-        HostCallError::NotConnected(reason) => format!("{reason}; nothing was changed"),
-        error @ HostCallError::Busy => error.to_string(),
-        HostCallError::Unknown(reason) => format!(
+        LinkError::Refused(error) => error.message,
+        LinkError::NotConnected(reason) => format!("{reason}; nothing was changed"),
+        error @ LinkError::Busy => error.to_string(),
+        LinkError::Unknown(reason) => format!(
             "{reason}; whether {} changed is unknown, so the folder is read again",
             operation.source
         ),
@@ -685,12 +682,7 @@ pub(crate) mod tests {
             path: path.parent().unwrap().to_string_lossy().into_owned(),
             identity: None,
         };
-        open_document(
-            &crate::host_access::InProcessHost,
-            &root,
-            &path.to_string_lossy(),
-        )
-        .expect("fixture document")
+        open_document(&hide_node::Local, &root, &path.to_string_lossy()).expect("fixture document")
     }
 
     /// A checkout whose path is replaced after a document opened refuses
@@ -714,7 +706,7 @@ pub(crate) mod tests {
             path: pinned_path.to_string_lossy().into_owned(),
             identity: Some(identity),
         };
-        let channel = crate::host_access::InProcessHost;
+        let channel = hide_node::Local;
         let (document, place) = open_document(
             &channel,
             &document_root,
@@ -786,24 +778,13 @@ pub(crate) mod tests {
             path: root.to_string_lossy().into_owned(),
             identity: None,
         };
-        let (document, place) = open_document(
-            &crate::host_access::InProcessHost,
-            &root_path,
-            &spelled.to_string_lossy(),
-        )
-        .unwrap();
+        let (document, place) =
+            open_document(&hide_node::Local, &root_path, &spelled.to_string_lossy()).unwrap();
         assert_eq!(document.path, spelled.to_string_lossy());
         assert_eq!(place.relative.as_str(), "src/a.txt");
         let outside = sandbox.path().join("alias/../elsewhere.txt");
         fs::write(sandbox.path().join("elsewhere.txt"), "b").unwrap();
-        assert!(
-            open_document(
-                &crate::host_access::InProcessHost,
-                &root_path,
-                &outside.to_string_lossy(),
-            )
-            .is_err()
-        );
+        assert!(open_document(&hide_node::Local, &root_path, &outside.to_string_lossy(),).is_err());
     }
 
     /// Names no other Trash entry can carry, so a trashed fixture can be
@@ -853,12 +834,12 @@ pub(crate) mod tests {
         calls: std::sync::Mutex<Vec<Call>>,
     }
 
-    impl HostChannel for RecordingHost {
+    impl NodeLink for RecordingHost {
         fn call(
             &self,
             call: Call,
             _timeout: Duration,
-        ) -> Result<crate::host_access::HostAnswer, HostCallError> {
+        ) -> Result<crate::node_access::LinkAnswer, LinkError> {
             self.calls.lock().unwrap().push(call);
             Ok(serde_json::json!({}).into())
         }

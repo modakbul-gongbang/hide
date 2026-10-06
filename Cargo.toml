@@ -8,6 +8,8 @@ members = [
     "hide-ai",
     "hide-factory",
     "hide-memory",
+    "hide-node",
+    "hide-node-link",
     "hide-platform",
     "hide-project",
     "hide-session",

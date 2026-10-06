@@ -1655,6 +1655,7 @@ mod worktree_observer_tests {
                     home_path: None,
                     codex_home: None,
                 },
+                std::sync::Arc::new(hide_node::Local),
             );
             let catalog = WorktreeCatalogSnapshot {
                 projects: vec![ProjectWorktreesSnapshot {
@@ -1932,6 +1933,7 @@ mod focus_readback_order_tests {
                 home_path: None,
                 codex_home: None,
             },
+            std::sync::Arc::new(hide_node::Local),
         );
         runtime.ingest_session(Ok(first.project()));
         Arc::new(Mutex::new(runtime))

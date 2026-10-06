@@ -573,6 +573,7 @@ fn runtime_for_fixture(socket_path: &Path, state_path: &Path) -> Arc<Mutex<Runti
             home_path: None,
             codex_home: None,
         },
+        std::sync::Arc::new(hide_node::Local),
     )))
 }
 
@@ -986,6 +987,7 @@ fn official_remote_session_coordinator_probe() {
             home_path: Some(PathBuf::from(home)),
             codex_home: None,
         },
+        std::sync::Arc::new(hide_node::Local),
     )));
     // The same path the shell takes: register the device, and the runtime
     // resolves the alias, asks the host for its socket and starts the

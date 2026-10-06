@@ -186,7 +186,12 @@ impl Core {
         (core, notifier)
     }
 
-    pub fn create(options: CoreOptions) -> Option<Box<Self>> {
+    /// `own_node` answers for the machine this core runs on (PRD
+    /// core-host-node D-21); the core reaches that machine only through it.
+    pub fn create(
+        options: CoreOptions,
+        own_node: std::sync::Arc<dyn crate::node_access::NodeLink>,
+    ) -> Option<Box<Self>> {
         if validate_options(&options).is_err() {
             return None;
         }
@@ -212,7 +217,11 @@ impl Core {
                 serde_json::json!({"kind": "diagnostics.open_failed", "message": error.to_string()})
             );
         }
-        let runtime = Arc::new(Mutex::new(Runtime::new(options.clone(), environment)));
+        let runtime = Arc::new(Mutex::new(Runtime::new(
+            options.clone(),
+            environment,
+            own_node,
+        )));
         let notifier = ChangeNotifier::new();
         lock_recover(&runtime).install_worker_context(Arc::downgrade(&runtime), notifier.clone());
         let delivery_path = hide_kit::layout::delivery_ledger(
@@ -501,14 +510,14 @@ impl Core {
     /// Where a device's file work runs, for the daemon's own
     /// requests that answer outside the snapshot (the Explorer's listing).
     /// Asking may start the device's helper, which the snapshot announces.
-    pub fn device_channel(
+    pub fn node_link(
         &self,
         device_id: &str,
-    ) -> Result<std::sync::Arc<dyn crate::host_access::HostChannel>, String> {
-        if !check_owner_thread(self, "device_channel") {
+    ) -> Result<std::sync::Arc<dyn crate::node_access::NodeLink>, String> {
+        if !check_owner_thread(self, "node_link") {
             return Err("the core was called off its owner thread".to_owned());
         }
-        let result = lock_recover(&self.runtime).device_channel(device_id);
+        let result = lock_recover(&self.runtime).node_link(device_id);
         // Only a refusal can have started a helper connection.
         if result.is_err() {
             notify_change(self);

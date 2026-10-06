@@ -147,6 +147,7 @@ fn the_sleep_setting_survives_a_restart_and_a_ui_state_update() {
             home_path: None,
             codex_home: None,
         },
+        std::sync::Arc::new(hide_node::Local),
     );
     assert_eq!(
         restarted.snapshot().ui_state.agent_sleep_after_hours,

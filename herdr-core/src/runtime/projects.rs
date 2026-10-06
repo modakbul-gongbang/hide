@@ -258,12 +258,12 @@ impl Runtime {
     fn changes_channel(
         &mut self,
         device_id: &str,
-    ) -> Result<Arc<dyn crate::host_access::HostChannel>, String> {
+    ) -> Result<Arc<dyn crate::node_access::NodeLink>, String> {
         if device_id != self.node.as_str() && !self.device_hosts.contains_key(device_id) {
             self.start_device_host(device_id);
         }
         match self.device_hosts.get(device_id).map(|host| &host.phase) {
-            _ if device_id == self.node.as_str() => Ok(Arc::clone(&self.local_host)),
+            _ if device_id == self.node.as_str() => Ok(Arc::clone(&self.own_node)),
             Some(hosts::HostPhase::Ready { host, .. }) if host.closed_reason().is_none() => {
                 Ok(Arc::clone(host))
             }
@@ -2694,7 +2694,7 @@ impl Runtime {
     pub(super) fn local_worktree_target(&self) -> Result<live::WorktreeTarget, String> {
         self.live
             .as_ref()
-            .map(|context| live::WorktreeTarget::local(context, Arc::clone(&self.local_host)))
+            .map(|context| live::WorktreeTarget::local(context, Arc::clone(&self.own_node)))
             .ok_or_else(|| "A live Herdr connection is required".to_owned())
     }
 
@@ -2710,7 +2710,7 @@ impl Runtime {
             .get(device)
             .cloned()
             .ok_or_else(|| "The device's Herdr connection is unavailable".to_owned())?;
-        let host = self.device_channel(device)?;
+        let host = self.node_link(device)?;
         Ok(live::WorktreeTarget::device(&control, host))
     }
 
@@ -3642,7 +3642,9 @@ impl Runtime {
                 Err("move branch: a live Herdr connection is required".into()),
             );
         };
-        if let Err(message) = live::spawn_branch_migration(context, request) {
+        if let Err(message) =
+            live::spawn_branch_migration(context, Arc::clone(&self.own_node), request)
+        {
             return self.ingest_task_operation_result(id, Err(message));
         }
         true

@@ -1164,6 +1164,8 @@ dependencies = [
  "hide-host",
  "hide-kit",
  "hide-memory",
+ "hide-node",
+ "hide-node-link",
  "hide-platform",
  "hide-project",
  "hide-session",
@@ -1256,6 +1258,7 @@ dependencies = [
  "cap-std",
  "hide-herdr-client",
  "hide-kit",
+ "hide-node-link",
  "hide-platform",
  "hide-project",
  "hide-session",
@@ -1295,6 +1298,25 @@ dependencies = [
  "sha2 0.10.9",
  "tempfile",
  "unicode-normalization",
+]
+
+[[package]]
+name = "hide-node"
+version = "0.1.0"
+dependencies = [
+ "hide-host",
+ "hide-node-link",
+]
+
+[[package]]
+name = "hide-node-link"
+version = "0.1.0"
+dependencies = [
+ "hide-kit",
+ "hide-session",
+ "libc",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -1350,6 +1372,7 @@ dependencies = [
  "hide-herdr-client",
  "hide-host",
  "hide-kit",
+ "hide-node",
  "hide-platform",
  "hide-session",
  "http-body-util",

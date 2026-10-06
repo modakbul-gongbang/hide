@@ -23,7 +23,7 @@ use std::time::{Duration, Instant};
 use serde_json::json;
 
 use crate::handle::ChangeNotifier;
-use crate::host_access::call_as;
+use crate::node_access::call_as;
 use crate::runtime::{DeviceKitAnswer, DeviceKitCall, DeviceKitWork, KitJob, Runtime};
 
 const PUMP_TICK: Duration = Duration::from_millis(250);
