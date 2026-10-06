@@ -34,12 +34,16 @@ async function deletionFixture(herdr: HerdrFixture) {
 /**
  * The fixture branch has nothing ahead of main and no dirt or agent, so the
  * core folds its row under Inactive once it has read the worktree's Git
- * facts; until then the row is drawn among the active checkouts. The fold is
- * awaited and opened, so the row is found where it stays whichever arrived
- * first. Its workspace opens without focus, and a focused checkout never folds.
+ * facts, unless it is the focused checkout; until then the row is drawn among
+ * the active checkouts. With no saved state the core focuses the first
+ * checkout its catalog holds, which can be this one, so main is focused first
+ * and the fold is awaited and opened: the row is then found where it stays.
  */
 async function featureRow(page: Page) {
   const project = page.locator("[data-project]").filter({ has: page.locator("[data-project-row]").filter({ hasText: "preflight-repo" }) });
+  const main = project.locator('[data-checkout][aria-label^="main"]');
+  await main.click();
+  await expect(main).toHaveAttribute("aria-current", "true");
   const inactive = project.locator("[data-inactive-checkouts]");
   await expect(inactive).toHaveText("Inactive 1", { timeout: 30_000 });
   await inactive.click();
