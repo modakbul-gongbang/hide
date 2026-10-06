@@ -223,4 +223,8 @@ def main(argv=None):
 
 
 if __name__ == "__main__":
+    # A test name can hold any character (⌘D splits ...) and the Actions log
+    # reads UTF-8, but a Windows runner writes stdout as cp1252: printing
+    # the name of an issue just filed raised, and the run was told nothing was filed.
+    sys.stdout.reconfigure(encoding="utf-8")
     sys.exit(main())

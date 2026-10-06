@@ -209,5 +209,23 @@ class Gh(unittest.TestCase):
         self.assertEqual(done.stdout.strip(), ascii([{"title": "탭"}]))
 
 
+    def test_a_test_name_outside_the_runner_code_page_is_filed_and_printed(self):
+        # A Windows runner writes stdout as cp1252; the ⌘ in a test name raised
+        # after its issue was filed, and the run reported it as not filed.
+        with tempfile.TemporaryDirectory() as tmp:
+            fake = Path(tmp) / "gh"
+            fake.write_text('#!/bin/sh\ncase "$2" in *labels=*) echo "[]" ;; *) echo \'{"number": 50, "html_url": "https://example/50"}\' ;; esac\n')
+            fake.chmod(0o755)
+            report = Path(tmp) / "report.json"
+            report.write_text(json.dumps({"suites": [{"title": "a.spec.ts", "specs": [spec("⌘D splits the pane", "flaky")]}]}))
+            done = subprocess.run(
+                [sys.executable, str(SCRIPT), "--suite", "web", "--playwright", str(report), "--system", "Windows"],
+                env={**ENV, "PATH": f"{tmp}{os.pathsep}{os.environ['PATH']}", "PYTHONIOENCODING": "cp1252"},
+                capture_output=True, text=True, encoding="utf-8",
+            )
+        self.assertEqual(done.returncode, 0, done.stdout + done.stderr)
+        self.assertIn("filed https://example/50 for ⌘D splits the pane", done.stdout)
+
+
 if __name__ == "__main__":
     unittest.main()
