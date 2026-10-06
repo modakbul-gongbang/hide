@@ -19,6 +19,9 @@ const RESULT_LIMIT: usize = 1_024;
 /// The most runs waiting; a full queue is a reported failure (rule 15).
 pub const QUEUE_LIMIT: usize = 256;
 pub const LOG_LIMIT: u64 = 1024 * 1024;
+/// The most output a running bundle may write before it is ended; the log
+/// is cut to [`LOG_LIMIT`] only after the run (rule 15).
+pub const RUN_OUTPUT_LIMIT: u64 = 256 * 1024 * 1024;
 
 /// A step run before the commands, such as checking out a commit.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -35,6 +38,8 @@ pub struct Job {
     pub commands: Vec<String>,
     pub prepare: Vec<Prepare>,
     pub timeout: Duration,
+    /// [`RUN_OUTPUT_LIMIT`] outside tests.
+    pub output_limit: u64,
 }
 
 struct Running {
@@ -129,6 +134,22 @@ impl VerifyRunner {
                         VerifyPoll::Failed {
                             check: format!("{command} (timeout {minutes}m)"),
                             link: String::new(),
+                        },
+                    );
+                    continue;
+                }
+                let written = std::fs::metadata(&running.log).map_or(0, |meta| meta.len());
+                if written > running.job.output_limit {
+                    let _ = running.child.kill_tree();
+                    let id = running.job.id.clone();
+                    let log = running.log.clone();
+                    self.running = None;
+                    trim(&log);
+                    self.finish(
+                        &id,
+                        VerifyPoll::Failed {
+                            check: format!("{command} (output over the log cap)"),
+                            link: log.display().to_string(),
                         },
                     );
                     continue;
@@ -371,6 +392,7 @@ mod tests {
             commands: commands.iter().map(|c| (*c).to_owned()).collect(),
             prepare: Vec::new(),
             timeout,
+            output_limit: RUN_OUTPUT_LIMIT,
         }
     }
 
@@ -513,6 +535,23 @@ mod tests {
             ));
         }
         assert!(!dir.path().join("ran.txt").exists());
+    }
+
+    #[test]
+    fn a_run_writing_past_the_output_cap_is_ended_and_failed() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut runner = VerifyRunner::new(dir.path().join("logs"));
+        let mut loud = job("loud", dir.path(), &["yes"], Duration::from_secs(60));
+        loud.output_limit = 64 * 1024;
+        runner.submit(loud).unwrap();
+        match wait(&mut runner, "loud") {
+            VerifyPoll::Failed { check, link } => {
+                assert_eq!(check, "yes (output over the log cap)");
+                assert!(std::fs::metadata(link).unwrap().len() <= LOG_LIMIT);
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(!runner.busy());
     }
 
     #[test]

@@ -18,7 +18,7 @@ use crate::command::{CardInput, Command, Refusal, VerificationChoice};
 use crate::dag;
 use crate::judgment::{self, Judgment, JudgmentInput, JudgmentOutcome, OtherTask, Priority};
 use crate::model::*;
-use crate::role::{ROLE_NOT_ALLOWED, Role};
+use crate::role::{Permission, ROLE_NOT_ALLOWED, Role};
 use crate::store::{Event, Record, Store, StoreError, sha256_hex};
 use crate::summary::{self, FactorySummary};
 
@@ -63,6 +63,9 @@ const ENV_RECHECK_MS: u64 = MINUTE_MS;
 /// How often a worker whose agent has not shown a session is asked again,
 /// and when the person is told to look at its pane.
 const START_RETRY_MS: u64 = 30_000;
+/// The most questions, decisions and discoveries one Task keeps; a worker
+/// report past it is refused.
+pub const REPORT_LIMIT: usize = 500;
 /// How often a broken main, or a main head with checks still running, is
 /// read again.
 const MAIN_CHECK_EVERY_MS: u64 = 30_000;
@@ -557,6 +560,20 @@ impl Engine {
             .to_json();
         }
         let verb = command.verb();
+        // A worker's reports grow its Task record: past the cap a report is
+        // refused, never stored (rule 15).
+        if command.permission() == Permission::Report
+            && let Role::Worker { factory, task } = role
+            && let Some(task) = self.task(factory, task)
+            && task.questions.len() + task.decisions.len() + task.discoveries.len() >= REPORT_LIMIT
+        {
+            return Refusal::new(
+                "report_limit",
+                "This Task holds too many questions and decisions; finish with hide factory done",
+            )
+            .with(json!({"limit": REPORT_LIMIT}))
+            .to_json();
+        }
         let answer = self.run_command(role, command);
         match answer {
             Ok(mut value) => {

@@ -855,6 +855,35 @@ fn a_cancelled_task_s_worker_stays_a_worker_and_is_stopped() {
 }
 
 #[test]
+fn a_worker_s_reports_stop_at_the_cap() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let t = h.ready("Chatty", &[]);
+    for n in 0..hide_factory::engine::REPORT_LIMIT {
+        let kept = h.as_worker(
+            &f,
+            &t,
+            Command::Decide {
+                text: format!("d{n}"),
+            },
+        );
+        assert_eq!(kept["ok"], true, "{kept}");
+    }
+    let refused = h.as_worker(
+        &f,
+        &t,
+        Command::Decide {
+            text: "one more".into(),
+        },
+    );
+    assert_eq!(refused["reason"], "report_limit", "{refused}");
+    assert_eq!(
+        h.task(&f, &t).decisions.len(),
+        hide_factory::engine::REPORT_LIMIT
+    );
+}
+
+#[test]
 fn a_worker_cannot_act_as_a_person() {
     let mut h = Bench::new(false);
     let f = h.factory(true);

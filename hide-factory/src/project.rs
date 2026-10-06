@@ -210,6 +210,7 @@ impl Projects {
                 cwd: path,
             }],
             timeout: Duration::from_millis(factory.config.verify_timeout_ms),
+            output_limit: crate::verify::RUN_OUTPUT_LIMIT,
         })
     }
 
@@ -1309,6 +1310,7 @@ impl Verifier for SharedProjects {
                     commands: commands.clone(),
                     prepare: Vec::new(),
                     timeout: Duration::from_millis(factory.config.verify_timeout_ms),
+                    output_limit: crate::verify::RUN_OUTPUT_LIMIT,
                 })?;
                 let log = this.verify.log_path(&id).display().to_string();
                 Ok(VerifyRun {
@@ -1353,6 +1355,7 @@ impl Verifier for SharedProjects {
             commands: commands.clone(),
             prepare,
             timeout: Duration::from_millis(factory.config.verify_timeout_ms),
+            output_limit: crate::verify::RUN_OUTPUT_LIMIT,
         })?;
         let log = this.verify.log_path(&id).display().to_string();
         Ok(VerifyRun {

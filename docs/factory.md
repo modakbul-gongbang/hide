@@ -58,7 +58,7 @@ A main recovery the restart cut short is not guessed again, since which merge it
 The engine opens the store when a store file already exists at start, or on the first command, so a machine that never created a Factory opens nothing.
 
 `factory-files/<factory id>/<task id>/` holds each attached PRD as `<sha256>.<extension>`, a read-only copy of at most 4 MiB, and `factory-files/logs/` holds one `<run id>.log` per local verification run.
-A run's log keeps only its last 1 MiB when the run ends.
+A run's log keeps only its last 1 MiB when the run ends; a run that writes more than 256 MiB is ended and fails as "output over the log cap".
 
 The Factory deletes no Task, question, decision, discovery, attempt or attachment.
 It removes a worker's worktree and pane when the Task is done and main verification has passed, when a cancelled Task or one an outside pull request took passes its keep period, and, only under disk pressure, for finished Tasks.
@@ -159,6 +159,7 @@ A capability file holds only a token, so editing it cannot change a role.
 | Configure | `config --set` | refused | yes |
 
 A refusal answers `role_not_allowed` with the role and the verb.
+A Task keeps at most 500 questions, decisions and discoveries together; past that a worker's report is refused with `report_limit`.
 A worker's `show` reaches its own Factory only.
 An operator relays a person's words, and every answer and decision records the relaying pane as `relayed_by`.
 Code cannot tell whether an operator pane's agent acted on a person's words, so it records who relayed and does not block.
