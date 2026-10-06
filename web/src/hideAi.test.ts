@@ -172,7 +172,8 @@ describe("whether Hide AI would answer now (B7, B66)", () => {
     expect(hideAiCanAnswer(ai([needsLogin, ready], { provider: "codex", fallback: [{ provider: "claude", model: "" }] }))).toBe(true);
     expect(hideAiCanAnswer(ai([needsLogin, provider("pi", { state: "unavailable", selectable: false })], { provider: "codex", fallback: [{ provider: "pi", model: "" }] }))).toBe(false);
     // An older daemon that sends no `enabled` is on.
-    const { enabled: _enabled, ...older } = ai([ready]);
+    const older = ai([ready]);
+    delete older.enabled;
     expect(hideAiCanAnswer(older)).toBe(true);
   });
 });
