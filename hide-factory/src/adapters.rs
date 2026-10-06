@@ -332,8 +332,12 @@ pub trait WorkerRuntime {
     fn spawn(&mut self, request: &WorkerSpawn) -> Result<crate::model::WorkerRef, Failure>;
     /// The engine no longer wants the worker a pending start makes (the
     /// Task was cancelled or paused while it started); the adapter ends it
-    /// when it arrives.
-    fn abandon_start(&mut self, _factory: &str, _task: &str) {}
+    /// when it arrives. True when the adapter took a start over, so the next
+    /// start is a new attempt; false when it held none, so the next start
+    /// asks the same spawn again and gets what it already reserved (rule 11).
+    fn abandon_start(&mut self, _factory: &str, _task: &str) -> bool {
+        false
+    }
     /// Sends a reply or wake message through the mailbox.
     fn message(
         &mut self,

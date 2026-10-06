@@ -4462,14 +4462,16 @@ impl Engine {
         // the slot.
         let starting: Vec<_> = self.starting.keys().cloned().collect();
         for (factory, id) in starting {
-            if self
-                .task(&factory, &id)
-                .is_none_or(|t| t.state != TaskState::Waiting)
-            {
-                self.ports.workers.abandon_start(&factory, &id);
-                // A later start is a new attempt, never the abandoned one
-                // replayed by its intent.
-                self.with_task(&factory, &id, |t| t.spawn_refusals += 1);
+            if self.task(&factory, &id).is_none_or(|t| {
+                !matches!(t.state, TaskState::Waiting | TaskState::Relanding)
+            }) {
+                // A start the adapter took over is never replayed by its
+                // intent: a later start is a new attempt. A spawn whose agent
+                // had not shown yet is asked again as the same attempt, so a
+                // revive gets the pane and worktree it already made.
+                if self.ports.workers.abandon_start(&factory, &id) {
+                    self.with_task(&factory, &id, |t| t.spawn_refusals += 1);
+                }
                 self.starting.remove(&(factory, id));
             }
         }

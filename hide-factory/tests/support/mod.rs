@@ -379,8 +379,15 @@ impl WorkerRuntime for Shared {
             .copied()
             .unwrap_or(WorkerStatus::Working)
     }
-    fn abandon_start(&mut self, _factory: &str, task: &str) {
-        self.world().abandoned.push(task.to_owned());
+    fn abandon_start(&mut self, _factory: &str, task: &str) -> bool {
+        let mut world = self.world();
+        world.abandoned.push(task.to_owned());
+        // A pending start is still in flight; a consumed `starting` answer
+        // left nothing in the adapter's hands.
+        world
+            .spawn_failure
+            .as_ref()
+            .is_some_and(|failure| failure.again_in_ms == Some(0))
     }
     fn stop(&mut self, worker: &WorkerRef) -> Result<(), Failure> {
         self.world().stops.push(task_of(worker));

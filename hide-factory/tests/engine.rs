@@ -2233,6 +2233,60 @@ fn a_start_cancelled_on_its_way_is_abandoned_and_a_revive_is_a_new_attempt() {
 }
 
 #[test]
+fn a_start_whose_agent_had_not_shown_is_asked_again_as_the_same_attempt_after_a_revive() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    h.world().spawn_failure = Some(Failure::starting(
+        "worker.spawn",
+        "native_identity_unavailable",
+    ));
+    let t = h.ready("Slow", &[]);
+    h.op(Command::Cancel { task: t.clone() });
+    h.engine.tick();
+    assert_eq!(h.task(&f, &t).spawn_refusals, 0, "nothing was taken over");
+    h.world().spawn_failure = None;
+    h.op(Command::Revive { task: t.clone() });
+    tick_until(&mut h, &f, &t, TaskState::Running);
+    let attempts: Vec<u32> = h.world().spawn_asks.iter().map(|r| r.attempt).collect();
+    assert!(
+        attempts.iter().all(|attempt| *attempt == 0),
+        "the reserved spawn is asked again: {attempts:?}"
+    );
+}
+
+#[test]
+fn a_relanding_task_whose_worker_restarts_slowly_keeps_its_start() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let a = h.ready("A", &[]);
+    h.world()
+        .main_checks
+        .insert("sha0001-T-1".into(), MainCheck::Pending);
+    h.done(&f, &a);
+    tick_until(&mut h, &f, &a, TaskState::Landed);
+    {
+        let mut world = h.world();
+        world.worker_status.insert(a.clone(), WorkerStatus::Gone);
+        world.spawn_failure = Some(Failure::start_pending("worker.spawn"));
+        world.main_checks.insert(
+            "sha0001-T-1".into(),
+            MainCheck::Red {
+                link: "run/1".into(),
+            },
+        );
+    }
+    h.advance(60_000);
+    tick_until(&mut h, &f, &a, TaskState::Relanding);
+    for _ in 0..10 {
+        h.engine.tick();
+    }
+    assert!(h.world().abandoned.is_empty(), "its own restart is kept");
+    assert_eq!(h.task(&f, &a).spawn_refusals, 0);
+    h.world().spawn_failure = None;
+    tick_until(&mut h, &f, &a, TaskState::Running);
+}
+
+#[test]
 fn a_resumed_worker_still_starting_holds_its_slot_without_a_failure_per_tick() {
     let mut h = Bench::new(false);
     let f = h.factory(true);

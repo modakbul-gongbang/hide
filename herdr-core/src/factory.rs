@@ -873,17 +873,19 @@ impl WorkerRuntime for CoreWorkers {
         Err(queue_start(&self.state, request))
     }
 
-    fn abandon_start(&mut self, factory: &str, task: &str) {
+    fn abandon_start(&mut self, factory: &str, task: &str) -> bool {
         let key = start_key(factory, task);
-        let finished = match self.state.lock() {
+        let (in_flight, finished) = match self.state.lock() {
             Ok(mut state) => {
-                if state.starts.in_flight.contains(&key) {
+                let in_flight = state.starts.in_flight.contains(&key);
+                if in_flight {
                     state.starts.abandoned.insert(key.clone());
                 }
-                state.starts.done.remove(&key)
+                (in_flight, state.starts.done.remove(&key))
             }
-            Err(_) => None,
+            Err(_) => (false, None),
         };
+        let taken = in_flight || finished.is_some();
         if let Some(Finished {
             fresh,
             result: Ok(worker),
@@ -891,6 +893,7 @@ impl WorkerRuntime for CoreWorkers {
         {
             self.release_start(task, fresh, &worker);
         }
+        taken
     }
 
     fn message(
