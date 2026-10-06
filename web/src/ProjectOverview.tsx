@@ -140,7 +140,7 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
       data-overview-state={state}
       data-overview-view={view}
     >
-      <header className="flex shrink-0 flex-col gap-xs border-b border-border px-lg py-sm">
+      <header className="@container flex shrink-0 flex-col gap-xs border-b border-border px-lg py-sm">
         <div className="flex min-w-0 items-center gap-lg">
           <nav aria-label={t("overview.location")} className="flex min-w-0 items-center gap-xs">
             <button type="button" className="shrink-0 rounded-xs px-xs text-caption text-subtle-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent" data-go-main="true" onClick={() => setProject(null)}>
@@ -155,16 +155,21 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
             {device && device.kind === "remote" ? <Badge variant="secondary">{device.label}</Badge> : null}
           </nav>
           <span className="flex-1" />
-          <Button variant="ghost" onClick={newAgent} disabled={!project.is_git && project.checkouts.length === 0} data-overview-new-agent="true">
-            <SquareTerminalIcon aria-hidden="true" />
-            {t("requests.newAgent")}
-          </Button>
-          {canIssue ? (
-            <Button onClick={newIssue} data-overview-new-issue="true">
-              <PlusIcon aria-hidden="true" />
-              {t("issue.newTitle")}
-              <Kbd>C</Kbd>
+          {/* Below the header's own width of `@lg` the actions keep their icon and drop their word and keycap, so the path back keeps its room (issue 618); their name and shortcut stay in the hint. */}
+          <Hint label={t("requests.newAgent")}>
+            <Button variant="ghost" className="@max-lg:size-(--size-control) @max-lg:px-0" onClick={newAgent} disabled={!project.is_git && project.checkouts.length === 0} data-overview-new-agent="true">
+              <SquareTerminalIcon aria-hidden="true" />
+              <span className="@max-lg:sr-only">{t("requests.newAgent")}</span>
             </Button>
+          </Hint>
+          {canIssue ? (
+            <Hint label={t("issue.newTitle")} shortcut={<Kbd>C</Kbd>}>
+              <Button className="@max-lg:size-(--size-control) @max-lg:px-0" onClick={newIssue} data-overview-new-issue="true">
+                <PlusIcon aria-hidden="true" />
+                <span className="@max-lg:sr-only">{t("issue.newTitle")}</span>
+                <Kbd className="@max-lg:hidden">C</Kbd>
+              </Button>
+            </Hint>
           ) : null}
         </div>
         <Stats workspace={project} stats={stats} refreshing={!!rest?.git_worktrees_loading || project.checkouts.some((checkout) => checkout.github?.loading)} onMerged={showCleanup} />
