@@ -289,6 +289,7 @@ impl Runtime {
                 if self.pane_focus_in_flight.as_ref() == Some(&control) {
                     self.pane_focus_in_flight = None;
                 }
+                self.drop_pane_focus_tab_wait(Some(control.serial));
             }
         }
     }
