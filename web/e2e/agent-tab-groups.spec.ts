@@ -46,7 +46,10 @@ async function startGroups(page: Page, name: string) {
     await enterWorkspace(page, "fixture");
     await expect(tab(page, third)).toBeVisible();
     expect((await shape(page))[0]?.tabs).toEqual([first, second, third]);
-    return { ...group, stop: () => { group.daemon.stop(); herdr.stop(); } };
+    // `stop` reads the daemon from the object it returns: a test that
+    // restarts hided puts the new daemon there, and the old one is gone.
+    const groups = { ...group, stop: () => { groups.daemon.stop(); herdr.stop(); } };
+    return groups;
   } catch (error) {
     herdr.stop();
     throw error;
