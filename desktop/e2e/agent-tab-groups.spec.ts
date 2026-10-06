@@ -3,7 +3,7 @@ import { execFileSync } from "node:child_process";
 import path from "node:path";
 import { startHerdr } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace } from "../../web/e2e/wire";
-import { isolate, launch, screenshot, test } from "./fixture";
+import { fitWindow, isolate, launch, screenshot, test } from "./fixture";
 
 test("Agent edge drag splits the desktop column into two live tab groups", async () => {
   const herdr = await startHerdr({ agents: false });
@@ -14,7 +14,7 @@ test("Agent edge drag splits the desktop column into two live tab groups", async
     const launched = await launch(run.env);
     app = launched.app;
     const page = launched.page;
-    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1920, 1080));
+    await fitWindow(app, { width: 1024, height: 1080 });
     await enterWorkspace(page, "fixture");
     const tab = page.locator(`[data-agent-tab-bar] [data-tab="${created.result.tab.tab_id}"]`);
     await expect(tab).toBeVisible();

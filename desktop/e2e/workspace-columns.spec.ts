@@ -9,7 +9,7 @@ import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { chord } from "../../web/e2e/chords";
 import { countSent, enterWorkspace, keyboardFocus, rest, sendEvent, showExplorer } from "../../web/e2e/wire";
 import { deviceHome, proveDeviceHome, resetDeviceHome, stageBuild, writeSshConfig } from "./device-home";
-import { isolate, launchShell, test } from "./fixture";
+import { fitCssWidth, isolate, launchShell, test } from "./fixture";
 
 type Probe = {
   arm: (marker: string) => void;
@@ -45,15 +45,18 @@ async function nativeCapture(app: ElectronApplication, page: Page, name: string)
   fs.writeFileSync(path.join(dir, `${name}.json`), JSON.stringify({ method: "exact candidate window screencapture without activation", collectedAt: new Date().toISOString(), source, geometry }, null, 2));
 }
 
+/**
+ * The window's height in these cases, or the work area's when a CI runner's is
+ * shorter. Every body width here is a CSS width (`fitCssWidth`), the first one
+ * 1440 so the first Tools call is made in a wide body on a CI screen too.
+ */
+const COLUMNS_HEIGHT = 900;
+
 async function bodyWidth(app: ElectronApplication, page: Page, width: number): Promise<void> {
   const inset = await page.evaluate(() => innerWidth - document.querySelector<HTMLElement>("[data-column-row=true]")!.clientWidth);
-  await app.evaluate(({ BrowserWindow }, width) => {
-    const window = BrowserWindow.getAllWindows()[0]!;
-    window.setSize(width, window.getSize()[1]!);
-    // macOS can clamp to a small CI screen. Preserve the requested CSS body
-    // width with the granted content size, and record zoom in native evidence.
-    window.webContents.setZoomFactor(window.getContentBounds().width / width);
-  }, width + inset);
+  // A CI screen is narrower than these bodies: the window fits it and the
+  // page zooms out, so the CSS body width is the requested one everywhere.
+  await fitCssWidth(app, width + inset, COLUMNS_HEIGHT);
   await expect.poll(() => page.locator("[data-column-row=true]").evaluate((element) => element.clientWidth)).toBe(width);
 }
 
@@ -118,7 +121,7 @@ test("Workspace columns preserve geometry, dock once on release and show native 
     await page.goto(url.href);
     await expect.poll(() => page.evaluate(() => typeof (window as unknown as { __hideProbe?: Probe }).__hideProbe)).toBe("object");
     await enterWorkspace(page, "fixture");
-    await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1440, 900));
+    await fitCssWidth(app, 1440, COLUMNS_HEIGHT);
     const workspace = page.locator("[data-workspace-screen]");
     await expect(workspace).toHaveAttribute("data-file-views", "off");
     await expect(workspace).toHaveAttribute("data-tools", "off");
