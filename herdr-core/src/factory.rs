@@ -356,6 +356,15 @@ fn handle(
     };
     // A pending review answers the pane that added the Task (B11); that is
     // the caller, never a pane the request names.
+    // A command that names no project means the Factory of the caller's
+    // checkout, when it has one; `status` without one still shows them all.
+    let here = || {
+        caller
+            .cwd
+            .as_deref()
+            .and_then(|cwd| engine.factory_for_project(cwd))
+            .map(|factory| factory.project.clone())
+    };
     let command = match command {
         Command::Add {
             project,
@@ -364,11 +373,27 @@ fn handle(
             card,
             producer_pane: _,
         } => Command::Add {
-            project,
+            project: project.or_else(here),
             task,
             issue,
             card,
             producer_pane: caller.pane.clone(),
+        },
+        Command::Config { project, set } => Command::Config {
+            project: project.or_else(here),
+            set,
+        },
+        Command::Close { project } => Command::Close {
+            project: project.or_else(here),
+        },
+        Command::Check {
+            project,
+            at,
+            instruction,
+        } => Command::Check {
+            project: project.or_else(here),
+            at,
+            instruction,
         },
         other => other,
     };
