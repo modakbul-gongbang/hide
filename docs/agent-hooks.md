@@ -133,21 +133,19 @@ The core follows it (`ui_state.agent_onboarding`), applies the answer to this Ma
 
 Claude Code and Codex are the agents the kit has always had a hook for.
 Every other agent Hide knows is one row of `hide-kit/src/agents.rs` (`ADAPTERS`), and one switch per agent per machine turns its pieces on and off, in Settings, Agents and in each device's row.
-A row carries the agent's detection (a program on the login `PATH` or the usual install folders, or a folder it creates under the home; the names `goose`, `amp`, `droid`, `copilot` and `kilo` are other programs too, so those agents are detected by their folder alone), the folder it reads skills from and the systems the documentation confirms that folder on, whether Hide writes a hook for it, the oldest version whose documentation has that hook, and the official page the row's answers come from (`doc_url`).
-The usual install folders are `~/.local/bin`, pnpm's global folder (`~/Library/pnpm` on macOS and `~/.local/share/pnpm` on Linux, and the `bin` folder inside it from pnpm 11), `~/.npm-global/bin`, `/opt/homebrew/bin` and `/usr/local/bin` (`cli_path` in `hide-agent-hooks/src/diagnosis.rs`).
-A program found there is also run with that `PATH`, because a CLI installed as a script starts its interpreter by name (pnpm's `codex` runs `node`) and a device helper started over SSH has only the system folders.
-A test fails a row with no `https` `doc_url`, so a claim in the table below always has a page behind it.
+A row carries the agent's program names (`executables`), the folder it reads skills from and the systems the documentation confirms that folder on, whether Hide writes a hook for it, the oldest version whose documentation has that hook, and the official page the row's answers come from (`doc_url`).
+A test fails a row with no `https` `doc_url`, and a row with no program, so a claim in the table below always has a page behind it and every agent can be found.
 
 Two pieces are written per agent, and nothing else:
 
 - The skill stub `hide-browser/SKILL.md` in the folder the agent reads.
   It is a few lines that point at `hide browser help`, so it stays right as the CLI's guide changes.
   Its folder is `~/.agents/skills` for the agents that read it, `~/.claude/skills` for Claude Code (which documents that it does not read the shared folder), and the agent's own folder for Kiro, Qwen Code and Cline.
-  A shared folder is written while any agent that reads it is on and set up, and it is removed only when none is.
+  A shared folder is written while any agent that reads it is on and installed, and it is removed only when none is.
   A file is Hide's only when its marker line, `<!-- hide-skill@<version>: ... -->`, is the first line after the front matter; a file that merely mentions `hide-skill@` is never replaced or removed, and the agent's row says a skill that Hide did not write is already there.
   A stub with Hide's marker over text that is not Hide's was edited by the operator: no pass rewrites it and a switch-off leaves it, the row reads Outdated with that reason, and only Reinstall puts Hide's text back.
   A stub of an older marker version is Hide's own and is replaced by the next pass.
-  An agent's own folder (`~/.claude`, `~/.kiro`, `~/.qwen`, `~/.cline`) is never created for the stub: its presence is how the kit judges the agent, so a pass that made it would change what the next pass finds.
+  An agent's own folder (`~/.claude`, `~/.kiro`, `~/.qwen`, `~/.cline`) is never created for the stub: the hook code reads that folder as the agent's settings being there, so a pass that made it would write a hook on the next pass that it did not write on this one, and a second apply would not be a no-op; the row says the agent has not created its folder yet, and the stub goes in on the pass after it has.
 - The guidance hook, for the agents below marked as done.
   It is one `SessionStart` entry, in the agent's own format, whose command is `hide-agent-hooks hook --runtime <agent id> --event SessionStart`.
   `hide-agent-hooks` writes it (`src/guidance.rs`) and nothing else does, under the marker `hide-guidance@1` that proves an entry is Hide's and separates a current one from an older one.
@@ -182,7 +180,31 @@ Non-Copilot guidance hooks are not written on Windows, because their commands ar
 The record `~/.hide/kit/installed.json` keeps the operator's choice per agent (`agents`) and the pieces Hide installed (`hook:<agent>`, `skill:<folder>`), and an older build ignores both.
 With no choice on record Claude Code and Codex are on, as they have been since their hooks became part of the kit, and every other agent is off.
 A piece that was installed and is gone stays gone until Reinstall, and an agent switched off keeps nothing of Hide's and gets nothing back from a later pass.
-Detection only decides whether a switch can work: an agent that is not set up on a machine has no switch there, and the choice for it is not recorded.
+Whether the agent is installed only decides whether a switch can work: an agent that is not installed on a machine has no switch there, and switching it on is not recorded.
+A guidance hook also needs the agent's own settings folder, which Hide does not create: an installed agent that has not made it yet reads that, and its hook goes in on the pass after it has.
+
+### Installed means the program is found
+
+An agent is installed on a machine when one of its programs is found there, the way the operator's terminal would find it; a folder the agent creates does not count, because an editor makes `~/.cursor` without the `cursor-agent` CLI and a CLI that was removed leaves its folder behind (`~/.pi/agent` without `pi`).
+The program names are the ones each vendor's install documentation and install script give the command: `claude`, `codex`, `opencode`, `gemini`, `cursor-agent`, `copilot`, `amp`, `droid`, `kiro-cli`, `qwen`, `goose`, `cline`, `kilo`, `crush`, `junie`, `auggie`, `pi`, `grok`, `kimi` and `vibe`.
+Cursor's installer now calls its command `agent` and keeps `cursor-agent` as a second name; Hide looks for `cursor-agent` only, because Grok's installer also puts an `agent` on the `PATH`.
+Some of these names belong to other programs too (`goose`, `amp` and `kilo` are also a database migration tool and two text editors); such a program reads as the agent, as it does in other tools that list agents by `PATH`, and the only cost is a switch for an agent that is not there.
+
+The search is, in order, the folders the account's login shell puts on its `PATH`, the daemon's own `PATH`, and the usual install folders: `~/.local/bin`, pnpm's global folder (`~/Library/pnpm` on macOS and `~/.local/share/pnpm` on Linux, and the `bin` folder inside it from pnpm 11), `~/.npm-global/bin`, `/opt/homebrew/bin` and `/usr/local/bin` (`cli_path_with` in `hide-agent-hooks/src/diagnosis.rs`).
+The login shell is asked because many installers put their own folder on the `PATH` by editing a startup file rather than using one of those folders: Grok's `~/.grok/bin`, Kilo Code's `~/.kilo/bin`, OpenCode's `~/.opencode/bin`, Kimi Code's `~/.kimi-code/bin` and Pi's `~/.pi/agent/bin` are written into `~/.zshrc`, `~/.bashrc` or `config.fish`, and a Node CLI installed under nvm lives in nvm's folder.
+No daemon sees those folders on its own: an app opened from the Dock gets the system folders and the usual install folders from the desktop host, and a device helper started over an SSH exec channel gets the system folders alone (a non-interactive zsh reads only `~/.zshenv`).
+`hide_platform::host::login_shell_path` runs `$SHELL -ilc` with the account's login variables and the home being searched, and reads the `PATH` it prints between two marks, past anything the startup files print; it gives the shell ten seconds, the same as the desktop host's own ask, and ends it and everything it started after that or when Hide quits.
+Only the kit asks, on the kit worker on this Mac and in the helper on a device; the hook diagnosis, Memory's version probe and Codex's per-pane part keep the search without the shell, so nothing that reads `cli_path` outside the kit starts a shell.
+The answer is kept until one of the shell's startup files changes (zsh's, bash's and sh's in the home and in `~/.config/zsh`, fish's, and the system's in `/etc`), which is how an installer adds a folder, so Settings re-reading the kit every few seconds starts no shell; a file those files read in turn is not watched, and is read again when `hided` or a device's helper next starts.
+A shell that does not answer is logged as `kit.login_shell_unread` with its error kind, asked again after a minute, and the search goes on without its folders meanwhile; Windows has no login shell, and its search is the account's own `Path` plus the usual folders.
+A program found by the search is also run with it, because a CLI installed as a script starts its interpreter by name (pnpm's `codex` runs `node`).
+
+### When the program is gone
+
+An agent that is on and whose program is no longer found (uninstalled, or moved where the search does not reach) keeps everything: the operator's choice stays on record, the stub and the hook Hide wrote stay where they are, and no pass installs, replaces or removes anything for it.
+Taking them out on a guess would remove what the operator may want back, and an unused stub or a guarded hook does nothing; this is the kit's rule that only the operator takes a piece away (D-20, D-26).
+Its row stays in Settings with its switch, reads `Not on this machine` with the reason that its program is not found, and offers no Reinstall, since Reinstall cannot bring a CLI back; switching it off takes out Hide's pieces as for any agent, and once the program is found again the agent is whole with nothing asked.
+Claude Code's and Codex's hook parts follow the kit-part rule instead: they are written while the agent is on and its folder (`~/.claude`, `~/.codex`) is there, found or not, because a CLI the search misses still runs the hook.
 
 ### Support table
 
@@ -212,7 +234,7 @@ Every row gets the skill stub where the system column says so.
 | Kimi Code | `~/.agents/skills` (macOS, Linux) | none: `SessionStart` is fire-and-forget; injection is documented for `UserPromptSubmit` only | [skills](https://github.com/MoonshotAI/kimi-code/blob/main/docs/en/customization/skills.md) |
 | Mistral Vibe | `~/.agents/skills` (macOS, Linux) | none: no `SessionStart` event | [README](https://github.com/mistralai/mistral-vibe/blob/main/README.md) |
 
-An agent is a row only when its documentation confirms where it reads skills and how it is detected.
+An agent is a row only when its documentation confirms where it reads skills and the name of the program it installs.
 Roo Code is not a row because it was shut down in May 2026, and Aider is not a row because it reads no skills.
 Hide does not write an agent's `AGENTS.md` or `CLAUDE.md`, its MCP configuration, its model settings, or its Codex hook trust review, and it runs no installer for an agent.
 
@@ -277,7 +299,7 @@ Reinstall, the `kit_reinstall` event, is offered only where a part is outdated, 
 Project Memory's "update hooks" sends the same Reinstall for this Mac's hook parts.
 Reinstall repairs what is on: the hook part of an agent that is switched off reads Off whatever its file says, the machine row does not offer Reinstall for it, and a pane of that agent says its hook is switched off in Settings, Agents (`hooks_switched_off`), not that it was never installed.
 A switch pressed while an earlier press for the same agent is still queued replaces it, so the latest press is what the machine ends up with.
-The kit looks for the agents once per pass, and asks a CLI for its version once per version of its file, so Settings re-reading the kit every few seconds runs no subprocess.
+The kit looks for the agents once per pass, asks the login shell for its `PATH` only when a startup file changed, and asks a CLI for its version once per version of its file, so Settings re-reading the kit every few seconds runs no subprocess.
 
 Removal does not need the helper, and must not: it reads the configuration file and takes out the entries carrying Hide's marker, and nothing else.
 Removing a device from Hide does that on the device while its helper is connected (D-16); the operator removes a hook on their own machine by editing the file, and the kit then leaves it removed.

@@ -117,6 +117,92 @@ fn the_default_shell_when_there_is_one_is_a_file_that_exists() {
     }
 }
 
+/// A stand-in login shell: `body` runs first, as startup files do, then the
+/// command the caller passed with `-ilc`.
+#[cfg(unix)]
+fn fake_shell(folder: &Path, body: &str) -> PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let shell = folder.join("shell");
+    fs::write(
+        &shell,
+        format!("#!/bin/sh\n{body}\n[ \"$1\" = -ilc ] || exit 64\neval \"$2\"\n"),
+    )
+    .unwrap();
+    fs::set_permissions(&shell, fs::Permissions::from_mode(0o755)).unwrap();
+    shell
+}
+
+#[cfg(unix)]
+#[test]
+fn the_login_shell_path_is_what_its_startup_files_set_past_what_they_print() {
+    use std::sync::atomic::AtomicBool;
+    use std::time::Duration;
+    let folder = tempfile::tempdir().unwrap();
+    let home = folder.path().join("home");
+    let shell = fake_shell(
+        folder.path(),
+        "echo 'Last login: today'\necho 'nvm: warning' >&2\nPATH=\"$HOME/.grok/bin:$PATH\"\nexport PATH",
+    );
+
+    let path = host::login_shell_path(
+        &shell,
+        &home,
+        Duration::from_secs(10),
+        &AtomicBool::new(false),
+    )
+    .unwrap();
+
+    let folders: Vec<PathBuf> = std::env::split_paths(&path).collect();
+    // The shell ran with the home it was given, not this process's.
+    assert_eq!(folders[0], home.join(".grok/bin"), "{path:?}");
+    assert!(folders.len() > 1, "the inherited folders follow: {path:?}");
+}
+
+#[cfg(unix)]
+#[test]
+fn a_login_shell_that_prints_no_path_or_never_answers_is_refused_in_time() {
+    use std::sync::atomic::AtomicBool;
+    use std::time::{Duration, Instant};
+    let folder = tempfile::tempdir().unwrap();
+    let silent = fake_shell(folder.path(), "exit 0");
+    let error = host::login_shell_path(
+        &silent,
+        folder.path(),
+        Duration::from_secs(10),
+        &AtomicBool::new(false),
+    )
+    .unwrap_err();
+    assert_eq!(error.kind(), ErrorKind::InvalidData, "{error}");
+
+    let hanging = folder.path().join("hanging");
+    fs::create_dir(&hanging).unwrap();
+    let hanging = fake_shell(&hanging, "sleep 30");
+    let started = Instant::now();
+    let error = host::login_shell_path(
+        &hanging,
+        folder.path(),
+        Duration::from_millis(500),
+        &AtomicBool::new(false),
+    )
+    .unwrap_err();
+    assert_eq!(error.kind(), ErrorKind::TimedOut, "{error}");
+    assert!(started.elapsed() < Duration::from_secs(10));
+}
+
+#[cfg(windows)]
+#[test]
+fn windows_has_no_login_shell_to_ask() {
+    use std::sync::atomic::AtomicBool;
+    let error = host::login_shell_path(
+        &host::default_shell().unwrap(),
+        &host::home_dir().unwrap(),
+        std::time::Duration::from_secs(1),
+        &AtomicBool::new(false),
+    )
+    .unwrap_err();
+    assert_eq!(error.kind(), ErrorKind::Unsupported, "{error}");
+}
+
 #[test]
 fn the_tailscale_location_is_absolute_where_the_system_has_one() {
     match host::tailscale_cli() {

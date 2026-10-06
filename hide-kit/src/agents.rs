@@ -1,11 +1,11 @@
 //! The agent adapters: which coding agents Hide knows how to reach, and what
 //! it puts where each one reads it (issue #517).
 //!
-//! One data row per agent declares how it is detected, where its skills
-//! live, whether it has hooks, the oldest version the hook needs and the
-//! official page every one of those answers comes from. The content an agent
-//! reads is the same for all of them and is read from the `hide` binary at
-//! run time (`hide browser help`), so a new agent is a row here and a
+//! One data row per agent declares the programs it is found by, where its
+//! skills live, whether it has hooks, the oldest version the hook needs and
+//! the official page every one of those answers comes from. The content an
+//! agent reads is the same for all of them and is read from the `hide` binary
+//! at run time (`hide browser help`), so a new agent is a row here and a
 //! fixture, never a new text (engineering rule 2, 7).
 //!
 //! Three things a row can turn on for an agent the operator switched on:
@@ -18,12 +18,15 @@
 //!   get the SessionStart guidance hook ([`HookSupport::Guidance`]);
 //! - nothing else. What Hide never writes is listed in `docs/agent-hooks.md`.
 
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
+use std::sync::{LazyLock, Mutex};
+use std::time::{Duration, Instant, SystemTime};
 
 use hide_agent_hooks::guidance::GuidanceAgent;
 use serde::{Deserialize, Serialize};
 
-use crate::{ComponentId, ComponentState};
+use crate::{ComponentId, ComponentState, KitTarget};
 
 /// The operating systems a skill folder is documented for.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -98,8 +101,10 @@ impl SkillDir {
 
     /// Whether the folder can be written without creating the agent's own
     /// folder: the shared folder is Hide's to create, an agent's own is not,
-    /// because its presence is how other parts of the kit see the agent
-    /// (a pass that made it would change what the next pass finds).
+    /// because its presence is how the hook code tells that the agent's
+    /// settings are there (`hide_agent_hooks`' runtime-absent answer), so a
+    /// pass that made it would let the next pass write a hook this one did
+    /// not, and a second apply would not be a no-op.
     pub(crate) fn writable(self, home: &Path) -> bool {
         let [folder, _] = self.relative();
         self == Self::Shared || home.join(folder).is_dir()
@@ -135,14 +140,12 @@ pub struct AgentAdapter {
     pub id: &'static str,
     /// The name the operator reads (a product name, never translated).
     pub label: &'static str,
-    /// Program names looked for on the login `PATH` and the usual install
-    /// folders; empty when the name is too generic to mean this agent
-    /// (`goose`, `amp`, `droid`, `copilot` and `kilo` are also other
-    /// programs), which is then detected by its home folder alone.
+    /// The program names the vendor's install documentation gives the CLI;
+    /// the agent is installed on a machine when one of them is found
+    /// ([`Detection`]). A folder the agent creates does not count: an editor
+    /// makes `~/.cursor` without the `cursor-agent` CLI, and a CLI that was
+    /// removed leaves its folder behind.
     pub executables: &'static [&'static str],
-    /// Folders under the home the agent creates; any one present means it is
-    /// set up here.
-    pub home_markers: &'static [&'static str],
     /// The folder the agent reads skills from.
     pub skill_dir: SkillDir,
     /// The systems the agent's documentation confirms that folder on.
@@ -167,7 +170,6 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         id: "claude-code",
         label: "Claude Code",
         executables: &["claude"],
-        home_markers: &[".claude"],
         skill_dir: SkillDir::Claude,
         skill_os: ALL_OS,
         hook: HookSupport::Part(ComponentId::ClaudeCodeHook),
@@ -179,7 +181,6 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         id: "codex",
         label: "Codex",
         executables: &["codex"],
-        home_markers: &[".codex"],
         skill_dir: SkillDir::Shared,
         skill_os: UNIX_OS,
         hook: HookSupport::Part(ComponentId::CodexHook),
@@ -191,7 +192,6 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         id: "opencode",
         label: "OpenCode",
         executables: &["opencode"],
-        home_markers: &[".config/opencode"],
         skill_dir: SkillDir::Shared,
         skill_os: UNIX_OS,
         hook: HookSupport::None,
@@ -203,7 +203,6 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         id: "gemini-cli",
         label: "Gemini CLI",
         executables: &["gemini"],
-        home_markers: &[".gemini"],
         skill_dir: SkillDir::Shared,
         skill_os: UNIX_OS,
         hook: HookSupport::Guidance(GuidanceAgent::Gemini),
@@ -215,7 +214,6 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         id: "cursor",
         label: "Cursor",
         executables: &["cursor-agent"],
-        home_markers: &[".cursor"],
         skill_dir: SkillDir::Shared,
         skill_os: UNIX_OS,
         hook: HookSupport::Guidance(GuidanceAgent::Cursor),
@@ -226,8 +224,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
     AgentAdapter {
         id: "copilot-cli",
         label: "GitHub Copilot CLI",
-        executables: &[],
-        home_markers: &[".copilot"],
+        executables: &["copilot"],
         skill_dir: SkillDir::Shared,
         skill_os: ALL_OS,
         hook: HookSupport::Guidance(GuidanceAgent::Copilot),
@@ -238,8 +235,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
     AgentAdapter {
         id: "amp",
         label: "Amp",
-        executables: &[],
-        home_markers: &[".config/amp"],
+        executables: &["amp"],
         skill_dir: SkillDir::Shared,
         skill_os: UNIX_OS,
         hook: HookSupport::None,
@@ -250,8 +246,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
     AgentAdapter {
         id: "factory-droid",
         label: "Factory Droid",
-        executables: &[],
-        home_markers: &[".factory"],
+        executables: &["droid"],
         skill_dir: SkillDir::Shared,
         skill_os: UNIX_OS,
         hook: HookSupport::Guidance(GuidanceAgent::Droid),
@@ -263,7 +258,6 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         id: "kiro",
         label: "Kiro",
         executables: &["kiro-cli"],
-        home_markers: &[".kiro"],
         skill_dir: SkillDir::Kiro,
         skill_os: UNIX_OS,
         hook: HookSupport::Guidance(GuidanceAgent::Kiro),
@@ -275,7 +269,6 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         id: "qwen-code",
         label: "Qwen Code",
         executables: &["qwen"],
-        home_markers: &[".qwen"],
         skill_dir: SkillDir::Qwen,
         skill_os: UNIX_OS,
         hook: HookSupport::Guidance(GuidanceAgent::Qwen),
@@ -286,8 +279,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
     AgentAdapter {
         id: "goose",
         label: "Goose",
-        executables: &[],
-        home_markers: &[".config/goose"],
+        executables: &["goose"],
         skill_dir: SkillDir::Shared,
         skill_os: UNIX_OS,
         hook: HookSupport::None,
@@ -299,7 +291,6 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         id: "cline",
         label: "Cline",
         executables: &["cline"],
-        home_markers: &[".cline"],
         skill_dir: SkillDir::Cline,
         skill_os: ALL_OS,
         hook: HookSupport::None,
@@ -310,8 +301,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
     AgentAdapter {
         id: "kilo-code",
         label: "Kilo Code",
-        executables: &[],
-        home_markers: &[".config/kilo"],
+        executables: &["kilo"],
         skill_dir: SkillDir::Shared,
         skill_os: ALL_OS,
         hook: HookSupport::None,
@@ -323,7 +313,6 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         id: "crush",
         label: "Crush",
         executables: &["crush"],
-        home_markers: &[".config/crush"],
         skill_dir: SkillDir::Shared,
         skill_os: ALL_OS,
         hook: HookSupport::None,
@@ -335,7 +324,6 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         id: "junie",
         label: "Junie",
         executables: &["junie"],
-        home_markers: &[".junie"],
         skill_dir: SkillDir::Shared,
         skill_os: ALL_OS,
         hook: HookSupport::Guidance(GuidanceAgent::Junie),
@@ -347,7 +335,6 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         id: "augment",
         label: "Augment",
         executables: &["auggie"],
-        home_markers: &[".augment"],
         skill_dir: SkillDir::Shared,
         skill_os: UNIX_OS,
         hook: HookSupport::Guidance(GuidanceAgent::Augment),
@@ -358,8 +345,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
     AgentAdapter {
         id: "pi",
         label: "Pi",
-        executables: &[],
-        home_markers: &[".pi/agent"],
+        executables: &["pi"],
         skill_dir: SkillDir::Shared,
         skill_os: ALL_OS,
         hook: HookSupport::None,
@@ -370,8 +356,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
     AgentAdapter {
         id: "grok",
         label: "Grok",
-        executables: &[],
-        home_markers: &[".grok"],
+        executables: &["grok"],
         skill_dir: SkillDir::Shared,
         skill_os: UNIX_OS,
         hook: HookSupport::None,
@@ -382,8 +367,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
     AgentAdapter {
         id: "kimi-code",
         label: "Kimi Code",
-        executables: &[],
-        home_markers: &[".kimi-code"],
+        executables: &["kimi"],
         skill_dir: SkillDir::Shared,
         skill_os: UNIX_OS,
         hook: HookSupport::None,
@@ -394,8 +378,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
     AgentAdapter {
         id: "mistral-vibe",
         label: "Mistral Vibe",
-        executables: &[],
-        home_markers: &[".vibe"],
+        executables: &["vibe"],
         skill_dir: SkillDir::Shared,
         skill_os: UNIX_OS,
         hook: HookSupport::None,
@@ -445,92 +428,223 @@ impl AgentAdapter {
             HookSupport::None => false,
         }
     }
-
-    /// The agent's program, when it is on this machine.
-    pub fn executable(&self, home: &Path) -> Option<PathBuf> {
-        // A test machine's own agents must not decide what a fixture home
-        // finds, so under test only the fixture's `~/.local/bin` is searched.
-        #[cfg(test)]
-        {
-            let folder = home.join(".local/bin").into_os_string();
-            self.executables
-                .iter()
-                .find_map(|name| hide_platform::host::find_program(&folder, name))
-        }
-        #[cfg(not(test))]
-        {
-            self.executables
-                .iter()
-                .find_map(|name| hide_agent_hooks::find_binary(name, home))
-        }
-    }
-
-    /// Whether the agent is set up on this machine: its program is found, or
-    /// a folder it creates is there.
-    pub fn detected(&self, home: &Path) -> bool {
-        self.executable(home).is_some()
-            || self
-                .home_markers
-                .iter()
-                .any(|marker| home.join(marker).is_dir())
-    }
 }
 
 /// What one pass found out about the agents on a machine: each adapter's
-/// program and home folder, looked for once. Every decision of the pass reads
-/// this instead of searching the `PATH` again.
+/// program, looked for once on one search. Every decision of the pass reads
+/// this instead of searching again.
 pub(crate) struct Detection {
-    rows: Vec<(&'static str, Option<PathBuf>, bool)>,
+    /// The search the programs were looked for on; a program found there is
+    /// run with it too, since a CLI installed as a script starts its
+    /// interpreter by name (`hide_agent_hooks::cli_path`).
+    path: OsString,
+    rows: Vec<(&'static str, Option<PathBuf>)>,
 }
 
 impl Detection {
-    pub(crate) fn probe(home: &Path) -> Self {
+    pub(crate) fn probe(target: &KitTarget) -> Self {
+        let path = search_path(target);
         let rows = ADAPTERS
             .iter()
             .map(|adapter| {
-                let executable = adapter.executable(home);
-                let present = executable.is_some()
-                    || adapter
-                        .home_markers
-                        .iter()
-                        .any(|marker| home.join(marker).is_dir());
-                (adapter.id, executable, present)
+                let program = adapter
+                    .executables
+                    .iter()
+                    .find_map(|name| hide_platform::host::find_program(&path, name));
+                (adapter.id, program)
             })
             .collect();
-        Self { rows }
+        Self { path, rows }
     }
 
-    pub(crate) fn detected(&self, adapter: &AgentAdapter) -> bool {
-        self.rows
-            .iter()
-            .any(|(id, _, present)| *id == adapter.id && *present)
+    /// Whether the agent is installed here: one of its programs is found.
+    pub(crate) fn installed(&self, adapter: &AgentAdapter) -> bool {
+        self.executable(adapter).is_some()
     }
 
     pub(crate) fn executable(&self, adapter: &AgentAdapter) -> Option<&Path> {
         self.rows
             .iter()
-            .find(|(id, ..)| *id == adapter.id)
-            .and_then(|(_, executable, _)| executable.as_deref())
+            .find(|(id, _)| *id == adapter.id)
+            .and_then(|(_, program)| program.as_deref())
+    }
+
+    /// `program --version`, run with the search it was found on.
+    pub(crate) fn version(&self, program: &Path) -> Option<String> {
+        program_version(program, &self.path)
     }
 }
 
-/// How long a version that could not be read is not asked for again. A
-/// version that was read stays until the program's file changes.
-const UNREAD_VERSION_RETRY: std::time::Duration = std::time::Duration::from_secs(60);
+/// Where the agents' programs are looked for: the folders the account's
+/// login shell puts on its `PATH`, then the daemon's own `PATH` and the
+/// usual install folders (`hide_agent_hooks::cli_path_with`). A join fails
+/// only for a folder whose name holds the separator, which no search can
+/// hold, so then nothing is found.
+fn search_path(target: &KitTarget) -> OsString {
+    let shell = login_shell_path(target);
+    // A test machine's own agents must not decide what a fixture home finds,
+    // so under test the search is the fixture's `~/.local/bin` and what the
+    // fixture's stand-in shell answers, never this process's `PATH`.
+    #[cfg(test)]
+    {
+        let folders = shell
+            .iter()
+            .flat_map(std::env::split_paths)
+            .chain([target.home.join(".local/bin")]);
+        std::env::join_paths(folders).unwrap_or_default()
+    }
+    #[cfg(not(test))]
+    {
+        hide_agent_hooks::cli_path_with(&target.home, shell.as_deref()).unwrap_or_default()
+    }
+}
 
-type VersionKey = (PathBuf, Option<std::time::SystemTime>, u64);
+/// The account's login shell: `$SHELL` on macOS and Linux, which launchd
+/// gives an app and sshd gives an exec channel. Windows has none to ask; a
+/// process there is given the account's own `Path`. A Unix process started
+/// without `SHELL` asks none, and the log says so.
+pub(crate) fn login_shell() -> Option<PathBuf> {
+    if cfg!(windows) {
+        return None;
+    }
+    hide_platform::host::default_shell()
+        .inspect_err(|error| eprintln!("kit.login_shell_missing kind={:?}", error.kind()))
+        .ok()
+}
+
+/// How long the login shell has to answer, as long as the desktop host gives
+/// it when it asks the same question.
+const LOGIN_SHELL_DEADLINE: Duration = Duration::from_secs(10);
+
+/// The startup files a login shell reads that installers edit to put their
+/// folder on the `PATH`: zsh's (in the home, and in `~/.config/zsh` for a
+/// `ZDOTDIR` there), bash's and sh's, fish's, and the system's own.
+const STARTUP_FILES_IN_HOME: &[&str] = &[
+    ".zshenv",
+    ".zprofile",
+    ".zshrc",
+    ".zlogin",
+    ".config/zsh/.zshenv",
+    ".config/zsh/.zprofile",
+    ".config/zsh/.zshrc",
+    ".config/zsh/.zlogin",
+    ".bash_profile",
+    ".bash_login",
+    ".profile",
+    ".bashrc",
+    ".config/fish/config.fish",
+    ".config/fish/conf.d",
+    ".config/fish/fish_variables",
+];
+const SYSTEM_STARTUP_FILES: &[&str] = &[
+    "/etc/paths",
+    "/etc/paths.d",
+    "/etc/zshenv",
+    "/etc/zprofile",
+    "/etc/zshrc",
+    "/etc/zlogin",
+    "/etc/profile",
+    "/etc/profile.d",
+    "/etc/bashrc",
+    "/etc/bash.bashrc",
+];
+
+/// Each startup file's write time and length, `None` where there is none.
+type StartupStamps = Vec<Option<(Option<SystemTime>, u64)>>;
+
+fn startup_stamps(home: &Path) -> StartupStamps {
+    STARTUP_FILES_IN_HOME
+        .iter()
+        .map(|name| home.join(name))
+        .chain(SYSTEM_STARTUP_FILES.iter().map(PathBuf::from))
+        .map(|file| {
+            std::fs::metadata(file)
+                .ok()
+                .map(|meta| (meta.modified().ok(), meta.len()))
+        })
+        .collect()
+}
+
+/// What the login shell last answered, for which shell, home and startup
+/// files, and when it was asked.
+struct ShellAnswer {
+    shell: PathBuf,
+    home: PathBuf,
+    stamps: StartupStamps,
+    path: Option<OsString>,
+    asked: Instant,
+}
+
+/// The `PATH` the account's login shell sets up, asked again only when one
+/// of its startup files changed: an installer puts its folder on the `PATH`
+/// by editing one, and Settings re-reads the kit every few seconds, which
+/// must not start a shell each time. A file those files read in turn is not
+/// watched; the next launch or connection asks afresh. A shell that did not
+/// answer is asked again after [`UNREAD_RETRY`], and the search goes on
+/// without its folders meanwhile; the failure is logged, since there is
+/// nothing on screen the operator could do about it (design rule 13).
+fn login_shell_path(target: &KitTarget) -> Option<OsString> {
+    static ANSWER: LazyLock<Mutex<Option<ShellAnswer>>> = LazyLock::new(Mutex::default);
+    let shell = target.login_shell.as_deref()?;
+    let stamps = startup_stamps(&target.home);
+    if let Ok(answer) = ANSWER.lock()
+        && let Some(answer) = answer.as_ref()
+        && answer.shell == shell
+        && answer.home == target.home
+        && answer.stamps == stamps
+        && (answer.path.is_some() || answer.asked.elapsed() < UNREAD_RETRY)
+    {
+        return answer.path.clone();
+    }
+    let asked = Instant::now();
+    let path = match hide_platform::host::login_shell_path(
+        shell,
+        &target.home,
+        LOGIN_SHELL_DEADLINE,
+        &target.stop,
+    ) {
+        Ok(path) => Some(path),
+        // The kit's owner is going away (Hide quitting, a device's
+        // connection closed): nothing failed, and nothing is remembered.
+        Err(error) if error.kind() == std::io::ErrorKind::Interrupted => return None,
+        Err(error) => {
+            eprintln!(
+                "kit.login_shell_unread shell={} kind={:?} elapsed_ms={}",
+                shell.display(),
+                error.kind(),
+                asked.elapsed().as_millis()
+            );
+            None
+        }
+    };
+    if let Ok(mut answer) = ANSWER.lock() {
+        *answer = Some(ShellAnswer {
+            shell: shell.to_path_buf(),
+            home: target.home.clone(),
+            stamps,
+            path: path.clone(),
+            asked,
+        });
+    }
+    path
+}
+
+/// How long an answer that could not be read (a version, the login shell's
+/// `PATH`) is not asked for again. One that was read stays until what it
+/// came from changes.
+const UNREAD_RETRY: Duration = Duration::from_secs(60);
+
+type VersionKey = (PathBuf, Option<SystemTime>, u64);
 
 /// What was answered for a program's version, and when it was asked.
-type VersionAnswers = std::collections::HashMap<VersionKey, (Option<String>, std::time::Instant)>;
+type VersionAnswers = std::collections::HashMap<VersionKey, (Option<String>, Instant)>;
 
-/// `binary --version`, asked at most once per version of the file: Settings
-/// re-reads the kit every few seconds, and a subprocess per read would put a
-/// slow or hanging program on the kit worker for as long as Settings is open.
-/// The probe itself is bounded (`hide_agent_hooks::program_version`).
-pub(crate) fn program_version(binary: &Path, home: &Path) -> Option<String> {
-    use std::sync::{LazyLock, Mutex};
-    use std::time::Instant;
-
+/// `binary --version`, run with `path`, asked at most once per version of the
+/// file: Settings re-reads the kit every few seconds, and a subprocess per
+/// read would put a slow or hanging program on the kit worker for as long as
+/// Settings is open. The probe itself is bounded
+/// (`hide_agent_hooks::program_version`).
+fn program_version(binary: &Path, path: &OsStr) -> Option<String> {
     static ANSWERS: LazyLock<Mutex<VersionAnswers>> = LazyLock::new(Mutex::default);
     let key = std::fs::metadata(binary)
         .map(|meta| (binary.to_path_buf(), meta.modified().ok(), meta.len()))
@@ -538,11 +652,11 @@ pub(crate) fn program_version(binary: &Path, home: &Path) -> Option<String> {
     if let Some(key) = &key
         && let Ok(answers) = ANSWERS.lock()
         && let Some((version, asked)) = answers.get(key)
-        && (version.is_some() || asked.elapsed() < UNREAD_VERSION_RETRY)
+        && (version.is_some() || asked.elapsed() < UNREAD_RETRY)
     {
         return version.clone();
     }
-    let version = hide_agent_hooks::program_version(binary, home);
+    let version = hide_agent_hooks::program_version(binary, path);
     if let Some(key) = key
         && let Ok(mut answers) = ANSWERS.lock()
     {
@@ -658,20 +772,20 @@ pub struct PieceReport {
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "snake_case")]
 pub enum Availability {
-    /// Detected, and at least one of its pieces (the skill, the hook) works
+    /// Installed, and at least one of its pieces (the skill, the hook) works
     /// on this system: the switch works.
     Available,
-    /// Not found on this machine.
+    /// None of its programs is found on this machine.
     NotInstalled,
-    /// Found, but neither the skill folder nor the hook is documented for
+    /// Installed, but neither the skill folder nor the hook is documented for
     /// this system, so there is nothing for the switch to do.
     UnsupportedSystem,
 }
 
-/// What the switch can do for an agent: it needs the agent on the machine and
-/// at least one piece that works on this system.
-pub(crate) fn availability(detected: bool, skill_here: bool, hook_here: bool) -> Availability {
-    if !detected {
+/// What the switch can do for an agent: it needs the agent installed and at
+/// least one piece that works on this system.
+pub(crate) fn availability(installed: bool, skill_here: bool, hook_here: bool) -> Availability {
+    if !installed {
         Availability::NotInstalled
     } else if !skill_here && !hook_here {
         Availability::UnsupportedSystem

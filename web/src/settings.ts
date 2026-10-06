@@ -340,7 +340,7 @@ export function kitAgentLine(agent: KitAgent, t: Translate): { text: string; ton
 }
 
 /**
- * The agent's switch: an agent set up on the machine can be switched; one
+ * The agent's switch: an agent installed on the machine can be switched; one
  * that is not has nothing to switch, and one that is on keeps a switch so it
  * can be turned off.
  */
@@ -361,19 +361,19 @@ export function kitAgentGets(agent: KitAgent, t: Translate): string {
 
 /**
  * Every machine's agents for the Agents tab (B27): This Mac first, then each
- * device in the Devices tab's order. `setUp` are the agents on the machine
+ * device in the Devices tab's order. `listed` are the agents installed there
  * (or on, which the operator can still turn off); `others` are the labels of
  * the rest, which have nothing to switch. A machine whose kit does not run
  * carries its reason instead of rows; one not checked yet carries neither.
  */
-export function kitAgentMachines(devices: readonly Device[]): { device: Device; setUp: KitAgent[]; others: string[]; unavailable: string | null }[] {
+export function kitAgentMachines(devices: readonly Device[]): { device: Device; listed: KitAgent[]; others: string[]; unavailable: string | null }[] {
   return devices
     .filter((device) => device.kind === "remote" || device.id === "local")
     .map((device) => {
       const agents = device.kit?.agents ?? [];
       return {
         device,
-        setUp: agents.filter((agent) => kitAgentSwitch(agent) !== null),
+        listed: agents.filter((agent) => kitAgentSwitch(agent) !== null),
         others: agents.filter((agent) => kitAgentSwitch(agent) === null).map((agent) => agent.label),
         unavailable: device.kit?.unavailable ?? null,
       };

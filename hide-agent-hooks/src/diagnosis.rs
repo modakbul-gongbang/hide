@@ -6,7 +6,7 @@
 //! that matches is the one shown; nothing falls through to an empty value or
 //! an invented cause (PRD B21, B32, D-64).
 
-use std::ffi::OsString;
+use std::ffi::{OsStr, OsString};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::AtomicBool;
@@ -341,7 +341,9 @@ pub fn runtime_compatibility(runtime: AgentRuntime, home: &Path) -> MemoryCompat
             minimum_version: minimum.to_owned(),
         };
     };
-    let Some(output) = version_output(&binary, home, RUNTIME_VERSION_PROBE_TIMEOUT) else {
+    let Some(output) = cli_path(home)
+        .and_then(|path| version_output(&binary, &path, RUNTIME_VERSION_PROBE_TIMEOUT))
+    else {
         return MemoryCompatibility::UpdateRequired {
             installed_version: None,
             minimum_version: minimum.to_owned(),
@@ -374,8 +376,8 @@ pub(crate) fn runtime_binary(runtime: AgentRuntime, home: &Path) -> Option<PathB
     find_binary(name, home)
 }
 
-/// The program `name` as a hook's daemon would find it on [`cli_path`].
-/// The install kit uses it to detect every agent it has an adapter for.
+/// The program `name` as a hook's daemon would find it on [`cli_path`],
+/// without the login shell's folders, which only the install kit reads.
 pub fn find_binary(name: &str, home: &Path) -> Option<PathBuf> {
     hide_platform::host::find_program(&cli_path(home)?, name)
 }
@@ -387,8 +389,32 @@ pub fn find_binary(name: &str, home: &Path) -> Option<PathBuf> {
 /// (pnpm's `codex` is a shell script that runs `node`), so a CLI found here
 /// is run with this value, never with the daemon's `PATH` alone.
 pub fn cli_path(home: &Path) -> Option<OsString> {
+    cli_path_with(home, None)
+}
+
+/// [`cli_path`] with the folders the account's login shell puts on its
+/// `PATH` in front, in the shell's order, which is the order the operator's
+/// terminal searches: an installer that adds its own folder in `~/.zshrc`
+/// (`~/.grok/bin`, `~/.kilo/bin`, `~/.opencode/bin`) reaches no other place
+/// this search looks. Asking the shell is a subprocess with a deadline, so
+/// only the install kit asks (`hide_platform::host::login_shell_path`) and
+/// hands the answer in here; a folder named twice is searched once.
+pub fn cli_path_with(home: &Path, shell_path: Option<&OsStr>) -> Option<OsString> {
     let inherited = hide_platform::host::login_path().unwrap_or_else(|_| "/usr/bin:/bin".into());
-    std::env::join_paths(std::env::split_paths(&inherited).chain([
+    let mut seen = std::collections::HashSet::new();
+    let shell = shell_path.map(std::env::split_paths).into_iter().flatten();
+    std::env::join_paths(
+        shell
+            .chain(std::env::split_paths(&inherited))
+            .chain(usual_install_folders(home))
+            .filter(|folder| seen.insert(folder.clone())),
+    )
+    .ok()
+}
+
+/// The folders installers put a CLI in that a daemon's `PATH` may not reach.
+fn usual_install_folders(home: &Path) -> [PathBuf; 8] {
+    [
         home.join(".local/bin"),
         // pnpm's global bin folder: `$PNPM_HOME` up to pnpm 10 and
         // `$PNPM_HOME/bin` from pnpm 11, with `$PNPM_HOME` defaulting to
@@ -400,21 +426,21 @@ pub fn cli_path(home: &Path) -> Option<OsString> {
         home.join(".npm-global/bin"),
         PathBuf::from("/opt/homebrew/bin"),
         PathBuf::from("/usr/local/bin"),
-    ]))
-    .ok()
+    ]
 }
 
-/// The version a program reports for `--version`, within the same short
-/// bound the runtime probe uses; `None` when it does not answer in time,
-/// exits non-zero or prints no `x.y.z`.
-pub fn program_version(binary: &Path, home: &Path) -> Option<String> {
-    version_output(binary, home, RUNTIME_VERSION_PROBE_TIMEOUT)
+/// The version a program reports for `--version`, run with `path` (the
+/// search it was found on), within the same short bound the runtime probe
+/// uses; `None` when it does not answer in time, exits non-zero or prints no
+/// `x.y.z`.
+pub fn program_version(binary: &Path, path: &OsStr) -> Option<String> {
+    version_output(binary, path, RUNTIME_VERSION_PROBE_TIMEOUT)
         .and_then(|output| parse_version(&output))
 }
 
-fn version_output(binary: &Path, home: &Path, timeout: Duration) -> Option<String> {
+fn version_output(binary: &Path, path: &OsStr, timeout: Duration) -> Option<String> {
     let mut command = Command::new(binary);
-    command.arg("--version").env("PATH", cli_path(home)?);
+    command.arg("--version").env("PATH", path);
     let finished = run_to_end(&mut command, timeout, &AtomicBool::new(false)).ok()?;
     let output = if finished.stdout.trim().is_empty() {
         finished.stderr
