@@ -1348,11 +1348,45 @@ fn set_aside(root: &Path, common: &Path, checkout: &Path, force: bool) -> Option
                 "checkout": checkout,
                 "os_error": error.raw_os_error(),
                 "message": error.to_string(),
+                "holders": holders_of(checkout),
             })
         );
         return None;
     }
     Some(SetAside { entry, admin })
+}
+
+/// Who holds the folder a rename was refused for, for the refusal's record: the
+/// processes the operating system lists with this process's own id beside
+/// them, so the record says whether the holder is this process or another one.
+/// Only Windows has the question; elsewhere, and when it cannot be asked, the
+/// answer says so rather than reading as nobody.
+fn holders_of(folder: &Path) -> serde_json::Value {
+    #[cfg(windows)]
+    {
+        let started = std::time::Instant::now();
+        match hide_platform::fs::holders::holders_of(folder, 256) {
+            Ok(holders) => serde_json::json!({
+                "self_pid": std::process::id(),
+                "scan_ms": started.elapsed().as_millis() as u64,
+                "processes": holders
+                    .iter()
+                    .map(|holder| serde_json::json!({
+                        "pid": holder.pid,
+                        "process": holder.process,
+                        "path": holder.path,
+                        "access": format!("{:#x}", holder.access),
+                    }))
+                    .collect::<Vec<_>>(),
+            }),
+            Err(error) => serde_json::json!({"unavailable": error.to_string()}),
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = folder;
+        serde_json::json!({"unavailable": "only Windows reports holders"})
+    }
 }
 
 /// The name of the worktree's administrative folder, from the `gitdir:`
