@@ -16,7 +16,7 @@ const agent = (id: string, availability: KitAgent["availability"]): KitAgent => 
 describe("the first-run agent choice", () => {
   const agents = [agent("claude-code", "available"), agent("cursor", "not_installed"), agent("codex", "available"), agent("amp", "unsupported_system")];
 
-  it("starts with the agents that are set up on, and never switches on one that is not", () => {
+  it("starts with the agents that are installed on, and never switches on one that is not", () => {
     expect([...selection(agents, new Set())]).toEqual(["claude-code", "codex"]);
     // The operator's flip turns one off; a flip of a tile with no switch changes nothing.
     expect([...selection(agents, new Set(["codex", "cursor"]))]).toEqual(["claude-code"]);

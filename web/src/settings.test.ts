@@ -274,17 +274,17 @@ describe("the install kit rows (PRD device-parity B7, B8, B27)", () => {
     expect(kitPartLine(part("codex_per_pane", "off"))).toEqual({ text: "Off", tone: "muted" });
   });
 
-  it("lists This Mac first and then each device, with the agents that are set up and the labels of the rest", () => {
+  it("lists This Mac first and then each device, with the agents that are installed and the labels of the rest", () => {
     const set = [agent("codex", { hook: piece("installed") }), agent("gemini-cli", { enabled: false, skill: piece("off") }), agent("cursor", { availability: "not_installed", enabled: false, skill: piece("off") })];
     const local = device({ id: "local", label: "mini", kind: "local", state: "ready", ssh_alias: null, kit: kit([part("cli", "installed")], null, set) });
     const studio = device({ kit: kit([], "Allow the helper to install Hide on Studio") });
     const unchecked = device({ id: "box", label: "Box" });
     const machines = kitAgentMachines([local, studio, unchecked]);
     expect(machines.map((machine) => machine.device.id)).toEqual(["local", "studio", "box"]);
-    expect(machines[0]?.setUp.map((row) => row.id)).toEqual(["codex", "gemini-cli"]);
+    expect(machines[0]?.listed.map((row) => row.id)).toEqual(["codex", "gemini-cli"]);
     expect(machines[0]?.others).toEqual(["cursor"]);
-    expect(machines[1]).toMatchObject({ setUp: [], others: [], unavailable: "Allow the helper to install Hide on Studio" });
-    expect(machines[2]).toMatchObject({ setUp: [], unavailable: null });
+    expect(machines[1]).toMatchObject({ listed: [], others: [], unavailable: "Allow the helper to install Hide on Studio" });
+    expect(machines[2]).toMatchObject({ listed: [], unavailable: null });
   });
 
   it("words an agent by its switch and its worst piece, and switches only what can be switched (issue #517)", () => {
@@ -299,7 +299,7 @@ describe("the install kit rows (PRD device-parity B7, B8, B27)", () => {
     expect(kitAgentSwitch(agent("a"))).toEqual({ on: true });
     expect(kitAgentSwitch(agent("a", { enabled: false }))).toEqual({ on: false });
     expect(kitAgentSwitch(agent("a", { availability: "not_installed", enabled: false }))).toBeNull();
-    // An agent that is on keeps its switch even where it can no longer be set up.
+    // An agent that is on keeps its switch even where its program is no longer found.
     expect(kitAgentSwitch(agent("a", { availability: "not_installed" }))).toEqual({ on: true });
     expect(kitAgentNeedsReinstall(agent("a", { hook: piece("removed") }))).toBe(true);
     expect(kitAgentNeedsReinstall(agent("a", { enabled: false, skill: piece("removed") }))).toBe(false);
