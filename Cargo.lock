@@ -1257,6 +1257,7 @@ dependencies = [
  "base64 0.23.1",
  "cap-std",
  "hide-agent-hooks",
+ "hide-ai",
  "hide-herdr-client",
  "hide-kit",
  "hide-node-link",
@@ -1317,6 +1318,7 @@ version = "0.1.0"
 dependencies = [
  "base64 0.23.1",
  "hide-agent-hooks",
+ "hide-ai",
  "hide-kit",
  "hide-platform",
  "hide-session",

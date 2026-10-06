@@ -440,6 +440,18 @@ pub fn handle_with_progress(
         Call::Git { root, command } => {
             to_value(crate::git_command::run(&absolute(&root)?, &command)?)
         }
+        Call::CodexCredentials { codex_home } => {
+            to_value(crate::usage::codex_credentials(&absolute(&codex_home)?))
+        }
+        Call::CodexSessionUsage { codex_home } => {
+            to_value(crate::usage::codex_session_usage(&absolute(&codex_home)?))
+        }
+        Call::ClaudeUsageText { cwd } => {
+            let cwd = absolute(&cwd)?;
+            to_value(crate::usage::claude_usage_text(&cwd, &mut || {
+                progress(Value::Null)
+            }))
+        }
         Call::ReadAttachments { paths } => to_value(
             crate::attachments::read_sources(&paths, &mut |index| progress(Value::from(index)))
                 .map_err(|reason| HostError::new(ErrorCode::InvalidPath, reason))?,

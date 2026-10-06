@@ -278,6 +278,22 @@ pub enum Call {
         root: String,
         command: crate::git::GitCommand,
     },
+    /// The Codex login in `<codex_home>/auth.json`
+    /// (`usage::CredentialsAnswer`).
+    CodexCredentials {
+        codex_home: String,
+    },
+    /// The weekly window the newest Codex session under `codex_home`
+    /// recorded (`usage::CodexWeeklyUsage`), or `null`.
+    CodexSessionUsage {
+        codex_home: String,
+    },
+    /// `claude -p /usage` run in `cwd` with the operator's login
+    /// (`usage::UsageText`), reporting at least once a second; a report
+    /// answered with false cancels it.
+    ClaudeUsageText {
+        cwd: String,
+    },
     /// Reads files the operator picked to attach to a terminal
     /// (`attachments::ReadFile`, in order), reporting before each file; a
     /// report answered with false ends the read as cancelled.

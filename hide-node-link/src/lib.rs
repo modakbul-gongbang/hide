@@ -28,6 +28,7 @@ pub mod process;
 pub mod protocol;
 pub mod register;
 pub mod save;
+pub mod usage;
 pub mod worktrees;
 
 pub use error::{ErrorCode, HostError, HostResult};

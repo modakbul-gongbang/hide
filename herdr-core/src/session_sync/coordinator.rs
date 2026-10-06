@@ -93,7 +93,10 @@ fn run_coordinator(
     // Kept for the AI settings and the counter sweep below, which read this
     // machine's files themselves.
     let hook_home = context.is_local().then(|| home_path.clone()).flatten();
-    let mut usage_reader = usage_paths.map(crate::usage::ProviderUsageReader::new);
+    // The rows read the operator's logins, which are the core's own node's.
+    let mut usage_reader = usage_paths
+        .zip(context.node().map(Arc::clone))
+        .map(|(paths, node)| crate::usage::ProviderUsageReader::new(paths, node));
     // A listening port is this machine's, so only the local coordinator looks.
     let mut ports_reader = context
         .is_local()

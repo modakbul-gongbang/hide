@@ -33,6 +33,7 @@ pub mod register;
 pub mod root;
 pub mod save;
 pub mod serve;
+pub mod usage;
 pub mod workspace_bridge;
 pub mod worktrees;
 

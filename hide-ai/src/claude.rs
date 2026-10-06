@@ -115,7 +115,8 @@ impl Default for ClaudeConfig {
 
 /// Why a `/usage` read produced no text. The caller decides what each one
 /// means for the screen; no variant carries output, a token, or an account.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
+#[serde(tag = "error", content = "kind", rename_all = "snake_case")]
 pub enum UsageError {
     /// The binary is not on `PATH` (or the configured path is not a file).
     NotInstalled,
