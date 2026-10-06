@@ -815,7 +815,9 @@ fn list_device(
         return Ok(());
     };
     let until = listing.next;
-    let page = call_as::<Vec<Candidate>>(
+    // A page that could not be listed is files not read: the listing is not
+    // recorded as listed through, and the next one starts where it did.
+    let listed = call_as::<Vec<Candidate>>(
         channel,
         Call::LinkFiles {
             since_unix_ms: listing.since,
@@ -823,8 +825,12 @@ fn list_device(
         },
         DEVICE_TIMEOUT,
     )
-    .map_err(|error| device_code(&error))?;
-    let stamps = store.stamps(device)?;
+    .map_err(|error| device_code(&error))
+    .and_then(|page| Ok((store.stamps(device)?, page)));
+    let (stamps, page) = listed.inspect_err(|_| {
+        listing.failed = true;
+        listing.next = None;
+    })?;
     listing.page(&page, until, device);
     entry.queue = unread(page, &stamps);
     Ok(())
@@ -1041,6 +1047,28 @@ mod tests {
             #[allow(clippy::disallowed_methods)] // a polling helper bounded by a deadline
             thread::sleep(Duration::from_millis(5));
         }
+    }
+
+    struct Refusing;
+
+    impl HostChannel for Refusing {
+        fn call(&self, _call: Call, _timeout: Duration) -> Result<HostAnswer, HostCallError> {
+            Err(HostCallError::NotConnected("gone".into()))
+        }
+    }
+
+    /// A device that drops during its listing is not recorded as listed
+    /// through, so what it holds is listed again when it is back (B40).
+    #[test]
+    fn a_failed_device_listing_is_not_recorded_as_listed() {
+        let state = tempfile::tempdir().unwrap();
+        let (store, _) = LinkStore::open(&state.path().join("links.sqlite3")).unwrap();
+        let mut entry = DeviceQueue::default();
+        assert!(list_device(&store, "mini", &Refusing, &mut entry).is_err());
+        finish_device(&store, "mini", &mut entry);
+        assert_eq!(store.meta("listed_at:mini").unwrap(), None);
+        assert!(!entry.filled);
+        assert!(entry.listing.is_none());
     }
 
     /// B20, B40: a connected device's session reaches a Mac project's panel
