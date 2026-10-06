@@ -170,10 +170,19 @@ fn run_for_projects(
                     components,
                     agents_on,
                     agents_off,
-                } => hide_kit::Scope::reinstall(components).merge(hide_kit::Scope::agents(
-                    agents_on.iter().map(String::as_str),
-                    agents_off.iter().map(String::as_str),
-                )),
+                    codex_daemon_off,
+                } => {
+                    let scope =
+                        hide_kit::Scope::reinstall(components).merge(hide_kit::Scope::agents(
+                            agents_on.iter().map(String::as_str),
+                            agents_off.iter().map(String::as_str),
+                        ));
+                    if codex_daemon_off {
+                        scope.merge(hide_kit::Scope::codex_daemon_off())
+                    } else {
+                        scope
+                    }
+                }
                 _ => hide_kit::Scope::automatic(),
             };
             to_value(hide_kit::apply(&target(), &scope))

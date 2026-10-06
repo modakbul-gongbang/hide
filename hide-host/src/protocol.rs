@@ -40,7 +40,11 @@ use crate::root::RootIdentity;
 /// `codex_per_pane`; `reinstall` has no `turn_off` and a report names the
 /// Codex daemon capability itself (PRD settings-cleanup D-06, D-13, D-14). A
 /// helper on 17 would still turn the Codex daemon off and know none of it.
-pub const PROTOCOL_VERSION: u32 = 18;
+/// 19: a `reinstall` can carry `codex_daemon_off`, the operator's own request
+/// to turn Codex's shared server off on that device, and the report that
+/// answers it carries `codex_daemon_off` (PRD settings-cleanup B27). A helper
+/// on 18 would run the pass and silently ignore the request.
+pub const PROTOCOL_VERSION: u32 = 19;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Request {
@@ -231,6 +235,10 @@ pub enum KitAction {
         agents_on: Vec<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         agents_off: Vec<String>,
+        /// Turn Codex's shared server off on this device (the operator's own
+        /// request, never part of a pass).
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        codex_daemon_off: bool,
     },
     Status,
     /// The device is being removed from Hide: Hide's parts come off, then
@@ -313,6 +321,41 @@ pub struct RevisionNow {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// An older caller's `reinstall` has no `codex_daemon_off` and means
+    /// "leave the shared server alone"; the request is on the wire only when
+    /// it is made.
+    #[test]
+    fn a_reinstall_asks_to_turn_the_codex_server_off_only_when_it_says_so() {
+        let plain = serde_json::json!({"kind": "reinstall", "components": ["cli"]});
+        let KitAction::Reinstall {
+            codex_daemon_off, ..
+        } = serde_json::from_value(plain).unwrap()
+        else {
+            panic!("a reinstall");
+        };
+        assert!(!codex_daemon_off);
+        let asked = KitAction::Reinstall {
+            components: Vec::new(),
+            agents_on: Vec::new(),
+            agents_off: Vec::new(),
+            codex_daemon_off: true,
+        };
+        assert_eq!(
+            serde_json::to_value(&asked).unwrap(),
+            serde_json::json!({"kind": "reinstall", "components": [], "codex_daemon_off": true})
+        );
+        let unasked = KitAction::Reinstall {
+            components: Vec::new(),
+            agents_on: Vec::new(),
+            agents_off: Vec::new(),
+            codex_daemon_off: false,
+        };
+        assert_eq!(
+            serde_json::to_value(&unasked).unwrap(),
+            serde_json::json!({"kind": "reinstall", "components": []})
+        );
+    }
 
     #[test]
     fn machine_identity_reports_unavailability_and_refuses_invalid_ids() {

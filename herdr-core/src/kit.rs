@@ -216,6 +216,7 @@ fn call_device(call: &DeviceKitCall) -> DeviceKitAnswer {
             components: scope.restore.iter().copied().collect(),
             agents_on: scope.agent_on.iter().cloned().collect(),
             agents_off: scope.agent_off.iter().cloned().collect(),
+            codex_daemon_off: scope.codex_daemon_off,
         },
         DeviceKitWork::Job(KitJob::Status) => KitAction::Status,
         DeviceKitWork::Remove => KitAction::Remove,

@@ -447,3 +447,122 @@ fn reopen_refuses_what_it_cannot_do_with_a_code_and_never_for_a_missing_hook() {
     assert_eq!(reopen_of(&runtime, "w1:p4"), None);
     assert!(runtime.pane_reopens.is_empty());
 }
+
+fn disable(runtime: &mut Runtime, device: &str) -> bool {
+    runtime.dispatch_json(
+        &serde_json::to_vec(&serde_json::json!({
+            "schema_version": SCHEMA_VERSION,
+            "kind": "codex_daemon_disable",
+            "payload": {"device_id": device}
+        }))
+        .unwrap(),
+    )
+}
+
+fn off_of(runtime: &Runtime) -> Option<crate::model::CodexDaemonOffSnapshot> {
+    runtime.snapshot.navigator.devices[0].kit.codex_daemon_off
+}
+
+fn report_with(on: bool, off: Option<hide_kit::CodexDaemonOff>) -> hide_kit::KitReport {
+    hide_kit::KitReport {
+        codex_daemon: Some(true),
+        codex_daemon_on: Some(on),
+        codex_daemon_off: off,
+        ..hide_kit::KitReport::default()
+    }
+}
+
+/// B27: the link on a Codex pane's popover turns the shared server off on
+/// this Mac through the kit worker. It is pending until the pass that
+/// carried it answers, nothing is queued twice, a failure is a code and
+/// leaves the setting, and a success re-judges the panes at once.
+#[test]
+fn the_shared_server_off_request_is_one_queued_pass_and_its_answer_is_a_code() {
+    use crate::model::CodexDaemonOffSnapshot as Off;
+    let mut runtime = runtime();
+    kit_rows(&mut runtime, Some(true));
+    runtime.ingest_hook_diagnosis(diagnosis(installed(), installed()));
+    feed(&mut runtime, &[("w1:p1", "codex", false)]);
+    assert_eq!(
+        connection_of(&runtime, "w1:p1").and_then(|connection| connection.reason),
+        Some(PaneConnectionReason::CodexSharedServer)
+    );
+
+    assert!(disable(&mut runtime, "local"));
+    assert_eq!(off_of(&runtime), Some(Off::Pending));
+    assert_eq!(
+        runtime.local_kit_pending,
+        Some(hide_kit::Scope::codex_daemon_off())
+    );
+    assert!(!disable(&mut runtime, "local"), "the same intent runs once");
+
+    // A read that lands first says nothing about the request.
+    runtime.ingest_kit_report(crate::workspace::LOCAL_DEVICE_ID, &report_with(true, None));
+    assert_eq!(off_of(&runtime), Some(Off::Pending));
+
+    runtime.ingest_kit_report(
+        crate::workspace::LOCAL_DEVICE_ID,
+        &report_with(
+            true,
+            Some(hide_kit::CodexDaemonOff::Failed {
+                reason: hide_kit::CodexDaemonOffFailure::TimedOut,
+                detail: "codex features disable did not answer".to_owned(),
+            }),
+        ),
+    );
+    assert_eq!(
+        off_of(&runtime),
+        Some(Off::Failed {
+            reason: hide_kit::CodexDaemonOffFailure::TimedOut
+        })
+    );
+    assert_eq!(
+        connection_of(&runtime, "w1:p1").and_then(|connection| connection.reason),
+        Some(PaneConnectionReason::CodexSharedServer),
+        "a failure leaves the pane as it was"
+    );
+
+    // Trying again is a new attempt; a success turns the pane's reason into
+    // the one a session started before the hook has.
+    assert!(disable(&mut runtime, "local"));
+    assert_eq!(off_of(&runtime), Some(Off::Pending));
+    runtime.ingest_kit_report(
+        crate::workspace::LOCAL_DEVICE_ID,
+        &report_with(false, Some(hide_kit::CodexDaemonOff::Done)),
+    );
+    assert_eq!(off_of(&runtime), Some(Off::Done));
+    assert_eq!(
+        connection_of(&runtime, "w1:p1").and_then(|connection| connection.reason),
+        Some(PaneConnectionReason::StartedBeforeHide)
+    );
+    assert!(
+        !disable(&mut runtime, "local"),
+        "already off: nothing to turn off"
+    );
+}
+
+#[test]
+fn a_machine_with_no_kit_or_no_such_device_refuses_the_request_with_an_error() {
+    let mut runtime = runtime();
+    runtime.set_local_kit_unavailable("standalone daemon");
+    assert!(disable(&mut runtime, "local"));
+    assert_eq!(
+        runtime
+            .snapshot()
+            .status
+            .last_error
+            .as_ref()
+            .map(|error| error.kind.as_str()),
+        Some("kit.unavailable")
+    );
+    assert!(disable(&mut runtime, "nowhere"));
+    assert_eq!(
+        runtime
+            .snapshot()
+            .status
+            .last_error
+            .as_ref()
+            .map(|error| error.kind.as_str()),
+        Some("kit.unknown_machine")
+    );
+}

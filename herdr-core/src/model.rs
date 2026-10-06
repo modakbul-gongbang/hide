@@ -663,19 +663,7 @@ pub enum CodexDaemonOffSnapshot {
     Failed { reason: CodexDaemonOffFailure },
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum CodexDaemonOffFailure {
-    /// No Codex program was found on the machine.
-    CodexMissing,
-    /// Codex refused the change or answered something Hide cannot read.
-    CodexRefused,
-    /// Codex did not answer in time and was stopped.
-    TimedOut,
-    /// The machine could not be asked: Hide was quitting or the device's
-    /// helper was away.
-    Unreachable,
-}
+pub use hide_kit::CodexDaemonOffFailure;
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
 pub struct KitComponentSnapshot {
@@ -844,7 +832,15 @@ impl KitSnapshot {
             shares_account_with: None,
             codex_daemon: report.codex_daemon,
             codex_daemon_on: report.codex_daemon_on,
-            codex_daemon_off: None,
+            codex_daemon_off: report
+                .codex_daemon_off
+                .as_ref()
+                .map(|outcome| match outcome {
+                    hide_kit::CodexDaemonOff::Done => CodexDaemonOffSnapshot::Done,
+                    hide_kit::CodexDaemonOff::Failed { reason, .. } => {
+                        CodexDaemonOffSnapshot::Failed { reason: *reason }
+                    }
+                }),
         }
     }
 

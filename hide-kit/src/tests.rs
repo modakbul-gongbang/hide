@@ -1087,6 +1087,69 @@ fn the_report_says_whether_the_shared_daemon_is_on() {
     assert_eq!(status(&fixture.target).codex_daemon_on, None);
 }
 
+/// B27: the operator's own request is the only thing that turns the shared
+/// server off, it asks Codex once, and the report that answers reads the
+/// setting afterwards.
+#[test]
+fn the_operators_request_turns_the_shared_daemon_off_once_and_says_so() {
+    let mut fixture = Fixture::new();
+    fake_codex(&mut fixture, "true");
+
+    let report = apply(&fixture.target, &Scope::codex_daemon_off());
+
+    assert_eq!(report.codex_daemon_off, Some(CodexDaemonOff::Done));
+    assert_eq!(fixture.daemon_setting(), "false");
+    assert_eq!(
+        fixture.codex_writes(),
+        ["features disable daemon_auto_start"]
+    );
+    assert_eq!(report.codex_daemon_on, Some(false));
+    assert_eq!(
+        apply(&fixture.target, &Scope::automatic()).codex_daemon_off,
+        None,
+        "a pass that was not asked answers nothing about it"
+    );
+    assert_eq!(fixture.codex_writes().len(), 1);
+}
+
+#[test]
+fn a_refused_request_leaves_the_setting_and_names_a_code() {
+    let mut fixture = Fixture::new();
+    fake_codex(&mut fixture, "true");
+    std::fs::write(fixture.home().join("codex-fails"), "").unwrap();
+
+    let report = apply(&fixture.target, &Scope::codex_daemon_off());
+
+    let Some(CodexDaemonOff::Failed { reason, detail }) = report.codex_daemon_off else {
+        panic!("the request failed: {:?}", report.codex_daemon_off);
+    };
+    assert_eq!(reason, CodexDaemonOffFailure::CodexRefused);
+    assert!(
+        detail.contains("locked"),
+        "Codex's words stay for the log: {detail}"
+    );
+    assert_eq!(fixture.daemon_setting(), "true");
+
+    let fixture = Fixture::new();
+    assert_eq!(
+        apply(&fixture.target, &Scope::codex_daemon_off()).codex_daemon_off,
+        Some(CodexDaemonOff::Failed {
+            reason: CodexDaemonOffFailure::CodexMissing,
+            detail: "no codex program was found".to_owned(),
+        })
+    );
+}
+
+#[test]
+fn the_request_is_not_an_automatic_pass_and_survives_a_merge() {
+    assert!(!Scope::codex_daemon_off().is_automatic());
+    let merged = Scope::reinstall([ComponentId::Cli])
+        .merge(Scope::codex_daemon_off())
+        .merge(Scope::agents(["codex"], []));
+    assert!(merged.codex_daemon_off);
+    assert!(merged.restore.contains(&ComponentId::Cli));
+}
+
 #[test]
 fn the_report_says_whether_the_codex_has_the_daemon_setting() {
     // No codex at all.

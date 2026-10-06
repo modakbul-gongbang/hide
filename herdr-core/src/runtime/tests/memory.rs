@@ -430,6 +430,7 @@ fn hook_repair_resumes_only_the_enable_intent_the_operator_approved() {
             legacy_retirement: Default::default(),
             codex_daemon: None,
             codex_daemon_on: None,
+            codex_daemon_off: None,
         },
     );
 

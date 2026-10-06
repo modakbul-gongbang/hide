@@ -1015,6 +1015,14 @@ pub(super) struct KitReinstallPayload {
     pub(super) agents: Option<Vec<String>>,
 }
 
+/// The operator asked, from a not connected Codex pane's popover, for Codex's
+/// shared server to be turned off on one machine (PRD settings-cleanup B27).
+/// `device_id` is `local` for this Mac.
+#[derive(Debug, Deserialize)]
+pub(super) struct CodexDaemonDisablePayload {
+    pub(super) device_id: String,
+}
+
 /// The operator switched an agent on or off from its row (issue #517); every
 /// adapter id has a switch, whether or not the agent is set up there.
 #[derive(Debug, Deserialize)]
@@ -1275,6 +1283,7 @@ pub(super) enum Event {
     CancelRepositoryClone(CancelRepositoryClonePayload),
     KitReinstall(KitReinstallPayload),
     KitAgentSet(KitAgentSetPayload),
+    CodexDaemonDisable(CodexDaemonDisablePayload),
     KitCheck(KitCheckPayload),
     UiAttached(UiAttachedPayload),
     AiSettings(AiSettingsPayload),
@@ -1483,6 +1492,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "cancel_repository_clone" => decode!(CancelRepositoryClonePayload, CancelRepositoryClone),
         "kit_reinstall" => decode!(KitReinstallPayload, KitReinstall),
         "kit_agent_set" => decode!(KitAgentSetPayload, KitAgentSet),
+        "codex_daemon_disable" => decode!(CodexDaemonDisablePayload, CodexDaemonDisable),
         "kit_check" => decode!(KitCheckPayload, KitCheck),
         "ui_attached" => decode!(UiAttachedPayload, UiAttached),
         "ai_settings" => decode!(AiSettingsPayload, AiSettings),
@@ -1741,6 +1751,9 @@ impl Runtime {
             }
             Event::KitAgentSet(payload) => {
                 self.request_kit_agent_set(&payload.device_id, &payload.agent, payload.enabled)
+            }
+            Event::CodexDaemonDisable(payload) => {
+                self.request_codex_daemon_disable(&payload.device_id)
             }
             Event::KitReinstall(payload) => self.request_kit_reinstall(
                 &payload.device_id,

@@ -16,7 +16,7 @@ use hide_kit::{ComponentId, KitReport, Scope};
 use super::Runtime;
 use super::hosts::HostPhase;
 use crate::host_access::HostChannel;
-use crate::model::KitSnapshot;
+use crate::model::{CodexDaemonOffSnapshot, KitSnapshot};
 use crate::workspace::LOCAL_DEVICE_ID;
 
 /// How often this Mac's kit is read again while Settings is on screen, so a
@@ -242,6 +242,24 @@ impl Runtime {
         let mut changed = self.decide_agent_onboarding(device_id, report);
         let mut snapshot = KitSnapshot::from_report(report);
         snapshot.busy = self.kit_install_queued(device_id);
+        // Only the pass that carried the operator's request answers it; a
+        // read that lands before or after keeps what the last one said.
+        match &report.codex_daemon_off {
+            Some(outcome) => {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "kit",
+                    "kind": "codex_daemon_off.answered",
+                    "device_id": device_id,
+                    "outcome": outcome,
+                }));
+            }
+            None => {
+                snapshot.codex_daemon_off = self
+                    .kit_states
+                    .get(device_id)
+                    .and_then(|state| state.codex_daemon_off);
+            }
+        }
         changed |= self.set_kit_state(device_id, snapshot);
         changed
     }
@@ -535,6 +553,57 @@ impl Runtime {
         }
     }
 
+    /// The operator asked for Codex's shared server to be turned off on a
+    /// machine, from a not connected pane's popover (PRD settings-cleanup
+    /// B27). The same request while one is running is the same intent, and a
+    /// machine whose setting is already off, or whose Codex has none, has
+    /// nothing to turn off (engineering rule 11). The answer comes back in
+    /// the report of the pass that carried it, as `codex_daemon_off`.
+    pub(super) fn request_codex_daemon_disable(&mut self, device_id: &str) -> bool {
+        if device_id != LOCAL_DEVICE_ID && !self.device_registration_exists(device_id) {
+            self.set_error(
+                "kit.unknown_machine",
+                format!("Device {device_id} is not registered"),
+                false,
+            );
+            return true;
+        }
+        let state = self.kit_view(device_id);
+        if let Some(reason) = state.unavailable {
+            self.set_error("kit.unavailable", reason, false);
+            return true;
+        }
+        if state.codex_daemon_off == Some(CodexDaemonOffSnapshot::Pending) {
+            return false;
+        }
+        if state.codex_daemon_on != Some(true) {
+            crate::diagnostic!(serde_json::json!({
+                "component": "kit",
+                "kind": "codex_daemon_off.ignored",
+                "device_id": device_id,
+                "codex_daemon_on": state.codex_daemon_on,
+            }));
+            return false;
+        }
+        self.queue_kit_scope(device_id, Scope::codex_daemon_off());
+        let mut state = self.kit_state(device_id);
+        state.codex_daemon_off = Some(CodexDaemonOffSnapshot::Pending);
+        self.set_kit_state(device_id, state);
+        true
+    }
+
+    /// A request that cannot be answered, because the helper it waits for
+    /// is gone or its call never ran, ends as a failure the pane can say.
+    fn end_codex_daemon_off_unanswered(&mut self, device_id: &str) {
+        let mut state = self.kit_state(device_id);
+        if state.codex_daemon_off == Some(CodexDaemonOffSnapshot::Pending) {
+            state.codex_daemon_off = Some(CodexDaemonOffSnapshot::Failed {
+                reason: crate::model::CodexDaemonOffFailure::Unreachable,
+            });
+            self.set_kit_state(device_id, state);
+        }
+    }
+
     /// Queues a Reinstall of `parts` on one machine.
     pub(super) fn queue_kit_reinstall(&mut self, device_id: &str, parts: Vec<ComponentId>) -> bool {
         self.queue_kit_scope(device_id, Scope::reinstall(parts))
@@ -772,6 +841,15 @@ impl Runtime {
                         "Hide could not read its kit on this device: {reason}"
                     ));
                 }
+                // The request rode the call that failed unless a newer one
+                // is still queued.
+                if state.codex_daemon_off == Some(CodexDaemonOffSnapshot::Pending)
+                    && !self.codex_daemon_off_queued(device_id)
+                {
+                    state.codex_daemon_off = Some(CodexDaemonOffSnapshot::Failed {
+                        reason: crate::model::CodexDaemonOffFailure::Unreachable,
+                    });
+                }
                 self.set_kit_state(device_id, state)
             }
         }
@@ -810,6 +888,13 @@ impl Runtime {
         self.device_registration_exists(device_id) && self.start_device_host(device_id)
     }
 
+    fn codex_daemon_off_queued(&self, device_id: &str) -> bool {
+        match self.device_kit_pending.get(device_id) {
+            Some(KitJob::Apply(scope)) => scope.codex_daemon_off,
+            _ => false,
+        }
+    }
+
     /// Queued work cannot run now: the row stops saying it is working.
     pub(super) fn clear_kit_busy(&mut self, device_id: &str) {
         let mut state = self.kit_state(device_id);
@@ -823,6 +908,7 @@ impl Runtime {
     /// nothing queued for it runs.
     pub(super) fn forget_device_kit_work(&mut self, device_id: &str) {
         self.device_kit_pending.remove(device_id);
+        self.end_codex_daemon_off_unanswered(device_id);
         self.reopen_first_run_choice(device_id);
         self.clear_kit_busy(device_id);
     }
@@ -1067,11 +1153,20 @@ impl Runtime {
         if self.kit_states.get(device_id) == Some(&snapshot) {
             return false;
         }
+        let daemon_on_before = self
+            .kit_states
+            .get(device_id)
+            .and_then(|state| state.codex_daemon_on);
+        let daemon_on_now = snapshot.codex_daemon_on;
         self.kit_states.insert(device_id.to_owned(), snapshot);
         self.refresh_device_snapshots();
         // A device's agent panes are judged against its kit.
         if device_id != LOCAL_DEVICE_ID {
             self.refresh_device_catalog(device_id);
+        } else if daemon_on_before != daemon_on_now {
+            // A Codex pane's reason for not being connected follows the
+            // shared server's setting, so it is judged again at once.
+            self.sync_pane_lineage();
         }
         true
     }

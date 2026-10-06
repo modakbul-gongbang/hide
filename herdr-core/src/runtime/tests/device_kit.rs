@@ -112,6 +112,7 @@ fn report(states: &[(ComponentId, ComponentState)]) -> KitReport {
         legacy_retirement: Default::default(),
         codex_daemon: None,
         codex_daemon_on: None,
+        codex_daemon_off: None,
     }
 }
 
@@ -292,6 +293,7 @@ fn reinstall_on_a_device_retries_failed_retirement_and_restores_removed_hooks() 
             ],
             agents_on: Vec::new(),
             agents_off: Vec::new(),
+            codex_daemon_off: false,
         }
     );
 }
@@ -375,6 +377,7 @@ fn an_agent_switch_on_a_device_sends_the_agent_and_repeats_nothing() {
         components: Vec::new(),
         agents_on: on.iter().map(|id| (*id).to_owned()).collect(),
         agents_off: Vec::new(),
+        codex_daemon_off: false,
     };
     assert_eq!(
         actions,
@@ -493,6 +496,7 @@ fn the_first_run_choice_is_asked_once_applied_everywhere_and_remembered_for_late
             components: Vec::new(),
             agents_on: vec!["claude-code".to_owned(), "codex".to_owned()],
             agents_off: Vec::new(),
+            codex_daemon_off: false,
         }]
     );
     let local = shared.lock().unwrap().local_kit_pending.clone().unwrap();
@@ -1295,5 +1299,122 @@ fn an_existing_macs_agents_become_the_saved_choice_a_later_device_receives() {
             .map(String::as_str)
             .collect::<Vec<_>>(),
         ["claude-code", "codex"]
+    );
+}
+
+fn with_daemon(on: bool) -> KitReport {
+    let mut answer = report(&[(ComponentId::Cli, ComponentState::Installed)]);
+    answer.codex_daemon = Some(true);
+    answer.codex_daemon_on = Some(on);
+    answer
+}
+
+/// B27: Turn off Codex's shared server on a device rides one `reinstall`
+/// call to its helper, is pending until that call answers, and the answer
+/// is what the pane's popover shows; a second request while it runs is the
+/// same intent and a machine already off has nothing to turn off.
+#[test]
+fn turning_a_devices_codex_shared_server_off_is_one_helper_call_with_its_own_answer() {
+    let helper = KitDevice::answering(Ok(with_daemon(true)));
+    let shared = with_consent(Some(Arc::clone(&helper)));
+    shared
+        .lock()
+        .unwrap()
+        .queue_device_kit(DEVICE, KitJob::Status);
+    settle(&shared);
+    assert_eq!(kit(&shared).codex_daemon_on, Some(true));
+
+    let mut done = with_daemon(false);
+    done.codex_daemon_off = Some(hide_kit::CodexDaemonOff::Done);
+    *helper.answer.lock().unwrap() = Ok(done);
+    dispatch(
+        &shared,
+        "codex_daemon_disable",
+        serde_json::json!({ "device_id": DEVICE }),
+    );
+    assert_eq!(
+        kit(&shared).codex_daemon_off,
+        Some(crate::model::CodexDaemonOffSnapshot::Pending)
+    );
+    settle(&shared);
+
+    let calls = helper.calls();
+    assert_eq!(calls.len(), 2, "{calls:?}");
+    assert_eq!(
+        calls[1].0,
+        KitAction::Reinstall {
+            components: Vec::new(),
+            agents_on: Vec::new(),
+            agents_off: Vec::new(),
+            codex_daemon_off: true,
+        }
+    );
+    let after = kit(&shared);
+    assert_eq!(
+        after.codex_daemon_off,
+        Some(crate::model::CodexDaemonOffSnapshot::Done)
+    );
+    assert_eq!(after.codex_daemon_on, Some(false));
+
+    // Already off: nothing to turn off, so no second call.
+    dispatch(
+        &shared,
+        "codex_daemon_disable",
+        serde_json::json!({ "device_id": DEVICE }),
+    );
+    settle(&shared);
+    assert_eq!(helper.calls().len(), 2);
+}
+
+#[test]
+fn a_refused_or_unanswered_request_ends_as_a_code_and_a_later_read_does_not_erase_it() {
+    let helper = KitDevice::answering(Ok(with_daemon(true)));
+    let shared = with_consent(Some(Arc::clone(&helper)));
+    shared
+        .lock()
+        .unwrap()
+        .queue_device_kit(DEVICE, KitJob::Status);
+    settle(&shared);
+
+    let mut refused = with_daemon(true);
+    refused.codex_daemon_off = Some(hide_kit::CodexDaemonOff::Failed {
+        reason: hide_kit::CodexDaemonOffFailure::CodexRefused,
+        detail: "config.toml is locked".to_owned(),
+    });
+    *helper.answer.lock().unwrap() = Ok(refused);
+    dispatch(
+        &shared,
+        "codex_daemon_disable",
+        serde_json::json!({ "device_id": DEVICE }),
+    );
+    settle(&shared);
+    let failed = crate::model::CodexDaemonOffSnapshot::Failed {
+        reason: hide_kit::CodexDaemonOffFailure::CodexRefused,
+    };
+    assert_eq!(kit(&shared).codex_daemon_off, Some(failed));
+    assert_eq!(kit(&shared).codex_daemon_on, Some(true), "left as it was");
+
+    // A plain read says nothing about the request, so it keeps the answer.
+    *helper.answer.lock().unwrap() = Ok(with_daemon(true));
+    shared
+        .lock()
+        .unwrap()
+        .queue_device_kit(DEVICE, KitJob::Status);
+    settle(&shared);
+    assert_eq!(kit(&shared).codex_daemon_off, Some(failed));
+
+    // A call that never ran to a report is the machine not being reachable.
+    *helper.answer.lock().unwrap() = Err("the helper went away".to_owned());
+    dispatch(
+        &shared,
+        "codex_daemon_disable",
+        serde_json::json!({ "device_id": DEVICE }),
+    );
+    settle(&shared);
+    assert_eq!(
+        kit(&shared).codex_daemon_off,
+        Some(crate::model::CodexDaemonOffSnapshot::Failed {
+            reason: hide_kit::CodexDaemonOffFailure::Unreachable
+        })
     );
 }

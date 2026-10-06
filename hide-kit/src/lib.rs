@@ -169,6 +169,10 @@ pub struct KitReport {
     /// no such setting.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex_daemon_on: Option<bool>,
+    /// How the operator's request to turn the shared server off ended; present
+    /// only in the report of the pass that carried it ([`Scope::codex_daemon_off`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_daemon_off: Option<CodexDaemonOff>,
     /// The machine's record says the operator has not answered the first-run
     /// agent choice: its first pass left the agents that are on by default off
     /// until they do, and an explicit agent choice clears it. It reads the
@@ -207,6 +211,7 @@ impl KitReport {
             agents: Vec::new(),
             codex_daemon: None,
             codex_daemon_on: None,
+            codex_daemon_off: None,
             held_for_onboarding: false,
             labels_retirement: Retirement::default(),
             legacy_retirement: Retirement::default(),
@@ -273,6 +278,10 @@ pub struct Scope {
     /// Agents the operator switched off: their marked entries and stubs come
     /// out and no pass puts them back.
     pub agent_off: BTreeSet<String>,
+    /// The operator asked for Codex's shared server to be turned off on this
+    /// machine (PRD settings-cleanup D-12, B27). Only this request ever does
+    /// it, and it answers in `KitReport::codex_daemon_off`.
+    pub codex_daemon_off: bool,
 }
 
 impl Scope {
@@ -329,14 +338,27 @@ impl Scope {
         self
     }
 
+    /// The operator's request to turn Codex's shared server off, and nothing
+    /// else.
+    pub fn codex_daemon_off() -> Self {
+        Self {
+            codex_daemon_off: true,
+            ..Self::default()
+        }
+    }
+
     pub fn is_automatic(&self) -> bool {
-        self.restore.is_empty() && self.agent_on.is_empty() && self.agent_off.is_empty()
+        self.restore.is_empty()
+            && self.agent_on.is_empty()
+            && self.agent_off.is_empty()
+            && !self.codex_daemon_off
     }
 
     /// Two requests for one machine as one; for an agent named by both, the
     /// later choice wins.
     pub fn merge(mut self, later: Scope) -> Scope {
         self.restore.extend(later.restore);
+        self.codex_daemon_off |= later.codex_daemon_off;
         for id in later.agent_on {
             self.agent_off.remove(&id);
             self.agent_on.insert(id);
@@ -527,9 +549,71 @@ pub fn status(target: &KitTarget) -> KitReport {
         agents,
         codex_daemon: daemon.0,
         codex_daemon_on: daemon.1,
+        codex_daemon_off: None,
         held_for_onboarding: held,
         labels_retirement: Retirement::default(),
         legacy_retirement: Retirement::default(),
+    }
+}
+
+/// How a request to turn Codex's shared server off ended.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum CodexDaemonOff {
+    /// Codex answered that it is off, and a read afterwards agrees.
+    Done,
+    /// The setting is as it was. `reason` is a code the screen turns into a
+    /// line; `detail` is Codex's own words, for the core's log only.
+    Failed {
+        reason: CodexDaemonOffFailure,
+        #[serde(default)]
+        detail: String,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CodexDaemonOffFailure {
+    /// No Codex program was found on the machine.
+    CodexMissing,
+    /// Codex refused the change or answered something Hide cannot read.
+    CodexRefused,
+    /// Codex did not answer in time and was stopped.
+    TimedOut,
+    /// The machine could not be asked: Hide was quitting or the device's
+    /// helper was away.
+    Unreachable,
+}
+
+/// Turns the machine's Codex shared server off through Codex's own command
+/// and reads the setting back, so a Done is what Codex now says.
+fn turn_codex_daemon_off(target: &KitTarget) -> CodexDaemonOff {
+    use hide_agent_hooks::codex_daemon::{DaemonSetting, SwitchFailure, read_setting, turn_off};
+    let failed = |reason, detail: String| CodexDaemonOff::Failed { reason, detail };
+    let Some(codex) = target.codex.as_deref() else {
+        return failed(
+            CodexDaemonOffFailure::CodexMissing,
+            "no codex program was found".to_owned(),
+        );
+    };
+    if let Err(error) = turn_off(codex, &target.home, &target.stop) {
+        return failed(
+            match error.failure {
+                SwitchFailure::CouldNotStart => CodexDaemonOffFailure::CodexMissing,
+                SwitchFailure::Refused => CodexDaemonOffFailure::CodexRefused,
+                SwitchFailure::TimedOut => CodexDaemonOffFailure::TimedOut,
+                SwitchFailure::Stopped => CodexDaemonOffFailure::Unreachable,
+            },
+            error.message,
+        );
+    }
+    match read_setting(codex, &target.home, &target.stop) {
+        Ok(DaemonSetting::Off) => CodexDaemonOff::Done,
+        Ok(setting) => failed(
+            CodexDaemonOffFailure::CodexRefused,
+            format!("codex still reports the shared server as {setting:?}"),
+        ),
+        Err(message) => failed(CodexDaemonOffFailure::CodexRefused, message),
     }
 }
 
@@ -539,6 +623,17 @@ pub fn status(target: &KitTarget) -> KitReport {
 /// apply of the same build changes nothing (engineering rule 11).
 /// Retirement preflight precedes even creation of the account lock.
 pub fn apply(target: &KitTarget, scope: &Scope) -> KitReport {
+    // The operator's own request runs first and is answered whatever else the
+    // pass finds; the report that follows reads the setting after it.
+    let daemon_off = scope
+        .codex_daemon_off
+        .then(|| turn_codex_daemon_off(target));
+    let mut report = apply_scope(target, scope);
+    report.codex_daemon_off = daemon_off;
+    report
+}
+
+fn apply_scope(target: &KitTarget, scope: &Scope) -> KitReport {
     if let Err(reason) = retirement_preflight(target) {
         return retirement_blocked(target, reason);
     }
@@ -694,6 +789,7 @@ pub fn apply(target: &KitTarget, scope: &Scope) -> KitReport {
         agents,
         codex_daemon: daemon.0,
         codex_daemon_on: daemon.1,
+        codex_daemon_off: None,
         held_for_onboarding,
         labels_retirement,
         legacy_retirement,
