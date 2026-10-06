@@ -71,9 +71,9 @@ pub struct TabTarget {
     connector: Arc<dyn ApiConnector>,
     runtime: Weak<Mutex<Runtime>>,
     notifier: ChangeNotifier,
-    /// This machine: a provider missing from this PATH is refused before
-    /// Herdr is asked.
-    local: bool,
+    /// The node whose PATH must hold the chosen agent, asked before Herdr
+    /// is; none for a device, whose own Herdr answers for its PATH.
+    agent_node: Option<Arc<dyn crate::node_access::NodeLink>>,
 }
 
 impl TabTarget {
@@ -82,7 +82,7 @@ impl TabTarget {
             connector: Arc::clone(&context.api_connector),
             runtime: context.runtime.clone(),
             notifier: context.notifier.clone(),
-            local: true,
+            agent_node: Some(Arc::clone(&context.node)),
         }
     }
 
@@ -91,7 +91,7 @@ impl TabTarget {
             connector: Arc::clone(&context.api_connector),
             runtime: context.runtime.clone(),
             notifier: context.notifier.clone(),
-            local: false,
+            agent_node: None,
         }
     }
 }
@@ -729,7 +729,7 @@ fn spawn_worktree_task(
                 context.connector.as_ref(),
                 &context.runtime,
                 &context.notifier,
-                context.local,
+                context.local.then_some(context.host.as_ref()),
                 request.id,
             );
         })
@@ -934,6 +934,9 @@ pub enum TaskAgentOutcome {
 /// little longer so a slow start is not reported as an unknown one.
 const AGENT_START_TIMEOUT_MS: u64 = 120_000;
 
+/// A PATH lookup on the node: a directory walk, nothing that should wait.
+const AGENT_CHECK_TIMEOUT: Duration = Duration::from_secs(10);
+
 /// Starts the agent the task chose, in the pane the task created, and hands
 /// the answer back on its own axis. The creation was already published, so a
 /// failure here never hides the worktree or the pane.
@@ -941,7 +944,7 @@ fn start_task_agent(
     connector: &dyn ApiConnector,
     runtime: &Weak<Mutex<Runtime>>,
     notifier: &ChangeNotifier,
-    local: bool,
+    agent_node: Option<&dyn crate::node_access::NodeLink>,
     id: u64,
 ) {
     let Some(runtime) = runtime.upgrade() else {
@@ -954,7 +957,7 @@ fn start_task_agent(
     let Some(start) = pending else {
         return;
     };
-    let outcome = launch_with_prompt(connector, local, id, start);
+    let outcome = launch_with_prompt(connector, agent_node, id, start);
     if let Ok(mut guard) = runtime.lock() {
         guard.ingest_task_agent_result(id, outcome);
     } else {
@@ -974,7 +977,7 @@ fn start_task_agent(
 /// that sent it keeps the text.
 fn launch_with_prompt(
     connector: &dyn ApiConnector,
-    local: bool,
+    agent_node: Option<&dyn crate::node_access::NodeLink>,
     id: u64,
     start: PendingAgentStart,
 ) -> TaskAgentOutcome {
@@ -991,7 +994,16 @@ fn launch_with_prompt(
             Err(message) => return TaskAgentOutcome::Failed(message),
         }
     }
-    launch_agent(connector, local, id, &pane_id, &kind, args, codex_daemon).into()
+    launch_agent(
+        connector,
+        agent_node,
+        id,
+        &pane_id,
+        &kind,
+        args,
+        codex_daemon,
+    )
+    .into()
 }
 
 /// The longest first prompt, in bytes once encoded, that a start carries.
@@ -1045,7 +1057,7 @@ pub fn spawn_task_agent_start(context: WorktreeTarget, id: u64) -> Result<(), St
                 context.connector.as_ref(),
                 &context.runtime,
                 &context.notifier,
-                context.local,
+                context.local.then_some(context.host.as_ref()),
                 id,
             )
         })
@@ -1077,7 +1089,7 @@ impl From<Launch> for TaskAgentOutcome {
 
 fn launch_agent(
     connector: &dyn ApiConnector,
-    local: bool,
+    agent_node: Option<&dyn crate::node_access::NodeLink>,
     id: u64,
     pane_id: &str,
     kind: &str,
@@ -1087,10 +1099,26 @@ fn launch_agent(
     // Herdr would type the command into the pane's shell and wait for an
     // agent that can never appear; say so before asking it. A device's PATH
     // is not this machine's, so there its Herdr answers for it.
-    if local && hide_ai::resolve_binary(Path::new(kind)).is_none() {
-        return Launch::Failed(format!(
-            "{kind} is not installed on the daemon's PATH. Install it, then retry."
-        ));
+    if let Some(node) = agent_node {
+        match crate::node_access::call_as::<bool>(
+            node,
+            Call::AgentInstalled {
+                name: kind.to_owned(),
+            },
+            AGENT_CHECK_TIMEOUT,
+        ) {
+            Ok(true) => {}
+            Ok(false) => {
+                return Launch::Failed(format!(
+                    "{kind} is not installed on the daemon's PATH. Install it, then retry."
+                ));
+            }
+            Err(error) => {
+                return Launch::Failed(format!(
+                    "Could not check whether {kind} is installed ({error}). Retry."
+                ));
+            }
+        }
     }
     let name = crate::fork::task_agent_name(kind, pane_id);
     let params = match wire::agent_start_params(pane_id, &name, kind, args, codex_daemon) {
@@ -1148,7 +1176,7 @@ fn open_tab_and_start_agent(target: &TabTarget, request: &CheckoutTabRequest) {
         target.connector.as_ref(),
         &target.runtime,
         &target.notifier,
-        target.local,
+        target.agent_node.as_deref(),
         request.id,
     );
 }
@@ -3222,7 +3250,7 @@ mod tests {
             .into();
         let outcome = launch_with_prompt(
             &server,
-            false,
+            None,
             7,
             PendingAgentStart {
                 pane_id: "w1:p1".into(),
@@ -3255,7 +3283,7 @@ mod tests {
         let server = server(vec![]);
         let outcome = launch_with_prompt(
             &server,
-            false,
+            None,
             7,
             PendingAgentStart {
                 pane_id: "w1:p1".into(),
@@ -3272,6 +3300,50 @@ mod tests {
         assert!(requests_of(&server).is_empty());
     }
 
+    /// The chosen agent is looked up on the node that would run it, and one
+    /// it lacks fails the start before Herdr types anything into the pane.
+    #[test]
+    fn an_agent_missing_from_its_node_fails_before_contacting_herdr() {
+        struct Missing(Mutex<Vec<hide_node_link::protocol::Call>>);
+        impl crate::node_access::NodeLink for Missing {
+            fn call(
+                &self,
+                call: hide_node_link::protocol::Call,
+                _timeout: std::time::Duration,
+            ) -> Result<crate::node_access::LinkAnswer, crate::node_access::LinkError> {
+                self.0.lock().unwrap().push(call);
+                Ok(crate::node_access::LinkAnswer::Parsed(json!(false)))
+            }
+        }
+        let node = Missing(Mutex::default());
+        let server = server(vec![]);
+        let outcome = launch_with_prompt(
+            &server,
+            Some(&node),
+            7,
+            PendingAgentStart {
+                pane_id: "w1:p1".into(),
+                kind: "claude".into(),
+                prompt: None,
+                args: Vec::new(),
+                codex_daemon: Default::default(),
+            },
+        );
+        assert_eq!(
+            outcome,
+            TaskAgentOutcome::Failed(
+                "claude is not installed on the daemon's PATH. Install it, then retry.".into()
+            )
+        );
+        assert_eq!(
+            *node.0.lock().unwrap(),
+            [hide_node_link::protocol::Call::AgentInstalled {
+                name: "claude".into()
+            }]
+        );
+        assert!(requests_of(&server).is_empty());
+    }
+
     #[test]
     fn a_codex_with_the_shared_daemon_starts_without_it() {
         let server = server(vec![
@@ -3280,7 +3352,7 @@ mod tests {
         ]);
         let outcome = launch_with_prompt(
             &server,
-            false,
+            None,
             7,
             PendingAgentStart {
                 pane_id: "w1:p1".into(),
@@ -3309,7 +3381,7 @@ mod tests {
         ]);
         let outcome = launch_with_prompt(
             &server,
-            false,
+            None,
             7,
             PendingAgentStart {
                 pane_id: "w1:p1".into(),
@@ -3340,7 +3412,7 @@ mod tests {
         let server = server(vec![]);
         let outcome = launch_with_prompt(
             &server,
-            false,
+            None,
             7,
             PendingAgentStart {
                 pane_id: "w1:p1".into(),
@@ -3366,7 +3438,7 @@ mod tests {
         assert!(prompt_argument(&at_cap).is_ok());
         let outcome = launch_with_prompt(
             &server,
-            false,
+            None,
             7,
             PendingAgentStart {
                 pane_id: "w1:p1".into(),
@@ -3393,7 +3465,7 @@ mod tests {
         ]);
         let outcome = launch_with_prompt(
             &server,
-            false,
+            None,
             7,
             PendingAgentStart {
                 pane_id: "w1:p1".into(),

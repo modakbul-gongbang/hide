@@ -490,6 +490,9 @@ pub fn handle_with_progress(
             crate::attachments::read_sources(&paths, &mut |index| progress(Value::from(index)))
                 .map_err(|reason| HostError::new(ErrorCode::InvalidPath, reason))?,
         ),
+        Call::AgentInstalled { name } => {
+            to_value(hide_ai::resolve_binary(Path::new(&name)).is_some())
+        }
         Call::TerminateGroup { leader } => {
             if leader <= 1 {
                 return Err(HostError::new(

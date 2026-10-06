@@ -337,6 +337,11 @@ pub enum Call {
     TerminateGroup {
         leader: u32,
     },
+    /// Whether an agent CLI named `name` is on the node's `PATH`, answered
+    /// as a bool before a pane is asked to start it.
+    AgentInstalled {
+        name: String,
+    },
     /// The start time of each pid, in order (`process::ProcessStart`).
     ProcessStarts {
         pids: Vec<u32>,
