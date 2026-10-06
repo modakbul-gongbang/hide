@@ -169,8 +169,14 @@ fn run_for_projects(
                 KitAction::Reinstall {
                     components,
                     turn_off,
+                    agents_on,
+                    agents_off,
                 } => hide_kit::Scope::reinstall(components)
-                    .merge(hide_kit::Scope::turn_off(turn_off)),
+                    .merge(hide_kit::Scope::turn_off(turn_off))
+                    .merge(hide_kit::Scope::agents(
+                        agents_on.iter().map(String::as_str),
+                        agents_off.iter().map(String::as_str),
+                    )),
                 _ => hide_kit::Scope::automatic(),
             };
             to_value(hide_kit::apply(&target(), &scope))

@@ -931,6 +931,30 @@ export type KitComponentId = "cli" | "claude_code_hook" | "codex_hook" | "coordi
 /** What a part is on its machine (`contracts/snapshot-wire-enums.json`: `kit_component_state`). */
 export type KitComponentState = "installed" | "outdated" | "not_installed" | "removed" | "failed" | "absent" | "off";
 
+/** Whether an agent can be switched on where a machine runs (`contracts/snapshot-wire-enums.json`: `kit_agent_availability`). */
+export type KitAgentAvailability = "available" | "not_installed" | "unsupported_system";
+
+/** One piece of an agent (its skill or its hook) on its machine. */
+export type KitPiece = {
+  state: KitComponentState;
+  reason: string | null;
+  location: string | null;
+};
+
+/**
+ * One agent on one machine (`KitAgentSnapshot`): its switch, and what Hide put
+ * there for it. `hook` is null for an agent that gets the skill only.
+ */
+export type KitAgent = {
+  id: string;
+  label: string;
+  availability: KitAgentAvailability;
+  enabled: boolean;
+  skill: KitPiece;
+  hook: KitPiece | null;
+  doc_url: string;
+};
+
 export type KitComponent = {
   id: KitComponentId;
   label: string;
@@ -951,6 +975,8 @@ export type Kit = {
   unavailable: string | null;
   busy: boolean;
   components: KitComponent[];
+  /** Every agent Hide has an adapter for; empty until the machine was checked. */
+  agents: KitAgent[];
   offers_reinstall: boolean;
   shares_account_with: string | null;
 };

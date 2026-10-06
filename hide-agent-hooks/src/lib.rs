@@ -22,6 +22,7 @@ pub mod codex_daemon;
 pub mod counters;
 pub mod delivery;
 pub mod diagnosis;
+pub mod guidance;
 pub mod install;
 pub mod memory;
 pub mod report;
@@ -30,7 +31,7 @@ pub mod runtime;
 pub use counters::PaneCounters;
 pub use diagnosis::{
     Diagnosis, MemoryCompatibility, PaneInstrumentation, RuntimeDiagnosis, UninstrumentedReason,
-    runtime_compatibility,
+    find_binary, program_version, runtime_compatibility, version_at_least,
 };
 pub use install::{
     HookStatus, InstallFailure, InstallOutcome, RemoveOutcome, install, installed_helper_path,

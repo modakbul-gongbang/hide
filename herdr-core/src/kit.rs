@@ -142,6 +142,8 @@ fn completed(device_id: &str, scope: &hide_kit::Scope, report: &hide_kit::KitRep
         "scope": if scope.is_automatic() { "automatic" } else { "operator" },
         "restore": scope.restore.iter().map(|id| id.code()).collect::<Vec<_>>(),
         "turn_off": scope.turn_off.iter().map(|id| id.code()).collect::<Vec<_>>(),
+        "agents_on": scope.agent_on,
+        "agents_off": scope.agent_off,
         "components": report.components.iter().map(|part| json!({
             "id": part.id.code(),
             "state": part.state,
@@ -214,6 +216,8 @@ fn call_device(call: &DeviceKitCall) -> DeviceKitAnswer {
         DeviceKitWork::Job(KitJob::Apply(scope)) => KitAction::Reinstall {
             components: scope.restore.iter().copied().collect(),
             turn_off: scope.turn_off.iter().copied().collect(),
+            agents_on: scope.agent_on.iter().cloned().collect(),
+            agents_off: scope.agent_off.iter().cloned().collect(),
         },
         DeviceKitWork::Job(KitJob::Status) => KitAction::Status,
         DeviceKitWork::Remove => KitAction::Remove,
