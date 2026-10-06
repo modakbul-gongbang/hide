@@ -142,7 +142,8 @@ Adding a dependency to a running Task whose predecessor is unmerged puts the Tas
 
 Each command runs with a role the engine decides from its own store, never from the caller's claim or a file.
 A caller is a worker when its pane is the pane of a Task's worker, or when its working folder is inside a Task's worktree.
-A `cancelled` or `done` Task's worker stays a worker, so its pane never gains an operator's commands, and the Task's state refuses its reports; a live Task wins when a pane or folder was reused.
+A `cancelled` or `done` Task's worker stays a worker while its worktree and pane stay, so its pane never gains an operator's commands, and the Task's state refuses its reports; a live Task wins when a pane or folder was reused.
+Once a Task's worktree is removed it binds no pane or folder, because Herdr can give a closed pane id to the operator's next pane.
 An agent a worker spawned acts as that worker: the host follows the caller's spawn lineage in the delivery ledger (up to 16 agents up), and a pane a checkout caller names but cannot prove only ever makes it a worker, never an operator.
 Every other caller is an operator, recorded by pane id, or `checkout` when the caller has no pane.
 The engine itself acts as a third role for deadlines and timers and is never a command caller.
@@ -161,7 +162,7 @@ A capability file holds only a token, so editing it cannot change a role.
 | Configure | `config --set` | refused | yes |
 
 A refusal answers `role_not_allowed` with the role and the verb.
-A Task keeps at most 500 questions, decisions and discoveries together; past that a worker's report is refused with `report_limit`.
+A Task keeps at most 500 questions, decisions and discoveries together; past that a worker's report is refused with `report_limit`, except `done`, which still finishes the Task without storing its summary.
 A worker's `show` reaches its own Factory only.
 An operator relays a person's words, and every answer and decision records the relaying pane as `relayed_by`.
 Code cannot tell whether an operator pane's agent acted on a person's words, so it records who relayed and does not block.

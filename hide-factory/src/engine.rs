@@ -362,11 +362,13 @@ impl Engine {
 
     /// The role of a caller (D-33): a pane the Factory spawned, or a cwd
     /// inside a Factory worktree, is a worker of that Task. A finished or
-    /// cancelled Task's worker stays a worker, so its pane never gains the
-    /// operator's commands; a live Task wins when a pane or folder was reused.
+    /// cancelled Task's worker stays a worker while its worktree and pane
+    /// stay, so its pane never gains the operator's commands; a live Task
+    /// wins when a pane or folder was reused. A purged Task binds nothing,
+    /// because Herdr can give its closed pane id to the operator's next pane.
     pub fn role_for(&self, pane: Option<&str>, cwd: Option<&str>) -> Option<(String, String)> {
         let bound = |task: &&Task| {
-            let Some(worker) = &task.worker else {
+            let Some(worker) = task.worker.as_ref().filter(|_| !task.purged) else {
                 return false;
             };
             if pane.is_some() && worker.pane.as_deref() == pane {
@@ -624,8 +626,9 @@ impl Engine {
         }
         let verb = command.verb();
         // A worker's reports grow its Task record: past the cap a report is
-        // refused, never stored (rule 15).
+        // refused, never stored (rule 15). `done` still finishes the Task.
         if command.permission() == Permission::Report
+            && !matches!(command, Command::Done { .. })
             && let Role::Worker { factory, task } = role
             && let Some(task) = self.task(factory, task)
             && task.questions.len() + task.decisions.len() + task.discoveries.len() >= REPORT_LIMIT
@@ -2612,7 +2615,9 @@ impl Engine {
         self.with_task(factory_id, id, |task| {
             task.last_report_at = Some(now);
             task.breaking |= breaking;
-            if let Some(text) = &summary_text {
+            let full = task.questions.len() + task.decisions.len() + task.discoveries.len()
+                >= REPORT_LIMIT;
+            if let Some(text) = summary_text.as_ref().filter(|_| !full) {
                 task.decisions.push(DecisionRecord {
                     text: format!("done: {}", judgment::cut(text, TEXT_LIMIT)),
                     by: format!("worker:{id}"),

@@ -855,6 +855,22 @@ fn a_cancelled_task_s_worker_stays_a_worker_and_is_stopped() {
 }
 
 #[test]
+fn a_finished_task_whose_pane_is_gone_binds_no_caller() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let t = h.ready("Landed", &[]);
+    let worker = h.task(&f, &t).worker.unwrap();
+    let pane = worker.pane.clone().unwrap();
+    h.done(&f, &t);
+    tick_until(&mut h, &f, &t, TaskState::Done);
+    assert!(h.task(&f, &t).purged, "the worktree and pane are gone");
+    // Herdr can give that pane id to the operator's next pane.
+    assert_eq!(h.engine.role_for(Some(&pane), None), None);
+    let inside = format!("{}/src", worker.worktree);
+    assert_eq!(h.engine.role_for(None, Some(&inside)), None);
+}
+
+#[test]
 fn a_worker_s_reports_stop_at_the_cap() {
     let mut h = Bench::new(false);
     let f = h.factory(true);
@@ -877,6 +893,21 @@ fn a_worker_s_reports_stop_at_the_cap() {
         },
     );
     assert_eq!(refused["reason"], "report_limit", "{refused}");
+    assert_eq!(
+        h.task(&f, &t).decisions.len(),
+        hide_factory::engine::REPORT_LIMIT
+    );
+    // The worker can still finish; its summary is not stored past the cap.
+    let done = h.as_worker(
+        &f,
+        &t,
+        Command::Done {
+            summary: Some("all of it".into()),
+            breaking: false,
+            letter: None,
+        },
+    );
+    assert_eq!(done["state"], "verifying", "{done}");
     assert_eq!(
         h.task(&f, &t).decisions.len(),
         hide_factory::engine::REPORT_LIMIT
