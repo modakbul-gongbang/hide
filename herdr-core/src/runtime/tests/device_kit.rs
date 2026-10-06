@@ -111,6 +111,7 @@ fn report(states: &[(ComponentId, ComponentState)]) -> KitReport {
         labels_retirement: Default::default(),
         legacy_retirement: Default::default(),
         codex_daemon: None,
+        codex_daemon_on: None,
     }
 }
 

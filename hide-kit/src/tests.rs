@@ -1067,6 +1067,24 @@ fn a_setting_an_earlier_build_turned_off_stays_off() {
     assert_eq!(fixture.daemon_setting(), "false");
     assert!(fixture.codex_writes().is_empty());
     assert_eq!(report.codex_daemon, Some(true));
+    assert_eq!(
+        report.codex_daemon_on,
+        Some(false),
+        "the setting an earlier build turned off reads off"
+    );
+}
+
+#[test]
+fn the_report_says_whether_the_shared_daemon_is_on() {
+    let mut fixture = Fixture::new();
+    fake_codex(&mut fixture, "true");
+    assert_eq!(status(&fixture.target).codex_daemon_on, Some(true));
+
+    // A Codex older than the setting has neither a capability nor a value.
+    let mut fixture = Fixture::new();
+    fake_codex(&mut fixture, "true");
+    std::fs::write(fixture.home().join("codex-old"), "").unwrap();
+    assert_eq!(status(&fixture.target).codex_daemon_on, None);
 }
 
 #[test]

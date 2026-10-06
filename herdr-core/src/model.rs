@@ -644,6 +644,37 @@ pub struct KitSnapshot {
     /// setting, `false` when it is confirmed older and has none, `None`
     /// when there is no answer (no Codex, or the read failed).
     pub codex_daemon: Option<bool>,
+    /// Whether that Codex starts the shared daemon on its own now (`None`
+    /// with no answer or an older Codex). With it on, a Codex pane that
+    /// reports nothing is read as running on the shared server (B27).
+    pub codex_daemon_on: Option<bool>,
+    /// How the last turn-off of the shared server ended, until the next one
+    /// starts; the pane popover reads it (B30).
+    pub codex_daemon_off: Option<CodexDaemonOffSnapshot>,
+}
+
+/// The outcome of the operator's request to turn Codex's shared server off on
+/// one machine. A failure carries a code, never the command's own words.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum CodexDaemonOffSnapshot {
+    Pending,
+    Done,
+    Failed { reason: CodexDaemonOffFailure },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CodexDaemonOffFailure {
+    /// No Codex program was found on the machine.
+    CodexMissing,
+    /// Codex refused the change or answered something Hide cannot read.
+    CodexRefused,
+    /// Codex did not answer in time and was stopped.
+    TimedOut,
+    /// The machine could not be asked: Hide was quitting or the device's
+    /// helper was away.
+    Unreachable,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -669,8 +700,51 @@ pub struct KitAgentSnapshot {
     /// machine's Herdr CLI; `None` for an agent the pinned Herdr has none
     /// for (Gemini CLI).
     pub herdr: Option<KitPieceSnapshot>,
+    /// Hide does only some of what it does for Claude Code with this agent:
+    /// the row wears the Partial chip whether or not the agent is on (PRD
+    /// settings-cleanup B18).
+    pub partial: bool,
+    /// Every feature of the Partial popover, in the table's order, with
+    /// whether this build does it for the agent (`hide_kit::agents::Feature`).
+    pub features: Vec<KitFeatureSnapshot>,
+    /// The agent's sessions open on this machine now, counted for the row's
+    /// "N connected" and "N not connected" (B16, B17); `None` for an agent
+    /// Hide cannot tell a connection of (B19) and for a machine whose
+    /// sessions are not read yet.
+    pub sessions: Option<KitAgentSessionsSnapshot>,
     /// The official page the adapter's answers come from.
     pub doc_url: String,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct KitFeatureSnapshot {
+    pub id: hide_kit::Feature,
+    pub supported: bool,
+}
+
+/// One agent's open sessions on one machine, by whether Hide hears them.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize)]
+pub struct KitAgentSessionsSnapshot {
+    pub connected: u32,
+    /// Each open session Hide does not hear, in the order the sidebar lists
+    /// their panes. Capped at [`MAX_NOT_CONNECTED_SESSIONS`]; `connected` and
+    /// the list's length together are the open sessions up to the cap.
+    pub not_connected: Vec<NotConnectedSessionSnapshot>,
+    /// The count of not connected sessions beyond the cap, so the number the
+    /// row says stays true while the list is bounded.
+    pub not_connected_hidden: u32,
+}
+
+/// Cap on the sessions one agent row lists; a person fixes them one pane at a
+/// time, and a longer list is a count.
+pub const MAX_NOT_CONNECTED_SESSIONS: usize = 32;
+
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct NotConnectedSessionSnapshot {
+    pub pane_id: String,
+    pub title: String,
+    pub project: String,
+    pub reason: PaneConnectionReason,
 }
 
 impl KitAgentSnapshot {
@@ -731,6 +805,19 @@ impl KitSnapshot {
                 skill: (&agent.skill).into(),
                 hook: agent.hook.as_ref().map(Into::into),
                 herdr: agent.herdr.as_ref().map(Into::into),
+                partial: hide_kit::agents::adapter(&agent.id).is_some_and(|row| row.partial()),
+                features: hide_kit::agents::adapter(&agent.id)
+                    .map(|row| {
+                        hide_kit::agents::Feature::ALL
+                            .into_iter()
+                            .map(|id| KitFeatureSnapshot {
+                                id,
+                                supported: row.supports(id),
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default(),
+                sessions: None,
                 doc_url: agent.doc_url.clone(),
             })
             .collect::<Vec<_>>();
@@ -756,6 +843,8 @@ impl KitSnapshot {
             agents,
             shares_account_with: None,
             codex_daemon: report.codex_daemon,
+            codex_daemon_on: report.codex_daemon_on,
+            codex_daemon_off: None,
         }
     }
 
@@ -1668,6 +1757,54 @@ pub struct PaneSnapshot {
     pub sleep_action: Option<AgentSleepActionSnapshot>,
 }
 
+/// Why a session is not connected to Hide.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaneConnectionReason {
+    /// Codex on its shared server runs its hooks there, not in the pane, so
+    /// Hide hears nothing from it (openai/codex#48500). Reopen starts it on
+    /// its own server.
+    CodexSharedServer,
+    /// The hook was installed after this session started, so it never fired.
+    StartedBeforeHide,
+    /// Hide's hook is missing, unreadable or outdated on the machine: the
+    /// fix is the agent's row in Settings, not Reopen.
+    SetupNeeded,
+}
+
+/// What a Reopen of a not connected pane is doing.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(tag = "state", rename_all = "snake_case")]
+pub enum PaneReopenSnapshot {
+    Pending,
+    /// The pane stayed as it was; `reason` names why for the popover's one
+    /// line.
+    Failed {
+        reason: PaneReopenFailure,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PaneReopenFailure {
+    /// Herdr or the agent could not start the session again.
+    StartRefused,
+    /// The pane or its session id is gone.
+    SessionGone,
+    /// The machine's Codex has not been read, so the start would not know
+    /// whether to leave the shared server.
+    CodexUnread,
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+pub struct PaneConnectionSnapshot {
+    pub connected: bool,
+    /// Present exactly when `connected` is false.
+    pub reason: Option<PaneConnectionReason>,
+    /// Absent while no Reopen was asked or the last one ended well.
+    pub reopen: Option<PaneReopenSnapshot>,
+}
+
 /// What a pane header says about the work its agent delegated.
 ///
 /// The three shapes it can take are deliberately different screens: chips
@@ -1692,6 +1829,13 @@ pub struct PaneChildrenSnapshot {
     /// an in-process subagent has no pane, so it cannot be a chip the
     /// operator clicks into (PRD D-63).
     pub chips: Vec<AgentChipSnapshot>,
+    /// Whether Hide hears this pane's session, for the pane header's "Not
+    /// connected" chip (PRD settings-cleanup B26 to B31). `None` on an agent
+    /// Hide has no connection to judge (Gemini CLI, Grok, OpenCode, Pi,
+    /// Cursor: B19) and on one whose hook is switched off or whose machine
+    /// the core has not read yet. Derived from the same observation as
+    /// `instrumented` above, never a second detector.
+    pub connection: Option<PaneConnectionSnapshot>,
     /// The parent badge, chosen from the pane children by the same priority
     /// the Workspace summary uses. In-process subagents take no part in it.
     pub representative: Option<AgentChipSnapshot>,
@@ -3911,21 +4055,15 @@ pub struct BackgroundAiRefusalSnapshot {
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct AgentHooksSnapshot {
     /// Each machine's hook parts are its kit rows (`DeviceSnapshot.kit`,
-    /// PRD device-parity B27); this section keeps what only the panes say.
-    ///
-    pub sessions_predating_install: Vec<AgentHookPaneSnapshot>,
+    /// PRD device-parity B27), and the sessions Hide does not hear are
+    /// counted on those rows' `sessions` and named on each pane's
+    /// `children.connection` (PRD settings-cleanup D-23: one per-session
+    /// warning list that grew with every session is gone).
     /// The sentence describing the last hook report Herdr did not take, when
     /// the most recent report failed. It is what separates "installed but
     /// every report is refused" from the restart advice above: with it on
     /// screen, a restart is not the fix and the sentence says what is.
     pub last_report_failure: Option<String>,
-}
-
-#[derive(Clone, Debug, PartialEq, Serialize)]
-pub struct AgentHookPaneSnapshot {
-    pub pane_id: String,
-    pub label: String,
-    pub message: String,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -4871,6 +5009,71 @@ mod wire_enum_tests {
         }
         assert_wire(&contract, "kit_agent_availability", &kit_availability);
         checked.insert("kit_agent_availability");
+
+        let features = hide_kit::Feature::ALL;
+        for variant in features {
+            match variant {
+                hide_kit::Feature::Skill
+                | hide_kit::Feature::Guidance
+                | hide_kit::Feature::Letters
+                | hide_kit::Feature::Memory
+                | hide_kit::Feature::Subagents
+                | hide_kit::Feature::HerdrIntegration
+                | hide_kit::Feature::Sleep
+                | hide_kit::Feature::Fork
+                | hide_kit::Feature::Start
+                | hide_kit::Feature::Titles => {}
+            }
+        }
+        assert_wire(&contract, "kit_feature", &features);
+        checked.insert("kit_feature");
+
+        let reasons = [
+            PaneConnectionReason::CodexSharedServer,
+            PaneConnectionReason::StartedBeforeHide,
+            PaneConnectionReason::SetupNeeded,
+        ];
+        for variant in reasons {
+            match variant {
+                PaneConnectionReason::CodexSharedServer
+                | PaneConnectionReason::StartedBeforeHide
+                | PaneConnectionReason::SetupNeeded => {}
+            }
+        }
+        assert_wire(&contract, "pane_connection_reason", &reasons);
+        checked.insert("pane_connection_reason");
+
+        let reopen_failures = [
+            PaneReopenFailure::StartRefused,
+            PaneReopenFailure::SessionGone,
+            PaneReopenFailure::CodexUnread,
+        ];
+        for variant in reopen_failures {
+            match variant {
+                PaneReopenFailure::StartRefused
+                | PaneReopenFailure::SessionGone
+                | PaneReopenFailure::CodexUnread => {}
+            }
+        }
+        assert_wire(&contract, "pane_reopen_failure", &reopen_failures);
+        checked.insert("pane_reopen_failure");
+
+        let daemon_failures = [
+            CodexDaemonOffFailure::CodexMissing,
+            CodexDaemonOffFailure::CodexRefused,
+            CodexDaemonOffFailure::TimedOut,
+            CodexDaemonOffFailure::Unreachable,
+        ];
+        for variant in daemon_failures {
+            match variant {
+                CodexDaemonOffFailure::CodexMissing
+                | CodexDaemonOffFailure::CodexRefused
+                | CodexDaemonOffFailure::TimedOut
+                | CodexDaemonOffFailure::Unreachable => {}
+            }
+        }
+        assert_wire(&contract, "codex_daemon_off_failure", &daemon_failures);
+        checked.insert("codex_daemon_off_failure");
 
         let unchecked = contract
             .keys()

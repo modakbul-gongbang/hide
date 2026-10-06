@@ -1134,6 +1134,7 @@ pub fn project_pane_children(
             .reason
             .map(|reason| reason.code().to_owned()),
         chips,
+        connection: None,
         representative,
         subagents: crate::model::SubagentCountsSnapshot {
             working: instrumentation.working,
@@ -1141,6 +1142,76 @@ pub fn project_pane_children(
             blocked: instrumentation.blocked,
         },
     })
+}
+
+/// [`project_pane_children`] with the pane's connection judged on top of it.
+///
+/// The connection is read from the observation the children were just
+/// projected from, so the header's mark and the Settings counts cannot
+/// disagree about which sessions Hide hears (PRD settings-cleanup B16, B26,
+/// D-09). `codex_daemon_on` is the machine's Codex shared-server setting.
+pub fn project_pane_children_connected(
+    agents: &[SidebarAgentSnapshot],
+    pane_id: &str,
+    tokens: crate::agent_hooks::PaneHookTokens,
+    status_of: &dyn Fn(hide_agent_hooks::AgentRuntime) -> Option<hide_agent_hooks::HookStatus>,
+    codex_daemon_on: bool,
+) -> Option<crate::model::PaneChildrenSnapshot> {
+    let mut children = project_pane_children(agents, pane_id, tokens, status_of)?;
+    let runtime = agents
+        .iter()
+        .find(|agent| agent.pane_id == pane_id)
+        .and_then(|agent| crate::agent_hooks::runtime_of(&agent.agent_kind));
+    children.connection = pane_connection(runtime, &children, codex_daemon_on);
+    Some(children)
+}
+
+/// Whether Hide hears one pane's session, and why not.
+///
+/// Only Claude Code and Codex have a hook that can speak, so no other agent
+/// has a connection to judge (B19). An agent switched off has no status, and
+/// a machine whose hooks Hide has not read leaves the cause unknown rather
+/// than naming one (B16).
+fn pane_connection(
+    runtime: Option<hide_agent_hooks::AgentRuntime>,
+    children: &crate::model::PaneChildrenSnapshot,
+    codex_daemon_on: bool,
+) -> Option<crate::model::PaneConnectionSnapshot> {
+    use crate::model::{PaneConnectionReason, PaneConnectionSnapshot};
+    use hide_agent_hooks::AgentRuntime;
+    use hide_agent_hooks::diagnosis::UninstrumentedReason as Reason;
+    let runtime = runtime?;
+    let not_connected = |reason| {
+        Some(PaneConnectionSnapshot {
+            connected: false,
+            reason: Some(reason),
+            reopen: None,
+        })
+    };
+    if children.instrumented {
+        return Some(PaneConnectionSnapshot {
+            connected: true,
+            reason: None,
+            reopen: None,
+        });
+    }
+    match children
+        .uninstrumented_code
+        .as_deref()
+        .and_then(Reason::from_code)?
+    {
+        Reason::HooksSwitchedOff | Reason::Unknown => None,
+        Reason::SessionPredatesInstall => {
+            not_connected(if runtime == AgentRuntime::Codex && codex_daemon_on {
+                PaneConnectionReason::CodexSharedServer
+            } else {
+                PaneConnectionReason::StartedBeforeHide
+            })
+        }
+        Reason::HooksNotInstalled | Reason::ConfigUnreadable | Reason::HookOutdated => {
+            not_connected(PaneConnectionReason::SetupNeeded)
+        }
+    }
 }
 
 /// The breadcrumb for one pane: its ancestors root first, each carrying that

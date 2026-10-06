@@ -1119,12 +1119,12 @@ impl Runtime {
                 .and_then(|diagnosis| diagnosis.status_of(runtime))
                 .cloned()
         };
+        let codex_daemon_on = self
+            .kit_states
+            .get(crate::workspace::LOCAL_DEVICE_ID)
+            .is_some_and(|kit| kit.codex_daemon_on == Some(true));
         let mut changed = false;
         let mut delegated_tabs_changed = false;
-        // Collected on the same walk as the pane children, so the Settings
-        // diagnosis and the pane's own mark can never disagree about which
-        // sessions predate the install (PRD B27, D-61).
-        let mut predating: Vec<crate::model::AgentHookPaneSnapshot> = Vec::new();
         // A tab is the operator's whenever it holds an agent they own. One
         // holding only delegated children is the pile this change exists to
         // take off the strip (PRD B1).
@@ -1170,25 +1170,13 @@ impl Runtime {
                 .get(&pane.id)
                 .copied()
                 .unwrap_or_default();
-            let children =
-                crate::sidebar::project_pane_children(&agents, &pane.id, tokens, &status_of);
-            if let Some(children) = children.as_ref()
-                && children.uninstrumented_code.as_deref()
-                    == Some(
-                        hide_agent_hooks::diagnosis::UninstrumentedReason::SessionPredatesInstall
-                            .code(),
-                    )
-            {
-                predating.push(crate::model::AgentHookPaneSnapshot {
-                    pane_id: pane.id.clone(),
-                    label: agents
-                        .iter()
-                        .find(|agent| agent.pane_id == pane.id)
-                        .map(|agent| agent.identity_label.clone())
-                        .unwrap_or_else(|| pane.id.clone()),
-                    message: children.uninstrumented_reason.clone().unwrap_or_default(),
-                });
-            }
+            let children = crate::sidebar::project_pane_children_connected(
+                &agents,
+                &pane.id,
+                tokens,
+                &status_of,
+                codex_daemon_on,
+            );
             let lineage_path = crate::sidebar::project_lineage_path(&agents, &pane.id);
             if pane.children != children {
                 pane.children = children;
@@ -1201,7 +1189,6 @@ impl Runtime {
         }
         self.snapshot.navigator.agents = agents;
         let hooks = crate::model::AgentHooksSnapshot {
-            sessions_predating_install: predating,
             last_report_failure: self
                 .hook_diagnosis
                 .as_ref()
@@ -1222,6 +1209,7 @@ impl Runtime {
             &mut self.snapshot.navigator.workspaces,
             &self.snapshot.navigator.agents,
         );
+        changed |= self.refresh_agent_sessions();
         changed | delegated_tabs_changed | self.refresh_inactive_groups()
     }
 

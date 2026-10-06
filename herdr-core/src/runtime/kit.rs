@@ -848,10 +848,141 @@ impl Runtime {
             .unwrap_or_default()
     }
 
+    /// Each agent's open sessions on one machine, counted by whether Hide
+    /// hears them (PRD settings-cleanup B16, B17, B19).
+    ///
+    /// Only the sessions that exist now are counted: the walk is over the
+    /// panes the snapshot holds, so a closed session leaves the count on the
+    /// next pass and nothing accumulates per session (D-23). The work is one
+    /// pass over the machine's panes each time the agent lineage pass or a
+    /// device's session republishes, not a per-tick cost, and the list it
+    /// builds is capped at [`crate::model::MAX_NOT_CONNECTED_SESSIONS`].
+    fn agent_sessions(
+        &self,
+        device_id: &str,
+    ) -> std::collections::BTreeMap<&'static str, crate::model::KitAgentSessionsSnapshot> {
+        use crate::model::{
+            KitAgentSessionsSnapshot, MAX_NOT_CONNECTED_SESSIONS, NotConnectedSessionSnapshot,
+        };
+        let remote = self
+            .snapshot
+            .status
+            .remote
+            .iter()
+            .find(|status| status.target_id == device_id)
+            .and_then(|status| status.session.as_ref());
+        let (workspaces, agents) = if device_id == LOCAL_DEVICE_ID {
+            (
+                &self.snapshot.navigator.workspaces,
+                &self.snapshot.navigator.agents,
+            )
+        } else if let Some(session) = remote {
+            (&session.workspaces, &session.agents)
+        } else {
+            return std::collections::BTreeMap::new();
+        };
+        let mut sessions: std::collections::BTreeMap<&'static str, KitAgentSessionsSnapshot> =
+            hide_kit::agents::ADAPTERS
+                .iter()
+                .filter(|adapter| adapter.supports(hide_kit::Feature::Letters))
+                .map(|adapter| (adapter.id, KitAgentSessionsSnapshot::default()))
+                .collect();
+        let panes = workspaces
+            .iter()
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .flat_map(|checkout| checkout.tabs.iter())
+            .flat_map(|tab| tab.panes.iter());
+        for pane in panes {
+            let local_pane = !crate::agent_hooks::is_remote_pane(&pane.id);
+            if (device_id == LOCAL_DEVICE_ID) != local_pane {
+                continue;
+            }
+            let Some(connection) = pane
+                .children
+                .as_ref()
+                .and_then(|children| children.connection)
+            else {
+                continue;
+            };
+            let Some(agent) = agents.iter().find(|agent| agent.pane_id == pane.id) else {
+                continue;
+            };
+            let Some(adapter_id) = crate::agent_hooks::runtime_of(&agent.agent_kind)
+                .map(crate::agent_hooks::adapter_id)
+            else {
+                continue;
+            };
+            let Some(row) = sessions.get_mut(adapter_id) else {
+                continue;
+            };
+            match connection.reason {
+                None => row.connected += 1,
+                Some(reason) if row.not_connected.len() < MAX_NOT_CONNECTED_SESSIONS => {
+                    row.not_connected.push(NotConnectedSessionSnapshot {
+                        pane_id: pane.id.clone(),
+                        title: agent.identity_label.clone(),
+                        project: agent.workspace_label.clone(),
+                        reason,
+                    });
+                }
+                Some(_) => row.not_connected_hidden += 1,
+            }
+        }
+        sessions
+    }
+
+    /// Puts [`Self::agent_sessions`] on a kit snapshot's agent rows; an agent
+    /// with no connection to judge keeps `None`.
+    fn fill_agent_sessions(&self, device_id: &str, kit: &mut KitSnapshot) {
+        let sessions = self.agent_sessions(device_id);
+        for agent in &mut kit.agents {
+            agent.sessions = sessions.get(agent.id.as_str()).cloned();
+        }
+    }
+
+    /// Recounts every machine's sessions onto its kit rows after the panes
+    /// changed; returns whether any count moved.
+    pub(super) fn refresh_agent_sessions(&mut self) -> bool {
+        let ids = self
+            .snapshot
+            .navigator
+            .devices
+            .iter()
+            .map(|device| device.id.clone())
+            .collect::<Vec<_>>();
+        let mut changed = false;
+        for id in ids {
+            let sessions = self.agent_sessions(&id);
+            let Some(device) = self
+                .snapshot
+                .navigator
+                .devices
+                .iter_mut()
+                .find(|device| device.id == id)
+            else {
+                continue;
+            };
+            for agent in &mut device.kit.agents {
+                let next = sessions.get(agent.id.as_str()).cloned();
+                if agent.sessions != next {
+                    agent.sessions = next;
+                    changed = true;
+                }
+            }
+        }
+        changed
+    }
+
     /// A machine's kit as its row shows it. A device the helper may not be
     /// installed on, or whose platform this build does not carry, installs
     /// nothing and says why (B17, B21); otherwise its last report stands.
     pub(super) fn kit_view(&self, device_id: &str) -> KitSnapshot {
+        let mut view = self.kit_view_without_sessions(device_id);
+        self.fill_agent_sessions(device_id, &mut view);
+        view
+    }
+
+    fn kit_view_without_sessions(&self, device_id: &str) -> KitSnapshot {
         if device_id == LOCAL_DEVICE_ID {
             return self.kit_state(device_id);
         }

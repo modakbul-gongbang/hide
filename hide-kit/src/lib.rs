@@ -42,7 +42,9 @@ use std::time::Duration;
 
 use serde::{Deserialize, Serialize};
 
-pub use agents::{AgentAdapter, AgentReport, Availability, HookSupport, PieceReport, SkillDir};
+pub use agents::{
+    AgentAdapter, AgentReport, Availability, Feature, HookSupport, PieceReport, SkillDir,
+};
 pub use coordination_retirement::preflight as retirement_preflight;
 pub use device::{CURRENT, device_target};
 pub use labels::{HCOORD_PLUGIN_ID, LABELS_PLUGIN_ID, Retirement, labels_home, plugin_state_dir};
@@ -160,6 +162,13 @@ pub struct KitReport {
     /// read. Hide reads it and never changes it (PRD settings-cleanup D-12).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex_daemon: Option<bool>,
+    /// Whether that Codex starts the shared daemon on its own now, read with
+    /// the capability and never changed by a pass: `Some(true)` is the shared
+    /// server a pane reads as the reason its session is not connected (PRD
+    /// settings-cleanup B27). `None` when there is no answer or the Codex has
+    /// no such setting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_daemon_on: Option<bool>,
     /// The machine's record says the operator has not answered the first-run
     /// agent choice: its first pass left the agents that are on by default off
     /// until they do, and an explicit agent choice clears it. It reads the
@@ -197,6 +206,7 @@ impl KitReport {
                 .collect(),
             agents: Vec::new(),
             codex_daemon: None,
+            codex_daemon_on: None,
             held_for_onboarding: false,
             labels_retirement: Retirement::default(),
             legacy_retirement: Retirement::default(),
@@ -511,10 +521,12 @@ pub fn status(target: &KitTarget) -> KitReport {
         })
         .collect();
     let agents = agent_kit::status(target, &record, &agent_kit::part_views(&components));
+    let daemon = codex_daemon(target);
     KitReport {
         components,
         agents,
-        codex_daemon: codex_daemon(target),
+        codex_daemon: daemon.0,
+        codex_daemon_on: daemon.1,
         held_for_onboarding: held,
         labels_retirement: Retirement::default(),
         legacy_retirement: Retirement::default(),
@@ -676,25 +688,31 @@ pub fn apply(target: &KitTarget, scope: &Scope) -> KitReport {
     let folders = legacy::retire(target);
     legacy_retirement.removed.extend(folders.removed);
     legacy_retirement.failures.extend(folders.failures);
+    let daemon = codex_daemon(target);
     KitReport {
         components,
         agents,
-        codex_daemon: codex_daemon(target),
+        codex_daemon: daemon.0,
+        codex_daemon_on: daemon.1,
         held_for_onboarding,
         labels_retirement,
         legacy_retirement,
     }
 }
 
-/// Whether the machine's Codex has the shared daemon setting, read without
-/// changing it (`KitReport::codex_daemon`).
-fn codex_daemon(target: &KitTarget) -> Option<bool> {
+/// What the machine's Codex says about its shared daemon, read without
+/// changing it: whether it has the setting (`KitReport::codex_daemon`) and
+/// whether the setting is on (`KitReport::codex_daemon_on`).
+fn codex_daemon(target: &KitTarget) -> (Option<bool>, Option<bool>) {
     use hide_agent_hooks::codex_daemon::{DaemonSetting, read_setting};
-    let codex = target.codex.as_deref()?;
+    let Some(codex) = target.codex.as_deref() else {
+        return (None, None);
+    };
     match read_setting(codex, &target.home, &target.stop) {
-        Ok(DaemonSetting::Unsupported) => Some(false),
-        Ok(DaemonSetting::On | DaemonSetting::Off) => Some(true),
-        Err(_) => None,
+        Ok(DaemonSetting::Unsupported) => (Some(false), None),
+        Ok(DaemonSetting::On) => (Some(true), Some(true)),
+        Ok(DaemonSetting::Off) => (Some(true), Some(false)),
+        Err(_) => (None, None),
     }
 }
 

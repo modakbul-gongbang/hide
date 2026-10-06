@@ -1610,14 +1610,20 @@ fn the_settings_diagnosis_reports_each_runtime_and_the_sessions_that_predate_the
     .expect("session payload")));
 
     // Before anything has been read, the screen has nothing to claim.
-    assert!(
+    let connection = |runtime: &Runtime, pane_id: &str| {
         runtime
             .snapshot
-            .status
-            .agent_hooks
-            .sessions_predating_install
-            .is_empty()
-    );
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|workspace| workspace.checkouts.iter())
+            .flat_map(|checkout| checkout.tabs.iter())
+            .flat_map(|tab| tab.panes.iter())
+            .find(|pane| pane.id == pane_id)
+            .and_then(|pane| pane.children.as_ref())
+            .and_then(|children| children.connection)
+    };
+    assert_eq!(connection(&runtime, "w1:p2"), None);
 
     assert!(runtime.ingest_hook_diagnosis(hide_agent_hooks::Diagnosis {
         runtimes: vec![
@@ -1650,26 +1656,23 @@ fn the_settings_diagnosis_reports_each_runtime_and_the_sessions_that_predate_the
     let hooks = &runtime.snapshot.status.agent_hooks;
 
     // The hook is installed and one pane still carries none of its tokens,
-    // so that session started first and a restart is what fixes it.
+    // so that session started first: it is the one not connected, and the
+    // instrumented pane is connected (B16, B26, B28).
     assert_eq!(
-        hooks
-            .sessions_predating_install
-            .iter()
-            .map(|pane| pane.pane_id.as_str())
-            .collect::<Vec<_>>(),
-        ["w1:p2"],
-        "the instrumented pane is not on the list"
-    );
-    assert!(
-        hooks.sessions_predating_install[0]
-            .message
-            .contains("Restart the agent"),
-        "got {:?}",
-        hooks.sessions_predating_install[0].message
+        connection(&runtime, "w1:p1"),
+        Some(crate::model::PaneConnectionSnapshot {
+            connected: true,
+            reason: None,
+            reopen: None,
+        })
     );
     assert_eq!(
-        hooks.sessions_predating_install[0].label,
-        "Restore hook visibility"
+        connection(&runtime, "w1:p2"),
+        Some(crate::model::PaneConnectionSnapshot {
+            connected: false,
+            reason: Some(crate::model::PaneConnectionReason::StartedBeforeHide),
+            reopen: None,
+        })
     );
     assert_eq!(
         hooks.last_report_failure, None,
@@ -1751,6 +1754,7 @@ fn a_reinstall_queues_only_the_parts_that_need_it() {
             labels_retirement: Default::default(),
             legacy_retirement: Default::default(),
             codex_daemon: None,
+            codex_daemon_on: None,
         },
     );
     let local = |runtime: &Runtime| {
@@ -1791,6 +1795,7 @@ fn a_reinstall_queues_only_the_parts_that_need_it() {
             labels_retirement: Default::default(),
             legacy_retirement: Default::default(),
             codex_daemon: None,
+            codex_daemon_on: None,
         },
     );
     assert!(!local(&runtime).busy);
@@ -2114,15 +2119,10 @@ fn a_delegation_session_projects_every_state_the_operator_has_to_tell_apart() {
     // A pane with no agent says nothing at all.
     assert!(pane("w1:p6").children.is_none());
 
-    // The Settings diagnosis names the pane a restart fixes.
-    let hooks = &runtime.snapshot.status.agent_hooks;
+    // The header's chip is the one place a session Hide cannot hear is named.
     assert_eq!(
-        hooks
-            .sessions_predating_install
-            .iter()
-            .map(|pane| pane.label.as_str())
-            .collect::<Vec<_>>(),
-        ["Restore hook visibility"]
+        unseen.connection.and_then(|connection| connection.reason),
+        Some(crate::model::PaneConnectionReason::StartedBeforeHide)
     );
 
     // Overview reads the same rows. A catalog is handed in directly because
@@ -2392,6 +2392,7 @@ fn codex_starts_follow_the_capability_the_machines_kit_read() {
     let mut runtime = runtime();
     let report = |codex_daemon| hide_kit::KitReport {
         codex_daemon,
+        codex_daemon_on: None,
         ..Default::default()
     };
     assert_eq!(

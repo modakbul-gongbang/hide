@@ -146,6 +146,18 @@ export type PaneChildren = {
   uninstrumented_reason: string | null;
   uninstrumented_label: string | null;
   chips: AgentChip[];
+  /** Whether Hide hears this pane's session; absent for an agent with no connection to judge. */
+  connection?: PaneConnection | null;
+};
+
+/** Why a session is not connected: `codex_shared_server`, `started_before_hide`, or `setup_needed` (fix it in Settings, no Reopen). */
+export type PaneConnectionReason = "codex_shared_server" | "started_before_hide" | "setup_needed";
+
+/** `PaneConnectionSnapshot`: `reason` is present exactly when `connected` is false; `reopen` is the last Reopen of the pane. */
+export type PaneConnection = {
+  connected: boolean;
+  reason: PaneConnectionReason | null;
+  reopen: { state: "pending" } | { state: "failed"; reason: "start_refused" | "session_gone" | "codex_unread" } | null;
 };
 
 /** One step of a pane's lineage, root first and ending at the pane itself. */
@@ -966,8 +978,39 @@ export type KitAgent = {
   hook: KitPiece | null;
   /** Herdr's own integration for the agent; null for an agent the pinned Herdr has none for (Gemini CLI). */
   herdr?: KitPiece | null;
+  /** Hide does only some of what it does for Claude Code with this agent: the row wears the Partial chip, on or off. */
+  partial?: boolean;
+  /** Every feature of the Partial popover in the table's order (`hide_kit::Feature` ids); `supported` is what this build does. */
+  features?: { id: KitFeatureId; supported: boolean }[];
+  /** The agent's open sessions on this machine; null for an agent with no connection to judge (Partial agents) and before the machine's sessions are read. */
+  sessions?: KitAgentSessions | null;
   doc_url: string;
 };
+
+export type KitFeatureId =
+  | "skill"
+  | "guidance"
+  | "letters"
+  | "memory"
+  | "subagents"
+  | "herdr_integration"
+  | "sleep"
+  | "fork"
+  | "start"
+  | "titles";
+
+/** `KitAgentSessionsSnapshot`: `not_connected` lists at most 32 sessions, and `not_connected_hidden` counts the rest. */
+export type KitAgentSessions = {
+  connected: number;
+  not_connected: { pane_id: string; title: string; project: string; reason: PaneConnectionReason }[];
+  not_connected_hidden: number;
+};
+
+/** How the last turn-off of Codex's shared server on a machine ended (`CodexDaemonOffSnapshot`). */
+export type CodexDaemonOff =
+  | { state: "pending" }
+  | { state: "done" }
+  | { state: "failed"; reason: "codex_missing" | "codex_refused" | "timed_out" | "unreachable" };
 
 export type KitComponent = {
   id: KitComponentId;
@@ -993,6 +1036,10 @@ export type Kit = {
   shares_account_with: string | null;
   /** What the machine's Codex answered about its shared daemon: true has it, false is older, null no answer. */
   codex_daemon?: boolean | null;
+  /** Whether that Codex starts the shared server on its own now: true is the reason a pane reads not connected; null no answer or an older Codex. */
+  codex_daemon_on?: boolean | null;
+  /** The last turn-off of the shared server on this machine; absent until one was asked. */
+  codex_daemon_off?: CodexDaemonOff | null;
 };
 
 /** One pane's rectangle in a remote tab, as fractions of the tab's area (`RemotePaneLayoutFrame`). */
@@ -1123,7 +1170,8 @@ export type BackgroundAi = {
 
 /** Each machine's hook parts are its kit rows (`Device.kit`); this section keeps what only the panes say. */
 export type AgentHooks = {
-  sessions_predating_install: { pane_id: string; label: string; message: string }[];
+  /** Removed from the wire: sessions are counted on `Kit.agents[].sessions` and named on `PaneChildren.connection`. The Agents tab rewrite deletes its last reader. */
+  sessions_predating_install?: { pane_id: string; label: string; message: string }[];
   last_report_failure: string | null;
 };
 

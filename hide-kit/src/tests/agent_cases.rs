@@ -741,3 +741,71 @@ fn cursor_and_gemini_get_the_guidance_hook_with_the_switch_and_lose_it_with_it()
         assert!(!fixture.home().join(file).exists(), "{id}");
     }
 }
+
+#[test]
+fn only_claude_code_and_codex_do_everything_and_the_five_others_are_partial() {
+    use crate::agents::Feature::{self, *};
+    // The expected rows come from the PRD and the hook research, not from
+    // the table: what Hide does for each agent in this build (D-10, B18).
+    let expected: [(&str, &[Feature]); 7] = [
+        ("claude-code", &Feature::ALL),
+        ("codex", &Feature::ALL),
+        ("gemini-cli", &[Skill, Guidance]),
+        ("grok", &[Skill, HerdrIntegration]),
+        ("opencode", &[Skill, HerdrIntegration]),
+        ("pi", &[Skill, HerdrIntegration]),
+        ("cursor", &[Skill, Guidance, HerdrIntegration]),
+    ];
+    assert_eq!(
+        ADAPTERS.iter().map(|row| row.id).collect::<Vec<_>>(),
+        expected.map(|(id, _)| id)
+    );
+    for (id, supported) in expected {
+        let row = crate::agents::adapter(id).unwrap();
+        for feature in Feature::ALL {
+            assert_eq!(
+                row.supports(feature),
+                supported.contains(&feature),
+                "{id}: {feature:?}"
+            );
+        }
+        assert_eq!(row.partial(), supported.len() != Feature::ALL.len(), "{id}");
+    }
+}
+
+#[test]
+fn the_features_the_hook_gives_are_the_ones_a_hook_runtime_exists_for() {
+    // Letters, Memory and subagent counts are the five-event hook, which the
+    // hook crate has a runtime for; an agent claiming them without one would
+    // be a popover that says more than the kit installs.
+    let with_runtime: Vec<&str> = ADAPTERS
+        .iter()
+        .filter(|row| row.supports(crate::agents::Feature::Letters))
+        .map(|row| row.id)
+        .collect();
+    assert_eq!(
+        with_runtime.len(),
+        hide_agent_hooks::AgentRuntime::ALL.len()
+    );
+    for row in ADAPTERS {
+        let part = matches!(row.hook, HookSupport::Part(_));
+        assert_eq!(
+            row.supports(crate::agents::Feature::Letters),
+            part,
+            "{}",
+            row.id
+        );
+        assert_eq!(
+            row.supports(crate::agents::Feature::Memory),
+            part,
+            "{}",
+            row.id
+        );
+        assert_eq!(
+            row.supports(crate::agents::Feature::Subagents),
+            part,
+            "{}",
+            row.id
+        );
+    }
+}

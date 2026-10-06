@@ -1392,6 +1392,7 @@ fn regrouping_a_device_session_keeps_its_agents_lineage() {
             labels_retirement: Default::default(),
             legacy_retirement: Default::default(),
             codex_daemon: None,
+            codex_daemon_on: None,
         },
     );
     assert_eq!(descendants(&runtime), vec![child]);
@@ -1501,6 +1502,7 @@ fn a_device_agent_pane_is_judged_against_its_own_kit() {
             labels_retirement: Default::default(),
             legacy_retirement: Default::default(),
             codex_daemon: None,
+            codex_daemon_on: None,
         },
     );
     let after = children(&runtime);

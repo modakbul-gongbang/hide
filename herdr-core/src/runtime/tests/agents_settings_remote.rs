@@ -511,6 +511,9 @@ fn switch_on(runtime: &mut Runtime, ids: &[&str]) {
                 skill: piece.clone(),
                 hook: None,
                 herdr: None,
+                partial: false,
+                features: Vec::new(),
+                sessions: None,
                 doc_url: String::new(),
             }
         })

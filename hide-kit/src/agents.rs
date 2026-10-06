@@ -153,6 +153,12 @@ pub struct AgentAdapter {
     /// Whether the agent is on without the operator choosing, as Claude Code
     /// and Codex have been since their hooks became part of the kit.
     pub default_on: bool,
+    /// Whether Hide reads this agent's own session files, which sleep, fork,
+    /// starting it from Hide's screen and conversation-based titles all need.
+    /// Only Claude Code and Codex have such a reader (PRD settings-cleanup
+    /// D-10); the gates in `herdr-core` that name the same two agents are held
+    /// to this by `runtime::tests::agent_features`.
+    pub session_reader: bool,
     /// The official page the row's answers come from.
     pub doc_url: &'static str,
 }
@@ -174,6 +180,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
             folder: &[".claude"],
         }),
         default_on: true,
+        session_reader: true,
         doc_url: "https://code.claude.com/docs/en/skills",
     },
     AgentAdapter {
@@ -188,6 +195,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
             folder: &[".codex"],
         }),
         default_on: true,
+        session_reader: true,
         doc_url: "https://learn.chatgpt.com/docs/build-skills",
     },
     AgentAdapter {
@@ -199,6 +207,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         hook: HookSupport::Guidance(GuidanceAgent::Gemini),
         herdr: None,
         default_on: false,
+        session_reader: false,
         doc_url: "https://geminicli.com/docs/cli/skills/",
     },
     AgentAdapter {
@@ -213,6 +222,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
             folder: &[".grok"],
         }),
         default_on: false,
+        session_reader: false,
         doc_url: "https://docs.x.ai/build/features/skills-plugins-marketplaces",
     },
     AgentAdapter {
@@ -227,6 +237,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
             folder: &[".config", "opencode"],
         }),
         default_on: false,
+        session_reader: false,
         doc_url: "https://opencode.ai/docs/skills/",
     },
     AgentAdapter {
@@ -241,6 +252,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
             folder: &[".pi", "agent"],
         }),
         default_on: false,
+        session_reader: false,
         doc_url: "https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/skills.md",
     },
     AgentAdapter {
@@ -255,6 +267,7 @@ pub const ADAPTERS: &[AgentAdapter] = &[
             folder: &[".cursor"],
         }),
         default_on: false,
+        session_reader: false,
         doc_url: "https://cursor.com/docs/context/skills",
     },
 ];
@@ -285,7 +298,78 @@ pub(crate) fn adapter_of_part(part: ComponentId) -> Option<&'static AgentAdapter
         .find(|adapter| adapter.hook == HookSupport::Part(part))
 }
 
+/// One thing Hide does for an agent, as the Partial popover lists it (PRD
+/// settings-cleanup D-10, B18). The ids are stable names the shell localizes;
+/// no sentence lives here.
+#[derive(Clone, Copy, Debug, Eq, Hash, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Feature {
+    /// The `hide-browser` skill stub in the folder the agent reads.
+    Skill,
+    /// The session-start guidance: the purpose instruction and the live
+    /// Workspace commands, written by a hook.
+    Guidance,
+    /// Letters taken in when the operator submits a prompt.
+    Letters,
+    /// Project Memory put into the session.
+    Memory,
+    /// The count of subagents the session spawned.
+    Subagents,
+    /// Herdr's own integration, which gives the session identity and an exact
+    /// status. Without it the status is judged from the screen alone (B15).
+    HerdrIntegration,
+    /// Putting the agent to sleep and waking it.
+    Sleep,
+    Fork,
+    /// Starting the agent from Hide's own screen.
+    Start,
+    /// Titles made from the conversation.
+    Titles,
+}
+
+impl Feature {
+    pub const ALL: [Feature; 10] = [
+        Self::Skill,
+        Self::Guidance,
+        Self::Letters,
+        Self::Memory,
+        Self::Subagents,
+        Self::HerdrIntegration,
+        Self::Sleep,
+        Self::Fork,
+        Self::Start,
+        Self::Titles,
+    ];
+}
+
 impl AgentAdapter {
+    /// Whether Hide does `feature` for this agent in this build. Every answer
+    /// is read off a field of the row that also drives the behavior, so the
+    /// popover cannot say more than the kit installs: the hooks from
+    /// [`HookSupport`], the integration from [`HerdrIntegration`], the four
+    /// that need a session reader from `session_reader`.
+    pub fn supports(&self, feature: Feature) -> bool {
+        match feature {
+            Feature::Skill => true,
+            Feature::Guidance => !matches!(self.hook, HookSupport::None),
+            Feature::Letters | Feature::Memory | Feature::Subagents => {
+                matches!(self.hook, HookSupport::Part(_))
+            }
+            Feature::HerdrIntegration => self.herdr.is_some(),
+            Feature::Sleep | Feature::Fork | Feature::Start | Feature::Titles => {
+                self.session_reader
+            }
+        }
+    }
+
+    /// Whether Hide does only some of what it does for Claude Code, so the
+    /// row wears the Partial chip whether or not the agent is on.
+    pub fn partial(&self) -> bool {
+        Feature::ALL
+            .into_iter()
+            .any(|feature| !self.supports(feature))
+    }
+
     /// Whether the agent's documentation confirms its skill folder here.
     pub fn skill_supported(&self) -> bool {
         self.skill_os.contains(&Os::CURRENT)
