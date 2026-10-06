@@ -16,7 +16,7 @@ import { SHOW_INACTIVE_SWITCH } from "../src/main/launchSwitches";
 export const DESKTOP_DIR = path.resolve(__dirname, "..");
 export const REPO = path.resolve(DESKTOP_DIR, "..");
 export const HIDE_CLI = path.join(REPO, "target", "debug", fixtureExecutable("hide"));
-const isolations = new Map<string, { cleanup: () => void; candidates: Set<ChildProcess>; launching: number }>();
+const isolations = new Map<string, { cleanup: () => void; candidates: Set<ChildProcess>; launching: number; root: string; states: () => string[] }>();
 const MAX_ISOLATIONS = 16;
 const MAX_CANDIDATES_PER_HOME = 16;
 
@@ -71,7 +71,9 @@ export function isolate(herdr: Pick<HerdrFixture, "socket" | "bin"> & Partial<Pi
     const answer = JSON.parse(hide(["status", "--json"]).stdout) as { running: boolean; pid?: number };
     return answer.running ? (answer.pid ?? null) : null;
   };
-  const owner = { cleanup: () => {}, candidates: new Set<ChildProcess>(), launching: 0 };
+  // Every state folder a daemon of this home may have used: the one the app is given and the two `hide` falls back to.
+  const states = () => [cleanupEnv.HIDE_STATE_DIR!, path.join(home, ".hide", "state"), path.join(home, ".local", "state", "hide")];
+  const owner = { cleanup: () => {}, candidates: new Set<ChildProcess>(), launching: 0, root, states };
   let cleaned = false;
   const cleanup = () => {
     if (cleaned) return;
@@ -81,7 +83,7 @@ export function isolate(herdr: Pick<HerdrFixture, "socket" | "bin"> & Partial<Pi
       throw new Error(`fixture cleanup incomplete; preserve ${root}: candidate exit unconfirmed (PIDs: ${pids || "none"}, pending launches: ${owner.launching}); close only the recorded owned candidates, confirm their exit, then call cleanup() again`);
     }
     const errors: unknown[] = [];
-    for (const state of [cleanupEnv.HIDE_STATE_DIR!, path.join(home, ".hide", "state"), path.join(home, ".local", "state", "hide")]) {
+    for (const state of states()) {
       if (!fs.existsSync(state)) continue;
       const stopped = spawnSync(HIDE_CLI, ["stop"], { env: { ...cleanupEnv, HIDE_STATE_DIR: state }, encoding: "utf8", timeout: 20_000 });
       if (stopped.error || stopped.status !== 0) errors.push(new Error(`private hided stop failed for ${state}: ${stopped.error?.message ?? (stopped.stderr || stopped.stdout || stopped.status)}`));
@@ -191,6 +193,9 @@ export const test = base.extend<{ focusGuard: void }>({
             try { await app.close(); } catch (error) { errors.push(error); }
           }
         }
+        if (testInfo.status !== testInfo.expectedStatus) {
+          try { keepDaemonLogs(testInfo.outputPath()); } catch (error) { errors.push(error); }
+        }
         for (const { cleanup } of [...isolations.values()]) {
           try { cleanup(); } catch (error) { errors.push(error); }
         }
@@ -206,6 +211,46 @@ export const test = base.extend<{ focusGuard: void }>({
     { auto: true },
   ],
 });
+
+/** The most of one daemon log a failed attempt keeps: the end of it, where the failure is. */
+const KEPT_LOG_BYTES = 256 * 1024;
+
+/**
+ * Copies the end of each private daemon's core log beside a failed attempt's
+ * report, as `hided-<n>.jsonl`, before cleanup removes the run's folders: the
+ * host log does not show the order of the core's focus, tab and pane records,
+ * and without them a CI flake could only be classified by inference (issue
+ * 629). The run's folders, the repository, the home and the temporary folder
+ * are written as placeholders; the core log carries no token or credential.
+ */
+function keepDaemonLogs(into: string): void {
+  const placeholders: [string, string][] = [];
+  for (const [home, { root }] of isolations) placeholders.push([root, "<run>"], [home, "<run>/home"]);
+  placeholders.push([REPO, "<repo>"], [os.homedir(), "<home>"], [fs.realpathSync.native(os.tmpdir()), "<tmp>"], [os.tmpdir(), "<tmp>"]);
+  // Paths reach the log as JSON strings, so a Windows path appears with its backslashes escaped.
+  const spellings = placeholders
+    .flatMap(([from, to]): [string, string][] => [[JSON.stringify(from).slice(1, -1), to], [from, to]])
+    .sort(([a], [b]) => b.length - a.length);
+  let kept = 0;
+  for (const { states } of isolations.values()) {
+    for (const state of states()) {
+      const file = path.join(state, "Logs", "core.jsonl");
+      if (!fs.existsSync(file)) continue;
+      const size = fs.statSync(file).size;
+      const start = Math.max(0, size - KEPT_LOG_BYTES);
+      const handle = fs.openSync(file, "r");
+      const bytes = Buffer.alloc(size - start);
+      try { fs.readSync(handle, bytes, 0, bytes.length, start); } finally { fs.closeSync(handle); }
+      let text = bytes.toString("utf8");
+      // A cut record is dropped whole, so every kept line is JSON.
+      if (start > 0) text = text.slice(text.indexOf("\n") + 1);
+      for (const [from, to] of spellings) text = text.replaceAll(from, to);
+      const note = start > 0 ? `${JSON.stringify({ kind: "e2e.log_tail", kept_bytes: KEPT_LOG_BYTES, total_bytes: size })}\n` : "";
+      fs.mkdirSync(into, { recursive: true });
+      fs.writeFileSync(path.join(into, `hided-${(kept += 1)}.jsonl`), note + text);
+    }
+  }
+}
 
 /** Starts the app with the focus guard preloaded, reporting into the running test's folder. */
 async function start(appDir: string, env: Record<string, string>, executablePath?: string): Promise<ElectronApplication> {

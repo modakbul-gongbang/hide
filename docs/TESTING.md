@@ -396,6 +396,7 @@ CI retries a failed test once, for classification and for the report, and for no
   The issue names the first run, the change and the system, and carries a deadline seven days out.
   The report step also sets its `flaky` output, and a lane that keeps its e2e logs for a failure keeps them for a flaky run too, under the same artifact name, because the first attempt's daemon, Herdr and input logs are the only evidence the issue gets; a run with no flaky and no failed test uploads nothing.
   On Windows CI the web suite also logs, for each failed attempt and at that moment, what holds TCP connections (count by state and by process name, `[windows sockets]` lines from `web/e2e/windows-sockets-reporter.ts`), because a Chromium `ERR_NO_BUFFER_SPACE` on a loopback connect left nothing saying who held the sockets; a passing attempt runs nothing.
+  The desktop suite keeps, for each failed attempt, the end of each private daemon's `Logs/core.jsonl` (at most 256 KiB, whole records) as `hided-<n>.jsonl` in that attempt's `test-results` folder, which the same artifact carries, with the run's folders, the repository, the home and the temporary folder written as placeholders, because the host log alone could not show the order of the core's focus records behind a flaky ⌃Tab cycle (issue 629); a passing attempt copies nothing.
   A test that fails its retry too fails the lane; nothing else is retried anywhere.
 - At the deadline a flaky test is fixed or deleted.
   Whoever knows the cause opens the fix or the deletion; if nobody does, the issue goes to the operator.
