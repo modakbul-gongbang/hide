@@ -35,7 +35,7 @@ export type Isolated = {
  * transcripts; without one the daemon finds whatever `claude` PATH has, on a
  * HOME where it is not logged in.
  */
-export function isolate(herdr: Pick<HerdrFixture, "socket" | "bin"> & Partial<Pick<HerdrFixture, "root">>, label: string): Isolated {
+export function isolate(herdr: Pick<HerdrFixture, "socket" | "bin"> & Partial<Pick<HerdrFixture, "root" | "afterStop">>, label: string): Isolated {
   if (isolations.size >= MAX_ISOLATIONS) throw new Error(`desktop fixture has ${MAX_ISOLATIONS} unclosed homes; clean an owned fixture before creating another`);
   const root = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), `hide-desktop-${label}-`)));
   const home = path.join(root, "home");
@@ -89,7 +89,12 @@ export function isolate(herdr: Pick<HerdrFixture, "socket" | "bin"> & Partial<Pi
     if (errors.length) throw new AggregateError(errors, `fixture cleanup incomplete; preserve ${root} and resolve the reported stop/unload failure`);
     // Windows keeps a running executable and a process's folder locked: end what still runs from the root first.
     if (process.platform === "win32") endWindowsProcesses([], root);
-    fs.rmSync(root, { recursive: true, force: true });
+    const remove = () => fs.rmSync(root, { recursive: true, force: true });
+    // A project the app registered is a workspace in this Herdr, whose panes
+    // keep its folder (inside this root) locked on Windows until the server's
+    // processes are gone, so the root is removed by the Herdr fixture's stop.
+    if (process.platform === "win32" && herdr.afterStop) herdr.afterStop(remove);
+    else remove();
     cleaned = true;
     isolations.delete(home);
     owned.disown();
