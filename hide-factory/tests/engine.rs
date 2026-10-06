@@ -10,6 +10,7 @@ use hide_factory::adapters::{
     EnvSignal, Failure, MainCheck, MemoryPressure, OutsideEvent, VerifyPoll, WorkerStatus,
 };
 use hide_factory::command::{CardInput, Command, VerificationChoice};
+use hide_factory::judgment::JudgmentInput;
 use hide_factory::model::*;
 use serde_json::json;
 use support::*;
@@ -909,10 +910,21 @@ fn an_enabled_autonomy_scope_starts_alone_and_the_third_new_task_stops_the_paren
         set: vec![("autonomy".into(), "lint_format=on".into())],
     });
     let t = h.ready("Parent", &[]);
+    let watches = |h: &Bench| {
+        let world = h.world();
+        world
+            .submitted
+            .iter()
+            .chain(&world.judged)
+            .filter(|j| matches!(j.input, JudgmentInput::Watch { .. }))
+            .count()
+    };
+    let mut watched = 0;
     for n in 1..=3 {
         if h.state(&f, &t) != TaskState::Running {
             h.op(Command::Resume { task: t.clone() });
         }
+        watched = watches(&h);
         let answer = h.as_worker(
             &f,
             &t,
@@ -943,6 +955,11 @@ fn an_enabled_autonomy_scope_starts_alone_and_the_third_new_task_stops_the_paren
     assert_eq!(
         (task.state, task.stop),
         (TaskState::Stopped, Some(StopReason::NewTaskCap))
+    );
+    assert_eq!(
+        watches(&h),
+        watched + 1,
+        "reaching the cap reads the board (B69)"
     );
     assert!(matches!(
         open_question(&h, &f, &t).kind,
@@ -1703,6 +1720,46 @@ fn a_refused_worker_start_stops_the_task_once_and_a_retry_starts_it() {
 }
 
 // ------------------------------------------------------------------ watch
+
+#[test]
+fn a_periodic_check_reads_each_running_task_on_the_watch_cadence() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let answer = h.op(Command::Check {
+        project: None,
+        at: CheckPoint::Periodic,
+        instruction: "Does it still match the card?".into(),
+    });
+    assert_eq!(answer["ok"], true, "{answer}");
+    let running = h.ready("Running", &[]);
+    let waiting = h.ready("Waiting", &[&running]);
+    h.world().drift.insert(
+        running.clone(),
+        json!({"pass": false, "questions": [{"text": "Drifting?", "suggestion": "keep", "default_action": "keep going"}], "flags": []}),
+    );
+    let periodic = |h: &Bench| {
+        h.world()
+            .judged
+            .iter()
+            .filter(|j| j.id.contains(":periodic:"))
+            .filter_map(|j| j.task.clone())
+            .collect::<Vec<_>>()
+    };
+    h.engine.tick();
+    assert!(periodic(&h).is_empty(), "nothing before the interval");
+    h.advance(30 * 60_000);
+    h.engine.tick();
+    h.engine.tick();
+    assert_eq!(periodic(&h), vec![running.clone()]);
+    let question = open_question(&h, &f, &running);
+    assert_eq!(question.text, "Drifting?");
+    assert_eq!(
+        h.state(&f, &running),
+        TaskState::Running,
+        "a check never stops the work"
+    );
+    assert_eq!(h.task(&f, &waiting).open_questions().count(), 0);
+}
 
 #[test]
 fn the_watch_raises_actionable_warnings_once_each_within_the_daily_cap() {

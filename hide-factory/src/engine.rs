@@ -149,6 +149,9 @@ enum Purpose {
     Intake,
     Drift,
     Check,
+    /// A periodic user check on a running Task: it adds questions or marks
+    /// and never holds a merge (B67).
+    Periodic,
     Watch,
     Env,
 }
@@ -2343,6 +2346,8 @@ impl Engine {
                     .task(factory, id)
                     .is_some_and(|t| t.new_tasks >= limit && !t.new_task_cap_extended);
                 if reached {
+                    // Reaching the cap is a watch event (B69).
+                    self.watch_due(factory, true);
                     self.put_to_sleep(factory, id);
                     self.with_task(factory, id, |task| task.stop = Some(StopReason::NewTaskCap));
                     self.set_state(factory, id, TaskState::Stopped);
@@ -3885,6 +3890,17 @@ impl Engine {
                     }
                     self.advance_merge(&factory, &task);
                 }
+                (JudgmentOutcome::Answered { value }, Purpose::Periodic, Some(task)) => {
+                    match judgment::parse_finding(value) {
+                        Ok(_) => self.apply_finding(&factory, &task, value),
+                        Err(_) => self.record(
+                            &factory,
+                            Some(&task),
+                            "judgment.failed",
+                            json!({"purpose": "Periodic", "reason": "unreadable"}),
+                        ),
+                    }
+                }
                 (JudgmentOutcome::Answered { value }, Purpose::Watch, _) => {
                     self.apply_watch(&factory, value)
                 }
@@ -4991,6 +5007,59 @@ impl Engine {
         if self.ports.judge.submit(judgment.clone()).is_ok() {
             self.judgments
                 .insert(judgment.id, (factory_id.to_owned(), None, Purpose::Watch));
+        }
+        if interval_due {
+            self.periodic_checks(&factory, now);
+        }
+    }
+
+    /// The periodic user checks run on the watch cadence over each running
+    /// Task's card (B67); one that cannot be queued is logged, since nothing
+    /// waits on it.
+    fn periodic_checks(&mut self, factory: &Factory, now: UnixMs) {
+        let checks: Vec<String> = factory
+            .config
+            .checks
+            .iter()
+            .filter(|c| c.at == CheckPoint::Periodic)
+            .map(|c| c.instruction.clone())
+            .collect();
+        if checks.is_empty() {
+            return;
+        }
+        let running: Vec<(String, Card)> = self
+            .tasks_of(&factory.id)
+            .filter(|t| t.state == TaskState::Running)
+            .map(|t| (t.id.clone(), t.card.clone()))
+            .collect();
+        for (id, card) in running {
+            for (index, instruction) in checks.iter().enumerate() {
+                let judgment = Judgment {
+                    id: format!("{}:{id}:periodic:{index}:{now}", factory.id),
+                    factory: factory.id.clone(),
+                    task: Some(id.clone()),
+                    priority: Priority::Factory,
+                    input: JudgmentInput::Check {
+                        instruction: instruction.clone(),
+                        card: card.clone(),
+                        diff: None,
+                    },
+                };
+                match self.ports.judge.submit(judgment.clone()) {
+                    Ok(()) => {
+                        self.judgments.insert(
+                            judgment.id,
+                            (factory.id.clone(), Some(id.clone()), Purpose::Periodic),
+                        );
+                    }
+                    Err(failure) => self.record(
+                        &factory.id,
+                        Some(&id),
+                        "check.skipped",
+                        json!({"at": "periodic", "stage": failure.stage}),
+                    ),
+                }
+            }
         }
     }
 
