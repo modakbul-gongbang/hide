@@ -238,6 +238,7 @@ jobs:
           mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
           args=(--shard="$SHARD")
           if [ -n "$GREP" ]; then args+=(--grep "$GREP"); fi
+          if [ "$RUNNER_OS" = Windows ]; then args+=(e2e/worktree-delete.spec.ts --repeat-each=10); fi
           bash scripts/verify-web.sh web e2e "${args[@]}"
       - name: Report flaky tests
         # A test that failed and passed its retry becomes an issue with a
