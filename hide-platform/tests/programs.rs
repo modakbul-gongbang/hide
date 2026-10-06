@@ -6,6 +6,7 @@
 use std::fs;
 use std::os::unix::fs::PermissionsExt;
 use std::path::{Path, PathBuf};
+use std::sync::Barrier;
 use std::sync::atomic::AtomicBool;
 
 use hide_platform::programs;
@@ -69,4 +70,70 @@ fn a_program_in_an_install_folder_the_daemons_path_misses_is_found() {
         programs::find_cli_with(&home, None, &AtomicBool::new(false), "hide-fixture-absent"),
         None
     );
+}
+
+/// A stand-in login shell that records each time it is started, one line per
+/// start in `starts`.
+fn counting_shell(folder: &Path, starts: &Path) -> PathBuf {
+    let shell = folder.join("counting-shell");
+    fs::write(
+        &shell,
+        format!(
+            "#!/bin/sh\necho started >> \"{}\"\n[ \"$1\" = -ilc ] || exit 64\neval \"$2\"\n",
+            starts.display()
+        ),
+    )
+    .unwrap();
+    fs::set_permissions(&shell, fs::Permissions::from_mode(0o755)).unwrap();
+    shell
+}
+
+fn starts(file: &Path) -> usize {
+    fs::read_to_string(file).map_or(0, |text| text.lines().count())
+}
+
+#[test]
+fn callers_that_arrive_cold_together_start_one_shell() {
+    let root = tempfile::tempdir().unwrap();
+    let home = root.path().join("home");
+    let started = root.path().join("starts");
+    let shell = counting_shell(root.path(), &started);
+    let callers = 6;
+    let together = Barrier::new(callers);
+
+    let answers: Vec<_> = std::thread::scope(|scope| {
+        let readers: Vec<_> = (0..callers)
+            .map(|_| {
+                scope.spawn(|| {
+                    together.wait();
+                    programs::login_shell_path(&home, Some(&shell), &AtomicBool::new(false))
+                })
+            })
+            .collect();
+        readers
+            .into_iter()
+            .map(|reader| reader.join().unwrap())
+            .collect()
+    });
+
+    assert!(answers[0].is_some(), "the stand-in shell answers");
+    assert!(answers.iter().all(|answer| answer == &answers[0]));
+    assert_eq!(starts(&started), 1, "one shell answered every caller");
+}
+
+#[test]
+fn a_second_home_does_not_make_the_first_ask_again() {
+    let root = tempfile::tempdir().unwrap();
+    let started = root.path().join("starts");
+    let shell = counting_shell(root.path(), &started);
+    let stop = AtomicBool::new(false);
+    let first = root.path().join("first-home");
+    let second = root.path().join("second-home");
+
+    programs::login_shell_path(&first, Some(&shell), &stop).unwrap();
+    programs::login_shell_path(&second, Some(&shell), &stop).unwrap();
+    assert_eq!(starts(&started), 2, "each home is asked once");
+    programs::login_shell_path(&first, Some(&shell), &stop).unwrap();
+    programs::login_shell_path(&second, Some(&shell), &stop).unwrap();
+    assert_eq!(starts(&started), 2, "both answers are still remembered");
 }
