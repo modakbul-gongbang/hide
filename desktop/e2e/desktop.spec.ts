@@ -8,6 +8,8 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import "../../web/src/host";
+import { chord, commandLabel } from "../../web/e2e/chords";
+import { fixtureExecutable } from "../../web/e2e/platform-fixture";
 import { countSent, enterWorkspace } from "../../web/e2e/wire";
 import { detachedApp, DESKTOP_DIR, HIDE_CLI, hostLog, isolate, launch, relaunch, screenshot, test, type Isolated } from "./fixture";
 
@@ -40,7 +42,8 @@ async function shellShown(page: Page): Promise<void> {
   await expect(page.locator("[data-main-screen]").or(page.locator("[data-workspace-screen]"))).toBeVisible({ timeout: 30_000 });
 }
 
-test("attach: the app starts hided, shows the shell, and runs the native chords and the menu", async () => {
+// @platform: `hide connect` starts hided through the system's processes and local stream, and the window, menu and chords are the system's own set.
+test("attach: the app starts hided, shows the shell, and runs the native chords and the menu", { tag: "@platform" }, async () => {
   ({ app } = await launch(run.env));
   const page = await app.firstWindow();
   const sent = countSent(page);
@@ -65,13 +68,13 @@ test("attach: the app starts hided, shows the shell, and runs the native chords 
     })),
   ).toEqual({ require: "undefined", process: "undefined", bridge: ["browser", "kind", "onCommand", "openPath", "pickFolder", "platform", "probePaths", "reportBindings", "reportLanguage", "revealPath"], kind: "electron" });
 
-  // B9: ⌘T is one create_tab here; the browser's ⌥T is not a chord in the app.
+  // B9: the app's New tab chord is one create_tab here; the browser's is not a chord in the app.
   const tabs = await page.locator("[role=tab]").count();
   await page.locator("[data-pane-view] .xterm-helper-textarea").first().focus();
-  await page.keyboard.press("Meta+KeyT");
+  await page.keyboard.press(chord("new_tab", "electron"));
   await expect(page.locator("[role=tab]")).toHaveCount(tabs + 1);
   await expect.poll(() => sent.get("create_tab")).toBe(1);
-  await page.keyboard.press("Alt+KeyT");
+  await page.keyboard.press(chord("new_tab"));
   // A menu click runs the same action through the bridge.
   await app.evaluate(({ Menu }) => Menu.getApplicationMenu()?.getMenuItemById("new_tab")?.click());
   await expect(page.locator("[role=tab]")).toHaveCount(tabs + 2);
@@ -97,13 +100,13 @@ test("attach: the app starts hided, shows the shell, and runs the native chords 
   expect(areaItems.map((item) => item.label)).toEqual(["Focus next Agent area", "Focus previous Agent area", "Grow Agent area", "Shrink Agent area", "Focus next View area", "Focus previous View area", "Grow View area", "Shrink View area"]);
   expect(areaItems.every((item) => item.accelerator === null)).toBe(true);
 
-  // B9: the ⌘/ sheet lists this host's chords, with no "moved for Chrome" note.
-  await page.keyboard.press("Meta+Slash");
+  // B9: the shortcuts sheet lists this host's chords, with no "moved for Chrome" note.
+  await page.keyboard.press(chord("shortcuts", "electron"));
   const sheet = page.locator("[data-shortcut-sheet]");
   await expect(sheet).toBeVisible();
   await expect(sheet.getByText("desktop app")).toBeVisible();
-  await expect(sheet.locator('[data-shortcut="new_tab"] kbd')).toHaveText("⌘T");
-  await expect(sheet.locator('[data-shortcut="close_tab"] kbd')).toHaveText("⌘W");
+  await expect(sheet.locator('[data-shortcut="new_tab"] kbd')).toHaveText(commandLabel("new_tab", "electron"));
+  await expect(sheet.locator('[data-shortcut="close_tab"] kbd')).toHaveText(commandLabel("close_tab", "electron"));
   await expect(sheet.getByText("moved for Chrome")).toHaveCount(0);
   await screenshot(page, "desktop-shortcut-sheet");
   await page.keyboard.press("Escape");
@@ -136,7 +139,8 @@ test("links: external links open in the default browser and the window stays on 
   expect(await page.evaluate(() => [location.origin, !!document.querySelector("[data-main-screen], [data-workspace-screen]")])).toEqual([origin, true]);
 });
 
-test("lifetime: a second launch brings the first back, closing the window keeps the app, and quitting leaves hided for the next launch", async () => {
+// @platform: Closing the last window keeps the app on macOS and ends it elsewhere (`window-all-closed` in `index.ts`); hided outlives the app on every system.
+test("lifetime: a second launch brings the first back, closing the last window keeps the app on macOS and ends it elsewhere, and hided stays for the next launch", { tag: "@platform" }, async () => {
   ({ app } = await launch(run.env));
   let page = await app.firstWindow();
   await shellShown(page);
@@ -148,24 +152,36 @@ test("lifetime: a second launch brings the first back, closing the window keeps 
   // B6: a second launch on the same profile exits and the first comes forward
   // (under e2e, shown again without taking the keyboard; the first instance's switch decides that).
   const electronBinary = fs.readFileSync(path.join(DESKTOP_DIR, "node_modules", "electron", "path.txt"), "utf8");
-  const second = spawn(path.join(DESKTOP_DIR, "node_modules", "electron", "dist", electronBinary), [DESKTOP_DIR], { env: run.env, stdio: "ignore" });
-  const code = await new Promise<number | null>((resolve) => second.once("exit", resolve));
-  expect(code).toBe(0);
+  // Playwright starts the first instance without Chromium's sandbox, which a CI runner on Linux cannot provide; the second must match.
+  const sandbox = process.platform === "linux" ? ["--no-sandbox"] : [];
+  const second = spawn(path.join(DESKTOP_DIR, "node_modules", "electron", "dist", electronBinary), [...sandbox, DESKTOP_DIR], { env: run.env, stdio: "ignore" });
+  const [code, signal] = await new Promise<[number | null, NodeJS.Signals | null]>((resolve) => second.once("exit", (exitCode, exitSignal) => resolve([exitCode, exitSignal])));
+  expect(code, `the second launch ended by signal ${signal}`).toBe(0);
   await expect.poll(() => hostLog(run.env).some((line) => line.event === "host.reopen" && line.trigger === "second-instance")).toBe(true);
   expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(1);
 
-  // B7: closing the last window keeps the app; a Dock click (activate) brings a window back.
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.close());
-  await expect.poll(() => app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(0);
-  const reopened = app.waitForEvent("window");
-  await app.evaluate(({ app: electronApp }) => electronApp.emit("activate"));
-  page = await reopened;
-  await shellShown(page);
+  // B7: closing the last window keeps the app on macOS, and a Dock click (activate) brings a window back;
+  // on every other system the app ends with its last window, and the next launch attaches to the same hided.
+  const first = app.process();
+  const closing = app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.close());
+  if (process.platform === "darwin") {
+    await closing;
+    await expect.poll(() => app!.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(0);
+    const reopened = app.waitForEvent("window");
+    await app.evaluate(({ app: electronApp }) => electronApp.emit("activate"));
+    page = await reopened;
+    await shellShown(page);
+  } else {
+    // The app ends with its window, so the connection can drop before the answer returns.
+    await closing.catch(() => undefined);
+    if (first.exitCode === null && first.signalCode === null) await new Promise((resolve) => first.once("exit", resolve));
+    app = await relaunch(run.env);
+  }
   expect(run.daemonPid()).toBe(pid);
 
   // B8: the size and position come back on the next launch.
   // Fitted inside this machine's primary work area (a CI runner's display is
-  // smaller than a workstation's), and the expectation is what macOS actually
+  // smaller than a workstation's), and the expectation is what the system actually
   // placed, since the window manager may still adjust a requested rect.
   const bounds = await app.evaluate(({ BrowserWindow, screen }) => {
     const area = screen.getPrimaryDisplay().workArea;
@@ -190,8 +206,9 @@ test("lifetime: a second launch brings the first back, closing the window keeps 
   expect(hostLog(run.env).filter((line) => line.event === "window.bounds").map((line) => line.source)).toEqual(["default", "stored", "stored"]);
 });
 
-test("failure: a missing CLI shows its reason and Retry attaches once it exists", async () => {
-  const cli = path.join(run.root, "bin", "hide");
+// @platform: The CLI is `hide.exe` on Windows and `hide` elsewhere, and the host looks for it in the system's own places (`cli.ts`).
+test("failure: a missing CLI shows its reason and Retry attaches once it exists", { tag: "@platform" }, async () => {
+  const cli = path.join(run.root, "bin", fixtureExecutable("hide"));
   ({ app } = await launch({ ...run.env, HIDE_CLI_PATH: cli }));
   const page = await app.firstWindow();
   // B2, B3: one screen, the reason category, and Retry; the tried path is logged.
@@ -200,7 +217,12 @@ test("failure: a missing CLI shows its reason and Retry attaches once it exists"
   await screenshot(page, "desktop-cli-missing");
   expect(hostLog(run.env).find((line) => line.event === "cli.missing")?.tried).toBe(cli);
   fs.mkdirSync(path.dirname(cli), { recursive: true });
-  fs.symlinkSync(HIDE_CLI, cli);
+  if (process.platform === "win32") {
+    // A link needs a privilege the account may lack, and `hide connect` starts the `hided` beside it, so both programs are copied.
+    for (const name of ["hide", "hided"]) fs.copyFileSync(path.join(path.dirname(HIDE_CLI), fixtureExecutable(name)), path.join(path.dirname(cli), fixtureExecutable(name)));
+  } else {
+    fs.symlinkSync(HIDE_CLI, cli);
+  }
   await page.getByRole("button", { name: "Retry" }).click();
   await shellShown(page);
 });
@@ -239,7 +261,8 @@ test("discovery: a Finder-style PATH still lets a new daemon run installed tools
   expect(resolved().at(-1)).toMatchObject({ source: "remembered", path: installed, tried: [...before, installed].join(":") });
 });
 
-test("reattach: a daemon that dies shows the shell's disconnected state, and the app follows the next one", async () => {
+// @platform: A daemon ending and the next one starting, seen through the system's processes and local stream.
+test("reattach: a daemon that dies shows the shell's disconnected state, and the app follows the next one", { tag: "@platform" }, async () => {
   ({ app } = await launch(run.env));
   const page = await app.firstWindow();
   await shellShown(page);

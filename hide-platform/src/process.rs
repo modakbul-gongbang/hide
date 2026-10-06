@@ -782,15 +782,32 @@ fn drain_available<P: io::Read + sys::PipeHandle>(
 
 /// Makes `command` start a child that no signal sent to this process's group,
 /// terminal or console reaches, and that holds none of this process's
-/// standard handles: a daemon whose lifetime is its own, and whose start
-/// leaves a caller reading this process's output to see that output end when
-/// this process does. Nothing owns the child afterwards.
+/// standard handles and none of the descriptors or handles this process was
+/// given beyond them: a daemon whose lifetime is its own, and whose start
+/// leaves a caller reading this process's output, or a pipe it lent to this
+/// process, to see that stream end when this process does. Nothing owns the
+/// child afterwards.
 ///
-/// Windows hands a child every inheritable handle of its parent, and this
-/// process's standard handles are inheritable whenever its own parent passed
-/// them in (the pipe a caller reads), so there they are made uninheritable
+/// A supervisor lends its child more than the standard streams (a debugging
+/// pipe, a readiness pipe) and does not mark them close-on-exec, so a program
+/// that starts a daemon would pass them on and the daemon would hold them for
+/// as long as it lives. On Unix the child marks every descriptor above the
+/// standard three close-on-exec before it runs, so the program it becomes
+/// starts without them. Windows hands a child every inheritable handle of its
+/// parent, and this process's standard handles are inheritable whenever its
+/// own parent passed them in (the pipe a caller reads), so there they, and
+/// every other inheritable handle this process holds, are made uninheritable
 /// first. A child started later with [`std::process::Stdio::inherit`] still
-/// gets them: the standard library hands it an inheritable copy.
+/// gets the standard ones: the standard library hands it an inheritable copy.
+///
+/// The Windows sweep changes this process's own handle table, not only the
+/// child's, so it is for a short-lived program that starts a daemon and then
+/// ends (`hide connect`, through the daemon's `spawn_owned`), with no other
+/// thread starting a child at the same time: a child another thread starts
+/// meanwhile would lose the inheritable handles it was meant to get. A caller
+/// that starts children from several threads must not use it. The sweep also
+/// asks only about handle values 4 to 65,536, so a handle above that bound
+/// stays inheritable.
 pub fn detach(command: &mut Command) -> io::Result<()> {
     sys::detach(command)
 }
@@ -1226,10 +1243,76 @@ mod sys {
         return Ok(unsafe { info.si_pid() } != 0);
     }
 
+    /// The highest descriptor the fallback marks; one above it stays
+    /// inheritable. A table larger than this is not a supervisor's loan of a
+    /// pipe or two, and a scan of it would cost the start more than it protects.
+    const MARKED_DESCRIPTOR_LIMIT: libc::c_int = 65_536;
+
     pub(super) fn detach(command: &mut Command) -> io::Result<()> {
         // A child's standard streams are the ones its Command names, and the
-        // standard library opens every other descriptor close-on-exec.
+        // standard library opens its own descriptors close-on-exec. What the
+        // parent was lent by its supervisor is neither, so it is marked here.
         command.process_group(0);
+        // `sysconf` is not on POSIX's list of calls safe between fork and
+        // exec, so the bound is read here, before the fork, and the child only
+        // uses the number.
+        let limit = fallback_limit();
+        // SAFETY: after fork the closure calls only `fcntl`, which POSIX lists
+        // as async-signal-safe, and `syscall`, the bare system-call entry:
+        // neither allocates or takes a lock, and it touches no memory this
+        // process shares with the child.
+        unsafe { command.pre_exec(move || mark_inherited_descriptors(limit)) };
+        Ok(())
+    }
+
+    /// The descriptor value below which the fallback scan marks: the open-file
+    /// limit, or the bound when the limit is indeterminate (`sysconf` answers
+    /// -1) or larger than the bound.
+    fn fallback_limit() -> libc::c_int {
+        // SAFETY: `sysconf` takes an integer and has no memory effects.
+        let table = unsafe { libc::sysconf(libc::_SC_OPEN_MAX) };
+        if table <= 0 {
+            MARKED_DESCRIPTOR_LIMIT
+        } else {
+            libc::c_int::try_from(table)
+                .unwrap_or(MARKED_DESCRIPTOR_LIMIT)
+                .min(MARKED_DESCRIPTOR_LIMIT)
+        }
+    }
+
+    /// Marks every descriptor above the standard three close-on-exec, so the
+    /// exec that follows drops them. Marking, not closing: the standard
+    /// library reports a failed exec to its parent through a descriptor in
+    /// this range that must survive until the exec. `limit` is where the
+    /// fallback scan stops, computed before the fork.
+    fn mark_inherited_descriptors(limit: libc::c_int) -> io::Result<()> {
+        #[cfg(target_os = "linux")]
+        {
+            // `close_range` with CLOSE_RANGE_CLOEXEC marks the whole range in
+            // one call (Linux 5.11). An older kernel answers ENOSYS or EINVAL.
+            const CLOSE_RANGE_CLOEXEC: libc::c_uint = 4;
+            // SAFETY: the call takes three integers and has no memory effects.
+            let marked = unsafe {
+                libc::syscall(
+                    libc::SYS_close_range,
+                    3 as libc::c_uint,
+                    libc::c_uint::MAX,
+                    CLOSE_RANGE_CLOEXEC,
+                )
+            };
+            if marked == 0 {
+                return Ok(());
+            }
+        }
+        for descriptor in 3..limit {
+            // SAFETY: `fcntl` on a descriptor number this process may not
+            // hold fails with EBADF and does nothing else.
+            let flags = unsafe { libc::fcntl(descriptor, libc::F_GETFD) };
+            if flags >= 0 && flags & libc::FD_CLOEXEC == 0 {
+                // SAFETY: as above; the flag is the only thing set.
+                unsafe { libc::fcntl(descriptor, libc::F_SETFD, flags | libc::FD_CLOEXEC) };
+            }
+        }
         Ok(())
     }
 
@@ -1582,8 +1665,9 @@ mod sys {
     use std::os::windows::process::CommandExt;
 
     use windows_sys::Win32::Foundation::{
-        CloseHandle, ERROR_ALREADY_EXISTS, FILETIME, GetLastError, HANDLE, HANDLE_FLAG_INHERIT,
-        INVALID_HANDLE_VALUE, STILL_ACTIVE, SetHandleInformation, WAIT_OBJECT_0, WAIT_TIMEOUT,
+        CloseHandle, ERROR_ALREADY_EXISTS, FILETIME, GetHandleInformation, GetLastError, HANDLE,
+        HANDLE_FLAG_INHERIT, INVALID_HANDLE_VALUE, STILL_ACTIVE, SetHandleInformation,
+        WAIT_OBJECT_0, WAIT_TIMEOUT,
     };
     use windows_sys::Win32::System::Console::{
         GetConsoleCP, GetStdHandle, STD_ERROR_HANDLE, STD_INPUT_HANDLE, STD_OUTPUT_HANDLE,
@@ -1956,6 +2040,11 @@ mod sys {
         Err(io::Error::other("the new process has no thread to start"))
     }
 
+    /// How many handle values `detach` asks about: values 4 to 65,536. A
+    /// process that holds more handles than this is not one a supervisor lent
+    /// a pipe to, and the sweep stays a bounded start cost.
+    const INHERITED_HANDLE_SLOTS: usize = 16_384;
+
     pub(super) fn detach(command: &mut Command) -> io::Result<()> {
         command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
         for which in [STD_INPUT_HANDLE, STD_OUTPUT_HANDLE, STD_ERROR_HANDLE] {
@@ -1967,6 +2056,22 @@ mod sys {
             // SAFETY: the handle is this process's own standard handle.
             if unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0) } == 0 {
                 return Err(io::Error::last_os_error());
+            }
+        }
+        // What the parent's supervisor lent it besides the standard handles is
+        // inheritable too. The table cannot be listed, but a handle value is a
+        // multiple of four, so the values a process realistically holds are
+        // asked about one by one; a value that names no handle answers with an
+        // error and nothing changes.
+        for slot in 1..=INHERITED_HANDLE_SLOTS {
+            let handle = (slot * 4) as HANDLE;
+            let mut flags = 0u32;
+            // SAFETY: `flags` is valid for the write; a value that is no handle fails.
+            if unsafe { GetHandleInformation(handle, &mut flags) } != 0
+                && flags & HANDLE_FLAG_INHERIT != 0
+            {
+                // SAFETY: the handle is one this process holds, and the flag is the only thing cleared.
+                unsafe { SetHandleInformation(handle, HANDLE_FLAG_INHERIT, 0) };
             }
         }
         Ok(())

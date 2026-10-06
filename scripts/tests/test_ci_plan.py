@@ -389,6 +389,24 @@ class Workflows(unittest.TestCase):
         self.assertIn("runner: macos-15", call)
         self.assertRegex(nightly[nightly.index("\n  report:\n"):], r"needs: \[[^\]]*\bremote-mailbox-macos\b[^\]]*\]")
 
+    def test_the_nightly_runs_only_what_differs_by_system_off_the_systems_that_run_it_whole(self):
+        nightly = (ROOT / ".github/workflows/nightly.yml").read_text()
+        # Linux's whole web suite is a `verify` lane, so the nightly has no web job for it;
+        # macOS and Windows run the web tests tagged `@platform`, one shard each.
+        self.assertNotIn("\n  web-e2e-linux:\n", nightly)
+        for name in ("web-e2e-macos", "web-e2e-windows"):
+            with self.subTest(job=name):
+                call = nightly[nightly.index(f"\n  {name}:\n"):].split("\n\n")[0]
+                self.assertIn("shards: 1", call)
+                self.assertIn('grep: "@platform"', call)
+        # The desktop suite runs whole on macOS and only its `@platform` tests elsewhere.
+        desktop = nightly[nightly.index("\n  desktop-e2e:\n"):nightly.index("\n  verify:\n")]
+        self.assertIn('if [ "$RUNNER_OS" != macOS ]; then', desktop)
+        self.assertIn("selection=(--grep @platform)", desktop)
+        # A desktop change plans the macOS desktop job; the OS contract's macOS leg does not bring it.
+        self.assertIn("desktop-e2e", plan("desktop/e2e/fixture.ts")["lanes"])
+        self.assertNotIn("desktop-e2e", plan("hide-platform/src/process.rs")["lanes"])
+
     def test_only_the_macos_lanes_name_a_macos_runner(self):
         # The macOS jobs are the ones in MACOS_LANES; no other job names a macOS
         # runner, so a plan without those lanes holds no macOS job.

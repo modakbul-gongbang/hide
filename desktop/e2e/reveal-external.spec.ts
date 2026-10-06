@@ -14,6 +14,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace, showTool } from "../../web/e2e/wire";
+import { toPage } from "../src/main/wirePath";
 import { hostLog, isolate, launch, screenshot, shellPage, test, type Isolated } from "./fixture";
 
 test.describe.configure({ timeout: 240_000 });
@@ -77,7 +78,8 @@ async function openMenu(page: Page, target: Locator, name: string): Promise<Loca
   return menu;
 }
 
-test("reveal: Explorer, History, a View tab and a sidebar row hand the item to the OS file manager under the OS's label", async () => {
+// @platform: The reveal is labelled and handed over by the system's file manager: Finder, File Explorer or the Linux file manager.
+test("reveal: Explorer, History, a View tab and a sidebar row hand the item to the OS file manager under the OS's label", { tag: "@platform" }, async () => {
   const checkout = path.join(fs.realpathSync(herdr.root), "fixture");
   fs.mkdirSync(path.join(checkout, "src"), { recursive: true });
   fs.writeFileSync(path.join(checkout, "src", "a.txt"), "a\n");
@@ -101,7 +103,7 @@ test("reveal: Explorer, History, a View tab and a sidebar row hand the item to t
   // Explorer: a file row's opens, the reveal, Rename, then Move to Trash.
   await showTool(page, "explorer");
   const notes = path.join(checkout, "notes.md");
-  let menu = await openMenu(page, page.locator(`[data-explorer-row="${notes}"]`), "notes.md actions");
+  let menu = await openMenu(page, page.locator(`[data-explorer-row="${toPage(notes)}"]`), "notes.md actions");
   expect(await menuLines(menu)).toEqual(["Open to the side", "─", label, "─", "Rename", "─", "Move to Trash"]);
   await screenshot(page, "reveal-explorer-file-menu");
   await menu.locator('[data-menu-item="reveal_external"]').click();
@@ -109,13 +111,13 @@ test("reveal: Explorer, History, a View tab and a sidebar row hand the item to t
 
   // A folder row: its creations, the reveal, Rename, Move to Trash.
   const src = path.join(checkout, "src");
-  menu = await openMenu(page, page.locator(`[data-explorer-row="${src}"]`), "src actions");
+  menu = await openMenu(page, page.locator(`[data-explorer-row="${toPage(src)}"]`), "src actions");
   expect(await menuLines(menu)).toEqual(["New File", "New Folder", "─", label, "─", "Rename", "─", "Move to Trash"]);
   await menu.locator('[data-menu-item="reveal_external"]').click();
   await expect.poll(revealed).toEqual([notes, src]);
 
   // A View tab: Copy path, Select in File Tree, the reveal, Close view.
-  await page.locator(`[data-explorer-row="${notes}"]`).dblclick();
+  await page.locator(`[data-explorer-row="${toPage(notes)}"]`).dblclick();
   const tab = page.locator('[data-view-tab-bar] [role="tab"][data-display][aria-label*="/notes.md"]');
   await expect(tab).toBeVisible({ timeout: 20_000 });
   await tab.click({ button: "right" });
@@ -160,12 +162,13 @@ test("reveal: Explorer, History, a View tab and a sidebar row hand the item to t
   await page.evaluate(([missing]) => {
     window.hideHost!.revealPath("notes.md");
     window.hideHost!.revealPath(missing!);
-  }, [path.join(checkout, "missing.md")]);
+  }, [toPage(path.join(checkout, "missing.md"))]);
   await expect
     .poll(() => hostLog(run.env).filter((line) => line.event === "reveal.refused").map((line) => line.reason))
     .toEqual(["path", "missing"]);
   expect(await revealed()).toHaveLength(5);
   const lines = hostLog(run.env).filter((line) => line.event.startsWith("reveal."));
   expect(lines.filter((line) => line.event === "reveal.shown").map((line) => line.kind)).toEqual(["file", "directory", "file", "file", "directory"]);
-  expect(JSON.stringify(lines)).not.toContain(checkout);
+  // The log is JSON, which writes a backslash twice, so the folder is searched for as the log would spell it.
+  for (const spelling of [checkout, toPage(checkout)]) expect(JSON.stringify(lines)).not.toContain(JSON.stringify(spelling).slice(1, -1));
 });
