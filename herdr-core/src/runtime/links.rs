@@ -66,6 +66,18 @@ impl Sink for RuntimeSink {
     fn filling(&self, filling: bool) {
         self.apply(move |runtime| runtime.ingest_link_filling(filling));
     }
+
+    fn devices(&self) -> Vec<(String, Arc<dyn crate::host_access::HostChannel>)> {
+        self.runtime
+            .upgrade()
+            .and_then(|runtime| {
+                runtime
+                    .lock()
+                    .ok()
+                    .map(|runtime| runtime.ready_device_channels())
+            })
+            .unwrap_or_default()
+    }
 }
 
 /// Starts the worker beside the runtime that owns its answers.

@@ -35,7 +35,10 @@ use crate::root::RootIdentity;
 /// pane closes. A helper without this preflight must never remove instead.
 /// 17: Hello carries native machine identity for lineage, and the kit reports
 /// the one-release coordination retirement instead of installing it.
-pub const PROTOCOL_VERSION: u32 = 17;
+/// 18: `link_files` lists the device's session files changed since a time
+/// and `link_read` reads their link facts from a checkpoint (PRD link-graph
+/// D-21); a helper on 17 would refuse both as unknown.
+pub const PROTOCOL_VERSION: u32 = 18;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Request {
@@ -205,6 +208,18 @@ pub enum Call {
     /// Metadata-only activity using the same native ownership proof as labels.
     SessionActivity {
         request: hide_session::session_activity::SessionActivityRequest,
+    },
+    /// The device's session files changed since a time, newest first and
+    /// capped (`hide_session::links::candidates`).
+    LinkFiles {
+        since_unix_ms: u64,
+    },
+    /// Link facts read from each file's checkpoint, a few files and one read
+    /// budget each (`hide_session::links::read`). The answer carries branch
+    /// spans, pull request addresses and the request before each, never a
+    /// conversation; a path outside the agent roots is refused.
+    LinkRead {
+        requests: Vec<hide_session::links::ReadRequest>,
     },
 }
 

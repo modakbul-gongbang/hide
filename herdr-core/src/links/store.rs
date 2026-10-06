@@ -677,12 +677,7 @@ impl LinkStore {
         for (index, project) in projects.iter().enumerate() {
             let paths = self.project_paths(project)?;
             for session in &sessions {
-                if session.key.device == project.device
-                    && session
-                        .cwd
-                        .as_deref()
-                        .is_some_and(|cwd| paths.iter().any(|path| within(cwd, path)))
-                {
+                if session.inside(&paths) {
                     owner.entry(session.key.clone()).or_insert(index);
                 }
             }
@@ -796,12 +791,14 @@ impl LinkStore {
             .map_err(failed)
     }
 
-    /// The folders a project's sessions work in: its root, the worktrees
-    /// recorded for it, and where a session that printed one of its pull
-    /// requests worked, which keeps a removed worktree's sessions in the
-    /// project after its checkout is gone.
-    fn project_paths(&self, project: &ProjectRow) -> Result<Vec<String>, String> {
-        let mut paths = vec![project.root.clone()];
+    /// The folders a project's sessions work in, each on its device: its
+    /// root and the worktrees recorded for it, and where a session that
+    /// printed one of its pull requests worked, on any device. The last keeps
+    /// a removed worktree's sessions in the project after its checkout is
+    /// gone, and joins a device's sessions to the project its repository is
+    /// registered as here (D-21).
+    fn project_paths(&self, project: &ProjectRow) -> Result<Vec<DevicePath>, String> {
+        let mut paths = vec![(project.device.clone(), project.root.clone())];
         let mut statement = self
             .connection
             .prepare_cached("SELECT DISTINCT path FROM worktrees WHERE project=?1")
@@ -810,18 +807,23 @@ impl LinkStore {
             .query_map([&project.key], |row| row.get(0))
             .and_then(Iterator::collect)
             .map_err(failed)?;
-        paths.extend(worktrees);
+        paths.extend(
+            worktrees
+                .into_iter()
+                .map(|path| (project.device.clone(), path)),
+        );
         if let Some(repo) = project.repo.as_deref() {
             let mut statement = self
                 .connection
                 .prepare_cached(
-                    "SELECT DISTINCT s.cwd FROM session_prs sp JOIN sessions s ON s.device=sp.device \
-                     AND s.agent=sp.agent AND s.id=sp.id JOIN repo_names r ON r.name=sp.repo_name \
-                     WHERE r.repo=?1 AND s.device=?2 AND s.cwd IS NOT NULL",
+                    "SELECT DISTINCT s.device, s.cwd FROM session_prs sp JOIN sessions s \
+                     ON s.device=sp.device AND s.agent=sp.agent AND s.id=sp.id \
+                     LEFT JOIN repo_names r ON r.name=sp.repo_name \
+                     WHERE COALESCE(r.repo, sp.repo_name)=?1 AND s.cwd IS NOT NULL",
                 )
                 .map_err(failed)?;
-            let learned: Vec<String> = statement
-                .query_map([repo, &project.device], |row| row.get(0))
+            let learned: Vec<DevicePath> = statement
+                .query_map([repo], |row| Ok((row.get(0)?, row.get(1)?)))
                 .and_then(Iterator::collect)
                 .map_err(failed)?;
             paths.extend(learned);
@@ -962,7 +964,7 @@ impl LinkStore {
         let mut paths = self.project_paths(project)?;
         for key in printed.keys() {
             if let Some(cwd) = self.session(key)?.and_then(|session| session.cwd) {
-                paths.push(cwd);
+                paths.push((key.device.clone(), cwd));
             }
         }
         let mut worked: BTreeMap<SessionKey, BranchWork> = BTreeMap::new();
@@ -971,18 +973,12 @@ impl LinkStore {
                 .connection
                 .prepare_cached(
                     "SELECT device, agent, id, first_at, last_at, last_request, last_request_at \
-                     FROM session_branches WHERE branch=?1 AND last_at>=?2 AND first_at<=?3 \
-                     AND device=?4",
+                     FROM session_branches WHERE branch=?1 AND last_at>=?2 AND first_at<=?3",
                 )
                 .map_err(failed)?;
             let rows: Vec<SpanRow> = statement
                 .query_map(
-                    params![
-                        pr.branch,
-                        start as i64,
-                        end.min(i64::MAX as u64) as i64,
-                        project.device
-                    ],
+                    params![pr.branch, start as i64, end.min(i64::MAX as u64) as i64],
                     |row| {
                         Ok((
                             SessionKey {
@@ -1033,14 +1029,8 @@ impl LinkStore {
                     *at + CREATED_BEFORE_MS >= created && *at <= created + CREATED_AFTER_MS
                 })
             });
-            if !printed.contains_key(&key) {
-                let inside = session
-                    .cwd
-                    .as_deref()
-                    .is_some_and(|cwd| paths.iter().any(|path| within(cwd, path)));
-                if !inside {
-                    continue;
-                }
+            if !printed.contains_key(&key) && !session.inside(&paths) {
+                continue;
             }
             let (role, request) = if created {
                 (
@@ -1372,20 +1362,15 @@ impl LinkStore {
         let mut statement = self
             .connection
             .prepare_cached(&format!(
-                "SELECT {SESSION_COLUMNS} FROM sessions WHERE device=?1 AND id=?2"
+                "SELECT {SESSION_COLUMNS} FROM sessions WHERE id=?1"
             ))
             .map_err(failed)?;
         let found: Vec<SessionRow> = statement
-            .query_map(params![row.device, session_id], session_row)
+            .query_map(params![session_id], session_row)
             .and_then(Iterator::collect)
             .map_err(failed)?;
         let Some(session) = found.into_iter().find(|session| {
-            session.interactive != Some(false)
-                && (!prs.is_empty()
-                    || session
-                        .cwd
-                        .as_deref()
-                        .is_some_and(|cwd| paths.iter().any(|path| within(cwd, path))))
+            session.interactive != Some(false) && (!prs.is_empty() || session.inside(&paths))
         }) else {
             return Ok(None);
         };
@@ -1659,6 +1644,20 @@ struct SessionKey {
     device: String,
     agent: String,
     id: String,
+}
+
+/// A folder on a device.
+type DevicePath = (String, String);
+
+impl SessionRow {
+    /// The session worked in one of `paths`, on that path's device.
+    fn inside(&self, paths: &[DevicePath]) -> bool {
+        self.cwd.as_deref().is_some_and(|cwd| {
+            paths
+                .iter()
+                .any(|(device, path)| *device == self.key.device && within(cwd, path))
+        })
+    }
 }
 
 struct SessionRow {

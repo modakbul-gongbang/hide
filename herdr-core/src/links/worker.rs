@@ -10,8 +10,10 @@
 
 use super::store::{IssueLinks, LinkStore, Opened, PrLinks};
 use super::{BACKFILL_MS, PaneFact, ParentFact, ProjectFacts, ProjectLinkSummary, now_ms};
+use crate::host_access::{HostCallError, HostChannel, call_as};
+use hide_host::protocol::Call;
 use hide_session::links::{self, Candidate, ReadRequest};
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};
 use std::thread;
@@ -21,6 +23,10 @@ use std::time::{Duration, Instant};
 const LIST_EVERY: Duration = Duration::from_secs(15);
 /// How often the panes' spans are extended while they stay.
 const PANES_EVERY: Duration = Duration::from_secs(60);
+/// How often each connected device is asked for its changed files (D-21).
+const DEVICE_EVERY: Duration = Duration::from_secs(60);
+/// How long one device call may take before the next turn.
+const DEVICE_TIMEOUT: Duration = Duration::from_secs(10);
 /// How often expired sessions are removed (D-18).
 const PRUNE_EVERY: Duration = Duration::from_secs(30 * 60);
 /// The longest a summary waits after a write, so a burst publishes once.
@@ -44,6 +50,8 @@ pub trait Sink: Send + 'static {
     fn panel(&self, generation: u64, answer: Result<PanelAnswer, String>);
     /// Whether the first fill or a listing's reads are running (B24).
     fn filling(&self, filling: bool);
+    /// The devices whose helper is connected now (D-21).
+    fn devices(&self) -> Vec<(String, Arc<dyn HostChannel>)>;
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -168,6 +176,10 @@ struct State {
     panel_answer: Option<Result<PanelAnswer, String>>,
     summaries: BTreeMap<String, ProjectLinkSummary>,
     queue: VecDeque<Candidate>,
+    /// Per device: its files waiting to be read, and when it was last listed.
+    devices: HashMap<String, DeviceQueue>,
+    /// When the connected devices were last asked for.
+    devices_at: Option<Instant>,
     filling: bool,
     dirty_at: Option<Instant>,
     listed: Option<Instant>,
@@ -199,6 +211,8 @@ fn run(client: &LinkClient, paths: &Paths, sink: &impl Sink) {
         panel_answer: None,
         summaries: BTreeMap::new(),
         queue: VecDeque::new(),
+        devices: HashMap::new(),
+        devices_at: None,
         filling: false,
         dirty_at: None,
         listed: None,
@@ -283,11 +297,16 @@ fn run(client: &LinkClient, paths: &Paths, sink: &impl Sink) {
                 list(store, home, paths, &mut state);
             }
             read_turn(store, home, paths, &mut state);
-            let filling = !state.queue.is_empty();
-            if filling != state.filling {
-                state.filling = filling;
-                sink.filling(filling);
-            }
+        }
+        device_turn(store, sink, &mut state);
+        let filling = !state.queue.is_empty()
+            || state
+                .devices
+                .values()
+                .any(|device| !device.queue.is_empty());
+        if filling != state.filling {
+            state.filling = filling;
+            sink.filling(filling);
         }
         if state.pruned.is_none_or(|at| at.elapsed() >= PRUNE_EVERY) {
             prune(store, paths);
@@ -308,7 +327,12 @@ fn run(client: &LinkClient, paths: &Paths, sink: &impl Sink) {
 }
 
 fn next_wait(state: &State) -> Duration {
-    if !state.queue.is_empty() {
+    if !state.queue.is_empty()
+        || state
+            .devices
+            .values()
+            .any(|device| !device.queue.is_empty())
+    {
         return REST;
     }
     let mut wait = LIST_EVERY;
@@ -433,6 +457,146 @@ fn read_turn(store: &mut LinkStore, home: &Path, paths: &Paths, state: &mut Stat
     }
 }
 
+#[derive(Default)]
+struct DeviceQueue {
+    queue: VecDeque<Candidate>,
+    listed: Option<Instant>,
+}
+
+/// One step for each connected device: list its changed files every
+/// [`DEVICE_EVERY`], then read up to a few of them per turn through its
+/// helper. A device that is gone keeps every row it gave; when it returns,
+/// its listing starts where the last one did, so what changed meanwhile is
+/// read then (B40).
+fn device_turn(store: &mut LinkStore, sink: &impl Sink, state: &mut State) {
+    let reading = state
+        .devices
+        .values()
+        .any(|device| !device.queue.is_empty());
+    if !reading
+        && state
+            .devices_at
+            .is_some_and(|at| at.elapsed() < DEVICE_EVERY)
+    {
+        return;
+    }
+    state.devices_at = Some(Instant::now());
+    let devices = sink.devices();
+    state
+        .devices
+        .retain(|id, _| devices.iter().any(|(device, _)| device == id));
+    for (device, channel) in devices {
+        let entry = state.devices.entry(device.clone()).or_default();
+        if entry.queue.is_empty() && entry.listed.is_none_or(|at| at.elapsed() >= DEVICE_EVERY) {
+            entry.listed = Some(Instant::now());
+            if let Err(code) = list_device(store, &device, channel.as_ref(), entry) {
+                log_device(&device, "listing", &code);
+            }
+        }
+        if entry.queue.is_empty() {
+            continue;
+        }
+        let batch = entry
+            .queue
+            .drain(..entry.queue.len().min(links::READ_FILE_LIMIT))
+            .collect::<Vec<_>>();
+        let mut requests = Vec::with_capacity(batch.len());
+        for candidate in &batch {
+            match store.checkpoint(&device, &candidate.path) {
+                Ok(checkpoint) => requests.push(ReadRequest {
+                    agent: candidate.agent,
+                    path: candidate.path.clone(),
+                    checkpoint,
+                }),
+                Err(code) => log_write(&code, "cursor"),
+            }
+        }
+        let answers = match call_as::<Vec<links::ReadAnswer>>(
+            channel.as_ref(),
+            Call::LinkRead { requests },
+            DEVICE_TIMEOUT,
+        ) {
+            Ok(answers) => answers,
+            Err(error) => {
+                // The files wait for the device's next turn.
+                for candidate in batch.into_iter().rev() {
+                    entry.queue.push_front(candidate);
+                }
+                log_device(&device, "read", &device_code(&error));
+                continue;
+            }
+        };
+        for candidate in batch {
+            let Some(answer) = answers.iter().find(|answer| answer.path == candidate.path) else {
+                continue;
+            };
+            if let Some(code) = answer.error.as_deref() {
+                log_device(&device, "session", code);
+            }
+            if let Err(code) = store.apply_answer(&device, answer, &candidate.stamp) {
+                log_write(&code, "session");
+                continue;
+            }
+            state.dirty_at.get_or_insert_with(Instant::now);
+            if answer.has_more && answer.error.is_none() {
+                entry.queue.push_back(candidate);
+            }
+        }
+    }
+}
+
+fn list_device(
+    store: &LinkStore,
+    device: &str,
+    channel: &dyn HostChannel,
+    entry: &mut DeviceQueue,
+) -> Result<(), String> {
+    let key = format!("{LISTED_AT}:{device}");
+    let started = now_ms();
+    let since = match store.meta(&key)? {
+        Some(at) => at
+            .parse::<u64>()
+            .unwrap_or(0)
+            .saturating_sub(LIST_OVERLAP_MS),
+        None => started.saturating_sub(BACKFILL_MS),
+    };
+    let candidates = call_as::<Vec<Candidate>>(
+        channel,
+        Call::LinkFiles {
+            since_unix_ms: since,
+        },
+        DEVICE_TIMEOUT,
+    )
+    .map_err(|error| device_code(&error))?;
+    let stamps = store.stamps(device)?;
+    entry.queue = candidates
+        .into_iter()
+        .rev()
+        .filter(|candidate| stamps.get(&candidate.path) != Some(&candidate.stamp))
+        .collect();
+    store.set_meta(&key, &started.to_string())
+}
+
+fn device_code(error: &HostCallError) -> String {
+    match error {
+        HostCallError::NotConnected(_) => "device_helper_not_connected".to_owned(),
+        HostCallError::Busy => "device_helper_busy".to_owned(),
+        HostCallError::Unknown(_) => "device_helper_unknown".to_owned(),
+        // A helper older than protocol 18 does not know the call.
+        HostCallError::Refused(error) if error.code == hide_host::ErrorCode::InvalidRequest => {
+            "device_helper_unsupported".to_owned()
+        }
+        HostCallError::Refused(error) => error.message.clone(),
+    }
+}
+
+fn log_device(device: &str, what: &str, code: &str) {
+    crate::diagnostic!(serde_json::json!({
+        "component": "links", "kind": "device.read_failed", "device_id": device,
+        "what": what, "code": code,
+    }));
+}
+
 fn prune(store: &mut LinkStore, paths: &Paths) {
     let policies = match store.policies(&paths.search) {
         Ok(policies) => policies,
@@ -501,5 +665,199 @@ fn answer_panel(store: &LinkStore, paths: &Paths, state: &mut State, sink: &impl
     if state.panel_answer.as_ref() != Some(&answer) {
         state.panel_answer = Some(answer.clone());
         sink.panel(request.generation, answer);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::host_access::HostAnswer;
+    use crate::links::{FileState, PrFact, ProjectFacts, SessionRole, WorktreeFact};
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    const CREATED: u64 = 1_790_000_000_000;
+
+    /// A connected device whose helper answers the two link calls from its
+    /// own home, the way `hide-host-helper serve` does.
+    struct Device {
+        home: PathBuf,
+        connected: AtomicBool,
+    }
+
+    impl HostChannel for Device {
+        fn call(&self, call: Call, _timeout: Duration) -> Result<HostAnswer, HostCallError> {
+            if !self.connected.load(Ordering::SeqCst) {
+                return Err(HostCallError::NotConnected("gone".into()));
+            }
+            let value = match call {
+                Call::LinkFiles { since_unix_ms } => {
+                    serde_json::to_value(links::candidates(&self.home, since_unix_ms).unwrap())
+                }
+                Call::LinkRead { requests } => {
+                    serde_json::to_value(links::read(&self.home, &requests))
+                }
+                other => panic!("unexpected call {other:?}"),
+            };
+            Ok(HostAnswer::Parsed(value.unwrap()))
+        }
+    }
+
+    #[derive(Default)]
+    struct Seen {
+        panel: Option<Result<PanelAnswer, String>>,
+        summaries: BTreeMap<String, ProjectLinkSummary>,
+    }
+
+    struct TestSink {
+        seen: Arc<Mutex<Seen>>,
+        device: Arc<Device>,
+    }
+
+    impl Sink for TestSink {
+        fn summaries(&self, summaries: BTreeMap<String, ProjectLinkSummary>) {
+            self.seen.lock().unwrap().summaries = summaries;
+        }
+        fn panel(&self, _generation: u64, answer: Result<PanelAnswer, String>) {
+            self.seen.lock().unwrap().panel = Some(answer);
+        }
+        fn filling(&self, _filling: bool) {}
+        fn devices(&self) -> Vec<(String, Arc<dyn HostChannel>)> {
+            vec![(
+                "mini".to_owned(),
+                self.device.clone() as Arc<dyn HostChannel>,
+            )]
+        }
+    }
+
+    fn iso(ms: u64) -> String {
+        jiff::Timestamp::from_millisecond(ms as i64)
+            .unwrap()
+            .to_string()
+    }
+
+    /// The device's session that made PR 7 from its own checkout.
+    fn device_session(home: &Path) {
+        let dir = home.join(".claude/projects/-mini-app");
+        std::fs::create_dir_all(&dir).unwrap();
+        let lines = [
+            serde_json::json!({
+                "type": "user", "isSidechain": false, "uuid": "u1", "parentUuid": null,
+                "message": {"role": "user", "content": "mini에서 PR 올려 줘"},
+                "timestamp": iso(CREATED - 60_000), "promptId": "p",
+                "origin": {"kind": "human"}, "userType": "external", "entrypoint": "cli",
+                "cwd": "/mini/app", "sessionId": "s-mini", "gitBranch": "feat",
+            }),
+            serde_json::json!({
+                "type": "pr-link", "sessionId": "s-mini", "prNumber": 7,
+                "prRepository": "acme/app", "prUrl": "https://github.com/acme/app/pull/7",
+                "timestamp": iso(CREATED + 1_000),
+            }),
+        ];
+        let text = lines.map(|line| line.to_string()).join("\n") + "\n";
+        std::fs::write(dir.join("s-mini.jsonl"), text).unwrap();
+    }
+
+    fn wait_until(what: &str, ready: impl Fn() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !ready() {
+            assert!(Instant::now() < deadline, "timed out waiting for {what}");
+            #[allow(clippy::disallowed_methods)] // a polling helper bounded by a deadline
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    /// B20, B40: a connected device's session reaches a Mac project's panel
+    /// with its device, its rows stay while the device is gone, and what it
+    /// adds meanwhile is read when it is back.
+    #[test]
+    fn a_devices_session_joins_the_panel_and_outlives_the_connection() {
+        let state = tempfile::tempdir().unwrap();
+        let device_home = tempfile::tempdir().unwrap();
+        device_session(device_home.path());
+        let device = Arc::new(Device {
+            home: device_home.path().to_path_buf(),
+            connected: AtomicBool::new(true),
+        });
+        let seen = Arc::new(Mutex::new(Seen::default()));
+        let worker = LinkWorker::spawn(
+            Paths {
+                store: state.path().join("links.sqlite3"),
+                search: state.path().join("session-search.sqlite3"),
+                home: None,
+                local_device: "local".into(),
+            },
+            TestSink {
+                seen: Arc::clone(&seen),
+                device: Arc::clone(&device),
+            },
+        )
+        .unwrap();
+        let client = worker.client();
+        client.projects(Arc::new(vec![ProjectFacts {
+            key: "app".into(),
+            device_id: "local".into(),
+            workspace_id: "w".into(),
+            root: "/work/app".into(),
+            repository: Some("acme/app".into()),
+            repository_id: None,
+            worktrees: vec![WorktreeFact {
+                path: "/work/app".into(),
+                branch: Some("main".into()),
+            }],
+            prs: vec![PrFact {
+                repository: "acme/app".into(),
+                number: 7,
+                branch: "feat".into(),
+                title: "PR 7".into(),
+                url: "https://github.com/acme/app/pull/7".into(),
+                created_at: Some(CREATED),
+                closed_at: None,
+                merged_at: None,
+                issues: Vec::new(),
+                hide_issue_known: false,
+            }],
+            prs_read: true,
+        }]));
+        client.read(PanelRequest {
+            generation: 1,
+            project: "app".into(),
+            target: PanelTarget::Pr(7),
+        });
+        let lines = || match &seen.lock().unwrap().panel {
+            Some(Ok(PanelAnswer::Pr(Some(links)))) => links.sessions.clone(),
+            _ => Vec::new(),
+        };
+        wait_until("the device's line", || !lines().is_empty());
+        let line = &lines()[0];
+        assert_eq!(
+            (line.device_id.as_str(), line.role),
+            ("mini", SessionRole::Created)
+        );
+        assert_eq!(line.request.as_deref(), Some("mini에서 PR 올려 줘"));
+        // This machine cannot look at a device's file.
+        assert_eq!(line.file, FileState::Unknown);
+        wait_until("the chip", || {
+            seen.lock()
+                .unwrap()
+                .summaries
+                .get("w")
+                .is_some_and(|summary| summary.sessions.contains_key("s-mini"))
+        });
+
+        // Gone: nothing is read and nothing leaves (B40).
+        device.connected.store(false, Ordering::SeqCst);
+        client.read(PanelRequest {
+            generation: 2,
+            project: "app".into(),
+            target: PanelTarget::Pr(7),
+        });
+        wait_until("the reread", || {
+            matches!(
+                &seen.lock().unwrap().panel,
+                Some(Ok(PanelAnswer::Pr(Some(_))))
+            )
+        });
+        assert_eq!(lines().len(), 1);
+        drop(worker);
     }
 }
