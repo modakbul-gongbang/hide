@@ -33,7 +33,7 @@ fn calls(fixture: &Fixture, method: &str) -> usize {
         .count()
 }
 
-fn held(fixture: &Fixture) -> usize {
+fn held_keys(fixture: &Fixture) -> usize {
     std::fs::read_to_string(codex_file(fixture, "fake-trust.json"))
         .map(|raw| {
             serde_json::from_str::<serde_json::Map<String, Value>>(&raw)
@@ -58,7 +58,7 @@ fn a_pass_that_installs_the_codex_hook_has_codex_trust_it_and_a_repeat_asks_for_
         "{report:?}"
     );
     assert_eq!(codex_part(&report).reason, None);
-    assert_eq!(held(&fixture), 5);
+    assert_eq!(held_keys(&fixture), 5);
     assert_eq!(calls(&fixture, "config/batchWrite"), 1);
 
     // The same pass again checks, and writes nothing (B7).
@@ -102,7 +102,7 @@ fn a_failure_is_the_codex_parts_reason_only_and_status_keeps_it_until_a_pass_suc
     assert_eq!(codex_part(&report).reason, None);
     let read = status(&fixture.target);
     assert_eq!(codex_part(&read).state, ComponentState::Installed);
-    assert_eq!(held(&fixture), 5);
+    assert_eq!(held_keys(&fixture), 5);
 }
 
 #[test]
@@ -146,4 +146,28 @@ fn nothing_is_asked_of_codex_for_a_hook_that_is_off_or_that_the_operator_took_ou
     let asked = calls(&fixture, "initialize");
     apply(&fixture.target, &Scope::automatic());
     assert_eq!(calls(&fixture, "initialize"), asked);
+}
+
+#[test]
+fn the_first_run_pass_that_switches_codex_on_has_codex_trust_the_hook_in_that_pass() {
+    // The record still holds the first-run hold when the part is judged; the
+    // scope's own switch is what says the agent is on.
+    let mut fixture = Fixture::fresh();
+    std::fs::create_dir_all(fixture.home().join(".codex")).unwrap();
+    fixture.target.codex = Some(
+        Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../hide-agent-hooks/tests/fixtures/fake-codex.py"),
+    );
+
+    let held = apply(&fixture.target, &Scope::automatic());
+    assert_eq!(codex_part(&held).state, ComponentState::Off, "{held:?}");
+    assert_eq!(calls(&fixture, "initialize"), 0, "nothing for a held agent");
+
+    let report = apply(&fixture.target, &Scope::agents(["codex"], []));
+    assert_eq!(
+        codex_part(&report).state,
+        ComponentState::Installed,
+        "{report:?}"
+    );
+    assert_eq!(held_keys(&fixture), 5);
 }

@@ -746,7 +746,6 @@ fn apply_scope(target: &KitTarget, scope: &Scope) -> KitReport {
             && !turning_off
             && !agent_off
             && matches!(after, Observed::Current)
-            && !agent_kit::part_is_off(&record, id)
         {
             failure = codex_trust::ensure(target);
         }
