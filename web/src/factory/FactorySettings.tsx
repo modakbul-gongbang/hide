@@ -151,7 +151,8 @@ function SettingsBody({ factory, actions }: { factory: FactoryView; actions: Act
   const verify = config.verification.kind === "commands" ? config.verification.commands.join(" &&& ") : "";
   const running = factory.columns.some((column) => column.cards.some((card) => card.state === "running"));
   return (
-    <>
+    // The last write's phase, so a reader can wait for the engine's answer.
+    <div className="contents" data-factory-settings-write={write.state.phase}>
       <Refusal state={write.state} />
       <Group title={t("factory.settings.run")} data-factory-settings-group="run">
         {numbers(RUN)}
@@ -240,7 +241,7 @@ function SettingsBody({ factory, actions }: { factory: FactoryView; actions: Act
           </Button>
         </Row>
       </Group>
-    </>
+    </div>
   );
 }
 
