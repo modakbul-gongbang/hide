@@ -157,6 +157,7 @@ test("cycles: ⌃Tab and ⌥Tab commit once, on releasing the held modifier", as
     await page.keyboard.press("Tab");
     await page.keyboard.press("Tab");
     await expect(cycleRow("agents")).toHaveAttribute("data-cycle-row", paneOf.get(tabs[2]!)!);
+    expect("TEMP forced failure").toBe("so the failed attempt keeps the daemon log");
     expect(sent.get("focus_pane") ?? 0).toBe(focused);
     await page.keyboard.up("Control");
     await expect(page.locator("[data-cycle]")).toHaveCount(0);
