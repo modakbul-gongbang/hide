@@ -186,6 +186,7 @@ test("lifetime: a second launch brings the first back, closing the last window k
   const bounds = await app.evaluate(({ BrowserWindow, screen }) => {
     const area = screen.getPrimaryDisplay().workArea;
     const window = BrowserWindow.getAllWindows()[0]!;
+    // eslint-disable-next-line hide-e2e/window-size-through-fixture -- the rect the next launch restores is this check's subject, set inside the work area.
     window.setBounds({
       x: area.x + 20,
       y: area.y + 20,

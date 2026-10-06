@@ -4,7 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace, showExplorer } from "../../web/e2e/wire";
-import { focusPage, isolate, launch, NEEDS_FOCUS, test } from "./fixture";
+import { fitWindow, focusPage, isolate, launch, NEEDS_FOCUS, test } from "./fixture";
 
 type Session = { herdr: HerdrFixture; app: ElectronApplication; page: Page; capture: (name: string) => void };
 
@@ -23,13 +23,13 @@ async function inWorkspace(label: string, body: (session: Session) => Promise<vo
       const windows = BrowserWindow.getAllWindows();
       if (windows.length !== 1) throw new Error("expected exactly one candidate window");
       const window = windows[0]!;
-      window.setSize(1600, 1000);
       return { pid: process.pid, executable: process.execPath, window: window.getMediaSourceId() };
     });
+    await fitWindow(app, { width: 1024, height: 1000 });
     const evidence = process.env.HIDE_E2E_SCREENSHOT_DIR;
     await enterWorkspace(page);
-    // macOS keeps the window within the screen, which on a CI runner is
-    // about 1024 wide; zoomed out, the body still reaches the wide step, so
+    // The window is a CI runner's screen wide on every machine; zoomed out,
+    // the body still reaches the wide step, so
     // File Views and Tools show side by side as these steps assume (PRD
     // three-column-panel D-07).
     await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.setZoomFactor(0.6));

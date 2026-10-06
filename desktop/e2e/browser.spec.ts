@@ -259,11 +259,7 @@ test("browser: a page opens from an agent's pane, follows its area, moves withou
   await nativePageShot(`${origin}/b.html`, "browser-native-page-b");
 
   // A narrower window moves the pages with their slots.
-  await app.evaluate(({ BrowserWindow }) => {
-    const window = BrowserWindow.getAllWindows()[0]!;
-    const [width, height] = window.getSize();
-    window.setSize(width! - 160, height! - 80);
-  });
+  await fitWindow(app, { width: WINDOW.width - 160, height: WINDOW.height - 80 });
   await expectOnSlot(page, `${origin}/b.html`, b);
   await expectOnSlot(page, `${origin}/a.html`, a);
   await windowShot("browser-two-areas");
@@ -548,8 +544,7 @@ test("browser: a login in one Workspace is available in another", async () => {
 test("browser: a sign-in popup keeps its opener, belongs to its page, and a link to another app asks first", async () => {
   ({ app } = await launch(run.env));
   const page = await app.firstWindow();
-  // The window a CI runner's screen holds.
-  await app.evaluate(({ BrowserWindow }, size) => BrowserWindow.getAllWindows()[0]!.setSize(size.width, size.height), WINDOW);
+  await fitWindow(app, WINDOW);
   await enterWorkspace(page, "fixture");
   const signin = `${origin}/signin.html`;
   const opened = await openFromCli(signin, ["--reveal", "--wait"]);
@@ -658,7 +653,7 @@ test("browser: a sign-in popup keeps its opener, belongs to its page, and a link
 test("new-tab: empty page creates no native renderer and address loads in the same display", async () => {
   ({ app } = await launch(run.env));
   expect(await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows().length)).toBe(1);
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1024, 640));
+  await fitWindow(app, WINDOW);
   const page = await app.firstWindow();
   await enterWorkspace(page, "fixture");
   expect(await openFromCli(`${origin}/a.html`, ["--reveal", "--wait"])).toMatchObject({ ok: true });
@@ -760,7 +755,9 @@ test("area cycle native: page input previews one exact area, releases once and c
   ({ app } = await launch(run.env));
   const page = await app.firstWindow();
   const sent = countSent(page);
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1280, 800));
+  // Within the work area: the blur and focus below order the window out and
+  // in, and macOS would clamp a larger one then, dropping both View areas.
+  await fitWindow(app, WINDOW);
   await enterWorkspace(page, "fixture");
   const outside = `${origin}/a.html`;
   const previous = `${origin}/b.html`;
@@ -914,7 +911,7 @@ function pinch(url: string): Promise<number> {
 
 test("zoom: the text-size commands zoom a focused page in Chrome's steps and a pinch zooms it", { tag: NEEDS_FOCUS }, async () => {
   ({ app } = await launch(run.env));
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1024, 640));
+  await fitWindow(app, WINDOW);
   const page = await app.firstWindow();
   const sent = countSent(page);
   await enterWorkspace(page, "fixture");

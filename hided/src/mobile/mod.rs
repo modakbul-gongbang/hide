@@ -1420,6 +1420,23 @@ impl Mobile {
         }
     }
 
+    /// Tells the core a phone write to `pane_id` is about to be made, so the
+    /// doorbell treats the pane as typed into. Sent before the write: one
+    /// Herdr then refuses still holds the pane until a prompt hook or a turn
+    /// clears it, which is safer than a window where the write lands unseen.
+    pub fn note_input(&self, pane_id: &str) {
+        let event = json!({
+            "schema_version": 2,
+            "kind": "pane_input_sent",
+            "payload": {"pane_id": pane_id},
+        });
+        if let Err(message) = self.config.core.dispatch(event.to_string().into_bytes()) {
+            herdr_core::diagnostic!(json!({
+                "component": "mobile_phone", "kind": "input.sent_unrecorded", "message": message,
+            }));
+        }
+    }
+
     /// The Herdr connection for a pane on this Mac or a connected device.
     pub fn herdr_api(
         &self,

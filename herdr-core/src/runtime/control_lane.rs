@@ -530,15 +530,30 @@ impl Runtime {
     }
 
     /// Records that the tab focus for `tab_id` has left for Herdr: from now
-    /// on its answer can arrive after something newer replaced it.
+    /// on its answer can arrive after something newer replaced it. One whose
+    /// wait was replaced or settled while it waited here still leaves (a
+    /// pane focus's tab wait does not take it off the lane), so its answer
+    /// is remembered as superseded from now (#629). A tab no checkout lists
+    /// has nothing to follow, so nothing of it is remembered.
     fn mark_tab_focus_sent(&mut self, tab_id: &str) {
-        if let Some(pending) = self
+        match self
             .pending_tab_focus
             .as_mut()
-            .filter(|pending| pending.target_id == tab_id && !pending.sent)
+            .filter(|pending| pending.target_id == tab_id)
         {
-            pending.sent = true;
-            pending.requested_at_unix_ms = unix_milliseconds();
+            Some(pending) => {
+                if !pending.sent {
+                    pending.sent = true;
+                    pending.requested_at_unix_ms = unix_milliseconds();
+                }
+            }
+            None => {
+                if let Some(checkout_id) = self.checkout_holding_tab(tab_id) {
+                    self.supersede_tab_focus(
+                        PendingViewFocus::new(checkout_id, tab_id).already_sent(),
+                    );
+                }
+            }
         }
     }
 }

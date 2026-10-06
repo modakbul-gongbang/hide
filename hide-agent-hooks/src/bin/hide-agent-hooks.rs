@@ -27,6 +27,10 @@ use hide_platform::process::{OwnedChild, OwnerWatch};
 
 const PROMPT_BUDGET: Duration = Duration::from_millis(1_850);
 const INTAKE_BUDGET: Duration = Duration::from_millis(1_650);
+/// How long a prompt hook waits for the runtime's payload to learn whether
+/// the prompt was Hide's bell. A producer that never closes stdin costs this
+/// and no more, and the prompt is then treated as the operator's.
+const PROMPT_PAYLOAD_BUDGET: Duration = Duration::from_millis(500);
 
 #[path = "../workspace_context.rs"]
 mod workspace_context;
@@ -153,12 +157,29 @@ fn run_hook(arguments: &[String], started: Instant) {
     let Some(home) = home_directory() else { return };
     let deadline = Instant::now() + Duration::from_millis(hide_memory::HOOK_PROCESS_BUDGET_MS);
     let delivery_deadline = started + INTAKE_BUDGET;
-    let mut output = if let Some(runtime) = runtime.filter(|_| {
-        arguments
-            .iter()
-            .any(|argument| argument == "--memory-injection")
-    }) {
-        memory_output_before_deadline(runtime, event, home.clone(), deadline)
+    let memory_injection = arguments
+        .iter()
+        .any(|argument| argument == "--memory-injection");
+    // The prompt event reads its payload for the bell test even without
+    // Memory; a Memory read that follows works from the same bytes.
+    let payload = if event == HookEvent::UserPromptSubmit && runtime.is_some() {
+        read_stdin_before_deadline(started + PROMPT_PAYLOAD_BUDGET)
+    } else if memory_injection {
+        read_stdin_before_deadline(deadline)
+    } else {
+        None
+    };
+    let prompt = match (&payload, event) {
+        (Some((bytes, truncated)), HookEvent::UserPromptSubmit) => {
+            hide_agent_hooks::delivery::read_prompt(bytes, *truncated)
+        }
+        _ => hide_agent_hooks::delivery::Prompt {
+            bell: false,
+            session: None,
+        },
+    };
+    let mut output = if let Some(runtime) = runtime.filter(|_| memory_injection) {
+        memory_output_before_deadline(runtime, event, home.clone(), deadline, payload)
     } else {
         runtime.and_then(|runtime| hook_stdout(runtime, event))
     };
@@ -173,7 +194,7 @@ fn run_hook(arguments: &[String], started: Instant) {
         });
     }
     let intake = if event == HookEvent::UserPromptSubmit && runtime.is_some() {
-        match hide_agent_hooks::delivery::pull(delivery_deadline) {
+        match hide_agent_hooks::delivery::pull(delivery_deadline, &prompt) {
             Ok(intake) => intake,
             Err(failure) => {
                 hide_agent_hooks::delivery::diagnose_failure(&home, &failure);
@@ -211,7 +232,8 @@ fn run_hook(arguments: &[String], started: Instant) {
             .is_ok();
     }
     if event == HookEvent::UserPromptSubmit {
-        if let Some(intake) = intake {
+        // A count-only answer has no letter to confirm.
+        if let Some(intake) = intake.filter(|intake| !intake.ids.is_empty()) {
             if flushed {
                 if let Err(failure) =
                     hide_agent_hooks::delivery::confirm(&intake, delivery_deadline)
@@ -254,8 +276,9 @@ fn memory_output_before_deadline(
     event: HookEvent,
     home: PathBuf,
     deadline: Instant,
+    payload: Option<(Vec<u8>, bool)>,
 ) -> Option<String> {
-    let Some((payload, exceeded)) = read_stdin_before_deadline(deadline) else {
+    let Some((payload, exceeded)) = payload else {
         return hook_stdout(runtime, event);
     };
     hide_agent_hooks::memory::project_memory_output_until(

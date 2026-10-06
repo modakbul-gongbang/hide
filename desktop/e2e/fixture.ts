@@ -71,6 +71,8 @@ export function isolate(herdr: Pick<HerdrFixture, "socket" | "bin"> & Partial<Pi
     const answer = JSON.parse(hide(["status", "--json"]).stdout) as { running: boolean; pid?: number };
     return answer.running ? (answer.pid ?? null) : null;
   };
+  // Every state folder a daemon of this home may have used: the one the app is given and the two `hide` falls back to.
+  const states = () => [cleanupEnv.HIDE_STATE_DIR!, path.join(home, ".hide", "state"), path.join(home, ".local", "state", "hide")];
   const owner = { cleanup: () => {}, candidates: new Set<ChildProcess>(), launching: 0 };
   let cleaned = false;
   const cleanup = () => {
@@ -81,10 +83,15 @@ export function isolate(herdr: Pick<HerdrFixture, "socket" | "bin"> & Partial<Pi
       throw new Error(`fixture cleanup incomplete; preserve ${root}: candidate exit unconfirmed (PIDs: ${pids || "none"}, pending launches: ${owner.launching}); close only the recorded owned candidates, confirm their exit, then call cleanup() again`);
     }
     const errors: unknown[] = [];
-    for (const state of [cleanupEnv.HIDE_STATE_DIR!, path.join(home, ".hide", "state"), path.join(home, ".local", "state", "hide")]) {
+    for (const state of states()) {
       if (!fs.existsSync(state)) continue;
       const stopped = spawnSync(HIDE_CLI, ["stop"], { env: { ...cleanupEnv, HIDE_STATE_DIR: state }, encoding: "utf8", timeout: 20_000 });
       if (stopped.error || stopped.status !== 0) errors.push(new Error(`private hided stop failed for ${state}: ${stopped.error?.message ?? (stopped.stderr || stopped.stdout || stopped.status)}`));
+    }
+    // A spec cleans up in its own hooks, before the test's outcome is final,
+    // so the logs are read here and the test fixture decides whether to keep them.
+    if (daemonLogs) {
+      try { daemonLogs.push(...daemonLogTails(states(), root, home)); } catch (error) { errors.push(error); }
     }
     if (errors.length) throw new AggregateError(errors, `fixture cleanup incomplete; preserve ${root} and resolve the reported stop/unload failure`);
     // Windows keeps a running executable and a process's folder locked: end what still runs from the root first.
@@ -177,6 +184,7 @@ export const test = base.extend<{ focusGuard: void }>({
     async ({}, use, testInfo) => {
       const dir = fs.mkdtempSync(path.join(os.tmpdir(), "hide-e2e-focus-"));
       focusReports = { dir, apps: [] };
+      daemonLogs = [];
       const errors: unknown[] = [];
       try {
         await use();
@@ -194,6 +202,13 @@ export const test = base.extend<{ focusGuard: void }>({
         for (const { cleanup } of [...isolations.values()]) {
           try { cleanup(); } catch (error) { errors.push(error); }
         }
+        if (testInfo.status !== testInfo.expectedStatus) {
+          try {
+            fs.mkdirSync(testInfo.outputPath(), { recursive: true });
+            daemonLogs.forEach((text, index) => fs.writeFileSync(testInfo.outputPath(`hided-${index + 1}.jsonl`), text));
+          } catch (error) { errors.push(error); }
+        }
+        daemonLogs = null;
         const reports = fs.readdirSync(dir).flatMap((file) => fs.readFileSync(path.join(dir, file), "utf8").split("\n").filter(Boolean));
         focusReports = null;
         fs.rmSync(dir, { recursive: true, force: true });
@@ -206,6 +221,52 @@ export const test = base.extend<{ focusGuard: void }>({
     { auto: true },
   ],
 });
+
+/** The most of one daemon log a failed attempt keeps: the end of it, where the failure is. */
+const KEPT_LOG_BYTES = 256 * 1024;
+
+/**
+ * The end of each private daemon log the running test's cleanups have read,
+ * written beside its report as `hided-<n>.jsonl` when the test fails: the
+ * host log does not show the order of the core's focus, tab and pane records,
+ * and without them a CI flake could only be classified by inference (issue
+ * 629). Null outside a test from this module's `test`.
+ */
+let daemonLogs: string[] | null = null;
+
+/**
+ * The end of each core log under `states`, at most `KEPT_LOG_BYTES` of whole
+ * records, with the run's folders, the repository, the home and the
+ * temporary folder written as placeholders; the core log carries no token or
+ * credential.
+ */
+function daemonLogTails(states: string[], root: string, home: string): string[] {
+  const placeholders: [string, string][] = [
+    [home, "<run>/home"], [root, "<run>"], [REPO, "<repo>"], [os.homedir(), "<home>"],
+    [fs.realpathSync.native(os.tmpdir()), "<tmp>"], [os.tmpdir(), "<tmp>"],
+  ];
+  // Paths reach the log as JSON strings, so a Windows path appears with its backslashes escaped.
+  const spellings = placeholders
+    .flatMap(([from, to]): [string, string][] => [[JSON.stringify(from).slice(1, -1), to], [from, to]])
+    .sort(([a], [b]) => b.length - a.length);
+  const tails: string[] = [];
+  for (const state of states) {
+    const file = path.join(state, "Logs", "core.jsonl");
+    if (!fs.existsSync(file)) continue;
+    const size = fs.statSync(file).size;
+    const start = Math.max(0, size - KEPT_LOG_BYTES);
+    const handle = fs.openSync(file, "r");
+    const bytes = Buffer.alloc(size - start);
+    try { fs.readSync(handle, bytes, 0, bytes.length, start); } finally { fs.closeSync(handle); }
+    let text = bytes.toString("utf8");
+    // A cut record is dropped whole, so every kept line is JSON.
+    if (start > 0) text = text.slice(text.indexOf("\n") + 1);
+    for (const [from, to] of spellings) text = text.replaceAll(from, to);
+    const note = start > 0 ? `${JSON.stringify({ kind: "e2e.log_tail", kept_bytes: KEPT_LOG_BYTES, total_bytes: size })}\n` : "";
+    tails.push(note + text);
+  }
+  return tails;
+}
 
 /** Starts the app with the focus guard preloaded, reporting into the running test's folder. */
 async function start(appDir: string, env: Record<string, string>, executablePath?: string): Promise<ElectronApplication> {
@@ -337,9 +398,13 @@ export async function focusPage(app: ElectronApplication, page: { url: string } 
  * Sizes the first window to what a layout needs, within the primary work
  * area: a CI runner's screen is 1024 points wide and its usable height
  * differs by runner (681 on one, 700 or more on another), and macOS clamps a
- * window to the work area without saying so. The width is the layout's and
- * must be granted whole; the height is the work area's when that is shorter.
- * Returns the size macOS granted, so a spec asserts its layout against it.
+ * window to the work area without saying so. It can keep a larger size until
+ * the window is next ordered in (a `blur()` or `focus()` of the test's own)
+ * and clamp it then, which changes the layout in the middle of a test (issue
+ * 511), so a spec sizes its window here (`hide-e2e/window-size-through-fixture`).
+ * The width is the layout's and must be granted whole; the height is the work
+ * area's when that is shorter. Returns the size macOS granted, so a spec
+ * asserts its layout against it.
  */
 export async function fitWindow(app: ElectronApplication, wanted: { width: number; height: number }): Promise<{ width: number; height: number }> {
   const { granted, area } = await app.evaluate(({ BrowserWindow, screen }, size) => {

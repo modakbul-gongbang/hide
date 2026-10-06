@@ -15,7 +15,7 @@ import path from "node:path";
 import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace, showTool } from "../../web/e2e/wire";
 import { toPage } from "../src/main/wirePath";
-import { hostLog, isolate, launch, screenshot, shellPage, test, type Isolated } from "./fixture";
+import { fitWindow, hostLog, isolate, launch, screenshot, shellPage, test, type Isolated } from "./fixture";
 
 test.describe.configure({ timeout: 240_000 });
 test.use({ actionTimeout: 15_000 });
@@ -94,7 +94,7 @@ test("reveal: Explorer, History, a View tab and a sidebar row hand the item to t
   const label = ({ darwin: "Reveal in Finder", win32: "Reveal in File Explorer", linux: "Open Containing Folder" } as Record<string, string>)[process.platform] ?? "Show in File Manager";
 
   ({ app } = await launch(run.env));
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1024, 681));
+  await fitWindow(app, { width: 1024, height: 681 });
   const page = await shellPage(app);
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.setZoomFactor(0.7));
   await enterWorkspace(page, "fixture");

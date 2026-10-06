@@ -186,6 +186,8 @@ A piece that another open change is still building is marked as pending with the
    `web/e2e/herdr-fixture.ts` starts a private Herdr and `web/e2e/hided-fixture.ts` a private `hided`; `desktop/e2e/fixture.ts` takes a started Herdr fixture and gives the packaged window its own `HOME` and `hided` state.
    Why: a test that shares a server with another inherits its panes, focus and timers, and its failure cannot be read alone.
    The config runs one worker (`web/playwright.config.ts`) so a timing assertion does not compete with a neighbour for cores; CI deals tests out across runners by their recorded durations (`scripts/web-e2e-shard.py`, [Balancing the web e2e shards](#balancing-the-web-e2e-shards)).
+   A desktop spec sizes its window with `fitWindow` in `desktop/e2e/fixture.ts`, inside the work area of a CI runner's 1024-point screen; `hide-e2e/window-size-through-fixture` refuses `setSize` and `setBounds` anywhere else, and a spec whose subject needs a larger window (`workspace-columns.spec.ts` asserts column widths in whole CSS pixels of bodies wider than the screen) says why in a line allow and never orders that window out and in.
+   Why: macOS can keep a window larger than the work area until the window is next ordered in, by the test's own `blur()` or `focus()`, and clamp it then, so the layout changes in the middle of the test; `area cycle native` lost both View areas that way in about one run in ten (issue 511).
 2. **Wait for a product signal, never for time.**
    The signals a spec waits on, in order of preference:
    - A DOM state the product exports as a data attribute: `data-pane-view` and `data-focused` for pane focus, `data-checkout-kind` for a checkout row, `data-tab`, `data-sidebar-mode`.
@@ -394,6 +396,7 @@ CI retries a failed test once, for classification and for the report, and for no
   The issue names the first run, the change and the system, and carries a deadline seven days out.
   The report step also sets its `flaky` output, and a lane that keeps its e2e logs for a failure keeps them for a flaky run too, under the same artifact name, because the first attempt's daemon, Herdr and input logs are the only evidence the issue gets; a run with no flaky and no failed test uploads nothing.
   On Windows CI the web suite also logs, for each failed attempt and at that moment, what holds TCP connections (count by state and by process name, `[windows sockets]` lines from `web/e2e/windows-sockets-reporter.ts`), because a Chromium `ERR_NO_BUFFER_SPACE` on a loopback connect left nothing saying who held the sockets; a passing attempt runs nothing.
+  The desktop suite keeps, for each failed attempt, the end of each private daemon's `Logs/core.jsonl` (at most 256 KiB, whole records) as `hided-<n>.jsonl` in that attempt's `test-results` folder, which the same artifact carries, with the run's folders, the repository, the home and the temporary folder written as placeholders, because the host log alone could not show the order of the core's focus records behind a flaky ⌃Tab cycle (issue 629); a passing attempt copies nothing.
   A test that fails its retry too fails the lane; nothing else is retried anywhere.
 - At the deadline a flaky test is fixed or deleted.
   Whoever knows the cause opens the fix or the deletion; if nobody does, the issue goes to the operator.

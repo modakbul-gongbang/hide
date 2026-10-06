@@ -1,5 +1,5 @@
 // The lint every Playwright spec in web/e2e and desktop/e2e passes.
-// eslint-plugin-playwright states the generic rules; hide-e2e states the two this repository was burned by.
+// eslint-plugin-playwright states the generic rules; hide-e2e states the ones this repository was burned by.
 // docs/TESTING.md owns the reasons. The size budget of one test is checked by web/scripts/check-e2e-test-size.mjs.
 import playwright from "eslint-plugin-playwright";
 import hide from "./eslint-rules/hide-e2e.mjs";
@@ -20,5 +20,6 @@ export default {
     "playwright/no-useless-await": "error",
     "hide-e2e/no-action-in-poll": "error",
     "hide-e2e/reopen-after-restart-through-blank": "error",
+    "hide-e2e/window-size-through-fixture": "error",
   },
 };
