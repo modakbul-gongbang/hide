@@ -362,7 +362,8 @@ A plan that finds tests the table lacks, or a heaviest shard more than 15 % over
 `scripts/tests/test_web_e2e_shard.py` checks the split, the check, the encoding and the table's shape.
 
 The table is the median over 20 runs of a passing test's duration on the Linux runner (2026-10-06); on it the four shards plan 472 seconds each, where Playwright's count split planned 306 to 577.
-It is a Linux recording: the nightly's macOS and Windows shards deal by it too, and their balance is not measured, because per-test costs there differ (symlinks, process and terminal tests) and no table has been recorded from their logs.
+It is a Linux recording, and only the pull request's Linux lane deals by it: the nightly's macOS and Windows lanes run one shard each.
+A lane that later runs several shards on another system would deal by a table that is not its own, because per-test costs there differ (symlinks, process and terminal tests) and none has been recorded from their logs.
 Refresh it when a shard's time drifts from the others in a run, when the plan warns, or after tests were added or renamed in bulk:
 
 1. Download the logs of the Linux `web e2e` shard jobs of about twenty recent successful runs (`gh api repos/<owner>/<repo>/actions/jobs/<job id>/logs`) into a directory outside the repository.
