@@ -1039,13 +1039,15 @@ pub(super) struct UiAttachedPayload {
     pub(super) attached: bool,
 }
 
-/// One Background AI settings event, carrying whatever it is about.
+/// One Hide AI settings event, carrying whatever it is about.
 ///
-/// It folds three things a single screen does into one event, the way
-/// `ui_state_update` already folds that screen's other state: the group
-/// appearing or going away, a chosen agent, and a chosen model. Nothing here
-/// is filled in on the core's side, so an event that names a model without
-/// its provider is refused rather than guessed at.
+/// It folds what a single screen does into one event, the way
+/// `ui_state_update` already folds that screen's other state: the tab
+/// appearing or going away, Use Hide AI, a chosen agent, a chosen model (for
+/// Runs on or for an agent in the fallback list), and the fallback list's
+/// additions and removals. Nothing here is filled in on the core's side, so
+/// an event that names a model without its provider is refused rather than
+/// guessed at.
 #[derive(Deserialize)]
 pub(super) struct AiSettingsPayload {
     /// True while the Background AI group is on screen. The provider probe
@@ -1066,6 +1068,16 @@ pub(super) struct AiSettingsPayload {
     /// The agent-summary switch (PRD overview-request-view D-11).
     #[serde(default)]
     pub(super) agent_summary: Option<bool>,
+    /// Use Hide AI (D-14): off, no model is asked anything.
+    #[serde(default)]
+    pub(super) enabled: Option<bool>,
+    /// An agent to add under "If <Runs on> can't answer" (D-16), at the end
+    /// of the list.
+    #[serde(default)]
+    pub(super) fallback_add: Option<String>,
+    /// An agent to take out of that list.
+    #[serde(default)]
+    pub(super) fallback_remove: Option<String>,
 }
 
 /// One pane search. An empty `term` clears the search rather than needing its

@@ -3771,25 +3771,38 @@ pub struct PaneFocusRequestSnapshot {
     pub retryable: bool,
 }
 
-/// Which agent and model the background AI features use, and what each
-/// provider can do about it right now.
+/// Which agent and model Hide AI uses, and what each agent can do about it
+/// right now (Settings › Hide AI).
 ///
 /// The choice is the operator's, stored by `hide-ai` in its own file; the
 /// availability and the model lists come from asking the providers, on the
-/// coordinator's reader, never under the runtime mutex.
+/// coordinator's reader, never under the runtime mutex. Every reason is a
+/// short machine code: the shell writes the words, and nothing here carries
+/// an account, a path or a conversation (B68).
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct BackgroundAiSnapshot {
-    /// The provider a background request runs on first. It is the operator's
-    /// choice when they have made one and the default otherwise.
-    pub provider: String,
-    /// Whether `provider` is a saved choice rather than the default.
+    /// Use Hide AI (D-14). Off, no model is asked anything and the other
+    /// settings are kept.
+    pub enabled: bool,
+    /// The agent Hide AI runs on first (Runs on), or `None` when nobody
+    /// chose one and none can be chosen yet (B47): Hide features then work
+    /// without a model, and the first agent that is switched on and signed in
+    /// is chosen by itself (D-18, D-27).
+    pub provider: Option<String>,
+    /// Whether `provider` is a stored choice.
     pub chosen: bool,
     /// The `에이전트 요약` switch: agent labels are asked for and shown.
     pub agent_summary: bool,
-    /// One row per provider Hide can route to, in the offered order. A
-    /// provider that is not on this Mac is still a row, because "not here"
-    /// and "not signed in" are different answers.
+    /// One row per agent Hide AI knows, in the fixed order. An agent that is
+    /// not on this Mac is still a row, because "not here" and "not signed in"
+    /// are different answers.
     pub providers: Vec<BackgroundAiProviderSnapshot>,
+    /// The agents tried, in this order, when `provider` cannot answer; empty
+    /// until the operator adds one (D-16).
+    pub fallback: Vec<BackgroundAiFallbackSnapshot>,
+    /// Why Runs on is not answering, and which listed agent answers instead;
+    /// absent while the chosen agent answers (B41, B42).
+    pub refusal: Option<BackgroundAiRefusalSnapshot>,
     /// Why the saved choice could not be read or written. The defaults are in
     /// use while this is set; it is never left empty to stand for success.
     pub unavailable_reason: Option<String>,
@@ -3797,24 +3810,14 @@ pub struct BackgroundAiSnapshot {
 
 impl BackgroundAiSnapshot {
     /// Every provider, none of them asked yet. This is what the screen shows
-    /// before the first read lands, and what an unobserved read answers. The
-    /// choice it names is the default, because nothing has been read that
-    /// could have changed it.
+    /// before the first read lands, and what an unobserved read answers. No
+    /// choice is claimed, because nothing has been read that could say one.
     pub fn unread() -> Self {
         Self {
-            provider: hide_ai::AiSettings::default().provider.as_str().to_owned(),
+            enabled: true,
             providers: hide_ai::PROVIDERS
                 .iter()
-                .map(|provider| BackgroundAiProviderSnapshot {
-                    id: provider.as_str().to_owned(),
-                    label: provider.label().to_owned(),
-                    state: "unread".to_owned(),
-                    headline: "Not checked yet".to_owned(),
-                    message: None,
-                    model: hide_ai::settings::default_model(*provider).to_owned(),
-                    models: Vec::new(),
-                    models_unavailable_reason: None,
-                })
+                .map(|provider| BackgroundAiProviderSnapshot::unread(*provider))
                 .collect(),
             agent_summary: true,
             ..Self::default()
@@ -3824,9 +3827,13 @@ impl BackgroundAiSnapshot {
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize)]
 pub struct BackgroundAiProviderSnapshot {
-    /// The provider layer's own id: `codex` or `claude`.
+    /// The provider layer's own id, such as `codex`.
     pub id: String,
     pub label: String,
+    /// The kit's adapter id for the same agent (`claude-code`, `codex`,
+    /// `gemini-cli`, `grok`, `opencode`, `pi`, `cursor`), which the Agents
+    /// tab and the logos are keyed by.
+    pub agent: String,
     /// The availability class the provider layer reported: `ready`,
     /// `needs_login`, `not_installed`, `unavailable`, `unsupported`, or
     /// `unread` before it has been asked.
@@ -3834,14 +3841,69 @@ pub struct BackgroundAiProviderSnapshot {
     /// The short words beside the provider's name. The core writes them; no
     /// view builds a sentence out of `state`.
     pub headline: String,
-    /// The provider layer's own reason, when its state carries one.
+    /// The provider layer's own reason code, when its state carries one
+    /// (`cannot_guarantee_read_only`, `model_not_offered:<model>`).
     pub message: Option<String>,
-    /// The model this provider is asked for.
+    /// Whether the agent's program was found; false only for
+    /// `not_installed`.
+    pub installed: bool,
+    /// Whether Runs on and Add agent offer it: installed, signed in, a
+    /// backend, and a call that cannot change files (D-15). Parked in a usage
+    /// limit is still selectable.
+    pub selectable: bool,
+    /// When a usage limit ends, as unix milliseconds, when the agent said.
+    pub retry_at_ms: Option<u64>,
+    /// The model this agent is asked for; empty is the CLI's own default. For
+    /// an agent in the fallback list it is that entry's model.
     pub model: String,
-    /// The models this provider offers. Empty when they are not known, which
+    /// The models this agent offers. Empty when they are not known, which
     /// `models_unavailable_reason` then says.
     pub models: Vec<String>,
+    /// The list is the CLI's documented one and cannot be asked for (Gemini
+    /// CLI), so the shell says so beside the menu (B36).
+    pub models_fixed: bool,
+    /// Whether "CLI default" can be chosen: the agent is asked with no
+    /// `--model` (B36). True for the agents measured against nothing yet.
+    pub cli_default: bool,
     pub models_unavailable_reason: Option<String>,
+}
+
+impl BackgroundAiProviderSnapshot {
+    pub fn unread(provider: hide_ai::ProviderId) -> Self {
+        Self {
+            id: provider.as_str().to_owned(),
+            label: provider.label().to_owned(),
+            agent: provider.descriptor().agent.to_owned(),
+            state: "unread".to_owned(),
+            headline: "Not checked yet".to_owned(),
+            installed: true,
+            model: provider.default_model().to_owned(),
+            cli_default: provider.default_model().is_empty(),
+            ..Self::default()
+        }
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct BackgroundAiFallbackSnapshot {
+    pub provider: String,
+    /// The model it is asked for; empty is the CLI's default.
+    pub model: String,
+}
+
+/// "Using Codex · Claude Code is out of usage until 3:10 PM" (B41), or the
+/// Runs on row's reason when nothing answers (B42). Codes only.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct BackgroundAiRefusalSnapshot {
+    /// The agent that cannot answer: Runs on.
+    pub provider: String,
+    /// The router's availability class for it: `usage_limited`,
+    /// `needs_login`, `not_installed`, `unavailable` or `unsupported`.
+    pub reason: String,
+    /// When a usage limit ends, as unix milliseconds, when the agent said.
+    pub retry_at_ms: Option<u64>,
+    /// The listed agent answering instead; absent when none can (B42).
+    pub using: Option<String>,
 }
 
 /// What the Settings diagnosis says about agent hooks (PRD B27, B28, D-31,

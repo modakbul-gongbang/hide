@@ -24,10 +24,17 @@ use crate::{AiError, Availability, PROVIDERS, ProviderId};
 /// naming one reads as the default, a `models` entry for it is kept untouched
 /// and a `fallback` entry for it is dropped.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-#[serde(from = "RawSettings")]
+#[serde(from = "RawSettings", into = "RawSettingsOut")]
 pub struct AiSettings {
-    /// The agent that answers: Settings › Hide AI › Runs on.
+    /// The agent that answers: Settings › Hide AI › Runs on. Only meaningful
+    /// while `chosen`; before then it is the first agent of the fixed order,
+    /// which nothing asks anything of.
     pub provider: ProviderId,
+    /// Whether `provider` was chosen, by the operator or by the first-run
+    /// rule (D-18), and so is stored. An unchosen settings value runs no
+    /// background request: Hide features work without a model until an agent
+    /// can answer (B47). It is the `provider` key being in the file.
+    pub chosen: bool,
     /// The model each provider is asked for, keyed by the provider's id. A
     /// provider with no entry is asked for its own default; an empty value is
     /// the CLI's default (no `--model`). The key is a string so an entry for
@@ -63,6 +70,30 @@ pub enum FallbackRefusal {
     AlreadyListed,
 }
 
+/// The file as it is written: `provider` only once it was chosen, so a file
+/// that only turned a switch does not make a choice for the operator.
+#[derive(Serialize)]
+struct RawSettingsOut {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    provider: Option<&'static str>,
+    models: BTreeMap<String, String>,
+    agent_summary: bool,
+    enabled: bool,
+    fallback: Vec<FallbackEntry>,
+}
+
+impl From<AiSettings> for RawSettingsOut {
+    fn from(settings: AiSettings) -> Self {
+        Self {
+            provider: settings.chosen.then(|| settings.provider.as_str()),
+            models: settings.models,
+            agent_summary: settings.agent_summary,
+            enabled: settings.enabled,
+            fallback: settings.fallback,
+        }
+    }
+}
+
 /// The file as it is read, before the registry judges the ids in it.
 #[derive(Deserialize)]
 struct RawSettings {
@@ -87,13 +118,10 @@ struct RawFallback {
 
 impl From<RawSettings> for AiSettings {
     fn from(raw: RawSettings) -> Self {
-        let provider = raw
-            .provider
-            .as_deref()
-            .and_then(ProviderId::from_id)
-            .unwrap_or_else(default_provider);
+        let named = raw.provider.as_deref().and_then(ProviderId::from_id);
         let mut settings = Self {
-            provider,
+            provider: named.unwrap_or_else(default_provider),
+            chosen: named.is_some(),
             models: raw.models,
             agent_summary: raw.agent_summary,
             enabled: raw.enabled,
@@ -115,6 +143,7 @@ impl Default for AiSettings {
     fn default() -> Self {
         Self {
             provider: default_provider(),
+            chosen: false,
             models: PROVIDERS
                 .iter()
                 .filter(|provider| !provider.default_model().is_empty())
@@ -204,6 +233,7 @@ impl AiSettings {
             }
         }
         self.provider = provider;
+        self.chosen = true;
     }
 
     /// Adds an agent at the end of the fallback list; order is the order of
@@ -252,7 +282,8 @@ impl AiSettings {
         priority.extend(self.fallback.iter().map(|entry| entry.provider));
         RouterConfig {
             priority,
-            enabled: self.enabled,
+            // An unchosen settings value has no agent to ask (B47).
+            enabled: self.enabled && self.chosen,
             ..RouterConfig::default()
         }
     }
@@ -456,6 +487,10 @@ mod tests {
         );
         let settings = load(&home).expect("an unknown agent does not make the file unreadable");
         assert_eq!(settings.provider, ProviderId::CLAUDE);
+        assert!(
+            !settings.chosen,
+            "a choice naming an agent this build does not know is no choice"
+        );
         assert_eq!(
             settings.fallback,
             vec![FallbackEntry {
@@ -515,6 +550,7 @@ mod tests {
     fn the_chosen_agent_leads_and_only_the_fallback_list_follows_it() {
         let mut settings = AiSettings {
             provider: ProviderId::CLAUDE,
+            chosen: true,
             ..AiSettings::default()
         };
         assert_eq!(
@@ -652,5 +688,35 @@ mod tests {
             (ProviderId::CLAUDE, Availability::NeedsLogin),
         ];
         assert_eq!(AiSettings::provider_for_first_run(&neither), None);
+    }
+
+    #[test]
+    fn a_file_that_only_turned_a_switch_makes_no_choice_and_asks_no_agent() {
+        let home = home("unchosen");
+        let mut settings = AiSettings::default();
+        assert!(!settings.chosen, "nothing is chosen until someone chooses");
+        settings.agent_summary = false;
+        save(&home, &settings).expect("the file is writable");
+        let written: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(settings_path(&home)).unwrap()).unwrap();
+        assert!(
+            written.get("provider").is_none(),
+            "the file does not name an agent nobody chose: {written}"
+        );
+        let reread = load(&home).expect("the file is readable");
+        assert!(!reread.chosen && !reread.agent_summary);
+        assert!(
+            !reread.router_config().enabled,
+            "with no agent chosen no request is asked of any model (B47)"
+        );
+        let mut chosen = reread;
+        chosen.set_provider(ProviderId::CODEX);
+        assert!(chosen.chosen && chosen.router_config().enabled);
+        save(&home, &chosen).expect("the file is writable");
+        assert!(
+            load(&home).unwrap().chosen,
+            "a saved choice reads as chosen"
+        );
+        std::fs::remove_dir_all(home).expect("the temporary home is removable");
     }
 }

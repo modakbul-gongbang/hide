@@ -71,7 +71,7 @@ impl Runtime {
         if now_unix_ms < self.memory_next_poll_unix_ms
             || self.memory_poll_in_flight
             || self.memory_operation_in_flight
-            || self.ai_settings.is_none()
+            || !self.ai_active()
             || self.snapshot.sessions.analysis.failed > 0
             || matches!(
                 self.snapshot.sessions.analysis.state.as_str(),
@@ -668,7 +668,10 @@ impl Runtime {
         let generation = self.memory_operation_generation;
         self.memory_operation_checkout_path = Some(checkout_path.clone());
         let action = payload.action.clone();
-        let analyzes = matches!(action.as_str(), "enable" | "retry");
+        // Memory analysis is a model call: with Hide AI off or no agent
+        // chosen the project is still enabled and its saved Memory still
+        // searched, and the analysis waits (B33).
+        let analyzes = matches!(action.as_str(), "enable" | "retry") && self.ai_active();
         let cancel = CancelToken::new();
         self.memory_cancel = analyzes.then(|| cancel.clone());
         if analyzes {

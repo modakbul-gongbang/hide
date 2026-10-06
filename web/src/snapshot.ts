@@ -1070,21 +1070,54 @@ export type CoreDiagnostic = { kind: string; message: string; occurred_at: numbe
 export type AiProvider = {
   id: string;
   label: string;
-  /** `ready`, `needs_login`, `not_installed`, `unavailable`, `unsupported`, or `unread`. */
+  /** The install kit's adapter id for the same agent (`claude-code`, `codex`, `gemini-cli`, `grok`, `opencode`, `pi`, `cursor`). */
+  agent: string;
+  /** `ready`, `needs_login`, `usage_limited`, `not_installed`, `unavailable`, `unsupported`, or `unread`. */
   state: string;
   headline: string;
+  /** The provider layer's own reason code (`cannot_guarantee_read_only`, `model_not_offered:<model>`), never prose. */
   message: string | null;
+  /** The agent's program was found. */
+  installed: boolean;
+  /** Runs on and Add agent offer it: installed, signed in, a backend, and a call that cannot change files. */
+  selectable: boolean;
+  /** When a usage limit ends (unix ms), when the agent said. */
+  retry_at_ms: number | null;
+  /** The model it is asked for; empty is the CLI's own default. */
   model: string;
   models: string[];
+  /** The list is the CLI's documented one and cannot be asked for (Gemini CLI). */
+  models_fixed: boolean;
+  /** "CLI default" can be chosen: the agent is asked with no `--model`. */
+  cli_default: boolean;
+  /** Why the list is empty: a code (`not_asked`, `not_observed`, or the provider's own). */
   models_unavailable_reason: string | null;
 };
 
-export type BackgroundAi = {
+/** The agents tried, in this order, when Runs on cannot answer. */
+export type AiFallback = { provider: string; model: string };
+
+/** Why Runs on is not answering, and who answers instead; absent while it answers. */
+export type AiRefusal = {
   provider: string;
+  /** `usage_limited`, `needs_login`, `not_installed`, `unavailable` or `unsupported`. */
+  reason: string;
+  retry_at_ms: number | null;
+  /** The listed agent answering instead; null when none can. */
+  using: string | null;
+};
+
+export type BackgroundAi = {
+  /** Use Hide AI; off, no model is asked anything. Absent from an older daemon, which is on. */
+  enabled?: boolean;
+  /** Runs on; null when nobody chose and none can be chosen yet. */
+  provider: string | null;
   chosen: boolean;
   /** The `에이전트 요약` switch; absent from an older daemon, which always summarizes. */
   agent_summary?: boolean;
   providers: AiProvider[];
+  fallback?: AiFallback[];
+  refusal?: AiRefusal | null;
   unavailable_reason: string | null;
 };
 

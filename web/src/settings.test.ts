@@ -165,11 +165,17 @@ describe("settings rules", () => {
     const provider: AiProvider = {
       id: "claude",
       label: "Claude",
+      agent: "claude-code",
       state: "ready",
       headline: "Ready",
       message: null,
+      installed: true,
+      selectable: true,
+      retry_at_ms: null,
       model: "custom-model",
       models: ["opus", "sonnet"],
+      models_fixed: false,
+      cli_default: false,
       models_unavailable_reason: null,
     };
     expect(offeredModels(provider)).toEqual(["custom-model", "opus", "sonnet"]);

@@ -152,7 +152,10 @@ impl Harness {
         let backend = Scripted::new();
         let router_backend: Arc<dyn AiBackend> = backend.clone();
         let analyzer = LabelAnalyzer::spawn_with(
-            Box::new(AiSettings::default),
+            Box::new(|| AiSettings {
+                chosen: true,
+                ..AiSettings::default()
+            }),
             Box::new(move |_| {
                 Arc::new(AiRouter::new(
                     vec![Arc::clone(&router_backend)],
@@ -164,6 +167,7 @@ impl Harness {
                     Arc::new(NoopLogSink),
                 ))
             }),
+            Arc::default(),
         )
         .unwrap();
         Self {

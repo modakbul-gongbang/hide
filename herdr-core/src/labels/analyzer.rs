@@ -46,16 +46,21 @@ pub(crate) struct LabelAnalyzer {
 }
 
 impl LabelAnalyzer {
-    pub(crate) fn spawn(settings: SettingsSource) -> Result<Self, String> {
+    pub(crate) fn spawn(
+        settings: SettingsSource,
+        standing: Arc<crate::ai::AiStanding>,
+    ) -> Result<Self, String> {
         Self::spawn_with(
             settings,
             Box::new(|settings| Arc::new(crate::ai::labels_router(settings))),
+            standing,
         )
     }
 
     pub(crate) fn spawn_with(
         settings: SettingsSource,
         router: RouterFactory,
+        standing: Arc<crate::ai::AiStanding>,
     ) -> Result<Self, String> {
         let (sender, receiver) = channel();
         let cancel = CancelToken::new();
@@ -66,7 +71,7 @@ impl LabelAnalyzer {
         };
         let worker = std::thread::Builder::new()
             .name("herdr-core-labels-analyzer".to_owned())
-            .spawn(move || run(receiver, settings, router, thread))
+            .spawn(move || run(receiver, settings, router, standing, thread))
             .map_err(|error| format!("label analyzer could not be started: {error}"))?;
         Ok(Self {
             queue: Mutex::new(Some(sender)),
@@ -139,12 +144,17 @@ fn run(
     receiver: Receiver<AnalysisJob>,
     settings: SettingsSource,
     build: RouterFactory,
+    standing: Arc<crate::ai::AiStanding>,
     running: Running,
 ) {
     let mut router: Option<(AiSettings, Arc<AiRouter>)> = None;
     while let Ok(job) = receiver.recv() {
         let current = settings();
-        if running.stopping.is_cancelled() || !current.agent_summary {
+        if running.stopping.is_cancelled()
+            || !current.agent_summary
+            || !current.enabled
+            || !current.chosen
+        {
             (job.done)(Err(AnalysisFailure::Stopped));
             continue;
         }
@@ -171,7 +181,12 @@ fn run(
         *lock(&running.job) = Some(cancel.clone());
         // A shutdown or the switch turned off between the checks above and
         // the token's install found no token to cancel; look once more.
-        if running.stopping.is_cancelled() || !settings().agent_summary {
+        let latest = settings();
+        if running.stopping.is_cancelled()
+            || !latest.agent_summary
+            || !latest.enabled
+            || !latest.chosen
+        {
             cancel.cancel();
         }
         // The outcome must arrive whatever happens on this thread: a panic
@@ -185,6 +200,7 @@ fn run(
             ))
         });
         lock(&running.job).take();
+        standing.observe(&active);
         (job.done)(result);
     }
 }

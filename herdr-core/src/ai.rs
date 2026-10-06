@@ -13,12 +13,13 @@
 //! unless the Background AI group is on screen, and an unobserved request
 //! answers from no provider, so an idle Hide starts no provider process.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
-use std::time::Duration;
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use hide_ai::{
     AiBackend, AiLogEvent, AiLogSink, AiRouter, AiSettings, Availability, ModelCatalog, ProviderId,
+    ProviderStatus,
 };
 
 use crate::model::{BackgroundAiProviderSnapshot, BackgroundAiSnapshot};
@@ -34,6 +35,11 @@ const REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 /// The least time between one read finishing and a changed request starting
 /// the next, so switching the model twice does not start two probes.
 const SPACING: Duration = Duration::from_secs(2);
+/// How often the agents that are switched on are asked whether they are
+/// signed in while nobody has chosen one and the screen is not open (D-27).
+/// A login takes minutes and the answer costs one status call per agent, so
+/// the idle cadence is slow; opening Settings asks at once.
+const SELECTING_INTERVAL: Duration = Duration::from_secs(300);
 
 /// What to ask the providers, and the freshness key for asking again.
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
@@ -46,11 +52,38 @@ pub struct AiRequest {
     /// is a different question and is asked at once rather than waiting out
     /// the interval.
     pub models: BTreeMap<ProviderId, String>,
+    /// The agents to ask whether they are signed in while the screen is not
+    /// open: those switched on in this Mac's kit and installed, and only
+    /// while nobody has chosen one and Hide AI is on, so the first signed-in
+    /// agent can be chosen by itself (D-18, D-27, B45, B47). Empty otherwise.
+    /// Nothing but availability is asked of them: no model list.
+    pub selecting: BTreeSet<ProviderId>,
 }
 
-/// The router one screen reuses, and the models it was built for. Rebuilding
-/// is what a changed model costs, because a backend is constructed with one.
-type CachedRouter = Arc<Mutex<Option<(BTreeMap<ProviderId, String>, Arc<AiRouter>)>>>;
+impl AiRequest {
+    /// Whether anything is asked at all.
+    fn asks(&self) -> bool {
+        self.observing || !self.selecting.is_empty()
+    }
+
+    /// The agents the router is built with: every registered one while the
+    /// screen is open, only the ones being selected from otherwise.
+    fn only(&self) -> Option<&BTreeSet<ProviderId>> {
+        (!self.observing).then_some(&self.selecting)
+    }
+}
+
+/// The router one screen reuses, and what it was built for. Rebuilding is
+/// what a changed model costs, because a backend is constructed with one.
+type CachedRouter = Arc<
+    Mutex<
+        Option<(
+            BTreeMap<ProviderId, String>,
+            Option<BTreeSet<ProviderId>>,
+            Arc<AiRouter>,
+        )>,
+    >,
+>;
 
 pub struct AiReader {
     inner: BackgroundRead<AiRequest, BackgroundAiSnapshot>,
@@ -66,31 +99,41 @@ impl AiReader {
         Self {
             inner: BackgroundRead::new(REFRESH_INTERVAL, SPACING, move |request: &AiRequest| {
                 let mut guard = cached.lock().unwrap_or_else(|error| error.into_inner());
-                if !request.observing {
+                if !request.asks() {
                     // Drop the router with the screen: its Codex child is a
                     // process, and nothing is reading its answers.
                     *guard = None;
                     return BackgroundAiSnapshot::unread();
                 }
+                let only = request.only().cloned();
                 let router = match guard.as_ref() {
-                    Some((models, router)) if *models == request.models => Arc::clone(router),
+                    Some((models, built_for, router))
+                        if *models == request.models && *built_for == only =>
+                    {
+                        Arc::clone(router)
+                    }
                     _ => {
                         let router = Arc::new(AiRouter::new(
-                            backends(&request.models),
-                            AiSettings::default().router_config(),
+                            backends(&request.models, only.as_ref()),
+                            hide_ai::RouterConfig::default(),
                             Arc::new(DiagnosticLogSink),
                         ));
-                        *guard = Some((request.models.clone(), Arc::clone(&router)));
+                        *guard = Some((request.models.clone(), only, Arc::clone(&router)));
                         router
                     }
                 };
                 drop(guard);
-                read(&router, &request.models)
+                read(&router, &request.models, request.observing)
             }),
         }
     }
 
     pub fn read_if_due(&mut self, request: AiRequest) -> Option<BackgroundAiSnapshot> {
+        self.inner.set_interval(if request.observing {
+            REFRESH_INTERVAL
+        } else {
+            SELECTING_INTERVAL
+        });
         self.inner.poll(request)
     }
 }
@@ -126,9 +169,13 @@ fn diagnostic_record(event: &AiLogEvent) -> serde_json::Value {
     record
 }
 
-fn backends(models: &BTreeMap<ProviderId, String>) -> Vec<Arc<dyn AiBackend>> {
+fn backends(
+    models: &BTreeMap<ProviderId, String>,
+    only: Option<&BTreeSet<ProviderId>>,
+) -> Vec<Arc<dyn AiBackend>> {
     hide_ai::PROVIDERS
         .iter()
+        .filter(|provider| only.is_none_or(|only| only.contains(*provider)))
         .map(|provider| {
             let model = models
                 .get(provider)
@@ -145,7 +192,7 @@ fn backends(models: &BTreeMap<ProviderId, String>) -> Vec<Arc<dyn AiBackend>> {
 pub(crate) fn memory_router(settings: &AiSettings) -> AiRouter {
     let config = memory_router_config(settings);
     AiRouter::new(
-        backends(&settings.models_by_provider()),
+        backends(&settings.models_by_provider(), None),
         config,
         Arc::new(DiagnosticLogSink),
     )
@@ -156,7 +203,7 @@ pub(crate) fn memory_router(settings: &AiSettings) -> AiRouter {
 /// cooldown and budget rules.
 pub(crate) fn labels_router(settings: &AiSettings) -> AiRouter {
     AiRouter::new(
-        backends(&settings.models_by_provider()),
+        backends(&settings.models_by_provider(), None),
         settings.router_config(),
         Arc::new(DiagnosticLogSink),
     )
@@ -166,21 +213,26 @@ fn memory_router_config(settings: &AiSettings) -> hide_ai::RouterConfig {
     settings.router_config()
 }
 
-fn read(router: &AiRouter, models: &BTreeMap<ProviderId, String>) -> BackgroundAiSnapshot {
-    let availability = router.availability();
-    let catalogs = router.models();
+fn read(
+    router: &AiRouter,
+    models: &BTreeMap<ProviderId, String>,
+    with_catalogs: bool,
+) -> BackgroundAiSnapshot {
+    let statuses = router.statuses();
+    let catalogs = if with_catalogs {
+        router.models()
+    } else {
+        Vec::new()
+    };
     let providers = hide_ai::PROVIDERS
         .iter()
         .map(|provider| {
-            let state = availability
-                .iter()
-                .find(|(id, _)| id == provider)
-                .map(|(_, state)| state.clone());
+            let status = statuses.iter().find(|status| status.provider == *provider);
             let catalog = catalogs
                 .iter()
                 .find(|(id, _)| id == provider)
-                .map(|(_, catalog)| catalog.clone());
-            project(*provider, state.as_ref(), catalog.as_ref(), models)
+                .map(|(_, catalog)| catalog);
+            project(*provider, status, catalog, models, with_catalogs)
         })
         .collect();
     BackgroundAiSnapshot {
@@ -189,59 +241,133 @@ fn read(router: &AiRouter, models: &BTreeMap<ProviderId, String>) -> BackgroundA
     }
 }
 
-/// One provider row. The core writes the words beside the provider's name,
-/// so no view builds a sentence out of a state class.
+fn unix_now_ms() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_millis().min(u64::MAX as u128) as u64)
+        .unwrap_or(0)
+}
+
+/// One provider row. Every reason is a code the shell turns into words; the
+/// short headline is the only English the core writes, kept for the rows
+/// that still show it.
 fn project(
     provider: ProviderId,
-    state: Option<&Availability>,
+    status: Option<&ProviderStatus>,
     catalog: Option<&ModelCatalog>,
     models: &BTreeMap<ProviderId, String>,
+    catalogs_asked: bool,
 ) -> BackgroundAiProviderSnapshot {
-    let (state_class, headline, message) = match state {
-        None => (
-            "unread",
-            "Not checked yet".to_owned(),
-            Some("The provider has not been asked yet".to_owned()),
-        ),
-        Some(Availability::Ready) => ("ready", "Signed in".to_owned(), None),
-        Some(Availability::NeedsLogin) => (
-            "needs_login",
-            "Sign in required".to_owned(),
-            Some(format!("Run `{provider} login` and check again")),
-        ),
-        Some(Availability::NotInstalled) => (
-            "not_installed",
-            "Not installed".to_owned(),
-            Some("The command is not on the login shell's PATH".to_owned()),
-        ),
-        Some(Availability::Unavailable { reason }) => (
-            "unavailable",
-            "Cannot answer".to_owned(),
-            Some(reason.clone()),
-        ),
-        Some(Availability::Unsupported { reason }) => (
-            "unsupported",
-            "Not supported".to_owned(),
-            Some(reason.clone()),
-        ),
-    };
-    BackgroundAiProviderSnapshot {
-        id: provider.as_str().to_owned(),
-        label: provider.label().to_owned(),
-        state: state_class.to_owned(),
-        headline,
-        message,
-        model: models
-            .get(&provider)
-            .cloned()
-            .unwrap_or_else(|| hide_ai::settings::default_model(provider).to_owned()),
-        models: catalog
-            .map(|catalog| catalog.offered().to_vec())
-            .unwrap_or_default(),
-        models_unavailable_reason: match catalog {
-            None => Some("The provider has not been asked yet".to_owned()),
-            Some(catalog) => catalog.unknown_reason().map(str::to_owned),
-        },
+    let mut row = BackgroundAiProviderSnapshot::unread(provider);
+    row.model = models
+        .get(&provider)
+        .cloned()
+        .unwrap_or_else(|| provider.default_model().to_owned());
+    if let Some(status) = status {
+        let (state, headline, message) = match (&status.availability, status.parked_for) {
+            (_, Some(_)) => ("usage_limited", "Out of usage", None),
+            (Availability::Ready, None) => ("ready", "Signed in", None),
+            (Availability::NeedsLogin, None) => ("needs_login", "Sign in required", None),
+            (Availability::NotInstalled, None) => ("not_installed", "Not installed", None),
+            (Availability::Unavailable { reason }, None) => {
+                ("unavailable", "Cannot answer", Some(reason.clone()))
+            }
+            (Availability::Unsupported { reason }, None) => {
+                ("unsupported", "Not supported", Some(reason.clone()))
+            }
+        };
+        row.state = state.to_owned();
+        row.headline = headline.to_owned();
+        row.message = message;
+        row.installed = !matches!(status.availability, Availability::NotInstalled);
+        row.selectable = status.selectable;
+        row.retry_at_ms = status
+            .parked_for
+            .map(|remaining| unix_now_ms().saturating_add(remaining.as_millis() as u64));
+    }
+    match catalog {
+        Some(catalog) => {
+            row.models = catalog.offered().to_vec();
+            row.models_fixed = catalog.is_fixed();
+            row.models_unavailable_reason = catalog.unknown_reason().map(str::to_owned);
+        }
+        None => {
+            row.models_unavailable_reason = Some(
+                if catalogs_asked {
+                    "not_asked"
+                } else {
+                    "not_observed"
+                }
+                .to_owned(),
+            );
+        }
+    }
+    row
+}
+
+/// What the last label analysis found about the agent Hide AI runs on: it
+/// could not answer, why, until when it said, and which listed agent a request
+/// made now would run on (B41, B42). Written on the analyzer's thread after
+/// each job and read by the runtime on its own thread, so it is one value
+/// behind a mutex and never a reader of any provider.
+#[derive(Default)]
+pub(crate) struct AiStanding {
+    record: Mutex<Option<Standing>>,
+}
+
+#[derive(Clone, Debug, PartialEq)]
+pub(crate) struct Standing {
+    /// Runs on.
+    pub(crate) selected: ProviderId,
+    /// `usage_limited`, `needs_login`, `not_installed`, `unavailable` or
+    /// `unsupported`.
+    pub(crate) reason: &'static str,
+    pub(crate) retry_at_ms: Option<u64>,
+    /// The agent a request made now would run on, when one can answer.
+    pub(crate) using: Option<ProviderId>,
+}
+
+impl AiStanding {
+    /// Records how `router` stands now. Asking is a query: it never runs a
+    /// request, and it refreshes a stale availability answer at most.
+    pub(crate) fn observe(&self, router: &AiRouter) {
+        let next = router.provider_state().and_then(|state| {
+            let degraded = state.degraded?;
+            Some(Standing {
+                selected: degraded.provider,
+                reason: refusal_class(&degraded.reason),
+                retry_at_ms: degraded.until.map(|until| {
+                    // Seconds are what an account reports; a changing
+                    // millisecond would republish the snapshot for nothing.
+                    unix_now_ms().saturating_add(until.as_secs().saturating_mul(1_000)) / 1_000
+                        * 1_000
+                }),
+                using: state.active.filter(|active| *active != degraded.provider),
+            })
+        });
+        *self
+            .record
+            .lock()
+            .unwrap_or_else(|error| error.into_inner()) = next;
+    }
+
+    pub(crate) fn current(&self) -> Option<Standing> {
+        self.record
+            .lock()
+            .unwrap_or_else(|error| error.into_inner())
+            .clone()
+    }
+}
+
+/// The class of a refusal the router reported for the selected agent. A
+/// usage-limit park is the one `Unavailable` that has its own class, because
+/// it is the one the shell says an end time for.
+fn refusal_class(reason: &Availability) -> &'static str {
+    match reason {
+        Availability::Unavailable { reason } if reason.starts_with("usage_limited") => {
+            "usage_limited"
+        }
+        other => other.class(),
     }
 }
 
@@ -371,12 +497,22 @@ mod tests {
         );
     }
 
+    fn status(availability: Availability, selectable: bool) -> ProviderStatus {
+        ProviderStatus {
+            provider: ProviderId::CODEX,
+            availability,
+            selectable,
+            parked_for: None,
+        }
+    }
+
     #[test]
     fn an_unobserved_request_asks_no_provider_anything() {
         let mut reader = AiReader::new();
         let request = AiRequest {
             observing: false,
             models: models(),
+            selecting: BTreeSet::new(),
         };
         // The first read starts the worker; once it has ended, the next read
         // hands its answer back.
@@ -400,55 +536,115 @@ mod tests {
     }
 
     #[test]
+    fn a_request_selecting_among_agents_asks_only_those_agents() {
+        let only: BTreeSet<ProviderId> = [ProviderId::PI].into();
+        let request = AiRequest {
+            observing: false,
+            models: models(),
+            selecting: only.clone(),
+        };
+        assert!(request.asks());
+        assert_eq!(request.only(), Some(&only));
+        let watching = AiRequest {
+            observing: true,
+            ..request
+        };
+        assert_eq!(watching.only(), None, "an open tab asks every agent");
+        assert!(!AiRequest::default().asks());
+    }
+
+    #[test]
     fn a_provider_that_was_not_asked_is_unread_rather_than_unavailable() {
-        let row = project(ProviderId::CODEX, None, None, &models());
+        let row = project(ProviderId::CODEX, None, None, &models(), true);
         assert_eq!(row.state, "unread");
         assert!(row.models.is_empty());
+        assert!(!row.selectable);
+        assert_eq!(row.agent, "codex");
         assert!(row.models_unavailable_reason.is_some());
     }
 
     #[test]
-    fn each_availability_state_carries_its_own_words_and_the_reason_it_has() {
+    fn each_availability_state_carries_its_code_and_whether_it_can_be_chosen() {
         let models = models();
-        let ready = project(ProviderId::CODEX, Some(&Availability::Ready), None, &models);
-        assert_eq!(ready.state, "ready");
-        assert_eq!(ready.headline, "Signed in");
+        let ready = project(
+            ProviderId::CODEX,
+            Some(&status(Availability::Ready, true)),
+            None,
+            &models,
+            true,
+        );
+        assert_eq!((ready.state.as_str(), ready.selectable), ("ready", true));
         assert_eq!(ready.message, None);
+        assert!(ready.installed);
 
         let needs_login = project(
             ProviderId::CLAUDE,
-            Some(&Availability::NeedsLogin),
+            Some(&status(Availability::NeedsLogin, false)),
             None,
             &models,
+            true,
         );
         assert_eq!(needs_login.state, "needs_login");
-        assert_eq!(needs_login.headline, "Sign in required");
+        assert!(needs_login.installed && !needs_login.selectable);
 
-        let unavailable = project(
-            ProviderId::CODEX,
-            Some(&Availability::Unavailable {
-                reason: "model_not_offered:some-model".to_owned(),
-            }),
+        let missing = project(
+            ProviderId::PI,
+            Some(&status(Availability::NotInstalled, false)),
             None,
             &models,
+            true,
         );
-        assert_eq!(unavailable.state, "unavailable");
+        assert_eq!(missing.state, "not_installed");
+        assert!(!missing.installed);
+
+        let unsupported = project(
+            ProviderId::CURSOR,
+            Some(&status(
+                Availability::Unsupported {
+                    reason: "cannot_guarantee_read_only".to_owned(),
+                },
+                false,
+            )),
+            None,
+            &models,
+            true,
+        );
+        assert_eq!(unsupported.state, "unsupported");
         assert_eq!(
-            unavailable.message.as_deref(),
-            Some("model_not_offered:some-model"),
-            "the provider layer's own reason reaches the screen"
+            unsupported.message.as_deref(),
+            Some("cannot_guarantee_read_only"),
+            "the provider layer's own reason code reaches the screen"
         );
+        assert!(unsupported.installed && !unsupported.selectable);
     }
 
     #[test]
-    fn an_unknown_model_list_is_reported_as_unknown_rather_than_as_no_models() {
+    fn an_agent_in_a_usage_limit_is_still_selectable_and_says_when_it_ends() {
+        let mut parked = status(
+            Availability::Unavailable {
+                reason: "usage_limited;retry_after_s=60".to_owned(),
+            },
+            true,
+        );
+        parked.parked_for = Some(Duration::from_secs(60));
+        let row = project(ProviderId::CLAUDE, Some(&parked), None, &models(), true);
+        assert_eq!(row.state, "usage_limited");
+        assert!(row.selectable);
+        let at = row.retry_at_ms.expect("the end of the limit is known");
+        assert!(at >= unix_now_ms() + 59_000, "{at}");
+    }
+
+    #[test]
+    fn an_unknown_model_list_is_reported_as_unknown_and_a_fixed_one_as_fixed() {
+        let ready = status(Availability::Ready, true);
         let row = project(
             ProviderId::CODEX,
-            Some(&Availability::Ready),
+            Some(&ready),
             Some(&ModelCatalog::Unknown {
                 reason: "codex_not_installed".to_owned(),
             }),
             &models(),
+            true,
         );
         assert!(row.models.is_empty());
         assert_eq!(
@@ -458,26 +654,62 @@ mod tests {
 
         let offered = project(
             ProviderId::CLAUDE,
-            Some(&Availability::Ready),
+            Some(&ready),
             Some(&ModelCatalog::Offered(vec!["haiku".to_owned()])),
             &models(),
+            true,
         );
         assert_eq!(offered.models, vec!["haiku".to_owned()]);
         assert_eq!(offered.models_unavailable_reason, None);
+        assert!(!offered.models_fixed);
+
+        let fixed = project(
+            ProviderId::GEMINI,
+            Some(&ready),
+            Some(&ModelCatalog::Fixed(vec!["pro".to_owned()])),
+            &models(),
+            true,
+        );
+        assert!(fixed.models_fixed && fixed.models == vec!["pro".to_owned()]);
+        assert!(
+            fixed.cli_default,
+            "a new agent can be asked for its CLI default"
+        );
+        assert!(
+            !offered.cli_default,
+            "Claude Code keeps its measured default"
+        );
     }
 
     #[test]
     fn a_row_reports_the_model_the_provider_is_configured_with() {
         let mut models = models();
-        models.insert(ProviderId::CLAUDE, "sonnet".to_owned());
+        models.insert(ProviderId::CLAUDE, "opus".to_owned());
         assert_eq!(
-            project(ProviderId::CLAUDE, None, None, &models).model,
-            "sonnet"
+            project(ProviderId::CLAUDE, None, None, &models, true).model,
+            "opus"
         );
         assert_eq!(
-            project(ProviderId::CLAUDE, None, None, &BTreeMap::new()).model,
+            project(ProviderId::CLAUDE, None, None, &BTreeMap::new(), true).model,
             hide_ai::settings::default_model(ProviderId::CLAUDE),
             "a provider with no configured model reports the backend's own default"
         );
+    }
+
+    #[test]
+    fn a_usage_limit_park_is_the_one_unavailable_that_has_its_own_refusal_class() {
+        assert_eq!(
+            refusal_class(&Availability::Unavailable {
+                reason: "usage_limited;retry_after_s=5".to_owned()
+            }),
+            "usage_limited"
+        );
+        assert_eq!(
+            refusal_class(&Availability::Unavailable {
+                reason: "model_not_offered:x".to_owned()
+            }),
+            "unavailable"
+        );
+        assert_eq!(refusal_class(&Availability::NeedsLogin), "needs_login");
     }
 }
