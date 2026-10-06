@@ -1992,7 +1992,11 @@ mod holder_scan_tests {
             let _ = blocked.recv();
             let _ = ended_tx.send(());
         });
-        assert!(matches!(first, Spawned::Started));
+        match first {
+            Spawned::Started => {}
+            Spawned::Busy => panic!("the slot was free"),
+            Spawned::Failed(error) => panic!("the scan thread did not start: {error}"),
+        }
         assert!(
             SLOT.load(Ordering::Acquire),
             "the running scan holds the slot"
