@@ -111,3 +111,32 @@ it("keeps what Hide installs and the Herdr socket under Advanced, three lines lo
   expect(advanced.querySelector("[data-device-socket]")).not.toBeNull();
   await unmount();
 });
+
+// The core clears `last_error` at its next event of any kind, so a refusal that only lived there would
+// let the form read "no error yet" as "still pending" and lock itself again (code-web 3, `useRefusalSince`).
+it("keeps a refused Add enabled with its reason after the core clears last_error", async () => {
+  const { q, unmount } = await mount(hosts([host("lab")]));
+  await act(async () => { q('[data-ssh-host="lab"] [role="radio"]')?.click(); });
+  await act(async () => { q('[data-add-device="true"]')?.click(); });
+  // Sent and not answered: the form waits.
+  expect(q('[data-add-device="true"]')?.hasAttribute("disabled")).toBe(true);
+  expect(q("[data-device-label]")?.hasAttribute("disabled")).toBe(true);
+
+  const refused = { kind: "device.consent_required", message: "Hide has no consent to install on lab", retryable: false, occurred_at: Date.now() + 1000 };
+  await act(async () => { useShellStore.setState({ rest: { ...useShellStore.getState().rest, status: { ...useShellStore.getState().rest?.status, last_error: refused } } } as never); });
+  expect(q('[data-add-device-error="true"]')?.textContent).toBe("Hide has no consent to install on lab");
+  expect(q('[data-add-device="true"]')?.hasAttribute("disabled")).toBe(false);
+  expect(q("[data-device-label]")?.hasAttribute("disabled")).toBe(false);
+
+  // An unrelated event arrives and the core takes last_error: the refusal stays, and the form stays usable.
+  await act(async () => { useShellStore.setState({ rest: { ...useShellStore.getState().rest, status: { ...useShellStore.getState().rest?.status, last_error: null } } } as never); });
+  expect(q('[data-add-device-error="true"]')?.textContent).toBe("Hide has no consent to install on lab");
+  expect(q('[data-add-device="true"]')?.hasAttribute("disabled")).toBe(false);
+  expect(q("[data-device-label]")?.hasAttribute("disabled")).toBe(false);
+
+  // Adding again is a new request: the refusal belonged to the last one, so the form waits again.
+  await act(async () => { q('[data-add-device="true"]')?.click(); });
+  expect(q('[data-add-device-error="true"]')).toBeNull();
+  expect(q('[data-add-device="true"]')?.hasAttribute("disabled")).toBe(true);
+  await unmount();
+});
