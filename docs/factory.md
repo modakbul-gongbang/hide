@@ -66,6 +66,7 @@ It removes a worker's worktree and pane when the Task is done and main verificat
 An outside pull request that takes a Task stops its worker and starts the keep period at that moment; the worktree waits the period out even when that pull request merges and the Task is done, because the worker's own work was never merged.
 The removal runs from the repository's main checkout through the host's guarded worktree removal.
 A finished Task keeps its branch; a cancelled or outside Task loses its local branch with its worktree, and the Factory never deletes a remote branch.
+A finished Task's worktree goes only when it is clean: uncommitted or untracked leftovers keep it, and a notice names the folder for a person to look at. Only a cancelled or outside Task past its keep period, or a start abandoned on its way, has what is left in its worktree discarded.
 A finished Task folds out of the board's Done column after 3 days and out of every list after 90 days; its page still opens.
 Each Factory keeps its newest 20,000 events and drops older ones.
 Judgment inputs and answers and letter bodies are kept in `records` and never deleted automatically; `Engine::records` reads a Task's, and the core's diagnostic log records each judgment's feature, ids, outcome and duration.

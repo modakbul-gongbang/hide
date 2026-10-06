@@ -15,8 +15,8 @@ use std::thread::{self, JoinHandle};
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use hide_factory::adapters::{
-    Clock, EnvSignal, Environment, Failure, Judge, MemoryPressure, Notifier, WorkerRuntime,
-    WorkerSpawn, WorkerStatus,
+    Clock, EnvSignal, Environment, Failure, Judge, MemoryPressure, Notifier, Removal,
+    WorkerRuntime, WorkerSpawn, WorkerStatus,
 };
 use hide_factory::exec::SystemRunner;
 use hide_factory::judgment::{Judgment, JudgmentAnswer, JudgmentOutcome};
@@ -769,7 +769,7 @@ impl CoreWorkers {
     fn release_start(&mut self, task: &str, fresh: bool, worker: &WorkerRef) {
         let mut result = self.stop(worker);
         if fresh && result.is_ok() {
-            result = self.remove_worktree(worker, true);
+            result = self.remove_worktree(worker, Removal::Discarded);
         }
         if let Err(failure) = result {
             crate::diagnostic!(
@@ -1059,7 +1059,8 @@ impl WorkerRuntime for CoreWorkers {
         .map_err(|reason| Failure::task("worker.stop", reason))
     }
 
-    fn remove_worktree(&mut self, worker: &WorkerRef, delete_branch: bool) -> Result<(), Failure> {
+    fn remove_worktree(&mut self, worker: &WorkerRef, removal: Removal) -> Result<(), Failure> {
+        let discard = removal == Removal::Discarded;
         let checkout = Path::new(&worker.worktree);
         let mut runner = SystemRunner {
             stop: Arc::new(AtomicBool::new(false)),
@@ -1088,10 +1089,11 @@ impl WorkerRuntime for CoreWorkers {
         let Some(root) = root else {
             return Ok(());
         };
-        // The Factory made this worktree, so what is left in it goes too.
-        hide_host::worktrees::remove_worktree(&root, checkout, true)
+        // Leftovers in a finished Task's worktree are the operator's to look
+        // at: only a discarded one is forced (D-58).
+        hide_host::worktrees::remove_worktree(&root, checkout, discard)
             .map_err(|reason| Failure::task("worktree.remove", reason))?;
-        if delete_branch {
+        if discard {
             hide_factory::exec::checked(
                 &mut runner,
                 "branch.delete",

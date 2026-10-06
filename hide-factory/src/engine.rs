@@ -12,8 +12,8 @@ use serde_json::{Value, json};
 
 use crate::adapters::{
     Clock, EnvSignal, Environment, Failure, Judge, MainCheck, MemoryPressure, MergeTarget,
-    Notifier, OutsideEvent, PreMerge, RevertRef, TaskSource, Verifier, VerifyPoll, VerifyRun,
-    WorkerRuntime, WorkerSpawn, WorkerStatus,
+    Notifier, OutsideEvent, PreMerge, Removal, RevertRef, TaskSource, Verifier, VerifyPoll,
+    VerifyRun, WorkerRuntime, WorkerSpawn, WorkerStatus,
 };
 use crate::command::{CardInput, Command, Refusal, VerificationChoice};
 use crate::dag;
@@ -3535,7 +3535,11 @@ impl Engine {
             return;
         };
         self.stop_worker(factory_id, id, &worker);
-        match self.ports.workers.remove_worktree(&worker, false) {
+        match self
+            .ports
+            .workers
+            .remove_worktree(&worker, Removal::Finished)
+        {
             Ok(()) => {
                 self.with_task(factory_id, id, |t| t.purged = true);
             }
@@ -3550,6 +3554,23 @@ impl Engine {
             "cleanup.failed",
             json!({"stage": failure.stage, "detail": failure.detail}),
         );
+        // A worktree that refuses to go (leftovers in a finished Task's) is
+        // a person's to look at; the environment's failures are retried.
+        if failure.signal.is_none()
+            && let Some(worktree) = self
+                .task(factory_id, id)
+                .and_then(|t| t.worker.as_ref())
+                .map(|w| w.worktree.clone())
+        {
+            self.once_notice(
+                factory_id,
+                id,
+                &format!(
+                    "worktree를 지우지 못했습니다: {worktree} ({}). 남은 변경을 확인한 뒤 직접 지우세요.",
+                    judgment::cut(&failure.detail, 200)
+                ),
+            );
+        }
     }
 
     // ------------------------------------------------------------- main break
@@ -5527,10 +5548,11 @@ impl Engine {
             })
             .collect();
         for (factory, id, worker) in targets {
-            let finished = self
-                .task(&factory, &id)
-                .is_some_and(|t| t.state == TaskState::Done);
-            match self.ports.workers.remove_worktree(&worker, !finished) {
+            let removal = match self.task(&factory, &id).is_some_and(kept_for_revive) {
+                true => Removal::Discarded,
+                false => Removal::Finished,
+            };
+            match self.ports.workers.remove_worktree(&worker, removal) {
                 Ok(()) => {
                     self.with_task(&factory, &id, |t| t.purged = true);
                     self.record(&factory, Some(&id), "cleanup.worktree", json!({}));
@@ -5922,7 +5944,10 @@ impl Engine {
             .collect();
         for (factory, id) in expired {
             if let Some(worker) = self.task(&factory, &id).and_then(|t| t.worker.clone())
-                && let Err(failure) = self.ports.workers.remove_worktree(&worker, true)
+                && let Err(failure) = self
+                    .ports
+                    .workers
+                    .remove_worktree(&worker, Removal::Discarded)
             {
                 self.cleanup_failed(&factory, &id, &failure);
                 continue;

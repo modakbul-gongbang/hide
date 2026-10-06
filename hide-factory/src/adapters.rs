@@ -337,6 +337,18 @@ pub enum WorkerStatus {
     Gone,
 }
 
+/// How much of a Task's worktree a removal may take.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Removal {
+    /// A finished Task: a clean worktree goes and its branch stays with the
+    /// merge; uncommitted leftovers keep the worktree and fail the removal,
+    /// so a person sees them (D-58).
+    Finished,
+    /// A Task cancelled or taken over past its keep period, or a start
+    /// abandoned on its way: what is left goes, with the local branch.
+    Discarded,
+}
+
 /// Starts, messages, sleeps and wakes workers (D-14).
 pub trait WorkerRuntime {
     fn spawn(&mut self, request: &WorkerSpawn) -> Result<crate::model::WorkerRef, Failure>;
@@ -360,13 +372,12 @@ pub trait WorkerRuntime {
     fn wake(&mut self, worker: &crate::model::WorkerRef, body: &str) -> Result<(), Failure>;
     fn status(&mut self, worker: &crate::model::WorkerRef) -> WorkerStatus;
     fn stop(&mut self, worker: &crate::model::WorkerRef) -> Result<(), Failure>;
-    /// Removes the Task's worktree (B43, B62, B71) and, with
-    /// `delete_branch`, its local branch (D-58); the remote branch stays.
-    /// Removing what is already gone succeeds.
+    /// Removes the Task's worktree (B43, B62, B71); the remote branch stays
+    /// (D-58). Removing what is already gone succeeds.
     fn remove_worktree(
         &mut self,
         worker: &crate::model::WorkerRef,
-        delete_branch: bool,
+        removal: Removal,
     ) -> Result<(), Failure>;
     fn usage_limited(&mut self, runtime: Runtime) -> Option<UnixMs>;
 }

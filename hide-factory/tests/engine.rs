@@ -1947,6 +1947,52 @@ fn an_outside_pull_request_takes_a_running_task_and_its_merge_finishes_it() {
 }
 
 #[test]
+fn a_finished_task_s_leftovers_keep_its_worktree_for_a_person() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let dirty = h.ready("Leftovers", &[]);
+    let clean = h.ready("Clean", &[]);
+    h.world().dirty_worktrees.insert(dirty.clone());
+    h.done(&f, &dirty);
+    tick_until(&mut h, &f, &dirty, TaskState::Done);
+    h.done(&f, &clean);
+    tick_until(&mut h, &f, &clean, TaskState::Done);
+    let world = h.world();
+    assert!(!world.removed.contains(&dirty), "never forced");
+    assert!(world.removed.contains(&clean));
+    assert!(
+        world.branches_deleted.is_empty(),
+        "branches stay with merges"
+    );
+    drop(world);
+    assert!(!h.task(&f, &dirty).purged);
+    let notice = h
+        .task(&f, &dirty)
+        .open_questions()
+        .any(|q| q.text.contains("worktree를 지우지 못했습니다"));
+    assert!(notice, "a person is told");
+    assert!(
+        h.engine
+            .events(&f, Some(&dirty), 50)
+            .iter()
+            .any(|e| e.kind == "cleanup.failed")
+    );
+}
+
+#[test]
+fn an_expired_cancel_discards_its_worktree_and_branch() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let t = h.ready("Dropped", &[]);
+    h.world().dirty_worktrees.insert(t.clone());
+    h.op(Command::Cancel { task: t.clone() });
+    h.advance(8 * DAY_MS);
+    h.engine.tick();
+    assert!(h.task(&f, &t).purged);
+    assert_eq!(h.world().branches_deleted, vec![t.clone()]);
+}
+
+#[test]
 fn a_task_taken_before_its_start_expires_after_the_keep_period() {
     let mut h = Bench::new(true);
     let f = github_factory(&mut h, MergeMode::Auto);

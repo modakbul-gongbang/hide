@@ -4,7 +4,7 @@
 
 #![allow(dead_code)]
 
-use std::collections::{BTreeMap, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::sync::{Arc, Mutex, MutexGuard};
 
 use hide_factory::adapters::*;
@@ -65,6 +65,8 @@ pub struct World {
     pub wakes: Vec<(String, String)>,
     pub stops: Vec<String>,
     pub removed: Vec<String>,
+    /// Worktrees holding uncommitted leftovers, by Task id.
+    pub dirty_worktrees: BTreeSet<String>,
     pub branches_deleted: Vec<String>,
     /// Runtimes the probe finds installed; none when empty.
     pub runtimes: Vec<Runtime>,
@@ -440,10 +442,18 @@ impl WorkerRuntime for Shared {
         self.world().stops.push(task_of(worker));
         Ok(())
     }
-    fn remove_worktree(&mut self, worker: &WorkerRef, delete_branch: bool) -> Result<(), Failure> {
-        self.world().removed.push(task_of(worker));
-        if delete_branch {
-            self.world().branches_deleted.push(task_of(worker));
+    fn remove_worktree(&mut self, worker: &WorkerRef, removal: Removal) -> Result<(), Failure> {
+        let mut world = self.world();
+        let task = task_of(worker);
+        if removal == Removal::Finished && world.dirty_worktrees.contains(&task) {
+            return Err(Failure::task(
+                "worktree.remove",
+                "the worktree contains modified or untracked files",
+            ));
+        }
+        world.removed.push(task.clone());
+        if removal == Removal::Discarded {
+            world.branches_deleted.push(task);
         }
         Ok(())
     }
