@@ -1868,3 +1868,348 @@ fn a_device_tab_hide_created_stays_in_its_folder_while_its_pane_reports_the_birt
     runtime.forget_device_catalog(TARGET);
     assert!(runtime.created_device_tabs.is_empty());
 }
+
+/// A connected device whose helper has answered for the tree's folders.
+fn device_runtime(t: &Tree) -> Runtime {
+    let mut runtime = runtime();
+    runtime.snapshot.status.remote.push(RemoteStatusSnapshot {
+        target_id: TARGET.to_owned(),
+        state: "not_connected".to_owned(),
+        message: None,
+        herdr_version: None,
+        session: None,
+        files: RemoteFileListSnapshot::idle(),
+        catalog: Default::default(),
+    });
+    runtime
+        .device_facts
+        .insert(TARGET.to_owned(), answered(&[&t.main, &t.linked, &t.other]));
+    runtime
+}
+
+fn acknowledge_device_tab(runtime: &mut Runtime, cwd: &str) {
+    runtime.ingest_remote_control_result(
+        TARGET,
+        "create",
+        RemoteControlAction::CreateTab {
+            workspace_id: "w1".to_owned(),
+            cwd: cwd.to_owned(),
+            label: "new".to_owned(),
+            area_id: None,
+            admission_id: None,
+        },
+        Ok(RemoteControlOutcome::Acknowledged {
+            created_tab_id: Some("t2".to_owned()),
+            created_pane_id: Some("t2p".to_owned()),
+        }),
+        3,
+    );
+}
+
+/// The tabs of the device's project at `project`, in the published session.
+fn device_tabs_in(runtime: &Runtime, project: &str) -> Vec<String> {
+    let session = runtime.snapshot.status.remote[0]
+        .session
+        .as_ref()
+        .expect("the device's session");
+    layout(session)
+        .into_iter()
+        .filter(|(path, _)| path == project)
+        .flat_map(|(_, checkouts)| checkouts)
+        .flat_map(|(_, tabs)| tabs)
+        .collect()
+}
+
+/// The first tab of a worktree created on a device is in a Herdr workspace of
+/// its own whose pane reports the birth cwd. It belongs to the worktree the
+/// device's `worktree.create` answered with, as a local one does, rather than
+/// to the project the birth cwd names.
+#[test]
+fn a_device_created_worktrees_first_tab_stays_in_its_worktree_while_the_pane_reports_the_birth_cwd()
+{
+    let t = tree();
+    let mut runtime = device_runtime(&t);
+    let id = runtime
+        .begin_task_operation(
+            "worktree_create",
+            Some(t.main.clone()),
+            Some("feature".to_owned()),
+            Some("main".to_owned()),
+            None,
+        )
+        .expect("creation operation");
+    runtime
+        .snapshot
+        .task_operation
+        .as_mut()
+        .expect("the operation")
+        .device_id = Some(TARGET.to_owned());
+    assert!(runtime.ingest_task_operation_result(
+        id,
+        Ok(live::WorktreeTaskOutcome {
+            path: t.linked.clone(),
+            pane_id: "w2p".to_owned(),
+            created_tab_id: Some("t2".to_owned()),
+            purpose_error: None,
+            unconfirmed_purpose_token: None,
+            issue_error: None,
+        })
+    ));
+
+    runtime.ingest_remote_session(
+        TARGET,
+        Ok(session(vec![
+            herdr_workspace(TARGET, "w1", &t.main, &[("t1", &t.main)]),
+            herdr_workspace(TARGET, "w2", &t.other, &[("t2", &t.other)]),
+        ])),
+    );
+
+    let session = runtime.snapshot.status.remote[0]
+        .session
+        .as_ref()
+        .expect("the device's session");
+    let linked_tabs = layout(session)
+        .into_iter()
+        .flat_map(|(_, checkouts)| checkouts)
+        .filter(|(path, _)| path == &t.linked)
+        .flat_map(|(_, tabs)| tabs)
+        .collect::<Vec<_>>();
+    assert_eq!(linked_tabs, ["t2"], "{:?}", layout(session));
+}
+
+/// The device's acknowledgment can arrive after the session already carried
+/// the tab. The session the device last sent is read again then, not at its
+/// next publish, which may be a long way off.
+#[test]
+fn a_device_acknowledgment_after_the_session_carried_the_tab_regroups_it_at_once() {
+    let t = tree();
+    let mut runtime = device_runtime(&t);
+    let raw = session(vec![herdr_workspace(
+        TARGET,
+        "w1",
+        &t.main,
+        &[("t1", &t.main), ("t2", &t.other)],
+    )]);
+
+    runtime.ingest_remote_session(TARGET, Ok(raw));
+    assert_eq!(device_tabs_in(&runtime, &t.main), ["t1"]);
+
+    acknowledge_device_tab(&mut runtime, &t.main);
+    assert_eq!(device_tabs_in(&runtime, &t.main), ["t1", "t2"]);
+}
+
+/// A device's folders are named by the device. A folder this machine happens
+/// to have as a link into the checkout's folder is not inside it on the
+/// device, where the same name is a folder of its own.
+#[cfg(unix)]
+#[test]
+fn a_device_cwd_is_compared_by_its_names_not_by_this_machines_files() {
+    let t = tree();
+    let mut runtime = device_runtime(&t);
+    // On this machine `main-alias` is the checkout; on the device it is a
+    // sibling folder the helper knows nothing about.
+    let alias = format!("{}-alias", t.main);
+    std::os::unix::fs::symlink(&t.main, &alias).expect("a link to the checkout");
+    let raw = |cwd: &str| {
+        session(vec![herdr_workspace(
+            TARGET,
+            "w1",
+            &t.main,
+            &[("t1", &t.main), ("t2", cwd)],
+        )])
+    };
+
+    acknowledge_device_tab(&mut runtime, &t.main);
+    runtime.ingest_remote_session(TARGET, Ok(raw(&alias)));
+    // Were the alias read as the checkout's folder the record would be
+    // settled, and this report of another project would be believed.
+    runtime.ingest_remote_session(TARGET, Ok(raw(&t.other)));
+
+    assert_eq!(
+        device_tabs_in(&runtime, &t.main),
+        ["t1", "t2"],
+        "the alias is not the checkout's folder, so the birth value is still being read"
+    );
+}
+
+/// A device tab whose pane never reports its folder is believed once the
+/// window is over, measured on the runtime's own clock: a record that outlived
+/// its window would hide the shell's real folder for the life of the tab.
+#[test]
+fn a_device_tab_whose_pane_never_reports_its_folder_is_believed_after_the_window() {
+    let t = tree();
+    let mut runtime = device_runtime(&t);
+    let clock = super::birth_cwd::SteeredClock::install(&mut runtime);
+    let raw = session(vec![herdr_workspace(
+        TARGET,
+        "w1",
+        &t.main,
+        &[("t1", &t.main), ("t2", &t.other)],
+    )]);
+
+    acknowledge_device_tab(&mut runtime, &t.main);
+    runtime.ingest_remote_session(TARGET, Ok(raw.clone()));
+    assert_eq!(device_tabs_in(&runtime, &t.main), ["t1", "t2"]);
+
+    clock.advance_ms(30_000);
+    runtime.ingest_remote_session(TARGET, Ok(raw.clone()));
+    assert_eq!(device_tabs_in(&runtime, &t.main), ["t1", "t2"]);
+
+    clock.advance_ms(1);
+    runtime.ingest_remote_session(TARGET, Ok(raw));
+    assert_eq!(device_tabs_in(&runtime, &t.main), ["t1"]);
+}
+
+/// Windows device paths are spelled with `/` and a drive on the wire; a sibling
+/// folder that only starts with the checkout's name is not inside it.
+#[test]
+fn a_device_path_is_inside_a_checkout_by_whole_names() {
+    use crate::runtime::session::within_by_names as within;
+
+    assert!(within("C:/repo/src", "C:/repo"));
+    assert!(within("C:/repo", "C:/repo"));
+    assert!(!within("C:/repo-other/src", "C:/repo"));
+    assert!(!within("D:/repo/src", "C:/repo"));
+    assert!(within("/srv/repo/", "/srv/repo"));
+    assert!(!within("/srv", "/srv/repo"));
+}
+
+/// Two tabs created within the window: the second acknowledgment regroups the
+/// stored session, and the first tab, whose pane that session already shows as
+/// its folder, must not be read as settled by it.
+#[test]
+fn a_second_device_acknowledgment_does_not_settle_the_first_tab() {
+    let t = tree();
+    let mut runtime = device_runtime(&t);
+    let raw = |first: &str, second: &str| {
+        session(vec![herdr_workspace(
+            TARGET,
+            "w1",
+            &t.main,
+            &[("t1", &t.main), ("t2", first), ("t3", second)],
+        )])
+    };
+    let acknowledge = |runtime: &mut Runtime, tab: &str| {
+        runtime.ingest_remote_control_result(
+            TARGET,
+            "create",
+            RemoteControlAction::CreateTab {
+                workspace_id: "w1".to_owned(),
+                cwd: t.main.clone(),
+                label: "new".to_owned(),
+                area_id: None,
+                admission_id: None,
+            },
+            Ok(RemoteControlOutcome::Acknowledged {
+                created_tab_id: Some(tab.to_owned()),
+                created_pane_id: Some(format!("{tab}p")),
+            }),
+            3,
+        );
+    };
+
+    acknowledge(&mut runtime, "t2");
+    runtime.ingest_remote_session(TARGET, Ok(raw(&t.other, &t.other)));
+    acknowledge(&mut runtime, "t3");
+    assert_eq!(device_tabs_in(&runtime, &t.main), ["t1", "t2", "t3"]);
+
+    // The device still reports the first tab's birth cwd.
+    runtime.ingest_remote_session(TARGET, Ok(raw(&t.other, &t.main)));
+    assert_eq!(device_tabs_in(&runtime, &t.main), ["t1", "t2", "t3"]);
+}
+
+/// A device's linked worktree below the checkout is a checkout of its own, as
+/// the device's helper listed it, so a pane born in it is still on its birth
+/// value.
+#[test]
+fn a_device_birth_cwd_inside_a_nested_linked_worktree_stays_clamped_to_the_outer_checkout() {
+    use crate::model::{ProjectWorktreesSnapshot, WorktreeSnapshot};
+
+    let t = tree();
+    let mut runtime = device_runtime(&t);
+    let nested = format!("{}/.worktrees/topic", t.main);
+    std::fs::create_dir_all(&nested).expect("nested worktree folder");
+    runtime.device_facts.insert(
+        TARGET.to_owned(),
+        answered(&[&t.main, &t.linked, &t.other, &nested]),
+    );
+    runtime.device_worktrees.insert(
+        TARGET.to_owned(),
+        crate::device_catalog::DeviceWorktrees {
+            projects: [(
+                t.main.clone(),
+                ProjectWorktreesSnapshot {
+                    root_path: t.main.clone(),
+                    worktrees: ["main", "topic"]
+                        .into_iter()
+                        .map(|name| WorktreeSnapshot {
+                            path: if name == "main" {
+                                t.main.clone()
+                            } else {
+                                nested.clone()
+                            },
+                            branch: Some(name.to_owned()),
+                            is_main: name == "main",
+                            ..WorktreeSnapshot::default()
+                        })
+                        .collect(),
+                    ..ProjectWorktreesSnapshot::default()
+                },
+            )]
+            .into(),
+            ..Default::default()
+        },
+    );
+    acknowledge_device_tab(&mut runtime, &t.main);
+
+    let raw = |cwd: &str| {
+        session(vec![herdr_workspace(
+            TARGET,
+            "w1",
+            &t.main,
+            &[("t1", &t.main), ("t2", cwd)],
+        )])
+    };
+    runtime.ingest_remote_session(TARGET, Ok(raw(&nested)));
+    // Were the nested worktree read as the checkout's own folder the record
+    // would be settled, and this report of another project would be believed.
+    runtime.ingest_remote_session(TARGET, Ok(raw(&t.other)));
+
+    let session = runtime.snapshot.status.remote[0]
+        .session
+        .as_ref()
+        .expect("the device's session");
+    let in_main_checkout = layout(session)
+        .into_iter()
+        .flat_map(|(_, checkouts)| checkouts)
+        .filter(|(path, _)| path == &t.main)
+        .flat_map(|(_, tabs)| tabs)
+        .collect::<Vec<_>>();
+    assert_eq!(in_main_checkout, ["t1", "t2"], "{:?}", layout(session));
+}
+
+/// The device acknowledges the same tab twice (a retry, or the worktree answer
+/// and the tab acknowledgment): the second must not start the record again and
+/// read the folder the shell has since entered as a birth value.
+#[test]
+fn a_repeated_device_acknowledgment_keeps_the_settled_record() {
+    let t = tree();
+    let mut runtime = device_runtime(&t);
+    let raw = |cwd: &str| {
+        session(vec![herdr_workspace(
+            TARGET,
+            "w1",
+            &t.main,
+            &[("t1", &t.main), ("t2", cwd)],
+        )])
+    };
+
+    acknowledge_device_tab(&mut runtime, &t.main);
+    runtime.ingest_remote_session(TARGET, Ok(raw(&t.main)));
+    // The shell has entered the folder and then left it.
+    runtime.ingest_remote_session(TARGET, Ok(raw(&t.other)));
+    assert_eq!(device_tabs_in(&runtime, &t.main), ["t1"]);
+
+    acknowledge_device_tab(&mut runtime, &t.main);
+    assert_eq!(device_tabs_in(&runtime, &t.main), ["t1"]);
+}
