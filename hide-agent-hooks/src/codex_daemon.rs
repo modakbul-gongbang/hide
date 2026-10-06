@@ -240,7 +240,7 @@ mod tests {
             Ok(DaemonSetting::Off)
         );
         assert_eq!(
-            crate::program_version(&shim, home.path()).as_deref(),
+            crate::program_version(&shim, &crate::cli_path(home.path()).unwrap()).as_deref(),
             Some("0.160.0")
         );
     }

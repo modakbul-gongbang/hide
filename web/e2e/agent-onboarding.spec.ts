@@ -13,11 +13,16 @@ const modal = (page: Page) => page.locator("[data-agent-onboarding]");
 const tile = (page: Page, id: string, state: string) => page.locator(`[data-onboarding-tile="${id}:${state}"]`);
 const read = (file: string) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "");
 
-/** A private HOME with two agents set up, a kit record only when `record`, and a daemon that runs the kit. */
+/**
+ * A private HOME with two agents installed (a program in `~/.local/bin`, which the kit searches, and the
+ * folder each agent makes), a kit record only when `record`, and a daemon that runs the kit.
+ */
 async function start(record: boolean) {
   const herdr = await startHerdr();
   const home = path.join(fs.mkdtempSync(path.join(herdr.root, "ob-")), "home");
   for (const folder of [".claude", ".gemini"]) fs.mkdirSync(path.join(home, folder), { recursive: true });
+  fs.mkdirSync(path.join(home, ".local", "bin"), { recursive: true });
+  for (const program of ["claude", "gemini"]) fs.writeFileSync(path.join(home, ".local", "bin", program), "#!/bin/sh\n", { mode: 0o755 });
   if (record) {
     fs.mkdirSync(path.join(home, ".hide", "kit"), { recursive: true });
     fs.writeFileSync(path.join(home, ".hide", "kit", "installed.json"), JSON.stringify({ format: 1, installed: [] }));
@@ -30,7 +35,7 @@ async function open(page: Page, daemon: Daemon) {
   await page.goto(`${daemon.origin}/#token=${daemon.token}`);
 }
 
-test("a Mac with no kit record is asked once, the set-up agents are on, and Apply writes only what is left on", async ({ page }) => {
+test("a Mac with no kit record is asked once, the installed agents are on, and Apply writes only what is left on", async ({ page }) => {
   const { daemon, home } = await start(false);
   try {
     await open(page, daemon);
