@@ -466,7 +466,20 @@ fn list_every(state: &State) -> Duration {
 }
 
 fn next_wait(state: &State) -> Duration {
-    if !state.queue.is_empty() || state.device_reading() {
+    // A listing with another page to take goes on at once, even when the
+    // page before held nothing new.
+    let paging = state
+        .listing
+        .as_ref()
+        .is_some_and(|listing| listing.next.is_some())
+        || state.devices.values().any(|device| {
+            device.retry_at.is_none_or(|at| at <= Instant::now())
+                && device
+                    .listing
+                    .as_ref()
+                    .is_some_and(|listing| listing.next.is_some())
+        });
+    if !state.queue.is_empty() || state.device_reading() || paging {
         return REST;
     }
     let every = list_every(state);
@@ -748,6 +761,7 @@ fn read_device(
             }
             continue;
         }
+        *write_failure = None;
         if answer.has_more && answer.error.is_none() {
             entry.queue.push_back(candidate);
         }
