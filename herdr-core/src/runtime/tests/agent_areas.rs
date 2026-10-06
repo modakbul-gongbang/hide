@@ -1248,3 +1248,100 @@ fn a_reopen_waiting_for_a_refused_close_is_dropped_and_never_reopens_an_older_cl
     assert!(!runtime.snapshot().recent_closed.restoring);
     assert_eq!(runtime.snapshot().recent_closed.count, 1);
 }
+
+/// Herdr makes a reopened tab inside a seed tab it then replaces
+/// (`workspace.create`, then `layout.apply`), and the seed's focus can reach
+/// the core after the reopen's own answer, when it is followed like any move
+/// of Herdr's. When the seed goes, the keyboard stays on the restored tab the
+/// checkout shows, never on the other area's tab Herdr's keyboard names
+/// (#425, `agent-tab-groups.spec.ts` "New tab and Reopen use the
+/// requested area").
+#[test]
+fn a_followed_reopen_seed_that_goes_leaves_the_operator_on_the_restored_tab() {
+    let (mut runtime, checkout) = two_areas_on_t1();
+    close_tab(&mut runtime, "w-order:t3");
+    answer_close(&mut runtime, Ok(()));
+    let after_close = ["w-order:t1", "w-order:t2"];
+    runtime.ingest_session(Ok(tab_order_payload(
+        "/agent-groups",
+        &after_close,
+        &after_close,
+        "w-order:t1",
+    )));
+    action(
+        &mut runtime,
+        serde_json::json!({"action":"focus","tab_id":"w-order:t2"}),
+    );
+    // Herdr confirms the click on the right area's tab.
+    runtime.ingest_session(Ok(tab_order_payload(
+        "/agent-groups",
+        &after_close,
+        &after_close,
+        "w-order:t2",
+    )));
+    let item = runtime.recent_closed.back().cloned().expect("t3 to reopen");
+    reopen(&mut runtime);
+    assert!(runtime.reopen_in_flight.is_some(), "the reopen started");
+    runtime.ingest_reopen_result(
+        &live::ReopenRequest {
+            codex_daemon: Default::default(),
+            item,
+            workspace_exists: true,
+            tab_exists: false,
+            fallback_pane_id: None,
+            owner: None,
+        },
+        Ok(live::FileReopenResultOrHerdr::Herdr(live::ReopenOutcome {
+            tab_id: Some("w-order:t4".into()),
+            consumed: true,
+            focused_pane_id: Some("w-order:t4:p".into()),
+            notices: vec![],
+        })),
+    );
+
+    // The seed's creation and its focus reach the core after that answer.
+    let seeded = ["w-order:t1", "w-order:t2", "w-order:t8"];
+    let mut seed = tab_order_payload("/agent-groups", &seeded, &seeded, "w-order:t8");
+    seed.tab_focus = Some(crate::sidebar::SessionTabFocus {
+        generation: 1,
+        workspace_id: "w-order".into(),
+        tab_id: "w-order:t8".into(),
+        revision: 1,
+        creation: true,
+    });
+    runtime.ingest_session(Ok(seed.clone()));
+    let focus = seed.tab_focus.as_mut().unwrap();
+    focus.creation = false;
+    focus.revision = 2;
+    runtime.ingest_session(Ok(seed));
+    assert_eq!(
+        runtime.snapshot().terminal.pane_id.as_deref(),
+        Some("w-order:t8:p"),
+        "the seed's focus was followed"
+    );
+
+    // The seed goes and the restored tab arrives, with Herdr's keyboard back
+    // on the right area's tab.
+    let restored = ["w-order:t1", "w-order:t2", "w-order:t4"];
+    runtime.ingest_session(Ok(tab_order_payload(
+        "/agent-groups",
+        &restored,
+        &restored,
+        "w-order:t2",
+    )));
+    assert_eq!(
+        drawn(&mut runtime),
+        [
+            area("w-order:t4", &["w-order:t1", "w-order:t4"]),
+            area("w-order:t2", &["w-order:t2"])
+        ]
+    );
+    assert_eq!(
+        checkout_active_tab_id(&runtime, &checkout).as_deref(),
+        Some("w-order:t4")
+    );
+    assert_eq!(
+        runtime.snapshot().terminal.pane_id.as_deref(),
+        Some("w-order:t4:p")
+    );
+}
