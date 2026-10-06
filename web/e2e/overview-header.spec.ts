@@ -39,6 +39,10 @@ test("the Project Overview header keeps the project name at every width", async 
         // The name keeps a width of its own, and nothing in the header runs past it.
         await expect.poll(async () => (await name.boundingBox())?.width ?? 0, { message: `the name at ${width}px` }).toBeGreaterThan(0);
         for (const action of actions) await expect(action).toBeVisible();
+        // Under 512 px of header the actions are square icons without the keycap; above it they carry their word and `C`.
+        const issue = await actions[1].boundingBox();
+        expect(issue!.width === issue!.height, `New issue is an icon at ${width}px`).toBe(width === 720);
+        await expect(header.locator("[data-overview-new-issue] kbd")).toBeVisible({ visible: width !== 720 });
         expect(await header.evaluate((node) => node.scrollWidth <= node.clientWidth), `header overflow at ${width}px`).toBe(true);
         await screenshot(page, `overview-header-${width}-${theme}`);
       }
@@ -46,6 +50,9 @@ test("the Project Overview header keeps the project name at every width", async 
     // The name is an actual readable label, not a sliver: it shows the whole of a short name.
     await page.setViewportSize({ width: 720, height: 800 });
     expect(await name.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
+    // The icon keeps its name and shortcut in a hint.
+    await actions[1].hover();
+    await expect(page.getByRole("tooltip")).toContainText("New issue");
   } finally {
     daemon?.stop();
     herdr.stop();
