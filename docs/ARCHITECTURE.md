@@ -195,6 +195,8 @@ The pending model covers the visible tab and the focused pane: zoom, splits, clo
 Every Herdr-owned mutation has one core-owned operation record with a host connection generation, target and conflict-scope IDs, phase, stage, start time, absolute deadline, caller-visible message, and retry policy; the records are exported as `status.async_operations`.
 Transport success is not topology truth: split, zoom, resize, move, and close remain pending until an authoritative session event or fresh snapshot identifies the exact created, changed, or absent topology.
 The session update that shows a pane operation's effect can arrive before the answer to its request (they travel on different threads), so the answer also checks the layout the core already holds; Herdr sends nothing more once the layout stops moving, and an operation left waiting would reject every later zoom, resize and close in its tab until its deadline.
+A device's pane and tab operations follow the same rule: when one begins to wait (its answer, an ambiguous answer, its deadline), the core checks the session it last observed for that device (`status.remote[..].session`, one per configured target, so nothing grows with use), through the one decision function the session pass also uses.
+That held session counts only when it belongs to the connection the operation was sent on, and a device's report judges only that device's operations.
 An expired or otherwise unconfirmed mutation becomes unknown and is never resent when doing so could repeat a destructive effect; same-scope requests are rejected while independent scopes continue.
 Resize intents on one pane and axis coalesce to the latest signed delta, so a fast gesture cannot create an unbounded queue.
 
