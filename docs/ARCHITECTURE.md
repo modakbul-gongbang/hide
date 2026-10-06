@@ -879,6 +879,12 @@ No file, SQLite, network or subprocess work happens under the runtime lock, and 
 `Core::drop` stops the Factory host first, so its verify runs and external calls end with the daemon.
 [factory.md](factory.md) owns the engine, the store, the roles and the read model.
 
+The Factory screens read two snapshot sections, `factory` (the engine's `FactorySummary` and the answers to the screen's own requests) and `factory_task` (the `TaskDetail` of the one Task page a shell opened), each with its own revision.
+Both are built and compared on the engine thread and handed to the runtime only when they differ from what it last held, so an idle tick takes no lock and publishes nothing, and the delta carries a section only on its own change.
+A screen action is the `factory_action` event, whose `command` is the stage-1 `Command` decoded strictly and limited to the verbs a person may send; the core runs it with the operator role relayed by `screen` and puts the answer in `factory.actions` under the event's request id, newest last and at most 16.
+`factory_task_open` and `factory_task_close` name the page the engine keeps building, and `factory_secretary_set` records the secretary's pane in the core's UI state.
+[UI_BEHAVIOR.md: Factory](UI_BEHAVIOR.md#factory) owns what the screens do.
+
 ### The mobile companion
 
 Everything a phone touches lives in `hided/src/mobile/`, and `herdr-core` does not know phones exist; its only addition is `Runtime::remote_herdr_api`, which lends the Herdr API connection it already holds for a connected SSH device.

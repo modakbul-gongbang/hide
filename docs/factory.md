@@ -672,7 +672,7 @@ The engine runs on its own thread, `herdr-core-factory`, and the judgments run o
 Dropping the core stops the engine first, then ends the verify runs, the judgment in flight and any `git` or `gh` call under way, so nothing the Factory started outlives the daemon.
 The engine takes the runtime lock only to read owned data (a delivery projection, a worker's pane state, the snapshot's agent rows) or to hand the core a request (a sleep, a wake, a kit read), and does no file, network or subprocess work while holding it.
 Every `git` and `gh` call runs on the engine thread with a 120 second deadline, and a verify bundle runs in an owned process tree the engine polls, so a long run never waits on the thread.
-The Factory adds nothing to the snapshot wire, and a Task changes no terminal, tab or scroll path.
+The Factory adds two snapshot sections, `factory` and `factory_task`, which carry the summary and the open Task page only when they change (ARCHITECTURE.md, The Factory host), and a Task changes no terminal, tab or scroll path.
 
 A machine without a Factory runs the thread's two-second wait and nothing else.
 With Factories, each two-second tick does bounded work:

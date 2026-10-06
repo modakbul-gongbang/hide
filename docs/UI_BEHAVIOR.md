@@ -1101,6 +1101,73 @@ A link whose project folder moved away is dropped at the next sync with nothing 
 A `~/hide` that Hide did not make is left untouched, and the start that wanted it says so where it was asked for, in the start panel or under the Home row for its `+`, with what to do.
 A Home agent reads and edits the projects through their links, the change shows on that project's checkout row, and its row stays under the Home row.
 
+## Factory
+
+Core owner: `herdr-core/src/factory/screen.rs`, `herdr-core/src/runtime/factory.rs` (see ARCHITECTURE.md, The Factory host). Web owner: `web/src/factory/`, the Factory and secretary rows in `web/src/components/sidebar-header.tsx` and `web/src/sidebar.tsx`.
+
+The Factory screens draw the Software Factory engine ([factory.md](factory.md)) and change nothing it decides.
+Every count, name, state, order and reason on them is a field of the engine's `FactorySummary` or `TaskDetail`, and every action they offer is one stage-1 command the engine may refuse.
+A refusal keeps the thing that was acted on in place with the engine's next action on one line beneath it.
+
+### The Factory place
+
+The sidebar has a Factory row of its own beside Home, and its badge is the number of items in 내 차례, with no badge at zero.
+The row, ⇧⌘F and the ⌘K command 'Factory 열기' open the Factory screen; the screen is kept out of Recent Panels.
+With no open Factory the screen offers only '+ Factory 만들기'.
+Under the Factory row, once a Factory exists, is the secretary row: an ordinary agent tab in the core device's Home with the Factory's guide in its first prompt, which reads the board with `hide factory status` each time it answers, so closing the tab loses nothing.
+There is one secretary; the row and '비서에게 묻기' go to it, and when there is none they start one with the Factory's default runtime.
+The core remembers the secretary's pane in its UI state, so a restart keeps the row on the same pane while that pane is listed.
+
+### The screen
+
+The header holds the Factory name, the project filter, the flow bar and '비서에게 묻기'.
+The flow bar shows 정리 중 · 대기 · 실행 중 · 완료 오늘 and never a person's-turn cell; a cell opens the board filtered to that column.
+The flow bar ends with the time of the last GitHub read, which turns the warning colour after three failed reads in a row and back when a read succeeds; there is no banner.
+The tabs are 내 차례 · 보드 · 그래프 · 설정, and the screen opens on 내 차례; the project filter applies to every tab.
+The 내 차례 tab's count and the sidebar badge are the engine's `my_turn` and are always the same number.
+Before the core's first summary arrives the screen draws its frame and no empty state.
+
+### 내 차례
+
+내 차례 is one column of every Factory's person-facing items in the engine's order and under its groups: 답할 것, 머지 대기, 멈춤, 알림.
+The top item opens expanded with the engine's suggestion chosen and the send button focused, so ⏎ once answers.
+The send button names the answer, the line beside it the result the engine gave, the line under it the default action and the time left, and '자세히 →' opens the Task page.
+The other items are one line each: the id (the Task id before Ready, the issue number after), the title, the project and a time cue, with a question that blocks progress reading 'N일째 기다림' at the top.
+↑ and ↓ move between items and open the one reached, a digit picks another choice, and ⏎ sends.
+While an answer is sent its button shows sending; when the engine takes it the item leaves and the next one opens.
+An empty 내 차례 shows one line that nothing is waiting, and a Factory with no Task shows the two ways to add one: ask the agent you are talking to, or put the `factory` label on a GitHub issue.
+There is no button that adds a Task.
+Under the list, only while agents outside the Factory have requests, one line 'Factory 밖 에이전트 요청 N → 요청' opens the Overview 요청 view, and that view has one line back to the Factory while 내 차례 has items.
+Factory workers are left out of the 요청 view and the Overview's yellow count.
+
+### Board and graph
+
+The board has four columns, 정리 중 · 대기 · 실행 중 · 완료, in the engine's order within each column.
+A card that needs the person (blocked, stopped, waiting to merge, an open question) has the warning border and stands at the top of its column; verifying, waiting to merge, blocked, stopped, relanding and outside work sit in 실행 중 with their state mark.
+A done Task the person has not seen has the unread dot; done Tasks older than three days fold into one group, and those past 90 days leave the group while their Task page still opens.
+A cancelled Task leaves the board and is found under the '취소됨' filter, which offers 되살리기 for seven days; cancelling asks nothing and leaves '취소됨 · 되살리기' in its place.
+The graph tab draws each Factory's dependencies in the Issues view's Dependencies layout with every arrow a longer path implies left out (A→B→C draws no A→C); the engine's data keeps every edge.
+Only cards that need the person are emphasised, done cards are dimmed, waiting cards say what they wait for, unrelated Tasks sit below, folded completions leave the drawing, and a node opens its Task page.
+A filter that leaves the board or graph empty offers to clear it.
+
+### The Task page
+
+The Task page is full width: the chain (its predecessors → this Task → the Tasks waiting on it) at the top, the goal, completion criteria, out of scope and attachments on the left, and progress (pull request and CI, verification n/3, each attempt's log tail and CI link, the external wait, 'worker 보기') and the decision record on the right.
+Verification n/3 counts the worker's resubmissions; a Factory without verification shows '검증 없음'.
+The page offers only the actions the engine allows in the Task's state: 정리 중 edit (which opens the secretary) and cancel, 대기 priority, removing a dependency and cancel, 실행 중 pause and cancel, 멈춤 retry and cancel, 머지 대기 merge, request changes and cancel, a blocked Task nothing but its answer, and a cancelled Task 되살리기 while it lasts.
+An open question is answered only in 내 차례: '내 차례에서 답하기 →' opens that item there.
+'worker 보기' opens the worker's pane in its Workspace.
+
+### Creating and configuring
+
+'+ Factory 만들기' asks three things: the project, the verification and the merge mode.
+The verification step shows the required checks and verify commands the engine detected for the project, with a loading mark while it detects, and the person picks the required checks, a set of verify commands, or none.
+The merge mode starts on auto; with no verification auto cannot be picked and says why in its place, and the Factory is made manual.
+A project with a GitHub remote shows, above the create button, the account, the repository and every GitHub read and write the engine will make; a project without one has no GitHub step.
+Nothing is written before the create button, which names the Factory it makes; cancelling leaves nothing, a failed step shows the engine's next action, and a project that already has a Factory opens it.
+The settings tab shows and changes every engine default in the groups 실행, 검증, 머지, 질문과 임계값, 점검, 알림과 보관, 자율 처리와 복구 범위 and 고급, including the harness preset and the macOS notifications (off by default); a changed value applies from the engine's next decision.
+'Factory 닫기' can be pressed only while no Task runs.
+
 ## Recent navigation
 
 Web owner: `web/src/recent.ts`, `web/src/areaCycle.ts`, `web/src/viewFocus.ts`, `web/src/keyboard.ts`, and `CycleOverlay` in `web/src/Overlays.tsx`.
