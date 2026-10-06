@@ -109,7 +109,7 @@ Capacity errors retain existing letters and watches.
 | Pending delivery deadline | 60 minutes, then `undelivered`; visible through CLI |
 | Quiet period | 30 seconds since hide last routed a key and since Herdr last changed the pane's status |
 | Doorbell reservations per letter | Three total, persisted across restart |
-| First inactivity warning | 20 minutes without activity |
+| First inactivity warning | 20 minutes without activity; 30 minutes when the observer is a Factory |
 | Second inactivity warning | First-warning time plus 60 minutes, at most two warnings per episode |
 | Unanswered parent warning notification | First-warning time plus 60 minutes, once per native target and inactivity episode |
 | Intent retention and finished-letter cleanup | 30 days; open letters remain |
@@ -155,6 +155,15 @@ A normal reply closes the request's answer wait and leaves the watch active.
 A done target remains watched until exit, explicit stop or a completion report.
 The first actual post-flush confirmation records `hook_confirmed: true` and ends a matching sender-parent watch for `hide request send --kind report`, even after acknowledgement, cancellation or the delivery deadline; replay after restart preserves a watch explicitly started after that receipt.
 A report from an unwatched sender is an ordinary letter; the parent can restart a watch explicitly.
+
+## The code-owned recipient `factory:<id>`
+
+Each open Factory is a code-owned recipient named `factory:<factory id>`, and [factory.md](factory.md#the-mailbox-recipient-factoryid) owns how it is used.
+Only the Factory's engine sends as it, and the ledger accepts that authority only while the Factory exists and is open.
+A pane or agent may send to it and may name it as a watch observer, and only while the Factory exists and is open; a pane or agent name that starts with `factory:` is refused at registration.
+A letter to it is never pasted into a composer and never rings a doorbell: the engine reads it, confirms it and, for a request or block, replies with its answer.
+The human-notice claim skips a letter whose recipient is code-owned.
+A watch observed by a Factory warns after 30 minutes without activity rather than 20, and the engine acts on the first warning.
 
 ## Agent registration and spawning
 
