@@ -4,10 +4,13 @@
 //! through [`NodeLink`]. [`Local`] is the core's own machine, answered in the
 //! same process.
 
+use std::fs::File;
 use std::path::PathBuf;
 use std::time::Duration;
 
+use cap_std::fs::Dir;
 use hide_host::serve::Env;
+use hide_node_link::RootIdentity;
 use hide_node_link::protocol::Call;
 use hide_node_link::{LinkAnswer, LinkError, NodeLink};
 
@@ -32,6 +35,30 @@ impl Local {
             env: Env::of_process(),
         }
     }
+}
+
+/// Checkout roots the daemon opened under its pinned registrations, held open
+/// while the core uses their identities, so a folder put at a root's path
+/// later cannot take the identity of the one that was opened.
+#[derive(Debug, Default)]
+pub struct HeldRoots {
+    _held: Vec<Dir>,
+}
+
+/// Holds `roots` and reads each one's identity from its handle; a root whose
+/// identity cannot be read is named without one, and its first request pins
+/// it.
+pub fn hold_roots(
+    roots: Vec<(PathBuf, File)>,
+) -> (HeldRoots, Vec<(PathBuf, Option<RootIdentity>)>) {
+    let mut held = Vec::with_capacity(roots.len());
+    let mut identities = Vec::with_capacity(roots.len());
+    for (path, file) in roots {
+        let dir = Dir::from_std_file(file);
+        identities.push((path, hide_host::root::identity_of(&dir).ok()));
+        held.push(dir);
+    }
+    (HeldRoots { _held: held }, identities)
 }
 
 impl NodeLink for Local {

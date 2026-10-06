@@ -8,6 +8,7 @@ publish = false
 # the machine it runs on, answered through `hide_node_link::NodeLink`.
 
 [dependencies]
+cap-std = "=4.0.3"
 hide-host = { path = "../hide-host" }
 hide-node-link = { path = "../hide-node-link" }
 

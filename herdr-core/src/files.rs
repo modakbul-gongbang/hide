@@ -1,9 +1,7 @@
-use std::fs::File;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use cap_std::fs::Dir;
 use hide_host::document::Document;
 use hide_host::protocol::{Call, RevisionNow, RootRef};
 use hide_host::save::Saved;
@@ -14,22 +12,22 @@ use hide_platform::path::{self, PathError, RelPath};
 use crate::model::EditorDocumentSnapshot;
 use crate::node_access::{LinkError, NodeLink, call_as};
 
-/// Opened checkout roots supplied by the daemon after its registration check.
-/// Each root's identity pins the folder every host request names; the opened
-/// handle is held so that identity cannot be reused by another folder while
-/// the daemon runs. A client that supplies none has its requests pin the
-/// root when they first open it.
+/// The checkout roots the daemon opened after its registration check, as the
+/// identities their handles reported. Each identity pins the folder every
+/// host request names; the daemon's node holds the handles
+/// (`hide_node::HeldRoots`), so that identity cannot be reused by another
+/// folder while the daemon runs. A client that supplies none has its
+/// requests pin the root when they first open it.
 type PinnedIdentity = (PathBuf, Option<RootIdentity>);
 
 #[derive(Clone, Debug, Default)]
 pub struct FileRoots {
-    roots: Arc<Vec<(PathBuf, Arc<Dir>)>>,
     identities: Arc<Vec<PinnedIdentity>>,
 }
 
 impl PartialEq for FileRoots {
     fn eq(&self, other: &Self) -> bool {
-        Arc::ptr_eq(&self.roots, &other.roots)
+        Arc::ptr_eq(&self.identities, &other.identities)
             || (self.identities.len() == other.identities.len()
                 && self.identities.iter().zip(other.identities.iter()).all(
                     |((left_path, left_id), (right_path, right_id))| {
@@ -42,17 +40,8 @@ impl PartialEq for FileRoots {
 impl Eq for FileRoots {}
 
 impl FileRoots {
-    pub fn from_opened(roots: Vec<(PathBuf, File)>) -> Self {
-        let mut opened = Vec::with_capacity(roots.len());
-        let mut identities = Vec::with_capacity(roots.len());
-        for (path, file) in roots {
-            let dir = Dir::from_std_file(file);
-            let identity = hide_host::root::identity_of(&dir).ok();
-            identities.push((path.clone(), identity));
-            opened.push((path, Arc::new(dir)));
-        }
+    pub fn from_identities(identities: Vec<PinnedIdentity>) -> Self {
         Self {
-            roots: Arc::new(opened),
             identities: Arc::new(identities),
         }
     }
@@ -654,6 +643,7 @@ pub(crate) mod tests {
     use super::*;
     use crate::model::DocumentKind;
     use std::fs;
+    use std::fs::File;
     use std::time::UNIX_EPOCH;
 
     #[test]
@@ -704,7 +694,9 @@ pub(crate) mod tests {
         fs::create_dir(&outside).unwrap();
         fs::write(root.join("note.txt"), "inside").unwrap();
         fs::write(outside.join("note.txt"), "outside").unwrap();
-        let roots = FileRoots::from_opened(vec![(root.clone(), File::open(&root).unwrap())]);
+        let roots = FileRoots::from_identities(
+            hide_node::hold_roots(vec![(root.clone(), File::open(&root).unwrap())]).1,
+        );
         let (pinned_path, identity) = roots.pinned_root(&root.join("note.txt")).unwrap();
         let document_root = DocumentRoot {
             device_id: "local".to_owned(),

@@ -423,6 +423,7 @@ fn owner_loop(
         let _ = notify.send(());
     });
     let _ = ready.send(Ok(()));
+    let mut _held_roots = hide_node::HeldRoots::default();
     while let Ok(command) = commands.recv() {
         match command {
             Command::DeliveryHuman { reply } => {
@@ -461,7 +462,11 @@ fn owner_loop(
                 ));
             }
             Command::SetFileRoots { roots, reply } => {
-                core.set_file_roots(herdr_core::FileRoots::from_opened(roots));
+                // This node holds the opened roots while the core pins their
+                // identities; the previous set closes once it is replaced.
+                let (held, identities) = hide_node::hold_roots(roots);
+                core.set_file_roots(herdr_core::FileRoots::from_identities(identities));
+                _held_roots = held;
                 let _ = reply.send(Ok(()));
             }
             Command::Dispatch { event, reply } => {

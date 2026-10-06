@@ -1856,7 +1856,7 @@ mod windows_boundary_tests {
         }]);
         let opened = boundary.opened_roots();
         assert_eq!(opened.len(), 1);
-        let retained = herdr_core::FileRoots::from_opened(opened);
+        let retained = hide_node::hold_roots(opened);
         fs::rename(&root, &moved).unwrap();
         fs::remove_dir_all(&moved).unwrap();
         assert!(!root.exists());

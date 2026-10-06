@@ -1670,10 +1670,9 @@ fn the_same_path_on_two_devices_is_two_documents_in_two_views() {
             vec![checkout(local_id, local_checkout, &path, None)],
         ));
         let opened = std::fs::File::open(&f.root).unwrap();
-        runtime.set_file_roots(crate::files::FileRoots::from_opened(vec![(
-            f.root.clone(),
-            opened,
-        )]));
+        runtime.set_file_roots(crate::files::FileRoots::from_identities(
+            hide_node::hold_roots(vec![(f.root.clone(), opened)]).1,
+        ));
         runtime.workspace_views =
             Some(WorkspaceViewStore::open(views_dir.join("views.json"), Default::default()).0);
         runtime.sync_workspace_view();
