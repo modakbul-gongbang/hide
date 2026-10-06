@@ -77,14 +77,13 @@ impl Runtime {
         let Ok(ledger) = self.delivery_state() else {
             return lineage;
         };
-        // Herdr reuses pane ids: only an agent still on the pane speaks for it.
-        let mut next = match ledger
-            .agents
-            .iter()
-            .rev()
-            .find(|agent| agent.pane == pane && !agent.ended)
-        {
-            Some(agent) => agent.parent.clone(),
+        // The newest record on the pane, ended or not: an agent can end its
+        // own record and keep running, so ending it never makes an operator.
+        let mut next = match ledger.agents.iter().rev().find(|agent| agent.pane == pane) {
+            Some(agent) => {
+                lineage.factory_spawned |= agent.actor.code_owned();
+                agent.parent.clone()
+            }
             None => None,
         };
         while let Some(id) = next {
@@ -393,7 +392,7 @@ mod tests {
     }
 
     #[test]
-    fn an_ended_agent_speaks_for_no_pane() {
+    fn an_ended_agent_still_walks_up_but_lends_no_pane() {
         let mut runtime = crate::runtime::tests::runtime();
         let ended = |mut record: AgentRecord| {
             record.ended = true;
@@ -408,9 +407,10 @@ mod tests {
             ],
             ..Ledger::default()
         }));
-        // A person's shell on a pane whose id an ended agent had.
-        let reused = runtime.factory_lineage("w2:p1");
-        assert!(reused.agents.is_empty() && reused.complete && !reused.factory_spawned);
+        // An agent that ended its own record still walks up to its worker.
+        let ended_child = runtime.factory_lineage("w2:p1");
+        assert_eq!(ended_child.agents, vec!["agent-worker", "agent-factory"]);
+        assert!(ended_child.complete && ended_child.factory_spawned);
         // Ended ancestors stay in the walk but lend no pane to bind by.
         let live = runtime.factory_lineage("w3:p1");
         assert_eq!(

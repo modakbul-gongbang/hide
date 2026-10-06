@@ -580,12 +580,10 @@ impl Engine {
             }
         });
         if let Some(from) = from {
-            if from == TaskState::Verifying {
-                // A merge or push asked again belongs to this verifying stay.
-                let key = (factory.to_owned(), id.to_owned());
-                self.merge_retry.remove(&key);
-                self.publish_refusals.remove(&key);
-            }
+            // A merge or push asked again belongs to the stay it was asked in.
+            let key = (factory.to_owned(), id.to_owned());
+            self.merge_retry.remove(&key);
+            self.publish_refusals.remove(&key);
             self.record(
                 factory,
                 Some(id),
@@ -3099,14 +3097,28 @@ impl Engine {
         }
         let key = (factory_id.to_owned(), id.to_owned());
         // A merge asked to wait is not read again before its time (B39).
-        // GitHub took a merge and has not named its commit: main merged in
-        // and the quick check are not run again, but every gate still holds.
-        let mut unnamed = false;
         if let Some((at, since)) = self.merge_retry.get(&key).copied() {
             if at > self.now() {
                 return;
             }
-            unnamed = since.is_some();
+            // GitHub answered a merge without naming its commit: only read
+            // whether it merged. A merged one landed whatever a gate says
+            // now; one that did not merge goes through every check again.
+            if since.is_some() {
+                match self.ports.merge.merged_commit(&factory, &task) {
+                    Ok(Some(sha)) => {
+                        self.landed(factory_id, id, &sha);
+                        return;
+                    }
+                    Ok(None) => {
+                        self.merge_retry.remove(&key);
+                    }
+                    Err(failure) => {
+                        self.merge_failed(factory_id, id, &failure);
+                        return;
+                    }
+                }
+            }
         }
         if self.verifying.contains_key(&key) {
             return;
@@ -3152,8 +3164,7 @@ impl Engine {
             return;
         }
         // Merge-tree and the quick check, in seconds (B38).
-        if !unnamed && (factory.config.verification.exists() || factory.source == SourceKind::Local)
-        {
+        if factory.config.verification.exists() || factory.source == SourceKind::Local {
             match self.ports.merge.premerge(&factory, &task) {
                 Ok(PreMerge::Clean) => {}
                 Ok(PreMerge::Conflict { files }) => {
@@ -3184,8 +3195,7 @@ impl Engine {
             }
         }
         // Verify factories run the bundle once on the latest main merged in.
-        if !unnamed
-            && matches!(factory.config.verification, Verification::Commands { .. })
+        if matches!(factory.config.verification, Verification::Commands { .. })
             && !task.writes.contains("premerge_passed")
         {
             self.start_verification(factory_id, id, AttemptStage::PreMerge);
@@ -3298,98 +3308,105 @@ impl Engine {
             .merge(&factory, &task, factory.config.merge_method)
         {
             Ok(sha) => {
-                let now = self.now();
-                self.merge_retry
-                    .remove(&(factory_id.to_owned(), id.to_owned()));
-                self.with_task(factory_id, id, |task| {
-                    task.merge_sha = Some(sha.clone());
-                    task.writes.insert("merge".into());
-                    task.gates.clear();
-                });
-                if let Some(f) = self.factories.get_mut(factory_id) {
-                    f.main.merges_since_green.push(LandedMerge {
-                        task: id.to_owned(),
-                        sha: sha.clone(),
-                        at: now,
-                    });
-                }
-                self.save_factory(factory_id);
-                self.main_seen.insert(factory_id.to_owned(), sha.clone());
-                self.record(factory_id, Some(id), "merge.done", json!({"sha": sha}));
-                self.set_state(factory_id, id, TaskState::Landed);
-                self.check_landed(factory_id, id);
+                self.landed(factory_id, id, &sha);
                 Ok(sha)
             }
             Err(failure) => {
-                self.external_failure(factory_id, Some(id), &failure);
-                let now = self.now();
-                let key = (factory_id.to_owned(), id.to_owned());
-                // Asked to wait (a merge commit not named yet, or GitHub or
-                // the network down): tried again at its time, not per tick.
-                let backoff = self
-                    .github_backoff
-                    .get(factory_id)
-                    .map(|(_, until)| *until)
-                    .filter(|until| *until > now)
-                    .filter(|_| {
-                        matches!(
-                            failure.signal,
-                            Some(
-                                EnvSignal::GithubRateLimit
-                                    | EnvSignal::GithubServer
-                                    | EnvSignal::Network
-                            )
-                        )
-                    });
-                let retry_at = match (failure.again_in_ms, failure.signal) {
-                    (Some(wait), _) => Some(now + wait.max(1)),
-                    (None, Some(_)) => Some(backoff.unwrap_or(now + PUBLISH_RETRY_MS)),
-                    (None, None) => None,
-                };
-                let since = self.merge_retry.get(&key).and_then(|(_, since)| *since);
-                let unnamed = failure.again_in_ms.is_some().then(|| since.unwrap_or(now));
-                if unnamed.is_some_and(|since| now.saturating_sub(since) >= MERGE_UNNAMED_LIMIT_MS)
-                {
-                    // GitHub never named the commit: a person looks (rule 15).
-                    self.merge_retry.remove(&key);
-                    self.with_task(factory_id, id, |task| {
-                        if !task.gates.contains(&Gate::MergeRefused) {
-                            task.gates.push(Gate::MergeRefused);
-                        }
-                    });
-                    self.record(
-                        factory_id,
-                        Some(id),
-                        "merge.refused",
-                        json!({"stage": failure.stage, "detail": "the merge commit was not named in 10 minutes"}),
-                    );
-                    self.set_state(factory_id, id, TaskState::MergeWaiting);
-                    return Err(failure);
-                }
-                match retry_at {
-                    Some(at) => {
-                        self.merge_retry.insert(key, (at, unnamed));
-                    }
-                    None => {
-                        self.merge_retry.remove(&key);
-                    }
-                }
-                if failure.signal.is_none() && failure.again_in_ms.is_none() {
-                    self.with_task(factory_id, id, |task| {
-                        if !task.gates.contains(&Gate::MergeRefused) {
-                            task.gates.push(Gate::MergeRefused);
-                        }
-                    });
-                    self.record(
-                        factory_id,
-                        Some(id),
-                        "merge.refused",
-                        json!({"stage": failure.stage, "detail": judgment::cut(&failure.detail, 300)}),
-                    );
-                    self.set_state(factory_id, id, TaskState::MergeWaiting);
-                }
+                self.merge_failed(factory_id, id, &failure);
                 Err(failure)
             }
+        }
+    }
+
+    /// Records a merge that landed on main (B39, B44).
+    fn landed(&mut self, factory_id: &str, id: &str, sha: &str) {
+        let sha = sha.to_owned();
+        let now = self.now();
+        self.merge_retry
+            .remove(&(factory_id.to_owned(), id.to_owned()));
+        self.with_task(factory_id, id, |task| {
+            task.merge_sha = Some(sha.clone());
+            task.writes.insert("merge".into());
+            task.gates.clear();
+        });
+        if let Some(f) = self.factories.get_mut(factory_id) {
+            f.main.merges_since_green.push(LandedMerge {
+                task: id.to_owned(),
+                sha: sha.clone(),
+                at: now,
+            });
+        }
+        self.save_factory(factory_id);
+        self.main_seen.insert(factory_id.to_owned(), sha.clone());
+        self.record(factory_id, Some(id), "merge.done", json!({"sha": sha}));
+        self.set_state(factory_id, id, TaskState::Landed);
+        self.check_landed(factory_id, id);
+    }
+
+    /// A merge that did not land: asked again at its time when it was asked
+    /// to wait, or held for a person when it was refused.
+    fn merge_failed(&mut self, factory_id: &str, id: &str, failure: &Failure) {
+        self.external_failure(factory_id, Some(id), failure);
+        let now = self.now();
+        let key = (factory_id.to_owned(), id.to_owned());
+        // Asked to wait (a merge commit not named yet, or GitHub or
+        // the network down): tried again at its time, not per tick.
+        let backoff = self
+            .github_backoff
+            .get(factory_id)
+            .map(|(_, until)| *until)
+            .filter(|until| *until > now)
+            .filter(|_| {
+                matches!(
+                    failure.signal,
+                    Some(EnvSignal::GithubRateLimit | EnvSignal::GithubServer | EnvSignal::Network)
+                )
+            });
+        let retry_at = match (failure.again_in_ms, failure.signal) {
+            (Some(wait), _) => Some(now + wait.max(1)),
+            (None, Some(_)) => Some(backoff.unwrap_or(now + PUBLISH_RETRY_MS)),
+            (None, None) => None,
+        };
+        let since = self.merge_retry.get(&key).and_then(|(_, since)| *since);
+        let unnamed = failure.again_in_ms.is_some().then(|| since.unwrap_or(now));
+        if unnamed.is_some_and(|since| now.saturating_sub(since) >= MERGE_UNNAMED_LIMIT_MS) {
+            // GitHub never named the commit: a person looks (rule 15).
+            self.merge_retry.remove(&key);
+            self.with_task(factory_id, id, |task| {
+                if !task.gates.contains(&Gate::MergeRefused) {
+                    task.gates.push(Gate::MergeRefused);
+                }
+            });
+            self.record(
+                factory_id,
+                Some(id),
+                "merge.refused",
+                json!({"stage": failure.stage, "detail": "the merge commit was not named in 10 minutes"}),
+            );
+            self.set_state(factory_id, id, TaskState::MergeWaiting);
+            return;
+        }
+        match retry_at {
+            Some(at) => {
+                self.merge_retry.insert(key, (at, unnamed));
+            }
+            None => {
+                self.merge_retry.remove(&key);
+            }
+        }
+        if failure.signal.is_none() && failure.again_in_ms.is_none() {
+            self.with_task(factory_id, id, |task| {
+                if !task.gates.contains(&Gate::MergeRefused) {
+                    task.gates.push(Gate::MergeRefused);
+                }
+            });
+            self.record(
+                factory_id,
+                Some(id),
+                "merge.refused",
+                json!({"stage": failure.stage, "detail": judgment::cut(&failure.detail, 300)}),
+            );
+            self.set_state(factory_id, id, TaskState::MergeWaiting);
         }
     }
 
@@ -5241,7 +5258,12 @@ impl Engine {
     fn merge_unnamed(&self, factory_id: &str) -> bool {
         self.merge_retry
             .iter()
-            .filter(|((factory, _), (_, unnamed))| factory == factory_id && unnamed.is_some())
+            .filter(|((factory, _), (_, since))| {
+                factory == factory_id
+                    && since.is_some_and(|since| {
+                        self.now().saturating_sub(since) < MERGE_UNNAMED_LIMIT_MS
+                    })
+            })
             .any(|((factory, id), _)| {
                 self.task(factory, id)
                     .is_some_and(|t| t.state == TaskState::Verifying)

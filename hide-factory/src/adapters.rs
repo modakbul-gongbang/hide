@@ -252,6 +252,16 @@ pub enum MainCheck {
 /// Branches, pull requests, merges and reverts.
 pub trait MergeTarget {
     fn main_head(&mut self, factory: &Factory) -> Result<String, Failure>;
+    /// Reads, without merging, whether the Task's pull request merged: its
+    /// merge commit, `None` when it has not merged, or a failure asking
+    /// again when GitHub merged it without naming the commit yet.
+    fn merged_commit(
+        &mut self,
+        _factory: &Factory,
+        _task: &Task,
+    ) -> Result<Option<String>, Failure> {
+        Ok(None)
+    }
     /// Pushes the worktree's commits to the Task branch on every report, then
     /// finds the open pull request for it (a harness's or an earlier
     /// report's) or opens one (B36).

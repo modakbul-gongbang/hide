@@ -142,10 +142,7 @@ pub fn classify(stage: &str, output: &Output) -> Failure {
         "tls handshake",
         "i/o timeout",
         "operation timed out",
-        "remote end hung up",
-        "early eof",
         "unexpected disconnect",
-        "could not read from remote repository",
     ]
     .iter()
     .any(|needle| lower.contains(needle))
@@ -227,10 +224,17 @@ mod tests {
                 128,
                 Some(EnvSignal::Network),
             ),
+            // These close lasting refusals too (a missing key, a gone
+            // repository, a pack too large): they reach a person.
             (
-                "fatal: the remote end hung up unexpectedly",
+                "git@github.com: Permission denied (publickey).\nfatal: Could not read from remote repository.",
                 128,
-                Some(EnvSignal::Network),
+                None,
+            ),
+            (
+                "error: RPC failed; HTTP 413\nfatal: the remote end hung up unexpectedly",
+                128,
+                None,
             ),
             (
                 " ! [remote rejected] HEAD -> factory/1-x (protected branch hook declined)",

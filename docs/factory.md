@@ -146,7 +146,7 @@ A `cancelled` or `done` Task's worker stays a worker while its worktree and pane
 Once a Task's worktree is removed it binds no pane or folder, because Herdr can give a closed pane id to the operator's next pane.
 An agent a worker spawned acts as that worker: the host follows the caller's spawn lineage in the delivery ledger (up to 16 agents up) and binds an ancestor by its agent id or by the pane it was registered on, and a pane a checkout caller names but cannot prove only ever makes it a worker, never an operator.
 A lineage the host cannot read to its root (the ledger unreadable, a missing record, a loop, more than 16 agents) may hide a worker above, so that caller can only read; anything else is refused with `lineage_unknown`.
-An agent that has ended speaks for no pane, since Herdr reuses pane ids, and an agent a Factory started that no Task holds as its worker (a start abandoned on its way) can only read; anything else is refused with `factory_agent_unbound`.
+The walk starts from the newest record on the caller's pane even when that record has ended, because an agent can end its own record and keep running; an ended ancestor lends no pane to bind by, because Herdr reuses pane ids. A caller below a Factory's own agent that no Task holds as its worker (a start abandoned on its way, or a shell on a reused pane id) can only read; anything else is refused with `factory_agent_unbound`.
 Every other caller is an operator, recorded by pane id, or `checkout` when the caller has no pane.
 The engine itself acts as a third role for deadlines and timers and is never a command caller.
 A capability file holds only a token, so editing it cannot change a role.
@@ -217,7 +217,7 @@ A worker reports through `hide factory` and gets its answer in the same call.
 On a GitHub Factory the next tick pushes the worktree's commits to the Task branch (with a lease, so a rebase goes through), then finds the open pull request for that branch or opens one, and only then reads CI on the pushed commit; every report pushes, so a fix after a failed check reaches the same pull request, and a merged pull request from before a revert is never reused.
 A Task branch the remote deleted, as automatic branch deletion does after a merge, is pushed again rather than refused by a stale lease.
 Only a pull request from the repository's own branch is a Task's or a revert's; a fork's pull request on the same branch name is never adopted.
-A push or pull request refused twice in a row with no environment signal in between (a protected branch, a hook; git's transport errors such as a 5xx answer, a timeout or a hung-up remote count as the network's) stops the Task as "push 거절됨" with the reason; a person fixes the cause and retries. One with an environment signal is asked again every minute.
+A push or pull request refused twice in a row with no environment signal in between (a protected branch, a hook; git's transport errors such as a 5xx answer or a timeout count as the network's, while a missing key, a gone repository or a hung-up remote reach a person) stops the Task as "push 거절됨" with the reason; a person fixes the cause and retries. One with an environment signal is asked again every minute.
 A failed push or pull request is tried again a minute later.
 `decide` records a decision.
 A worker whose agent rests for the no-report window (`no_report_minutes`, 2) after a turn that reported nothing stops the Task as "no report"; a worker that goes quiet for the stall window (`stall_minutes`, 30) stops it as "stalled".
@@ -320,7 +320,7 @@ A gate sends an `auto` Task to `merge_waiting` and appears in the Task page and 
 
 A review by an agent alone never merges.
 A person's `merge` runs merge-tree and the quick check again on the latest main, then the same merge at once; a conflict sends the worker to rebase and a failed quick check counts as a verification failure.
-A refused merge is tried once and then waits for a person, never once per tick; only an environment signal, or a merge GitHub answered before naming its commit, is asked again, at the GitHub back-off for a rate-limit, server or network signal (a minute for any other signal) and every 30 seconds for an unnamed commit, with no merge-tree or quick check in between while every gate still holds; a commit still unnamed after 10 minutes waits for a person as a refused merge.
+A refused merge is tried once and then waits for a person, never once per tick; only an environment signal, or a merge GitHub answered before naming its commit, is asked again, at the GitHub back-off for a rate-limit, server or network signal (a minute for any other signal) and every 30 seconds for an unnamed commit, which is only read and never merged again: a pull request that merged lands whatever gate appeared since, because nothing can undo it, and one that did not merge goes through every check again before another merge; a commit still unnamed after 10 minutes waits for a person as a refused merge.
 While a merge's commit is unnamed, a red run on a main head the Factory has not recorded is read as pending, not as an outside push.
 `request-changes --comment` returns the Task to `running`, clears its gates and sends the worker the comment.
 

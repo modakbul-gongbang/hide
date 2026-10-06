@@ -1572,11 +1572,16 @@ fn a_merge_asked_to_wait_is_read_again_at_its_time_and_main_is_not_misread_meanw
         h.advance(2_000);
         h.engine.tick();
     }
-    assert_eq!(h.world().merge_attempts, 2, "once per 30 seconds over 40");
+    assert_eq!(h.world().merge_attempts, 1, "never merged again");
+    assert_eq!(
+        h.world().merged_reads,
+        1,
+        "read once per 30 seconds over 40"
+    );
     assert_eq!(
         h.world().premerge_calls,
         premerges,
-        "only the merge commit is read again"
+        "only whether it merged is read again"
     );
     // The next outside read finds the new head.
     h.advance(2 * MINUTE_MS);
@@ -1594,6 +1599,39 @@ fn a_merge_asked_to_wait_is_read_again_at_its_time_and_main_is_not_misread_meanw
     }
     assert_eq!(h.state(&f, &t), TaskState::MergeWaiting);
     assert_eq!(h.task(&f, &t).gates, vec![Gate::MergeRefused]);
+}
+
+#[test]
+fn an_unnamed_merge_lands_once_named_and_one_that_did_not_merge_is_checked_again() {
+    let mut h = Bench::new(true);
+    let f = github_factory(&mut h, MergeMode::Auto);
+    let t = h.ready("Named later", &[]);
+    h.world().merge_unnamed = 1;
+    h.done(&f, &t);
+    for _ in 0..3 {
+        h.engine.tick();
+    }
+    h.advance(31_000);
+    h.engine.tick();
+    assert!(h.state(&f, &t).merged(), "{:?}", h.state(&f, &t));
+    assert_eq!(h.world().merge_attempts, 1);
+    assert!(h.task(&f, &t).merge_sha.is_some());
+
+    let u = h.ready("Dropped", &[]);
+    h.world().merge_unnamed = 1;
+    h.done(&f, &u);
+    for _ in 0..3 {
+        h.engine.tick();
+    }
+    let premerges = h.world().premerge_calls;
+    h.world().merge_dropped = true;
+    h.advance(31_000);
+    h.engine.tick();
+    assert!(
+        h.world().premerge_calls > premerges,
+        "every check runs again"
+    );
+    assert_eq!(h.world().merge_attempts, 3, "merged again only after them");
 }
 
 #[test]

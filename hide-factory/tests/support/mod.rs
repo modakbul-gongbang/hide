@@ -38,6 +38,10 @@ pub struct World {
     pub merge_refusal: Option<Failure>,
     /// This many merges answer before GitHub names the merge commit.
     pub merge_unnamed: u32,
+    /// Reads of whether a merge GitHub answered has landed.
+    pub merged_reads: u32,
+    /// The pull request turns out not to have merged (a queue dropped it).
+    pub merge_dropped: bool,
     pub merge_attempts: u32,
     /// Every push is refused with this failure.
     pub publish_refusal: Option<Failure>,
@@ -297,6 +301,30 @@ impl MergeTarget for Shared {
         world.writes.push(format!("merge {}", task.id));
         world.head = sha.clone();
         Ok(sha)
+    }
+    fn merged_commit(
+        &mut self,
+        _factory: &Factory,
+        task: &Task,
+    ) -> Result<Option<String>, Failure> {
+        let mut world = self.world();
+        world.merged_reads += 1;
+        if world.merge_dropped {
+            world.merge_dropped = false;
+            return Ok(None);
+        }
+        if world.merge_unnamed > 0 {
+            world.merge_unnamed -= 1;
+            return Err(Failure {
+                again_in_ms: Some(hide_factory::engine::MERGE_COMMIT_AGAIN_MS),
+                ..Failure::task("github.merged", "merge commit not named yet")
+            });
+        }
+        world.next_sha += 1;
+        let sha = format!("sha{:04}-{}", world.next_sha, task.id);
+        world.writes.push(format!("merge {}", task.id));
+        world.head = sha.clone();
+        Ok(Some(sha))
     }
     fn main_check(&mut self, _factory: &Factory, sha: &str) -> Result<MainCheck, Failure> {
         if let Some(next) = self

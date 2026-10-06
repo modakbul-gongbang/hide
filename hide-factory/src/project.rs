@@ -818,6 +818,18 @@ impl TaskSource for SharedProjects {
 }
 
 impl MergeTarget for SharedProjects {
+    fn merged_commit(&mut self, factory: &Factory, task: &Task) -> Result<Option<String>, Failure> {
+        if factory.source != SourceKind::Github {
+            return Ok(None);
+        }
+        let Some(pr) = &task.pr else { return Ok(None) };
+        let view = self.lock().pr_view(factory, pr.number)?;
+        if view["state"].as_str() != Some("MERGED") {
+            return Ok(None);
+        }
+        merge_commit("github.merged", &view).map(Some)
+    }
+
     fn main_head(&mut self, factory: &Factory) -> Result<String, Failure> {
         let mut this = self.lock();
         let base = this.base(factory)?;
@@ -1044,8 +1056,13 @@ impl MergeTarget for SharedProjects {
             let args = vec![flag.to_owned(), check.clone()];
             let output = this.runner.run(program, &args, Some(&path))?;
             if !output.ok() {
+                // The project's own check speaks for the machine only when
+                // the disk or memory ran out; any other text is its result.
                 let failure = classify("quick_check", &output);
-                if failure.signal.is_some() {
+                if matches!(
+                    failure.signal,
+                    Some(EnvSignal::DiskFull | EnvSignal::OutOfMemory)
+                ) {
                     return Err(failure);
                 }
                 return Ok(PreMerge::QuickCheckFailed { check });
