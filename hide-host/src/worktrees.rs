@@ -1354,6 +1354,7 @@ fn set_aside(root: &Path, common: &Path, checkout: &Path, force: bool) -> Option
                 "message": error.to_string(),
             })
         );
+        #[cfg(windows)]
         record_holders(checkout, attempt);
         return None;
     }
@@ -1368,7 +1369,8 @@ static HOLDER_SCAN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBoo
 #[cfg(any(windows, test))]
 #[derive(Debug)]
 enum Spawned {
-    Started,
+    /// The work runs on the thread this handle joins.
+    Started(std::thread::JoinHandle<()>),
     /// The slot was taken, so the work did not run.
     Busy,
     Failed(std::io::Error),
@@ -1378,7 +1380,8 @@ enum Spawned {
 /// holds `slot`, which the thread's end frees on every exit, a panic included.
 /// The caller never waits for the work: a call that blocks forever keeps the
 /// slot and costs one thread, and every later call answers [`Spawned::Busy`]
-/// instead of adding another.
+/// instead of adding another. A caller that has no use for the thread drops
+/// the handle, and a test joins it to know the slot is free.
 #[cfg(any(windows, test))]
 fn spawn_exclusive(
     slot: &'static std::sync::atomic::AtomicBool,
@@ -1407,7 +1410,7 @@ fn spawn_exclusive(
             let _frees = frees;
             work();
         }) {
-        Ok(_) => Spawned::Started,
+        Ok(thread) => Spawned::Started(thread),
         Err(error) => Spawned::Failed(error),
     }
 }
@@ -1415,6 +1418,7 @@ fn spawn_exclusive(
 /// One `set_aside_holders` line: the refusal's `checkout` and `attempt`, which
 /// make it read with the `set_aside_refused` line, and what is known of the
 /// holders in `detail`.
+#[cfg(windows)]
 fn holders_line(checkout: &Path, attempt: &Option<String>, detail: serde_json::Value) {
     let mut record = serde_json::json!({
         "component": "worktree_removal",
@@ -1433,50 +1437,40 @@ fn holders_line(checkout: &Path, attempt: &Option<String>, detail: serde_json::V
 /// system's table of open handles, and a handle of some kinds can block the
 /// questions asked of it, so it never runs on the removal's thread: the removal
 /// goes on to Git's own removal at once, and the line is written when the scan
-/// ends. Only Windows has the question.
+/// ends. Only Windows has the question, so no other system writes the line.
+#[cfg(windows)]
 fn record_holders(checkout: &Path, attempt: Option<String>) {
-    #[cfg(windows)]
-    {
-        let folder = checkout.to_path_buf();
-        let (scan_folder, scan_attempt) = (folder.clone(), attempt.clone());
-        let spawned = spawn_exclusive(&HOLDER_SCAN, "set-aside-holders", move || {
-            let started = std::time::Instant::now();
-            let detail = match hide_platform::fs::holders::holders_of(&scan_folder, 256) {
-                Ok(holders) => serde_json::json!({
-                    "self_pid": std::process::id(),
-                    "scan_ms": started.elapsed().as_millis() as u64,
-                    "processes": holders
-                        .iter()
-                        .map(|holder| serde_json::json!({
-                            "pid": holder.pid,
-                            "process": holder.process,
-                            "path": holder.path,
-                            "access": format!("{:#x}", holder.access),
-                        }))
-                        .collect::<Vec<_>>(),
-                }),
-                Err(error) => serde_json::json!({"unavailable": error.to_string()}),
-            };
-            holders_line(&scan_folder, &scan_attempt, detail);
-        });
-        match spawned {
-            Spawned::Started => {}
-            Spawned::Busy => {
-                holders_line(&folder, &attempt, serde_json::json!({"scan_busy": true}))
-            }
-            Spawned::Failed(error) => holders_line(
-                &folder,
-                &attempt,
-                serde_json::json!({"unavailable": error.to_string()}),
-            ),
-        }
+    let folder = checkout.to_path_buf();
+    let (scan_folder, scan_attempt) = (folder.clone(), attempt.clone());
+    let spawned = spawn_exclusive(&HOLDER_SCAN, "set-aside-holders", move || {
+        let started = std::time::Instant::now();
+        let detail = match hide_platform::fs::holders::holders_of(&scan_folder, 256) {
+            Ok(holders) => serde_json::json!({
+                "self_pid": std::process::id(),
+                "scan_ms": started.elapsed().as_millis() as u64,
+                "processes": holders
+                    .iter()
+                    .map(|holder| serde_json::json!({
+                        "pid": holder.pid,
+                        "process": holder.process,
+                        "path": holder.path,
+                        "access": format!("{:#x}", holder.access),
+                    }))
+                    .collect::<Vec<_>>(),
+            }),
+            Err(error) => serde_json::json!({"unavailable": error.to_string()}),
+        };
+        holders_line(&scan_folder, &scan_attempt, detail);
+    });
+    match spawned {
+        Spawned::Started(_) => {}
+        Spawned::Busy => holders_line(&folder, &attempt, serde_json::json!({"scan_busy": true})),
+        Spawned::Failed(error) => holders_line(
+            &folder,
+            &attempt,
+            serde_json::json!({"unavailable": error.to_string()}),
+        ),
     }
-    #[cfg(not(windows))]
-    holders_line(
-        checkout,
-        &attempt,
-        serde_json::json!({"unavailable": "only Windows reports holders"}),
-    );
 }
 
 /// The name of the worktree's administrative folder, from the `gitdir:`
@@ -1976,7 +1970,6 @@ mod holder_scan_tests {
     use super::*;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::sync::mpsc;
-    use std::time::Duration;
 
     /// A scan that never ends costs one thread and no one waits for it: the call
     /// that started it returns at once, a later call is told the slot is taken
@@ -1985,18 +1978,16 @@ mod holder_scan_tests {
     fn a_scan_that_blocks_holds_the_slot_and_nothing_waits_for_it() {
         static SLOT: AtomicBool = AtomicBool::new(false);
         let (release, blocked) = mpsc::channel::<()>();
-        let (ended_tx, ended) = mpsc::channel::<()>();
 
         let first = spawn_exclusive(&SLOT, "test-scan", move || {
             // Blocks until the test lets go, as a handle that never answers would.
             let _ = blocked.recv();
-            let _ = ended_tx.send(());
         });
-        match first {
-            Spawned::Started => {}
+        let thread = match first {
+            Spawned::Started(thread) => thread,
             Spawned::Busy => panic!("the slot was free"),
             Spawned::Failed(error) => panic!("the scan thread did not start: {error}"),
-        }
+        };
         assert!(
             SLOT.load(Ordering::Acquire),
             "the running scan holds the slot"
@@ -2008,48 +1999,26 @@ mod holder_scan_tests {
         assert!(matches!(second, Spawned::Busy));
 
         release.send(()).unwrap();
-        ended
-            .recv_timeout(Duration::from_secs(30))
-            .expect("the scan ends once released");
-        // The thread frees the slot as it ends, a moment after its last line.
-        let freed = (0..3000).any(|_| {
-            let free = !SLOT.load(Ordering::Acquire);
-            if !free {
-                std::thread::yield_now();
-            }
-            free
-        });
-        assert!(freed, "the slot comes back when the scan ends");
+        // The thread frees the slot as it ends, so once it is joined it is free.
+        thread.join().expect("the scan ends once released");
+        assert!(
+            !SLOT.load(Ordering::Acquire),
+            "the slot comes back when the scan ends"
+        );
         assert!(matches!(
             spawn_exclusive(&SLOT, "test-scan", || {}),
-            Spawned::Started
+            Spawned::Started(_)
         ));
     }
 
     #[test]
     fn a_scan_that_panics_still_frees_the_slot() {
         static SLOT: AtomicBool = AtomicBool::new(false);
-        let (ended_tx, ended) = mpsc::channel::<()>();
-        struct Signals(mpsc::Sender<()>);
-        impl Drop for Signals {
-            fn drop(&mut self) {
-                let _ = self.0.send(());
-            }
-        }
-        let signals = Signals(ended_tx);
-        let started = spawn_exclusive(&SLOT, "test-scan", move || {
-            let _signals = signals;
-            panic!("a scan that fails");
-        });
-        assert!(matches!(started, Spawned::Started));
-        ended.recv_timeout(Duration::from_secs(30)).unwrap();
-        let freed = (0..3000).any(|_| {
-            let free = !SLOT.load(Ordering::Acquire);
-            if !free {
-                std::thread::yield_now();
-            }
-            free
-        });
-        assert!(freed, "a panic frees the slot too");
+        let started = spawn_exclusive(&SLOT, "test-scan", || panic!("a scan that fails"));
+        let Spawned::Started(thread) = started else {
+            panic!("the slot was free and the thread should start");
+        };
+        assert!(thread.join().is_err(), "the scan panicked");
+        assert!(!SLOT.load(Ordering::Acquire), "a panic frees the slot too");
     }
 }
