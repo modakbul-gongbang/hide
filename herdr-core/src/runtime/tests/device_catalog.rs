@@ -6,6 +6,7 @@
 //! its folder: every workspace with tabs there is one row (PRD
 //! checkout-workspace-binding B8).
 
+use super::control_order::diagnostic_messages;
 use super::documents::FakeDevice;
 use super::*;
 use crate::device_catalog::{self, DeviceFacts, Fact};
@@ -1871,6 +1872,292 @@ fn a_device_tab_hide_created_stays_in_its_folder_while_its_pane_reports_the_birt
     assert!(!runtime.created_device_tabs.is_empty());
     runtime.forget_device_catalog(TARGET);
     assert!(runtime.created_device_tabs.is_empty());
+}
+
+fn connected_status(target: &str) -> RemoteStatusSnapshot {
+    RemoteStatusSnapshot {
+        target_id: target.to_owned(),
+        state: "connected".to_owned(),
+        message: None,
+        herdr_version: Some("0.9.1".to_owned()),
+        session: None,
+        files: RemoteFileListSnapshot::idle(),
+        catalog: Default::default(),
+    }
+}
+
+/// A runtime with the mini connected, its Herdr not yet reported.
+fn connected_device_runtime() -> Runtime {
+    let mut runtime = runtime();
+    runtime
+        .snapshot
+        .status
+        .remote
+        .push(connected_status(TARGET));
+    runtime
+}
+
+/// `target`'s Herdr as it reports one workspace with the tabs `tabs`, tab
+/// `t1` zoomed or not.
+fn device_report(target: &str, path: &str, tabs: &[&str], zoomed: bool) -> RemoteSessionSnapshot {
+    let tabs = tabs.iter().map(|tab| (*tab, path)).collect::<Vec<_>>();
+    let mut raw = session(vec![herdr_workspace(target, "w1", path, &tabs)]);
+    raw.pane_layouts
+        .push(crate::model::RemotePaneLayoutSnapshot {
+            workspace_id: format!("remote:{target}:workspace:w1"),
+            tab_id: format!("remote:{target}:tab:t1"),
+            focused_pane_id: format!("remote:{target}:pane:t1"),
+            zoomed,
+            frames: Vec::new(),
+        });
+    raw
+}
+
+/// Starts a zoom of the mini's pane `t1` and returns what a caller sees of the
+/// next one: whether it was turned away.
+fn zoom_t1(runtime: &mut Runtime, request_id: &str) -> bool {
+    runtime.snapshot.status.last_error = None;
+    runtime.request_remote_control(RemoteControlPayload {
+        target_id: TARGET.to_owned(),
+        request_id: request_id.to_owned(),
+        report_pane_focus_outcome: false,
+        focus_device: false,
+        request: RemoteControlRequest::TogglePaneZoom {
+            pane_id: format!("remote:{TARGET}:pane:t1"),
+        },
+    });
+    runtime
+        .snapshot
+        .status
+        .last_error
+        .as_ref()
+        .is_some_and(|error| error.kind == "remote.control.in_progress")
+}
+
+fn answer_zoom_t1(runtime: &mut Runtime, request_id: &str) {
+    assert!(runtime.ingest_remote_control_result(
+        TARGET,
+        request_id,
+        RemoteControlAction::Pane(PaneControlAction::ToggleZoom {
+            pane_id: "t1".to_owned(),
+        }),
+        Ok(RemoteControlOutcome::Acknowledged {
+            created_tab_id: None,
+            created_pane_id: None,
+        }),
+        4,
+    ));
+}
+
+fn pending_remote(runtime: &Runtime) -> Vec<(String, String, String)> {
+    let mut pending = runtime
+        .remote_operations
+        .iter()
+        .map(|((target, request), operation)| {
+            (target.clone(), request.clone(), operation.phase.clone())
+        })
+        .collect::<Vec<_>>();
+    pending.sort();
+    pending
+}
+
+/// Starts `request` on the mini as the core would, without a transport, and
+/// returns its key.
+fn start_remote_operation(
+    runtime: &mut Runtime,
+    request_id: &str,
+    request: RemoteControlRequest,
+) -> (String, String) {
+    let raw = runtime.snapshot.status.remote[0]
+        .session
+        .clone()
+        .expect("the device's session");
+    let descriptor = crate::runtime::operations::remote_mutation_descriptor(&raw, &request)
+        .expect("a pane or tab operation");
+    let key = (TARGET.to_owned(), request_id.to_owned());
+    runtime.insert_remote_operation(&key, descriptor, unix_milliseconds(), 0);
+    key
+}
+
+fn close_pane_t2() -> RemoteControlRequest {
+    RemoteControlRequest::ClosePane {
+        pane_id: format!("remote:{TARGET}:pane:t2"),
+        confirmed: true,
+    }
+}
+
+/// A device's session update that shows a pane operation's effect can reach
+/// the runtime before the answer to the request does, because the two come from
+/// different threads. The update finds the operation still transmitting and
+/// skips it, and the device sends nothing more once its layout stops moving,
+/// so the answer has to settle the operation from the session the runtime
+/// already holds; otherwise every later operation in that tab is turned away
+/// as already running.
+#[test]
+fn a_device_pane_operation_whose_session_arrived_before_its_answer_settles_on_the_answer() {
+    let t = tree();
+    let mut runtime = connected_device_runtime();
+    runtime.ingest_remote_session(TARGET, Ok(device_report(TARGET, &t.main, &["t1"], false)));
+    let _requests = recording_device(&mut runtime);
+
+    assert!(!zoom_t1(&mut runtime, "zoom-1"));
+    assert_eq!(runtime.remote_operations.len(), 1);
+
+    // The device's update with the zoomed layout arrives while the request
+    // is still unanswered.
+    runtime.ingest_remote_session(TARGET, Ok(device_report(TARGET, &t.main, &["t1"], true)));
+    assert_eq!(runtime.remote_operations.len(), 1);
+
+    answer_zoom_t1(&mut runtime, "zoom-1");
+    assert!(
+        runtime.remote_operations.is_empty(),
+        "the answer settled the zoom from the session already received"
+    );
+    assert_eq!(
+        diagnostic_messages(&runtime, "remote.control.topology_confirmed"),
+        [
+            "Confirmed pane.zoom for remote:mini:pane:t1 on mini from the session received before it waited"
+        ]
+    );
+
+    // The next operation in the tab is sent, not turned away as running.
+    assert!(!zoom_t1(&mut runtime, "zoom-2"));
+    assert_eq!(
+        pending_remote(&runtime),
+        [(
+            TARGET.to_owned(),
+            "zoom-2".to_owned(),
+            "transmitting".to_owned()
+        )]
+    );
+}
+
+/// The held session counts only for what it shows: one that does not show the
+/// zoom leaves the operation waiting and the tab refusing, until the device
+/// reports the effect itself.
+#[test]
+fn a_held_device_session_that_does_not_show_the_effect_leaves_the_operation_waiting() {
+    let t = tree();
+    let mut runtime = connected_device_runtime();
+    runtime.ingest_remote_session(TARGET, Ok(device_report(TARGET, &t.main, &["t1"], false)));
+    let _requests = recording_device(&mut runtime);
+
+    assert!(!zoom_t1(&mut runtime, "zoom-1"));
+    answer_zoom_t1(&mut runtime, "zoom-1");
+    assert_eq!(pending_remote(&runtime)[0].2, "awaiting_topology");
+    assert!(zoom_t1(&mut runtime, "zoom-2"), "the tab still refuses");
+
+    runtime.ingest_remote_session(TARGET, Ok(device_report(TARGET, &t.main, &["t1"], true)));
+    assert!(runtime.remote_operations.is_empty());
+    assert_eq!(
+        diagnostic_messages(&runtime, "remote.control.topology_confirmed"),
+        ["Confirmed pane.zoom for remote:mini:pane:t1 on mini from fresh topology"]
+    );
+}
+
+/// A close is confirmed by the pane's absence, which the same function reads
+/// from the held session on the answer: tab t2 went away before the answer.
+#[test]
+fn a_device_close_whose_session_arrived_before_its_answer_settles_on_the_answer() {
+    let t = tree();
+    let mut runtime = connected_device_runtime();
+    runtime.ingest_remote_session(
+        TARGET,
+        Ok(device_report(TARGET, &t.main, &["t1", "t2"], false)),
+    );
+    let key = start_remote_operation(&mut runtime, "close-1", close_pane_t2());
+
+    runtime.ingest_remote_session(TARGET, Ok(device_report(TARGET, &t.main, &["t1"], false)));
+    assert_eq!(runtime.remote_operations.len(), 1, "still transmitting");
+
+    assert!(runtime.acknowledge_remote_operation(TARGET, "close-1", None));
+    assert!(!runtime.remote_operations.contains_key(&key));
+}
+
+/// A device's update says what its own Herdr has. Another device's pane being
+/// absent from it proves nothing about that device's close.
+#[test]
+fn one_devices_update_does_not_settle_another_devices_operation() {
+    let t = tree();
+    let mut runtime = connected_device_runtime();
+    runtime.snapshot.status.remote.push(connected_status("lab"));
+    runtime.ingest_remote_session(
+        TARGET,
+        Ok(device_report(TARGET, &t.main, &["t1", "t2"], false)),
+    );
+    let key = start_remote_operation(&mut runtime, "close-1", close_pane_t2());
+    assert!(runtime.acknowledge_remote_operation(TARGET, "close-1", None));
+    assert_eq!(pending_remote(&runtime)[0].2, "awaiting_topology");
+
+    // "lab" reports, and has no pane t2 at all.
+    runtime.ingest_remote_session("lab", Ok(device_report("lab", &t.other, &["t1"], false)));
+    assert!(
+        runtime.remote_operations.contains_key(&key),
+        "lab's report did not close the mini's pane"
+    );
+
+    runtime.ingest_remote_session(TARGET, Ok(device_report(TARGET, &t.main, &["t1"], false)));
+    assert!(runtime.remote_operations.is_empty());
+}
+
+/// An operation that became unknown, by an ambiguous answer or by its
+/// deadline, waits for a session the device may never send; the one already
+/// held settles it when it shows the effect.
+#[test]
+fn an_unknown_device_operation_settles_from_the_session_already_held() {
+    let t = tree();
+    let mut runtime = connected_device_runtime();
+    runtime.ingest_remote_session(
+        TARGET,
+        Ok(device_report(TARGET, &t.main, &["t1", "t2"], false)),
+    );
+    let ambiguous = start_remote_operation(&mut runtime, "close-1", close_pane_t2());
+    runtime.ingest_remote_session(TARGET, Ok(device_report(TARGET, &t.main, &["t1"], false)));
+    assert!(runtime.mark_remote_operation_unknown(&ambiguous, "answer lost".to_owned()));
+    assert!(runtime.remote_operations.is_empty(), "the answer path");
+
+    // The same operation on a fresh device that reports nothing more: it
+    // reaches its deadline and expires.
+    let mut runtime = connected_device_runtime();
+    runtime.ingest_remote_session(
+        TARGET,
+        Ok(device_report(TARGET, &t.main, &["t1", "t2"], false)),
+    );
+    let expiring = start_remote_operation(&mut runtime, "close-2", close_pane_t2());
+    runtime.ingest_remote_session(TARGET, Ok(device_report(TARGET, &t.main, &["t1"], false)));
+    assert_eq!(runtime.remote_operations.len(), 1);
+    assert!(runtime.expire_remote_operations(u64::MAX));
+    assert!(
+        !runtime.remote_operations.contains_key(&expiring),
+        "the expiry path"
+    );
+}
+
+/// A session kept across a disconnected interval belongs to the connection
+/// before it. An operation sent on the connection after it does not read the
+/// effect from that session, only from a report the new connection makes.
+#[test]
+fn a_session_held_from_before_a_reconnect_does_not_settle_a_later_operation() {
+    let t = tree();
+    let mut runtime = connected_device_runtime();
+    runtime.ingest_remote_session(
+        TARGET,
+        Ok(device_report(TARGET, &t.main, &["t1", "t2"], false)),
+    );
+    let key = start_remote_operation(&mut runtime, "close-1", close_pane_t2());
+    runtime.ingest_remote_session(TARGET, Ok(device_report(TARGET, &t.main, &["t1"], false)));
+
+    // The connection is replaced while the operation, sent on the first, is
+    // still waiting; the held session stays as it was.
+    *runtime
+        .remote_connection_generations
+        .entry(TARGET.to_owned())
+        .or_insert(0) += 1;
+    assert!(runtime.acknowledge_remote_operation(TARGET, "close-1", None));
+    assert!(
+        runtime.remote_operations.contains_key(&key),
+        "the answer did not read the earlier connection's session"
+    );
 }
 
 /// A connected device whose helper has answered for the tree's folders.

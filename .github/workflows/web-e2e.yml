@@ -40,15 +40,6 @@ on:
         type: string
         required: false
         default: ""
-      remote-mailbox:
-        description: >-
-          Also run the remote mailbox crate-boundary lane
-          (`herdr-core/tests/remote_delivery.rs`) on this runner after the
-          suite; single shard only. It needs every CLI binary, so the build
-          becomes `verify-cargo.sh cli`.
-        type: boolean
-        required: false
-        default: false
 
 # `issues: write` is for filing a flaky test; a caller must grant it.
 permissions:
@@ -179,20 +170,12 @@ jobs:
         if: ${{ inputs.shards == 1 }}
         with:
           workspaces: ". -> target"
-          # The mailbox lane builds 48 dependencies the hided build does not.
-          # The cache saves only under a new key, so a key shared with the
-          # mailbox-less lanes (nightly macOS, and this lane before it ran the
-          # mailbox) kept a cache without them and every run compiled them.
-          shared-key: ${{ inputs.remote-mailbox && 'web-e2e-mailbox' || 'web-e2e' }}
+          shared-key: web-e2e
           save-if: ${{ github.ref == 'refs/heads/main' }}
       - name: Build hided for Playwright
         if: ${{ inputs.shards == 1 }}
         timeout-minutes: 20
-        env:
-          # `cli` builds hided and hide as `build -p hided` does, with the
-          # agent hooks and the host helper the mailbox lane also starts.
-          MODE: ${{ inputs.remote-mailbox && 'cli' || 'build -p hided -p hide-agent-hooks' }}
-        run: bash scripts/verify-cargo.sh $MODE
+        run: bash scripts/verify-cargo.sh build -p hided -p hide-agent-hooks
       - name: Fetch hided from the build job
         if: ${{ inputs.shards > 1 }}
         uses: actions/download-artifact@v8
@@ -270,26 +253,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/ci-flaky-report.py --suite web --playwright web/e2e-report.json
-      - name: Install cargo-nextest
-        if: ${{ inputs.remote-mailbox && !cancelled() }}
-        timeout-minutes: 3
-        run: bash scripts/install-nextest.sh
-      - name: Remote mailbox over private SSH
-        # The candidate CLI binaries, two private pinned Herdr servers and a
-        # loopback SSH server (docs/TESTING.md); it stands on its own, so it
-        # runs whatever the suite above answered.
-        if: ${{ inputs.remote-mailbox && !cancelled() && steps.herdr.outcome == 'success' }}
-        timeout-minutes: 10
-        env:
-          HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
-        run: bash scripts/verify-cargo.sh nextest --profile ci -p herdr-core --test remote_delivery --run-ignored only
-      - name: Report flaky Rust tests
-        if: ${{ inputs.remote-mailbox && !cancelled() }}
-        continue-on-error: true
-        timeout-minutes: 5
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/ci-flaky-report.py --suite rust --junit target/nextest/ci/junit*.xml
       - name: Keep the e2e run's logs
         # The daemon, Herdr server and PTY input logs behind a failed flow
         # (with the screenshots the specs take, under the same directory),

@@ -60,6 +60,26 @@ class Selection(unittest.TestCase):
         lanes = set(plan("web/e2e/new-tab.spec.ts")["lanes"])
         self.assertEqual(lanes, {"policy", "web-checks", "web-e2e"})
 
+    def test_the_remote_mailbox_lane_follows_the_crates_it_builds_and_tests(self):
+        for path in (
+            "herdr-core/src/lib.rs", "herdr-core/tests/remote_delivery.rs", "hided/src/main.rs",
+            "hide-host/src/lib.rs", "hide-agent-hooks/src/lib.rs", "hide-platform/src/process.rs",
+            "hide-session/src/lib.rs", "hide-ai/src/lib.rs",
+        ):
+            with self.subTest(path=path):
+                self.assertIn("remote-mailbox", plan(path)["lanes"])
+        # Web and desktop files and documentation cannot
+        # change it.
+        for path in (
+            "web/e2e/s3.spec.ts", "web/e2e/new-tab.spec.ts", "web/src/host.ts", "web/src/Overview.tsx",
+            "web/playwright.config.ts", "desktop/src/main/wirePath.ts", "desktop/src/preload/index.ts",
+            "docs/TESTING.md",
+        ):
+            with self.subTest(path=path):
+                self.assertNotIn("remote-mailbox", plan(path)["lanes"])
+        # A change no rule claims plans every lane, this one included.
+        self.assertIn("remote-mailbox", plan("scripts/verify-cargo.sh")["lanes"])
+
     def test_desktop_changes_run_the_desktop_lanes(self):
         result = plan("desktop/src/preload/index.ts")
         self.assertEqual(set(result["lanes"]), {"policy", "desktop-checks", "desktop-e2e"})
@@ -67,7 +87,7 @@ class Selection(unittest.TestCase):
 
     def test_a_platform_crate_reaches_every_os_and_its_consumers(self):
         result = plan("hide-platform/src/process.rs")
-        self.assertTrue({"rust", "os-contract", "windows-check", "windows-e2e", "desktop-e2e", "web-e2e"} <= set(result["lanes"]))
+        self.assertTrue({"rust", "os-contract", "windows-check", "windows-e2e", "desktop-e2e", "web-e2e", "remote-mailbox"} <= set(result["lanes"]))
         # hide-project depends on nothing in the workspace, so it is the one
         # crate a platform change does not reach.
         self.assertEqual(result["rust_packages"], [name for name in EVERY_PACKAGE if name != "hide-project"])

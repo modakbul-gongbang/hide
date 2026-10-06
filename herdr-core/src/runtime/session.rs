@@ -1940,7 +1940,7 @@ impl Runtime {
         }
         changed |= self.expire_remote_operations(unix_milliseconds());
         if let Some(session) = observed_session.as_ref() {
-            changed |= self.observe_remote_operations(session);
+            changed |= self.observe_remote_operations(target_id, session);
         }
         if session_ok {
             changed |= self.request_device_facts(target_id);

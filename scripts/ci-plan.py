@@ -31,6 +31,7 @@ LANES = (
     "windows-e2e",
     "web-e2e",
     "web-e2e-platform",
+    "remote-mailbox",
     "desktop-e2e",
 )
 
@@ -46,9 +47,11 @@ OS_CRATES = {
     "hide-kit",
     "hide-platform",
 }
-# `web-e2e-platform` also runs the remote mailbox lane over private SSH, which
-# builds the CLI from these crates; a rule that plans it for fewer of them
-# leaves that lane out too.
+# The remote mailbox lane builds `hided`, `hide`, the host helper and the hook
+# binary, and runs `herdr-core`'s `remote_delivery` test against them over
+# private SSH; a change to any crate they link, or to the test, can change its
+# result, and nothing else can.
+MAILBOX_CRATES = {"herdr-core", "hided", "hide-agent-hooks", "hide-host"}
 OS_LANES = ("os-contract", "windows-check", "windows-e2e", "web-e2e-platform", "desktop-e2e")
 
 # Web files the desktop host imports or drives through native input: the host
@@ -232,6 +235,8 @@ def classify(path, status, crates, root):
             lanes.add("web-e2e")
         if crate["name"] in OS_CRATES:
             lanes.update(OS_LANES)
+        if packages & MAILBOX_CRATES:
+            lanes.add("remote-mailbox")
         return lanes, f"crate {crate['name']}: {path}", packages
     if parts[0] == "web" and len(parts) > 1:
         if parts[1] == "e2e" and len(parts) == 3 and path.name.endswith(".spec.ts"):
