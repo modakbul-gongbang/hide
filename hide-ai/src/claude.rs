@@ -24,17 +24,14 @@
 //! reads Claude Code, so Hide itself never touches the keychain; see
 //! [`ClaudeCliBackend::usage_text`].
 
-use std::io::{Read, Write};
-use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::sync::mpsc::{self, TryRecvError};
+use std::path::PathBuf;
+use std::sync::Mutex;
 use std::time::{Duration, Instant};
-
-use hide_platform::process::OwnedChild;
 
 use serde_json::Value;
 
 use crate::codex::resolve_binary;
+use crate::runner::{self, Environment, Run, Spec};
 use crate::{
     AiBackend, AiError, AiRequest, AiResponse, AiUsage, Availability, CancelToken, ModelCatalog,
     ProviderId,
@@ -59,17 +56,13 @@ pub const DEFAULT_MODEL: &str = "sonnet";
 /// bring the latency back.
 pub const THINKING_OFF: (&str, &str) = ("MAX_THINKING_TOKENS", "0");
 
-/// The aliases `--model` accepts, cheapest first.
-///
-/// This is the one model list in the crate that a provider is not asked for,
-/// because Claude Code has no command that answers the question: `--help`
-/// documents `--model` with three of the four aliases as examples and there is
-/// no list subcommand. Parsing that sentence would be a worse contract than
-/// naming the aliases here, so the gap is recorded in `AI_PROVIDERS.md`
-/// instead, and an account that cannot use the chosen alias still discovers it
-/// as a request failure. It stays inside the provider boundary: no list of
-/// Claude models exists in the core or the shell.
-pub const MODEL_ALIASES: &[&str] = &["haiku", "sonnet", "opus", "fable"];
+/// How long the account's model list is kept before the CLI is asked again.
+/// Settings reads the list while the Hide AI tab is on screen, and a model list
+/// is not worth a child process every few seconds.
+const MODELS_TTL: Duration = Duration::from_secs(600);
+/// The `initialize` request answers from the CLI's own state without a model
+/// turn; the bound covers a cold Node start on a loaded machine.
+const MODELS_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// The availability probe is a local process that reads a token file; it has
 /// no reason to take longer than this, and the router must not stall on it.
@@ -90,10 +83,6 @@ const USAGE_TIMEOUT: Duration = Duration::from_secs(30);
 /// without `HERDR_ENV` the operator's Herdr and hide hooks exit early, and
 /// without `CLAUDECODE` the CLI does not think it is nested.
 pub const USAGE_ENVIRONMENT: &[&str] = hide_platform::process::LOGIN_CHILD_VARIABLES;
-/// How long a child that has closed stdout is given to exit before it is
-/// killed. Its answer is already in hand at that point.
-const EXIT_GRACE: Duration = Duration::from_secs(5);
-const POLL: Duration = Duration::from_millis(50);
 
 #[derive(Clone, Debug)]
 pub struct ClaudeConfig {
@@ -133,39 +122,19 @@ pub enum UsageError {
     NoResultFrame,
 }
 
-/// What a child inherits from this process.
-#[derive(Clone, Copy)]
-enum ChildEnvironment {
-    /// The process environment as is; the login probe needs whatever the
-    /// operator's shell gave the app.
-    Inherit,
-    /// The process environment with [`THINKING_OFF`] set: a model turn needs
-    /// the same login and `PATH`, and never a thinking budget.
-    ModelTurn,
-    /// Exactly [`USAGE_ENVIRONMENT`], each copied from this process when set.
-    Usage,
-}
-
-impl ChildEnvironment {
-    fn apply(self, command: &mut Command) {
-        match self {
-            Self::Inherit => {}
-            Self::ModelTurn => {
-                command.env(THINKING_OFF.0, THINKING_OFF.1);
-            }
-            Self::Usage => hide_platform::process::restrict_to_login_environment(command),
-        }
-    }
-}
-
 /// Drives the installed Claude Code CLI in print mode, one child per request.
 pub struct ClaudeCliBackend {
     config: ClaudeConfig,
+    /// The account's model list and when it was read.
+    models: Mutex<Option<(Instant, Vec<String>)>>,
 }
 
 impl ClaudeCliBackend {
     pub fn new(config: ClaudeConfig) -> Self {
-        Self { config }
+        Self {
+            config,
+            models: Mutex::new(None),
+        }
     }
 
     /// The exact argument vector one request is started with. The prompt body
@@ -225,18 +194,21 @@ impl ClaudeCliBackend {
     /// text, not a class this function can name.
     pub fn usage_text(&self, cancel: &CancelToken) -> Result<String, UsageError> {
         let binary = self.resolved_binary().ok_or(UsageError::NotInstalled)?;
-        let run = run(
-            &binary,
-            &Self::usage_arguments(),
-            &self.config.cwd,
-            None,
-            ChildEnvironment::Usage,
-            USAGE_TIMEOUT,
+        let run = runner::run(
+            &Spec {
+                binary: &binary,
+                args: &Self::usage_arguments(),
+                cwd: &self.config.cwd,
+                stdin: None,
+                environment: Environment::Login,
+                set: &[],
+                deadline: USAGE_TIMEOUT,
+            },
             cancel,
         )
         .map_err(|error| match error {
-            RunError::Deadline => UsageError::Timeout,
-            RunError::Cancelled => UsageError::Cancelled,
+            runner::RunError::Deadline => UsageError::Timeout,
+            runner::RunError::Cancelled => UsageError::Cancelled,
             other => UsageError::Failed(other.diagnostic("usage")),
         })?;
         // A non-zero exit is the child failing, whatever it printed on the
@@ -261,11 +233,84 @@ impl ClaudeCliBackend {
     fn resolved_binary(&self) -> Option<PathBuf> {
         resolve_binary(&self.config.binary)
     }
+
+    /// The argument vector the account's model list is asked with: the
+    /// stream-json control protocol with only an `initialize` request, so no
+    /// model turn runs and nothing is persisted.
+    pub fn models_arguments() -> Vec<String> {
+        [
+            "-p",
+            "--input-format",
+            "stream-json",
+            "--output-format",
+            "stream-json",
+            "--verbose",
+            "--no-session-persistence",
+            "--tools",
+            "",
+            "--setting-sources",
+            "",
+            "--strict-mcp-config",
+            "--disable-slash-commands",
+        ]
+        .map(str::to_owned)
+        .to_vec()
+    }
+
+    /// The one line written to the child's stdin for [`Self::models_arguments`].
+    const INITIALIZE_REQUEST: &'static str = r#"{"type":"control_request","request_id":"hide-models","request":{"subtype":"initialize"}}"#;
+
+    /// Asks the CLI which models the logged-in account can use.
+    ///
+    /// The `initialize` answer also carries the account (an email, an
+    /// organization, the plan): only the model names are read from it, and
+    /// neither the answer nor any part of it is logged or returned.
+    fn read_models(&self, binary: &std::path::Path) -> Result<Vec<String>, String> {
+        let mut input = Self::INITIALIZE_REQUEST.to_owned();
+        input.push('\n');
+        let run = runner::run(
+            &Spec {
+                binary,
+                args: &Self::models_arguments(),
+                cwd: &self.config.cwd,
+                stdin: Some(&input),
+                environment: Environment::Inherit,
+                set: &[],
+                deadline: MODELS_TIMEOUT,
+            },
+            &CancelToken::new(),
+        )
+        .map_err(|error| error.diagnostic("claude_models"))?;
+        parse_models(&run.stdout)
+            .ok_or_else(|| format!("claude_models_unreadable:exit={}", run.exit()))
+    }
+}
+
+/// The model names in the `initialize` control response, in the order the CLI
+/// lists them, without `default`: that is the CLI choosing for the account,
+/// which the shell offers as "CLI default" (no `--model`) instead.
+fn parse_models(stdout: &str) -> Option<Vec<String>> {
+    let frame = stdout.lines().find_map(|line| {
+        let frame = serde_json::from_str::<Value>(line.trim()).ok()?;
+        (frame.get("type").and_then(Value::as_str) == Some("control_response")).then_some(frame)
+    })?;
+    let response = frame.get("response")?;
+    if response.get("subtype").and_then(Value::as_str) != Some("success") {
+        return None;
+    }
+    let models = response.get("response")?.get("models")?.as_array()?;
+    let names: Vec<String> = models
+        .iter()
+        .filter_map(|model| model.get("value").and_then(Value::as_str))
+        .filter(|name| *name != "default")
+        .map(str::to_owned)
+        .collect();
+    (!names.is_empty()).then_some(names)
 }
 
 impl AiBackend for ClaudeCliBackend {
     fn id(&self) -> ProviderId {
-        ProviderId::Claude
+        ProviderId::CLAUDE
     }
 
     /// `claude auth status --json` is the contract for the login state. The
@@ -274,13 +319,16 @@ impl AiBackend for ClaudeCliBackend {
         let Some(binary) = self.resolved_binary() else {
             return Availability::NotInstalled;
         };
-        let run = match run(
-            &binary,
-            &Self::auth_arguments(),
-            &self.config.cwd,
-            None,
-            ChildEnvironment::Inherit,
-            AUTH_TIMEOUT,
+        let run = match runner::run(
+            &Spec {
+                binary: &binary,
+                args: &Self::auth_arguments(),
+                cwd: &self.config.cwd,
+                stdin: None,
+                environment: Environment::Inherit,
+                set: &[],
+                deadline: AUTH_TIMEOUT,
+            },
             &CancelToken::new(),
         ) {
             Ok(run) => run,
@@ -309,212 +357,55 @@ impl AiBackend for ClaudeCliBackend {
         }
     }
 
-    /// The documented aliases, which is all the CLI offers; see
-    /// [`MODEL_ALIASES`]. A CLI that is not installed answers nothing, the
-    /// same as its availability does.
+    /// The models the logged-in account can use, asked of the CLI itself (the
+    /// `initialize` control request) and kept for ten minutes. A CLI that is
+    /// not installed or does not answer reports why instead of a list the
+    /// account may not be able to use (B36).
     fn models(&self) -> ModelCatalog {
-        if self.resolved_binary().is_none() {
+        let Some(binary) = self.resolved_binary() else {
             return ModelCatalog::Unknown {
                 reason: "claude_not_installed".to_owned(),
             };
+        };
+        let mut cached = self.models.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some((read_at, models)) = cached.as_ref()
+            && read_at.elapsed() < MODELS_TTL
+        {
+            return ModelCatalog::Offered(models.clone());
         }
-        ModelCatalog::Offered(
-            MODEL_ALIASES
-                .iter()
-                .map(|alias| (*alias).to_owned())
-                .collect(),
-        )
+        match self.read_models(&binary) {
+            Ok(models) => {
+                *cached = Some((Instant::now(), models.clone()));
+                ModelCatalog::Offered(models)
+            }
+            Err(reason) => ModelCatalog::Unknown { reason },
+        }
     }
 
     fn execute(&self, request: &AiRequest, cancel: &CancelToken) -> Result<AiResponse, AiError> {
         let binary = self
             .resolved_binary()
             .ok_or_else(|| AiError::ProviderUnavailable("claude_not_installed".to_owned()))?;
-        let run = run(
-            &binary,
-            &Self::print_arguments(&self.config.model, &request.system, &request.output_schema),
-            &self.config.cwd,
-            Some(&request.input),
-            ChildEnvironment::ModelTurn,
-            request.deadline,
+        let run = runner::run(
+            &Spec {
+                binary: &binary,
+                args: &Self::print_arguments(
+                    &self.config.model,
+                    &request.system,
+                    &request.output_schema,
+                ),
+                cwd: &self.config.cwd,
+                stdin: Some(&request.input),
+                environment: Environment::Inherit,
+                // Print mode thinks by default; see `THINKING_OFF`.
+                set: &[(THINKING_OFF.0, THINKING_OFF.1.to_owned())],
+                deadline: request.deadline,
+            },
             cancel,
         )
-        .map_err(|error| error.before_submission())?;
+        .map_err(|error| error.into_error("claude"))?;
         answer(&run)
     }
-}
-
-/// One finished child: whatever it wrote to stdout, and how it ended.
-struct Run {
-    code: Option<i32>,
-    stdout: String,
-}
-
-impl Run {
-    /// The exit status as a diagnostic token; `signal` when a signal ended it.
-    fn exit(&self) -> String {
-        self.code
-            .map_or_else(|| "signal".to_owned(), |code| code.to_string())
-    }
-
-    fn succeeded(&self) -> bool {
-        self.code == Some(0)
-    }
-}
-
-/// Why a child produced no output. Every variant here happened before the
-/// prompt reached the model: the child is killed before its stdin closes, so
-/// an EOF can never submit a partial prompt.
-enum RunError {
-    Spawn(std::io::ErrorKind),
-    NoPipe(&'static str),
-    Write(std::io::ErrorKind),
-    Deadline,
-    Cancelled,
-}
-
-impl RunError {
-    fn diagnostic(&self, stage: &str) -> String {
-        match self {
-            Self::Spawn(kind) => format!("{stage}_spawn_failed:{kind}"),
-            Self::NoPipe(pipe) => format!("{stage}_no_{pipe}"),
-            Self::Write(kind) => format!("{stage}_stdin_write_failed:{kind}"),
-            Self::Deadline => format!("{stage}_deadline"),
-            Self::Cancelled => format!("{stage}_cancelled"),
-        }
-    }
-
-    /// The classification for a request the model never saw.
-    fn before_submission(self) -> AiError {
-        match self {
-            Self::Deadline => AiError::Timeout,
-            Self::Cancelled => AiError::Cancelled,
-            other => AiError::ProviderUnavailable(other.diagnostic("claude")),
-        }
-    }
-}
-
-/// Runs one child to completion under a deadline, collecting its stdout.
-///
-/// stdout is drained by its own thread, so a child that writes more than a
-/// pipe buffer cannot deadlock against the waiter, and its answer is in hand
-/// before the exit status is read.
-#[allow(clippy::disallowed_methods)] // a production wait, not test code
-fn run(
-    binary: &Path,
-    args: &[String],
-    cwd: &Path,
-    stdin_text: Option<&str>,
-    environment: ChildEnvironment,
-    deadline: Duration,
-    cancel: &CancelToken,
-) -> Result<Run, RunError> {
-    let mut command = Command::new(binary);
-    environment.apply(&mut command);
-    command
-        .args(args)
-        .current_dir(cwd)
-        .stdin(if stdin_text.is_some() {
-            Stdio::piped()
-        } else {
-            Stdio::null()
-        })
-        .stdout(Stdio::piped())
-        .stderr(Stdio::null());
-    // Every child in the crate is started through the one spawn helper, and
-    // ending it ends whatever it started.
-    let mut child =
-        OwnedChild::spawn(&mut command).map_err(|error| RunError::Spawn(error.kind()))?;
-
-    let Some(mut stdout) = child.take_stdout() else {
-        kill(&mut child);
-        return Err(RunError::NoPipe("stdout"));
-    };
-    let (sender, incoming) = mpsc::channel();
-    std::thread::spawn(move || {
-        let mut text = String::new();
-        let _ = stdout.read_to_string(&mut text);
-        let _ = sender.send(text);
-    });
-
-    if let Some(text) = stdin_text {
-        let Some(mut stdin) = child.take_stdin() else {
-            kill(&mut child);
-            return Err(RunError::NoPipe("stdin"));
-        };
-        if let Err(error) = stdin
-            .write_all(text.as_bytes())
-            .and_then(|()| stdin.flush())
-        {
-            // Kill before the pipe drops: closing a half-written stdin is an
-            // EOF, and print mode submits whatever it read at EOF.
-            let kind = error.kind();
-            kill(&mut child);
-            drop(stdin);
-            return Err(RunError::Write(kind));
-        }
-        // The prompt is complete; EOF is what starts the turn.
-        drop(stdin);
-    }
-
-    let until = Instant::now() + deadline;
-    loop {
-        match incoming.try_recv() {
-            Ok(stdout) => {
-                return Ok(Run {
-                    code: wait_briefly(&mut child),
-                    stdout,
-                });
-            }
-            // The reader thread always sends exactly once, so a closed
-            // channel means it panicked; treat that as no output rather than
-            // waiting for a send that will never come.
-            Err(TryRecvError::Disconnected) => {
-                return Ok(Run {
-                    code: wait_briefly(&mut child),
-                    stdout: String::new(),
-                });
-            }
-            Err(TryRecvError::Empty) => {}
-        }
-        if cancel.is_cancelled() {
-            kill(&mut child);
-            return Err(RunError::Cancelled);
-        }
-        let now = Instant::now();
-        if now >= until {
-            kill(&mut child);
-            return Err(RunError::Deadline);
-        }
-        std::thread::sleep(POLL.min(until - now));
-    }
-}
-
-/// The exit status of a child that has already closed stdout, or `None` when
-/// it had to be killed to stop waiting for it.
-#[allow(clippy::disallowed_methods)] // a production wait, not test code
-fn wait_briefly(child: &mut OwnedChild) -> Option<i32> {
-    let until = Instant::now() + EXIT_GRACE;
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => return status.code(),
-            Ok(None) => {}
-            Err(_) => return None,
-        }
-        let now = Instant::now();
-        if now >= until {
-            kill(child);
-            return None;
-        }
-        std::thread::sleep(POLL.min(until - now));
-    }
-}
-
-fn kill(child: &mut OwnedChild) {
-    // A print-mode child holds no state worth draining, so killing it and
-    // what it started is always safe.
-    let _ = child.kill_tree();
-    let _ = child.wait();
 }
 
 /// Turns one finished child into the answer or the failure it reported.
@@ -676,6 +567,7 @@ mod tests {
         Run {
             code: Some(code),
             stdout: frame.to_string(),
+            stderr: String::new(),
         }
     }
 
@@ -708,6 +600,7 @@ mod tests {
             let run = Run {
                 code: Some(1),
                 stdout: stdout.to_owned(),
+                stderr: String::new(),
             };
             match answer(&run) {
                 Err(AiError::CompletionUnknown(reason)) => {
@@ -805,5 +698,41 @@ mod tests {
             backend.execute(&request, &CancelToken::new()).unwrap_err(),
             AiError::ProviderUnavailable("claude_not_installed".to_owned())
         );
+    }
+
+    #[test]
+    fn the_models_are_the_values_of_the_initialize_answer_without_the_account() {
+        let answer = json!({
+            "type": "control_response",
+            "response": {
+                "subtype": "success",
+                "request_id": "hide-models",
+                "response": {
+                    "models": [
+                        {"value": "default", "displayName": "Default (recommended)"},
+                        {"value": "opus", "resolvedModel": "claude-opus-5-5"},
+                        {"value": "sonnet"}
+                    ],
+                    "account": {"email": "someone@example.invalid"}
+                }
+            }
+        });
+        let stdout = format!("{}\n", answer);
+        let models = parse_models(&stdout).unwrap();
+        assert_eq!(models, ["opus", "sonnet"]);
+        assert!(!models.iter().any(|model| model.contains("example")));
+    }
+
+    #[test]
+    fn an_answer_without_models_is_not_a_list() {
+        for stdout in [
+            "",
+            "not json",
+            r#"{"type":"system","subtype":"init"}"#,
+            r#"{"type":"control_response","response":{"subtype":"error","error":"x"}}"#,
+            r#"{"type":"control_response","response":{"subtype":"success","response":{"models":[]}}}"#,
+        ] {
+            assert_eq!(parse_models(stdout), None, "{stdout}");
+        }
     }
 }

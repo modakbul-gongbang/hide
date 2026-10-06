@@ -350,7 +350,13 @@ impl CodexAppServerBackend {
 
 impl AiBackend for CodexAppServerBackend {
     fn id(&self) -> ProviderId {
-        ProviderId::Codex
+        ProviderId::CODEX
+    }
+
+    /// The app-server is resident, so its descendants and size are measured
+    /// after each turn and held to the router's caps.
+    fn measurable(&self) -> bool {
+        true
     }
 
     fn availability(&self) -> Availability {
@@ -535,7 +541,7 @@ fn spawn_idle_reaper(
                     // hold requests.
                     drop(active);
                     let mut event = AiLogEvent::new("ai.app_server.idle_exit");
-                    event.provider = Some(ProviderId::Codex);
+                    event.provider = Some(ProviderId::CODEX);
                     event.app_server_pid = Some(pid);
                     event.detail = Some(format!("idle_s={}", IDLE_TIMEOUT.as_secs()));
                     sink.log(event);

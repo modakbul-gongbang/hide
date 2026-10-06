@@ -8,18 +8,31 @@
 mod claude;
 mod codex;
 mod codex_home;
+mod gemini;
+mod grok;
 mod log;
+mod pi;
 mod process;
+mod registry;
 mod router;
+mod runner;
 mod schema;
 pub mod settings;
+mod text_cli;
+mod unproven;
 
 pub use claude::{ClaudeCliBackend, ClaudeConfig, USAGE_ENVIRONMENT, UsageError};
 pub use codex::{CodexAppServerBackend, CodexConfig, resolve_binary};
+pub use gemini::GeminiCliBackend;
+pub use grok::GrokCliBackend;
 pub use log::{AiLogEvent, AiLogSink, NoopLogSink};
+pub use pi::PiCliBackend;
 pub use process::ProcessMeasurement;
-pub use router::{AiRouter, Degraded, ProviderState, RouterConfig};
-pub use settings::{AiSettings, PROVIDERS};
+pub use registry::{CLI_DEFAULT_MODEL, PROVIDERS, ProviderDescriptor, ProviderId, build_backend};
+pub use router::{AiRouter, Degraded, ProviderState, ProviderStatus, RouterConfig};
+pub use settings::{AiSettings, FallbackEntry, FallbackRefusal};
+pub use text_cli::TextCliConfig;
+pub use unproven::UnprovenReadOnlyBackend;
 
 use std::fmt;
 use std::sync::Arc;
@@ -29,46 +42,6 @@ use std::time::Duration;
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
-/// Stable provider name; also the log field value.
-#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize)]
-#[serde(rename_all = "snake_case")]
-pub enum ProviderId {
-    Codex,
-    Claude,
-}
-
-impl ProviderId {
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Codex => "codex",
-            Self::Claude => "claude",
-        }
-    }
-
-    /// The provider's name as a person reads it. The shell renders this
-    /// rather than capitalising `as_str` itself.
-    pub fn label(self) -> &'static str {
-        match self {
-            Self::Codex => "Codex",
-            Self::Claude => "Claude Code",
-        }
-    }
-
-    pub fn from_id(id: &str) -> Option<Self> {
-        match id {
-            "codex" => Some(Self::Codex),
-            "claude" => Some(Self::Claude),
-            _ => None,
-        }
-    }
-}
-
-impl fmt::Display for ProviderId {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        f.write_str(self.as_str())
-    }
-}
-
 /// What models a provider offers, or why that is not known.
 ///
 /// A provider that cannot be asked reports the reason rather than an empty
@@ -76,21 +49,32 @@ impl fmt::Display for ProviderId {
 /// menu and only one of them is a real answer.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum ModelCatalog {
+    /// The list the provider's own CLI or account answered.
     Offered(Vec<String>),
-    Unknown { reason: String },
+    /// A list the CLI documents but cannot be asked for (Gemini CLI's
+    /// aliases). The shell says so beside the menu instead of presenting it
+    /// as the account's own list (B36).
+    Fixed(Vec<String>),
+    Unknown {
+        reason: String,
+    },
 }
 
 impl ModelCatalog {
     pub fn offered(&self) -> &[String] {
         match self {
-            Self::Offered(models) => models,
+            Self::Offered(models) | Self::Fixed(models) => models,
             Self::Unknown { .. } => &[],
         }
     }
 
+    pub fn is_fixed(&self) -> bool {
+        matches!(self, Self::Fixed(_))
+    }
+
     pub fn unknown_reason(&self) -> Option<&str> {
         match self {
-            Self::Offered(_) => None,
+            Self::Offered(_) | Self::Fixed(_) => None,
             Self::Unknown { reason } => Some(reason),
         }
     }
@@ -209,6 +193,10 @@ pub enum AiError {
     },
     /// No connected provider; carries each provider's availability.
     NoProvider(Vec<(ProviderId, Availability)>),
+    /// Use Hide AI is off: no provider was asked anything and nothing was
+    /// submitted (B33). Not a failure to report; the caller falls back to its
+    /// own non-AI behavior.
+    Disabled,
 }
 
 impl AiError {
@@ -226,6 +214,7 @@ impl AiError {
             Self::Unsupported(_) => "unsupported",
             Self::OverBudget { .. } => "over_budget",
             Self::NoProvider(_) => "no_provider",
+            Self::Disabled => "disabled",
         }
     }
 }
@@ -302,6 +291,12 @@ impl CancelToken {
 
 pub trait AiBackend: Send + Sync {
     fn id(&self) -> ProviderId;
+    /// Whether this backend owns a resident process whose descendants and
+    /// size the router measures after each turn and holds to its caps. The
+    /// backend declares it; the router never names a provider for it.
+    fn measurable(&self) -> bool {
+        false
+    }
     fn availability(&self) -> Availability;
     /// Which models this provider offers the logged-in account. Every backend
     /// answers, so nothing above this layer keeps a model list of its own.
