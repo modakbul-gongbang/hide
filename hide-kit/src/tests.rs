@@ -180,6 +180,8 @@ impl Fixture {
         let kit = root.join("kit");
         std::fs::create_dir_all(home.join(".claude")).unwrap();
         std::fs::write(home.join(".claude/settings.json"), OTHER_TOOL).unwrap();
+        // Claude Code is installed: its program is what says so.
+        executable(&home.join(".local/bin/claude"), "#!/bin/sh\n");
         executable(&kit.join("hide"), "#!/bin/sh\n");
         executable(&kit.join("hide-agent-hooks"), "#!/bin/sh\n");
         executable(&root.join("launchctl"), "#!/bin/sh\nexit 113\n");
@@ -196,6 +198,7 @@ impl Fixture {
             herdr_socket: herdr.socket.clone(),
             herdr_bin: Some(root.join("bin/herdr")),
             codex: None,
+            login_shell: None,
             legacy_coordination_home: None,
             user_agents: hide_platform::user_agents::UserAgents::fixture(
                 root.join("launchctl"),
@@ -301,15 +304,13 @@ fn a_first_apply_installs_every_part_and_keeps_other_tools_entries() {
         &std::fs::read_to_string(fixture.home().join(".hide/kit/installed.json")).unwrap(),
     )
     .unwrap();
-    // Skill stubs depend on which agents the machine running the test has, so
-    // only the parts and the Claude Code stub (its folder is in the fixture)
-    // are pinned.
+    // The fixture machine has Claude Code installed and no other agent, so
+    // its stub is the only one.
     let installed: Vec<&str> = record["installed"]
         .as_array()
         .unwrap()
         .iter()
         .map(|code| code.as_str().unwrap())
-        .filter(|code| *code == "skill:claude" || !code.starts_with("skill:"))
         .collect();
     assert_eq!(
         installed,

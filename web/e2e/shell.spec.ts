@@ -1,9 +1,10 @@
 import { expect, test, type Page } from "@playwright/test";
-import { spawn, type ChildProcess } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { herdrBinary, linkFixtureTranscripts, startHerdr, type HerdrFixture } from "./herdr-fixture";
+import { spawnDaemon, stopDaemon } from "./hided-fixture";
 import { enterWorkspace } from "./wire";
 import { fixtureExecutable, fixtureHomeEnv, fixtureOpenCommand, fixtureToolPath, inheritedFixtureEnv } from "./platform-fixture";
 import { ownUntilWorkerExit } from "./worker-owned";
@@ -18,12 +19,15 @@ type Daemon = {
 /** `herdr` lends the daemon its transcripts and its `claude` label provider. */
 async function startHided(extra: Record<string, string> = {}, herdr?: HerdrFixture): Promise<Daemon> {
   const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "hide-e2e-")));
+  const bin = path.resolve("..", "target", "debug", fixtureExecutable("hided"));
+  let env: NodeJS.ProcessEnv = {};
   let child: ChildProcess | undefined;
   let spawnAttempted = false;
   let spawnFailed: Error | null = null;
   let stopping = false;
+  let ended = false;
   let cleaned = false;
-  const canRemove = () => !spawnAttempted || (child !== undefined &&
+  const canRemove = () => !spawnAttempted || ended || (child !== undefined &&
     (child.exitCode != null || child.signalCode != null || (spawnFailed !== null && child.pid === undefined)));
   const incomplete = () => new Error(`hided fixture cleanup incomplete; preserve ${dir}: child exit unconfirmed (PID: ${child?.pid ?? "unavailable"}); wait for the recorded child's exit/close and owned cleanup, or confirm its exit before removing this retained root after worker loss`);
   const cleanup = () => {
@@ -49,7 +53,12 @@ async function startHided(extra: Record<string, string> = {}, herdr?: HerdrFixtu
     stopping = true;
     if (spawnAttempted && !child) throw incomplete();
     if (child && !canRemove()) {
-      try { child.kill(); } catch (error) { throw new Error(incomplete().message, { cause: error }); }
+      try {
+        if (process.platform === "win32") child.kill();
+        else ended = stopDaemon(child, bin, env, dir);
+      } catch (error) {
+        throw new Error(incomplete().message, { cause: error });
+      }
     }
     if (canRemove()) cleanup();
     else console.error("hided fixture cleanup pending", { root: dir, pid: child?.pid, action: "wait for the recorded child's exit/close; its root remains owned" });
@@ -59,8 +68,7 @@ async function startHided(extra: Record<string, string> = {}, herdr?: HerdrFixtu
   });
   try {
     if (herdr) linkFixtureTranscripts(herdr, dir);
-    const bin = path.resolve("..", "target", "debug", fixtureExecutable("hided"));
-    const env = {
+    env = {
       ...inheritedFixtureEnv(),
       ...fixtureHomeEnv(dir),
       HIDE_STATE_DIR: path.join(dir, "hide"),
@@ -75,7 +83,7 @@ async function startHided(extra: Record<string, string> = {}, herdr?: HerdrFixtu
       ...extra,
     };
     spawnAttempted = true;
-    child = spawn(bin, [], { env, stdio: ["ignore", "pipe", "pipe"] });
+    child = spawnDaemon(bin, env);
     child.once("error", (error) => { spawnFailed = error; });
     let closeLog = () => {};
     child.once("close", () => {

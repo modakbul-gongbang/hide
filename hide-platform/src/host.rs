@@ -1,8 +1,8 @@
 //! What this machine and the account running on it are called, and where
 //! their things live: the home folder, the folder an application keeps its
 //! state in, the socket the pinned Herdr listens on by default, the programs
-//! on the search path, the default shell, the Trash, the Tailscale CLI, and
-//! the machine's name and identity.
+//! on the search path, the `PATH` the login shell sets up, the default
+//! shell, the Trash, the Tailscale CLI, and the machine's name and identity.
 //!
 //! Every function answers for the machine this process runs on, from the
 //! variables and tables that system defines, and refuses (`NotFound`, or
@@ -136,13 +136,86 @@ pub fn herdr_config_dir_from(variables: Variables) -> io::Result<PathBuf> {
     Ok(home_dir_from(variables)?.join(".config").join("herdr"))
 }
 
-/// The search path this process finds programs on (`PATH`). The desktop app
-/// adds the folders installers put programs in before it starts `hide`, so
-/// this is the login shell's path even when the app was opened from the Dock.
+/// The search path this process finds programs on (`PATH`), as whoever
+/// started it set it. It starts no shell, so a folder the account's startup
+/// files add (`~/.zshrc`, `~/.bashrc`) is on it only when the process was
+/// started from a terminal: the desktop app opened from the Dock adds the
+/// system folders and the usual install folders, and an SSH exec channel has
+/// the system folders alone. [`login_shell_path`] asks the shell.
 pub fn login_path() -> io::Result<OsString> {
     std::env::var_os("PATH")
         .filter(|path| !path.is_empty())
         .ok_or_else(|| io::Error::new(io::ErrorKind::NotFound, "PATH is not set"))
+}
+
+/// The mark the login shell prints its `PATH` between, so nothing its startup
+/// files print before or after can be read as part of it.
+const SHELL_PATH_MARK: &str = "__HIDE_LOGIN_PATH__";
+
+/// The `PATH` the account's login shell sets up, which is what the operator's
+/// terminal searches: `shell -ilc` runs the startup files an installer edits
+/// (`-i` reads `~/.zshrc` and `~/.bashrc`, `-l` the login files) and prints
+/// the result between two marks, past anything those files print.
+///
+/// The shell gets the account's login variables only
+/// ([`crate::process::LOGIN_CHILD_VARIABLES`]), with `HOME` set to `home`,
+/// plus the variables that keep Oh My Zsh's update prompt and its tmux
+/// autostart from holding an interactive shell open, the ones the desktop
+/// host sets when it asks the same question (`desktop/src/main/cli.ts`). The
+/// shell and everything it started end when `deadline` passes (`TimedOut`)
+/// or `stop` is raised (`Interrupted`); a shell that ends without printing
+/// the marks says `InvalidData`. Windows has no login shell: a process there
+/// is given the account's own `Path`, so it says `Unsupported`.
+pub fn login_shell_path(
+    shell: &Path,
+    home: &Path,
+    deadline: std::time::Duration,
+    stop: &std::sync::atomic::AtomicBool,
+) -> io::Result<OsString> {
+    use crate::process::{RunFailure, restrict_to_login_environment, run_to_end};
+    if cfg!(windows) {
+        return Err(io::Error::new(
+            io::ErrorKind::Unsupported,
+            "Windows has no login shell; a process already has the account's Path",
+        ));
+    }
+    let mut command = std::process::Command::new(shell);
+    command.arg("-ilc").arg(format!(
+        "printf '\\n{SHELL_PATH_MARK}%s{SHELL_PATH_MARK}\\n' \"$PATH\""
+    ));
+    restrict_to_login_environment(&mut command);
+    command
+        .env(HOME_VARIABLE, home)
+        .env("DISABLE_AUTO_UPDATE", "true")
+        .env("ZSH_TMUX_AUTOSTARTED", "true")
+        .env("ZSH_TMUX_AUTOSTART", "false");
+    let finished = run_to_end(&mut command, deadline, stop).map_err(|failure| match failure {
+        RunFailure::Start(error) | RunFailure::Wait(error) => error,
+        RunFailure::TimedOut => io::Error::new(
+            io::ErrorKind::TimedOut,
+            format!("{} did not answer in time", shell.display()),
+        ),
+        RunFailure::Stopped => io::Error::new(io::ErrorKind::Interrupted, "stopped"),
+    })?;
+    marked_path(&finished.stdout)
+        .map(OsString::from)
+        .ok_or_else(|| {
+            io::Error::new(
+                io::ErrorKind::InvalidData,
+                format!(
+                    "{} printed no PATH (exit {:?})",
+                    shell.display(),
+                    finished.code
+                ),
+            )
+        })
+}
+
+/// The non-empty text between the first two marks.
+fn marked_path(output: &str) -> Option<&str> {
+    let (_, after) = output.split_once(SHELL_PATH_MARK)?;
+    let (path, _) = after.split_once(SHELL_PATH_MARK)?;
+    (!path.is_empty()).then_some(path)
 }
 
 /// The program `name` as this system's shell would find it on `path`: the

@@ -1,6 +1,7 @@
-# Version updates for the two ecosystems it covers, cargo and GitHub Actions. Each
-# waits seven days after a release before proposing it, so a version that is
-# yanked or patched within its first week never reaches a pull request here.
+# Version updates for cargo, GitHub Actions and the Rust toolchain. Cargo and
+# Actions wait seven days after a release before proposing it, so a version
+# that is yanked or patched within its first week never reaches a pull request
+# here; Dependabot has no cooldown for the toolchain (see its entry).
 # The bundled Herdr runtime is not a package; herdr-update.yml owns that pin.
 version: 2
 updates:
@@ -21,3 +22,13 @@ updates:
       day: monday
     cooldown:
       default-days: 7
+  # `channel` in rust-toolchain.toml. The proposal's CI lists what the new
+  # compiler and Clippy ask of the code, and the fixes land on that pull
+  # request (docs/BUILD.md, "One toolchain version"). Dependabot offers no
+  # cooldown for this ecosystem, so a release is proposed the Monday after it
+  # ships, and a point release that follows within weeks is proposed again.
+  - package-ecosystem: rust-toolchain
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
