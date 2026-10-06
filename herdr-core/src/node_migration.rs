@@ -549,6 +549,18 @@ fn convert_core_state(value: &mut Value, node: &str, projects: &BTreeMap<String,
     for device in each(value, "expanded_inactive_project_device_ids") {
         changed |= rewrite(Some(device), node);
     }
+    // A list that already named the node holds it once.
+    if let Some(devices) = value
+        .get_mut("expanded_inactive_project_device_ids")
+        .and_then(Value::as_array_mut)
+    {
+        let mut seen = Vec::new();
+        devices.retain(|device| {
+            let first = !seen.contains(device);
+            seen.push(device.clone());
+            first
+        });
+    }
     for row in each(value, "recent_checkouts") {
         changed |= rewrite(row.get_mut("device_id"), node);
     }
@@ -1311,12 +1323,17 @@ mod tests {
         let core_state = json!({
             "schema_version": 1,
             "device_expanded_paths": {"local": ["/a", "/b"], NODE: ["/b", "/c"]},
+            "expanded_inactive_project_device_ids": ["local", NODE, "mini"],
         });
         std::fs::write(dir.path().join(CORE_STATE), core_state.to_string()).unwrap();
         convert(dir.path(), dir.path(), &node()).unwrap();
         assert_eq!(
             read(&dir.path().join(CORE_STATE))["device_expanded_paths"],
             json!({NODE: ["/b", "/c", "/a"]})
+        );
+        assert_eq!(
+            read(&dir.path().join(CORE_STATE))["expanded_inactive_project_device_ids"],
+            json!([NODE, "mini"])
         );
     }
 
