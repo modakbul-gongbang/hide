@@ -909,6 +909,16 @@ export function createActions(send: DispatchFn) {
       dispatch({ schema_version: 2, kind: "agent_wake", payload: { pane_id: paneId, fresh } });
     },
 
+    /** Reopen a pane Hide cannot hear, in place and on the same conversation (the Not connected popover, B29). */
+    reopenPane(paneId: string) {
+      dispatch({ schema_version: 2, kind: "pane_reopen", payload: { pane_id: paneId } });
+    },
+
+    /** Turn off Codex's shared server on one machine (`local` for this Mac), the popover's secondary link (B30). */
+    turnOffCodexSharedServer(deviceId: string) {
+      dispatch({ schema_version: 2, kind: "codex_daemon_disable", payload: { device_id: deviceId } });
+    },
+
     setFontSize(size: number) {
       updateUiState({ font_size: size });
     },
