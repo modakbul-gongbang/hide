@@ -2,7 +2,7 @@ import { CheckIcon } from "lucide-react";
 import { useState } from "react";
 import type { Actions } from "./actions";
 import { agentLogo, monogram } from "./agentLogos";
-import { appliedAgents, selection, tileSwitchable } from "./agentOnboardingRules";
+import { appliedAgents, hideAiFirstRunKey, selection, tileSwitchable } from "./agentOnboardingRules";
 import { firstRunAgent } from "./hideAi";
 import { Button } from "./components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./components/ui/dialog";
@@ -67,7 +67,7 @@ function AgentOnboarding({ actions, agents }: { actions: Actions; agents: KitAge
           {/* The agent Hide AI will run on under D-18's rule; no line when none of the chosen agents is signed in (B46). */}
           {hideAi ? (
             <p className="text-caption text-muted-foreground" data-onboarding-hide-ai={hideAi.id}>
-              {t("hideAi.firstRun", { agent: hideAi.label })}
+              {t(hideAiFirstRunKey(hideAi.agent), { agent: hideAi.label })}
             </p>
           ) : null}
         </DialogFooter>

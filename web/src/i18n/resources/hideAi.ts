@@ -1,8 +1,10 @@
 import type { Catalog, Catalogs } from "../schema";
 
 // Settings > Hide AI and the first-run line (PRD settings-cleanup D-14 to D-18).
-// Korean avoids a particle after an agent's name (it changes with the last
-// sound of the name), and Japanese and Chinese insert names without one.
+// The Korean first-run line ends the name with an object particle that
+// follows the name's last sound, so an agent whose Korean reading ends in a
+// consonant has its own key (`hideAi.firstRunConsonant`); Japanese and
+// Chinese insert names without a particle.
 export const hideAiEnglish = {
   "hideAi.use": "Use Hide AI",
   "hideAi.useDescription": "Off: Hide makes no AI calls. Agent titles show each session's own text, and you name worktrees yourself.",
@@ -49,6 +51,7 @@ export const hideAiEnglish = {
   "hideAi.worktreeNames": "Worktree names",
   "hideAi.worktreeNamesDescription": "Suggested from the issue title when you start work",
   "hideAi.firstRun": "Hide AI uses {{agent}}",
+  "hideAi.firstRunConsonant": "Hide AI uses {{agent}}",
 } as const;
 
 const ko = {
@@ -96,7 +99,8 @@ const ko = {
   "hideAi.agentSummariesDescription": "에이전트마다 제목과 한 줄 상태",
   "hideAi.worktreeNames": "워크트리 이름",
   "hideAi.worktreeNamesDescription": "작업을 시작할 때 이슈 제목으로 이름을 제안해요",
-  "hideAi.firstRun": "Hide AI가 사용하는 에이전트: {{agent}}",
+  "hideAi.firstRun": "Hide AI는 {{agent}}를 씁니다",
+  "hideAi.firstRunConsonant": "Hide AI는 {{agent}}을 씁니다",
 } satisfies Catalog<typeof hideAiEnglish>;
 
 const zhCN = {
@@ -145,6 +149,7 @@ const zhCN = {
   "hideAi.worktreeNames": "工作树名称",
   "hideAi.worktreeNamesDescription": "开始工作时根据议题标题给出建议",
   "hideAi.firstRun": "Hide AI 使用的智能体：{{agent}}",
+  "hideAi.firstRunConsonant": "Hide AI 使用的智能体：{{agent}}",
 } satisfies Catalog<typeof hideAiEnglish>;
 
 const ja = {
@@ -193,6 +198,7 @@ const ja = {
   "hideAi.worktreeNames": "ワークツリー名",
   "hideAi.worktreeNamesDescription": "作業開始時に Issue のタイトルから提案します",
   "hideAi.firstRun": "Hide AI が使うエージェント：{{agent}}",
+  "hideAi.firstRunConsonant": "Hide AI が使うエージェント：{{agent}}",
 } satisfies Catalog<typeof hideAiEnglish>;
 
 export const hideAiCatalogs = { en: hideAiEnglish, ko, "zh-CN": zhCN, ja } satisfies Catalogs<typeof hideAiEnglish>;

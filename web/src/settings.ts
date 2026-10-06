@@ -6,7 +6,7 @@ import type { TFunction } from "i18next";
 import type { DaemonInfo } from "./store";
 import type { MessageKey } from "./i18n/catalogs";
 import type { AccentName } from "./theme";
-import type { AgentRow, AiProvider, CoreDiagnostic, Device, DeviceHost, EnvironmentStatus, GithubFailureCategory, HerdrStatus, KitAgent, KitComponent, KitPiece, RemoteStatus, Workspace } from "./snapshot";
+import type { AgentRow, CoreDiagnostic, Device, DeviceHost, EnvironmentStatus, GithubFailureCategory, HerdrStatus, KitComponent, RemoteStatus, Workspace } from "./snapshot";
 
 type Translate = TFunction<"translation">;
 
@@ -324,81 +324,6 @@ export function kitProblems(kit: Device["kit"]): KitComponent[] {
   return kit.components.filter((part) => kitPartNeedsReinstall(part));
 }
 
-/** The pieces of an agent Hide manages: its skill, and its hook when it has one. */
-function agentPieces(agent: KitAgent): KitPiece[] {
-  return agent.hook ? [agent.skill, agent.hook] : [agent.skill];
-}
-
-/**
- * The piece the agent's row speaks for: the first that failed, else the first
- * that Reinstall would repair, else the skill. An agent that is off has no
- * piece to speak for.
- */
-function agentWorstPiece(agent: KitAgent): KitPiece {
-  const pieces = agentPieces(agent);
-  return (
-    pieces.find((piece) => piece.state === "failed") ??
-    pieces.find((piece) => kitPartNeedsReinstall(piece)) ??
-    pieces[0]!
-  );
-}
-
-/** An agent's state as its row words it (agent adapters): off, or the state of its worst piece. */
-export function kitAgentLine(agent: KitAgent, t: Translate): { text: string; tone: "ok" | "warn" | "error" | "muted"; reason: string | null } {
-  if (!agent.enabled) {
-    // A switch-off whose removal did not finish is not Off.
-    const left = agentPieces(agent).find((piece) => piece.state === "failed");
-    return left ? { text: t("settings.kit.failed"), tone: "error", reason: left.reason } : { text: t("common.off"), tone: "muted", reason: null };
-  }
-  const piece = agentWorstPiece(agent);
-  const line = kitPartLine(piece, t);
-  // A hook that cannot be written here (Kiro below 3.0, a version Hide cannot
-  // read) is no repair, so the skill's "Installed" stands, with the hook's reason beside it.
-  const hookNote = agent.hook?.state === "absent" ? agent.hook.reason : null;
-  return { ...line, reason: piece.state === "installed" ? hookNote : piece.reason };
-}
-
-/**
- * The agent's switch: an agent installed on the machine can be switched; one
- * that is not has nothing to switch, and one that is on keeps a switch so it
- * can be turned off.
- */
-export function kitAgentSwitch(agent: KitAgent): { on: boolean } | null {
-  if (agent.availability === "available" || agent.enabled) return { on: agent.enabled };
-  return null;
-}
-
-/** Whether Reinstall would change something for this agent: only an agent that is on has pieces to repair. */
-export function kitAgentNeedsReinstall(agent: KitAgent): boolean {
-  return agent.enabled && agentPieces(agent).some((piece) => kitPartNeedsReinstall(piece));
-}
-
-/** What the agent's switch puts on the machine, named for the row's second line. */
-export function kitAgentGets(agent: KitAgent, t: Translate): string {
-  return t(agent.hook ? "settings.agentGetsSkillHook" : "settings.agentGetsSkill");
-}
-
-/**
- * Every machine's agents for the Agents tab (B27): This Mac first, then each
- * device in the Devices tab's order. `listed` are the agents installed there
- * (or on, which the operator can still turn off); `others` are the labels of
- * the rest, which have nothing to switch. A machine whose kit does not run
- * carries its reason instead of rows; one not checked yet carries neither.
- */
-export function kitAgentMachines(devices: readonly Device[]): { device: Device; listed: KitAgent[]; others: string[]; unavailable: string | null }[] {
-  return devices
-    .filter((device) => device.kind === "remote" || device.id === "local")
-    .map((device) => {
-      const agents = device.kit?.agents ?? [];
-      return {
-        device,
-        listed: agents.filter((agent) => kitAgentSwitch(agent) !== null),
-        others: agents.filter((agent) => kitAgentSwitch(agent) === null).map((agent) => agent.label),
-        unavailable: device.kit?.unavailable ?? null,
-      };
-    });
-}
-
 /** A device Herdr socket must be an absolute single-line path on that device, or left empty. */
 export function socketProblem(path: string, t: Translate): string | null {
   const trimmed = path.trim();
@@ -497,12 +422,6 @@ export function aliasProblem(alias: string, t: Translate): string | null {
   return null;
 }
 
-/** The provider row's state as the operator reads it; the core's headline wins when it has one. */
-export function providerLine(provider: AiProvider): { text: string; tone: "ok" | "warn" | "pending" } {
-  const tone = provider.state === "ready" ? "ok" : provider.state === "unread" ? "pending" : "warn";
-  const text = provider.headline || provider.state.replace(/_/g, " ");
-  return { text: provider.message ? `${text}: ${provider.message}` : text, tone };
-}
 // A secret-shaped run: the page token and anything like it (32+ hex), or a
 // `token=`/`key=`/`secret=`/`password=` assignment. Diagnostics are copied to be
 // pasted elsewhere, so they never carry one even when a message quoted it.
