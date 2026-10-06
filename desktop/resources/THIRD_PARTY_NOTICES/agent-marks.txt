@@ -1,19 +1,24 @@
 Agent product marks
 ===================
 
-hide bundles two small product marks so the sidebar can say which tool is
-running in a pane:
+hide bundles small product marks of the coding agents it works with, so its
+interface can say which tool is running in a pane and which agents the
+first-run choice offers:
 
-  Sources/HerdrMacOS/Resources/agent-claude.png  - Claude Code, Anthropic PBC
-  Sources/HerdrMacOS/Resources/agent-codex.png   - Codex, OpenAI, Inc.
+  web/src/assets/agent-claude.png  - Claude Code, Anthropic PBC
+  web/src/assets/agent-codex.png   - Codex, OpenAI, Inc.
+  web/src/assets/agents/           - the other agents' marks; manifest.json
+                                     there names each file's product, source,
+                                     terms and retrieval date
 
 These marks are used only to identify the corresponding product in hide's
 interface. They are the property of their respective owners, hide claims no
-rights in them, and their presence does not imply that either company
-endorses, sponsors, or is affiliated with hide.
+rights in them, and their presence does not imply that any owner endorses,
+sponsors, or is affiliated with hide.
 
-Neither mark is used as hide's own branding, and neither appears in the
-application icon.
+No mark is used as hide's own branding, and none appears in the application
+icon.
 
-To remove them, delete the two files above; the sidebar falls back to the
-agent's initial and nothing else changes.
+To remove a mark under web/src/assets/agents/, delete its file and move its
+manifest entry to the monogram list; the first-run choice then draws the
+agent's initials and nothing else changes.
