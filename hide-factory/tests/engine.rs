@@ -1452,6 +1452,28 @@ fn a_conflict_sends_the_worker_to_rebase_without_counting_a_failure() {
 }
 
 #[test]
+fn a_manual_merge_checks_main_again_and_a_conflict_goes_back_to_rebase() {
+    let mut h = Bench::new(true);
+    let f = github_factory(&mut h, MergeMode::Manual);
+    let t = h.ready("Waits", &[]);
+    h.done(&f, &t);
+    tick_until(&mut h, &f, &t, TaskState::MergeWaiting);
+    // Main moved while the Task waited for a person.
+    h.world().premerge.insert(
+        t.clone(),
+        [hide_factory::adapters::PreMerge::Conflict {
+            files: vec!["src/lib.rs".into()],
+        }]
+        .into(),
+    );
+    let refused = h.op(Command::Merge { task: t.clone() });
+    assert_eq!(refused["reason"], "merge_conflict", "{refused}");
+    assert_eq!(h.state(&f, &t), TaskState::Running);
+    assert!(h.world().wakes.last().unwrap().1.contains("rebase"));
+    assert!(h.writes("merge").is_empty(), "nothing merged");
+}
+
+#[test]
 fn a_dirty_local_main_holds_the_merge() {
     let mut h = Bench::new(false);
     let f = h.factory(true);
@@ -1805,6 +1827,30 @@ fn an_outside_pull_request_takes_a_running_task_and_its_merge_finishes_it() {
     h.advance(2 * DAY_MS);
     h.engine.tick();
     assert_eq!(h.world().removed, vec![t.clone()]);
+}
+
+#[test]
+fn a_task_taken_before_its_start_expires_after_the_keep_period() {
+    let mut h = Bench::new(true);
+    let f = github_factory(&mut h, MergeMode::Auto);
+    set_workers(&mut h, &f, 1);
+    let _running = h.ready("Running", &[]);
+    let t = h.ready("Waiting", &[]);
+    assert_eq!(h.state(&f, &t), TaskState::Waiting);
+    let issue = h.task(&f, &t).issue.unwrap();
+    h.world().outside.push_back(OutsideEvent::ClosingPr {
+        issue,
+        pr: 56,
+        url: "pr/56".into(),
+        merged: false,
+    });
+    h.advance(3 * MINUTE_MS);
+    h.engine.tick();
+    assert_eq!(h.state(&f, &t), TaskState::Outside);
+    assert!(h.task(&f, &t).cancelled_at.is_some(), "its keep period runs");
+    h.advance(8 * DAY_MS);
+    h.engine.tick();
+    assert!(h.task(&f, &t).purged, "folded after the keep period");
 }
 
 #[test]

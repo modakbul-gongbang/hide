@@ -2939,7 +2939,13 @@ impl Engine {
             });
             self.start_verification(factory, id, stage);
         }
-        self.start_checks(factory, id);
+        // A report still to be published starts its checks once pushed.
+        if self
+            .task(factory, id)
+            .is_some_and(|task| !task.writes.contains(PUBLISH_PENDING))
+        {
+            self.start_checks(factory, id);
+        }
     }
 
     fn cancel_verification(&mut self, factory: &str, id: &str) {
@@ -3419,15 +3425,21 @@ impl Engine {
     /// stopped and its worktree kept for the keep period from now, so the
     /// work it had not reported survives until then.
     fn follow_outside(&mut self, factory_id: &str, task: &Task) {
+        // A Task already taken keeps the keep period of its first takeover.
+        if task.state == TaskState::Outside && task.cancelled_at.is_some() {
+            return;
+        }
+        let now = self.now();
+        self.with_task(factory_id, &task.id, |t| {
+            t.cancelled_at = Some(now);
+            t.cancelled_from = Some(t.state);
+        });
         let Some(worker) = &task.worker else { return };
         if task.purged {
             return;
         }
         self.stop_worker(factory_id, &task.id, worker);
-        let now = self.now();
         self.with_task(factory_id, &task.id, |t| {
-            t.cancelled_at = Some(now);
-            t.cancelled_from = Some(t.state);
             if let Some(w) = &mut t.worker {
                 w.asleep = true;
             }
@@ -4951,6 +4963,7 @@ impl Engine {
                         self.notice(factory_id, &task.id, &format!("밖의 PR이 이 Task의 issue를 닫습니다: {url}. worker를 멈췄고 worktree는 7일 남습니다. 되살리려면 hide factory revive {}", task.display_id()));
                     }
                     _ => {
+                        self.follow_outside(factory_id, &task);
                         self.set_state(factory_id, &task.id, TaskState::Outside);
                         self.record(factory_id, Some(&task.id), "outside.pr", json!({"pr": pr}));
                     }
