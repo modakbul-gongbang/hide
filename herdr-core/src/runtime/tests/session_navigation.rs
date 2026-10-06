@@ -1363,7 +1363,7 @@ fn view_authority_the_screen_stays_on_the_last_request_whatever_order_herdr_answ
         Deadline,
     }
     use Step::*;
-    let cases: [(&str, &[Step]); 9] = [
+    let cases: [(&str, &[Step]); 10] = [
         (
             "in order",
             &[
@@ -1418,6 +1418,24 @@ fn view_authority_the_screen_stays_on_the_last_request_whatever_order_herdr_answ
                 Answer("t2"),
                 Herdr(&["t2"]),
                 Herdr(&["t3"]),
+                Herdr(&["t2"]),
+            ],
+        ),
+        // #660: an Agent drop (t2), a click back into the first area (t1), then
+        // a click into the second (t2), each answered before Herdr reports the
+        // move before it. Following the late t1 moved the keyboard out of the
+        // second area in the middle of typing there.
+        (
+            "a click back and a click forward each answered before the move before it",
+            &[
+                Click("t2"),
+                Answer("t2"),
+                Click("t1"),
+                Answer("t1"),
+                Herdr(&["t2"]),
+                Click("t2"),
+                Answer("t2"),
+                Herdr(&["t1"]),
                 Herdr(&["t2"]),
             ],
         ),
