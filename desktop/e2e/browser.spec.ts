@@ -790,7 +790,9 @@ test("area cycle native: page input previews one exact area, releases once and c
   ({ app } = await launch(run.env));
   const page = await app.firstWindow();
   const sent = countSent(page);
-  await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1280, 800));
+  // TEMP_CLAMP reproduces the old opening: wider than the work area, so macOS can clamp it later.
+  if (process.env.TEMP_CLAMP) await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1280, 800));
+  else await fitWindow(app, WINDOW);
   await enterWorkspace(page, "fixture");
   const outside = `${origin}/a.html`;
   const previous = `${origin}/b.html`;
@@ -883,13 +885,16 @@ test("area cycle native: page input previews one exact area, releases once and c
   nativeKeys(pid, ["control down", "tab"]);
   console.log(JSON.stringify({ ts: new Date().toISOString(), event: "temp.keys_posted" }));
   await expect(page.locator("[data-cycle=area]")).toBeVisible();
-  console.log(JSON.stringify({ ts: new Date().toISOString(), event: "temp.cycle_visible" }));
+  console.log(JSON.stringify({ ts: new Date().toISOString(), event: "temp.cycle_visible", bounds: await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.getContentBounds()) }));
+  // TEMP_CLAMP: what macOS does to that window when the blur orders it out and back, made certain.
+  if (process.env.TEMP_CLAMP) await app.evaluate(({ BrowserWindow, screen }) => BrowserWindow.getAllWindows()[0]!.setBounds(screen.getPrimaryDisplay().workArea));
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.blur());
   await expect(page.locator("[data-cycle]")).toHaveCount(0);
   // The window coming back gives the keyboard to the page that started the hold.
   console.log(JSON.stringify({ ts: new Date().toISOString(), event: "temp.cycle_gone" }));
   await app.evaluate(({ app: electron, BrowserWindow }) => { electron.focus({ steal: true }); BrowserWindow.getAllWindows()[0]!.focus(); });
   await expect.poll(async () => (await zoomOf(current)).focused).toBe(true);
+  console.log(JSON.stringify({ ts: new Date().toISOString(), event: "temp.returned", active: await page.evaluate(() => { const element = document.activeElement; return element && `${element.tagName} ${[...element.attributes].filter((a) => a.name.startsWith("data-") || a.name === "aria-label").map((a) => `${a.name}=${a.value.slice(0, 30)}`).slice(0, 6).join(" ")}`; }), shellHasFocus: await page.evaluate(() => document.hasFocus()) }));
   nativeKeys(pid, ["control up"]);
   await expect(tab(page, "한글 브라우저")).toHaveAttribute("aria-selected", "true");
   expect(sent.get("view_layout") ?? 0).toBe(canceled);
