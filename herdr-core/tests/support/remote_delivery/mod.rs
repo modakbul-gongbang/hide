@@ -162,6 +162,22 @@ pub fn wait_for<T>(what: &str, mut observe: impl FnMut() -> Result<Option<T>>) -
     }
 }
 
+/// What the account's machine is running when the helper never became ready,
+/// read-only, so a failed run shows whether the helper started at all. It
+/// starts nothing: a second helper would change the state it reports.
+fn helper_diagnostics(remote: &Environment) -> String {
+    let mut processes = remote.command("/bin/ps");
+    processes.args(["-eo", "pid,ppid,stat,etime,args"]);
+    match capture(processes) {
+        Ok(answer) => {
+            let text = String::from_utf8_lossy(&answer.stdout);
+            let shown: String = text.chars().take(8192).collect();
+            format!("private helper never became ready; processes:\n{shown}")
+        }
+        Err(error) => format!("private helper never became ready; processes unavailable: {error}"),
+    }
+}
+
 fn read(path: &Path) -> Result<Vec<u8>> {
     ensure!(
         fs::metadata(path)?.len() <= READ_CAP as u64,
@@ -579,7 +595,8 @@ impl Fixture {
                     })
                 })
                 .then_some(()))
-        })?;
+        })
+        .inspect_err(|_| eprintln!("{}", helper_diagnostics(&fixture.remote.environment)))?;
         fixture.event("create_workspace", json!({"device_id":"remote","path":fixture.remote.environment.home.join("project"),"label":"Remote fixture","initialize_git":false}))?;
         wait_for("registered private remote checkout", || {
             let snapshot = fixture.snapshot()?;
