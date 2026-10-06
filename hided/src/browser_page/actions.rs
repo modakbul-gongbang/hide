@@ -1060,6 +1060,17 @@ async fn wait_for(page: &mut Page, wait: Wait, timeout: Duration) -> Result<Outp
                 silent.join(", ")
             ));
         }
+        let unlisted: Vec<String> = page
+            .unlisted()
+            .into_iter()
+            .map(|(_, origin)| origin)
+            .collect();
+        if !unlisted.is_empty() {
+            detail.push_str(&format!(
+                "; the frames inside {} were not listed",
+                unlisted.join(", ")
+            ));
+        }
         // Not read is not absent: the last poll was cut short at the deadline
         // before the page answered, so the condition may hold.
         if page_silent {
@@ -1709,6 +1720,7 @@ mod tests {
             )],
             silent: Vec::new(),
             unread: Vec::new(),
+            unlisted: Vec::new(),
             lineage: Vec::new(),
         };
         let message = changed(&mut page, Duration::ZERO, &before, None)
@@ -1734,6 +1746,7 @@ mod tests {
             sections: Vec::new(),
             silent: Vec::new(),
             unread: Vec::new(),
+            unlisted: Vec::new(),
             lineage: Vec::new(),
         };
         let message = changed(&mut page, Duration::ZERO, &before, None)

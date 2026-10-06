@@ -44,6 +44,9 @@ pub enum CdpError {
     Protocol(String),
     /// No answer before the client's deadline.
     Timeout,
+    /// The call was never sent: the gateway had no room for it, or no time
+    /// was left. It says nothing of the page, which was not asked.
+    NotSent,
     /// The relay or the gateway closed the connection.
     Closed { code: u16, reason: String },
 }
@@ -140,7 +143,7 @@ impl Cdp {
     ) -> Result<Option<Value>, CdpError> {
         // Nothing is sent that no answer could be waited for.
         if timeout.is_zero() {
-            return Err(CdpError::Timeout);
+            return Err(CdpError::NotSent);
         }
         let deadline = Instant::now() + timeout;
         // A single call is the top document's or a frame's own action, an
@@ -168,15 +171,16 @@ impl Cdp {
     /// that bring the commands held to a bound, the top document's first
     /// and always, then the sessions with nothing held, then those that have
     /// not answered their last call (under the lower bound). A call that does
-    /// not fit, with no room to come before the deadline, is not sent and
-    /// reads as unanswered; the others are never refused for it.
+    /// not fit is not sent and is `NotSent`, not `Timeout`: the page was not
+    /// asked. The others are never refused for it.
     pub async fn call_all(
         &mut self,
         calls: &[(&str, Value, &str)],
         timeout: Duration,
     ) -> Result<Vec<Result<Value, CdpError>>, CdpError> {
+        // A call is `NotSent` until a round sends it, then waits for an answer.
         let mut answers: Vec<Option<Result<Value, CdpError>>> =
-            calls.iter().map(|_| None).collect();
+            calls.iter().map(|_| Some(Err(CdpError::NotSent))).collect();
         if !timeout.is_zero() {
             let deadline = Instant::now() + timeout;
             let mut queue: Vec<usize> = (0..calls.len()).collect();
@@ -243,6 +247,7 @@ impl Cdp {
     ) -> Result<bool, CdpError> {
         let mut ids = Vec::with_capacity(round.len());
         for index in round {
+            answers[*index] = None;
             let (method, params, session) = &calls[*index];
             ids.push(self.send(method, params.clone(), Some(session)).await?);
         }

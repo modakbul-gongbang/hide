@@ -58,6 +58,7 @@ After two silent rounds in a row a command leaves it alone until the command end
 `wait` ends at its own timeout and names the frames it could not read, and it never reports a frame that did not answer as one that lacks the text.
 An action that could not read a frame says so instead of reporting that nothing changed.
 `type` or `press` that cannot tell which frame holds the focus, because a frame did not answer, sends nothing and fails `page_unresponsive`.
+A frame that is read but gives no answer to the look for the frames inside it keeps its section and refs, and `# OOPIF unlisted origin=<origin>` follows the top document: what is inside it is not shown, and not known to be absent.
 A ref from an older document, or from a frame that navigated, fails `ref_stale` instead of touching another element: take a fresh snapshot.
 While a frame that did not answer may be the ref's frame, the ref cannot be told stale, so it fails `page_unresponsive` with the same advice to take a fresh snapshot.
 

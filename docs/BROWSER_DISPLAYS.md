@@ -184,7 +184,9 @@ Only an unanswered call counts as silence: a closed connection, including the re
 The note is part of the top document's `--diff` baseline, so a diff names a frame once, when it goes silent or answers again; the lines a frame showed before it went silent cannot be read back and are not reported as removed.
 Silence is what one read observed, not a state of the frame: every frame stays known, and a read of the page (every snapshot, the capture before an action and each one after it, every poll of a `wait`) asks again a frame that gave no answer before.
 That covers a frame that missed its `Page.enable`, its tag, its look for its own frames or an earlier read.
-The budget is for silence, not for a frame's history: a frame is given up in a command after `MISS_LIMIT` (two) unanswered rounds in a row, the round that found it silent and one more in case it was only slow, and any answer from it starts the count again.
+The budget is for silence, not for a frame's history: a frame is given up in a command after `MISS_LIMIT` (two) unanswered rounds in a row, the round that found it silent and one more in case it was only slow.
+It is counted per kind of request: its `Page.enable`, tag and reads together, and its look for its own frames apart.
+Only an answer of the same kind starts a count again, so a frame that answers reads but never the look for its own frames is given up for that look after two, and one whose reads hang is given up for reads even if its look answers.
 A given-up frame is noted and not asked again for the rest of that command, so a frame that never answers costs at most two steps (its rounds run together with the other frames', one step each) and not one on every read.
 A read that would have asked it gets the silence it already showed (`Page::eval` and `Page::eval_all` answer a frame the command has given up on without sending), so the frame stays unread and named, never counted as a change or as absent.
 The next command starts with a clean budget.
@@ -197,7 +199,8 @@ The gateway holds at most 32 commands per client, and it keeps one that nobody a
 `Cdp` therefore keeps every command it sent until a message of the gateway's ends it, an answer or its deadline error, and never from the time alone, since a relay in between delays the gateway's clock by an amount no client can know.
 The calls of a batch of frame reads go in rounds that bring the commands held to at most 28, the top document's first and always.
 A session whose last command has not been answered is asked again only while no more than 16 are held, so a renderer that is not answering cannot take the room a session not yet asked needs.
-A call that does not fit is not sent and reads as unanswered, and every other call goes on: a frame that answers is read beside the frames that do not.
+A call that does not fit is not sent, and every other call goes on: a frame that answers is read beside the frames that do not.
+A call that was never sent (`CdpError::NotSent`, also when no time is left) reads as unread this round but is not a miss, since the frame was not asked; a later round asks it.
 The top document's calls, a single call and an input event among them, are never held back by what frames hold, so a drag's release is always sent.
 The gateway's pending cap, unlike its 600-commands-a-minute limit, is therefore never passed because of frames that are silent.
 Nothing is sent when no time is left.
@@ -213,7 +216,9 @@ When it was the top document's read that was cut short, the `timeout` says the l
 An action's change check that could not read a frame says so, with the frame's origin, instead of reporting that nothing changed, and adds no stall to the streak.
 The change check compares like with like: a frame that one of the two reads (before the action, after it) could not read is left out of both texts, so a frame that answered in one read and not the other is never a content change, and it is named: with no other change the answer says the frame did not answer and adds no stall, and with a change it ends with an `# unread:` line naming the frames that could not be compared.
 A frame whose own frames could not be looked for (its look for child frames got no answer) is as unread as one that gave no document: a ref that no readable frame carries may be a child of it, so it is not stale or gone either.
-It is noted like a frame that gave no document, with its origin, in a snapshot, in a change check, where it and the frames inside it are left out of both texts, and in a `wait` that times out.
+That frame has been read, so it keeps its section and its refs and is compared normally.
+The frames inside it are the unread ones: a snapshot notes them as `# OOPIF unlisted origin=<origin>` after the top document, a change check leaves them out of both texts and names the frame, and a `wait` that times out says the frames inside it were not listed.
+The note is not the unresponsive note of a frame that gave no document, and the frame is not called silent.
 The frame that holds the keyboard focus is found by asking every frame together. When none reports the focus and a frame did not answer, `type` and `press` fail with `page_unresponsive` and send nothing, since the focus may be in the frame that did not answer; the top document is the answer only when every frame answered and none holds the focus.
 An action on such a ref goes to that frame's own session in its own coordinates, so a ref from a frame that navigated fails `ref_stale` instead of touching another element.
 Same-origin frames and open shadow roots are read and acted on through the top document.

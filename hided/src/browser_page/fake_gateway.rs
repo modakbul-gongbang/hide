@@ -120,6 +120,9 @@ pub async fn page_within(
 pub struct Traffic {
     requests: Vec<(String, String)>,
     pub most_pending: usize,
+    /// Set by a test of `recording_held`: the gateway ends what it holds with
+    /// the next request it receives.
+    pub release: bool,
 }
 
 impl Traffic {
@@ -139,15 +142,40 @@ pub type Seen = Arc<Mutex<Traffic>>;
 /// with an error, and one that arrives while 32 are pending closes the
 /// connection with 1013, as the real gateway does.
 pub fn recording(
+    script: impl FnMut(&Value) -> Vec<Value> + Send + 'static,
+) -> (impl FnMut(&Value) -> Vec<Value> + Send + 'static, Seen) {
+    recording_by(script, Some(HOLD))
+}
+
+/// As `recording`, but the gateway ends the commands nobody answers when the
+/// test says so (`Traffic::release`), not after a time: the test orders the
+/// end of what is held against the reads it makes, and nothing waits.
+/// The error answers go out with the next request the gateway receives.
+pub fn recording_held(
+    script: impl FnMut(&Value) -> Vec<Value> + Send + 'static,
+) -> (impl FnMut(&Value) -> Vec<Value> + Send + 'static, Seen) {
+    recording_by(script, None)
+}
+
+fn recording_by(
     mut script: impl FnMut(&Value) -> Vec<Value> + Send + 'static,
+    hold: Option<Duration>,
 ) -> (impl FnMut(&Value) -> Vec<Value> + Send + 'static, Seen) {
     let seen = Seen::default();
     let log = Arc::clone(&seen);
-    let mut pending: Vec<Instant> = Vec::new();
+    // When each held command arrived, and the answer that ends it once released.
+    let mut pending: Vec<(Instant, Value)> = Vec::new();
     let script = move |request: &Value| {
         let now = Instant::now();
-        pending.retain(|arrived| now < *arrived + HOLD);
         let mut seen = log.lock().unwrap();
+        let mut ended = Vec::new();
+        match hold {
+            Some(hold) => pending.retain(|(arrived, _)| now < *arrived + hold),
+            None if std::mem::take(&mut seen.release) => {
+                ended = pending.drain(..).map(|(_, error)| error).collect();
+            }
+            None => {}
+        }
         seen.requests.push((
             request["method"].as_str().unwrap_or("").to_owned(),
             request["sessionId"].as_str().unwrap_or("").to_owned(),
@@ -158,13 +186,17 @@ pub fn recording(
         seen.most_pending = seen.most_pending.max(pending.len() + 1);
         let mut replies = script(request);
         if !replies.iter().any(|reply| reply["id"] == request["id"]) {
-            pending.push(now);
-            replies.push(after(
-                HOLD,
-                json!({"id": request["id"], "sessionId": request["sessionId"],
-                    "error": {"message": "CDP command timed out"}}),
-            ));
+            let error = json!({"id": request["id"], "sessionId": request["sessionId"],
+                "error": {"message": "CDP command timed out"}});
+            match hold {
+                Some(hold) => {
+                    replies.push(after(hold, error.clone()));
+                    pending.push((now, error));
+                }
+                None => pending.push((now, error)),
+            }
         }
+        replies.extend(ended);
         replies
     };
     (script, seen)
