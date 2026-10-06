@@ -51,12 +51,34 @@ test("the sidebar's edge drags between its bounds, lands once, survives a reload
     const created = herdr.run(["workspace", "create", "--cwd", folder, "--label", "notes", "--env", `PATH=${herdr.fixturePath}`, "--no-focus"]) as {
       result: { root_pane: { pane_id: string } };
     };
+    // TEMP probe (do not merge): what Herdr reports as each pane's directory.
+    const index = test.info().repeatEachIndex;
+    const probe = (stage: string) => {
+      const snapshot = herdr.run(["api", "snapshot"]) as { result?: { snapshot?: { panes?: Record<string, unknown>[] } } };
+      const panes = (snapshot.result?.snapshot?.panes ?? []).map((pane) =>
+        Object.fromEntries(Object.entries(pane).filter(([key]) => key === "pane_id" || key === "workspace_id" || key.includes("cwd"))));
+      console.log(`PROBE ${index} ${stage} t=${Date.now()} root=${herdr.root} ${JSON.stringify(panes)}`);
+    };
+    probe("created");
     await prompt(herdr, created.result.root_pane.pane_id);
+    probe("prompt");
 
     const last = new Map<string, Record<string, unknown>>();
     const sent = countSent(page, last);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await page.locator('[data-sidebar-mode="projects"]').click();
+    const rowNames = () => page.locator("[data-project]").allInnerTexts();
+    const looked = Date.now();
+    let found = false;
+    for (let attempt = 0; attempt < 30 && !found; attempt += 1) {
+      found = (await rowNames()).some((name) => /^notes/.test(name));
+      if (!found) await page.waitForTimeout(500);
+    }
+    console.log(`PROBE ${index} rows found=${found} after=${Date.now() - looked}ms ${JSON.stringify(await rowNames())}`);
+    if (!found) {
+      probe("missing");
+      throw new Error("PROBE the notes row never appeared");
+    }
     const nav = page.locator("nav[data-sidebar]");
     const box = page.locator("[data-sidebar-box]");
     const edge = page.locator("[data-sidebar-edge]");
