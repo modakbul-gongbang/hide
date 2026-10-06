@@ -3099,16 +3099,14 @@ impl Engine {
         }
         let key = (factory_id.to_owned(), id.to_owned());
         // A merge asked to wait is not read again before its time (B39).
-        if let Some((at, unnamed)) = self.merge_retry.get(&key).copied() {
+        // GitHub took a merge and has not named its commit: main merged in
+        // and the quick check are not run again, but every gate still holds.
+        let mut unnamed = false;
+        if let Some((at, since)) = self.merge_retry.get(&key).copied() {
             if at > self.now() {
                 return;
             }
-            // GitHub took the merge and has not named its commit: only that
-            // is read again, never main merged in or the quick check.
-            if unnamed.is_some() {
-                let _ = self.merge_now(factory_id, id);
-                return;
-            }
+            unnamed = since.is_some();
         }
         if self.verifying.contains_key(&key) {
             return;
@@ -3154,7 +3152,8 @@ impl Engine {
             return;
         }
         // Merge-tree and the quick check, in seconds (B38).
-        if factory.config.verification.exists() || factory.source == SourceKind::Local {
+        if !unnamed && (factory.config.verification.exists() || factory.source == SourceKind::Local)
+        {
             match self.ports.merge.premerge(&factory, &task) {
                 Ok(PreMerge::Clean) => {}
                 Ok(PreMerge::Conflict { files }) => {
@@ -3185,7 +3184,8 @@ impl Engine {
             }
         }
         // Verify factories run the bundle once on the latest main merged in.
-        if matches!(factory.config.verification, Verification::Commands { .. })
+        if !unnamed
+            && matches!(factory.config.verification, Verification::Commands { .. })
             && !task.writes.contains("premerge_passed")
         {
             self.start_verification(factory_id, id, AttemptStage::PreMerge);
