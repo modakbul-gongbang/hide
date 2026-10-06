@@ -1090,7 +1090,16 @@ async fn scoped_client_loop(
                                 ScopedRequest::Factory(command, hint) => {
                                     core.prepare_factory(&cap.context.device_id, &cap.pane_id, &cap.context, hint, command)
                                         .and_then(|prepared| prepared.run(FACTORY_ANSWER_TIMEOUT))
-                                        .map_err(|code| (code, "Check that Hide is running and retry"))?
+                                        // A timed-out command may still apply: retrying blind
+                                        // can add a Task twice, so look first.
+                                        .map_err(|code| {
+                                            let next = if code == "factory_timeout" {
+                                                "The command may still apply; check hide factory status before retrying"
+                                            } else {
+                                                "Check that Hide is running and retry"
+                                            };
+                                            (code, next)
+                                        })?
                                 }
                                 ScopedRequest::Links(query) => {
                                     let scope = core.links_scope(&cap.context).ok_or((
