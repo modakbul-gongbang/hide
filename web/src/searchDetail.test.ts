@@ -29,4 +29,12 @@ describe("the palette's detail pane in the operator's language", () => {
     expect(detail.facts.at(-1)?.[1]).toBe("5 分前に読み込み");
     expect(detail.action).toBe("PR ビューで開く");
   });
+
+  it("counts a pull request's recorded sessions and leaves the line out at none", () => {
+    const { t } = initializeInterfaceI18n("ko");
+    const entry = searchEntries(RICH, t).find((row) => row.id === "pr:w1:275")!;
+    const links = { projects: { w1: { prs: { "275": 3 } } }, filling: false };
+    expect(detailOf(RICH, entry, now, t, "ko", links).facts).toContainEqual(["세션", "3"]);
+    expect(detailOf(RICH, entry, now, t, "ko", { projects: {}, filling: false }).facts.map(([label]) => label)).not.toContain("세션");
+  });
 });
