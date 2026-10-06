@@ -24,8 +24,20 @@ fn gemini_settings(fixture: &Fixture) -> PathBuf {
     fixture.home().join(".gemini/settings.json")
 }
 
+/// A folder the agent makes under the home, such as its settings folder.
 fn set_up(fixture: &Fixture, folder: &str) {
     std::fs::create_dir_all(fixture.home().join(folder)).unwrap();
+}
+
+/// An agent installed the way its installer leaves it: its program in the
+/// fixture's `~/.local/bin` (the only folder a test searches) and its own
+/// folder under the home.
+fn install(fixture: &Fixture, program: &str, folder: &str) {
+    executable(
+        &fixture.home().join(".local/bin").join(program),
+        "#!/bin/sh\n",
+    );
+    set_up(fixture, folder);
 }
 
 /// A program the kit will run for its version. A script written a moment ago
@@ -68,8 +80,8 @@ fn every_adapter_names_an_official_page_and_a_unique_id() {
         );
         assert!(!adapter.label.is_empty());
         assert!(
-            !adapter.executables.is_empty() || !adapter.home_markers.is_empty(),
-            "{} could never be detected",
+            !adapter.executables.is_empty(),
+            "{} names no program, so it could never be installed",
             adapter.id
         );
         if let HookSupport::Guidance(guidance) = adapter.hook {
@@ -87,7 +99,7 @@ fn every_adapter_names_an_official_page_and_a_unique_id() {
 #[test]
 fn an_agent_that_is_not_on_gets_nothing_until_the_operator_switches_it_on() {
     let fixture = Fixture::new();
-    set_up(&fixture, ".gemini");
+    install(&fixture, "gemini", ".gemini");
 
     let report = apply(&fixture.target, &Scope::automatic());
 
@@ -118,7 +130,7 @@ fn an_agent_that_is_not_on_gets_nothing_until_the_operator_switches_it_on() {
 }
 
 #[test]
-fn switching_on_an_agent_that_is_not_set_up_here_records_nothing() {
+fn switching_on_an_agent_that_is_not_installed_here_records_nothing() {
     let fixture = Fixture::new();
 
     let report = apply(&fixture.target, &Scope::agents(["gemini-cli"], []));
@@ -134,7 +146,7 @@ fn switching_on_an_agent_that_is_not_set_up_here_records_nothing() {
 }
 
 #[test]
-fn a_program_on_the_home_bin_folder_counts_as_the_agent_being_set_up() {
+fn a_program_on_the_home_bin_folder_is_the_agent_being_installed() {
     let fixture = Fixture::new();
     executable(&fixture.home().join(".local/bin/gemini"), "#!/bin/sh\n");
 
@@ -153,7 +165,7 @@ fn a_program_on_the_home_bin_folder_counts_as_the_agent_being_set_up() {
 #[test]
 fn a_second_apply_of_an_agent_that_is_on_changes_nothing() {
     let fixture = Fixture::new();
-    set_up(&fixture, ".gemini");
+    install(&fixture, "gemini", ".gemini");
     apply(&fixture.target, &Scope::agents(["gemini-cli"], []));
     let tree = home_tree(fixture.home());
 
@@ -166,7 +178,7 @@ fn a_second_apply_of_an_agent_that_is_on_changes_nothing() {
 #[test]
 fn removed_by_hand_stays_removed_until_the_operator_reinstalls() {
     let fixture = Fixture::new();
-    set_up(&fixture, ".gemini");
+    install(&fixture, "gemini", ".gemini");
     apply(&fixture.target, &Scope::agents(["gemini-cli"], []));
     std::fs::remove_file(gemini_settings(&fixture)).unwrap();
     std::fs::remove_dir_all(fixture.home().join(".agents")).unwrap();
@@ -192,7 +204,7 @@ fn removed_by_hand_stays_removed_until_the_operator_reinstalls() {
 #[test]
 fn an_older_stub_is_replaced_without_the_operator_asking() {
     let fixture = Fixture::new();
-    set_up(&fixture, ".gemini");
+    install(&fixture, "gemini", ".gemini");
     apply(&fixture.target, &Scope::agents(["gemini-cli"], []));
     let path = shared_skill(&fixture);
     let current = std::fs::read_to_string(&path).unwrap();
@@ -215,8 +227,8 @@ fn an_older_stub_is_replaced_without_the_operator_asking() {
 #[test]
 fn switching_an_agent_off_takes_only_hides_pieces_and_keeps_a_folder_another_agent_reads() {
     let fixture = Fixture::new();
-    set_up(&fixture, ".gemini");
-    set_up(&fixture, ".codex");
+    install(&fixture, "gemini", ".gemini");
+    install(&fixture, "codex", ".codex");
     let settings = r#"{"theme":"dark","hooks":{"SessionStart":[{"matcher":"*","hooks":[{"name":"other","type":"command","command":"/opt/other/start.sh"}]}]}}"#;
     std::fs::write(gemini_settings(&fixture), settings).unwrap();
     apply(&fixture.target, &Scope::agents(["gemini-cli"], []));
@@ -252,7 +264,7 @@ fn switching_an_agent_off_takes_only_hides_pieces_and_keeps_a_folder_another_age
 #[test]
 fn a_skill_that_hide_did_not_write_is_left_alone_and_reported() {
     let fixture = Fixture::new();
-    set_up(&fixture, ".gemini");
+    install(&fixture, "gemini", ".gemini");
     let own = shared_skill(&fixture);
     std::fs::create_dir_all(own.parent().unwrap()).unwrap();
     std::fs::write(&own, "---\nname: hide-browser\n---\nmine\n").unwrap();
@@ -387,7 +399,7 @@ fn an_agent_with_a_documented_minimum_gets_the_hook_only_from_that_version() {
 #[test]
 fn removing_a_machine_takes_every_marked_piece_and_nothing_else() {
     let fixture = Fixture::new();
-    set_up(&fixture, ".gemini");
+    install(&fixture, "gemini", ".gemini");
     apply(&fixture.target, &Scope::agents(["gemini-cli"], []));
 
     let removed = remove(&fixture.target);
@@ -407,14 +419,14 @@ fn removing_a_machine_takes_every_marked_piece_and_nothing_else() {
 }
 
 #[test]
-fn the_shared_stub_goes_when_the_last_agent_reading_it_is_switched_off_even_with_codex_not_set_up()
-{
+fn the_shared_stub_goes_when_the_last_agent_reading_it_is_switched_off_even_with_codex_not_installed()
+ {
     let fixture = Fixture::new();
-    set_up(&fixture, ".gemini");
+    install(&fixture, "gemini", ".gemini");
     apply(&fixture.target, &Scope::agents(["gemini-cli"], []));
     assert!(shared_skill(&fixture).is_file());
 
-    // Codex is on by default but not set up here, so it reads nothing.
+    // Codex is on by default but not installed here, so it reads nothing.
     apply(&fixture.target, &Scope::agents([], ["gemini-cli"]));
 
     assert!(!shared_skill(&fixture).exists());
@@ -423,7 +435,7 @@ fn the_shared_stub_goes_when_the_last_agent_reading_it_is_switched_off_even_with
 #[test]
 fn a_switch_off_that_left_hides_stub_behind_does_not_read_as_off() {
     let fixture = Fixture::new();
-    set_up(&fixture, ".gemini");
+    install(&fixture, "gemini", ".gemini");
     apply(&fixture.target, &Scope::agents(["gemini-cli"], []));
     // The choice is off and Hide's stub is still there, as a removal that
     // failed would leave it.
@@ -465,7 +477,7 @@ fn an_agent_found_only_by_its_program_reports_its_folder_as_not_made_yet() {
 #[test]
 fn switching_factory_droid_off_finds_its_entry_in_either_file() {
     let fixture = Fixture::new();
-    set_up(&fixture, ".factory");
+    install(&fixture, "droid", ".factory");
     std::fs::write(
         fixture.home().join(".factory/settings.json"),
         r#"{"hooks":{"SessionStart":[]}}"#,
@@ -491,7 +503,7 @@ fn switching_factory_droid_off_finds_its_entry_in_either_file() {
 #[test]
 fn a_file_that_only_mentions_the_marker_is_not_hides_stub() {
     let fixture = Fixture::new();
-    set_up(&fixture, ".gemini");
+    install(&fixture, "gemini", ".gemini");
     let own = shared_skill(&fixture);
     std::fs::create_dir_all(own.parent().unwrap()).unwrap();
     // The marker's words sit in the body, not in the line Hide writes.
@@ -511,7 +523,7 @@ fn a_file_that_only_mentions_the_marker_is_not_hides_stub() {
 #[test]
 fn an_edited_stub_is_reported_and_only_reinstall_puts_hides_text_back() {
     let fixture = Fixture::new();
-    set_up(&fixture, ".gemini");
+    install(&fixture, "gemini", ".gemini");
     apply(&fixture.target, &Scope::agents(["gemini-cli"], []));
     let path = shared_skill(&fixture);
     let hide_text = std::fs::read_to_string(&path).unwrap();
@@ -541,33 +553,134 @@ fn an_edited_stub_is_reported_and_only_reinstall_puts_hides_text_back() {
 }
 
 #[test]
-fn a_program_with_a_common_name_does_not_count_as_the_agent() {
-    // `goose`, `amp`, `droid`, `copilot` and `kilo` are other programs too.
+fn a_folder_the_agent_makes_is_not_the_agent_being_installed() {
+    // Each agent's folder alone: an editor makes `~/.cursor` without the
+    // `cursor-agent` CLI, and Pi's installer keeps `~/.pi/agent` around.
     for (program, id, folder) in [
+        ("pi", "pi", ".pi/agent"),
+        ("cursor-agent", "cursor", ".cursor"),
+        ("grok", "grok", ".grok"),
         ("goose", "goose", ".config/goose"),
         ("amp", "amp", ".config/amp"),
         ("droid", "factory-droid", ".factory"),
         ("copilot", "copilot-cli", ".copilot"),
         ("kilo", "kilo-code", ".config/kilo"),
+        ("kimi", "kimi-code", ".kimi-code"),
+        ("vibe", "mistral-vibe", ".vibe"),
     ] {
         let fixture = Fixture::new();
+        set_up(&fixture, folder);
+        let report = apply(&fixture.target, &Scope::agents([id], []));
+        let row = agent(&report, id);
+        assert_eq!(row.availability, Availability::NotInstalled, "{id}");
+        assert!(record(&fixture).get("agents").is_none(), "{id}");
+
+        // Its program is what makes it installed.
         executable(
             &fixture.home().join(".local/bin").join(program),
             "#!/bin/sh\n",
         );
         assert_eq!(
             agent(&status(&fixture.target), id).availability,
-            Availability::NotInstalled,
-            "{program} alone is not {id}"
-        );
-        // The agent's own folder is the signal.
-        set_up(&fixture, folder);
-        assert_eq!(
-            agent(&status(&fixture.target), id).availability,
             Availability::Available,
             "{id}"
         );
     }
+}
+
+#[test]
+fn an_agent_whose_program_is_gone_keeps_what_hide_put_down_until_it_is_switched_off() {
+    let fixture = Fixture::new();
+    install(&fixture, "gemini", ".gemini");
+    apply(&fixture.target, &Scope::agents(["gemini-cli"], []));
+    assert!(shared_skill(&fixture).is_file());
+    std::fs::remove_file(fixture.home().join(".local/bin/gemini")).unwrap();
+    let tree = home_tree(fixture.home());
+
+    let report = apply(&fixture.target, &Scope::automatic());
+
+    // Nothing is taken out or written: the operator's choice and Hide's
+    // pieces stay as they were, so the agent is whole again once its
+    // program is back.
+    assert_eq!(home_tree(fixture.home()), tree);
+    assert_eq!(record(&fixture)["agents"]["gemini-cli"], true);
+    let gemini = agent(&report, "gemini-cli");
+    assert_eq!(gemini.availability, Availability::NotInstalled);
+    assert!(gemini.enabled, "the switch stays so it can be turned off");
+    assert!(!gemini.needs_attention(), "nothing for Reinstall to do");
+    for piece in [&gemini.skill, gemini.hook.as_ref().unwrap()] {
+        assert_eq!(piece.state, ComponentState::Absent, "{gemini:?}");
+        assert!(
+            piece
+                .reason
+                .as_deref()
+                .unwrap()
+                .contains("`gemini` is not found"),
+            "{piece:?}"
+        );
+    }
+
+    // The switch still takes Hide's pieces out.
+    let report = apply(&fixture.target, &Scope::agents([], ["gemini-cli"]));
+
+    assert!(!agent(&report, "gemini-cli").enabled);
+    assert!(!shared_skill(&fixture).exists());
+    assert!(
+        !std::fs::read_to_string(gemini_settings(&fixture))
+            .map(|text| text.contains("hide-guidance"))
+            .unwrap_or(false)
+    );
+}
+
+/// A stand-in login shell that puts `~/.grok/bin` on its `PATH`, as Grok's
+/// installer does in `~/.zshrc`, and counts how often it is asked. Its `PATH`
+/// is that folder alone, so this process's own `PATH` stays out of the
+/// search as in every other test.
+fn grok_login_shell(fixture: &Fixture) -> PathBuf {
+    let shell = fixture.root.join("bin/login-shell");
+    version_program(
+        &shell,
+        &format!(
+            "#!/bin/sh\n[ \"$1\" = -ilc ] || exit 64\necho x >> '{}'\necho 'Last login: today'\nPATH=\"$HOME/.grok/bin\"\nexport PATH\neval \"$2\"\n",
+            fixture.root.join("shell-asked").display()
+        ),
+    );
+    shell
+}
+
+#[test]
+fn a_program_on_the_login_shells_path_is_installed_and_the_shell_is_asked_again_only_after_its_files_change()
+ {
+    let mut fixture = Fixture::new();
+    executable(&fixture.home().join(".grok/bin/grok"), "#!/bin/sh\n");
+    assert_eq!(
+        agent(&status(&fixture.target), "grok").availability,
+        Availability::NotInstalled,
+        "no other folder this test searches holds it"
+    );
+    fixture.target.login_shell = Some(grok_login_shell(&fixture));
+    let asked = || {
+        std::fs::read_to_string(fixture.root.join("shell-asked"))
+            .map(|text| text.lines().count())
+            .unwrap_or(0)
+    };
+
+    for _ in 0..3 {
+        assert_eq!(
+            agent(&status(&fixture.target), "grok").availability,
+            Availability::Available
+        );
+    }
+    assert_eq!(asked(), 1, "Settings re-reads the kit every few seconds");
+
+    // An installer that adds its folder edits a startup file.
+    std::fs::write(
+        fixture.home().join(".zshrc"),
+        "export PATH=\"$HOME/.kilo/bin:$PATH\"\n",
+    )
+    .unwrap();
+    status(&fixture.target);
+    assert_eq!(asked(), 2);
 }
 
 #[test]
@@ -608,7 +721,7 @@ fn the_switch_works_while_either_the_skill_or_the_hook_does_here() {
 #[test]
 fn a_machine_the_kit_has_never_touched_waits_for_the_first_choice_before_any_agent_gets_anything() {
     let fixture = Fixture::fresh();
-    set_up(&fixture, ".codex");
+    install(&fixture, "codex", ".codex");
 
     let report = apply(&fixture.target, &Scope::automatic());
 
@@ -657,7 +770,7 @@ fn a_machine_the_kit_has_never_touched_waits_for_the_first_choice_before_any_age
 #[test]
 fn answering_with_nothing_chosen_is_still_an_answer() {
     let fixture = Fixture::fresh();
-    set_up(&fixture, ".codex");
+    install(&fixture, "codex", ".codex");
     assert!(apply(&fixture.target, &Scope::automatic()).held_for_onboarding);
 
     let answered = apply(&fixture.target, &Scope::first_run([]));
@@ -702,13 +815,13 @@ fn a_machine_with_a_record_keeps_what_it_had_when_this_build_arrives() {
 #[cfg(unix)]
 #[test]
 fn cursor_augment_and_junie_get_the_guidance_hook_with_the_switch_and_lose_it_with_it() {
-    for (id, folder, file) in [
-        ("cursor", ".cursor", ".cursor/hooks.json"),
-        ("augment", ".augment", ".augment/settings.json"),
-        ("junie", ".junie", ".junie/config.json"),
+    for (id, program, folder, file) in [
+        ("cursor", "cursor-agent", ".cursor", ".cursor/hooks.json"),
+        ("augment", "auggie", ".augment", ".augment/settings.json"),
+        ("junie", "junie", ".junie", ".junie/config.json"),
     ] {
         let fixture = Fixture::new();
-        set_up(&fixture, folder);
+        install(&fixture, program, folder);
 
         let report = apply(&fixture.target, &Scope::agents([id], []));
 

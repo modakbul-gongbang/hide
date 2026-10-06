@@ -242,6 +242,11 @@ pub struct KitTarget {
     pub herdr_bin: Option<PathBuf>,
     /// The machine's `codex`, `None` when Hide finds none.
     pub codex: Option<PathBuf>,
+    /// The account's login shell, asked for the `PATH` its startup files set
+    /// up, so an agent's CLI is found where the operator's terminal finds it
+    /// (`agents::Detection`). `None` asks nothing: Windows has no login
+    /// shell, and a test searches only its fixture.
+    pub login_shell: Option<PathBuf>,
     /// Legacy relocation, inspected only by the one-release retirement.
     pub legacy_coordination_home: Option<PathBuf>,
     /// Account login-agent boundary. Fixtures inject a stand-in command.
