@@ -1398,6 +1398,48 @@ fn a_refused_merge_waits_for_a_person_with_its_reason_and_is_tried_once() {
 }
 
 #[test]
+fn a_merge_asked_to_wait_is_read_again_at_its_time_and_main_is_not_misread_meanwhile() {
+    let mut h = Bench::new(true);
+    let f = github_factory(&mut h, MergeMode::Auto);
+    h.engine.tick();
+    let t = h.ready("Queued", &[]);
+    h.world().merge_unnamed = 100;
+    h.done(&f, &t);
+    for _ in 0..3 {
+        h.engine.tick();
+    }
+    assert_eq!(h.world().merge_attempts, 1);
+    let premerges = h.world().premerge_calls;
+    // GitHub moved main to a commit the Factory has not been told of, and
+    // its run is red: that is this merge, not an outside push.
+    {
+        let mut world = h.world();
+        world.head = "landed-unnamed".into();
+        world.main_checks.insert(
+            "landed-unnamed".into(),
+            MainCheck::Red {
+                link: "run/1".into(),
+            },
+        );
+    }
+    for _ in 0..20 {
+        h.advance(2_000);
+        h.engine.tick();
+    }
+    assert_eq!(h.world().merge_attempts, 2, "once per 30 seconds over 40");
+    assert!(h.world().premerge_calls <= premerges + 1);
+    // The next outside read finds the new head.
+    h.advance(2 * MINUTE_MS);
+    h.engine.tick();
+    h.engine.tick();
+    assert!(
+        !h.engine.factories().next().unwrap().main.broken,
+        "not read as an outside push"
+    );
+    assert_eq!(h.state(&f, &t), TaskState::Verifying);
+}
+
+#[test]
 fn a_broken_main_holds_auto_merge_without_reading_it_every_tick() {
     let mut h = Bench::new(false);
     let f = h.factory(true);

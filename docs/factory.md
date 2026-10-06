@@ -315,7 +315,8 @@ A gate sends an `auto` Task to `merge_waiting` and appears in the Task page and 
 
 A review by an agent alone never merges.
 A person's `merge` runs merge-tree and the quick check again on the latest main, then the same merge at once; a conflict sends the worker to rebase and a failed quick check counts as a verification failure.
-A refused merge is tried once and then waits for a person, never once per tick; only an environment signal, or a merge GitHub answered before naming its commit, is asked again.
+A refused merge is tried once and then waits for a person, never once per tick; only an environment signal, or a merge GitHub answered before naming its commit, is asked again, at the GitHub back-off for a signal and every 30 seconds for an unnamed commit, with no merge-tree or quick check in between.
+While a merge's commit is unnamed, a red run on a main head the Factory has not recorded is read as pending, not as an outside push.
 `request-changes --comment` returns the Task to `running`, clears its gates and sends the worker the comment.
 
 **GitHub.** The merge is `gh pr merge` with the Factory's `merge_method` and `--match-head-commit` set to the commit the Task-stage verification passed on, so a push after it makes GitHub refuse the merge; a Factory without verification pins the head a person reviewed.

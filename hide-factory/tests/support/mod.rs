@@ -36,6 +36,8 @@ pub struct World {
     pub premerge_calls: u32,
     /// The next merge is refused with this failure.
     pub merge_refusal: Option<Failure>,
+    /// This many merges answer before GitHub names the merge commit.
+    pub merge_unnamed: u32,
     pub merge_attempts: u32,
     /// Each report a GitHub Task pushed, by Task id.
     pub pushes: Vec<String>,
@@ -272,6 +274,13 @@ impl MergeTarget for Shared {
         world.merge_attempts += 1;
         if let Some(failure) = world.merge_refusal.take() {
             return Err(failure);
+        }
+        if world.merge_unnamed > 0 {
+            world.merge_unnamed -= 1;
+            return Err(Failure {
+                again_in_ms: Some(hide_factory::engine::MERGE_COMMIT_AGAIN_MS),
+                ..Failure::task("github.merge", "merge commit not named yet")
+            });
         }
         world.next_sha += 1;
         let sha = format!("sha{:04}-{}", world.next_sha, task.id);

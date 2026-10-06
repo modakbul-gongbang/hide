@@ -164,6 +164,9 @@ pub struct Engine {
     main_checked_at: BTreeMap<String, UnixMs>,
     /// When a failed push or pull request is tried again, per Task.
     publish_retry: BTreeMap<(String, String), UnixMs>,
+    /// When a merge asked to wait is tried again, per Task, and whether the
+    /// merge may already have landed with its commit not named yet.
+    merge_retry: BTreeMap<(String, String), (UnixMs, bool)>,
     processed: BTreeSet<String>,
     processed_order: Vec<String>,
     /// Recent environment and Task failures the cascade rules read.
@@ -227,6 +230,7 @@ impl Engine {
             main_pending: BTreeSet::new(),
             main_checked_at: BTreeMap::new(),
             publish_retry: BTreeMap::new(),
+            merge_retry: BTreeMap::new(),
             processed: BTreeSet::new(),
             processed_order: Vec::new(),
             env_failures: Vec::new(),
@@ -3003,6 +3007,14 @@ impl Engine {
             return;
         }
         let key = (factory_id.to_owned(), id.to_owned());
+        // A merge asked to wait is not read again before its time (B39).
+        if self
+            .merge_retry
+            .get(&key)
+            .is_some_and(|(at, _)| *at > self.now())
+        {
+            return;
+        }
         if self.verifying.contains_key(&key) {
             return;
         }
@@ -3192,6 +3204,8 @@ impl Engine {
         {
             Ok(sha) => {
                 let now = self.now();
+                self.merge_retry
+                    .remove(&(factory_id.to_owned(), id.to_owned()));
                 self.with_task(factory_id, id, |task| {
                     task.merge_sha = Some(sha.clone());
                     task.writes.insert("merge".into());
@@ -3213,6 +3227,23 @@ impl Engine {
             }
             Err(failure) => {
                 self.external_failure(factory_id, Some(id), &failure);
+                let now = self.now();
+                // Asked to wait (a merge commit not named yet, or GitHub or
+                // the network down): tried again at its time, not per tick.
+                let wait = failure.again_in_ms.or_else(|| {
+                    failure.signal.map(|_| {
+                        self.github_backoff
+                            .get(factory_id)
+                            .map(|(_, until)| until.saturating_sub(now))
+                            .unwrap_or(PUBLISH_RETRY_MS)
+                    })
+                });
+                if let Some(wait) = wait {
+                    self.merge_retry.insert(
+                        (factory_id.to_owned(), id.to_owned()),
+                        (now + wait.max(1), failure.again_in_ms.is_some()),
+                    );
+                }
                 if failure.signal.is_none() && failure.again_in_ms.is_none() {
                     self.with_task(factory_id, id, |task| {
                         if !task.gates.contains(&Gate::MergeRefused) {
@@ -5039,6 +5070,11 @@ impl Engine {
                         self.record(&factory.id, None, "main.green", json!({"sha": head}));
                     }
                 }
+                // A merge that may have landed without its commit named yet
+                // is not an outside push: wait until the commit is known.
+                Ok(MainCheck::Red { .. }) if !known && self.merge_unnamed(&factory.id) => {
+                    self.main_pending.insert(factory.id.clone());
+                }
                 Ok(MainCheck::Red { link }) if !known && !factory.main.broken => {
                     self.main_pending.remove(&factory.id);
                     self.main_seen.insert(factory.id.clone(), head.clone());
@@ -5060,6 +5096,18 @@ impl Engine {
                 Err(failure) => self.external_failure(&factory.id, None, &failure),
             }
         }
+    }
+
+    /// A Task of this Factory still verifying whose merge answered without
+    /// naming its commit.
+    fn merge_unnamed(&self, factory_id: &str) -> bool {
+        self.merge_retry
+            .iter()
+            .filter(|((factory, _), (_, unnamed))| factory == factory_id && *unnamed)
+            .any(|((factory, id), _)| {
+                self.task(factory, id)
+                    .is_some_and(|t| t.state == TaskState::Verifying)
+            })
     }
 
     // ------------------------------------------------------------- environment
