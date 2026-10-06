@@ -31,12 +31,29 @@ async function deletionFixture(herdr: HerdrFixture) {
   return { repo, worktree, pane: created.result.root_pane.pane_id };
 }
 
+/**
+ * The fixture branch has nothing ahead of main and no dirt or agent, so the
+ * core folds its row under Inactive once it has read the worktree's Git
+ * facts; until then the row is drawn among the active checkouts. The fold is
+ * awaited and opened, so the row is found where it stays whichever arrived
+ * first. Its workspace opens without focus, and a focused checkout never folds.
+ */
+async function featureRow(page: Page) {
+  const project = page.locator("[data-project]").filter({ has: page.locator("[data-project-row]").filter({ hasText: "preflight-repo" }) });
+  const inactive = project.locator("[data-inactive-checkouts]");
+  await expect(inactive).toHaveText("Inactive 1", { timeout: 30_000 });
+  await inactive.click();
+  await expect(inactive).toHaveAttribute("aria-expanded", "true");
+  const feature = project.locator("[data-checkout-row]").filter({ has: page.locator(`[data-checkout][aria-label^="${BRANCH}"]`) });
+  await expect(feature).toBeVisible();
+  return feature;
+}
+
 async function openDeletion(page: Page, daemon: Daemon) {
   await page.goto(`${daemon.origin}/#token=${daemon.token}`);
   await expect(page.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
   await page.locator('[data-sidebar-mode="projects"]').click();
-  const feature = page.locator("[data-checkout-row]").filter({ has: page.locator(`[data-checkout][aria-label^="${BRANCH}"]`) });
-  await expect(feature).toBeVisible({ timeout: 30_000 });
+  const feature = await featureRow(page);
   await feature.locator("[data-checkout-menu]").click({ button: "right" });
   await page.getByRole("menu", { name: `${BRANCH} actions` }).locator('[data-menu-item="delete_worktree"]').click();
   return page.locator("[data-delete-worktree]");
@@ -158,9 +175,8 @@ test("an open deletion dialog receives refreshed Git facts and retires Discard t
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await expect(page.locator("[data-main-screen]")).toBeVisible({ timeout: 20_000 });
     await page.locator('[data-sidebar-mode="projects"]').click();
-    const feature = page.locator("[data-checkout-row]").filter({ has: page.locator(`[data-checkout][aria-label^="${BRANCH}"]`) });
     const project = page.locator("[data-project]").filter({ has: page.locator("[data-project-row]").filter({ hasText: "preflight-repo" }) });
-    await expect(feature).toBeVisible({ timeout: 30_000 });
+    const feature = await featureRow(page);
     await feature.locator("[data-checkout-menu]").click({ button: "right" });
     await page.getByRole("menu", { name: `${BRANCH} actions` }).locator('[data-menu-item="delete_worktree"]').click();
     const dialog = page.locator("[data-delete-worktree]");
