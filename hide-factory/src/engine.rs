@@ -5350,7 +5350,7 @@ impl Engine {
             EnvSignal::DiskFull => {
                 self.hold_reason = Some("디스크 부족".into());
                 self.hold_checked_at = Some(now);
-                self.remove_finished_worktrees();
+                self.remove_finished_worktrees(None);
             }
             EnvSignal::OutOfMemory => {
                 if let Some(task) = task
@@ -5401,11 +5401,13 @@ impl Engine {
     }
 
     /// D-54 ①: only worktrees of finished Tasks and of cancelled Tasks past
-    /// their keep period (B62).
-    fn remove_finished_worktrees(&mut self) {
+    /// their keep period (B62), of one Factory or, below the disk floor, of
+    /// every Factory.
+    fn remove_finished_worktrees(&mut self, only: Option<&str>) {
         let now = self.now();
         let targets: Vec<(String, String, WorkerRef)> = self
             .all_tasks()
+            .filter(|t| only.is_none_or(|factory| t.factory == factory))
             .filter(|t| !t.purged)
             .filter(|t| {
                 let keep = self
@@ -5487,9 +5489,13 @@ impl Engine {
             json!({"action": action.as_str()}),
         );
         match action {
-            RecoveryAction::RemoveFinishedWorktrees => self.remove_finished_worktrees(),
+            RecoveryAction::RemoveFinishedWorktrees => {
+                self.remove_finished_worktrees(Some(factory));
+            }
+            // The start hold is the machine's (disk, memory): reading it again
+            // is not one Factory's to keep.
             RecoveryAction::RetryReadsAndReconnect => {
-                self.github_backoff.clear();
+                self.github_backoff.remove(factory);
                 self.hold_reason = None;
             }
             // A Task the environment stopped starts its worker again in the
@@ -5517,8 +5523,10 @@ impl Engine {
                     self.set_state(factory, &id, TaskState::Waiting);
                 }
             }
-            // A running worker waiting on input is put to sleep and woken
-            // in the same session with a note to carry on.
+            // A running worker waiting on input is asked to sleep and woken
+            // in the same session with a note to carry on. Herdr does not put
+            // an agent waiting for a person to sleep, so for such an agent the
+            // note waits for its next prompt.
             RecoveryAction::SleepWakeWorker => {
                 let stuck: Vec<(String, WorkerRef)> = self
                     .tasks_of(factory)

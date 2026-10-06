@@ -1989,6 +1989,55 @@ fn a_diagnosis_runs_an_enabled_recovery_and_an_approved_proposal_runs_too() {
     assert_ne!(h.state(&f, &stopped), TaskState::Stopped);
 }
 
+/// Turns `action` on, holds starts below the disk floor so a problem
+/// outlasts 30 minutes, and lets the diagnosis name `action`.
+fn diagnose(h: &mut Bench, action: &str) -> String {
+    let enabled = h.op(Command::Config {
+        project: Some(PROJECT.into()),
+        set: vec![("recovery".into(), format!("{action}=on"))],
+    });
+    assert_eq!(enabled["ok"], true, "{enabled}");
+    h.world().disk_free = Some(1 << 30);
+    let held = h.ready("Held", &[]);
+    h.world().env_diagnosis = Some(json!({"cause": "disk", "action": action}));
+    h.advance(31 * MINUTE_MS);
+    h.engine.tick();
+    h.engine.tick();
+    held
+}
+
+#[test]
+fn sleep_wake_reaches_only_a_worker_waiting_on_input() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let blocked = h.ready("Blocked", &[]);
+    let working = h.ready("Working", &[]);
+    h.world()
+        .worker_status
+        .insert(blocked.clone(), WorkerStatus::Blocked);
+    diagnose(&mut h, "sleep_wake_worker");
+    let world = h.world();
+    assert!(world.sleeps.contains(&blocked));
+    assert!(world.wakes.iter().any(|(task, _)| *task == blocked));
+    assert!(!world.sleeps.contains(&working));
+    assert!(!world.wakes.iter().any(|(task, _)| *task == working));
+    drop(world);
+    assert_eq!(h.state(&f, &blocked), TaskState::Running);
+}
+
+#[test]
+fn switching_runtime_moves_new_starts_to_the_other_runtime() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let held = diagnose(&mut h, "switch_runtime");
+    h.world().disk_free = None;
+    h.advance(2 * MINUTE_MS);
+    tick_until(&mut h, &f, &held, TaskState::Running);
+    let default = h.engine.factories().next().unwrap().config.default_runtime;
+    let started = h.task(&f, &held).worker.unwrap().runtime;
+    assert_ne!(started, default, "the default runtime rests for an hour");
+}
+
 #[test]
 fn a_failed_store_write_is_counted_and_handed_to_the_host_log() {
     let mut h = Bench::new(false);
