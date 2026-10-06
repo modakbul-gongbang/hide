@@ -21,7 +21,6 @@ import {
   kitAgentSwitch,
   kitPartLine as kitPartLineIn,
   kitPartNeedsReinstall,
-  offeredModels,
   redact,
   shownIn,
   sleepAfterLabel,
@@ -31,7 +30,7 @@ import {
   usableFontSize,
   unstoredDeviceDrafts,
 } from "./settings";
-import type { AiProvider, Device, DeviceHost, KitAgent, KitComponent, RemoteStatus } from "./snapshot";
+import type { Device, DeviceHost, KitAgent, KitComponent, RemoteStatus } from "./snapshot";
 
 // The English strings are what the sheet shipped with; the rules read the same under them.
 const t = initializeInterfaceI18n("en").getFixedT(null, "translation");
@@ -159,26 +158,6 @@ describe("settings rules", () => {
     expect(herdrProtocolText({ state: "connected", expected_protocol: 22, received_protocol: 22 })).toEqual({ text: "22", matches: true });
     expect(herdrProtocolText({ state: "protocol_mismatch", expected_protocol: 23, received_protocol: 22 })).toEqual({ text: "22 (expects 23)", matches: false });
     expect(herdrProtocolText({ state: "socket_missing" })).toEqual({ text: "unavailable", matches: true });
-  });
-
-  it("keeps the configured model among the offered ones", () => {
-    const provider: AiProvider = {
-      id: "claude",
-      label: "Claude",
-      agent: "claude-code",
-      state: "ready",
-      headline: "Ready",
-      message: null,
-      installed: true,
-      selectable: true,
-      retry_at_ms: null,
-      model: "custom-model",
-      models: ["opus", "sonnet"],
-      models_fixed: false,
-      cli_default: false,
-      models_unavailable_reason: null,
-    };
-    expect(offeredModels(provider)).toEqual(["custom-model", "opus", "sonnet"]);
   });
 
   it("copies diagnostics without the page token or any secret-shaped value", () => {

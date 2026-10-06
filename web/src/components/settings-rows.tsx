@@ -7,11 +7,11 @@ import { ChevronRightIcon } from "lucide-react";
 import type { ReactNode } from "react";
 import { cn } from "../lib/utils";
 
-/** A titled card whose rows are separated by hairlines, like `HideSettingsGroup`. */
-export function Group({ title, note, children, ...data }: { title: string; note?: ReactNode; children: ReactNode } & Record<`data-${string}`, string>) {
+/** A card whose rows are separated by hairlines, like `HideSettingsGroup`; titled unless it stands alone, like the Hide AI switch. */
+export function Group({ title, note, children, ...data }: { title?: string; note?: ReactNode; children: ReactNode } & Record<`data-${string}`, string>) {
   return (
     <section className="mb-lg" {...data}>
-      <h3 className="mb-sm text-body font-semibold text-subtle-foreground">{title}</h3>
+      {title ? <h3 className="mb-sm text-body font-semibold text-subtle-foreground">{title}</h3> : null}
       <div className="divide-y divide-border rounded-md border border-border bg-card">{children}</div>
       {note ? <p className="mt-sm text-body text-muted-foreground">{note}</p> : null}
     </section>
@@ -19,9 +19,9 @@ export function Group({ title, note, children, ...data }: { title: string; note?
 }
 
 /** One row: its label on the left, whatever the row is about on the right; wraps on a narrow sheet. */
-export function Row({ label, children, detail, className }: { label: ReactNode; children?: ReactNode; detail?: ReactNode; className?: string }) {
+export function Row({ label, children, detail, className, ...data }: { label: ReactNode; children?: ReactNode; detail?: ReactNode; className?: string } & Record<`data-${string}`, string>) {
   return (
-    <div className={cn("px-md py-sm", className)}>
+    <div className={cn("px-md py-sm", className)} {...data}>
       <div className="flex flex-wrap items-center gap-x-md gap-y-xs">
         <div className="min-w-[min(100%,var(--size-settings-control-w))] flex-1 text-subhead text-foreground">{label}</div>
         {children ? <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-sm">{children}</div> : null}

@@ -481,14 +481,6 @@ export function providerLine(provider: AiProvider): { text: string; tone: "ok" |
   const text = provider.headline || provider.state.replace(/_/g, " ");
   return { text: provider.message ? `${text}: ${provider.message}` : text, tone };
 }
-
-/** The models offered for a provider, always including the configured one so it is never swapped silently. */
-export function offeredModels(provider: AiProvider): string[] {
-  const models = [...provider.models];
-  if (provider.model && !models.includes(provider.model)) models.unshift(provider.model);
-  return models;
-}
-
 // A secret-shaped run: the page token and anything like it (32+ hex), or a
 // `token=`/`key=`/`secret=`/`password=` assignment. Diagnostics are copied to be
 // pasted elsewhere, so they never carry one even when a message quoted it.

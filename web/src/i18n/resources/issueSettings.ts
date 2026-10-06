@@ -2,7 +2,6 @@ import type { Catalog, Catalogs } from "../schema";
 
 export const issueSettingsEnglish = {
   "issueSettings.local": "Local",
-  "issueSettings.aiNames": "Let AI name worktrees",
   "issueSettings.closesInstruction": "Link the issue in pull requests",
   "issueSettings.auto": "Automatic",
   "issueSettings.autoResolved": "Automatic ({{source}})",
@@ -15,7 +14,6 @@ export const issueSettingsEnglish = {
 
 const ko = {
   "issueSettings.local": "Local",
-  "issueSettings.aiNames": "AI가 워크트리 이름 짓기",
   "issueSettings.closesInstruction": "PR에 이슈 연결",
   "issueSettings.auto": "자동",
   "issueSettings.autoResolved": "자동 ({{source}})",
@@ -28,7 +26,6 @@ const ko = {
 
 const zhCN = {
   "issueSettings.local": "本地",
-  "issueSettings.aiNames": "让 AI 命名工作树",
   "issueSettings.closesInstruction": "在拉取请求中关联议题",
   "issueSettings.auto": "自动",
   "issueSettings.autoResolved": "自动（{{source}}）",
@@ -41,7 +38,6 @@ const zhCN = {
 
 const ja = {
   "issueSettings.local": "ローカル",
-  "issueSettings.aiNames": "AIにワークツリー名を付けてもらう",
   "issueSettings.closesInstruction": "PRにIssueをリンク",
   "issueSettings.auto": "自動",
   "issueSettings.autoResolved": "自動（{{source}}）",

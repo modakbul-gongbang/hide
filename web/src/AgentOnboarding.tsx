@@ -3,11 +3,13 @@ import { useState } from "react";
 import type { Actions } from "./actions";
 import { agentLogo, monogram } from "./agentLogos";
 import { appliedAgents, selection, tileSwitchable } from "./agentOnboardingRules";
+import { firstRunAgent } from "./hideAi";
 import { Button } from "./components/ui/button";
 import { Dialog, DialogBody, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from "./components/ui/dialog";
 import { useInterfaceTranslation } from "./i18n/client";
 import type { KitAgent } from "./snapshot";
 import { useShellStore } from "./store";
+import { useAgentsDemand } from "./settings/useAgentsDemand";
 
 /**
  * The first-run agent choice: shown while the core says it is pending and
@@ -26,6 +28,10 @@ function AgentOnboarding({ actions, agents }: { actions: Actions; agents: KitAge
   // Only the operator's flips are state; what is on is read from the live availability each render.
   const [flipped, setFlipped] = useState<ReadonlySet<string>>(new Set());
   const on = selection(agents, flipped);
+  // The sign-in probe runs only while a page asks for it, and the rule below needs it (D-18).
+  useAgentsDemand(actions, false);
+  const ai = useShellStore((s) => s.rest?.status?.background_ai);
+  const hideAi = firstRunAgent(ai, on);
   const toggle = (id: string) =>
     setFlipped((current) => {
       const next = new Set(current);
@@ -54,10 +60,16 @@ function AgentOnboarding({ actions, agents }: { actions: Actions; agents: KitAge
           </div>
           <p className="mt-md text-caption text-muted-foreground">{t("onboarding.devices")}</p>
         </DialogBody>
-        <DialogFooter>
+        <DialogFooter className="flex-col items-end">
           <Button onClick={() => actions.applyAgentOnboarding(appliedAgents(agents, flipped))} data-onboarding-apply="true">
             {t("onboarding.apply")}
           </Button>
+          {/* The agent Hide AI will run on under D-18's rule; no line when none of the chosen agents is signed in (B46). */}
+          {hideAi ? (
+            <p className="text-caption text-muted-foreground" data-onboarding-hide-ai={hideAi.id}>
+              {t("hideAi.firstRun", { agent: hideAi.label })}
+            </p>
+          ) : null}
         </DialogFooter>
       </DialogContent>
     </Dialog>

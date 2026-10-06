@@ -969,6 +969,17 @@ export function createActions(send: DispatchFn) {
     setAgentSummary(on: boolean) {
       dispatch({ schema_version: 2, kind: "ai_settings", payload: { agent_summary: on } });
     },
+    /** Use Hide AI (PRD settings-cleanup D-14): off, no model is asked anything and the other Hide AI values stay stored. */
+    setHideAiEnabled(on: boolean) {
+      dispatch({ schema_version: 2, kind: "ai_settings", payload: { enabled: on } });
+    },
+    /** Adds an agent at the end of "If <Runs on> can't answer" (D-16). */
+    addAiFallback(provider: string) {
+      dispatch({ schema_version: 2, kind: "ai_settings", payload: { fallback_add: provider } });
+    },
+    removeAiFallback(provider: string) {
+      dispatch({ schema_version: 2, kind: "ai_settings", payload: { fallback_remove: provider } });
+    },
 
     /** Reinstall on a machine's row repairs every part that needs it; a hook row names its one part. */
     reinstallKit(deviceId: string, components?: KitComponentId[], agents?: string[]) {
