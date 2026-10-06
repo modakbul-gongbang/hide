@@ -24,13 +24,14 @@
 //! reads Claude Code, so Hide itself never touches the keychain; see
 //! [`ClaudeCliBackend::usage_text`].
 
+use std::ffi::OsString;
 use std::path::PathBuf;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
-use crate::codex::resolve_binary;
+use crate::program::Program;
 use crate::runner::{self, Environment, Run, Spec};
 use crate::{
     AiBackend, AiError, AiRequest, AiResponse, AiUsage, Availability, CancelToken, ModelCatalog,
@@ -94,6 +95,11 @@ pub struct ClaudeConfig {
     /// own CLAUDE.md out of the prompt; `--setting-sources ''` does not stop
     /// CLAUDE.md discovery, the directory does.
     pub cwd: PathBuf,
+    /// The `PATH` the CLI is looked for on and run with. `None` is this
+    /// account's search (`hide_platform::programs`); a caller that has to
+    /// choose it, such as a test with a stand-in login shell, gives one built
+    /// by `hide_platform::programs::cli_path_with`.
+    pub search_path: Option<OsString>,
 }
 
 impl Default for ClaudeConfig {
@@ -102,6 +108,7 @@ impl Default for ClaudeConfig {
             binary: PathBuf::from("claude"),
             model: DEFAULT_MODEL.to_owned(),
             cwd: std::env::temp_dir(),
+            search_path: None,
         }
     }
 }
@@ -230,8 +237,8 @@ impl ClaudeCliBackend {
             .ok_or(UsageError::NoResultFrame)
     }
 
-    fn resolved_binary(&self) -> Option<PathBuf> {
-        resolve_binary(&self.config.binary)
+    fn resolved_binary(&self) -> Option<Program> {
+        Program::resolve(&self.config.binary, self.config.search_path.as_deref())
     }
 
     /// The argument vector the account's model list is asked with: the
@@ -265,7 +272,7 @@ impl ClaudeCliBackend {
     /// The `initialize` answer also carries the account (an email, an
     /// organization, the plan): only the model names are read from it, and
     /// neither the answer nor any part of it is logged or returned.
-    fn read_models(&self, binary: &std::path::Path) -> Result<Vec<String>, String> {
+    fn read_models(&self, binary: &Program) -> Result<Vec<String>, String> {
         let mut input = Self::INITIALIZE_REQUEST.to_owned();
         input.push('\n');
         let run = runner::run(
@@ -680,7 +687,7 @@ mod tests {
     #[test]
     fn a_missing_binary_is_not_installed_and_refuses_before_submitting() {
         let backend = ClaudeCliBackend::new(ClaudeConfig {
-            binary: PathBuf::from("claude-binary-that-does-not-exist"),
+            binary: PathBuf::from("/nonexistent/claude-binary-that-does-not-exist"),
             ..ClaudeConfig::default()
         });
         assert_eq!(backend.availability(), Availability::NotInstalled);

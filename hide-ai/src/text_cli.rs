@@ -11,12 +11,13 @@
 //! `CompletionUnknown`: the child ran, so the prompt may have been submitted,
 //! and a request whose fate is unknown is never re-sent anywhere (B40).
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
 use serde_json::Value;
 
-use crate::codex::resolve_binary;
+use crate::program::Program;
 use crate::runner::{self, Environment, Run, RunError, Spec};
 use crate::{AiError, CancelToken};
 
@@ -31,6 +32,11 @@ pub struct TextCliConfig {
     /// Where status and model probes run; a request runs in a folder of its
     /// own.
     pub cwd: PathBuf,
+    /// The `PATH` the CLI is looked for on and run with. `None` is this
+    /// account's search (`hide_platform::programs`); a caller that has to
+    /// choose it, such as a test with a stand-in login shell, gives one built
+    /// by `hide_platform::programs::cli_path_with`.
+    pub search_path: Option<OsString>,
 }
 
 impl TextCliConfig {
@@ -39,11 +45,15 @@ impl TextCliConfig {
             binary: None,
             model: model.to_owned(),
             cwd: std::env::temp_dir(),
+            search_path: None,
         }
     }
 
-    pub(crate) fn resolved(&self, program: &str) -> Option<PathBuf> {
-        resolve_binary(self.binary.as_deref().unwrap_or_else(|| Path::new(program)))
+    pub(crate) fn resolved(&self, program: &str) -> Option<Program> {
+        Program::resolve(
+            self.binary.as_deref().unwrap_or_else(|| Path::new(program)),
+            self.search_path.as_deref(),
+        )
     }
 }
 
@@ -52,7 +62,12 @@ impl TextCliConfig {
 pub(crate) const PROBE_TIMEOUT: Duration = Duration::from_secs(20);
 
 /// Runs a probe child that makes no model turn.
-pub(crate) fn probe(binary: &Path, args: &[&str], cwd: &Path, stage: &str) -> Result<Run, String> {
+pub(crate) fn probe(
+    binary: &Program,
+    args: &[&str],
+    cwd: &Path,
+    stage: &str,
+) -> Result<Run, String> {
     let args: Vec<String> = args.iter().map(|arg| (*arg).to_owned()).collect();
     runner::run(
         &Spec {

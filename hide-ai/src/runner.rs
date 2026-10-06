@@ -21,6 +21,7 @@ use std::time::{Duration, Instant};
 
 use hide_platform::process::OwnedChild;
 
+use crate::program::Program;
 use crate::{AiError, CancelToken};
 
 /// The most stdout one child may produce. A background answer is a short JSON
@@ -48,7 +49,7 @@ pub(crate) enum Environment {
 }
 
 pub(crate) struct Spec<'a> {
-    pub binary: &'a Path,
+    pub binary: &'a Program,
     pub args: &'a [String],
     /// A neutral directory keeps a project's own instruction files out of the
     /// prompt.
@@ -155,10 +156,13 @@ fn lossy(drained: Drained) -> String {
 /// stderr.
 #[allow(clippy::disallowed_methods)] // a production wait, not test code
 pub(crate) fn run(spec: &Spec<'_>, cancel: &CancelToken) -> Result<Run, RunError> {
-    let mut command = Command::new(spec.binary);
+    let mut command = Command::new(spec.binary.path());
     if let Environment::Login = spec.environment {
         hide_platform::process::restrict_to_login_environment(&mut command);
     }
+    // The `PATH` the program was found on, over the one the base environment
+    // gave; a variable a backend `set`s below is still the last word.
+    spec.binary.apply(&mut command);
     for (key, value) in spec.set {
         command.env(key, value);
     }

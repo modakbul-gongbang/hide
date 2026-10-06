@@ -29,6 +29,7 @@ fn backend() -> ClaudeCliBackend {
         binary: fixture(),
         model: "haiku".to_owned(),
         cwd: std::env::temp_dir(),
+        search_path: None,
     })
 }
 
@@ -353,7 +354,7 @@ fn availability_reports_login_install_and_probe_state() {
         );
     });
     let missing = ClaudeCliBackend::new(ClaudeConfig {
-        binary: PathBuf::from("claude-binary-that-does-not-exist"),
+        binary: PathBuf::from("/nonexistent/claude-binary-that-does-not-exist"),
         ..ClaudeConfig::default()
     });
     assert_eq!(missing.availability(), Availability::NotInstalled);
@@ -391,6 +392,7 @@ mod usage {
             binary: fixture(),
             model: "haiku".to_owned(),
             cwd: cwd.to_path_buf(),
+            search_path: None,
         })
     }
 
@@ -496,7 +498,7 @@ mod usage {
             Err(UsageError::NoResultFrame)
         );
         let missing = ClaudeCliBackend::new(ClaudeConfig {
-            binary: PathBuf::from("claude-binary-that-does-not-exist"),
+            binary: PathBuf::from("/nonexistent/claude-binary-that-does-not-exist"),
             ..ClaudeConfig::default()
         });
         assert_eq!(

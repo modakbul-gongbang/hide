@@ -102,6 +102,7 @@ fn descendant_count_stays_bounded_across_many_requests() {
             binary: fixture(),
             model: "gpt-5.6-luna".to_owned(),
             cwd: std::env::temp_dir(),
+            search_path: None,
         },
         Arc::new(NoopLogSink),
     ));

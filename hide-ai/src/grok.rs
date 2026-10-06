@@ -20,6 +20,7 @@
 
 use serde_json::Value;
 
+use crate::program::Program;
 use crate::runner::{self, Environment, PrivateFile, Spec};
 use crate::text_cli::{self, TextCliConfig, classify_failure, json_from_text};
 use crate::{
@@ -83,7 +84,7 @@ impl GrokCliBackend {
         ]
     }
 
-    fn list_models(&self, binary: &std::path::Path) -> Result<ModelsOutcome, String> {
+    fn list_models(&self, binary: &Program) -> Result<ModelsOutcome, String> {
         let run = text_cli::probe(binary, &["models"], &self.config.cwd, "grok_models")?;
         Ok(parse_models(&run.stdout, &run.stderr))
     }

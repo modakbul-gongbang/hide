@@ -21,6 +21,7 @@
 
 use serde_json::Value;
 
+use crate::program::Program;
 use crate::runner::{self, Environment, Spec};
 use crate::text_cli::{self, TextCliConfig, classify_failure, json_from_text, system_with_schema};
 use crate::{
@@ -70,7 +71,7 @@ impl PiCliBackend {
         args
     }
 
-    fn list_models(&self, binary: &std::path::Path) -> Result<Vec<String>, String> {
+    fn list_models(&self, binary: &Program) -> Result<Vec<String>, String> {
         let run = text_cli::probe(binary, &["--list-models"], &self.config.cwd, "pi_models")?;
         if !run.succeeded() {
             return Err(format!("pi_models_failed:exit={}", run.exit()));

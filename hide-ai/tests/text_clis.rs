@@ -92,6 +92,7 @@ impl Fake {
             binary: Some(self.binary.clone()),
             model: model.to_owned(),
             cwd: self.dir.clone(),
+            search_path: None,
         }
     }
 
