@@ -1504,3 +1504,184 @@ fn the_inbox_orders_blocking_questions_first_then_answers_merges_and_stops() {
     // Merge waiting sits in the running column (D-47).
     assert_eq!((flow.running, flow.waiting), (3, 0));
 }
+
+// ------------------------------------------------------------ slow worker start
+
+#[test]
+fn a_worker_whose_agent_has_not_started_holds_its_slot_and_is_asked_again_later() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    set_workers(&mut h, &f, 1);
+    h.world().spawn_failure = Some(Failure::starting(
+        "worker.spawn",
+        "native_identity_unavailable",
+    ));
+    let a = h.ready("A", &[]);
+    h.engine.tick();
+    assert_eq!(h.state(&f, &a), TaskState::Waiting);
+    let b = h.ready("B", &[]);
+    for _ in 0..3 {
+        h.advance(5_000);
+        h.engine.tick();
+    }
+    let starting = |h: &Bench| {
+        h.engine
+            .events(&f, None, 100)
+            .iter()
+            .filter(|e| e.kind == "worker.starting")
+            .count()
+    };
+    assert_eq!(starting(&h), 1, "recorded once, not once per tick");
+    assert!(
+        h.engine
+            .events(&f, None, 100)
+            .iter()
+            .all(|e| e.kind != "external.failed"),
+        "a slow start is not a failure"
+    );
+    assert_eq!(
+        h.state(&f, &b),
+        TaskState::Waiting,
+        "A's slot is still held"
+    );
+    assert!(h.task(&f, &a).open_questions().next().is_none());
+
+    // Ten quiet minutes: the person is told to look at the pane.
+    h.advance(10 * 60_000);
+    h.engine.tick();
+    let notice = open_question(&h, &f, &a);
+    assert!(
+        notice.text.contains("시작되지 않았습니다"),
+        "{}",
+        notice.text
+    );
+
+    // The agent comes up: the same spawn now answers, and B still waits.
+    h.world().spawn_failure = None;
+    h.advance(30_000);
+    h.engine.tick();
+    assert_eq!(h.state(&f, &a), TaskState::Running);
+    assert_eq!(h.state(&f, &b), TaskState::Waiting);
+    assert_eq!(h.world().spawned.len(), 1);
+}
+
+#[test]
+fn a_refused_worker_start_stops_the_task_once_and_a_retry_starts_it() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    h.world().spawn_failure = Some(Failure::task(
+        "worker.spawn",
+        "Codex support could not be confirmed",
+    ));
+    let a = h.ready("A", &[]);
+    for _ in 0..5 {
+        h.advance(2_000);
+        h.engine.tick();
+    }
+    let task = h.task(&f, &a);
+    assert_eq!(task.state, TaskState::Stopped);
+    assert_eq!(task.stop, Some(StopReason::WorkerStart));
+    let failed = h
+        .engine
+        .events(&f, Some(&a), 100)
+        .iter()
+        .filter(|e| e.kind == "external.failed")
+        .count();
+    assert_eq!(failed, 1, "a refusal is not asked again every tick");
+    let inbox = h.engine.summary().inbox;
+    let item = inbox.iter().find(|i| i.task == a).expect("stopped item");
+    assert!(
+        item.text.contains("Codex support could not be confirmed"),
+        "{}",
+        item.text
+    );
+
+    h.world().spawn_failure = None;
+    let answer = h.op(Command::Retry { task: a.clone() });
+    assert_eq!(answer["ok"], true, "{answer}");
+    h.engine.tick();
+    assert_eq!(h.state(&f, &a), TaskState::Running);
+    assert_eq!(h.task(&f, &a).stop_detail, None);
+    assert_eq!(
+        h.world().spawned[0].attempt,
+        1,
+        "the retry is a new start, not the refused one again"
+    );
+}
+
+// ------------------------------------------------------------------ watch
+
+#[test]
+fn the_watch_raises_actionable_warnings_once_each_within_the_daily_cap() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let a = h.ready("A", &[]);
+    let b = h.ready("B", &[]);
+    let asked = h.as_worker(
+        &f,
+        &a,
+        Command::Ask {
+            text: "Which name?".into(),
+            suggestion: "calc".into(),
+            default_action: "use calc".into(),
+            deadline_hours: Some(24),
+            letter: None,
+        },
+    );
+    assert_eq!(asked["ok"], true, "{asked}");
+    let notices = |h: &Bench, id: &str| {
+        h.task(&f, id)
+            .open_questions()
+            .filter(|q| q.text.starts_with("감시:"))
+            .count()
+    };
+    h.world().watch.push_back(json!({"warnings": [
+        {"text": "nothing to do here"},
+        {"text": "A still waits on its answer", "action": "answer A", "task": a},
+        {"text": "B has been quiet", "action": "look at B", "task": b},
+    ]}));
+    // The watch reads the board every 30 minutes (B69).
+    h.advance(30 * 60_000);
+    h.engine.tick();
+    h.engine.tick();
+    assert_eq!(
+        notices(&h, &b),
+        1,
+        "an actionable warning reaches the inbox"
+    );
+    assert_eq!(notices(&h, &a), 0, "A is already in the inbox");
+    let logged = h
+        .engine
+        .events(&f, None, 200)
+        .iter()
+        .filter(|e| e.kind == "watch.logged")
+        .count();
+    assert_eq!(logged, 2, "no action, or already open: the log only");
+
+    // At most five a day.
+    for n in 0..6 {
+        h.world().watch.push_back(json!({"warnings": [
+            {"text": format!("finding {n}"), "action": "check", "task": null},
+        ]}));
+        h.advance(30 * 60_000);
+        h.engine.tick();
+        h.engine.tick();
+    }
+    let sent: usize = h
+        .engine
+        .tasks_of(&f)
+        .map(|t| {
+            t.questions
+                .iter()
+                .filter(|q| q.text.starts_with("감시:"))
+                .count()
+        })
+        .sum();
+    assert_eq!(sent, 5, "the daily cap holds");
+    assert!(
+        h.engine
+            .events(&f, None, 400)
+            .iter()
+            .any(|e| e.kind == "watch.capped")
+    );
+}

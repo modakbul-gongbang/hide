@@ -199,8 +199,6 @@ pub struct Config {
     pub merge_method: MergeMethod,
     /// Optional quick check before a merge (D-46), run on the merged tree.
     pub quick_check: Option<String>,
-    /// Concurrent workers on this machine across every Factory (D-30, D-45).
-    pub max_workers: u32,
     pub question_deadline_ms: u64,
     pub stall_ms: u64,
     pub no_report_ms: u64,
@@ -236,7 +234,6 @@ impl Default for Config {
             merge_mode: MergeMode::Manual,
             merge_method: MergeMethod::Merge,
             quick_check: None,
-            max_workers: 5,
             question_deadline_ms: 24 * HOUR_MS,
             stall_ms: 30 * MINUTE_MS,
             no_report_ms: 2 * MINUTE_MS,
@@ -664,6 +661,7 @@ pub enum StopReason {
     VerifyFailed,
     NewTaskCap,
     EnvironmentRepeated,
+    WorkerStart,
 }
 
 impl StopReason {
@@ -674,6 +672,7 @@ impl StopReason {
             Self::VerifyFailed => "검증 3회 실패",
             Self::NewTaskCap => "새 Task 상한",
             Self::EnvironmentRepeated => "같은 환경 실패 반복",
+            Self::WorkerStart => "worker 시작 실패",
         }
     }
 }
@@ -770,6 +769,13 @@ pub struct Task {
     pub merge_sha: Option<String>,
     pub gates: Vec<Gate>,
     pub stop: Option<StopReason>,
+    /// What the runtime said when the stop came from outside the Task, such
+    /// as a refused worker start; shown beside the stop reason.
+    #[serde(default)]
+    pub stop_detail: Option<String>,
+    /// Fresh worker starts refused so far; names the next start's intent.
+    #[serde(default)]
+    pub spawn_refusals: u32,
     pub breaking: bool,
     pub scope_approved: bool,
     pub new_tasks: u32,
@@ -845,6 +851,8 @@ impl Task {
             merge_sha: None,
             gates: Vec::new(),
             stop: None,
+            stop_detail: None,
+            spawn_refusals: 0,
             breaking: false,
             scope_approved: false,
             new_tasks: 0,

@@ -310,7 +310,10 @@ pub fn render_human(verb: &str, answer: &Value) -> String {
             }
             text
         }
-        "config" => serde_json::to_string_pretty(&answer["config"]).unwrap_or_default(),
+        "config" => serde_json::to_string_pretty(
+            &serde_json::json!({"config": answer["config"], "machine": answer["machine"]}),
+        )
+        .unwrap_or_default(),
         _ => {
             let mut text = answer["message"].as_str().unwrap_or("ok").to_owned();
             if let Some(task) = answer.get("task")

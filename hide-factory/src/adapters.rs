@@ -29,6 +29,9 @@ pub struct Failure {
     pub missing_scope: Option<String>,
     /// Usage limit reset time (B58).
     pub reset_at: Option<UnixMs>,
+    /// The worker's pane exists but its agent has not shown a session yet
+    /// (a first-run prompt, a slow start): not a failure, ask again later.
+    pub starting: bool,
 }
 
 impl Failure {
@@ -39,6 +42,14 @@ impl Failure {
             detail: detail.into(),
             missing_scope: None,
             reset_at: None,
+            starting: false,
+        }
+    }
+
+    pub fn starting(stage: &str, detail: impl Into<String>) -> Self {
+        Self {
+            starting: true,
+            ..Self::task(stage, detail)
         }
     }
 
@@ -49,6 +60,7 @@ impl Failure {
             detail: detail.into(),
             missing_scope: None,
             reset_at: None,
+            starting: false,
         }
     }
 }
@@ -276,6 +288,9 @@ pub struct WorkerSpawn {
     pub args: Vec<String>,
     /// Reuse the worktree and session (retry, wake, relanding).
     pub resume: Option<crate::model::WorkerRef>,
+    /// How many earlier fresh starts were refused: each attempt is its own
+    /// spawn intent, and the same attempt asked again converges.
+    pub attempt: u32,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]

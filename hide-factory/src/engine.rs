@@ -60,6 +60,10 @@ const BACKOFF_MS: [u64; 5] = [
 const PROCESSED_LETTERS: usize = 4_096;
 const CASCADE_WINDOW_MS: u64 = 30 * MINUTE_MS;
 const ENV_RECHECK_MS: u64 = MINUTE_MS;
+/// How often a worker whose agent has not shown a session is asked again,
+/// and when the person is told to look at its pane.
+const START_RETRY_MS: u64 = 30_000;
+const START_NOTICE_MS: u64 = 10 * MINUTE_MS;
 
 struct VerifyState {
     run: VerifyRun,
@@ -104,6 +108,12 @@ pub struct Engine {
     /// A runtime unavailable until its usage resets (B58).
     runtime_blocked: BTreeMap<Runtime, UnixMs>,
     github_backoff: BTreeMap<String, (u32, UnixMs)>,
+    /// The `hide` program a worker runs: the one beside this daemon, so a
+    /// worker never reaches an older copy earlier on its PATH.
+    hide_program: String,
+    /// Workers whose agent has not shown a session yet: (first seen, next
+    /// ask). Each holds its slot (B57's count) until it starts or is given up.
+    starting: BTreeMap<(String, String), (UnixMs, UnixMs)>,
     machine_max_workers: u32,
     question_seq: u64,
 }
@@ -124,6 +134,10 @@ fn refuse(reason: &str, next: &str) -> Refusal {
 }
 
 impl Engine {
+    pub fn set_hide_program(&mut self, program: impl Into<String>) {
+        self.hide_program = program.into();
+    }
+
     pub fn open(store: &Path, files: &Path, ports: Ports) -> Result<Self, StoreError> {
         let store = Store::open(store, files)?;
         let loaded = store.load()?;
@@ -147,6 +161,8 @@ impl Engine {
             hold_reason: None,
             runtime_blocked: BTreeMap::new(),
             github_backoff: BTreeMap::new(),
+            hide_program: "hide".into(),
+            starting: BTreeMap::new(),
             machine_max_workers: 5,
             question_seq: 0,
         };
@@ -360,6 +376,7 @@ impl Engine {
                 }
                 if state != TaskState::Stopped {
                     task.stop = None;
+                    task.stop_detail = None;
                 }
             }
         });
@@ -449,6 +466,7 @@ impl Engine {
         self.all_tasks()
             .filter(|task| task.state.holds_slot())
             .count() as u32
+            + self.starting.len() as u32
     }
 
     // ----------------------------------------------------------------- commands
@@ -3884,6 +3902,17 @@ impl Engine {
 
     fn start_tasks(&mut self) {
         let now = self.now();
+        // A Task cancelled or paused while its worker was starting frees
+        // the slot.
+        let starting: Vec<_> = self.starting.keys().cloned().collect();
+        for (factory, id) in starting {
+            if self
+                .task(&factory, &id)
+                .is_none_or(|t| t.state != TaskState::Waiting)
+            {
+                self.starting.remove(&(factory, id));
+            }
+        }
         if self.halt_until.is_some_and(|until| until > now) {
             return;
         }
@@ -3954,6 +3983,14 @@ impl Engine {
             .machine_max_workers
             .saturating_sub(self.running_count());
         for task in candidates {
+            let key = (task.factory.clone(), task.id.clone());
+            if let Some((_, next)) = self.starting.get(&key) {
+                // Its slot is already counted; ask again when due.
+                if *next <= now {
+                    self.start(&task.factory, &task.id);
+                }
+                continue;
+            }
             // A relanding Task already holds its slot.
             let relanding = task.state == TaskState::Relanding;
             if free == 0 && !relanding {
@@ -4019,7 +4056,7 @@ impl Engine {
                     runtime,
                     project: factory.project.clone(),
                     branch: worker.branch.clone(),
-                    prompt: worker_prompt(&task, &factory, true),
+                    prompt: worker_prompt(&task, &factory, true, &self.hide_program),
                     args: factory
                         .config
                         .worker_args
@@ -4027,6 +4064,7 @@ impl Engine {
                         .cloned()
                         .unwrap_or_default(),
                     resume: Some(worker.clone()),
+                    attempt: task.spawn_refusals,
                 };
                 self.ports.workers.spawn(&request).map(Some)
             } else {
@@ -4060,7 +4098,7 @@ impl Engine {
                 runtime,
                 project: factory.project.clone(),
                 branch: task.branch_slug(),
-                prompt: worker_prompt(&task, &factory, false),
+                prompt: worker_prompt(&task, &factory, false, &self.hide_program),
                 args: factory
                     .config
                     .worker_args
@@ -4068,9 +4106,12 @@ impl Engine {
                     .cloned()
                     .unwrap_or_default(),
                 resume: None,
+                attempt: task.spawn_refusals,
             };
+            let key = (factory_id.to_owned(), id.to_owned());
             match self.ports.workers.spawn(&request) {
                 Ok(worker) => {
+                    self.starting.remove(&key);
                     self.with_task(factory_id, id, |t| {
                         t.worker = Some(worker);
                         t.last_report_at = None;
@@ -4084,11 +4125,59 @@ impl Engine {
                     self.set_state(factory_id, id, TaskState::Running);
                     true
                 }
+                Err(failure) if failure.starting => {
+                    self.worker_starting(factory_id, id, &failure);
+                    true
+                }
                 Err(failure) => {
+                    self.starting.remove(&key);
                     self.external_failure(factory_id, Some(id), &failure);
+                    if failure.signal.is_none() {
+                        // A refused start does not change by asking again;
+                        // a person fixes the cause and retries (B54).
+                        self.set_state(factory_id, id, TaskState::Stopped);
+                        let detail = judgment::cut(&failure.detail, 300);
+                        self.with_task(factory_id, id, |t| {
+                            t.stop = Some(StopReason::WorkerStart);
+                            t.stop_detail = Some(detail);
+                            t.spawn_refusals += 1;
+                        });
+                    }
                     false
                 }
             }
+        }
+    }
+
+    /// The worker's pane runs but its agent has shown no session: ask the
+    /// same spawn again later, and after a while tell the person to look
+    /// at the pane, where a first-run prompt may be waiting.
+    fn worker_starting(&mut self, factory: &str, id: &str, failure: &Failure) {
+        let now = self.now();
+        let key = (factory.to_owned(), id.to_owned());
+        let first = match self.starting.get(&key) {
+            Some((first, _)) => *first,
+            None => {
+                self.record(
+                    factory,
+                    Some(id),
+                    "worker.starting",
+                    json!({"detail": failure.detail}),
+                );
+                now
+            }
+        };
+        self.starting.insert(key, (first, now + START_RETRY_MS));
+        if now.saturating_sub(first) >= START_NOTICE_MS {
+            let name = self
+                .task(factory, id)
+                .map(|t| worker_name(&self.factories[factory], t))
+                .unwrap_or_default();
+            self.once_notice(
+                factory,
+                id,
+                &format!("worker {name}가 시작되지 않았습니다. 그 pane에서 신뢰·로그인 같은 확인 화면이 기다리는지 보세요."),
+            );
         }
     }
 
@@ -4504,7 +4593,11 @@ impl Engine {
             factory,
             task,
             "external.failed",
-            json!({"stage": failure.stage, "signal": failure.signal.map(EnvSignal::as_str)}),
+            json!({
+                "stage": failure.stage,
+                "signal": failure.signal.map(EnvSignal::as_str),
+                "detail": judgment::cut(&failure.detail, 200),
+            }),
         );
         let now = self.now();
         let Some(signal) = failure.signal else { return };
@@ -4832,6 +4925,21 @@ impl Engine {
                 .and_then(|t| self.resolve(&Role::Engine, &t).ok().map(|(_, id)| id))
                 .or_else(|| self.tasks_of(factory_id).last().map(|t| t.id.clone()));
             let Some(anchor) = anchor else { continue };
+            // A Task already waiting on a person is in the inbox; a warning
+            // about it would say the same thing twice (design #13).
+            if warning.task.is_some()
+                && self
+                    .task(factory_id, &anchor)
+                    .is_some_and(|t| t.open_questions().next().is_some())
+            {
+                self.record(
+                    factory_id,
+                    Some(&anchor),
+                    "watch.logged",
+                    json!({"already_open": true}),
+                );
+                continue;
+            }
             self.add_question(
                 factory_id,
                 &anchor,
@@ -5112,7 +5220,7 @@ fn worker_name(factory: &Factory, task: &Task) -> String {
 
 /// The worker's first prompt (B22): the card, the attachments, the harness
 /// preset and the Factory's reporting rules.
-pub fn worker_prompt(task: &Task, factory: &Factory, resumed: bool) -> String {
+pub fn worker_prompt(task: &Task, factory: &Factory, resumed: bool, hide: &str) -> String {
     let mut prompt = String::new();
     if resumed {
         prompt.push_str("Factory: 같은 worktree에서 이 Task를 이어서 맡습니다. 지금까지 한 일을 확인하고 이어가세요.\n\n");
@@ -5142,6 +5250,12 @@ pub fn worker_prompt(task: &Task, factory: &Factory, resumed: bool) -> String {
         ));
     }
     prompt.push_str(REPORTING_RULES);
+    if hide != "hide" {
+        prompt.push_str(&format!(
+            "- 위와 이후 편지의 `hide`는 모두 이 프로그램입니다: '{}'\n",
+            hide.replace('\'', "'\\''")
+        ));
+    }
     prompt
 }
 

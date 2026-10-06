@@ -54,6 +54,8 @@ pub struct World {
     /// Intake answers by card title; a plain ready verdict when absent.
     pub intake: BTreeMap<String, Value>,
     pub drift: BTreeMap<String, Value>,
+    /// Scripted watch answers, oldest first; no warnings when empty.
+    pub watch: VecDeque<Value>,
     pub judge_down: bool,
     pub hold_judgments: bool,
     pub disk_free: Option<u64>,
@@ -385,7 +387,10 @@ impl Judge for Shared {
                     .as_ref()
                     .and_then(|task| world.drift.get(task).cloned())
                     .unwrap_or_else(|| json!({"pass": true, "questions": [], "flags": []})),
-                JudgmentInput::Watch { .. } => json!({"warnings": []}),
+                JudgmentInput::Watch { .. } => world
+                    .watch
+                    .pop_front()
+                    .unwrap_or_else(|| json!({"warnings": []})),
                 JudgmentInput::EnvDiagnosis { .. } => json!({"cause": "unknown", "action": "none"}),
             };
             answers.push(JudgmentAnswer {

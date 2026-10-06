@@ -6,7 +6,7 @@
 //! The engine opens its store the first time it is asked, or at start when a
 //! store already exists, so a machine without a Factory pays nothing.
 
-use std::collections::{BTreeSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError, SyncSender};
@@ -164,7 +164,22 @@ struct Waiter {
 struct WorkerState {
     /// Panes whose sleep was asked while the agent was still in its turn.
     pending_sleep: BTreeSet<String>,
+    /// Woken workers whose agent has not come back yet, with the letters it
+    /// gets once it has: a letter needs the agent's session to address.
+    waking: BTreeMap<String, Woken>,
 }
+
+struct Woken {
+    worker: WorkerRef,
+    letters: Vec<(String, String)>,
+    since: Instant,
+}
+
+/// Letters held for one woken worker, and how long a wake may take before
+/// they go to the diagnostic log instead (the engine's no-report rule then
+/// stops the Task).
+const WOKEN_LETTER_LIMIT: usize = 16;
+const WAKE_LIMIT: Duration = Duration::from_secs(10 * 60);
 
 fn run(
     paths: Paths,
@@ -206,7 +221,12 @@ fn run(
             }),
         };
         match Engine::open(&paths.store, &paths.files, ports) {
-            Ok(engine) => Some(engine),
+            Ok(mut engine) => {
+                if let Some(program) = hide_program() {
+                    engine.set_hide_program(program);
+                }
+                Some(engine)
+            }
             Err(error) => {
                 crate::diagnostic!(
                     json!({"component":"factory","kind":"store.open_failed","error":error.0})
@@ -266,6 +286,11 @@ fn run(
             pump_letters(engine, &runtime);
             engine.tick();
             settle_sleeps(&workers, &runtime);
+            let mut port = CoreWorkers {
+                runtime: runtime.clone(),
+                state: Arc::clone(&workers),
+            };
+            port.deliver_woken();
             publish_recipients(Some(engine), &runtime);
         }
         waiters.retain(|waiter| {
@@ -307,6 +332,16 @@ fn publish_recipients(engine: Option<&Engine>, runtime: &Weak<Mutex<Runtime>>) {
 /// Runs one command with the caller's role (D-33). A worker's report travels
 /// as a ledger letter from its own pane, so a harness that only speaks the
 /// letter protocol lands on the same path (B25).
+/// The `hide` program beside the running daemon (the app bundle's
+/// Resources, or a build's target folder).
+fn hide_program() -> Option<String> {
+    let name = if cfg!(windows) { "hide.exe" } else { "hide" };
+    let program = std::env::current_exe().ok()?.parent()?.join(name);
+    program
+        .is_file()
+        .then(|| program.to_string_lossy().into_owned())
+}
+
 fn handle(
     engine: &mut Engine,
     runtime: &Weak<Mutex<Runtime>>,
@@ -511,6 +546,66 @@ struct CoreWorkers {
 }
 
 impl CoreWorkers {
+    /// Hands each woken worker its letters once its agent is back.
+    fn deliver_woken(&mut self) {
+        let panes: Vec<String> = self
+            .state
+            .lock()
+            .map(|state| state.waking.keys().cloned().collect())
+            .unwrap_or_default();
+        for pane in panes {
+            let Ok(runtime) = self.runtime() else { return };
+            let probe = guard(&runtime).factory_worker_probe(&pane);
+            drop(runtime);
+            let Some(woken) = self
+                .state
+                .lock()
+                .ok()
+                .and_then(|mut state| state.waking.remove(&pane))
+            else {
+                continue;
+            };
+            if !probe.present || probe.asleep {
+                if woken.since.elapsed() >= WAKE_LIMIT {
+                    crate::diagnostic!(
+                        json!({"component":"factory","kind":"worker.wake_timed_out","pane_id":pane,"letters":woken.letters.len()})
+                    );
+                } else if let Ok(mut state) = self.state.lock() {
+                    state.waking.insert(pane, woken);
+                }
+                continue;
+            }
+            let mut left = Vec::new();
+            for (intent, body) in woken.letters {
+                if !left.is_empty() {
+                    left.push((intent, body));
+                    continue;
+                }
+                if let Err(failure) = self.message(&woken.worker, &intent, None, &body) {
+                    // The agent is back but its session is not observed yet.
+                    if woken.since.elapsed() >= WAKE_LIMIT {
+                        crate::diagnostic!(
+                            json!({"component":"factory","kind":"worker.wake_letter_failed","pane_id":pane,"reason":failure.detail})
+                        );
+                        continue;
+                    }
+                    left.push((intent, body));
+                }
+            }
+            if !left.is_empty()
+                && let Ok(mut state) = self.state.lock()
+            {
+                state.waking.insert(
+                    pane,
+                    Woken {
+                        letters: left,
+                        ..woken
+                    },
+                );
+            }
+        }
+    }
+
     fn runtime(&self) -> Result<Arc<Mutex<Runtime>>, Failure> {
         lock(&self.runtime)
             .ok_or_else(|| Failure::environment("worker", EnvSignal::HerdrSocket, "core stopped"))
@@ -554,6 +649,11 @@ impl CoreWorkers {
 impl WorkerRuntime for CoreWorkers {
     fn spawn(&mut self, request: &WorkerSpawn) -> Result<WorkerRef, Failure> {
         let runtime = self.runtime()?;
+        if request.runtime == hide_factory::model::Runtime::Codex
+            && !guard(&runtime).factory_kit_read()
+        {
+            return Err(Failure::starting("worker.spawn", "kit_not_read"));
+        }
         let (client, authority, actor) = guard(&runtime)
             .factory_delivery(&request.factory)
             .map_err(|reason| Failure::task("worker.spawn", reason))?;
@@ -583,8 +683,15 @@ impl WorkerRuntime for CoreWorkers {
                     Some(previous.worktree.clone()),
                 )
             }
-            None => (
+            None if request.attempt == 0 => (
                 format!("factory-{}-{}", request.factory, request.task),
+                None,
+            ),
+            None => (
+                format!(
+                    "factory-{}-{}-a{}",
+                    request.factory, request.task, request.attempt
+                ),
                 None,
             ),
         };
@@ -667,14 +774,31 @@ impl WorkerRuntime for CoreWorkers {
             .lock()
             .map(|mut state| state.pending_sleep.remove(&pane))
             .unwrap_or(false);
-        if !never_slept {
-            let runtime = self.runtime()?;
-            guard(&runtime).factory_wake(&pane);
-        }
-        // The letter waits in the ledger; the doorbell rings once the agent
-        // is back at its prompt.
         let intent = format!("factory-wake-{}-{}", pane, now_ms());
-        self.message(worker, &intent, None, body)
+        if never_slept {
+            // Still in its pane: the doorbell rings at its next prompt.
+            return self.message(worker, &intent, None, body);
+        }
+        let runtime = self.runtime()?;
+        guard(&runtime).factory_wake(&pane);
+        drop(runtime);
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| Failure::task("worker.wake", "state unavailable"))?;
+        let woken = state.waking.entry(pane).or_insert_with(|| Woken {
+            worker: worker.clone(),
+            letters: Vec::new(),
+            since: Instant::now(),
+        });
+        if woken.letters.len() >= WOKEN_LETTER_LIMIT {
+            return Err(Failure::task(
+                "worker.wake",
+                "too many letters wait for this worker",
+            ));
+        }
+        woken.letters.push((intent, body.to_owned()));
+        Ok(())
     }
 
     fn status(&mut self, worker: &WorkerRef) -> WorkerStatus {
@@ -776,13 +900,18 @@ impl WorkerRuntime for CoreWorkers {
 }
 
 fn spawn_failure(reason: &str) -> Failure {
-    if reason.contains("socket")
-        || reason.contains("delivery_unavailable")
-        || reason.contains("unavailable")
-    {
-        Failure::environment("worker.spawn", EnvSignal::HerdrSocket, reason)
-    } else {
-        Failure::task("worker.spawn", reason)
+    match reason {
+        // The pane was made and the agent typed in; its session is not
+        // visible yet. The same intent continues the spawn later.
+        "native_identity_unavailable" => Failure::starting("worker.spawn", reason),
+        "delivery_unavailable" | "ledger_unavailable" => {
+            Failure::environment("worker.spawn", EnvSignal::HerdrSocket, reason)
+        }
+        // A Herdr request that could not reach the server.
+        _ if reason.contains("socket") || reason.contains("connect") => {
+            Failure::environment("worker.spawn", EnvSignal::HerdrSocket, reason)
+        }
+        _ => Failure::task("worker.spawn", reason),
     }
 }
 

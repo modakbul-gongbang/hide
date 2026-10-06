@@ -220,6 +220,20 @@ impl Runtime {
             .cloned()
     }
 
+    /// Whether this Mac's kit has answered since launch; when not, asks it to
+    /// read the machine. A Codex start needs that answer (`codex_launch`),
+    /// and the Factory starts workers with no Settings on screen.
+    pub(crate) fn factory_kit_read(&mut self) -> bool {
+        if self
+            .kit_states
+            .contains_key(crate::workspace::LOCAL_DEVICE_ID)
+        {
+            return true;
+        }
+        self.request_kit_check();
+        false
+    }
+
     pub(crate) fn factory_ai_settings(&self) -> Option<hide_ai::AiSettings> {
         self.ai_settings.clone()
     }

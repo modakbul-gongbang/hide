@@ -425,10 +425,16 @@ pub fn inbox_items(
                 let mut item = base(
                     "stopped",
                     3,
-                    format!(
-                        "멈춤: {}",
-                        task.stop.map(|reason| reason.label()).unwrap_or("?")
-                    ),
+                    match &task.stop_detail {
+                        Some(detail) => format!(
+                            "멈춤: {} - {detail}",
+                            task.stop.map(|reason| reason.label()).unwrap_or("?")
+                        ),
+                        None => format!(
+                            "멈춤: {}",
+                            task.stop.map(|reason| reason.label()).unwrap_or("?")
+                        ),
+                    },
                     task.state_since,
                 );
                 item.choices = vec!["retry".into(), "cancel".into()];
