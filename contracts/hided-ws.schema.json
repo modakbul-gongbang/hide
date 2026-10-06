@@ -9,6 +9,7 @@
     { "$ref": "#/$defs/clientEvent" },
     { "$ref": "#/$defs/workspaceQuery" },
     { "$ref": "#/$defs/workspaceAction" },
+    { "$ref": "#/$defs/linksQuery" },
     { "$ref": "#/$defs/workspaceResult" }
   ],
   "$defs": {
@@ -33,6 +34,32 @@
         "type": { "const": "workspace_query" },
         "request_id": { "$ref": "#/$defs/workspaceRequestId" },
         "query": { "enum": ["info", "view_list"] }
+      }
+    },
+    "linksQuery": {
+      "description": "`hide links`: a read of the link record on a capability-authenticated WebSocket, answered as a workspace_result without a shell. The caller checkout's Project is the scope unless all_projects is set; a target only another Project holds is refused with other_project, and one the record never saw with not_found.",
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "request_id", "query"],
+      "properties": {
+        "type": { "const": "links" },
+        "request_id": { "$ref": "#/$defs/workspaceRequestId" },
+        "query": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["target"],
+          "properties": {
+            "all_projects": { "type": "boolean" },
+            "target": {
+              "oneOf": [
+                { "type": "object", "additionalProperties": false, "required": ["kind", "number"], "properties": { "kind": { "const": "pr" }, "number": { "type": "integer", "minimum": 1 } } },
+                { "type": "object", "additionalProperties": false, "required": ["kind", "number"], "properties": { "kind": { "const": "issue" }, "number": { "type": "integer", "minimum": 1 } } },
+                { "type": "object", "additionalProperties": false, "required": ["kind", "name"], "properties": { "kind": { "const": "branch" }, "name": { "type": "string", "minLength": 1, "maxLength": 256 } } },
+                { "type": "object", "additionalProperties": false, "required": ["kind", "id"], "properties": { "kind": { "const": "session" }, "id": { "type": "string", "minLength": 1, "maxLength": 256 } } }
+              ]
+            }
+          }
+        }
       }
     },
     "workspaceAction": {

@@ -281,6 +281,60 @@ impl Runtime {
         }
     }
 
+    /// The Projects `hide links` may read, and which one holds the caller's
+    /// checkout; none when the record has no home.
+    pub(crate) fn links_scope(
+        &self,
+        context: &crate::workspace_control::Context,
+    ) -> Option<crate::links::query::Scope> {
+        let directory = self
+            .state_path
+            .parent()
+            .filter(|directory| !directory.as_os_str().is_empty())?;
+        let projects = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .filter(|workspace| workspace.is_git && !workspace.is_home && !workspace.temporary)
+            .map(|workspace| crate::links::query::ScopeProject {
+                key: hide_project::project_id(&workspace.device_id, Path::new(&workspace.path)),
+                workspace_id: workspace.id.clone(),
+                label: workspace.label.clone(),
+                root: workspace.path.clone(),
+                device_id: workspace.device_id.clone(),
+                checkouts: workspace
+                    .checkouts
+                    .iter()
+                    .map(|checkout| checkout.path.clone())
+                    .collect(),
+            })
+            .collect::<Vec<_>>();
+        let caller = self
+            .snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .find(|workspace| {
+                workspace.device_id == context.device_id
+                    && (workspace.id == context.workspace_id
+                        || workspace
+                            .checkouts
+                            .iter()
+                            .any(|checkout| checkout.path == context.checkout_path))
+            })
+            .map(|workspace| {
+                hide_project::project_id(&workspace.device_id, Path::new(&workspace.path))
+            })
+            .unwrap_or_default();
+        Some(crate::links::query::Scope {
+            store: hide_kit::layout::links_store(directory),
+            local_device: workspace::LOCAL_DEVICE_ID.to_owned(),
+            caller,
+            projects,
+        })
+    }
+
     /// `links_open`: reads the record for one pull request or issue of a
     /// project into the `link_panel` section; reading the same one again is
     /// the failure line's Retry (B25).

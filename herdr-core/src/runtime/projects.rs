@@ -3845,21 +3845,6 @@ fn pull_request_times(
         .collect()
 }
 
-#[cfg(test)]
-mod purpose_version_tests {
-    use super::*;
-
-    #[test]
-    fn remote_purpose_requires_the_pinned_minimum_version() {
-        assert!(!herdr_version_supports_purpose(None));
-        assert!(!herdr_version_supports_purpose(Some("0.9.0")));
-        assert!(herdr_version_supports_purpose(Some("0.9.1")));
-        assert!(herdr_version_supports_purpose(Some("v0.10.0")));
-        assert!(herdr_version_supports_purpose(Some("1.0.0-beta.1")));
-        assert!(!herdr_version_supports_purpose(Some("unknown")));
-    }
-}
-
 /// The arguments that resume `session_id` in `kind`'s CLI, or none for an id
 /// that is not one plain token: it reaches the agent's command line, where
 /// one that began with `-` would read as an option.
@@ -3879,4 +3864,19 @@ fn resume_session_arguments(kind: &str, session_id: &str) -> Option<Vec<String>>
         kind: kind.to_owned(),
         session_id: Some(session_id.to_owned()),
     })
+}
+
+#[cfg(test)]
+mod purpose_version_tests {
+    use super::*;
+
+    #[test]
+    fn remote_purpose_requires_the_pinned_minimum_version() {
+        assert!(!herdr_version_supports_purpose(None));
+        assert!(!herdr_version_supports_purpose(Some("0.9.0")));
+        assert!(herdr_version_supports_purpose(Some("0.9.1")));
+        assert!(herdr_version_supports_purpose(Some("v0.10.0")));
+        assert!(herdr_version_supports_purpose(Some("1.0.0-beta.1")));
+        assert!(!herdr_version_supports_purpose(Some("unknown")));
+    }
 }

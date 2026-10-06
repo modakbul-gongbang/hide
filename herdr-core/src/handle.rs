@@ -499,6 +499,18 @@ impl Core {
     /// Daemon-only pane query. The daemon validates the process that asked;
     /// the core then resolves current pane membership at the point of use.
     /// Only owned result data leaves the runtime lock.
+    /// The registered Projects and the caller checkout's own, for a
+    /// `hide links` read the daemon then answers off this thread.
+    pub fn links_scope(
+        &self,
+        context: &crate::workspace_control::Context,
+    ) -> Option<crate::links::query::Scope> {
+        if !check_owner_thread(self, "links_scope") {
+            return None;
+        }
+        lock_recover(&self.runtime).links_scope(context)
+    }
+
     pub fn workspace_control_query(
         &self,
         device_id: &str,

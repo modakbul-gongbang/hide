@@ -11,6 +11,7 @@
 //! that writes it, and `runtime/links.rs` what the runtime hands the worker
 //! and publishes.
 
+pub mod query;
 pub mod store;
 pub mod worker;
 
@@ -276,6 +277,17 @@ pub struct LinkSummariesSnapshot {
 
 /// The most sessions a project's summary names chips for.
 pub const SUMMARY_SESSION_LIMIT: usize = 2_000;
+
+/// An issue's key as the record holds it: a GitHub key lower case, since
+/// GitHub answers a repository's name in either case; a local key as it is,
+/// since it names a path.
+pub fn issue_key(key: &str) -> String {
+    if key.starts_with("github:") {
+        key.to_ascii_lowercase()
+    } else {
+        key.to_owned()
+    }
+}
 
 /// `owner/name` from a GitHub pull request address, lower case.
 pub fn repository_of(url: &str) -> Option<String> {

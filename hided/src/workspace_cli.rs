@@ -218,6 +218,22 @@ fn request_query(path: &Path, query: &str, display_id: Option<&str>) -> Result<V
     )
 }
 
+/// `hide links`: a read, answered without a shell.
+pub fn request_links(
+    path: &Path,
+    query: &herdr_core::links::query::LinksQuery,
+) -> Result<Value, String> {
+    let reference = read_reference(path)?;
+    let request_id = fresh_request_id()?;
+    run_exchange(
+        path,
+        &reference,
+        json!({"type":"links","request_id":request_id,"query":query}),
+        &request_id,
+        false,
+    )
+}
+
 /// Losing the final capability claim cannot turn durable success into retry.
 pub fn request_delivery(
     path: &Path,

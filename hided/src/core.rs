@@ -59,6 +59,10 @@ enum Command {
         query: Query,
         reply: Sender<Result<QueryResult, Refusal>>,
     },
+    LinksScope {
+        context: Context,
+        reply: Sender<Option<herdr_core::links::query::Scope>>,
+    },
     WorkspaceAction {
         device_id: String,
         pane_id: String,
@@ -222,6 +226,19 @@ impl CoreHandle {
             .map_err(|_| "core owner thread is gone".to_owned())?;
         rx.recv()
             .map_err(|_| "core owner thread dropped browser route source".to_owned())
+    }
+
+    /// The Projects a `hide links` read may answer from, as the core knows
+    /// them now; the read itself runs on the caller's blocking task.
+    pub fn links_scope(&self, context: &Context) -> Option<herdr_core::links::query::Scope> {
+        let (reply, rx) = mpsc::channel();
+        self.commands
+            .send(Command::LinksScope {
+                context: context.clone(),
+                reply,
+            })
+            .ok()?;
+        rx.recv().ok().flatten()
     }
 
     pub fn workspace_query(
@@ -414,6 +431,9 @@ fn owner_loop(
                 reply,
             } => {
                 let _ = reply.send(core.workspace_control_query(&device_id, &pane_id, query));
+            }
+            Command::LinksScope { context, reply } => {
+                let _ = reply.send(core.links_scope(&context));
             }
             Command::WorkspaceAction {
                 device_id,

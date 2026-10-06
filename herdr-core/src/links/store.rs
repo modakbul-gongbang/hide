@@ -24,7 +24,7 @@ const SCHEMA_VERSION: i64 = 1;
 
 const SCHEMA: &str = "
 CREATE TABLE projects(key TEXT PRIMARY KEY, device TEXT NOT NULL, root TEXT NOT NULL,
-    repo TEXT, seen_at INTEGER NOT NULL);
+    repo TEXT, name TEXT, seen_at INTEGER NOT NULL);
 CREATE TABLE repo_names(name TEXT PRIMARY KEY, repo TEXT NOT NULL);
 CREATE TABLE prs(repo TEXT NOT NULL, number INTEGER NOT NULL, project TEXT NOT NULL,
     branch TEXT NOT NULL, title TEXT NOT NULL, url TEXT NOT NULL, created_at INTEGER,
@@ -268,9 +268,17 @@ impl LinkStore {
             None => None,
         };
         tx.execute(
-            "INSERT INTO projects VALUES(?1,?2,?3,?4,?5) ON CONFLICT(key) DO UPDATE SET \
-             root=excluded.root, repo=COALESCE(excluded.repo, projects.repo), seen_at=excluded.seen_at",
-            params![project.key, project.device_id, project.root, repo, now as i64],
+            "INSERT INTO projects VALUES(?1,?2,?3,?4,?5,?6) ON CONFLICT(key) DO UPDATE SET \
+             root=excluded.root, repo=COALESCE(excluded.repo, projects.repo), \
+             name=COALESCE(excluded.name, projects.name), seen_at=excluded.seen_at",
+            params![
+                project.key,
+                project.device_id,
+                project.root,
+                repo,
+                project.repository.as_deref().map(str::to_ascii_lowercase),
+                now as i64
+            ],
         )
         .map_err(failed)?;
         for worktree in &project.worktrees {
@@ -316,15 +324,12 @@ impl LinkStore {
                         .issues
                         .iter()
                         .filter(|(_, from)| *from == source)
-                        .map(|(key, _)| key.as_str())
+                        .map(|(key, _)| super::issue_key(key))
                         .collect::<BTreeSet<_>>();
                     // The source says the link is gone: close it at this
                     // pass, never delete it (B27).
                     let open = issues_open(&tx, &repo, pr.number, source)?;
-                    for issue in open
-                        .iter()
-                        .filter(|issue| !current.contains(issue.as_str()))
-                    {
+                    for issue in open.iter().filter(|issue| !current.contains(*issue)) {
                         tx.execute(
                             "UPDATE pr_issues SET end_at=?5 WHERE repo=?1 AND number=?2 \
                              AND issue=?3 AND source=?4",
@@ -744,7 +749,7 @@ impl LinkStore {
     pub fn projects(&self) -> Result<Vec<ProjectRow>, String> {
         let mut statement = self
             .connection
-            .prepare_cached("SELECT key, device, root, repo FROM projects ORDER BY key")
+            .prepare_cached("SELECT key, device, root, repo, name FROM projects ORDER BY key")
             .map_err(failed)?;
         statement
             .query_map([], |row| {
@@ -753,6 +758,7 @@ impl LinkStore {
                     device: row.get(1)?,
                     root: row.get(2)?,
                     repo: row.get(3)?,
+                    name: row.get(4)?,
                 })
             })
             .and_then(Iterator::collect)
@@ -959,7 +965,7 @@ impl LinkStore {
                 paths.push(cwd);
             }
         }
-        let mut worked: BTreeMap<SessionKey, (u64, u64, Option<(u64, String)>)> = BTreeMap::new();
+        let mut worked: BTreeMap<SessionKey, BranchWork> = BTreeMap::new();
         {
             let mut statement = self
                 .connection
@@ -969,7 +975,7 @@ impl LinkStore {
                      AND device=?4",
                 )
                 .map_err(failed)?;
-            let rows: Vec<(SessionKey, u64, u64, Option<String>, Option<i64>)> = statement
+            let rows: Vec<SpanRow> = statement
                 .query_map(
                     params![
                         pr.branch,
@@ -994,13 +1000,17 @@ impl LinkStore {
                 .and_then(Iterator::collect)
                 .map_err(failed)?;
             for (key, first, last, request, request_at) in rows {
-                let entry = worked.entry(key).or_insert((first, last, None));
-                entry.0 = entry.0.min(first);
-                entry.1 = entry.1.max(last);
+                let entry = worked.entry(key).or_insert(BranchWork {
+                    first,
+                    last,
+                    request: None,
+                });
+                entry.first = entry.first.min(first);
+                entry.last = entry.last.max(last);
                 if let (Some(request), Some(at)) = (request, request_at) {
                     let at = at as u64;
-                    if at <= end && entry.2.as_ref().is_none_or(|(held, _)| at > *held) {
-                        entry.2 = Some((at, request));
+                    if at <= end && entry.request.as_ref().is_none_or(|(held, _)| at > *held) {
+                        entry.request = Some((at, request));
                     }
                 }
             }
@@ -1040,7 +1050,7 @@ impl LinkStore {
             } else {
                 let branch_request = worked
                     .get(&key)
-                    .and_then(|(_, _, request)| request.clone().map(|(_, text)| text));
+                    .and_then(|work| work.request.clone().map(|(_, text)| text));
                 let printed_request = printed.get(&key).and_then(|(_, request)| request.clone());
                 (SessionRole::Worked, branch_request.or(printed_request))
             };
@@ -1242,7 +1252,7 @@ impl LinkStore {
         let Some(project) = self.project(project)? else {
             return Ok(IssueLinks::default());
         };
-        let prs = self.issue_prs(&project.key, issue)?;
+        let prs = self.issue_prs(&project.key, &super::issue_key(issue))?;
         let mut sessions: Vec<LinkedSession> = Vec::new();
         for pr in &prs {
             for line in self.pr_lines(&project, pr, local_device)? {
@@ -1292,7 +1302,7 @@ impl LinkStore {
                 found.push((pr, line));
             }
         }
-        found.sort_by(|(left, _), (right, _)| right.number.cmp(&left.number));
+        found.sort_by_key(|(pr, _)| std::cmp::Reverse(pr.number));
         Ok(found)
     }
 
@@ -1312,6 +1322,97 @@ impl LinkStore {
         statement
             .query_map([project], pr_row)
             .and_then(Iterator::collect)
+            .map_err(failed)
+    }
+
+    /// The sessions that worked on a branch in a project at any time, and
+    /// the pull requests made from it, for `hide links branch`.
+    pub fn branch_links(
+        &self,
+        project: &str,
+        branch: &str,
+        local_device: Option<&str>,
+    ) -> Result<Option<BranchLinks>, String> {
+        let Some(row) = self.project(project)? else {
+            return Ok(None);
+        };
+        let prs = self.prs_on_branch(project, branch)?;
+        // The branch's whole life: no window, no address.
+        let whole = PrRow {
+            repo: row.repo.clone().unwrap_or_default(),
+            number: 0,
+            branch: branch.to_owned(),
+            title: String::new(),
+            url: String::new(),
+            created_at: None,
+            closed_at: None,
+            merged_at: None,
+        };
+        let sessions = self.pr_lines(&row, &whole, local_device)?;
+        if prs.is_empty() && sessions.is_empty() {
+            return Ok(None);
+        }
+        Ok(Some((prs, sessions)))
+    }
+
+    /// One session's own line in a project and the pull requests it made or
+    /// worked on, for `hide links session`; none when the session never
+    /// worked in the project.
+    pub fn session_links(
+        &self,
+        project: &str,
+        session_id: &str,
+        local_device: Option<&str>,
+    ) -> Result<Option<SessionLinks>, String> {
+        let Some(row) = self.project(project)? else {
+            return Ok(None);
+        };
+        let prs = self.session_prs(&row, session_id)?;
+        let paths = self.project_paths(&row)?;
+        let mut statement = self
+            .connection
+            .prepare_cached(&format!(
+                "SELECT {SESSION_COLUMNS} FROM sessions WHERE device=?1 AND id=?2"
+            ))
+            .map_err(failed)?;
+        let found: Vec<SessionRow> = statement
+            .query_map(params![row.device, session_id], session_row)
+            .and_then(Iterator::collect)
+            .map_err(failed)?;
+        let Some(session) = found.into_iter().find(|session| {
+            session.interactive != Some(false)
+                && (!prs.is_empty()
+                    || session
+                        .cwd
+                        .as_deref()
+                        .is_some_and(|cwd| paths.iter().any(|path| within(cwd, path))))
+        }) else {
+            return Ok(None);
+        };
+        let request = self.session_request(&session.key)?;
+        let role = if prs
+            .iter()
+            .any(|(_, line)| line.role == SessionRole::Created)
+        {
+            SessionRole::Created
+        } else {
+            SessionRole::Worked
+        };
+        let line = self
+            .lines(vec![(session, role, request)], 0, local_device)?
+            .remove(0);
+        Ok(Some((line, prs)))
+    }
+
+    fn session_request(&self, key: &SessionKey) -> Result<Option<String>, String> {
+        self.connection
+            .query_row(
+                "SELECT last_request FROM sessions WHERE device=?1 AND agent=?2 AND id=?3",
+                params![key.device, key.agent, key.id],
+                |row| row.get(0),
+            )
+            .optional()
+            .map(Option::flatten)
             .map_err(failed)
     }
 
@@ -1393,7 +1494,7 @@ fn migrate(connection: &Connection) -> Result<(), OpenFailure> {
     let version: i64 = connection
         .pragma_query_value(None, "user_version", |row| row.get(0))
         .map_err(classify)?;
-    if version > SCHEMA_VERSION || version < 0 {
+    if !(0..=SCHEMA_VERSION).contains(&version) {
         return Err(OpenFailure::Newer);
     }
     if version == 0 {
@@ -1536,6 +1637,23 @@ fn link_continuations(tx: &Transaction<'_>, device: &str) -> Result<(), String> 
     Ok(())
 }
 
+/// A session's work on a branch inside a pull request's life: its first
+/// and last time there and its last request then.
+struct BranchWork {
+    first: u64,
+    last: u64,
+    request: Option<(u64, String)>,
+}
+
+/// One `session_branches` row: who, first, last, request, its time.
+type SpanRow = (SessionKey, u64, u64, Option<String>, Option<i64>);
+
+/// A branch's pull requests and the sessions that worked on it.
+pub type BranchLinks = (Vec<PrRow>, Vec<LinkedSession>);
+
+/// A session's own line and the pull requests it is on, each with its line.
+pub type SessionLinks = (LinkedSession, Vec<(PrRow, LinkedSession)>);
+
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 struct SessionKey {
     device: String,
@@ -1579,7 +1697,10 @@ pub struct ProjectRow {
     pub key: String,
     pub device: String,
     pub root: String,
+    #[serde(skip)]
     pub repo: Option<String>,
+    /// `owner/name` as GitHub last answered it.
+    pub name: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize)]
