@@ -3519,7 +3519,6 @@ mod tests {
         }
     }
 
-    #[cfg(unix)]
     #[test]
     fn only_this_nodes_id_or_none_reads_through_this_machines_boundary() {
         let home = tempfile::tempdir().unwrap();

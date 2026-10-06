@@ -17,7 +17,7 @@
 //! stops the start and names the file; the files not yet converted are
 //! untouched, and a retry converges.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 
@@ -286,6 +286,39 @@ pub fn convert(state_dir: &Path, home: &Path, node: &NodeId) -> Result<Outcome, 
         _ => {}
     }
 
+    // A store the conversion would push past its loader's limit stops the
+    // start before anything is written, so every file stays as it was (B2).
+    // Only stores whose converter reads no project id have a limit, so the
+    // check needs none of the pairs found below.
+    for (file, version_key, versions, convert) in JSON_STORES {
+        let limit = stored_limit(file);
+        let path = state_dir.join(file);
+        if limit == usize::MAX || over_limit(&path, limit) {
+            continue;
+        }
+        let Some(mut value) = read_json(&path).map_err(|reason| refuse(&path, reason))? else {
+            continue;
+        };
+        if !current(&value, version_key, versions) {
+            continue;
+        }
+        if convert(&mut value, node.as_str(), &BTreeMap::new()) {
+            let bytes =
+                serde_json::to_vec(&value).map_err(|error| refuse(&path, error.to_string()))?;
+            if bytes.len() > limit {
+                return Err(refuse(
+                    &path,
+                    format!(
+                        "converted, it would be {} bytes, over the {limit} bytes its loader \
+                         reads; start the previous build once so its retention trims the \
+                         file, or move the file aside to start without it",
+                        bytes.len()
+                    ),
+                ));
+            }
+        }
+    }
+
     let mut outcome = Outcome::default();
     let backup = Backup::new(state_dir, marker.is_none());
     let mut project_pairs: Vec<(String, String)> = Vec::new();
@@ -336,26 +369,20 @@ pub fn convert(state_dir: &Path, home: &Path, node: &NodeId) -> Result<Outcome, 
 
     for (file, version_key, versions, convert) in JSON_STORES {
         let path = state_dir.join(file);
+        // A store its own loader already refuses is left to that loader,
+        // as a store of an unknown version is.
+        if over_limit(&path, stored_limit(file)) {
+            continue;
+        }
         let Some(mut value) = read_json(&path).map_err(|reason| refuse(&path, reason))? else {
             continue;
         };
-        let version = value.get(*version_key).and_then(Value::as_u64);
-        if !version.is_some_and(|version| versions.contains(&version)) {
+        if !current(&value, version_key, versions) {
             continue;
         }
         if convert(&mut value, node.as_str(), &project_ids) {
             let bytes =
                 serde_json::to_vec(&value).map_err(|error| refuse(&path, error.to_string()))?;
-            let limit = stored_limit(file);
-            if bytes.len() > limit {
-                return Err(refuse(
-                    &path,
-                    format!(
-                        "converted, it would be {} bytes, over the {limit} bytes its loader reads",
-                        bytes.len()
-                    ),
-                ));
-            }
             backup
                 .copy(&path, file)
                 .map_err(|reason| refuse(&path, reason))?;
@@ -423,6 +450,19 @@ const JSON_STORES: &[(&str, &str, &[u64], JsonConverter)] = &[
     (LABELS, "version", &[1], convert_labels),
     (DELIVERY_LEDGER, "version", &[1], convert_delivery_ledger),
 ];
+
+/// Whether the store is one of the versions this build converts.
+fn current(value: &Value, version_key: &str, versions: &[u64]) -> bool {
+    value
+        .get(version_key)
+        .and_then(Value::as_u64)
+        .is_some_and(|version| versions.contains(&version))
+}
+
+/// Whether the file is already larger than its loader reads.
+fn over_limit(path: &Path, limit: usize) -> bool {
+    std::fs::metadata(path).is_ok_and(|metadata| metadata.len() > limit as u64)
+}
 
 fn read_marker(path: &Path) -> Result<Option<String>, String> {
     match std::fs::read(path) {
@@ -515,11 +555,12 @@ fn rename_key(object: Option<&mut Value>, node: &str) -> bool {
         // An expanded-paths list keeps the paths of both.
         Some(Value::Array(current)) => {
             if let Value::Array(legacy) = legacy {
-                for entry in legacy {
-                    if !current.contains(&entry) {
-                        current.push(entry);
-                    }
-                }
+                let mut held: HashSet<String> = current.iter().map(Value::to_string).collect();
+                current.extend(
+                    legacy
+                        .into_iter()
+                        .filter(|entry| held.insert(entry.to_string())),
+                );
             }
         }
         // A value the node wrote since is the newer one.
@@ -554,12 +595,8 @@ fn convert_core_state(value: &mut Value, node: &str, projects: &BTreeMap<String,
         .get_mut("expanded_inactive_project_device_ids")
         .and_then(Value::as_array_mut)
     {
-        let mut seen = Vec::new();
-        devices.retain(|device| {
-            let first = !seen.contains(device);
-            seen.push(device.clone());
-            first
-        });
+        let mut seen = HashSet::new();
+        devices.retain(|device| seen.insert(device.to_string()));
     }
     for row in each(value, "recent_checkouts") {
         changed |= rewrite(row.get_mut("device_id"), node);
@@ -1346,21 +1383,52 @@ mod tests {
         let letter_bytes = letter.to_string().len() + 1;
         let growth = 2 * (NODE.len() - LEGACY.len());
         let count = crate::delivery::FILE_LIMIT / (letter_bytes + growth) + 1;
-        let ledger = json!({"version": 1, "letters": vec![letter; count]});
+        let ledger = json!({"version": 1, "letters": vec![letter.clone(); count]});
         let bytes = serde_json::to_vec(&ledger).unwrap();
         assert!(
             bytes.len() <= crate::delivery::FILE_LIMIT,
             "fixture starts loadable"
         );
         std::fs::write(dir.path().join(DELIVERY_LEDGER), &bytes).unwrap();
+        // A store converted before the ledger in a start that went through.
+        let core_state = json!({"schema_version": 1, "focused_device_id": "local"}).to_string();
+        std::fs::write(dir.path().join(CORE_STATE), &core_state).unwrap();
+        let before = snapshot(dir.path());
 
         let refusal = convert(dir.path(), dir.path(), &node()).unwrap_err();
         assert_eq!(refusal.file, dir.path().join(DELIVERY_LEDGER));
+        assert!(
+            refusal.to_string().contains("move the file aside"),
+            "{refusal}"
+        );
+        assert_eq!(snapshot(dir.path()), before, "nothing was written");
+        assert!(!dir.path().join(BACKUP_DIR).exists());
+    }
+
+    #[test]
+    fn a_ledger_its_loader_already_refuses_is_left_to_that_loader() {
+        let dir = tempfile::tempdir().unwrap();
+        let actor = json!({"device_id": "local", "pane_id": "p"});
+        let letter = json!({"sender": actor, "recipient": actor});
+        let count = crate::delivery::FILE_LIMIT / letter.to_string().len() + 1;
+        let bytes =
+            serde_json::to_vec(&json!({"version": 1, "letters": vec![letter; count]})).unwrap();
+        assert!(
+            bytes.len() > crate::delivery::FILE_LIMIT,
+            "fixture starts unloadable"
+        );
+        std::fs::write(dir.path().join(DELIVERY_LEDGER), &bytes).unwrap();
+
+        let outcome = convert(dir.path(), dir.path(), &node()).unwrap();
+        assert!(outcome.files.is_empty(), "{outcome:?}");
         assert_eq!(
             std::fs::read(dir.path().join(DELIVERY_LEDGER)).unwrap(),
             bytes
         );
-        assert!(!dir.path().join(MARKER_FILE).exists());
+        assert_eq!(
+            read(&dir.path().join(MARKER_FILE)),
+            json!({"version": 1, "node": NODE})
+        );
     }
 
     #[test]

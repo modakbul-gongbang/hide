@@ -87,7 +87,10 @@ fn a_folder_owned_by_another_node_stops_the_daemon_and_logs_why() {
 }
 
 /// What the desktop host shows (B2): `hide connect` answers at once, not
-/// after its health wait, with the file the daemon refused.
+/// after its health wait, with the file the daemon refused. Unix only: the
+/// cleared environment and the `/usr/bin:/bin` PATH it starts the daemon with
+/// are a Unix process's; the refusal itself is covered on every system by
+/// the test above.
 #[cfg(unix)]
 #[test]
 fn hide_connect_names_the_file_a_refused_start_stopped_on() {
