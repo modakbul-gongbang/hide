@@ -183,13 +183,20 @@ Its web files are `web/src/ProjectOverview.tsx` and `web/src/ProjectSessions.tsx
 
 Settings is `Screen / Settings`.
 It draws the seven tabs the sheet had before the settings cleanup (General, Appearance, Agents, Issues, Devices, Performance, Shortcuts) and the Group/Row layout a tab renders, shown on the Appearance tab.
-The shipped sheet has six tabs (General, Agents, Hide AI, Devices, Mobile, Shortcuts); the Pen screen has not been redrawn to match, so the code and `docs/UI_BEHAVIOR.md` own the tab list.
+The shipped Settings has six tabs (General, Agents, Hide AI, Devices, Mobile, Shortcuts), so the sheet is stale in these ways until it is redrawn:
+- its tab strip lists Appearance, Issues and Performance, which no longer exist as tabs, and lacks Hide AI and Mobile;
+- its Appearance frame is now the Appearance group of General;
+- it has no Agents list (seven agents, one machine at a time, Installed and Not installed), no Hide AI tab, and no Add device that lists ssh config Hosts.
+
+The code and `docs/UI_BEHAVIOR.md` own the tab list and what each tab shows; the sheet owns only the Group/Row look.
 The Mobile tab's strip and content are drawn on `Screen / Mobile`.
 Its web files are `web/src/SettingsSheet.tsx` and `web/src/settings.ts`.
 
 Palette is `Screen / Palette`.
 It draws the sidebar's Search icon with its `Search ⌘K` hint, the ⌘K palette's wide list-and-detail layout with its relation list, grouped results, collapsed, no-match and GitHub states, and the ⌘P file palette on the same shell.
-`/gallery?scene=agent-onboarding&theme=light|dark` is the first-run agent choice over a synthetic local device that lists all 20 adapters (`web/src/gallery/AgentOnboardingScene.tsx`).
+`/gallery?scene=agent-onboarding&theme=light|dark` is the first-run agent choice over a synthetic local device that lists the seven supported agents (`web/src/gallery/AgentOnboardingScene.tsx`).
+`Screen / Onboarding` (built by `buildOnboarding` in `scripts/pen-screens.mjs`) is stale against it: it draws the removed 20-adapter grid of tiles and has no `Hide AI uses ...` line under Apply.
+The gallery scene is the current picture until that sheet is redrawn.
 `/gallery?scene=search-palette` is the real ⌘K over `web/src/gallery/cmdkSceneData.ts` (`front=agent|agent-short|terminal|none`, `github=results|pending|failed|empty`), which answers `github_search` as the core would.
 Its web files are `web/src/Palette.tsx`, `web/src/SearchPalette.tsx`, `web/src/search.ts`, and `web/src/components/sidebar-header.tsx`.
 
@@ -219,6 +226,9 @@ Mobile is `Screen / Mobile`.
 It draws Settings > Mobile, blocked on a failing Tailscale check with only that step lit, one action beside it and no QR, then ready with every check passing, the QR, the ts.net address, the code countdown with 새 코드, the connected phones (2 / 4) with 해지, and the three push modes.
 Beside it, the phone app: the pairing confirm the QR opens, the list in four groups (내 확인 대기, 끝, 진행 중, 확인함), the detail with its read-only scrollback, five quick keys and one-line reply, the unreachable state over the dimmed last list, the empty state, the push banner, and the start sheet the list's `+` opens (text box, target, kind, model and `시작` over the dimmed list).
 The machine name and tailnet are placeholders, and the QR is a drawn pattern, never a real code.
+The Settings > Mobile frames are stale against the shipped tab: they draw the QR open with a `새 코드` button as soon as the checks pass, and one row per Tailscale check.
+The shipped tab opens with no code and a `Show QR` row that turns into `Hide QR`, offers `Show QR` again in place of `Hide QR` once the code has expired, and collapses a passing Tailscale check to one ready line.
+The phone app frames are unchanged.
 Its web files are `web/src/MobileTab.tsx` and `web/src/mobileSettings.ts`, and the phone app under `web/src/mobile/` with its entry `web/mobile.html`.
 
 Disk Cleanup is `Screen / Disk Cleanup`.
