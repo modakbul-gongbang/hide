@@ -78,6 +78,24 @@ test.afterEach(async () => {
   const info = test.info();
   // TEMP evidence run for #511: every repetition's focus events, passed or failed.
   console.log(`=== ${info.title} repeat ${info.repeatEachIndex} ${info.status}`);
+  if (info.status !== info.expectedStatus && app) {
+    try {
+      const shell = await app.firstWindow();
+      const frame = () => shell.evaluate(() => new Promise<unknown>((resolve) => {
+        const start = performance.now();
+        requestAnimationFrame(() => resolve(Math.round(performance.now() - start)));
+        setTimeout(() => resolve("none in 1500 ms"), 1500);
+      }));
+      const state = () => shell.evaluate(() => ({ visibility: document.visibilityState, focus: document.hasFocus(), cycle: document.querySelectorAll("[data-cycle]").length, layers: document.querySelectorAll('[data-radix-popper-content-wrapper],[role="dialog"],[role="alertdialog"],[data-slot$="-overlay"],[data-tools-overlay]').length }));
+      const host = () => app!.evaluate(({ BrowserWindow }) => { const w = BrowserWindow.getAllWindows()[0]!; return { visible: w.isVisible(), focused: w.isFocused(), throttling: w.webContents.getBackgroundThrottling(), shellFocused: w.webContents.isFocused() }; });
+      console.log(JSON.stringify({ ts: new Date().toISOString(), event: "temp.after_failure", shell: await state(), host: await host(), raf_ms: await frame() }));
+      await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.invalidate());
+      console.log(JSON.stringify({ ts: new Date().toISOString(), event: "temp.after_invalidate", raf_ms: await frame(), shell: await state() }));
+      console.log(hostLog(run.env).filter((line) => String(line.event).startsWith("browser.page_visible") || String(line.event).startsWith("browser.window_return")).slice(-4).map((line) => JSON.stringify(line)).join("\n"));
+    } catch (error) {
+      console.log(`temp probe failed: ${String(error)}`);
+    }
+  }
   console.log(hostLog(run.env).filter((line) => String(line.event).startsWith("browser.") && !String(line.event).startsWith("browser.cdp") && !String(line.event).startsWith("browser.view_created") && !String(line.event).startsWith("browser.control")).map((line) => JSON.stringify(line)).join("\n"));
   await app?.close().catch(() => undefined);
   app = null;
@@ -847,14 +865,19 @@ test("area cycle native: page input previews one exact area, releases once and c
   nativeKeys(pid, ["2"]);
   // The caret sits wherever the script's focus put it, so only the landing is checked.
   expect(await inPage(current, "document.querySelector('input').value")).toContain("2");
+  console.log(JSON.stringify({ ts: new Date().toISOString(), event: "temp.capture_start" }));
   await capture("area-native-readable");
+  console.log(JSON.stringify({ ts: new Date().toISOString(), event: "temp.capture_end" }));
 
   // A native-window blur cancels a fresh hold; a later release cannot commit it.
   nativeKeys(pid, ["control down", "tab"]);
+  console.log(JSON.stringify({ ts: new Date().toISOString(), event: "temp.keys_posted" }));
   await expect(page.locator("[data-cycle=area]")).toBeVisible();
+  console.log(JSON.stringify({ ts: new Date().toISOString(), event: "temp.cycle_visible" }));
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.blur());
   await expect(page.locator("[data-cycle]")).toHaveCount(0);
   // The window coming back gives the keyboard to the page that started the hold.
+  console.log(JSON.stringify({ ts: new Date().toISOString(), event: "temp.cycle_gone" }));
   await app.evaluate(({ app: electron, BrowserWindow }) => { electron.focus({ steal: true }); BrowserWindow.getAllWindows()[0]!.focus(); });
   await expect.poll(async () => (await zoomOf(current)).focused).toBe(true);
   nativeKeys(pid, ["control up"]);

@@ -517,7 +517,7 @@ jobs:
           HIDE_E2E_SCREENSHOT_DIR: ${{ runner.temp }}/hide-e2e
         run: |
           mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
-          bash scripts/verify-web.sh desktop e2e --grep "area cycle native" --repeat-each 30 --retries 0
+          bash scripts/verify-web.sh desktop e2e --project needs-focus --no-deps --grep "area cycle native" --repeat-each 40 --retries 0
       - name: Report flaky tests
         # A failed test is retried once; see web-e2e.yml.
         id: flaky
