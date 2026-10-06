@@ -10,7 +10,7 @@ import { deviceConnected, frontDeviceId, localDeviceId } from "./devices";
 import type { TFunction } from "i18next";
 import type { MessageKey } from "./i18n/catalogs";
 import { translate } from "./i18n/client";
-import { projectsOf } from "./remote";
+import { herdrPaneId, projectsOf } from "./remote";
 import type { AgentRow, Checkout, Device, GithubSearchResult, PullRequest, SnapshotRest, Task, Workspace } from "./snapshot";
 
 /** The header an entry is drawn under: one per kind of thing; `label` is the catalog key the palette translates where it draws the header. */
@@ -416,15 +416,22 @@ export function numberQuery(query: string): number | null {
 }
 
 /**
- * The entries matching `query`, best first. A number (`273`, or with a hash) puts the
+ * The entries matching `query`, best first. A pane's Herdr id (`w9J:p52`, as
+ * `$HERDR_PANE_ID` or Copy pane ID gives it) puts the agent in that pane on
+ * every device ahead of everything, matched whole and with its case, since
+ * Herdr tells `pB` from `pb`. A number (`273`, or with a hash) puts the
  * issues and then the pull requests numbered exactly that ahead of every title
  * match, each as its own row (PRD B12); the other rows must hold the digits.
  */
 export function filterEntries(entries: SearchEntry[], query: string, limit = 80): SearchEntry[] {
-  const needle = query.trim().toLowerCase();
+  const trimmed = query.trim();
+  const needle = trimmed.toLowerCase();
   if (!needle) return entries.slice(0, limit);
   const number = numberQuery(needle);
-  const exact = number === null ? [] : [...entries.filter((entry) => entry.kind === "issue" && entry.number === number), ...entries.filter((entry) => entry.kind === "pr" && entry.number === number)];
+  const exact = [
+    ...entries.filter((entry) => entry.kind === "agent" && entry.paneId !== undefined && herdrPaneId(entry.paneId) === trimmed),
+    ...(number === null ? [] : [...entries.filter((entry) => entry.kind === "issue" && entry.number === number), ...entries.filter((entry) => entry.kind === "pr" && entry.number === number)]),
+  ];
   const taken = new Set(exact);
   const digits = number === null ? null : String(number);
   const scored = entries

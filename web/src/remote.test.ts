@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it } from "vitest";
 import { createActions } from "./actions";
 import { initializeInterfaceI18n } from "./i18n/instance";
-import { deviceCatalogLine, remoteTargetOfPane, remoteView, supportsRemotePurpose } from "./remote";
+import { deviceCatalogLine, herdrPaneId, remoteTargetOfPane, remoteView, supportsRemotePurpose } from "./remote";
 import { queueBuffer, tabBufferKey } from "./buffers";
 import type { Device, EditorSnapshot, RemoteSession, RemoteStatus, SnapshotRest, Tab, Workspace } from "./snapshot";
 import { useShellStore, type DaemonInfo } from "./store";
@@ -188,6 +188,12 @@ describe("remote view", () => {
     expect(remoteTargetOfPane(value, PANE_A)).toBe("studio");
     expect(remoteTargetOfPane(value, "remote:studio2:pane:w1:p1")).toBe("studio2");
     expect(remoteTargetOfPane(value, LOCAL_PANE)).toBeNull();
+  });
+
+  it("copies a pane by the id its own Herdr knows it by, without the device scope", () => {
+    expect(herdrPaneId("w9J:p52")).toBe("w9J:p52");
+    expect(herdrPaneId("remote:mini:pane:w9J:p52")).toBe("w9J:p52");
+    expect(herdrPaneId("remote:studio2:pane:w1:pB")).toBe("w1:pB");
   });
 
   it("stores a remote purpose only from Herdr 0.9.1", () => {

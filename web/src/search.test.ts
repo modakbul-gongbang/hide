@@ -148,6 +148,32 @@ describe("search entries across devices (PRD home-device-rail B40)", () => {
   });
 });
 
+describe("an agent by its pane's Herdr id", () => {
+  // Ids as `herdr pane list` prints them; mini's pane is that device's own, scoped by the core.
+  const withIds = (local: string[], mini: string) => {
+    const rest = structuredClone(TWO_DEVICES);
+    rest.navigator!.agents = local.map((pane, index) => ({ ...REST.navigator!.agents![0]!, id: `a${index}`, pane_id: pane, identity_label: `Agent ${index}` }));
+    rest.status!.remote![0]!.session!.agents![0]!.pane_id = `remote:mini:pane:${mini}`;
+    return searchEntries(rest, t);
+  };
+  const ranked = (entries: SearchEntry[], query: string) => filterEntries(entries, query).map((entry) => entry.id);
+
+  it("lists the agent in that pane first, on every device that has a pane by that id", () => {
+    const entries = withIds(["w9J:p5", "w9J:p52"], "w9J:p52");
+    expect(ranked(entries, "w9J:p52").slice(0, 2)).toEqual(["agent:w9J:p52", "agent:remote:mini:pane:w9J:p52"]);
+    expect(ranked(entries, " w9J:p52 ")[0]).toBe("agent:w9J:p52");
+  });
+
+  it("matches the id whole and in its case, so part of an id finds no agent", () => {
+    const entries = withIds(["w9J:pB", "w9J:pb"], "w60:p12");
+    expect(ranked(entries, "w9J:pB")[0]).toBe("agent:w9J:pB");
+    expect(ranked(entries, "w9J:pb")[0]).toBe("agent:w9J:pb");
+    expect(ranked(entries, "w9j:pb").filter((id) => id.startsWith("agent:"))).toEqual([]);
+    expect(ranked(entries, "w9J:p").filter((id) => id.startsWith("agent:"))).toEqual([]);
+    expect(ranked(entries, "p12").filter((id) => id.startsWith("agent:"))).toEqual([]);
+  });
+});
+
 describe("grouping (issue 154)", () => {
   const agentsHere = { id: "agents:w1", label: "overview.agents" } as const;
   const agentsThere = { id: "agents:w2", label: "overview.issues" } as const;
