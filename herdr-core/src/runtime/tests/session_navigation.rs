@@ -1545,7 +1545,8 @@ fn view_authority_the_screen_stays_on_the_last_request_whatever_order_herdr_answ
 /// or come before a new replica after a reconnect. Then the tabs newly
 /// active since the last session stand in for them, and the gap is
 /// recorded; consuming only the moves kept would leave the dropped
-/// requests waiting out the deadline.
+/// requests waiting out the deadline. With no request waiting there is
+/// nothing to stand in for, and a reconnect records no gap.
 #[test]
 fn view_authority_dropped_moves_fall_back_to_the_tabs_newly_active() {
     let checkout_path = "/private/tmp/hide-view-authority-moves-gap";
@@ -1604,6 +1605,12 @@ fn view_authority_dropped_moves_fall_back_to_the_tabs_newly_active() {
     runtime.ingest_session(Ok(herdr.after(&["w-order:t4"], herdr_on("w-order:t4"))));
     assert_eq!(on_screen(&runtime).as_deref(), Some("w-order:t4"));
     assert_eq!(diagnostic_count(&runtime, "tab.focus.followed"), 1);
+
+    let mut herdr = herdr.reconnected();
+    let ((), records) = crate::diagnostics::capture(|| {
+        runtime.ingest_session(Ok(herdr.after(&[], herdr_on("w-order:t4"))));
+    });
+    assert_eq!(gaps(&records), 0, "{records:?}");
 }
 
 /// The tab wait a pane focus arms always ends: Herdr refusing the focus
