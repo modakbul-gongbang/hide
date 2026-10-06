@@ -1,28 +1,28 @@
-// Settings > Mobile (PRD mobile-companion B1-B7, B10, B14, B15, B29, B39):
-// the switch, the four-step Tailscale checklist with the first failing
-// step's action, the QR once hided has confirmed its serve entry, the paired
-// phones with Revoke, and the push mode. Every value is the daemon's `mobile`
-// frame; every control sends one `mobile_*` event.
+// Settings > Mobile (PRD mobile-companion B1-B7, B10, B14, B15, B29, B39;
+// settings-cleanup B57-B59): the switch, one ready line or only the failing
+// Tailscale steps with their fix, the QR once hided has confirmed its serve
+// entry and Show QR is pressed, the paired phones with Revoke, and the push
+// mode in one dropdown. Every value is the daemon's `mobile` frame; every
+// control sends one `mobile_*` event.
 
-import { AlertTriangleIcon, CheckIcon, CircleAlertIcon, ExternalLinkIcon } from "lucide-react";
+import { AlertTriangleIcon, CircleAlertIcon, ExternalLinkIcon } from "lucide-react";
 import qrcode from "qrcode-generator";
 import { useEffect, useMemo, useState } from "react";
 import type { Actions } from "./actions";
 import { useInterfaceTranslation } from "./i18n/client";
-import type { MessageKey } from "./i18n/catalogs";
 import { requireInterfaceLanguage } from "./i18n/locale";
 import { Button } from "./components/ui/button";
-import { RadioGroup, RadioGroupItem } from "./components/ui/radio-group";
+import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./components/ui/select";
 import { Switch } from "./components/ui/switch";
-import { Group, Note, Row } from "./components/settings-rows";
+import { Group, Note, Row, Status } from "./components/settings-rows";
 import {
   PUSH_CHOICES,
-  checklistRows,
+  checklistView,
   codeCountdown,
   exposureLine,
   phoneLine,
   phonesTitle,
-  type ChecklistRow,
+  type FailedStep,
   type MobileState,
   type PushMode,
 } from "./mobileSettings";
@@ -32,9 +32,9 @@ export function MobileTab({ actions }: { actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const mobile = useShellStore((s) => s.mobile);
   const live = useShellStore((s) => s.connection === "live");
-  // hided rechecks the checklist while this tab is open and shows a new code
-  // each time it opens (B3, B10). A restarted daemon has forgotten the tab,
-  // so every live connection says so again.
+  // hided rechecks the checklist while this tab is open (B3). Opening it
+  // makes no code and voids none: only Show QR does (B58). A restarted daemon
+  // has forgotten the tab, so every live connection says so again.
   useEffect(() => {
     if (!live) return;
     actions.observeMobile(true);
@@ -54,49 +54,65 @@ export function MobileTab({ actions }: { actions: Actions }) {
         >
           <Switch checked={mobile.enabled} onCheckedChange={(next) => actions.setMobileEnabled(next)} aria-label={t("mobileSetup.enable")} data-mobile-switch="true" />
         </Row>
-        {mobile.enabled ? checklistRows(mobile, t).map((row) => <ChecklistItem key={row.id} row={row} />) : null}
+        {mobile.enabled ? <Checks state={mobile} /> : null}
         {/* A removal that failed at switch-off stays on screen until it is finished (B7). */}
         {mobile.enabled || mobile.exposure === "failed" ? <Pairing state={mobile} actions={actions} /> : null}
       </Group>
       {mobile.phones.length > 0 ? <Phones state={mobile} actions={actions} /> : null}
       <Group title={t("mobileSetup.push")}>
-        <RadioGroup value={mobile.push_mode} onValueChange={(value) => actions.setPushMode(value as PushMode)} aria-label={t("mobileSetup.push")} className="gap-none divide-y divide-border">
-          {PUSH_CHOICES.map((choice) => (
-            <label key={choice.id} className="flex cursor-pointer items-start gap-md px-md py-sm" data-push-choice={choice.id}>
-              <RadioGroupItem value={choice.id} aria-label={t(choice.label)} className="mt-xxs" />
-              <span className="flex min-w-0 flex-col gap-xxs">
-                <span className="text-subhead text-foreground">{t(choice.label)}</span>
-                {choice.detail ? <span className="text-body text-muted-foreground">{t(choice.detail)}</span> : null}
-              </span>
-            </label>
-          ))}
-        </RadioGroup>
+        <PushMode mode={mobile.push_mode} actions={actions} />
       </Group>
     </div>
   );
 }
 
-function StepMark({ state }: { state: ChecklistRow["state"] }) {
-  if (state === "ok") return <CheckIcon aria-hidden="true" className="size-(--size-icon-lg) shrink-0 text-success" />;
-  if (state === "failed") return <AlertTriangleIcon aria-hidden="true" className="size-(--size-icon-lg) shrink-0 text-warning" />;
-  return <CircleAlertIcon aria-hidden="true" className="size-(--size-icon-lg) shrink-0 text-muted-foreground" />;
+/** Push to the phone in one dropdown; only the chosen item's description shows (B59). */
+function PushMode({ mode, actions }: { mode: PushMode; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
+  const chosen = PUSH_CHOICES.find((choice) => choice.id === mode);
+  return (
+    <Row label={t("mobileSetup.pushTo")} detail={chosen ? <Note data-push-detail={chosen.id}>{t(chosen.detail)}</Note> : null}>
+      <Select value={mode} onValueChange={(value) => actions.setPushMode(value as PushMode)}>
+        <SelectTrigger aria-label={t("mobileSetup.push")} data-push-select="true">
+          <SelectValue />
+        </SelectTrigger>
+        <SelectContent>
+          {PUSH_CHOICES.map((choice) => (
+            <SelectItem key={choice.id} value={choice.id} data-push-choice={choice.id}>
+              {t(choice.label)}
+            </SelectItem>
+          ))}
+        </SelectContent>
+      </Select>
+    </Row>
+  );
 }
 
-const STEP_WORD: Record<ChecklistRow["state"], MessageKey> = { ok: "mobileSetup.step.ok", failed: "mobileSetup.step.failed", waiting: "mobileSetup.step.waiting" };
+/** One ready line when Tailscale is set up, otherwise only the steps that need the operator (B57). */
+function Checks({ state }: { state: MobileState }) {
+  const { t } = useInterfaceTranslation();
+  const view = checklistView(state, t);
+  if (view.kind === "ready") {
+    return (
+      <Row label={<Status tone="ok">{t("mobileSetup.ready")}</Status>} data-mobile-ready="true" />
+    );
+  }
+  return view.kind === "failed" ? view.steps.map((step) => <FailedStepRow key={step.id} step={step} />) : null;
+}
 
-function ChecklistItem({ row }: { row: ChecklistRow }) {
+function FailedStepRow({ step }: { step: FailedStep }) {
   const { t } = useInterfaceTranslation();
   return (
-    <div className="flex items-start gap-md px-md py-sm" data-mobile-step={row.id} data-step-state={row.state}>
-      <StepMark state={row.state} />
-      <span className="sr-only">{t(STEP_WORD[row.state])}: </span>
+    <div className="flex items-start gap-md px-md py-sm" data-mobile-step={step.id} data-step-state="failed">
+      <AlertTriangleIcon aria-hidden="true" className="size-(--size-icon-lg) shrink-0 text-warning" />
+      <span className="sr-only">{t("mobileSetup.step.failed")}: </span>
       <div className="flex min-w-0 flex-1 flex-col gap-xxs">
-        <span className={`text-subhead ${row.state === "waiting" ? "text-muted-foreground" : "text-foreground"}`}>{row.title}</span>
-        {row.action ? <span className="text-body text-muted-foreground">{row.action}</span> : null}
+        <span className="text-subhead text-foreground">{step.title}</span>
+        <span className="text-body text-muted-foreground">{step.action}</span>
       </div>
-      {row.link ? (
-        <a href={row.link.href} target="_blank" rel="noopener noreferrer" className="inline-flex shrink-0 items-center gap-xs text-subhead text-primary outline-none focus-visible:ring-1 focus-visible:ring-ring" data-mobile-step-link={row.id}>
-          {row.link.label}
+      {step.link ? (
+        <a href={step.link.href} target="_blank" rel="noopener noreferrer" className="inline-flex shrink-0 items-center gap-xs text-subhead text-primary outline-none focus-visible:ring-1 focus-visible:ring-ring" data-mobile-step-link={step.id}>
+          {step.link.label}
           <ExternalLinkIcon aria-hidden="true" className="size-(--size-icon)" />
         </a>
       ) : null}
@@ -155,44 +171,64 @@ function Pairing({ state, actions }: { state: MobileState; actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const since = useSinceFrame(state, 1000, state.code_expires_at_ms !== null);
   const line = exposureLine(state, t);
-  if (!state.qr || line) {
+  if (line) {
     return (
       <div className="flex items-start gap-md px-md py-sm" data-mobile-pairing="waiting">
-        {line?.tone === "error" || line?.tone === "warn" ? (
+        {line.tone === "error" || line.tone === "warn" ? (
           <AlertTriangleIcon aria-hidden="true" className={`size-(--size-icon-lg) shrink-0 ${line.tone === "error" ? "text-destructive" : "text-warning"}`} />
         ) : (
           <CircleAlertIcon aria-hidden="true" className="size-(--size-icon-lg) shrink-0 text-muted-foreground" />
         )}
         <span
-          role={line?.tone === "error" ? "alert" : undefined}
-          className={`min-w-0 break-words text-subhead ${line?.tone === "error" ? "text-destructive" : line?.tone === "warn" ? "text-warning" : "text-muted-foreground"}`}
+          role={line.tone === "error" ? "alert" : undefined}
+          className={`min-w-0 break-words text-subhead ${line.tone === "error" ? "text-destructive" : line.tone === "warn" ? "text-warning" : "text-muted-foreground"}`}
           data-mobile-exposure-line={state.exposure}
         >
-          {line?.text}
+          {line.text}
         </span>
       </div>
     );
   }
+  // Until hided has confirmed its serve entry there is nothing to pair with.
+  if (state.exposure !== "exposed") return null;
   const countdown = codeCountdown(state.code_expires_at_ms, state.now_ms, since);
   return (
-    <div className="flex flex-wrap items-center gap-xl px-md py-lg" data-mobile-pairing="ready">
-      <QrCode text={state.qr} />
-      <div className="flex min-w-0 flex-1 flex-col gap-sm">
-        <span className="text-headline font-semibold text-foreground">{t("mobileSetup.scan")}</span>
-        <span className="text-subhead text-muted-foreground">{t("mobileSetup.scanDescription")}</span>
-        <span className="break-all font-mono text-subhead text-subtle-foreground" data-mobile-url={state.url ?? ""}>
-          {state.url}
-        </span>
-        <span className="flex items-center gap-md">
-          <span className="font-mono text-subhead text-muted-foreground" data-mobile-countdown={countdown ?? "expired"}>
-            {countdown ? t("mobileSetup.codeExpires", { time: countdown }) : t("mobileSetup.codeExpired")}
+    <>
+      <Row
+        data-mobile-pairing="idle"
+        label={
+          <span className="flex min-w-0 flex-col gap-xxs">
+            <span>{t("mobileSetup.pair")}</span>
+            <span className="text-body text-muted-foreground">{t("mobileSetup.pairDescription")}</span>
           </span>
-          <Button variant="secondary" size="sm" onClick={() => actions.newMobileCode()} data-mobile-new-code="true">
-            {t("mobileSetup.newCode")}
+        }
+      >
+        {state.qr ? (
+          <Button variant="secondary" size="sm" onClick={() => actions.hideMobileCode()} data-mobile-hide-code="true">
+            {t("mobileSetup.hideQr")}
           </Button>
-        </span>
-      </div>
-    </div>
+        ) : (
+          <Button variant="secondary" size="sm" onClick={() => actions.showMobileCode()} data-mobile-show-code="true">
+            {t("mobileSetup.showQr")}
+          </Button>
+        )}
+      </Row>
+      {state.qr ? (
+        <div className="flex flex-wrap items-center gap-xl px-md py-lg" data-mobile-pairing="ready">
+          <QrCode text={state.qr} />
+          <div className="flex min-w-0 flex-1 flex-col gap-sm">
+            <span className="text-headline font-semibold text-foreground">{t("mobileSetup.scan")}</span>
+            <span className="text-subhead text-muted-foreground">{t("mobileSetup.scanDescription")}</span>
+            <span className="break-all font-mono text-subhead text-subtle-foreground" data-mobile-url={state.url ?? ""}>
+              {state.url}
+            </span>
+            <span className="font-mono text-subhead text-muted-foreground" data-mobile-countdown={countdown ?? "expired"}>
+              {countdown ? t("mobileSetup.codeExpires", { time: countdown }) : t("mobileSetup.codeExpired")}
+            </span>
+          </div>
+        </div>
+      ) : null}
+    </>
   );
 }
 

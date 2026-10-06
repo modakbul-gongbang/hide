@@ -1326,6 +1326,12 @@ An explicit choice is shared by connected shell windows; Use system language res
 Settings > Devices lists This Mac and every device, one row each (PRD settings-cleanup B54, B55, B56): the name, a line with the SSH alias, the platform its helper runs on and the Herdr version it reported, and the connection state, with Test (a device) and a ⋯ menu at the end.
 `+ Add device` is one button above the list on the right; the Add dialog is on the page only after it is pressed, and every other way in (the rail's `+`, the hidden rail's `기기 추가…`, Add a project's host list) opens Settings › Devices with that dialog in front.
 The dialog closes by itself once the device is listed.
+The Add dialog lists the Host entries of the daemon machine's `~/.ssh/config` with the address each leads to (`user@host:port`, which `ssh -G` resolves without connecting); it asks hided for them each time it opens (`ssh_hosts_list`, answered in `status.ssh_hosts`) and says it is reading until they arrive (PRD settings-cleanup B50 to B52).
+Choosing a Host fills the Name with the alias, which the person can rewrite and which later choices no longer replace; Add stores only that name and the alias, so the dialog has no input for a username, port or key and no way to type an alias.
+A Host a registered device already uses, or one that reaches the same machine as one, is dimmed with `Added as <name>` and cannot be chosen; a Host whose address could not be read is dimmed with a short reason (no `ssh`, `ssh` could not read it, `ssh` took too long); a wildcard Host is not listed, and a config with more concrete Hosts than the list holds says so.
+With no Host at all the dialog shows only `Not listed? Add a Host entry…` with an example entry, and no form.
+The list is a radio group: the arrow keys move between the Hosts that can be chosen and Enter adds.
+Advanced, closed at first, holds `What Hide installs there` in three lines (the helper and the `hide` command, hooks and Herdr integrations for the agents turned on, and that removing the device takes them off) and the Herdr socket; the description above the list says Hide installs its helper on the device, so adding is still the one place the kit is agreed to (device-parity D-12).
 The ⋯ menu offers Select, Connection details…, Allow and install… (a device whose helper is not allowed) or Revoke helper… (one that is), and, after a separator, Remove…; This Mac's menu has Select and Connection details… only.
 Revoke helper… and Remove… ask before they act, with the same confirmations and events as before; no button is focused when a confirmation opens.
 Connection details is a dialog with the helper's state and folder, the helper program, the folder of the `hide` command and the SSH host key the consent is bound to, then every part of Hide's kit with a mark, its name and where it is when installed or its state and reason when not.
@@ -1395,18 +1401,17 @@ Every value is the core's `status.background_ai`; the tab sends `ai_settings` ev
 ### Settings > Mobile
 
 Settings has a Mobile tab after Devices.
-Its switch, 폰에서 hide 열기, is off at first, and its description says hide turns tailscale serve on and removes only the entry it made.
+Its switch, 폰에서 hide 열기, is off at first, and its one-line description says it works over Tailscale and only inside the tailnet (PRD settings-cleanup B59).
 While the switch is off hide runs no Tailscale command.
-Turned on, it shows four steps in order: Tailscale installed on this Mac, logged in with the Mac's name, MagicDNS and HTTPS on for the tailnet, and Tailscale on the phone with the same account.
-A passed step shows a check; only the first failing step shows a warning with its action (a download link, "Tailscale 앱에서 로그인", or the admin console's DNS page with a link), and the steps after it wait.
-The phone step is guidance hide cannot check: it waits until the QR shows and then reads as done.
+Turned on, the three Mac checks (Tailscale installed, logged in, MagicDNS and HTTPS on for the tailnet) fold into one line, `Tailscale is ready`, once they all pass (B57); a failing step shows only itself with a warning and its action (a download link, "Tailscale 앱에서 로그인", or the admin console's DNS page with a link) and nothing for the steps that passed or still wait.
+The phone side, Tailscale on the phone with the same account, is guidance hide cannot check and is part of the `폰 연결하기` row's description.
 The tab rechecks every three seconds while it is open, so logging in or turning HTTPS on continues without reopening it.
-Once every Mac step passes and hide has confirmed its serve entry, the tab shows the QR, 폰 카메라로 찍으세요, the ts.net address, the code's m:ss countdown and 새 코드.
-An HTTPS entry hide did not make shows its target in one line and no QR; a failed serve command shows the failed step and its message in one line, and so does a Funnel that would publish the address, which also disconnects every phone when it is turned on later.
+Once every Mac step passes and hide has confirmed its serve entry, the `폰 연결하기` row offers `QR 보기`; opening the tab makes no code and voids none (B58).
+Pressing it shows the QR, 폰 카메라로 찍으세요, the ts.net address and the code's m:ss countdown, and the row's button becomes `QR 숨기기`, which takes the code out again; a pairing phone spends the code and the QR goes, so the next phone needs `QR 보기` again.
+An HTTPS entry hide did not make shows its target in one line and no pairing row; a failed serve command shows the failed step and its message in one line, and so does a Funnel that would publish the address, which also disconnects every phone when it is turned on later.
 A removal that fails when the switch goes off keeps that line under the switch until hide finishes it.
-Opening the tab, pressing 새 코드, or a phone pairing shows a new code, and the previous code stops working.
 The phones group is titled 연결된 폰 · n / 4; each row shows the phone's name, when it was last seen, whether notifications are on or off, the days left before the seven-day revoke once it has been away a day, and 해지, which closes that phone at once.
-푸시 알림 offers 끔 (the default), 앱이 닫혀 있을 때만 and 항상, and the choice survives a restart.
+푸시 알림 is one dropdown of 끔 (the default), 앱이 닫혀 있을 때만 and 항상, with the description of the chosen mode only under it, and the choice survives a restart (B59).
 
 ### The phone app
 

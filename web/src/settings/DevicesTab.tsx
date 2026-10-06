@@ -89,7 +89,7 @@ export function DevicesTab({ actions }: { actions: Actions }) {
       </Group>
       {adding !== null ? (
         <Dialog open onOpenChange={(next) => { if (!next) setAdding(null); }}>
-          <DialogContent data-add-device-dialog="true">
+          <DialogContent showCloseButton data-add-device-dialog="true">
             <DialogHeader>
               <DialogTitle>{t("devices.addTitle")}</DialogTitle>
             </DialogHeader>

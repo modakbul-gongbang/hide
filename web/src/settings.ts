@@ -414,14 +414,6 @@ export function draftExported(exported: ReadonlyMap<string, string>, current: (t
   };
 }
 
-/** What an SSH alias must look like before it is sent: one token, no spaces or shell syntax. */
-export function aliasProblem(alias: string, t: Translate): string | null {
-  const trimmed = alias.trim();
-  if (!trimmed) return t("devices.aliasRequired");
-  if (!/^[A-Za-z0-9._@-]+$/.test(trimmed)) return t("devices.aliasInvalid");
-  return null;
-}
-
 // A secret-shaped run: the page token and anything like it (32+ hex), or a
 // `token=`/`key=`/`secret=`/`password=` assignment. Diagnostics are copied to be
 // pasted elsewhere, so they never carry one even when a message quoted it.

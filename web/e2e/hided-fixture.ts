@@ -185,3 +185,14 @@ async function launch(herdr: HerdrFixture, label: string, dir: string, home: str
   stop();
   throw new Error("hided did not write a state file");
 }
+
+/**
+ * Gives the daemon's private HOME an ssh config with one Host, so Add device has an entry to
+ * choose. The host name is reserved for documentation and never resolves, which keeps the
+ * device registered and unreachable; hided reads this file and the operator's own is untouched.
+ */
+export function writeSshHost(daemon: Daemon, alias: string): void {
+  const dir = path.join(daemon.home, ".ssh");
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(path.join(dir, "config"), `Host ${alias}\n  HostName ${alias}.invalid\n  User e2e\n`, { mode: 0o600 });
+}

@@ -5,8 +5,8 @@
 // `+` opens Settings > Devices > Add device, and each device's sidebar is its
 // name, shared Overview and Projects | Agents, with Home in Projects. A right-click
 // hides the rail, the name on the top line becomes the device menu, and the
-// choice survives a reload. Registering one device that cannot be reached (an
-// alias no SSH config knows) adds a dimmed monogram tile with a cross and no
+// choice survives a reload. Registering one device that cannot be reached (a
+// Host of the fixture's ssh config that never resolves) adds a dimmed monogram tile with a cross and no
 // mark, named by its hint, and, selected, the sidebar reduced to its name, `Not connected` and `Reconnect`.
 // Removing it leaves This Mac's rail. The Add project dialog's Host list entry
 // needs the desktop host's folder picker, so it is proved in desktop/e2e, not
@@ -14,7 +14,7 @@
 
 import { expect, test, type Page } from "@playwright/test";
 import { startHerdr } from "./herdr-fixture";
-import { startHided, type Daemon } from "./hided-fixture";
+import { startHided, writeSshHost, type Daemon } from "./hided-fixture";
 import { countSent, screenshot } from "./wire";
 import { SYSTEM } from "./chords";
 import { animationsFinished } from "./wait";
@@ -53,6 +53,7 @@ test("the rail follows the registered devices; a device that cannot be reached i
   let daemon: Daemon | null = null;
   try {
     daemon = await startHided(herdr, "device-rail");
+    writeSshHost(daemon, ALIAS);
     const sent = countSent(page);
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await expect(page.locator(CENTER).first()).toBeVisible({ timeout: 20_000 });
@@ -74,14 +75,13 @@ test("the rail follows the registered devices; a device that cannot be reached i
     await expect(page.locator("[data-project-list]")).toHaveCount(0);
     await page.locator('[data-sidebar-mode="projects"]').click();
 
-    // B6: a right-click on the rail offers Hide rail; hidden, the name is the device menu with Add device… and Show device rail.
+    // B6: a right-click on the rail offers Hide rail; hidden, the name is the device menu with Add device… and Show device rail; the choice is the core's, so it survives a reload.
     await rail.click({ button: "right", position: { x: 10, y: 400 } });
     const railMenu = page.locator('[data-device-rail-menu][role="menu"]');
     await expect(railMenu).toContainText("Hide rail");
     await railMenu.locator('[data-menu-item="hide"]').click();
     await expect(rail).toHaveCount(0);
     await expect(page.locator("[data-sidebar-device-menu]")).toContainText("This Mac");
-    // The choice is the core's, so it survives a reload.
     await page.reload();
     await expect(page.locator(CENTER).first()).toBeVisible({ timeout: 20_000 });
     await expect(page.locator("[data-device-rail]")).toHaveCount(0);
@@ -108,8 +108,8 @@ test("the rail follows the registered devices; a device that cannot be reached i
 
     // Registering a device, even an unreachable one, adds its tile; the center stays where it was.
     const centerBefore = await page.locator("[data-main-screen]").count();
+    await page.locator(`[data-ssh-host="${ALIAS}"]`).click();
     await page.locator("[data-device-label]").fill("연구실 빌드 서버 자동화 장비");
-    await page.locator("[data-device-alias]").fill(ALIAS);
     await page.locator("[data-add-device]").click();
     await leaveSettings(page, "closes itself");
     await expect(rail.locator("[data-rail-tile]")).toHaveCount(2, { timeout: 20_000 });

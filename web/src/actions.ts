@@ -938,12 +938,17 @@ export function createActions(send: DispatchFn) {
     setMobileEnabled(enabled: boolean) {
       dispatch({ schema_version: 2, kind: "mobile_enable", payload: { enabled } });
     },
-    /** Settings > Mobile open or closed: hided rechecks the checklist while it is open and issues a new code on open. */
+    /** Settings > Mobile open or closed: hided rechecks the checklist while it is open; a code is made only by Show QR. */
     observeMobile(observing: boolean) {
       dispatch({ schema_version: 2, kind: "mobile_observe", payload: { observing } });
     },
-    newMobileCode() {
+    /** Show QR: hided makes one pairing code and shows it in the `mobile` frame (PRD settings-cleanup B58). */
+    showMobileCode() {
       dispatch({ schema_version: 2, kind: "mobile_show_code", payload: {} });
+    },
+    /** Hide QR: the code leaves the frame. */
+    hideMobileCode() {
+      dispatch({ schema_version: 2, kind: "mobile_hide_code", payload: {} });
     },
     revokePhone(phoneId: string) {
       dispatch({ schema_version: 2, kind: "mobile_revoke", payload: { phone_id: phoneId } });
@@ -1013,6 +1018,11 @@ export function createActions(send: DispatchFn) {
     /** A tab showing the kit opened: this Mac's parts are read once. */
     checkKit() {
       dispatch({ schema_version: 2, kind: "kit_check", payload: {} });
+    },
+
+    /** Add device opened: hided reads the account's ssh config Hosts once and publishes `status.ssh_hosts`. */
+    listSshHosts() {
+      dispatch({ schema_version: 2, kind: "ssh_hosts_list", payload: {} });
     },
 
     registerDevice(id: string, label: string, alias: string, options: { hostConsent: boolean; herdrSocketPath: string | null }) {

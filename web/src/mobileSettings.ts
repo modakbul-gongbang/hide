@@ -1,7 +1,7 @@
 // The pure rules behind Settings > Mobile (PRD mobile-companion B1-B7,
-// B10, B14, B15, B29): what each checklist step says and which one carries
-// the action, how the code countdown and a phone's row read, and the push
-// choices. hided owns every value; this only words what its `mobile` frame
+// B10, B14, B15, B29; settings-cleanup B57-B59): which Tailscale steps show
+// and with what fix, how the code countdown and a phone's row read, and the
+// push choices. hided owns every value; this only words what its `mobile` frame
 // reported, so each rule is tested without a browser.
 
 import type { TFunction } from "i18next";
@@ -40,78 +40,48 @@ export type PhoneRow = {
 
 export type PushMode = "off" | "app_closed" | "always";
 
-export const PUSH_CHOICES: readonly { id: PushMode; label: MessageKey; detail: MessageKey | null }[] = [
-  { id: "off", label: "mobileSetup.push.off", detail: null },
+export const PUSH_CHOICES: readonly { id: PushMode; label: MessageKey; detail: MessageKey }[] = [
+  { id: "off", label: "mobileSetup.push.off", detail: "mobileSetup.push.offDescription" },
   { id: "app_closed", label: "mobileSetup.push.appClosed", detail: "mobileSetup.push.appClosedDescription" },
-  { id: "always", label: "mobileSetup.push.always", detail: null },
+  { id: "always", label: "mobileSetup.push.always", detail: "mobileSetup.push.alwaysDescription" },
 ];
 
-export type ChecklistRow = {
-  id: "installed" | "logged_in" | "https" | "phone";
-  state: StepState;
+/** A Tailscale step that needs the operator: what is wrong, what to do, and where to do it. */
+export type FailedStep = {
+  id: "installed" | "logged_in" | "https";
   title: string;
-  /** What to do, on the first failing step only. */
-  action: string | null;
+  action: string;
   link: { label: string; href: string } | null;
 };
 
 /**
- * The four steps in order (B2): passed steps read as done, the first failing
- * one carries the exact action, and everything after it waits. The phone
- * step is guidance hide cannot check; it reads as done once the QR shows (B4).
+ * What the Tailscale checks show (PRD settings-cleanup B57): one ready line
+ * when all three Mac steps passed, only the failing steps with their fix when
+ * some failed, and nothing while a step is still being read (the exposure
+ * line says it is checking). The phone-side step is guidance hide cannot
+ * check; it lives in the pairing row's description.
  */
-export function checklistRows(state: MobileState, t: TFunction<"translation">): ChecklistRow[] {
+export type ChecklistView = { kind: "ready" } | { kind: "failed"; steps: FailedStep[] } | { kind: "pending" };
+
+export function checklistView(state: MobileState, t: TFunction<"translation">): ChecklistView {
   const steps = state.checklist ?? { installed: "waiting", logged_in: "waiting", https: "waiting", host_name: null };
-  const rows: ChecklistRow[] = [
-    steps.installed === "failed"
-      ? {
-          id: "installed",
-          state: "failed",
-          title: t("mobileSetup.installMissing"),
-          action: t("mobileSetup.installAction"),
-          link: { label: t("mobileSetup.download"), href: state.download_url },
-        }
-      : { id: "installed", state: steps.installed, title: t("mobileSetup.installed"), action: null, link: null },
-    steps.logged_in === "failed"
-      ? {
-          id: "logged_in",
-          state: "failed",
-          title: t("mobileSetup.loginMissing"),
-          action: t("mobileSetup.loginAction"),
-          link: null,
-        }
-      : {
-          id: "logged_in",
-          state: steps.logged_in,
-          title: steps.logged_in === "ok" && steps.host_name ? t("mobileSetup.loggedInHost", { host: steps.host_name }) : t("mobileSetup.loggedIn"),
-          action: null,
-          link: null,
-        },
-    steps.https === "failed"
-      ? {
-          id: "https",
-          state: "failed",
-          title: t("mobileSetup.httpsMissing"),
-          action: t("mobileSetup.httpsAction"),
-          link: { label: t("mobileSetup.adminConsole"), href: state.admin_url },
-        }
-      : { id: "https", state: steps.https, title: t("mobileSetup.httpsReady"), action: null, link: null },
-    {
-      id: "phone",
-      state: state.qr ? "ok" : "waiting",
-      title: t("mobileSetup.phoneStep"),
-      action: null,
-      link: null,
-    },
-  ];
-  return rows;
+  const failed: FailedStep[] = [];
+  if (steps.installed === "failed") {
+    failed.push({ id: "installed", title: t("mobileSetup.installMissing"), action: t("mobileSetup.installAction"), link: { label: t("mobileSetup.download"), href: state.download_url } });
+  }
+  if (steps.logged_in === "failed") {
+    failed.push({ id: "logged_in", title: t("mobileSetup.loginMissing"), action: t("mobileSetup.loginAction"), link: null });
+  }
+  if (steps.https === "failed") {
+    failed.push({ id: "https", title: t("mobileSetup.httpsMissing"), action: t("mobileSetup.httpsAction"), link: { label: t("mobileSetup.adminConsole"), href: state.admin_url } });
+  }
+  if (failed.length > 0) return { kind: "failed", steps: failed };
+  return steps.installed === "ok" && steps.logged_in === "ok" && steps.https === "ok" ? { kind: "ready" } : { kind: "pending" };
 }
 
-/** The one line under the checklist when there is no QR, or null when the QR shows. */
+/** The one line beside the checks when hide itself has something to say about the serve entry, or null. */
 export function exposureLine(state: MobileState, t: TFunction<"translation">): { tone: "pending" | "warn" | "error"; text: string } | null {
   switch (state.exposure) {
-    case "exposed":
-      return state.qr ? null : { tone: "pending", text: t("mobileSetup.generatingCode") };
     case "checking":
       return { tone: "pending", text: t("mobileSetup.checking") };
     case "foreign":
@@ -119,7 +89,7 @@ export function exposureLine(state: MobileState, t: TFunction<"translation">): {
     case "failed":
       return { tone: "error", text: t("mobileSetup.failed", { step: t(failureStep(state.failure?.step)), message: state.failure?.message ?? "" }).trim() };
     default:
-      return { tone: "pending", text: t("mobileSetup.qrWaiting") };
+      return null;
   }
 }
 
