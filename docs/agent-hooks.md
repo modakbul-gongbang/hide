@@ -132,6 +132,8 @@ The core follows it (`ui_state.agent_onboarding`), applies the answer to this Ma
 Claude Code and Codex are the agents the kit has always had a hook for.
 Every other agent Hide knows is one row of `hide-kit/src/agents.rs` (`ADAPTERS`), and one switch per agent per machine turns its pieces on and off, in Settings, Agents and in each device's row.
 A row carries the agent's detection (a program on the login `PATH` or the usual install folders, or a folder it creates under the home; the names `goose`, `amp`, `droid`, `copilot` and `kilo` are other programs too, so those agents are detected by their folder alone), the folder it reads skills from and the systems the documentation confirms that folder on, whether Hide writes a hook for it, the oldest version whose documentation has that hook, and the official page the row's answers come from (`doc_url`).
+The usual install folders are `~/.local/bin`, pnpm's global folder (`~/Library/pnpm` on macOS and `~/.local/share/pnpm` on Linux, and the `bin` folder inside it from pnpm 11), `~/.npm-global/bin`, `/opt/homebrew/bin` and `/usr/local/bin` (`cli_path` in `hide-agent-hooks/src/diagnosis.rs`).
+A program found there is also run with that `PATH`, because a CLI installed as a script starts its interpreter by name (pnpm's `codex` runs `node`) and a device helper started over SSH has only the system folders.
 A test fails a row with no `https` `doc_url`, so a claim in the table below always has a page behind it.
 
 Two pieces are written per agent, and nothing else:

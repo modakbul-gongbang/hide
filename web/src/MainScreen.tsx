@@ -15,7 +15,7 @@ import { lensHandlers } from "./OverviewLenses";
 import { agentsTile, scopeAgents } from "./overviewLens";
 import { RequestView } from "./RequestView";
 import { requestRows } from "./requestList";
-import { allProjectsStats, buildTasks, NO_FILTER, type AllProjectsStats, type IssueFilter, type SourceState, type TaskCard } from "./projectBoard";
+import { allProjectsStats, boardLabels, buildTasks, NO_FILTER, type AllProjectsStats, type IssueFilter, type SourceState, type TaskCard } from "./projectBoard";
 import { frontDeviceId } from "./devices";
 import { frontCheckout, type Device } from "./snapshot";
 import { useShellStore } from "./store";
@@ -189,7 +189,7 @@ export function MainScreen({ actions }: { actions: Actions }) {
         </Tabs>
         {view === "tasks" ? (
           <span className="flex items-center gap-xs" data-issues-controls="true">
-            <IssueFilterControl filter={filter} onChange={setFilter} />
+            <IssueFilterControl filter={filter} labels={boardLabels(tasks, filter.labels)} onChange={setFilter} />
             <TasksModeToggle mode={tasksMode} onChange={setTasksMode} />
           </span>
         ) : view === "agents" ? (

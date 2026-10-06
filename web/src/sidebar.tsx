@@ -1015,13 +1015,14 @@ const NO_BOARD_ROWS: BoardRow[] = [];
 /**
  * What a checkout's row draws besides line one, shared by the checkout row and
  * a folder's one row: its agent rows open only where agents run and the
- * operator opened them. Line two is the purpose and exists only while there
+ * operator opened them, or on a selected SSH device, whose tree has no folds.
+ * Line two is the purpose and exists only while there
  * is one (PRD sidebar-typography D-04); opening the agents never grows or
  * shrinks the row.
  */
 function checkoutDisclosure(checkout: Checkout, agentRows: BoardRow[], view: CheckoutPresentation, context: ListContext, t: TFunction<"translation">) {
   const foldable = context.disclosure && agentRows.length > 0;
-  const open = foldable && context.openCheckouts.includes(checkout.id);
+  const open = agentRows.length > 0 && (!context.disclosure || context.openCheckouts.includes(checkout.id));
   const purpose = checkout.purpose?.text ?? null;
   const parents = [...new Set(agentRows
     .filter((row) => row.depth === 0)

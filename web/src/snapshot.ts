@@ -201,6 +201,8 @@ export type Issue = {
   project_status: string | null;
   updated_at_unix_ms: number | null;
   created_at_unix_ms: number | null;
+  /** Absent when the issue has none; the web reads a task's labels, not these. */
+  labels?: IssueLabel[];
 };
 
 /** The issue a checkout is linked to and where the link came from (`IssueLinkSnapshot`). */
@@ -231,6 +233,8 @@ export type Task = {
   blocked_by?: TaskRef[];
   /** GitHub's sub-issues of this task with its own progress count; absent when it has none (`TaskSubIssuesSnapshot`). */
   sub_issues?: TaskSubIssues | null;
+  /** The source's labels in its order, read with the list; absent when it has none, as every Local issue (`TaskLabel`). */
+  labels?: IssueLabel[];
 };
 
 /** GitHub's `completed` of `total` sub-issues, and the sub-issues themselves. */

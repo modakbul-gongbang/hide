@@ -300,7 +300,8 @@ After a blur cancels a hold, the host owes the initiating page the keyboard and 
 The window is back at its own `focus` event, not when it reads as key: on macOS that event is the window becoming main again, and Electron restores the focus it stored on `blur` (the shell, which the hold had given the keyboard) just before it, so a page paid while the window is key but not yet back loses the keyboard to that restore.
 The shell's sync that uncovers the page can land after the window returns, so the debt waits for the page instead of expiring at the first focus event.
 Another page taking the keyboard, a new hold, leaving the page's Workspace, or the page closing ends the debt.
-The host logs the window's blur and focus, the page's blur and the shell's focus beside `browser.window_return`, so a failed return shows whether the keyboard was never paid or was taken after it, and by what.
+The host logs the window's blur, focus and visibility (macOS reports it hidden while nothing of it is drawn, and the shell then sends no sync), each page's focus, blur and shown state with its display id and whether it is the owed page, and the shell's focus beside `browser.window_return`, so a failed return shows whether the keyboard was never paid or was taken after it, and by what.
+None of these carries an address or page content, and each fires at the rate the operator focuses, covers or switches a window or page.
 After the core confirms a selected display, the existing keyboard-follow request focuses its document or diff, or schedules one trusted native-page focus command after visible-slot sync.
 The host focuses only a visible page in its already-focused candidate window; it never brings a window forward for this command.
 Cycle menu items are immediate command clicks without accelerators, so one physical key cannot also dispatch a menu selection.

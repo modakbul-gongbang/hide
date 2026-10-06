@@ -18,7 +18,7 @@ import { LensTabs, lensHandlers } from "./OverviewLenses";
 import { agentsTile, issuesTile, lastIssueRead, prsTile, scopeAgents, sessionsTile } from "./overviewLens";
 import { RequestView } from "./RequestView";
 import { requestRows, requestsTile } from "./requestList";
-import { buildPullRequests, buildTasks, projectStats, type BoardProject, type BoardStats, type TaskCard } from "./projectBoard";
+import { boardLabels, buildPullRequests, buildTasks, projectStats, type BoardProject, type BoardStats, type TaskCard } from "./projectBoard";
 import { PullRequestsView } from "./PullRequestsView";
 import { IssuesView, panelCard, type IssuesPage } from "./IssuesView";
 import type { Workspace } from "./snapshot";
@@ -176,7 +176,7 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
           <GraphFilterControls agents={lensAgents} filter={lens.graph} onChange={(graph) => setLens({ graph })} />
         ) : view === "issues" ? (
           <span className="flex items-center gap-xs" data-issues-controls="true">
-            <IssueFilterControl filter={lens.filter} onChange={(filter) => setLens({ filter })} />
+            <IssueFilterControl filter={lens.filter} labels={tasks ? boardLabels(tasks, lens.filter.labels) : []} onChange={(filter) => setLens({ filter })} />
             <TasksModeToggle mode={lens.tasksMode} onChange={(tasksMode) => setLens({ tasksMode })} />
           </span>
         ) : null}

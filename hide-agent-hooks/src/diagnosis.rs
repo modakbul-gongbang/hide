@@ -6,6 +6,7 @@
 //! that matches is the one shown; nothing falls through to an empty value or
 //! an invented cause (PRD B21, B32, D-64).
 
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::AtomicBool;
@@ -340,7 +341,7 @@ pub fn runtime_compatibility(runtime: AgentRuntime, home: &Path) -> MemoryCompat
             minimum_version: minimum.to_owned(),
         };
     };
-    let Some(output) = version_output(&binary, RUNTIME_VERSION_PROBE_TIMEOUT) else {
+    let Some(output) = version_output(&binary, home, RUNTIME_VERSION_PROBE_TIMEOUT) else {
         return MemoryCompatibility::UpdateRequired {
             installed_version: None,
             minimum_version: minimum.to_owned(),
@@ -373,38 +374,48 @@ pub(crate) fn runtime_binary(runtime: AgentRuntime, home: &Path) -> Option<PathB
     find_binary(name, home)
 }
 
-/// The program `name` as a hook's daemon would find it: the login `PATH`,
-/// then the folders installers put a CLI in that such a `PATH` may not reach.
+/// The program `name` as a hook's daemon would find it on [`cli_path`].
 /// The install kit uses it to detect every agent it has an adapter for.
 pub fn find_binary(name: &str, home: &Path) -> Option<PathBuf> {
-    let installed = std::env::join_paths([
+    hide_platform::host::find_program(&cli_path(home)?, name)
+}
+
+/// The `PATH` an agent's CLI is found on and run with: the daemon's own
+/// `PATH`, then the folders installers put a CLI in that such a `PATH` may
+/// not reach. A device helper started over SSH has only the system folders.
+/// A CLI installed as a script starts its interpreter from the same `PATH`
+/// (pnpm's `codex` is a shell script that runs `node`), so a CLI found here
+/// is run with this value, never with the daemon's `PATH` alone.
+pub fn cli_path(home: &Path) -> Option<OsString> {
+    let inherited = hide_platform::host::login_path().unwrap_or_else(|_| "/usr/bin:/bin".into());
+    std::env::join_paths(std::env::split_paths(&inherited).chain([
         home.join(".local/bin"),
+        // pnpm's global bin folder: `$PNPM_HOME` up to pnpm 10 and
+        // `$PNPM_HOME/bin` from pnpm 11, with `$PNPM_HOME` defaulting to
+        // `~/Library/pnpm` on macOS and `~/.local/share/pnpm` on Linux.
         home.join("Library/pnpm"),
+        home.join("Library/pnpm/bin"),
+        home.join(".local/share/pnpm"),
+        home.join(".local/share/pnpm/bin"),
         home.join(".npm-global/bin"),
         PathBuf::from("/opt/homebrew/bin"),
         PathBuf::from("/usr/local/bin"),
-    ])
-    .ok()?;
-    hide_platform::host::login_path()
-        .ok()
-        .and_then(|path| hide_platform::host::find_program(&path, name))
-        .or_else(|| hide_platform::host::find_program(&installed, name))
+    ]))
+    .ok()
 }
 
 /// The version a program reports for `--version`, within the same short
 /// bound the runtime probe uses; `None` when it does not answer in time,
 /// exits non-zero or prints no `x.y.z`.
-pub fn program_version(binary: &Path) -> Option<String> {
-    version_output(binary, RUNTIME_VERSION_PROBE_TIMEOUT).and_then(|output| parse_version(&output))
+pub fn program_version(binary: &Path, home: &Path) -> Option<String> {
+    version_output(binary, home, RUNTIME_VERSION_PROBE_TIMEOUT)
+        .and_then(|output| parse_version(&output))
 }
 
-fn version_output(binary: &Path, timeout: Duration) -> Option<String> {
-    let finished = run_to_end(
-        Command::new(binary).arg("--version"),
-        timeout,
-        &AtomicBool::new(false),
-    )
-    .ok()?;
+fn version_output(binary: &Path, home: &Path, timeout: Duration) -> Option<String> {
+    let mut command = Command::new(binary);
+    command.arg("--version").env("PATH", cli_path(home)?);
+    let finished = run_to_end(&mut command, timeout, &AtomicBool::new(false)).ok()?;
     let output = if finished.stdout.trim().is_empty() {
         finished.stderr
     } else {

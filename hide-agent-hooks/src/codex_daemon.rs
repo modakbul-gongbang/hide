@@ -140,7 +140,9 @@ fn parse_feature_list(stdout: &str) -> Result<DaemonSetting, String> {
 
 /// Codex is run with the account's HOME and its own `.codex` named outright,
 /// in an environment built rather than inherited, so a `CODEX_HOME` the
-/// launching shell carried never redirects which setting is changed.
+/// launching shell carried never redirects which setting is changed. Its
+/// `PATH` is the one it was found on ([`crate::diagnosis::cli_path`]), so a
+/// Codex installed by pnpm, a script that runs `node`, finds `node` there.
 fn run(codex: &Path, home: &Path, args: &[&str], stop: &AtomicBool) -> Result<Finished, String> {
     let mut command = Command::new(codex);
     command
@@ -150,7 +152,9 @@ fn run(codex: &Path, home: &Path, args: &[&str], stop: &AtomicBool) -> Result<Fi
         .env("CODEX_HOME", home.join(".codex"))
         .env(
             "PATH",
-            std::env::var_os("PATH").unwrap_or_else(|| "/usr/bin:/bin".into()),
+            crate::diagnosis::cli_path(home).ok_or_else(|| {
+                format!("a folder under {} cannot be put on a PATH", home.display())
+            })?,
         );
     let name = format!("codex {}", args.join(" "));
     run_to_end(&mut command, DEADLINE, stop).map_err(|failure| match failure {
@@ -195,6 +199,50 @@ mod tests {
             Ok(DaemonSetting::Unsupported)
         );
         assert!(parse_feature_list("daemon_auto_start stable maybe\n").is_err());
+    }
+
+    /// The Mac mini's layout on 2026-10-06: pnpm 11 puts the `codex` script
+    /// in `~/Library/pnpm/bin`, the script runs `node` by name, `node` is in
+    /// `~/.local/bin`, and the device helper's own `PATH` holds neither. The
+    /// names are unique so a CLI on the test machine's `PATH` cannot answer.
+    #[cfg(unix)]
+    #[test]
+    fn a_codex_installed_by_pnpm_11_is_found_and_runs_with_its_node() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let home = tempfile::tempdir().unwrap();
+        let script = |path: PathBuf, body: &str| {
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, body).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            path
+        };
+        let shim = script(
+            home.path().join("Library/pnpm/bin/hide-fixture-codex"),
+            "#!/bin/sh\nexec hide-fixture-node \"$@\"\n",
+        );
+        script(
+            home.path().join(".local/bin/hide-fixture-node"),
+            concat!(
+                "#!/bin/sh\n",
+                "case \"$1 $2\" in\n",
+                "  '--version ') echo 'codex-cli 0.160.0' ;;\n",
+                "  'features list') echo 'daemon_auto_start  stable  false' ;;\n",
+                "  *) exit 2 ;;\n",
+                "esac\n",
+            ),
+        );
+
+        let found = crate::find_binary("hide-fixture-codex", home.path());
+        assert_eq!(found.as_deref(), Some(shim.as_path()));
+        assert_eq!(
+            read_setting(&shim, home.path(), &AtomicBool::new(false)),
+            Ok(DaemonSetting::Off)
+        );
+        assert_eq!(
+            crate::program_version(&shim, home.path()).as_deref(),
+            Some("0.160.0")
+        );
     }
 
     #[test]

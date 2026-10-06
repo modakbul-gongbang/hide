@@ -12,7 +12,7 @@ import type { TFunction } from "i18next";
 import { formatDateTime } from "./i18n/format";
 import type { MessageKey } from "./i18n/catalogs";
 import { requireInterfaceLanguage } from "./i18n/locale";
-import type { AgentRow, Checkout, PullRequest, Task, TaskSubIssue, Workspace } from "./snapshot";
+import type { AgentRow, Checkout, IssueLabel, PullRequest, Task, TaskSubIssue, Workspace } from "./snapshot";
 
 export type Stage = "backlog" | "working" | "review" | "done";
 
@@ -409,22 +409,51 @@ export function buildTasks(projects: readonly BoardProject[], scope: BoardScope,
   };
 }
 
-/** The Issues filter at the facts line's right end (B21): words in the id or title, and the operator's turn only. */
-export type IssueFilter = { query: string; turn: boolean };
+/**
+ * The Issues filter at the facts line's right end (B21): words in the id or
+ * title, the operator's turn only, and labels by name, of which a card has to
+ * carry any one.
+ */
+export type IssueFilter = { query: string; turn: boolean; labels: readonly string[] };
 
-export const NO_FILTER: IssueFilter = { query: "", turn: false };
+export const NO_FILTER: IssueFilter = { query: "", turn: false, labels: [] };
 
 export function filterActive(filter: IssueFilter): boolean {
-  return filter.turn || filter.query.trim() !== "";
+  return filter.turn || filter.query.trim() !== "" || filter.labels.length > 0;
 }
 
 /** The board with only the cards the filter keeps; the lines of work with no issue are not issues and stay. */
 export function filterBoard(board: TasksBoard, filter: IssueFilter): TasksBoard {
   if (!filterActive(filter)) return board;
   const words = filter.query.trim().toLowerCase().split(/\s+/).filter(Boolean);
+  const picked = new Set(filter.labels);
   const keeps = (value: TaskCard) =>
-    (!filter.turn || value.needsYou) && words.every((word) => value.title.toLowerCase().includes(word) || (value.task.id ?? "").toLowerCase().includes(word));
+    (!filter.turn || value.needsYou) &&
+    (picked.size === 0 || (value.task.labels ?? []).some((label) => picked.has(label.name))) &&
+    words.every((word) => value.title.toLowerCase().includes(word) || (value.task.id ?? "").toLowerCase().includes(word));
   return { ...board, cards: board.cards.filter(keeps) };
+}
+
+/** A label the filter offers: its name, a card's colour for it, and how many cards carry it. */
+export type BoardLabel = { label: IssueLabel; count: number };
+
+/**
+ * The labels the board's cards carry, the filter's choices (B21), in name
+ * order. Labels are one by name across projects, coloured as the first card
+ * that carries one has it. A picked label no card carries any more stays
+ * offered with no cards, so it can still be taken off.
+ */
+export function boardLabels(board: TasksBoard, picked: readonly string[]): BoardLabel[] {
+  const byName = new Map<string, BoardLabel>();
+  for (const value of board.cards) {
+    for (const label of value.task.labels ?? []) {
+      const known = byName.get(label.name);
+      if (known) known.count += 1;
+      else byName.set(label.name, { label, count: 1 });
+    }
+  }
+  for (const name of picked) if (!byName.has(name)) byName.set(name, { label: { name, color: null }, count: 0 });
+  return [...byName.values()].sort((a, b) => a.label.name.localeCompare(b.label.name));
 }
 
 /** The cards of one Tasks column. */

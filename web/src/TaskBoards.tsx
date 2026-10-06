@@ -50,12 +50,14 @@ import { cn } from "./lib/utils";
 import { useMeasuredPaths } from "./measuredPaths";
 import { AgentMessageHint, PullRequestChip } from "./OverviewLenses";
 import {
+  NO_FILTER,
   STAGES,
   buildDependencies,
   filterActive,
   issueDate,
   readFailureText,
   stageCards,
+  type BoardLabel,
   type BoardRow,
   type BoardScope,
   type CardSubIssues,
@@ -513,10 +515,13 @@ export function TasksModeToggle({ mode, onChange }: { mode: TasksMode; onChange:
 
 /**
  * The Issues filter, left of the mode control (B21): words in an issue's id
- * or title, and the operator's turn only. The icon is filled while a filter
- * holds; it is page state and sends nothing.
+ * or title, the operator's turn only, and the labels the board's cards carry,
+ * several at once, a card passing with any one of them; a lit label is taken
+ * off by pressing it again. The label choices stand only while a card carries
+ * a label or one is picked. The icon is filled while a filter holds; it is
+ * page state and sends nothing.
  */
-export function IssueFilterControl({ filter, onChange }: { filter: IssueFilter; onChange: (filter: IssueFilter) => void }) {
+export function IssueFilterControl({ filter, labels, onChange }: { filter: IssueFilter; labels: readonly BoardLabel[]; onChange: (filter: IssueFilter) => void }) {
   const { t } = useInterfaceTranslation();
   const active = filterActive(filter);
   return (
@@ -528,14 +533,28 @@ export function IssueFilterControl({ filter, onChange }: { filter: IssueFilter; 
           </Button>
         </PopoverTrigger>
       </Hint>
-      <PopoverContent align="end" className="flex flex-col gap-sm" data-issue-filter-panel="true">
+      <PopoverContent align="end" className="flex max-h-(--radix-popover-content-available-height) flex-col gap-sm overflow-y-auto" data-issue-filter-panel="true">
         <Input autoFocus value={filter.query} placeholder={t("board.filterQuery")} onChange={(event) => onChange({ ...filter, query: event.target.value })} data-issue-filter-query="true" />
         <label className="flex items-center justify-between gap-sm text-caption text-foreground">
           {t("board.myTurnOnly")}
           <Switch checked={filter.turn} onCheckedChange={(turn) => onChange({ ...filter, turn })} data-issue-filter-turn="true" />
         </label>
+        {labels.length > 0 ? (
+          <div className="flex flex-col gap-xs" data-issue-filter-labels="true">
+            <span className="text-caption text-muted-foreground">{t("board.filterLabels")}</span>
+            <ToggleGroup type="multiple" value={[...filter.labels]} onValueChange={(names) => onChange({ ...filter, labels: names })} aria-label={t("board.filterLabels")} className="w-full flex-wrap">
+              {labels.map(({ label, count }) => (
+                <ToggleGroupItem key={label.name} value={label.name} size="sm" className="min-w-0 max-w-full" data-issue-filter-label={label.name}>
+                  <IssueLabelDot color={label.color} />
+                  <span className="min-w-0 truncate">{label.name}</span>
+                  {count > 0 ? <span className="font-mono text-muted-foreground">{count}</span> : null}
+                </ToggleGroupItem>
+              ))}
+            </ToggleGroup>
+          </div>
+        ) : null}
         {active ? (
-          <Button variant="ghost" size="sm" className="self-start" onClick={() => onChange({ query: "", turn: false })} data-issue-filter-reset="true">
+          <Button variant="ghost" size="sm" className="self-start" onClick={() => onChange(NO_FILTER)} data-issue-filter-reset="true">
             {t("board.clearFilter")}
           </Button>
         ) : null}
@@ -550,21 +569,38 @@ export function TaskGlyph({ task, className }: { task: Task; className?: string 
   return <Glyph aria-hidden="true" className={cn("size-(--size-icon-sm) shrink-0", className)} />;
 }
 
+/** A label's dot in the colour its source gives it, grey without one. */
+function IssueLabelDot({ color }: { color: string | null }) {
+  // The colour is the source's data, not a design value, so it reaches the dot through a custom property.
+  const tint = color ? { "--issue-label": `#${color}` } : undefined;
+  return <span aria-hidden="true" className={cn("size-(--issue-label-dot) shrink-0 rounded-full", color ? "bg-(--issue-label)" : "bg-muted-foreground")} style={tint as CSSProperties} />;
+}
+
 /** One label as its source colours it: a dot in the label's colour and its name. */
 export function IssueLabelView({ label }: { label: IssueLabel }) {
-  // The colour is the source's data, not a design value, so it reaches the dot through a custom property.
-  const tint = label.color ? { "--issue-label": `#${label.color}` } : undefined;
   return (
     <span className="inline-flex min-w-0 items-center gap-xxs text-caption text-muted-foreground" data-issue-label={label.name}>
-      <span aria-hidden="true" className={cn("size-(--issue-label-dot) shrink-0 rounded-full", label.color ? "bg-(--issue-label)" : "bg-muted-foreground")} style={tint as CSSProperties} />
+      <IssueLabelDot color={label.color} />
       <span className="truncate">{label.name}</span>
+    </span>
+  );
+}
+
+/** A card's or a List row's labels, at most `CARD_LABELS` of them, from the task itself (B1). */
+function CardLabels({ labels, className }: { labels: readonly IssueLabel[]; className?: string }) {
+  if (labels.length === 0) return null;
+  return (
+    <span className={cn("flex min-w-0 items-center gap-xs", className)} data-card-labels="true">
+      {labels.slice(0, CARD_LABELS).map((label) => (
+        <IssueLabelView key={label.name} label={label} />
+      ))}
     </span>
   );
 }
 
 /**
  * An issue card (B1, B2, B5-B9). The id line holds the source glyph, the id,
- * at most two labels once the issue has been read, and at its end a slot
+ * at most two of its labels, and at its end a slot
  * whose buttons show only under the pointer or focus, so the card keeps its
  * height. Under it the title in two lines, the lock line, then in progress
  * and review the checkout and PR chips (review adds the CI mark and the
@@ -636,13 +672,7 @@ export function IssueCardView({ card, page, actions, handlers, graph }: { card: 
     >
       <div className="flex h-(--size-control-sm) min-w-0 items-center gap-xs">
         <IssueIdPreview card={card} detail={cached} pinned={previewPinned} actions={actions} handlers={handlers} />
-        {cached && cached.labels.length > 0 ? (
-          <span className="flex min-w-0 items-center gap-xs" data-card-labels="true">
-            {cached.labels.slice(0, CARD_LABELS).map((label) => (
-              <IssueLabelView key={label.name} label={label} />
-            ))}
-          </span>
-        ) : null}
+        <CardLabels labels={task.labels ?? []} />
         {card.project ? (
           <span className="min-w-0 truncate text-caption text-muted-foreground" data-card-project="true">
             {card.project}
@@ -1136,7 +1166,11 @@ function ListRow({ card, now, page, actions, handlers }: { card: TaskCard; now: 
           {task.id}
         </span>
         <span className="flex min-w-0 flex-1 items-center gap-xs">
-          <span className="min-w-0 truncate text-body text-foreground">{card.title}</span>
+          {/* The title keeps its width up to the whole span and the labels take what is left, so a narrow row shortens and then drops the labels before the title gives way. */}
+          <span className="flex min-w-0 items-center gap-xs overflow-hidden">
+            <span className="max-w-full shrink-0 truncate text-body text-foreground">{card.title}</span>
+            <CardLabels labels={task.labels ?? []} className="overflow-hidden" />
+          </span>
           {card.project ? <span className="shrink-0 text-caption text-muted-foreground">{card.project}</span> : null}
           {turn ? (
             <Badge variant="outline" className="shrink-0 border-warning text-warning" data-turn={turn}>
