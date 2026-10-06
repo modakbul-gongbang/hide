@@ -5,6 +5,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
+use std::time::Duration;
 
 use hide_factory::adapters::*;
 use hide_factory::exec::{Output, Runner};
@@ -19,6 +20,7 @@ struct Hub {
     next: u64,
     writes: Vec<String>,
     checks: Vec<Value>,
+    check_reads: usize,
     fail_next: Option<String>,
 }
 
@@ -122,7 +124,10 @@ impl Runner for FakeGh {
                 hub.writes.push(format!("pr reopen {number}"));
                 ok("")
             }
-            ["api", path] if path.contains("/check-runs") => ok(json!({"check_runs": hub.checks}).to_string()),
+            ["api", path] if path.contains("/check-runs") => {
+                hub.check_reads += 1;
+                ok(json!({"check_runs": hub.checks}).to_string())
+            }
             ["api", path] if path.contains("/actions/runs") => ok(json!({"workflow_runs": [{"id": 7, "conclusion": "cancelled"}, {"id": 8, "conclusion": "success"}]}).to_string()),
             ["run", "rerun", id, ..] => {
                 hub.writes.push(format!("run rerun {id}"));
@@ -188,6 +193,7 @@ fn projects(gh: &FakeGh) -> SharedProjects {
         Box::new(NoIssues),
         PathBuf::from("/nonexistent/logs"),
     )
+    .with_ci_poll_every(Duration::ZERO)
 }
 
 #[test]
@@ -274,6 +280,19 @@ fn required_checks_decide_and_a_cancelled_run_is_asked_again() {
     gh.0.lock().unwrap().checks =
         vec![json!({"name": "test", "status": "completed", "conclusion": "success"})];
     assert_eq!(p.main_check(&factory, "abc").unwrap(), MainCheck::Green);
+}
+
+#[test]
+fn running_checks_are_not_asked_again_on_every_tick() {
+    let gh = FakeGh::default();
+    let mut p = projects(&gh).with_ci_poll_every(Duration::from_secs(3600));
+    let factory = factory();
+    gh.0.lock().unwrap().checks = vec![json!({"name": "test", "status": "in_progress"})];
+    assert_eq!(p.main_check(&factory, "abc").unwrap(), MainCheck::Pending);
+    assert_eq!(p.main_check(&factory, "abc").unwrap(), MainCheck::Pending);
+    assert_eq!(gh.0.lock().unwrap().check_reads, 1);
+    assert_eq!(p.main_check(&factory, "def").unwrap(), MainCheck::Pending);
+    assert_eq!(gh.0.lock().unwrap().check_reads, 2, "each commit is asked once");
 }
 
 #[test]

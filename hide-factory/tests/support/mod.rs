@@ -165,7 +165,11 @@ impl Verifier for Shared {
         }
         let id = format!("{}:{}", task.id, world.verify_runs.len());
         world.verify_runs.push(id.clone());
-        Ok(VerifyRun { id, log: None })
+        Ok(VerifyRun {
+            id,
+            log: None,
+            commit: None,
+        })
     }
     fn start_premerge(&mut self, factory: &Factory, task: &Task) -> Result<VerifyRun, Failure> {
         self.start(factory, task)

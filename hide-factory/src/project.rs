@@ -9,7 +9,7 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use serde_json::Value;
 
@@ -43,7 +43,16 @@ pub struct Projects {
     pub verify: VerifyRunner,
     /// Issue bodies already seen, to tell an edit from the first read.
     bodies: BTreeMap<(String, u64), String>,
+    /// When each commit's checks last answered Pending: they are asked again
+    /// only after `ci_poll_every`, not on every engine tick (B75).
+    ci_pending: BTreeMap<String, Instant>,
+    ci_poll_every: Duration,
 }
+
+/// How often a commit whose checks are still running is asked again.
+pub const CI_POLL_EVERY: Duration = Duration::from_secs(30);
+/// Commits remembered as pending; the oldest is forgotten past this.
+const CI_PENDING_LIMIT: usize = 256;
 
 /// One `Projects` shared by the engine's source, merge and verifier ports.
 #[derive(Clone)]
@@ -56,7 +65,16 @@ impl SharedProjects {
             issues,
             verify: VerifyRunner::new(logs),
             bodies: BTreeMap::new(),
+            ci_pending: BTreeMap::new(),
+            ci_poll_every: CI_POLL_EVERY,
         })))
+    }
+
+    /// How long a commit with running checks waits before it is asked again;
+    /// tests that script gh answers turn by turn pass zero.
+    pub fn with_ci_poll_every(self, every: Duration) -> Self {
+        self.lock().ci_poll_every = every;
+        self
     }
 
     fn lock(&self) -> MutexGuard<'_, Projects> {
@@ -188,8 +206,35 @@ impl Projects {
         })
     }
 
-    /// Required check runs on a commit (B35, B44).
+    /// Required check runs on a commit (B35, B44), read at most once per
+    /// `ci_poll_every` while they are pending.
     fn checks(&mut self, factory: &Factory, sha: &str) -> Result<MainCheck, Failure> {
+        if self
+            .ci_pending
+            .get(sha)
+            .is_some_and(|at| at.elapsed() < self.ci_poll_every)
+        {
+            return Ok(MainCheck::Pending);
+        }
+        let answer = self.read_checks(factory, sha)?;
+        if answer == MainCheck::Pending {
+            if self.ci_pending.len() >= CI_PENDING_LIMIT
+                && let Some(oldest) = self
+                    .ci_pending
+                    .iter()
+                    .min_by_key(|(_, at)| **at)
+                    .map(|(sha, _)| sha.clone())
+            {
+                self.ci_pending.remove(&oldest);
+            }
+            self.ci_pending.insert(sha.to_owned(), Instant::now());
+        } else {
+            self.ci_pending.remove(sha);
+        }
+        Ok(answer)
+    }
+
+    fn read_checks(&mut self, factory: &Factory, sha: &str) -> Result<MainCheck, Failure> {
         let repo = repo(factory)?;
         let path = format!("repos/{repo}/commits/{sha}/check-runs?per_page=100");
         let value = self.gh_json("github.checks", &["api", &path])?;
@@ -208,12 +253,9 @@ impl Projects {
                         .any(|name| run["name"].as_str() == Some(name))
             })
             .collect();
+        // No run yet is not a pass: CI has not answered for this commit.
         if runs.is_empty() {
-            return Ok(if required.is_empty() {
-                MainCheck::None
-            } else {
-                MainCheck::Pending
-            });
+            return Ok(MainCheck::Pending);
         }
         if let Some(missing) = required
             .iter()
@@ -945,14 +987,21 @@ impl MergeTarget for SharedProjects {
                         .unwrap_or_default()
                         .to_owned());
                 }
-                let head = view["headRefOid"].as_str().unwrap_or_default().to_owned();
+                // Pinned to the commit that passed verification: a push after
+                // it makes GitHub refuse the merge (B39).
+                let head = task
+                    .attempts
+                    .iter()
+                    .rev()
+                    .find(|attempt| matches!(attempt.outcome, Some(AttemptOutcome::Passed)))
+                    .and_then(|attempt| attempt.commit.clone())
+                    .unwrap_or_else(|| view["headRefOid"].as_str().unwrap_or_default().to_owned());
                 let number = pr.number.to_string();
                 let flag = match method {
                     MergeMethod::Merge => "--merge",
                     MergeMethod::Squash => "--squash",
                     MergeMethod::Rebase => "--rebase",
                 };
-                // The head SHA is pinned: a push after verification refuses the merge.
                 this.gh(
                     "github.merge",
                     &[
@@ -1170,6 +1219,7 @@ impl Verifier for SharedProjects {
             Verification::Commands { commands } => {
                 let id = verify_id(task, "task");
                 let cwd = worktree(task)?;
+                let commit = this.head_sha(task)?;
                 this.verify.forget(&id);
                 this.verify.submit(Job {
                     id: id.clone(),
@@ -1179,13 +1229,18 @@ impl Verifier for SharedProjects {
                     timeout: Duration::from_millis(factory.config.verify_timeout_ms),
                 })?;
                 let log = this.verify.log_path(&id).display().to_string();
-                Ok(VerifyRun { id, log: Some(log) })
+                Ok(VerifyRun {
+                    id,
+                    log: Some(log),
+                    commit: Some(commit),
+                })
             }
             Verification::Ci { .. } => {
                 let sha = this.head_sha(task)?;
                 Ok(VerifyRun {
                     id: format!("ci:{sha}"),
                     log: task.pr.as_ref().map(|pr| pr.url.clone()),
+                    commit: Some(sha),
                 })
             }
             Verification::None => Err(Failure::task("verify", "no verification")),
@@ -1218,7 +1273,11 @@ impl Verifier for SharedProjects {
             timeout: Duration::from_millis(factory.config.verify_timeout_ms),
         })?;
         let log = this.verify.log_path(&id).display().to_string();
-        Ok(VerifyRun { id, log: Some(log) })
+        Ok(VerifyRun {
+            id,
+            log: Some(log),
+            commit: None,
+        })
     }
 
     fn poll(&mut self, factory: &Factory, run: &VerifyRun) -> VerifyPoll {

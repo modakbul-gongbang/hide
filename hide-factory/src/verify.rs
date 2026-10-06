@@ -41,6 +41,8 @@ struct Running {
     job: Job,
     index: usize,
     child: OwnedChild,
+    /// When the run's first command started: the time cap covers the whole
+    /// bundle (D-46).
     started: Instant,
     log: PathBuf,
 }
@@ -141,8 +143,9 @@ impl VerifyRunner {
                             if running.index < running.job.commands.len() {
                                 let job = running.job.clone();
                                 let index = running.index;
+                                let started = running.started;
                                 self.running = None;
-                                self.spawn(job, index);
+                                self.spawn(job, index, started);
                                 continue;
                             }
                             self.running = None;
@@ -200,11 +203,11 @@ impl VerifyRunner {
                 self.finish(&job.id, VerifyPoll::Passed);
                 continue;
             }
-            self.spawn(job, 0);
+            self.spawn(job, 0, Instant::now());
         }
     }
 
-    fn spawn(&mut self, job: Job, index: usize) {
+    fn spawn(&mut self, job: Job, index: usize, started: Instant) {
         let log = self.log_path(&job.id);
         let file = (|| -> std::io::Result<(File, File)> {
             std::fs::create_dir_all(&self.logs)?;
@@ -249,7 +252,7 @@ impl VerifyRunner {
                     job,
                     index,
                     child,
-                    started: Instant::now(),
+                    started,
                     log,
                 });
             }
@@ -440,6 +443,26 @@ mod tests {
         assert!(runner.busy());
         runner.cancel("cancelled");
         assert!(!runner.busy());
+    }
+
+    #[test]
+    fn the_time_cap_covers_the_whole_bundle_not_each_command() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut runner = VerifyRunner::new(dir.path().join("logs"));
+        // Each command fits the cap alone; together they do not.
+        runner
+            .submit(job(
+                "bundle",
+                dir.path(),
+                &["sleep 1", "sleep 1"],
+                Duration::from_millis(1_500),
+            ))
+            .unwrap();
+        runner.pump(&mut NoRunner);
+        match wait(&mut runner, "bundle") {
+            VerifyPoll::Failed { check, .. } => assert_eq!(check, "sleep 1 (timeout 0m)"),
+            other => panic!("{other:?}"),
+        }
     }
 
     #[test]

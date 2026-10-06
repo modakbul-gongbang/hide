@@ -82,6 +82,32 @@ enum RevertPhase {
     },
 }
 
+/// A failure the cascade rules read (D-31 rule 3).
+struct FailureNote {
+    at: UnixMs,
+    factory: String,
+    task: String,
+    stage: String,
+    kind: FailureKind,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum FailureKind {
+    /// Read as the environment's (a structured signal).
+    Environment,
+    /// Counted against the Task (a verification failure).
+    Task,
+}
+
+impl FailureKind {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Environment => "environment",
+            Self::Task => "task",
+        }
+    }
+}
+
 pub struct Engine {
     store: Store,
     ports: Ports,
@@ -97,8 +123,8 @@ pub struct Engine {
     main_seen: BTreeMap<String, String>,
     processed: BTreeSet<String>,
     processed_order: Vec<String>,
-    /// Recent environment-class failures: (at, factory, task, stage).
-    env_failures: Vec<(UnixMs, String, String, String)>,
+    /// Recent environment and Task failures the cascade rules read.
+    env_failures: Vec<FailureNote>,
     /// New starts halted by a cascade until this time (B60).
     halt_until: Option<UnixMs>,
     env_problem_since: Option<UnixMs>,
@@ -2499,7 +2525,7 @@ impl Engine {
                 self.with_task(factory_id, id, |task| {
                     task.attempts.push(Attempt {
                         number,
-                        commit: None,
+                        commit: run.commit.clone(),
                         started_at: now,
                         stage,
                         outcome: None,
@@ -4485,11 +4511,21 @@ impl Engine {
     ) {
         let now = self.now();
         self.with_task(factory, id, |task| task.environment_failures += 1);
-        self.env_failures
-            .push((now, factory.to_owned(), id.to_owned(), stage.to_owned()));
+        self.env_failures.push(FailureNote {
+            at: now,
+            factory: factory.to_owned(),
+            task: id.to_owned(),
+            stage: stage.to_owned(),
+            kind: FailureKind::Environment,
+        });
         let repeated = self.task(factory, id).map_or(0, |t| t.environment_failures);
-        let others_fine = !self.env_failures.iter().any(|(at, f, t, _)| {
-            now.saturating_sub(*at) <= CASCADE_WINDOW_MS && f == factory && t != id
+        // Another Task's environment failure in the window says the cause is
+        // shared; a Task failure elsewhere says nothing about it.
+        let others_fine = !self.env_failures.iter().any(|note| {
+            note.kind == FailureKind::Environment
+                && now.saturating_sub(note.at) <= CASCADE_WINDOW_MS
+                && note.factory == factory
+                && note.task != id
         });
         if repeated >= 3 && others_fine {
             // Only this Task keeps failing this way: the Task's (B60).
@@ -4526,13 +4562,14 @@ impl Engine {
 
     fn cascade_note(&mut self, factory: &str, id: &str, stage: &str, now: UnixMs) {
         self.env_failures
-            .retain(|(at, ..)| now.saturating_sub(*at) <= CASCADE_WINDOW_MS);
-        self.env_failures.push((
-            now,
-            factory.to_owned(),
-            format!("task:{id}"),
-            stage.to_owned(),
-        ));
+            .retain(|note| now.saturating_sub(note.at) <= CASCADE_WINDOW_MS);
+        self.env_failures.push(FailureNote {
+            at: now,
+            factory: factory.to_owned(),
+            task: id.to_owned(),
+            stage: stage.to_owned(),
+            kind: FailureKind::Task,
+        });
     }
 
     /// Three different Tasks failing the same stage within 30 minutes is the
@@ -4543,19 +4580,19 @@ impl Engine {
             .env_failures
             .iter()
             .rev()
-            .find(|(_, f, t, _)| f == factory && *t == format!("task:{id}"))
-            .map(|(_, _, _, s)| s.clone());
+            .find(|note| note.kind == FailureKind::Task && note.factory == factory && note.task == id)
+            .map(|note| note.stage.clone());
         let Some(stage) = stage else { return false };
         let tasks: BTreeSet<String> = self
             .env_failures
             .iter()
-            .filter(|(at, f, t, s)| {
-                now.saturating_sub(*at) <= CASCADE_WINDOW_MS
-                    && f == factory
-                    && *s == stage
-                    && t.starts_with("task:")
+            .filter(|note| {
+                note.kind == FailureKind::Task
+                    && now.saturating_sub(note.at) <= CASCADE_WINDOW_MS
+                    && note.factory == factory
+                    && note.stage == stage
             })
-            .map(|(_, _, t, _)| t.trim_start_matches("task:").to_owned())
+            .map(|note| note.task.clone())
             .collect();
         if tasks.len() < 3 {
             return false;
@@ -4574,8 +4611,9 @@ impl Engine {
                 self.set_state(factory, task, TaskState::Waiting);
             }
         }
-        self.env_failures
-            .retain(|(_, f, t, s)| !(f == factory && *s == stage && t.starts_with("task:")));
+        self.env_failures.retain(|note| {
+            !(note.kind == FailureKind::Task && note.factory == factory && note.stage == stage)
+        });
         self.halt_until = Some(now + CASCADE_WINDOW_MS);
         self.env_problem_since.get_or_insert(now);
         self.record(
@@ -4751,7 +4789,7 @@ impl Engine {
         let facts = json!({
             "hold": self.hold_reason,
             "halted": self.halt_until.is_some_and(|u| u > now),
-            "recent_failures": self.env_failures.iter().map(|(_, _, t, s)| json!({"task": t, "stage": s})).collect::<Vec<_>>(),
+            "recent_failures": self.env_failures.iter().map(|note| json!({"task": note.task, "stage": note.stage, "kind": note.kind.as_str()})).collect::<Vec<_>>(),
             "disk_free": self.ports.environment.disk_free(&factory.project),
         });
         let judgment = Judgment {

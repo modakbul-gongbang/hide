@@ -179,6 +179,10 @@ pub struct IssueText {
 pub struct VerifyRun {
     pub id: String,
     pub log: Option<String>,
+    /// The commit this run verifies, when it is known at the start: the
+    /// merge is pinned to it (B39).
+    #[serde(default)]
+    pub commit: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
