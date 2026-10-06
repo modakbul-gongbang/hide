@@ -57,6 +57,21 @@ pub trait NodeLink: Send + Sync {
     /// runtime lock.
     fn call(&self, call: Call, timeout: Duration) -> Result<LinkAnswer, LinkError>;
 
+    /// A call whose node reports progress before it answers: `progress`
+    /// hears each report and answers whether the call should go on, and
+    /// answering `false` asks the node to stop the work, which it answers
+    /// as stopped. A link that carries no reports answers as
+    /// [`NodeLink::call`] does.
+    fn call_with_progress(
+        &self,
+        call: Call,
+        timeout: Duration,
+        progress: &mut dyn FnMut(Value) -> bool,
+    ) -> Result<LinkAnswer, LinkError> {
+        let _ = progress;
+        self.call(call, timeout)
+    }
+
     /// Whether the answer is computed in this process, so a path the
     /// operator spelled through a link to the checkout can be resolved on
     /// this machine's filesystem.
@@ -89,12 +104,44 @@ pub trait NodeLink: Send + Sync {
     fn pin(&self, _root: &str, _identity: Option<RootIdentity>) {}
 }
 
+/// [`call_as`] for a call that reports progress: each report is decoded as
+/// `P`, and one that does not decode stops the call.
+pub fn call_as_with_progress<T: serde::de::DeserializeOwned, P: serde::de::DeserializeOwned>(
+    link: &(impl NodeLink + ?Sized),
+    call: Call,
+    timeout: Duration,
+    mut progress: impl FnMut(P) -> bool,
+) -> Result<T, LinkError> {
+    let mut undecoded = None;
+    let answer = link.call_with_progress(
+        call,
+        timeout,
+        &mut |report| match serde_json::from_value(report) {
+            Ok(report) => progress(report),
+            Err(error) => {
+                undecoded = Some(error);
+                false
+            }
+        },
+    );
+    if let Some(error) = undecoded {
+        return Err(LinkError::Unknown(format!(
+            "The node reported progress in an unexpected shape: {error}"
+        )));
+    }
+    decode(answer?)
+}
+
 pub fn call_as<T: serde::de::DeserializeOwned>(
     link: &(impl NodeLink + ?Sized),
     call: Call,
     timeout: Duration,
 ) -> Result<T, LinkError> {
-    let decoded = match link.call(call, timeout)? {
+    decode(link.call(call, timeout)?)
+}
+
+fn decode<T: serde::de::DeserializeOwned>(answer: LinkAnswer) -> Result<T, LinkError> {
+    let decoded = match answer {
         LinkAnswer::Parsed(value) => serde_json::from_value(value),
         LinkAnswer::Raw(raw) => serde_json::from_str(raw.get()),
     };

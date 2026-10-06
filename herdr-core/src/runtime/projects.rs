@@ -659,7 +659,7 @@ impl Runtime {
         // emptied one by one.
         let mut cells: Vec<live::cleanup::CellChoice> = Vec::new();
         for cell in payload.cells.into_iter().take(limit) {
-            let Some(layer) = crate::disk_layers::Layer::from_code(&cell.layer) else {
+            let Some(layer) = hide_node_link::disk::Layer::from_code(&cell.layer) else {
                 continue;
             };
             let choice = live::cleanup::CellChoice {

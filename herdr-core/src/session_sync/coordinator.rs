@@ -104,7 +104,14 @@ fn run_coordinator(
         .node()
         .map(|node| crate::worktrees::WorktreeReader::new(Arc::clone(node)));
     let mut github_reader = context.is_local().then(crate::github::GithubReader::new);
-    let mut disk_reader = context.is_local().then(crate::disk::DiskReader::new);
+    let mut disk_reader = context
+        .is_local()
+        .then(|| {
+            context
+                .node()
+                .map(|node| crate::disk::DiskReader::new(Arc::clone(node)))
+        })
+        .flatten();
     // The provider probe starts a `codex app-server` child and runs
     // `claude auth status`, so it is a reader like the three above and it
     // reads nothing at all while the Background AI group is off screen.

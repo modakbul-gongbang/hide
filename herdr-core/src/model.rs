@@ -3857,14 +3857,14 @@ pub struct DiskUsageSnapshot {
     /// What a checkout holds by layer, for a measured checkout row. Absent
     /// for the shared Git directory and for a measurement that failed.
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub layers: Option<crate::disk_layers::DiskLayers>,
+    pub layers: Option<hide_node_link::disk::DiskLayers>,
     /// Free space of the volume the measured path sits on, in bytes.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub volume_free_bytes: Option<u64>,
     /// The folders behind the layer cells. The core keeps them so a cleanup
     /// can move them; the wire never carries a path.
     #[serde(skip)]
-    pub folders: Vec<crate::disk_layers::LayerFolder>,
+    pub folders: Vec<hide_node_link::disk::LayerFolder>,
 }
 
 /// The right panel's summary card for the selected checkout.

@@ -257,6 +257,16 @@ pub fn handle(call: Call) -> HostResult<Value> {
 
 /// Answers one request for the node whose environment is `env`.
 pub fn handle_in(call: Call, env: &Env) -> HostResult<Value> {
+    handle_with_progress(call, env, &mut |_| true)
+}
+
+/// [`handle_in`] for a caller that hears a long call's progress reports and
+/// answers whether it should go on.
+pub fn handle_with_progress(
+    call: Call,
+    env: &Env,
+    progress: &mut dyn FnMut(Value) -> bool,
+) -> HostResult<Value> {
     match call {
         Call::Hello => to_value(Hello {
             protocol: PROTOCOL_VERSION,
@@ -380,6 +390,18 @@ pub fn handle_in(call: Call, env: &Env) -> HostResult<Value> {
                 })
                 .collect::<Vec<_>>(),
         ),
+        Call::DiskUsage { paths, shared_git } => {
+            let request = crate::disk::DiskRequest {
+                paths: paths.iter().map(PathBuf::from).collect(),
+                shared_git: shared_git.iter().map(PathBuf::from).collect(),
+            };
+            to_value(crate::disk::read_with(&request, |row| {
+                if let Ok(row) = serde_json::to_value(row) {
+                    progress(row);
+                }
+            }))
+        }
+        Call::VolumeFree { path } => to_value(crate::disk::volume_free_bytes(&absolute(&path)?)),
         Call::HookDiagnosis => {
             let home = env.home("HOME is not set, so the agent hooks have no account to read")?;
             to_value(hide_agent_hooks::Diagnosis::read(&home))

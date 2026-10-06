@@ -12,6 +12,8 @@
 
 pub mod bytes;
 pub mod clone;
+pub mod disk;
+pub mod disk_layers;
 pub mod document;
 pub mod git;
 pub mod git_command;

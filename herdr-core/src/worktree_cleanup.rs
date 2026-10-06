@@ -5,9 +5,10 @@
 //! All inspection and filesystem effects run on the existing action-worker
 //! path, never under the runtime lock.
 use super::{LiveContext, control_request};
-use crate::disk_layers::{Layer, LayerFolder, verify_folder};
 use crate::model::ListeningPortSnapshot;
 use crate::{disk, github, worktrees::git};
+use hide_host::disk_layers::verify_folder;
+use hide_node_link::disk::{Layer, LayerFolder};
 use serde::Serialize;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -902,7 +903,7 @@ pub fn spawn_review(context: LiveContext, id: u64, input: ReviewInput) -> Result
                 workspace_id: input.workspace_id.clone(),
                 repository_root: hide_platform::path::to_wire_lossy(&input.root),
                 phase: "loading".into(),
-                free_bytes: disk::volume_free_bytes(&input.root),
+                free_bytes: disk::volume_free_bytes(context.node.as_ref(), &input.root),
                 ..Default::default()
             };
             let mut guard = WorkerGuard::for_context(&context, base.clone(), "failed");
@@ -1350,7 +1351,7 @@ pub fn spawn_confirm(
             let mut done = 0usize;
             let mut answer = CleanupSnapshot {
                 phase: "removing".into(),
-                free_before: disk::volume_free_bytes(&root),
+                free_before: disk::volume_free_bytes(context.node.as_ref(), &root),
                 progress: Some(CleanupProgress { done, total }),
                 ..review.clone()
             };
@@ -1449,7 +1450,7 @@ pub fn spawn_confirm(
             }
             answer.phase = "complete".into();
             answer.progress = Some(CleanupProgress { done: total, total });
-            answer.free_after = disk::volume_free_bytes(&root);
+            answer.free_after = disk::volume_free_bytes(context.node.as_ref(), &root);
             answer.id = id;
             guard.finish(answer);
         })
@@ -2501,10 +2502,13 @@ mod tests {
             std::fs::write(main.join("dist/app.js"), vec![3u8; 4_000]).unwrap();
             git(&main, &["add", ".gitignore", "Cargo.toml", "package.json"]).unwrap();
             commit(&main, "Manifests");
-            let measured = disk::read(&disk::DiskRequest {
-                paths: vec![main.clone()],
-                ..Default::default()
-            });
+            let measured = disk::read(
+                &hide_node::Local::of_process(),
+                &disk::DiskRequest {
+                    paths: vec![main.clone()],
+                    ..Default::default()
+                },
+            );
             let folders = HashMap::from([(main, measured[0].folders.clone())]);
             Self { f, folders }
         }

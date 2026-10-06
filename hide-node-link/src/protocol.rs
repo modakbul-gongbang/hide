@@ -228,6 +228,19 @@ pub enum Call {
     ProcessStarts {
         pids: Vec<u32>,
     },
+    /// Measures each of `paths` (`disk::DiskUsage`), reporting each one as
+    /// it finishes and answering them all. The entries of `shared_git` are
+    /// a repository's shared Git directory, measured as one size.
+    DiskUsage {
+        paths: Vec<String>,
+        #[serde(default)]
+        shared_git: Vec<String>,
+    },
+    /// Bytes free to an unprivileged writer on the volume holding `path`;
+    /// `None` when the volume cannot say.
+    VolumeFree {
+        path: String,
+    },
     /// One bounded read of a pane's conversation for its label, from the
     /// checkpoint the caller kept (`hide_session::label_transcript::read`).
     /// The helper keeps nothing between reads; it answers events and the

@@ -677,14 +677,14 @@ fn a_named_project_overview_measures_its_whole_disk() {
     };
     // A checkout row carries its layers; the shared Git directory does not.
     let layered = |path: &str, cache: u64, deps: u64, other: u64, source: u64| {
-        let cell = |bytes| crate::disk_layers::LayerCell {
+        let cell = |bytes| hide_node_link::disk::LayerCell {
             bytes,
             folders: usize::from(bytes > 0),
             largest_name: None,
         };
         DiskUsageSnapshot {
             volume_free_bytes: Some(7),
-            layers: Some(crate::disk_layers::DiskLayers {
+            layers: Some(hide_node_link::disk::DiskLayers {
                 build_cache: cell(cache),
                 dependencies: cell(deps),
                 other: cell(other),

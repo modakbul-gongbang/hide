@@ -13,7 +13,7 @@ use std::time::Duration;
 use hide_node_link::ErrorCode;
 use hide_node_link::list::Listing;
 use hide_node_link::protocol::{Call, RootOpened, RootRef};
-pub use hide_node_link::{LinkAnswer, LinkError, NodeLink, call_as};
+pub use hide_node_link::{LinkAnswer, LinkError, NodeLink, call_as, call_as_with_progress};
 
 const LIST_TIMEOUT: Duration = Duration::from_secs(30);
 

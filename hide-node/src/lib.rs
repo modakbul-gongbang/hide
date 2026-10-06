@@ -84,6 +84,17 @@ impl NodeLink for Local {
             .map_err(LinkError::Refused)
     }
 
+    fn call_with_progress(
+        &self,
+        call: Call,
+        _timeout: Duration,
+        progress: &mut dyn FnMut(serde_json::Value) -> bool,
+    ) -> Result<LinkAnswer, LinkError> {
+        hide_host::serve::handle_with_progress(call, &self.env, progress)
+            .map(LinkAnswer::Parsed)
+            .map_err(LinkError::Refused)
+    }
+
     fn in_process(&self) -> bool {
         true
     }

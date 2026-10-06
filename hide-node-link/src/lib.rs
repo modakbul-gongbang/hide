@@ -10,6 +10,7 @@
 //! their types only.
 
 pub mod bytes;
+pub mod disk;
 pub mod document;
 pub mod error;
 pub mod git;
@@ -25,7 +26,7 @@ pub mod save;
 pub mod worktrees;
 
 pub use error::{ErrorCode, HostError, HostResult};
-pub use link::{LinkAnswer, LinkError, NodeLink, call_as};
+pub use link::{LinkAnswer, LinkError, NodeLink, call_as, call_as_with_progress};
 
 use serde::{Deserialize, Serialize};
 
