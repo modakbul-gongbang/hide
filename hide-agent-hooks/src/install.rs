@@ -73,6 +73,10 @@ pub enum HookStatus {
     Outdated { version: u32 },
     /// The runtime is here and carries no entry of Hide's.
     NotInstalled,
+    /// The operator switched the agent off in Settings, Agents, so Hide's
+    /// hook is meant to be absent. Nothing in the runtime's file says so:
+    /// the kit's record does, and whoever holds it sets this.
+    Off,
     /// The file could not be read, parsed or written.
     Failed { reason: InstallFailure },
 }
@@ -307,7 +311,7 @@ fn windows_hook(helper: &Path, runtime: AgentRuntime, event: HookEvent) -> Value
 
 /// How a path is quoted in the command this system writes, and read back.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-enum Quoting {
+pub(crate) enum Quoting {
     /// Single quotes, a quote inside written `'\''`.
     Posix,
     /// Single quotes, a quote inside doubled. PowerShell takes the
@@ -316,15 +320,16 @@ enum Quoting {
 }
 
 impl Quoting {
-    const NATIVE: Self = if cfg!(windows) {
+    pub(crate) const NATIVE: Self = if cfg!(windows) {
         Self::PowerShell
     } else {
         Self::Posix
     };
 
-    const POWERSHELL_QUOTES: [char; 5] = ['\'', '\u{2018}', '\u{2019}', '\u{201A}', '\u{201B}'];
+    pub(crate) const POWERSHELL_QUOTES: [char; 5] =
+        ['\'', '\u{2018}', '\u{2019}', '\u{201A}', '\u{201B}'];
 
-    fn quote(self, value: &str) -> String {
+    pub(crate) fn quote(self, value: &str) -> String {
         match self {
             Self::Posix => format!("'{}'", value.replace('\'', "'\\''")),
             Self::PowerShell => {
@@ -344,7 +349,7 @@ impl Quoting {
 
     /// The first single-quoted word of `command`, unquoted: the helper path,
     /// in the guarded command and in the bare one versions before 6 wrote.
-    fn first_quoted(self, command: &str) -> Option<String> {
+    pub(crate) fn first_quoted(self, command: &str) -> Option<String> {
         let start = command.find('\'')? + 1;
         let mut rest = &command[start..];
         let mut path = String::new();
@@ -430,7 +435,7 @@ pub fn installed_helper_path(runtime: AgentRuntime, home: &Path) -> Option<Strin
     installed_helper(hooks)
 }
 
-fn read_document(path: &Path) -> Result<Option<Value>, InstallFailure> {
+pub(crate) fn read_document(path: &Path) -> Result<Option<Value>, InstallFailure> {
     let raw = match fs::read_to_string(path) {
         Ok(raw) => raw,
         Err(error) if error.kind() == ErrorKind::NotFound => return Ok(None),
@@ -513,7 +518,7 @@ fn event_array_mut<'a>(
 /// tokens, and a new one is 0600. A settings file that is a link, as a
 /// dotfile manager makes it, is written where the link leads, so the link
 /// stays the operator's.
-fn write_document(path: &Path, document: &Value) -> Result<(), InstallFailure> {
+pub(crate) fn write_document(path: &Path, document: &Value) -> Result<(), InstallFailure> {
     let failure = |detail: String| InstallFailure::NotWritable {
         path: path.display().to_string(),
         detail,

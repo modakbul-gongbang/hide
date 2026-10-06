@@ -218,11 +218,18 @@ pub enum KitAction {
     /// what is outdated.
     Apply,
     /// The operator's choice on the machine's row: Reinstall of these
-    /// parts, or a part turned on (`components`) or off (`turn_off`).
+    /// parts, or a part turned on (`components`) or off (`turn_off`), or an
+    /// agent switched on (`agents_on`, which is also Reinstall of an agent
+    /// that is on) or off (`agents_off`). The agent lists are additive: a
+    /// helper that predates them ignores them.
     Reinstall {
         components: Vec<hide_kit::ComponentId>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         turn_off: Vec<hide_kit::ComponentId>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        agents_on: Vec<String>,
+        #[serde(default, skip_serializing_if = "Vec::is_empty")]
+        agents_off: Vec<String>,
     },
     Status,
     /// The device is being removed from Hide: Hide's parts come off, then

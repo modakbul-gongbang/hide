@@ -83,7 +83,8 @@ jobs:
         run: python3 scripts/ci-flaky-report.py --suite rust --junit target/nextest/ci/junit*.xml
       - name: Keep the lane's run directory
         # The daemon's and both Herdr servers' logs behind a failed run, without
-        # the staged binaries and the fixture's SSH keys.
+        # the staged binaries, the copies of them the install places in each
+        # account's helper and bin folders, and the fixture's SSH keys.
         if: ${{ failure() }}
         uses: actions/upload-artifact@v7
         with:
@@ -93,4 +94,6 @@ jobs:
             agents/runs/rd-*
             !agents/runs/rd-*/cli/**
             !agents/runs/rd-*/*/*/.ssh/**
+            !agents/runs/rd-*/*/*/helper/**
+            !agents/runs/rd-*/*/*/bin/**
           if-no-files-found: ignore

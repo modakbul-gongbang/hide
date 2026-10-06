@@ -122,6 +122,9 @@ Agent and View areas share the drag, divider and narrow-window controls describe
 A drag keeps its original tab in place and changes no terminal size until a valid drop.
 Dropping on a tab bar reorders or moves the tab; dropping on a content edge highlights the new half with Split left/right/up/down and creates another area on release.
 Moving the last tab out collapses its area, as does closing it or its disappearance from Herdr.
+Closing a tab, or its only pane, takes the tab out of its area the moment the close is approved, without waiting for Herdr: the area shows the tab it showed before it, or collapses when the tab was its last, and when the closed tab held the keyboard the keyboard goes to what is now shown in its place (the area's next tab, or the neighbouring area's), never to the next tab in Herdr's order.
+A close Herdr refuses, or one that fails before it is sent, puts the tab back where it stood, and the keyboard with it when nothing has moved since; a close whose result is unknown shows the tab again until the status check settles it.
+A pane closing inside a tab that keeps other panes stays drawn as closing until Herdr confirms it, because Herdr decides how its neighbours fill the space.
 A sole empty area shows No agent tab is open and New tab.
 Agent tabs cannot enter the View column, and a sole tab cannot split its own area.
 Invalid size, area or depth limits show the forbidden cursor without an overlay; Escape, outside release and a vanished target leave the layout unchanged.
@@ -143,6 +146,7 @@ An older build may discard Agent layout state; returning starts with all current
 SSH device Workspaces use the same component with one area, retain device Herdr reorder, and disable splitting with a local-Workspaces-only reason.
 
 Closing a primary Herdr workspace's last tab or last pane while a linked worktree remains first creates a shell at the checkout root in the same area and position.
+That tab stays in its area, marked closing, until Herdr confirms the close, so the area is never empty while the shell is made.
 The existing close guards run first, and linked workspaces remain untouched.
 If shell creation fails, nothing closes; if closing is refused, the shell remains.
 Retry close reuses that intent's shell, while Dismiss ends the failed intent; detailed Herdr failures are diagnostic-only.
@@ -1109,6 +1113,7 @@ Until the core's order moves after a report, the page puts the pane it reported 
 The shown tab of the recorded keyboard area is the current visit, including native browser pages; intermediate commit frames are not visits.
 
 Reopen Closed Tab is disabled when the session-local recent-close stack is empty or a restore is already running, and restoration works regardless of which surface currently owns focus.
+Pressed while this machine's newest close is still being confirmed, it is accepted and waits: the closed item reopens as soon as Herdr confirms the close, and nothing reopens if that close is refused or fails, or if another close starts first.
 Restoration is one action with no confirmation: an in-flight pane shows inline progress, and a restore without a target pane shows a compact inline warning.
 Missing cwd, an unavailable prior conversation, a missing file, and a retryable failure all use the same inline notice vocabulary, without a banner, card, or modal.
 A definitive close refusal removes its reserved reopen entry, while an unconfirmed result keeps the entry and explains inline that Hide could not determine whether the item closed.
@@ -1297,7 +1302,12 @@ The add form has one Add button and lists, once, what the kit puts on the device
 Removing a device asks once, names in one line what comes off that device (with its helper folder, `~/.hide/host-helper` by default) and that the records in `~/.hide` stay, or, when its helper is not connected, that the kit stays there; no button is focused when the confirmation opens (B22).
 When another registered device reaches the same account on that machine, such as a second Herdr server there, the line says the kit stays for it instead.
 
-Settings > Agents lists the hook parts of every machine, This Mac first and then each device in the Devices order, with Reinstall on a part that needs it and nowhere else (B27).
+Settings > Agents lists, for every machine, This Mac first and then each device in the Devices order, one row per agent that is set up there or is on: its name, one line saying what its switch puts there (a skill and a session hook, or the skill only), its state, and the switch.
+An agent that is off reads `Off` with nothing else, an agent that is on reads the state of its worst piece with that piece's reason when it is not installed, and Reinstall sits on an agent's row only while that agent is on and one of its pieces needs it.
+An agent set up on the machine keeps its switch whatever the system, as long as one of its pieces (the skill, the hook) works there, so one switched off can be switched on again; a hook that cannot be written (Kiro below 3.0, a version Hide cannot read) shows its reason beside the skill's `Installed`.
+The agents Hide knows that are not set up on the machine are one muted line, with no switch and no row each, so a machine with two agents shows two rows and not twenty.
+Settings > Devices shows the same agents on a machine's kit rows, each with its switch.
+An agent installed later appears in these rows off and is never turned on by a pass.
 Its Background AI group ends with `에이전트 요약`, a switch on by default and kept on this Mac across launches (PRD overview-request-view D-11, B21): off, no agent label is asked for, the one being made is dropped, and every surface names each agent by its session's own title or its provider with no AI line or written question; on again, the kept labels return at once and each pane's current turn is asked for.
 
 ## Mobile companion

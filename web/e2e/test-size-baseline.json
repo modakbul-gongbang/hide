@@ -40,10 +40,6 @@
       "lines": 120,
       "expect": 44
     },
-    "pane-focus-ordering.spec.ts::rapid pane clicks coalesce behind one request and leave keys on the last pane": {
-      "lines": 148,
-      "expect": 23
-    },
     "projects-sidebar.spec.ts::the Projects tab: kind, age, status badges, opened checkouts and folded projects": {
       "lines": 411,
       "expect": 153

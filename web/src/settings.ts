@@ -6,7 +6,7 @@ import type { TFunction } from "i18next";
 import type { DaemonInfo } from "./store";
 import type { MessageKey } from "./i18n/catalogs";
 import type { AccentName } from "./theme";
-import type { AgentRow, AiProvider, CoreDiagnostic, Device, DeviceHost, EnvironmentStatus, HerdrStatus, KitComponent, KitComponentId, RemoteStatus, Workspace } from "./snapshot";
+import type { AgentRow, AiProvider, CoreDiagnostic, Device, DeviceHost, EnvironmentStatus, HerdrStatus, KitAgent, KitComponent, KitComponentId, KitPiece, RemoteStatus, Workspace } from "./snapshot";
 
 type Translate = TFunction<"translation">;
 
@@ -267,7 +267,7 @@ export function kitRemovalLine(device: Device, t: Translate): string {
 }
 
 /** A kit part's state as the machine rows word it (PRD device-parity B7). */
-export function kitPartLine(part: KitComponent, t: Translate): { text: string; tone: "ok" | "warn" | "error" | "muted" } {
+export function kitPartLine(part: Pick<KitComponent, "state">, t: Translate): { text: string; tone: "ok" | "warn" | "error" | "muted" } {
   switch (part.state) {
     case "installed":
       return { text: t("settings.kit.installed"), tone: "ok" };
@@ -301,25 +301,83 @@ export function kitPartSwitch(part: KitComponent): { on: boolean } | null {
 }
 
 /** Whether Reinstall would change this part: the same four states the core repairs (B8). */
-export function kitPartNeedsReinstall(part: KitComponent): boolean {
+export function kitPartNeedsReinstall(part: Pick<KitComponent, "state">): boolean {
   return part.state === "outdated" || part.state === "not_installed" || part.state === "removed" || part.state === "failed";
 }
 
-export const KIT_HOOK_PARTS: readonly KitComponentId[] = ["claude_code_hook", "codex_hook"];
+/** The pieces of an agent Hide manages: its skill, and its hook when it has one. */
+function agentPieces(agent: KitAgent): KitPiece[] {
+  return agent.hook ? [agent.skill, agent.hook] : [agent.skill];
+}
 
 /**
- * Every machine's hook parts for the Agents tab (B27): This Mac first, then
- * each device in the Devices tab's order. A machine whose kit does not run
+ * The piece the agent's row speaks for: the first that failed, else the first
+ * that Reinstall would repair, else the skill. An agent that is off has no
+ * piece to speak for.
+ */
+function agentWorstPiece(agent: KitAgent): KitPiece {
+  const pieces = agentPieces(agent);
+  return (
+    pieces.find((piece) => piece.state === "failed") ??
+    pieces.find((piece) => kitPartNeedsReinstall(piece)) ??
+    pieces[0]!
+  );
+}
+
+/** An agent's state as its row words it (agent adapters): off, or the state of its worst piece. */
+export function kitAgentLine(agent: KitAgent, t: Translate): { text: string; tone: "ok" | "warn" | "error" | "muted"; reason: string | null } {
+  if (!agent.enabled) {
+    // A switch-off whose removal did not finish is not Off.
+    const left = agentPieces(agent).find((piece) => piece.state === "failed");
+    return left ? { text: t("settings.kit.failed"), tone: "error", reason: left.reason } : { text: t("common.off"), tone: "muted", reason: null };
+  }
+  const piece = agentWorstPiece(agent);
+  const line = kitPartLine(piece, t);
+  // A hook that cannot be written here (Kiro below 3.0, a version Hide cannot
+  // read) is no repair, so the skill's "Installed" stands, with the hook's reason beside it.
+  const hookNote = agent.hook?.state === "absent" ? agent.hook.reason : null;
+  return { ...line, reason: piece.state === "installed" ? hookNote : piece.reason };
+}
+
+/**
+ * The agent's switch: an agent set up on the machine can be switched; one
+ * that is not has nothing to switch, and one that is on keeps a switch so it
+ * can be turned off.
+ */
+export function kitAgentSwitch(agent: KitAgent): { on: boolean } | null {
+  if (agent.availability === "available" || agent.enabled) return { on: agent.enabled };
+  return null;
+}
+
+/** Whether Reinstall would change something for this agent: only an agent that is on has pieces to repair. */
+export function kitAgentNeedsReinstall(agent: KitAgent): boolean {
+  return agent.enabled && agentPieces(agent).some((piece) => kitPartNeedsReinstall(piece));
+}
+
+/** What the agent's switch puts on the machine, named for the row's second line. */
+export function kitAgentGets(agent: KitAgent, t: Translate): string {
+  return t(agent.hook ? "settings.agentGetsSkillHook" : "settings.agentGetsSkill");
+}
+
+/**
+ * Every machine's agents for the Agents tab (B27): This Mac first, then each
+ * device in the Devices tab's order. `setUp` are the agents on the machine
+ * (or on, which the operator can still turn off); `others` are the labels of
+ * the rest, which have nothing to switch. A machine whose kit does not run
  * carries its reason instead of rows; one not checked yet carries neither.
  */
-export function kitHookMachines(devices: readonly Device[]): { device: Device; parts: KitComponent[]; unavailable: string | null }[] {
+export function kitAgentMachines(devices: readonly Device[]): { device: Device; setUp: KitAgent[]; others: string[]; unavailable: string | null }[] {
   return devices
     .filter((device) => device.kind === "remote" || device.id === "local")
-    .map((device) => ({
-      device,
-      parts: (device.kit?.components ?? []).filter((part) => KIT_HOOK_PARTS.includes(part.id)),
-      unavailable: device.kit?.unavailable ?? null,
-    }));
+    .map((device) => {
+      const agents = device.kit?.agents ?? [];
+      return {
+        device,
+        setUp: agents.filter((agent) => kitAgentSwitch(agent) !== null),
+        others: agents.filter((agent) => kitAgentSwitch(agent) === null).map((agent) => agent.label),
+        unavailable: device.kit?.unavailable ?? null,
+      };
+    });
 }
 
 /** A device Herdr socket must be an absolute single-line path on that device, or left empty. */

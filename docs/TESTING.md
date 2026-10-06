@@ -35,8 +35,9 @@ Pick the cheapest layer that can observe the result.
 An e2e spec is for a flow that crosses a boundary, not for a rule a unit or core test can state.
 The external crate-boundary lane in `herdr-core/tests/remote_delivery.rs` runs candidate CLI binaries, two private pinned Herdr servers and a loopback SSH server.
 It verifies real helper attestation and reverse-forward mailbox intake, the two-second disconnected hook boundary, and reconnect without duplicate delivery.
-Its explicit ignore marks the external prerequisites; the `remote mailbox` job in `pr.yml` (a Linux runner, planned for every change to what differs by system) builds those binaries, fetches the pinned Herdr and runs this lane with `--run-ignored only`.
-It runs on Linux because nothing in it changes with the operating system: SSH, the helper's attestation and the mailbox are the same code, and what differs by system beneath them is the `os-contract` lane's and `windows check`'s to prove.
+Its explicit ignore marks the external prerequisites; the `remote mailbox` job in `pr.yml` (a Linux runner, planned for a change to a crate it builds and tests) builds those binaries, fetches the pinned Herdr and runs this lane with `--run-ignored only`.
+A pull request runs it on Linux only: SSH, the helper's attestation and the mailbox are the same code on every system, and what differs by system beneath them is the `os-contract` lane's and `windows check`'s to prove.
+The fixture's macOS branches (codesign of the staged binaries, BSD `ps` and `strip`, the SFTP server path) and the usual remote device being a Mac are why the nightly runs the lane on macOS too (`remote mailbox (macOS)`).
 The fixture owns every process tree and SSH channel job, bounds retained jobs and reads, and keeps account configuration and run evidence in a private ignored run directory.
 Each spec starts its own Herdr, hided and browser, so a rule restated end to end costs runner minutes on every pull request and fails for reasons that have nothing to do with the rule.
 Keep one representative journey per user-visible flow; when a long spec carries an independent contract, split that contract into a small spec that still runs against the real pinned Herdr and hided rather than adding steps to the journey.
@@ -53,6 +54,10 @@ Keep one representative journey per user-visible flow; when a long spec carries 
 - A poll only observes (`hide-e2e/no-action-in-poll` in the e2e lint).
   A click, focus, creation or resend is one explicit action outside the poll; an action repeated inside `toPass` or `expect.poll` turns one intent into several and can satisfy the assertion with the wrong one.
 - Prefer subject IDs, request identity and generation or revision numbers over wall-clock comparisons and the last diagnostic string.
+- A barrier on what the page sent is not a barrier on what the daemon accepted.
+  After a burst of clicks, `terminal_click` frames counted at the page say the page sent them; hided may still hold a dozen on its socket, and the last `pane.focus` diagnostic the page has seen can be an earlier request's confirmation.
+  Count the diagnostics the daemon sent back against the changes the page sent, with a cumulative count (`observeDiagnostics(...).added` in `web/e2e/pane-focus-ordering.spec.ts`): the list is capped and drops from its front, so the number of entries of one kind in it falls while a burst appends.
+  Playwright's `framereceived` fires before the page's handler runs, so before reading what the page shows, poll `window.__hideProbe.arrivals()` up to the frames Playwright has seen.
 - A test's own waiting must not compete with a deadline the product enforces.
   While the test holds a request the product will time out, run nothing slow between holding and releasing it, and give every observation poll in that window explicit `intervals`.
   Playwright's default poll backoff grows to a second between attempts, which is time taken from the product's deadline.
@@ -199,7 +204,7 @@ A piece that another open change is still building is marked as pending with the
 5. **Keep the size of a test bounded.**
    One representative journey per user-visible flow, and one small spec per independent contract.
    A long journey that joins several contracts fails whole, so one shaky step hides every contract after it and turns the lane red for all of them; split a test so the part that shakes can be fixed alone.
-   The reference splits are `agent-close-contract.spec.ts` (one Herdr contract, two UI contracts), the drag contracts in `agent-tab-groups.spec.ts`, the row menus in `sidebar-menus.spec.ts` and the view caps in `s7.spec.ts`: each spec starts from one shared `start...` helper, puts itself into the shape it needs as setup, and asserts one contract.
+   The reference splits are `agent-close-contract.spec.ts` (one Herdr contract, two UI contracts), the focus contracts in `pane-focus-ordering.spec.ts` (one held request, keys after a burst, an external focus), the drag contracts in `agent-tab-groups.spec.ts`, the row menus in `sidebar-menus.spec.ts` and the view caps in `s7.spec.ts`: each spec starts from one shared `start...` helper, puts itself into the shape it needs as setup, and asserts one contract.
    Splitting costs a stack start per spec, so say in the pull request what the split bought.
    `web/scripts/check-e2e-test-size.mjs` (run by `lint` in `web` and `desktop`) fails a test over 120 lines or 40 `expect` calls, counted on the `test(...)` call itself.
    The tests that were already over are recorded in `e2e/test-size-baseline.json` as a ceiling that only shrinks: a recorded test that grows fails, and so does an entry whose test is gone or fits the limit, until the entry is removed.
@@ -289,27 +294,21 @@ A planned lane that was skipped, failed or cancelled fails `verify`, so a wrong 
 | Web code the desktop host imports or drives through native input (the host bridge, the shortcut registry, keys and keyboard, store, snapshot and socket, terminals, focus and area cycling, `App.tsx`, `main.tsx`; `SHARED_WEB` in the script) | also `desktop-e2e` and `windows-e2e` |
 | A `web/e2e` spec | `checks` and `web-e2e`; a spec tagged `@platform` also runs `windows-e2e` (the whole suite runs on Linux, so the Linux leg of `@platform` is `web-e2e`) |
 | `desktop/src`, `desktop/static`, a `desktop/e2e` spec | `checks` and `desktop-e2e`, the only macOS job a change outside the two crates below asks for; `desktop/src/main` also runs `windows-check`, where the main process's unit suite runs on Windows |
-| A Rust crate | `rust` over the crate and every crate that depends on it (from `cargo metadata`), `windows-check`, which compiles every crate for Windows, and the Linux `web-e2e`, since every crate reaches `hided` |
+| A Rust crate | `rust` over the crate and every crate that depends on it (from `cargo metadata`), `windows-check`, which compiles every crate for Windows, the Linux `web-e2e`, since every crate reaches `hided`, and `remote-mailbox` when the crate reaches `herdr-core`, `hided`, `hide-agent-hooks` or `hide-host` |
 | `herdr-core`, `hided`, `hide-platform`, `hide-herdr-client`, `hide-host`, `hide-kit`, `hide-agent-hooks` | also `os-contract` (its Linux and Windows legs) and `windows-e2e`; no macOS job |
 | `hide-platform`, `hide-herdr-client` | also `os-contract-macos`, the OS contract's macOS leg, which tests exactly these two crates |
 | The paths `POLICY_ONLY` names, which no lane reads: `agents/`, `site/`, `tools/`, `spikes/`, `.gitignore` files, the PR template and `dependabot.yml`, the workflows no `pr.yml` job calls (`nightly`, `package`, `release`, `herdr-update`, `design-contract`), `scripts/tests/`, the policy `check-*` scripts and the design, release and measurement scripts, and Markdown below a folder no rule claims | `policy` alone |
 | The paths `NAMED_LANES` names, whose readers are a known set: a `web/e2e` file that is not a spec (the `desktop` suites import it, and `desktop/e2e` unit tests run in `windows-check`), a `desktop/e2e` file that is not a spec, the Playwright, eslint and vitest configurations, `web/scripts`, `desktop/scripts` | the lanes that read it, listed in the script and its test; never `rust`, `os-contract` or `os-contract-macos` |
 | `.github/` (`pr.yml`, `web-e2e.yml`, `os-contract.yml`), `scripts/` the lanes call (`verify-*.sh`, `ci-flaky-report.py`, `ci-plan.py`, ...), `contracts/` (the Herdr pin and schemas), any `package.json`, lockfile, the workspace `Cargo.toml`, a type change, and any path no row above names | every lane a pull request can plan (all but `web-e2e-platform`) |
 
-Every plan includes `policy`, whatever else it names, except a draft pull request's and a verified push's (below): a draft plans no lane, and `verify` fails with "draft: lanes not run, mark ready for review".
+Every plan includes `policy`, whatever else it names, except a draft pull request's: it plans no lane, and `verify` fails with "draft: lanes not run, mark ready for review".
 Marking the pull request ready (`ready_for_review`) starts the run that plans and runs the lanes, and that run's `verify` replaces the failed one.
 `verify` fails on a draft instead of being skipped because a skipped required check counts as passed, and `verify` is not started until its lanes finish: a skipped `verify` from the draft run would otherwise be the only check on the commit for the minutes after it is marked ready.
 Keep `ready_for_review` in `pr.yml`'s `types`, and keep `verify` running on a draft; `scripts/tests/test_ci_plan.py` reads the workflow for both.
 A hand run of `nightly.yml` takes a `lane` (`all`, `linux`, `macos`, `windows`): one system's web and desktop suites and the remote mailbox lane, with `verify` and `package` for `all` only; the schedule runs everything.
-A plan that cannot be computed plans every lane: a missing base, a checkout that is not the merge commit, a diff that does not parse, or a crate graph `cargo metadata` cannot read.
-A merge queue group (`merge_group`) plans from the paths between the commit it starts from (`merge_group.base_sha`) and the group's commit; that base is main for the first group and the commit of the group queued ahead for every later one, so each group plans its own pull request's changes on the tree the groups ahead make, and a base the `plan` job cannot fetch is a missing base.
-That is enough because each group's run checks its own lanes on a tree that already holds every group ahead: a lane is checked by the run of the last group that touched its inputs, on the same inputs as the tree main finally becomes, which assumes the path rules are right, as a pull request's plan does.
-The queue merges a group only when every group ahead of it passed, and one that fails is removed and the groups behind it are rebuilt on a new base.
-A push to main plans no lane when a merge queue run of `verify` succeeded on its commit, which the `plan` job asks the Actions API, and `verify` passes with every lane skipped.
-The exception is a push that changed a file a CI cache key hashes (`CACHE_KEYS` in the script: `Cargo.lock`, a `Cargo.toml`, a toolchain file, `.cargo/`, `pnpm-lock.yaml`, `.github/workflows/`), compared from the last main commit whose push run passed, so a run GitHub replaced while it waited still has its merges checked: the caches save only from main and only under a new key, so that push runs every lane.
-A lookup that fails, no merge queue run on the commit, or a comparison it cannot make also plans every lane, and the plan's output says which.
-Nightly calls `verify` on main with every lane; that run is the net under a pull request that left out a lane it needed, and a lane it fails opens the nightly issue.
-Main's runs queue rather than cancel each other.
+A push to main plans every lane, and so does a plan that cannot be computed: a missing base, a checkout that is not the merge commit, a diff that does not parse, or a crate graph `cargo metadata` cannot read.
+Main's full run is the net under a pull request that left out a lane it needed; main's runs queue rather than cancel each other.
+Nightly calls `verify` on main with every lane too: a lane it fails opens the nightly issue, which a failed push run does not, and a lane that breaks with no merge is found within a day.
 When one does, fix the rule in `scripts/ci-plan.py` with a case in its test; a test that reads a file outside its own folder adds that file to `READERS`.
 A path is narrower than every lane only by being named in `POLICY_ONLY` or `NAMED_LANES`, with its reader in a comment and a case in `NamedPaths`; a new or unknown path plans every lane until someone names it.
 ### Where the macOS runners went

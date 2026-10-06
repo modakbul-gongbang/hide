@@ -1747,6 +1747,7 @@ fn a_reinstall_queues_only_the_parts_that_need_it() {
                     hide_kit::ComponentState::Installed,
                 ),
             ],
+            agents: Vec::new(),
             labels_retirement: Default::default(),
             legacy_retirement: Default::default(),
         },
@@ -1784,6 +1785,7 @@ fn a_reinstall_queues_only_the_parts_that_need_it() {
                 hide_kit::ComponentId::Cli,
                 hide_kit::ComponentState::Installed,
             )],
+            agents: Vec::new(),
             labels_retirement: Default::default(),
             legacy_retirement: Default::default(),
         },
@@ -2401,6 +2403,7 @@ fn the_codex_part_switch_queues_its_choice_and_starts_follow_the_kit() {
             location: None,
             codex_daemon: None,
         }],
+        agents: Vec::new(),
         labels_retirement: Default::default(),
         legacy_retirement: Default::default(),
     };

@@ -253,6 +253,7 @@ impl Runtime {
         &mut self,
         device_id: &str,
         only: Option<&[ComponentId]>,
+        only_agents: Option<&[String]>,
     ) -> bool {
         if device_id != LOCAL_DEVICE_ID && !self.device_registration_exists(device_id) {
             self.set_error(
@@ -267,19 +268,116 @@ impl Runtime {
             self.set_error("kit.unavailable", reason, false);
             return true;
         }
+        // Naming parts or agents narrows the repair to what is named.
+        let named = only.is_some() || only_agents.is_some();
         let parts = state
             .components
             .iter()
             .filter(|part| part.state.needs_attention())
-            .filter(|part| only.is_none_or(|only| only.contains(&part.id)))
+            .filter(|part| match only {
+                Some(only) => only.contains(&part.id),
+                None => !named,
+            })
             .map(|part| part.id)
+            .collect::<Vec<_>>();
+        let agents = state
+            .agents
+            .iter()
+            .filter(|agent| agent.needs_attention())
+            .filter(|agent| match only_agents {
+                Some(only) => only.contains(&agent.id),
+                None => !named,
+            })
+            .map(|agent| agent.id.as_str())
             .collect::<Vec<_>>();
         // A second press after the first one repaired everything is the same
         // intent, already met (engineering rule 11).
-        if parts.is_empty() {
+        if parts.is_empty() && agents.is_empty() {
             return false;
         }
-        self.queue_kit_reinstall(device_id, parts)
+        let scope = Scope::reinstall(parts).merge(Scope::agents(agents, []));
+        self.queue_kit_scope(device_id, scope)
+    }
+
+    /// The operator switched an agent on or off from its row (issue #517).
+    /// An agent already where the switch puts it, or that is not set up on
+    /// that machine, is the same intent, already met (engineering rule 11).
+    pub(super) fn request_kit_agent_set(
+        &mut self,
+        device_id: &str,
+        agent: &str,
+        enabled: bool,
+    ) -> bool {
+        if hide_kit::agents::adapter(agent).is_none() {
+            self.set_error(
+                "kit.unknown_agent",
+                format!("{agent} is not an agent Hide knows"),
+                false,
+            );
+            return true;
+        }
+        if device_id != LOCAL_DEVICE_ID && !self.device_registration_exists(device_id) {
+            self.set_error(
+                "kit.unknown_machine",
+                format!("Device {device_id} is not registered"),
+                false,
+            );
+            return true;
+        }
+        let state = self.kit_view(device_id);
+        if let Some(reason) = state.unavailable {
+            self.set_error("kit.unavailable", reason, false);
+            return true;
+        }
+        let Some(now) = state.agents.iter().find(|row| row.id == agent) else {
+            return false;
+        };
+        // The latest intent wins (engineering rule 11): what is queued for
+        // this agent decides, and while an install runs the last report is
+        // older than that install, so it decides nothing.
+        let already = match self.queued_agent_choice(device_id, agent) {
+            Some(queued) => queued == enabled,
+            None if state.busy => false,
+            None if enabled => {
+                // Nothing to switch on where the agent is not set up; an agent
+                // that is on and has nothing to repair is met.
+                now.availability != hide_kit::Availability::Available
+                    || (now.enabled && !now.needs_attention())
+            }
+            None => !now.enabled,
+        };
+        if enabled && now.availability != hide_kit::Availability::Available {
+            return false;
+        }
+        if already {
+            return false;
+        }
+        let scope = if enabled {
+            Scope::agents([agent], [])
+        } else {
+            Scope::agents([], [agent])
+        };
+        self.queue_kit_scope(device_id, scope)
+    }
+
+    /// What the work still queued for a machine says about one agent's
+    /// switch: `Some(true)` on, `Some(false)` off, `None` when it says nothing.
+    fn queued_agent_choice(&self, device_id: &str, agent: &str) -> Option<bool> {
+        let scope = if device_id == LOCAL_DEVICE_ID {
+            self.local_kit_pending.as_ref()
+        } else {
+            match self.device_kit_pending.get(device_id) {
+                Some(KitJob::Apply(scope)) => Some(scope),
+                _ => None,
+            }
+        }?;
+        if scope.agent_off.contains(agent) {
+            Some(false)
+        } else if scope.agent_on.contains(agent) {
+            Some(true)
+        } else {
+            None
+        }
     }
 
     /// Queues a Reinstall of `parts` on one machine.
@@ -590,6 +688,10 @@ impl Runtime {
                 "device_id": device_id,
                 "components": removed.kit.components.iter().map(|(id, outcome)| {
                     serde_json::json!({ "id": id.code(), "outcome": outcome })
+                }).collect::<Vec<_>>(),
+                // The agents' hooks and skill stubs, a failed one included.
+                "agents": removed.kit.agents.iter().map(|(piece, outcome)| {
+                    serde_json::json!({ "piece": piece, "outcome": outcome })
                 }).collect::<Vec<_>>(),
                 "helper_root": removed.helper_root,
             })),

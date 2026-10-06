@@ -23,7 +23,8 @@ pub(crate) fn observe(target: &KitTarget, runtime: AgentRuntime) -> Observed {
         HookStatus::RuntimeAbsent => {
             return Observed::Absent(format!("{} is not set up on this machine", runtime.label()));
         }
-        HookStatus::NotInstalled => Observed::Missing,
+        // Reading a file never says Off: the kit's record does (`HookStatus::Off`).
+        HookStatus::NotInstalled | HookStatus::Off => Observed::Missing,
         HookStatus::Outdated { version } => Observed::Stale(format!(
             "version {version} of the hook is there; this build writes version {}",
             hide_agent_hooks::HOOK_VERSION
@@ -82,5 +83,15 @@ pub(crate) fn remove(target: &KitTarget, runtime: AgentRuntime) -> RemoveOutcome
         Err(failure) => RemoveOutcome::Failed {
             reason: failure.message(),
         },
+    }
+}
+
+/// An agent switched off: Hide's entries come out, and only Hide's. The
+/// part then reads Off, and no pass puts it back until the operator switches
+/// the agent on.
+pub(crate) fn turn_off(target: &KitTarget, runtime: AgentRuntime) -> Result<(), String> {
+    match remove(target, runtime) {
+        RemoveOutcome::Removed | RemoveOutcome::Absent => Ok(()),
+        RemoveOutcome::Kept { reason } | RemoveOutcome::Failed { reason } => Err(reason),
     }
 }

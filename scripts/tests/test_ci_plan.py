@@ -88,6 +88,26 @@ class Selection(unittest.TestCase):
                 self.assertIn("remote-mailbox", plan(f"{directory}/src/lib.rs")["lanes"])
         self.assertIn("remote-mailbox", plan(".github/workflows/pr.yml")["lanes"])
 
+    def test_the_remote_mailbox_lane_follows_the_crates_it_builds_and_tests(self):
+        for path in (
+            "herdr-core/src/lib.rs", "herdr-core/tests/remote_delivery.rs", "hided/src/main.rs",
+            "hide-host/src/lib.rs", "hide-agent-hooks/src/lib.rs", "hide-platform/src/process.rs",
+            "hide-session/src/lib.rs", "hide-ai/src/lib.rs",
+        ):
+            with self.subTest(path=path):
+                self.assertIn("remote-mailbox", plan(path)["lanes"])
+        # Web and desktop files and documentation cannot
+        # change it.
+        for path in (
+            "web/e2e/s3.spec.ts", "web/e2e/new-tab.spec.ts", "web/src/host.ts", "web/src/Overview.tsx",
+            "web/playwright.config.ts", "desktop/src/main/wirePath.ts", "desktop/src/preload/index.ts",
+            "docs/TESTING.md",
+        ):
+            with self.subTest(path=path):
+                self.assertNotIn("remote-mailbox", plan(path)["lanes"])
+        # A change no rule claims plans every lane, this one included.
+        self.assertIn("remote-mailbox", plan("scripts/verify-cargo.sh")["lanes"])
+
     def test_desktop_changes_run_the_desktop_lanes(self):
         result = plan("desktop/src/preload/index.ts")
         self.assertEqual(set(result["lanes"]), {"policy", "checks", "desktop-e2e"})
@@ -159,11 +179,27 @@ class Selection(unittest.TestCase):
                 self.assertEqual(result["lanes"], list(ci.LANES))
                 self.assertEqual(result["rust_packages"], EVERY_PACKAGE)
 
-    def test_the_nightly_call_and_a_failed_comparison_run_everything(self):
-        self.assertEqual(ci.plan("schedule", "HEAD^1", "HEAD", ROOT)["lanes"], list(ci.LANES))
+    def test_a_push_and_a_failed_comparison_run_everything(self):
+        self.assertEqual(ci.plan("push", None, None, ROOT)["lanes"], list(ci.LANES))
         result = ci.plan("pull_request", "0" * 40, "HEAD", ROOT)
         self.assertTrue(result["full"])
         self.assertIn("comparison unavailable", result["reasons"]["rust"][0])
+
+    def test_nightly_calls_verify_with_every_lane(self):
+        # The call plans every lane like a push, and a lane it fails reaches
+        # the nightly issue through the report job's `needs`.
+        self.assertEqual(ci.plan("schedule", None, None, ROOT)["lanes"], list(ci.LANES))
+        workflow = (ROOT / ".github/workflows/pr.yml").read_text()
+        self.assertRegex(workflow, r"\n  workflow_call:\n")
+        # A called run takes the caller's name, so it never takes a push run's
+        # pending place in the `verify-refs/heads/main` group.
+        self.assertIn("group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}", workflow)
+        nightly = (ROOT / ".github/workflows/nightly.yml").read_text()
+        call = nightly[nightly.index("\n  verify:\n"):nightly.index("\n  package:\n")]
+        self.assertIn("uses: ./.github/workflows/pr.yml", call)
+        self.assertIn("issues: write", call)
+        report = nightly[nightly.index("\n  report:\n"):]
+        self.assertRegex(report, r"needs: \[[^\]]*\bverify\b[^\]]*\]")
 
     def test_a_draft_plans_no_lane_and_ready_for_review_runs_them(self):
         result = ci.plan("pull_request", "0" * 40, "HEAD", ROOT, draft=True)
@@ -213,156 +249,6 @@ class Selection(unittest.TestCase):
             git("merge", "-q", "--no-ff", "-m", "merge", "topic")
             result = ci.plan("pull_request", "HEAD^1", "HEAD", repo, CRATES)
             self.assertEqual(result["lanes"], ["policy"])
-
-    def test_a_merge_group_plans_its_own_change_on_the_groups_ahead(self):
-        with tempfile.TemporaryDirectory() as directory:
-            repo = Path(directory)
-            def git(*args):
-                return subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True).stdout.strip()
-            def group(name, path, on):
-                # The queue builds a group commit by merging the pull request
-                # onto its base: main, or the group queued ahead.
-                git("checkout", "-qb", f"pr-{name}", main)
-                (repo / path).parent.mkdir(parents=True, exist_ok=True)
-                (repo / path).write_text(f"{name}\n")
-                git("add", ".")
-                git("commit", "-qm", name)
-                git("checkout", "-q", "--detach", on)
-                git("merge", "-q", "--no-ff", "-m", f"group {name}", f"pr-{name}")
-                return git("rev-parse", "HEAD")
-            git("init", "-q", "-b", "main")
-            git("config", "user.email", "ci@example.invalid")
-            git("config", "user.name", "ci")
-            (repo / "docs").mkdir()
-            (repo / "docs/a.md").write_text("a\n")
-            git("add", ".")
-            git("commit", "-qm", "base")
-            main = git("rev-parse", "HEAD")
-            # Two pull requests queued in order: a desktop change, then docs.
-            # The second group's base is the first group's commit, not main.
-            first = group("desktop", "desktop/src/preload/index.ts", main)
-            second = group("docs", "docs/b.md", first)
-            result = ci.plan("merge_group", main, first, repo, CRATES)
-            self.assertFalse(result["full"])
-            self.assertEqual(set(result["lanes"]), {"policy", "checks", "desktop-e2e"})
-            # The second group checks only its own change; the desktop lanes
-            # were checked by the first group's run on the same desktop files.
-            self.assertEqual(ci.plan("merge_group", first, second, repo, CRATES)["lanes"], ["policy"])
-            # When the first group fails, the queue rebuilds the second on main.
-            rebuilt = group("docs-again", "docs/c.md", main)
-            self.assertEqual(ci.plan("merge_group", main, rebuilt, repo, CRATES)["lanes"], ["policy"])
-            # A base the checkout does not have runs every lane.
-            missing = ci.plan("merge_group", "0" * 40, second, repo, CRATES)
-            self.assertTrue(missing["full"])
-            self.assertIn("comparison unavailable", missing["reasons"]["rust"][0])
-
-    def test_the_merge_queue_runs_verify_from_the_groups_base(self):
-        workflow = (ROOT / ".github/workflows/pr.yml").read_text()
-        self.assertRegex(workflow, r"\n  merge_group:\n    types: \[checks_requested\]\n")
-        self.assertIn("${{ github.event.merge_group.base_sha || 'HEAD^1' }}", workflow)
-        self.assertIn('--base "$BASE"', workflow)
-        # Only a pull request's newer push cancels a run; a group's ref is its
-        # own, and main's runs queue.
-        self.assertIn("cancel-in-progress: ${{ github.event_name == 'pull_request' }}", workflow)
-
-    def test_a_push_the_merge_queue_verified_plans_no_lane(self):
-        with tempfile.TemporaryDirectory() as directory:
-            repo = Path(directory)
-            def git(*args):
-                return subprocess.run(["git", *args], cwd=repo, check=True, capture_output=True, text=True).stdout.strip()
-            def merge(branch, path):
-                git("checkout", "-qb", branch, "main")
-                (repo / path).parent.mkdir(parents=True, exist_ok=True)
-                (repo / path).write_text(f"{branch}\n")
-                git("add", ".")
-                git("commit", "-qm", branch)
-                git("checkout", "-q", "main")
-                git("merge", "-q", "--no-ff", "-m", f"merge {branch}", branch)
-                return git("rev-parse", "HEAD")
-            def answer(*runs):
-                path = repo.parent / f"{repo.name}-runs.json"
-                path.write_text(json.dumps({"total_count": len(runs), "workflow_runs": list(runs)}))
-                return str(path)
-            def queue_run(sha, event="merge_group", conclusion="success"):
-                return {"event": event, "conclusion": conclusion, "head_sha": sha, "html_url": f"https://example.invalid/runs/{event}"}
-            git("init", "-q", "-b", "main")
-            git("config", "user.email", "ci@example.invalid")
-            git("config", "user.name", "ci")
-            (repo / "docs").mkdir()
-            (repo / "docs/a.md").write_text("a\n")
-            git("add", ".")
-            git("commit", "-qm", "base")
-            before = git("rev-parse", "HEAD")
-            head = merge("docs", "web/src/Overview.tsx")
-
-            verified = ci.plan("push", before, "HEAD", repo, CRATES, queue_runs=answer(queue_run(head)))
-            self.assertEqual(verified["lanes"], [])
-            self.assertEqual(verified["verified_by"], "https://example.invalid/runs/merge_group")
-            self.assertIn("merge queue verified", ci.summary(verified))
-
-            # Anything short of a successful queue run on this very commit runs
-            # every lane and says why.
-            for runs, reason in (
-                (answer(queue_run(before)), "no merge queue run verified"),
-                (answer(queue_run(head, event="pull_request")), "no merge queue run verified"),
-                (answer(queue_run(head, conclusion="failure")), "no merge queue run verified"),
-                (str(repo.parent / "missing.json"), "merge queue lookup failed"),
-                (answer(), "no merge queue run verified"),
-                (None, "merge queue lookup not given"),
-            ):
-                with self.subTest(reason=reason, runs=runs):
-                    result = ci.plan("push", before, "HEAD", repo, CRATES, queue_runs=runs)
-                    self.assertEqual(result["lanes"], list(ci.LANES))
-                    self.assertIn(reason, result["reasons"]["policy"][0])
-            for base, reason in (("0" * 40, "comparison unavailable"), ("", "no passing push run on main")):
-                with self.subTest(base=base):
-                    result = ci.plan("push", base, "HEAD", repo, CRATES, queue_runs=answer(queue_run(head)))
-                    self.assertEqual(result["lanes"], list(ci.LANES))
-                    self.assertIn(reason, result["reasons"]["policy"][0])
-
-            # A cache key input runs every lane even when the queue verified the
-            # commit, and the comparison spans every merge since the last
-            # passing push run, here two.
-            for index, path in enumerate(("Cargo.lock", "herdr-core/Cargo.toml", "pnpm-lock.yaml", ".github/workflows/web-e2e.yml")):
-                with self.subTest(path=path):
-                    start = git("rev-parse", "HEAD")
-                    merge(f"key-{index}", path)
-                    head = merge(f"docs-{index}", f"docs/after-{index}.md")
-                    result = ci.plan("push", start, "HEAD", repo, CRATES, queue_runs=answer(queue_run(head)))
-                    self.assertEqual(result["lanes"], list(ci.LANES))
-                    self.assertIn(f"{path} changes a CI cache key", result["reasons"]["policy"][0])
-                    self.assertEqual(ci.plan("push", "HEAD^1", "HEAD", repo, CRATES, queue_runs=answer(queue_run(head)))["lanes"], [])
-
-    def test_every_crate_manifest_is_a_cache_key(self):
-        # rust-cache hashes each crate's Cargo.toml; a crate a pattern misses
-        # would let a push change the key without saving the cache.
-        for directory in CRATES:
-            manifest = f"{directory}/Cargo.toml" if directory else "Cargo.toml"
-            self.assertTrue(any(ci.fnmatchcase(manifest, pattern) for pattern in ci.CACHE_KEYS), manifest)
-
-    def test_main_asks_the_queue_and_nightly_runs_every_lane(self):
-        workflow = (ROOT / ".github/workflows/pr.yml").read_text()
-        plan_job = workflow[workflow.index("\n  plan:\n"):workflow.index("\n  policy:\n")]
-        self.assertIn("      actions: read\n", plan_job)
-        self.assertIn("verified-by: ${{ steps.plan.outputs.verified-by }}", plan_job)
-        self.assertIn('runs="repos/$GITHUB_REPOSITORY/actions/workflows/pr.yml/runs"', plan_job)
-        self.assertIn("$runs?head_sha=$GITHUB_SHA&event=merge_group&status=success", plan_job)
-        self.assertIn('queue=(--queue-runs "$answer")', plan_job)
-        # A push compares from the last passing push run, so a run GitHub
-        # replaced while it waited still has its merges checked.
-        self.assertIn("$runs?branch=main&event=push&status=success&per_page=1", plan_job)
-        self.assertNotIn("github.event.before", plan_job)
-        # A called run takes the caller's name, so nightly's never shares a
-        # concurrency group with a push to main.
-        self.assertRegex(workflow, r"\n  workflow_call:\n")
-        self.assertIn("group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}", workflow)
-        nightly = (ROOT / ".github/workflows/nightly.yml").read_text()
-        call = nightly[nightly.index("\n  verify:\n"):nightly.index("\n  package:\n")]
-        self.assertIn("uses: ./.github/workflows/pr.yml", call)
-        for permission in ("contents: read", "issues: write", "actions: read"):
-            self.assertIn(permission, call)
-        report = nightly[nightly.index("\n  report:\n"):]
-        self.assertRegex(report, r"needs: \[[^\]]*\bverify\b[^\]]*\]")
 
 
 class NamedPaths(unittest.TestCase):
@@ -544,17 +430,6 @@ class Aggregate(unittest.TestCase):
         needs["plan"]["outputs"] = {"lanes": json.dumps(["policy"]), "draft": "false"}
         needs["policy"] = {"result": "success"}
         ci.aggregate(needs)
-
-    def test_a_verified_push_passes_only_with_every_lane_skipped(self):
-        needs = {lane: {"result": "skipped"} for lane in ci.LANES}
-        needs["plan"] = {"result": "success", "outputs": {"lanes": "[]", "verified-by": "https://example.invalid/runs/1"}}
-        ci.aggregate(needs)
-        with self.assertRaises(ValueError):
-            ci.aggregate({**needs, "rust": {"result": "success"}})
-        planned = {**needs, "policy": {"result": "success"}}
-        planned["plan"] = {"result": "success", "outputs": {"lanes": json.dumps(["policy"]), "verified-by": "https://example.invalid/runs/1"}}
-        with self.assertRaisesRegex(ValueError, "a verified push planned lanes"):
-            ci.aggregate(planned)
 
     def test_a_missing_or_unknown_lane_or_a_failed_plan_fails(self):
         needs = needs_for(plan("docs/BUILD.md"))

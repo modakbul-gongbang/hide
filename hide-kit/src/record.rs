@@ -4,7 +4,7 @@
 //! installed" (D-26). A part enters it the first time the kit finds it in
 //! place and leaves it only when the machine is removed from Hide.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Serialize};
@@ -26,6 +26,12 @@ pub(crate) struct Record {
     /// that does not know the field ignores it.
     #[serde(default, skip_serializing_if = "BTreeSet::is_empty")]
     retired: BTreeSet<String>,
+    /// The operator's explicit choice per agent (issue #517), by adapter id:
+    /// `true` switched on, `false` switched off. An agent with no entry has
+    /// made no choice and is on only when its adapter says it is by default.
+    /// A build that does not know the field ignores it.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    agents: BTreeMap<String, bool>,
 }
 
 impl Record {
@@ -35,6 +41,29 @@ impl Record {
 
     pub(crate) fn insert(&mut self, id: ComponentId) {
         self.installed.insert(id.code().to_owned());
+    }
+
+    /// Whether the kit has put the piece with this code on the machine
+    /// (`hook:<agent>`, `skill:<folder>`); the same set that holds the parts.
+    pub(crate) fn contains_piece(&self, code: &str) -> bool {
+        self.installed.contains(code)
+    }
+
+    pub(crate) fn insert_piece(&mut self, code: &str) -> bool {
+        self.installed.insert(code.to_owned())
+    }
+
+    pub(crate) fn forget_piece(&mut self, code: &str) -> bool {
+        self.installed.remove(code)
+    }
+
+    pub(crate) fn agent_choice(&self, id: &str) -> Option<bool> {
+        self.agents.get(id).copied()
+    }
+
+    /// Records the operator's choice; true when it changed the record.
+    pub(crate) fn set_agent_choice(&mut self, id: &str, on: bool) -> bool {
+        self.agents.insert(id.to_owned(), on) != Some(on)
     }
 
     pub(crate) fn owns_cli(&self, destination: &Path) -> bool {
@@ -118,6 +147,7 @@ pub(crate) fn save(home: &Path, record: &Record) -> Result<(), String> {
         installed: record.installed.clone(),
         cli_destination: record.cli_destination.clone(),
         retired: record.retired.clone(),
+        agents: record.agents.clone(),
     };
     let mut bytes = serde_json::to_vec_pretty(&record).map_err(|error| error.to_string())?;
     bytes.push(b'\n');

@@ -1,8 +1,8 @@
 # Full web and desktop suites and package checks on all three OSes nightly,
-# and `verify` (pr.yml) with every lane on main: a push to main that the merge
-# queue verified runs no lane, so this run is the net under a lane a pull
-# request's plan left out, and it saves main's caches after a runner image
-# changes the toolchain.
+# and `verify` (pr.yml) with every lane on main. A push to main runs every lane
+# too, but a lane it fails opens no issue; here it opens the nightly issue, and
+# a lane that breaks with no merge (a runner image, a toolchain, a service a
+# test reaches) is found within a day.
 # A test fails this run only when it fails its retry too (CI retries a failed
 # test once); a test that passes the retry is flaky, and
 # scripts/ci-flaky-report.py files it as an issue, as in pr.yml.
@@ -201,11 +201,10 @@ jobs:
     name: verify
     if: ${{ inputs.lane == '' || inputs.lane == 'all' }}
     uses: ./.github/workflows/pr.yml
-    # pr.yml's jobs file a flaky test, and its plan job reads the Actions API.
+    # pr.yml's jobs file a flaky test.
     permissions:
       contents: read
       issues: write
-      actions: read
   package:
     name: package
     if: ${{ inputs.lane == '' || inputs.lane == 'all' }}

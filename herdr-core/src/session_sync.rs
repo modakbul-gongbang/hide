@@ -233,6 +233,6 @@ pub(crate) use replica::{SNAPSHOT_FIELDS_THE_REPLICA_READS, remote_tab_id};
 #[cfg(test)]
 pub(crate) use subscription::connect_failure_from_api;
 pub(crate) use subscription::{
-    Connected, connect, fetch_agents, fetch_workspace_active_tab, log_sync_failure,
+    Connected, connect, fetch_agents, fetch_pane_cwd, fetch_workspace_active_tab, log_sync_failure,
     stop_subscription,
 };
