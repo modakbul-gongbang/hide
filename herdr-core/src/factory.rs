@@ -62,9 +62,32 @@ pub struct FactoryCaller {
     /// A pane the caller named but could not be checked against: it can only
     /// make the caller a worker, never an operator.
     pub claimed: Option<String>,
-    /// The agents above the caller in the spawn lineage, nearest first: a
-    /// worker's child is a worker of the same Task (D-33).
-    pub ancestors: Vec<String>,
+    /// The agents above the caller in the spawn lineage: a worker's child is
+    /// a worker of the same Task (D-33).
+    pub ancestors: Lineage,
+}
+
+/// The spawn lineage above a caller, nearest first.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Lineage {
+    pub agents: Vec<String>,
+    /// The pane each of `agents` was registered on, where the ledger has it.
+    pub panes: Vec<String>,
+    /// The walk reached an agent with no parent. A cut walk (the ledger
+    /// unreadable, a missing record, a loop, the step limit) cannot rule out
+    /// a worker above the caller.
+    pub complete: bool,
+}
+
+impl Lineage {
+    /// No lineage: a caller with no agent record above it.
+    pub fn none() -> Self {
+        Self {
+            agents: Vec::new(),
+            panes: Vec::new(),
+            complete: true,
+        }
+    }
 }
 
 enum Request {
@@ -508,22 +531,17 @@ fn handle(
     caller: &FactoryCaller,
     command: Command,
 ) -> Value {
-    // Everything that names a worker binds to it: the caller's own pane or
-    // folder, a pane it claimed, or an agent above it in the spawn lineage.
-    let bound = engine
-        .role_for(caller.pane.as_deref(), caller.cwd.as_deref())
-        .or_else(|| {
-            caller
-                .claimed
-                .as_deref()
-                .and_then(|pane| engine.role_for(Some(pane), None))
-        })
-        .or_else(|| engine.role_for_agents(&caller.ancestors));
-    let role = match bound {
-        Some((factory, task)) => Role::Worker { factory, task },
-        None => Role::Operator {
-            pane: caller.pane.clone().unwrap_or_else(|| "checkout".into()),
-        },
+    let facts = hide_factory::engine::Caller {
+        pane: caller.pane.as_deref(),
+        cwd: caller.cwd.as_deref(),
+        claimed: caller.claimed.as_deref(),
+        ancestor_agents: &caller.ancestors.agents,
+        ancestor_panes: &caller.ancestors.panes,
+        lineage_complete: caller.ancestors.complete,
+    };
+    let role = match engine.caller_role(&facts, &command) {
+        Ok(role) => role,
+        Err(refusal) => return refusal.to_json(),
     };
     // A pending review answers the pane that added the Task (B11); that is
     // the caller, never a pane the request names.

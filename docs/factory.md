@@ -144,7 +144,8 @@ Each command runs with a role the engine decides from its own store, never from 
 A caller is a worker when its pane is the pane of a Task's worker, or when its working folder is inside a Task's worktree.
 A `cancelled` or `done` Task's worker stays a worker while its worktree and pane stay, so its pane never gains an operator's commands, and the Task's state refuses its reports; a live Task wins when a pane or folder was reused.
 Once a Task's worktree is removed it binds no pane or folder, because Herdr can give a closed pane id to the operator's next pane.
-An agent a worker spawned acts as that worker: the host follows the caller's spawn lineage in the delivery ledger (up to 16 agents up), and a pane a checkout caller names but cannot prove only ever makes it a worker, never an operator.
+An agent a worker spawned acts as that worker: the host follows the caller's spawn lineage in the delivery ledger (up to 16 agents up) and binds an ancestor by its agent id or by the pane it was registered on, and a pane a checkout caller names but cannot prove only ever makes it a worker, never an operator.
+A lineage the host cannot read to its root (the ledger unreadable, a missing record, a loop, more than 16 agents) may hide a worker above, so that caller can only read; anything else is refused with `lineage_unknown`.
 Every other caller is an operator, recorded by pane id, or `checkout` when the caller has no pane.
 The engine itself acts as a third role for deadlines and timers and is never a command caller.
 A capability file holds only a token, so editing it cannot change a role.

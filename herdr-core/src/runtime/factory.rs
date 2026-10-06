@@ -56,8 +56,9 @@ impl Runtime {
         let ancestors = pane
             .as_deref()
             .or(claimed.as_deref())
-            .map(|pane| self.factory_lineage(pane))
-            .unwrap_or_default();
+            .map_or_else(crate::factory::Lineage::none, |pane| {
+                self.factory_lineage(pane)
+            });
         Ok(crate::factory::FactoryCaller {
             pane,
             cwd: Some(context.checkout_path.clone()).filter(|path| !path.is_empty()),
@@ -66,32 +67,34 @@ impl Runtime {
         })
     }
 
-    /// The agent ids above `pane` in the spawn lineage, nearest first, from
+    /// The agents above `pane` in the spawn lineage, nearest first, from
     /// the ledger in memory; at most [`LINEAGE_LIMIT`] steps.
-    fn factory_lineage(&self, pane: &str) -> Vec<String> {
-        let Ok(ledger) = self.delivery_state() else {
-            return Vec::new();
+    fn factory_lineage(&self, pane: &str) -> crate::factory::Lineage {
+        let mut lineage = crate::factory::Lineage {
+            complete: false,
+            ..crate::factory::Lineage::none()
         };
-        let parent_of = |agent: &crate::coordination::AgentRecord| agent.parent.clone();
-        let mut next = ledger
-            .agents
-            .iter()
-            .rev()
-            .find(|agent| agent.pane == pane)
-            .and_then(parent_of);
-        let mut ancestors = Vec::new();
+        let Ok(ledger) = self.delivery_state() else {
+            return lineage;
+        };
+        let mut next = match ledger.agents.iter().rev().find(|agent| agent.pane == pane) {
+            Some(agent) => agent.parent.clone(),
+            None => None,
+        };
         while let Some(id) = next {
-            if ancestors.len() >= LINEAGE_LIMIT || ancestors.contains(&id) {
-                break;
+            if lineage.agents.len() >= LINEAGE_LIMIT || lineage.agents.contains(&id) {
+                return lineage;
             }
-            next = ledger
-                .agents
-                .iter()
-                .find(|agent| agent.id == id)
-                .and_then(parent_of);
-            ancestors.push(id);
+            let Some(agent) = ledger.agents.iter().find(|agent| agent.id == id) else {
+                lineage.agents.push(id);
+                return lineage;
+            };
+            lineage.agents.push(id);
+            lineage.panes.push(agent.pane.clone());
+            next = agent.parent.clone();
         }
-        ancestors
+        lineage.complete = true;
+        lineage
     }
 
     /// A delivery command the Factory sends as its own recipient, to the pane
@@ -357,16 +360,18 @@ mod tests {
             ],
             ..Ledger::default()
         }));
+        let full = runtime.factory_lineage("w3:p1");
         assert_eq!(
-            runtime.factory_lineage("w3:p1"),
+            full.agents,
             vec!["agent-child", "agent-worker", "agent-factory"]
         );
-        assert!(runtime.factory_lineage("w0:p1").is_empty());
-        assert_eq!(
-            runtime.factory_lineage("w9:p1"),
-            vec!["agent-b", "agent-a"],
-            "a loop ends the walk"
-        );
+        assert_eq!(full.panes, vec!["w2:p1", "w1:p1", "factory:f-1"]);
+        assert!(full.complete);
+        let none = runtime.factory_lineage("w0:p1");
+        assert!(none.agents.is_empty() && none.complete);
+        let looped = runtime.factory_lineage("w9:p1");
+        assert_eq!(looped.agents, vec!["agent-b", "agent-a"], "a loop ends the walk");
+        assert!(!looped.complete, "a loop cannot rule out a worker above");
     }
 
     fn row(provider: &str, used: f64, bucket: Option<(f64, u64)>) -> ProviderUsageSnapshot {

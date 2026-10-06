@@ -353,6 +353,36 @@ impl Engine {
         self.store.events(factory, task, limit).unwrap_or_default()
     }
 
+    /// The role of a caller as the host saw it (D-33). Everything that names
+    /// a worker binds to it: the caller's own pane or folder, a pane it
+    /// claimed, or an agent above it in the spawn lineage, by its id or by
+    /// the pane it was registered on. A lineage cut short may hide a worker
+    /// above, so such a caller only reads, never acts as an operator.
+    pub fn caller_role(&self, caller: &Caller<'_>, command: &Command) -> Result<Role, Refusal> {
+        let bound = self
+            .role_for(caller.pane, caller.cwd)
+            .or_else(|| caller.claimed.and_then(|pane| self.role_for(Some(pane), None)))
+            .or_else(|| self.role_for_agents(caller.ancestor_agents))
+            .or_else(|| {
+                caller
+                    .ancestor_panes
+                    .iter()
+                    .find_map(|pane| self.role_for(Some(pane), None))
+            });
+        match bound {
+            Some((factory, task)) => Ok(Role::Worker { factory, task }),
+            None if !caller.lineage_complete && command.permission() != Permission::Read => {
+                Err(Refusal::new(
+                    "lineage_unknown",
+                    "The caller's spawn lineage could not be read to its root; run this from an operator pane",
+                ))
+            }
+            None => Ok(Role::Operator {
+                pane: caller.pane.unwrap_or("checkout").to_owned(),
+            }),
+        }
+    }
+
     /// The Task whose worker is one of `agents` (a caller's spawn lineage):
     /// a worker's child acts as that worker (D-33).
     pub fn role_for_agents(&self, agents: &[String]) -> Option<(String, String)> {
@@ -6007,6 +6037,22 @@ pub fn issue_body(task: &Task, factory: &Factory) -> String {
         body.push_str(&judgment::cut(&text, 48 * 1024));
     }
     body
+}
+
+/// A command's caller as the host saw it.
+#[derive(Clone, Copy, Debug)]
+pub struct Caller<'a> {
+    pub pane: Option<&'a str>,
+    pub cwd: Option<&'a str>,
+    /// A pane the caller named but could not be checked against: it can only
+    /// make the caller a worker, never an operator.
+    pub claimed: Option<&'a str>,
+    /// The agents above the caller in the spawn lineage, nearest first.
+    pub ancestor_agents: &'a [String],
+    /// The pane each of those agents was registered on.
+    pub ancestor_panes: &'a [String],
+    /// The lineage walk reached an agent with no parent.
+    pub lineage_complete: bool,
 }
 
 pub fn pr_body(task: &Task, factory: &Factory) -> String {

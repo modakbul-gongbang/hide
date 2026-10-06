@@ -934,6 +934,72 @@ fn an_agent_a_worker_spawned_acts_as_that_worker() {
 }
 
 #[test]
+fn a_caller_binds_through_a_claimed_pane_or_an_ancestor_s_pane_and_a_cut_lineage_only_reads() {
+    use hide_factory::engine::Caller;
+    use hide_factory::role::Role;
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let t = h.ready("Parent", &[]);
+    let worker_pane = h.task(&f, &t).worker.unwrap().pane.unwrap();
+    let worker = Role::Worker {
+        factory: f.clone(),
+        task: t.clone(),
+    };
+    let status = Command::Status { project: None };
+    let merge = Command::Merge { task: t.clone() };
+    let caller = Caller {
+        pane: Some("child-pane"),
+        cwd: Some("/elsewhere"),
+        claimed: None,
+        ancestor_agents: &[],
+        ancestor_panes: &[],
+        lineage_complete: true,
+    };
+    // A worker stopped mid-turn spawned a helper: its parent is a new,
+    // parentless record on the worker's own pane.
+    let panes = [worker_pane.clone()];
+    let agents = ["agent-new".to_owned()];
+    let helper = Caller {
+        ancestor_agents: &agents,
+        ancestor_panes: &panes,
+        ..caller
+    };
+    assert_eq!(h.engine.caller_role(&helper, &merge).unwrap(), worker);
+    // A checkout caller that names a worker's pane is that worker.
+    let checkout = Caller {
+        pane: None,
+        claimed: Some(&worker_pane),
+        ..caller
+    };
+    assert_eq!(h.engine.caller_role(&checkout, &merge).unwrap(), worker);
+    // A lineage cut short reads, and acts as no operator.
+    let cut = Caller {
+        lineage_complete: false,
+        ..caller
+    };
+    assert!(matches!(
+        h.engine.caller_role(&cut, &status),
+        Ok(Role::Operator { .. })
+    ));
+    for command in [
+        merge.clone(),
+        Command::Answer {
+            task: t.clone(),
+            question: None,
+            choice: None,
+            text: Some("yes".into()),
+        },
+    ] {
+        let refused = h.engine.caller_role(&cut, &command).unwrap_err();
+        assert_eq!(refused.reason, "lineage_unknown");
+    }
+    assert!(matches!(
+        h.engine.caller_role(&caller, &merge),
+        Ok(Role::Operator { .. })
+    ));
+}
+
+#[test]
 fn a_worker_cannot_act_as_a_person() {
     let mut h = Bench::new(false);
     let f = h.factory(true);
