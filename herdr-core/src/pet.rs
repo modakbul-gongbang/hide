@@ -272,7 +272,7 @@ mod tests {
             group: group.to_owned(),
             symbol: "\u{25cb}".to_owned(),
             emphasized: false,
-            status_label: "Idle".to_owned(),
+            status_code: crate::model::AgentStatusCode::Idle,
             requires_close_confirmation: false,
             requires_close_status_check: false,
             progress: None,

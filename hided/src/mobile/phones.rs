@@ -67,9 +67,9 @@ pub fn name_from_user_agent(user_agent: &str) -> &'static str {
     } else if user_agent.contains("iPhone") {
         "iPhone"
     } else if user_agent.contains("Android") {
-        "Android 폰"
+        "Android"
     } else {
-        "폰"
+        "Phone"
     }
 }
 

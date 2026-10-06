@@ -101,7 +101,7 @@ function agent(pane: string, extra: Partial<AgentRow> = {}): AgentRow {
     agent_kind: "claude",
     symbol: "○",
     group: "seen",
-    status_label: "Idle",
+    status_code: "idle",
     changed_at_unix_ms: null,
     emphasized: false,
     unread: false,

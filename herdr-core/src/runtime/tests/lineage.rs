@@ -1355,7 +1355,7 @@ fn a_quiet_root_waits_on_busy_descendants_in_working_until_every_one_is_quiet() 
     assert!(root.waiting_on_descendants);
     assert_eq!(root.group, "working", "a waiting root is not Done");
     assert_eq!(root.symbol, "\u{25cb}");
-    assert_eq!(root.status_label, "Waiting");
+    assert_eq!(root.status_code, crate::model::AgentStatusCode::Waiting);
     assert!(!root.emphasized);
     assert_eq!(root.descendant_counts.working, 1);
     let wire = serde_json::to_value(root).unwrap();

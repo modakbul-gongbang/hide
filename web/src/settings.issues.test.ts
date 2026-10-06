@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { initializeInterfaceI18n } from "./i18n/instance";
 import { githubAccess, githubAccessLine as githubAccessLineIn, issueSourceChoices as issueSourceChoicesIn } from "./settings";
-import type { Checkout, GithubStatus, TaskSource, Workspace } from "./snapshot";
+import type { Checkout, GithubFailureCategory, GithubStatus, TaskSource, Workspace } from "./snapshot";
 
 // Korean is the wording Settings > Issues shipped with; the rules read the same under it.
 const t = initializeInterfaceI18n("ko").getFixedT(null, "translation");
@@ -50,14 +50,14 @@ const project = (patch: Partial<Workspace> & { github?: GithubStatus }): Workspa
 
 describe("Settings › Issues", () => {
   it("reads gh as connected once any project's read succeeded, and otherwise names gh's own refusal first", () => {
-    const loggedOut = project({ github: status({ available: false, failure_category: "not logged in", unavailable_reason: "run gh auth login" }) });
-    const offline = project({ id: "w2", github: status({ stale: true, failure_category: "network or rate limit", unavailable_reason: "timeout" }) });
-    const noRemote = project({ id: "w3", github: status({ stale: true, failure_category: "no GitHub remote", unavailable_reason: "none of the git remotes" }) });
+    const loggedOut = project({ github: status({ available: false, failure_category: "not_logged_in", unavailable_reason: "run gh auth login" }) });
+    const offline = project({ id: "w2", github: status({ stale: true, failure_category: "network_or_rate_limit", unavailable_reason: "timeout" }) });
+    const noRemote = project({ id: "w3", github: status({ stale: true, failure_category: "no_github_remote", unavailable_reason: "none of the git remotes" }) });
     const healthy = project({ id: "w4", github: status({ last_success_at_unix_ms: 5 }) });
 
     expect(githubAccess([offline, healthy])).toEqual({ state: "connected" });
-    expect(githubAccess([offline, loggedOut])).toEqual({ state: "failed", category: "not logged in", reason: "run gh auth login" });
-    expect(githubAccessLine({ state: "failed", category: "not logged in", reason: null }).text).toBe("gh 로그인 안 됨");
+    expect(githubAccess([offline, loggedOut])).toEqual({ state: "failed", category: "not_logged_in", reason: "run gh auth login" });
+    expect(githubAccessLine({ state: "failed", category: "not_logged_in", reason: null }).text).toBe("gh 로그인 안 됨");
     // A repository with no GitHub remote says nothing about gh, and a device's project is not read here.
     expect(githubAccess([noRemote])).toBeNull();
     expect(githubAccess([project({ remote_target_id: "mini", github: status({ last_success_at_unix_ms: 5 }) })])).toBeNull();
@@ -95,8 +95,8 @@ describe("Settings › Issues", () => {
   });
 
   it("words the same choices and the gh state in English", () => {
-    expect(githubAccessLineIn({ state: "failed", category: "not logged in", reason: null }, english).text).toBe("Not signed in to gh");
-    expect(githubAccessLineIn({ state: "failed", category: "from a newer gh", reason: null }, english).text).toBe("from a newer gh");
+    expect(githubAccessLineIn({ state: "failed", category: "not_logged_in", reason: null }, english).text).toBe("Not signed in to gh");
+    expect(githubAccessLineIn({ state: "failed", category: "from a newer gh" as GithubFailureCategory, reason: null }, english).text).toBe("from a newer gh");
     const onDefault = project({ tasks: { source: source({}), tasks: [], overflow: false } });
     expect(issueSourceChoicesIn(onDefault, undefined, english).options.map((option) => option.label)).toEqual(["Automatic (GitHub)", "GitHub · acme/app", "Local"]);
   });

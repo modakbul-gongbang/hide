@@ -126,7 +126,7 @@ export function applyFrame(frame: ServerFrame): void {
         connected: true,
         unreachable: false,
         refusal: null,
-        macName: frame.mac_name,
+        macName: frame.mac_name ?? "",
         vapidKey: frame.vapid_public_key,
         notifications: frame.notifications,
       });

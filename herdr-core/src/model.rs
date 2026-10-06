@@ -840,8 +840,9 @@ pub struct SidebarAgentSnapshot {
     pub symbol: String,
     /// Derived: rows in Needs You and Done are drawn bright, the rest subdued.
     pub emphasized: bool,
-    /// Derived: the short human word for this row. No view shows an axis value.
-    pub status_label: String,
+    /// Derived: the status code the screen turns into a word. No view shows an
+    /// axis value.
+    pub status_code: AgentStatusCode,
     /// Derived: closing this pane would interrupt work or discard a result the
     /// operator has not read.
     pub requires_close_confirmation: bool,
@@ -1462,6 +1463,47 @@ pub fn display_tab_label(
         .unwrap_or_else(|| format!("Tab {}", automatic_number.unwrap_or(number)))
 }
 
+/// The status of one agent as a code, never as a sentence: the screen chooses
+/// the word in the operator's language, and `english` is the word for output
+/// that is not a screen (the project context an agent reads).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentStatusCode {
+    Error,
+    Question,
+    Approval,
+    Working,
+    Done,
+    Idle,
+    Unknown,
+    /// A root waiting on its delegated children.
+    Waiting,
+    /// A pane that holds a terminal but no agent.
+    Attached,
+    Sleeping,
+    Waking,
+    SleepFailed,
+}
+
+impl AgentStatusCode {
+    pub fn english(self) -> &'static str {
+        match self {
+            Self::Error => "Error",
+            Self::Question => "Question",
+            Self::Approval => "Approval",
+            Self::Working => "Working",
+            Self::Done => "Done",
+            Self::Idle => "Idle",
+            Self::Unknown => "Unknown",
+            Self::Waiting => "Waiting",
+            Self::Attached => "Attached",
+            Self::Sleeping => "Sleeping \u{b7} resumes when opened",
+            Self::Waking => "Waking\u{2026}",
+            Self::SleepFailed => "Sleeping \u{b7} couldn\u{2019}t resume",
+        }
+    }
+}
+
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct TabAgentSnapshot {
     pub agent_kind: String,
@@ -1470,7 +1512,7 @@ pub struct TabAgentSnapshot {
     pub activity: String,
     pub emphasized: bool,
     pub waiting_on_descendants: bool,
-    pub status_label: String,
+    pub status_code: AgentStatusCode,
 }
 
 impl From<&SidebarAgentSnapshot> for TabAgentSnapshot {
@@ -1482,7 +1524,7 @@ impl From<&SidebarAgentSnapshot> for TabAgentSnapshot {
             activity: agent.activity.clone(),
             emphasized: agent.emphasized,
             waiting_on_descendants: agent.waiting_on_descendants,
-            status_label: agent.status_label.clone(),
+            status_code: agent.status_code,
         }
     }
 }
@@ -1577,9 +1619,9 @@ pub struct PaneSnapshot {
     pub herdr_label: Option<String>,
     pub terminal_title: Option<String>,
     pub cwd: String,
-    /// The one short human word for the agent in this pane, from the same
-    /// derivation the sidebar row uses.
-    pub status_label: String,
+    /// The status code of the agent in this pane, from the same derivation the
+    /// sidebar row uses.
+    pub status_code: AgentStatusCode,
     /// Whether closing this pane needs the operator to confirm first. Derived
     /// with the agent row's own value so the header and the core cannot
     /// disagree about it.
@@ -1664,7 +1706,7 @@ pub struct AgentChipSnapshot {
     pub activity: String,
     pub emphasized: bool,
     pub symbol: String,
-    pub status_label: String,
+    pub status_code: AgentStatusCode,
     /// Whether this child is still delegated work. It lifts only when the
     /// child's parent is gone and the child is a root again.
     pub delegated: bool,
@@ -3259,6 +3301,29 @@ pub struct PullRequestSnapshot {
     pub cross_repository: bool,
 }
 
+/// Why a GitHub read failed, as a code the screen words (the reason stays
+/// `gh`'s own stderr, which is data).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum GithubFailureCategory {
+    NotInstalled,
+    NotLoggedIn,
+    NoGithubRemote,
+    NetworkOrRateLimit,
+}
+
+impl GithubFailureCategory {
+    /// The words for diagnostics and the errors a command reports.
+    pub fn english(self) -> &'static str {
+        match self {
+            Self::NotInstalled => "not installed",
+            Self::NotLoggedIn => "not logged in",
+            Self::NoGithubRemote => "no GitHub remote",
+            Self::NetworkOrRateLimit => "network or rate limit",
+        }
+    }
+}
+
 /// How a repository's `gh` lookup is doing, independent of what it found.
 ///
 /// "No pull request on this branch" and "the lookup failed" are different
@@ -3267,7 +3332,7 @@ pub struct PullRequestSnapshot {
 /// inferred from an empty list.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub struct GithubStatusSnapshot {
-    pub failure_category: Option<String>,
+    pub failure_category: Option<GithubFailureCategory>,
     /// `gh` is installed and logged in.
     pub available: bool,
     /// No lookup has completed yet for this repository.

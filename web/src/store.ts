@@ -516,7 +516,7 @@ export const useShellStore = create<Store>((set, get) => ({
           : (rest.navigator?.agents ?? []).map((agent) => {
               if (agent.group && !KNOWN_GROUPS.has(agent.group)) {
                 diagnostics.push(`unknown enum group=${agent.group}`);
-                return { ...agent, group: "unknown", unknown: true, symbol: "?", status_label: "unknown" };
+                return { ...agent, group: "unknown", unknown: true, symbol: "?", status_code: "unknown" as const };
               }
               return agent;
             });

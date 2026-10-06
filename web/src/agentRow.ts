@@ -5,6 +5,7 @@
 // sidebar and any other list of agents (the Overview) cannot disagree.
 
 import type { TFunction } from "i18next";
+import { statusText } from "./agentStatus";
 import { chipTone, demandTone } from "./lineage";
 import type { AgentRow, MarkCounts } from "./snapshot";
 
@@ -129,8 +130,8 @@ export function branchChip(agent: Pick<AgentRow, "delegated" | "lineage_worktree
  * row's visible text is hidden from assistive technology, so everything it
  * shows has to be here.
  */
-export function rowAccessibleName(agent: AgentRow, device: string | null): string {
-  return [agent.identity_label, device, branchChip(agent), agent.agent_kind, agent.status_label, agent.detail].filter(Boolean).join(", ");
+export function rowAccessibleName(t: TFunction<"translation">, agent: AgentRow, device: string | null): string {
+  return [agent.identity_label, device, branchChip(agent), agent.agent_kind, statusText(t, agent.status_code), agent.detail].filter(Boolean).join(", ");
 }
 
 /** A row in a drawn agent tree: the row, its device, and how deep it sits under the root drawn above it. */

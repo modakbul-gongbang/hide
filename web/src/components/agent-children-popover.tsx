@@ -2,6 +2,7 @@ import { ArrowRightIcon, ListTreeIcon } from "lucide-react";
 import { useEffect, useRef, useState, type ReactNode } from "react";
 import { branchChip, markTone } from "../agentRow";
 import { useInterfaceTranslation } from "../i18n/client";
+import { statusText } from "../agentStatus";
 import type { AgentRow } from "../snapshot";
 import { Command, CommandGroup, CommandItem, CommandList, CommandSeparator } from "./ui/command";
 import { Kbd } from "./ui/kbd";
@@ -109,7 +110,7 @@ function ChildItem({ parent, child, onOpen }: { parent: AgentRow; child: AgentRo
           <Elapsed since={child.changed_at_unix_ms} className="shrink-0 text-micro text-muted-foreground" />
         </span>
         <span className="flex min-w-0 items-center gap-xs text-caption">
-          <span className={`shrink-0 ${tone}`}>{child.status_label}</span>
+          <span className={`shrink-0 ${tone}`}>{statusText(t, child.status_code)}</span>
           {branch ? (
             <span className="min-w-0 truncate font-mono text-muted-foreground" data-branch-chip={branch}>
               {branch}

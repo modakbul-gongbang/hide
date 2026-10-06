@@ -5,6 +5,7 @@
 // screen offers, not what is allowed.
 
 import type { TFunction } from "i18next";
+import { statusText } from "./agentStatus";
 import type { MessageKey } from "./i18n/catalogs";
 import { shownPullRequest } from "./projects";
 import { supportsRemotePurpose } from "./remote";
@@ -252,8 +253,8 @@ export function agentMenu(agent: AgentRow, showChord: string, t: TFunction<"tran
 }
 
 /** The agents deleting a checkout stops: every pane an agent runs in, by the name and state the sidebar shows. */
-export function stoppedAgents(checkout: Checkout): string[] {
-  return checkout.tabs.flatMap((tab) => tab.panes).flatMap((pane) => (pane.identity_label ? [`${pane.identity_label} (${pane.status_label})`] : []));
+export function stoppedAgents(checkout: Checkout, t: TFunction<"translation">): string[] {
+  return checkout.tabs.flatMap((tab) => tab.panes).flatMap((pane) => (pane.identity_label ? [`${pane.identity_label} (${statusText(t, pane.status_code)})`] : []));
 }
 
 /**
@@ -263,7 +264,7 @@ export function stoppedAgents(checkout: Checkout): string[] {
 export function deletionFacts(checkout: Checkout, paneCount: number, t: TFunction<"translation">): string[] {
   const facts: string[] = [t("workspace.facts.folderRemoved")];
   if (paneCount > 0) facts.push(t("workspace.facts.panesClose", { count: paneCount }));
-  const agents = stoppedAgents(checkout);
+  const agents = stoppedAgents(checkout, t);
   if (agents.length > 0) facts.push(t("workspace.facts.stopsNamed", { count: agents.length, names: agents.join(", ") }));
   return facts;
 }

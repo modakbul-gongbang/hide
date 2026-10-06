@@ -6,7 +6,7 @@ import type { TFunction } from "i18next";
 import type { DaemonInfo } from "./store";
 import type { MessageKey } from "./i18n/catalogs";
 import type { AccentName } from "./theme";
-import type { AgentRow, AiProvider, CoreDiagnostic, Device, DeviceHost, EnvironmentStatus, HerdrStatus, KitAgent, KitComponent, KitComponentId, KitPiece, RemoteStatus, Workspace } from "./snapshot";
+import type { AgentRow, AiProvider, CoreDiagnostic, Device, DeviceHost, EnvironmentStatus, GithubFailureCategory, HerdrStatus, KitAgent, KitComponent, KitComponentId, KitPiece, RemoteStatus, Workspace } from "./snapshot";
 
 type Translate = TFunction<"translation">;
 
@@ -43,7 +43,7 @@ export function sleepingCount(agents: readonly AgentRow[] | undefined): number {
 }
 
 /** What `gh` answered across this Mac's Git projects, the Issues tab's GitHub row. */
-export type GithubAccess = { state: "connected" } | { state: "failed"; category: string; reason: string | null };
+export type GithubAccess = { state: "connected" } | { state: "failed"; category: GithubFailureCategory; reason: string | null };
 
 /**
  * Whether GitHub reads work on this Mac: connected once any local Git
@@ -59,15 +59,15 @@ export function githubAccess(workspaces: readonly Workspace[]): GithubAccess | n
     .filter((status) => status !== undefined);
   if (statuses.some((status) => status.last_success_at_unix_ms != null && !status.stale)) return { state: "connected" };
   const failure =
-    statuses.find((status) => status.failure_category === "not installed" || status.failure_category === "not logged in") ??
-    statuses.find((status) => status.failure_category != null && status.failure_category !== "no GitHub remote");
+    statuses.find((status) => status.failure_category === "not_installed" || status.failure_category === "not_logged_in") ??
+    statuses.find((status) => status.failure_category != null && status.failure_category !== "no_github_remote");
   return failure?.failure_category ? { state: "failed", category: failure.failure_category, reason: failure.unavailable_reason } : null;
 }
 
-const GH_FAILURE_KEY: Record<string, MessageKey> = {
-  "not installed": "issueSettings.ghNotInstalled",
-  "not logged in": "issueSettings.ghNotLoggedIn",
-  "network or rate limit": "issueSettings.readFailed",
+const GH_FAILURE_KEY: Partial<Record<GithubFailureCategory, MessageKey>> = {
+  not_installed: "issueSettings.ghNotInstalled",
+  not_logged_in: "issueSettings.ghNotLoggedIn",
+  network_or_rate_limit: "issueSettings.readFailed",
 };
 
 /** What the GitHub row's state says; a category this build does not know is shown as the core named it. */

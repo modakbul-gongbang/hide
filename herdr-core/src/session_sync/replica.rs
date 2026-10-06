@@ -405,9 +405,9 @@ impl SessionReplica {
                                             .or(pane.terminal_title.as_deref()),
                                     ),
                                     cwd: pane.cwd.clone().unwrap_or_else(|| path.clone()),
-                                    status_label: agent
-                                        .map(|agent| agent.status_label.clone())
-                                        .unwrap_or_else(|| "Attached".to_owned()),
+                                    status_code: agent
+                                        .map(|agent| agent.status_code)
+                                        .unwrap_or(crate::model::AgentStatusCode::Attached),
                                     requires_close_confirmation: agent
                                         .is_some_and(|agent| agent.requires_close_confirmation),
                                     requires_close_status_check: agent

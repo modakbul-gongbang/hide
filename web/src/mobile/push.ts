@@ -35,12 +35,12 @@ async function registration(): Promise<ServiceWorkerRegistration | null> {
 }
 
 /**
- * Gives the service worker the two words a notification body starts with, in
+ * Gives the service worker the words a notification body starts with, in
  * the language in effect; it keeps them so a closed app still notifies in it.
  */
 export async function postWords(): Promise<void> {
   const worker = await registration();
-  worker?.active?.postMessage({ type: "words", words: { needs_you: translate("mobile.group.needs_you"), done: translate("mobile.group.done") } });
+  worker?.active?.postMessage({ type: "words", words: { needs_you: translate("mobile.group.needs_you"), done: translate("mobile.group.done"), observer_unconfirmed: translate("mobile.notice.observerUnconfirmed"), letter_undelivered: translate("mobile.notice.letterUndelivered") } });
 }
 
 async function subscribe(): Promise<boolean> {

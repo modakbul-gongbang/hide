@@ -3,6 +3,7 @@ import { useEffect, useId, useRef, useState, type RefObject } from "react";
 import { createPortal } from "react-dom";
 import type { Actions } from "./actions";
 import { useInterfaceTranslation } from "./i18n/client";
+import { statusText } from "./agentStatus";
 import type { MessageKey } from "./i18n/catalogs";
 import type { TFunction } from "i18next";
 import { AlertDialog, AlertDialogAction, AlertDialogCancel, AlertDialogContent, AlertDialogDescription, AlertDialogFooter, AlertDialogHeader, AlertDialogTitle } from "./components/ui/alert-dialog";
@@ -84,7 +85,7 @@ export function CycleOverlay() {
               data-cycle-row={item.target.kind === "surface" ? item.target.surface.id : item.target.kind === "pane" ? item.target.paneId : item.key}
               data-cycle-kind={item.kind}
               aria-selected={selected}
-              aria-label={[itemTitle, item.agent && t("agents.kindAgent", { kind: item.agent.agent_kind }), item.agent?.status_label, itemDetail, item.chip?.label].filter(Boolean).join(", ")}
+              aria-label={[itemTitle, item.agent && t("agents.kindAgent", { kind: item.agent.agent_kind }), item.agent && statusText(t, item.agent.status_code), itemDetail, item.chip?.label].filter(Boolean).join(", ")}
               className={`flex items-center gap-sm px-md py-xxs ${selected ? "bg-secondary text-foreground" : "text-subtle-foreground"}`}
             >
               <CycleMarks item={item} title={itemTitle} />
@@ -114,7 +115,7 @@ function CycleMarks({ item, title }: { item: CycleItem; title: string }) {
   return (
     <span className="flex shrink-0 items-center gap-xs" data-cycle-marks={item.agent ? (knownProvider(item.agent.agent_kind) ?? "neutral") : item.kind}>
       <span className="flex w-(--size-agent-mark) shrink-0 justify-center">
-        {item.agent ? <StatusMark symbol={item.agent.symbol} className={markTone(item.agent)} data-cycle-status={item.agent.status_label} /> : null}
+        {item.agent ? <StatusMark symbol={item.agent.symbol} className={markTone(item.agent)} data-cycle-status={item.agent.status_code} /> : null}
       </span>
       <span className="flex w-(--size-agent-badge-compact) shrink-0 justify-center">
         <KindMark item={item} title={title} />
@@ -200,17 +201,17 @@ function StopWorkClose({ actions, kind, stopWork, footer }: { actions: Actions; 
         {stopWork.rows.map((row) => (
           <li
             key={row.pane.id}
-            aria-label={`${row.label}, ${row.agent?.status_label ?? row.pane.status_label}`}
+            aria-label={`${row.label}, ${statusText(t, (row.agent ?? row.pane).status_code)}`}
             data-stop-work-row={row.pane.id}
             data-stop-work-state={row.state}
             className={`flex min-w-0 items-start gap-xs ${row.state === "quiet" ? "opacity-(--opacity-read-status)" : ""}`}
           >
             <span className="flex w-(--size-agent-mark) shrink-0 justify-center">
-              {row.agent ? <RowMark symbol={row.agent.symbol} tone={markTone(row.agent)} status={row.state === "quiet" ? row.agent.status_label : null} /> : null}
+              {row.agent ? <RowMark symbol={row.agent.symbol} tone={markTone(row.agent)} status={row.state === "quiet" ? statusText(t, row.agent.status_code) : null} /> : null}
             </span>
             <span className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-xs" aria-hidden="true">
               <span className="min-w-0 break-words text-foreground">{row.label}</span>
-              {row.state === "quiet" ? null : <span className="shrink-0 text-subtle-foreground" data-stop-work-status="true">{row.agent?.status_label ?? row.pane.status_label}</span>}
+              {row.state === "quiet" ? null : <span className="shrink-0 text-subtle-foreground" data-stop-work-status="true">{statusText(t, (row.agent ?? row.pane).status_code)}</span>}
             </span>
           </li>
         ))}

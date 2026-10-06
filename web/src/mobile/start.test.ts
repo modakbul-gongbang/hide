@@ -8,9 +8,9 @@ import { CLOSED_SHEET, applyFrame, patch, usePhone } from "./store";
 const FRAME = `{
   "type": "start_catalog",
   "targets": [
-    {"id": "home:local", "device_id": "local", "label": "Home", "device_label": "This Mac", "connected": true},
-    {"id": "c1", "device_id": "local", "label": "herdr-ide · main", "device_label": "This Mac", "connected": true},
-    {"id": "home:mini", "device_id": "mini", "label": "Home", "device_label": "mini", "connected": false}
+    {"id": "home:local", "device_id": "local", "place": null, "device_label": null, "connected": true},
+    {"id": "c1", "device_id": "local", "place": "herdr-ide · main", "device_label": null, "connected": true},
+    {"id": "home:mini", "device_id": "mini", "place": null, "device_label": "mini", "connected": false}
   ],
   "kinds": [
     {"id": "claude", "models": ["opus", "sonnet"]},
@@ -21,12 +21,14 @@ const FRAME = `{
 
 const catalog = JSON.parse(FRAME) as StartCatalog;
 const korean = initializeInterfaceI18n("ko").getFixedT(null, "translation");
+const english = initializeInterfaceI18n("en").getFixedT(null, "translation");
 
 describe("selectionOf", () => {
   it("defaults to This Mac's Home with the remembered kind and its model", () => {
     const selection = selectionOf(catalog, NO_CHOICE);
     expect(selection.target?.id).toBe("home:local");
-    expect(targetText(selection.target!)).toBe("This Mac · Home");
+    expect(targetText(english, selection.target!)).toBe("This Mac · Home");
+    expect(targetText(korean, selection.target!)).toBe("이 Mac · 홈");
     expect(selection.kind).toBe("codex");
     // Codex lists no model: the select is disabled on the default.
     expect(modelsOf(selection)).toEqual([]);

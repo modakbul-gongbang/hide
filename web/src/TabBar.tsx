@@ -12,6 +12,7 @@ import type { AsyncOperation, Checkout, StripTab } from "./snapshot";
 import { useShellStore } from "./store";
 import { tabFit, type AreaTabInteraction } from "./AreaTree";
 import { useInterfaceTranslation } from "./i18n/client";
+import { statusText } from "./agentStatus";
 import type { TabFit } from "./areaLayout";
 
 // The sole Agent tab rendering unit, reused by every local and device area.
@@ -29,8 +30,8 @@ export function AgentTab({ number, entry, checkout, interaction, actions, renami
   const { t } = useInterfaceTranslation();
   const operations = useShellStore((s) => s.rest?.status?.async_operations) ?? NONE;
   const agent = checkout.tabs.find((row) => row.id === entry.source_id)?.agent;
-  const identity = `${agent ? t("panes.agent.tabIdentityAgent", { kind: agent.agent_kind, label: entry.label }) : t("panes.agent.tabIdentityTerminal", { label: entry.label })}${agent ? ` · ${agent.status_label}` : ""}`;
-  return <TabButton entry={entry} editor={renaming ? <TabRenameInput key={entry.source_id} entry={entry} actions={actions} onCancel={onCancelRename} /> : null} identity={identity} mark={<>{agent ? <StatusMark symbol={agent.symbol} className={markTone(agent)} data-tab-status={agent.status_label} /> : null}<AgentMark kind={agent?.agent_kind} /></>} number={number} active={interaction.selected} areaActive={interaction.areaActive} closing={closingSuffix(entry.source_id, "tab.close", operations)} closeLabel={t("shell.closeTab", { title: entry.label })} fit={interaction.fit} dragging={interaction.dragging} onSelect={interaction.select} onClose={() => actions.closeTab(entry.source_id)} onPointerDown={interaction.press} />;
+  const identity = `${agent ? t("panes.agent.tabIdentityAgent", { kind: agent.agent_kind, label: entry.label }) : t("panes.agent.tabIdentityTerminal", { label: entry.label })}${agent ? ` · ${statusText(t, agent.status_code)}` : ""}`;
+  return <TabButton entry={entry} editor={renaming ? <TabRenameInput key={entry.source_id} entry={entry} actions={actions} onCancel={onCancelRename} /> : null} identity={identity} mark={<>{agent ? <StatusMark symbol={agent.symbol} className={markTone(agent)} data-tab-status={agent.status_code} /> : null}<AgentMark kind={agent?.agent_kind} /></>} number={number} active={interaction.selected} areaActive={interaction.areaActive} closing={closingSuffix(entry.source_id, "tab.close", operations)} closeLabel={t("shell.closeTab", { title: entry.label })} fit={interaction.fit} dragging={interaction.dragging} onSelect={interaction.select} onClose={() => actions.closeTab(entry.source_id)} onPointerDown={interaction.press} />;
 }
 
 function TabRenameInput({ entry, actions, onCancel }: { entry: StripTab; actions: Actions; onCancel: () => void }) {

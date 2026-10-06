@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import type { Checkout, TaskOperation, Workspace } from "./snapshot";
+import type { AgentStatusCode, Checkout, TaskOperation, Workspace } from "./snapshot";
 import * as manage from "./workspaceManage";
 import { branchProblem, checkoutRemoving, discardConfirmationKey, factsLine, normalizePurpose, purposeIsLong, removalFor, scalarCount, taskFor } from "./workspaceManage";
 import { initializeInterfaceI18n } from "./i18n/instance";
@@ -162,7 +162,7 @@ describe("row menus", () => {
     ]);
     expect(checkoutMenu(workspace(), checkout(), desktop).find((item) => item.id === "delete_worktree")?.destructive).toBe(true);
     // A pull request GitHub cannot vouch for now is not offered (checkout-pr-glyph-card B10).
-    const unavailable = { failure_category: "auth", available: false, loading: false, stale: false, last_success_at_unix_ms: null, unavailable_reason: "gh is not signed in" };
+    const unavailable = { failure_category: "not_logged_in" as const, available: false, loading: false, stale: false, last_success_at_unix_ms: null, unavailable_reason: "gh is not signed in" };
     expect(checkoutMenu(workspace(), checkout({ pull_request: pr, github: unavailable }), desktop).some((item) => item.id === "open_pull_request")).toBe(false);
   });
 
@@ -200,20 +200,20 @@ describe("row menus", () => {
   });
 
   it("names the agents a deletion stops once, by name and state, beside the gate's warnings", () => {
-    const pane = (id: string, identity: string | null, status: string) => ({
+    const pane = (id: string, identity: string | null, status: AgentStatusCode) => ({
       id,
       herdr_label: null,
       terminal_title: null,
       cwd: "/Users/example/hide.worktrees/feature",
-      status_label: status,
+      status_code: status,
       requires_close_confirmation: false,
       requires_close_status_check: false,
       identity_label: identity,
     });
     const row = checkout({
       tabs: [
-        { id: "t1", workspace_id: "w1", checkout_id: "c1", label: "1", empty: false, delegated: false, panes: [pane("p1", "Fix the parser", "Working"), pane("p2", null, "")] },
-        { id: "t2", workspace_id: "w1", checkout_id: "c1", label: "2", empty: false, delegated: false, panes: [pane("p3", "Review tests", "Idle")] },
+        { id: "t1", workspace_id: "w1", checkout_id: "c1", label: "1", empty: false, delegated: false, panes: [pane("p1", "Fix the parser", "working"), pane("p2", null, "unknown")] },
+        { id: "t2", workspace_id: "w1", checkout_id: "c1", label: "2", empty: false, delegated: false, panes: [pane("p3", "Review tests", "idle")] },
       ],
     });
     if (row.worktree) {
@@ -240,7 +240,7 @@ describe("row menus", () => {
   });
 
   it("draws an agent's menu with its ⌥n and without Mark as seen or Stop agent (B7, B8)", () => {
-    const agent = { id: "a", pane_id: "p1", identity_label: "배포 전 확인", agent_kind: "claude", symbol: "●", group: "working", status_label: "working", changed_at_unix_ms: null, emphasized: false, unread: false, session_id: "0b5e-session" };
+    const agent = { id: "a", pane_id: "p1", identity_label: "배포 전 확인", agent_kind: "claude", symbol: "●", group: "working", status_code: "working" as const, changed_at_unix_ms: null, emphasized: false, unread: false, session_id: "0b5e-session" };
     expect(drawn(agentMenu(agent, "⌥3"))).toEqual(["Show ⌥3", "─", "Copy title", "Copy session id", "Copy pane ID", "─", "Close tab…"]);
     expect(drawn(agentMenu(agent, ""))[0]).toBe("Show");
     expect(agentMenu({ ...agent, session_id: null }, "").find((item) => item.id === "copy_session_id")?.unavailable).toMatch(/no session id/);

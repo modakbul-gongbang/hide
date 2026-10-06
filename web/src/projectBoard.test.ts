@@ -70,7 +70,7 @@ function workspace(checkouts: Checkout[], options: { git?: boolean; tasks?: Task
 }
 
 function agent(pane: string, group = "working", extra: Partial<AgentRow> = {}): AgentRow {
-  return { id: pane, pane_id: pane, identity_label: pane, agent_kind: "claude", symbol: "●", group, status_label: group, changed_at_unix_ms: null, emphasized: false, unread: false, demand: "none", activity: "working", ...extra };
+  return { id: pane, pane_id: pane, identity_label: pane, agent_kind: "claude", symbol: "●", group, status_code: "idle", changed_at_unix_ms: null, emphasized: false, unread: false, demand: "none", activity: "working", ...extra };
 }
 
 function one(project: Workspace, agents: AgentRow[] = []): BoardProject[] {
@@ -415,7 +415,7 @@ describe("the facts line", () => {
 
   it("totals every Project's open pull requests and merged worktrees only when every Project can give its part", () => {
     const answered = { failure_category: null, available: true, loading: false, stale: false, last_success_at_unix_ms: NOW, unavailable_reason: null };
-    const noRemote = { ...answered, available: false, last_success_at_unix_ms: null, failure_category: "no GitHub remote" };
+    const noRemote = { ...answered, available: false, last_success_at_unix_ms: null, failure_category: "no_github_remote" as const };
     const read = workspace([checkout("a", { pr: pr("open") }), checkout("b", { pr: pr("merged") })].map((row) => ({ ...row, github: answered })));
     const local = workspace([{ ...checkout("c"), github: noRemote }]);
     const folder = workspace([checkout("f", { worktree: false })], { git: false });
@@ -556,7 +556,7 @@ describe("the PRs tab", () => {
     expect(reading).toMatchObject({ open: null, reading: true, failure: null });
     const failed = buildPullRequests({ workspace: repo([], [listed(6, "asks")], { github: { ...answered, stale: true, last_success_at_unix_ms: NOW - 3 * 60_000 } }), agents: [], device: null }, NOW);
     expect(failed).toMatchObject({ open: 1, reading: false, failure: { project: null, source: "GitHub", value: { minutes: 3 } } });
-    const none = buildPullRequests({ workspace: repo([], [], { github: { ...answered, last_success_at_unix_ms: null, available: false, failure_category: "no GitHub remote", unavailable_reason: "no remote" } }), agents: [], device: null }, NOW);
+    const none = buildPullRequests({ workspace: repo([], [], { github: { ...answered, last_success_at_unix_ms: null, available: false, failure_category: "no_github_remote", unavailable_reason: "no remote" } }), agents: [], device: null }, NOW);
     expect(none).toMatchObject({ open: 0, reading: false, failure: null });
   });
 });

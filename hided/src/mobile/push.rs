@@ -321,12 +321,15 @@ impl Effective {
     }
 }
 
-/// The two states a notification announces; the wire value is also the key
-/// of the phone's translated word for it.
+/// The states a notification announces; the wire value is also the key of
+/// the phone's translated word for it. The last two are the human delivery
+/// causes (`herdr_core::delivery::worker::HumanNoticeKind`).
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum NoticeState {
     NeedsYou,
     Done,
+    ObserverUnconfirmed,
+    LetterUndelivered,
 }
 
 impl NoticeState {
@@ -334,6 +337,8 @@ impl NoticeState {
         match self {
             Self::NeedsYou => "needs_you",
             Self::Done => "done",
+            Self::ObserverUnconfirmed => "observer_unconfirmed",
+            Self::LetterUndelivered => "letter_undelivered",
         }
     }
 }

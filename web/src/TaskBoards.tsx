@@ -40,6 +40,7 @@ import { Switch } from "./components/ui/switch";
 import { ToggleGroup, ToggleGroupItem } from "./components/ui/toggle-group";
 import { Hint, Tooltip, TooltipContent, TooltipTrigger, useHintOpen } from "./components/ui/tooltip";
 import { useInterfaceTranslation } from "./i18n/client";
+import { statusText } from "./agentStatus";
 import type { MessageKey } from "./i18n/catalogs";
 import { requireInterfaceLanguage } from "./i18n/locale";
 import { typing } from "./IssueDialogs";
@@ -849,6 +850,7 @@ export function ReviewMarks({ pr, review = true }: { pr: PrChip; review?: boolea
  * said (B8, B9). A delegated child is indented one step per level (B13).
  */
 export function CardAgentRow({ agent, depth, place, selected, onOpen }: { agent: AgentRow; depth: number; place: string; selected: boolean; onOpen: (paneId: string) => void }) {
+  const { t } = useInterfaceTranslation();
   const said = rowLine(agent);
   const turn = agent.group === "needs_you" || agent.unread;
   const open = () => onOpen(agent.pane_id);
@@ -860,7 +862,7 @@ export function CardAgentRow({ agent, depth, place, selected, onOpen }: { agent:
       data-depth={depth}
       onClick={(event) => event.stopPropagation()}
     >
-      <button type="button" aria-label={rowAccessibleName(agent, null)} className="absolute inset-0 rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-ring" onClick={open} data-agent-open={agent.pane_id} />
+      <button type="button" aria-label={rowAccessibleName(t, agent, null)} className="absolute inset-0 rounded-sm outline-none focus-visible:ring-1 focus-visible:ring-ring" onClick={open} data-agent-open={agent.pane_id} />
       <span className="pointer-events-none relative flex min-w-0 items-center gap-xs">
         <StatusMark symbol={agent.symbol} className={markTone(agent)} />
         <AgentMark kind={agent.agent_kind} />
@@ -1178,7 +1180,7 @@ function ListRow({ card, now, page, actions, handlers }: { card: TaskCard; now: 
         </span>
         <span className="flex shrink-0 items-center gap-sm font-mono text-caption text-muted-foreground">
           {card.shown.length > 0 ? (
-            <span className="inline-flex items-center gap-xxs" role="img" aria-label={card.rows.map((entry) => `${entry.agent.identity_label} ${entry.agent.status_label}`).join(", ")}>
+            <span className="inline-flex items-center gap-xxs" role="img" aria-label={card.rows.map((entry) => `${entry.agent.identity_label} ${statusText(t, entry.agent.status_code)}`).join(", ")}>
               {card.shown.map((agent) => (
                 <StatusMark key={agent.pane_id} symbol={agent.symbol} className={markTone(agent)} />
               ))}

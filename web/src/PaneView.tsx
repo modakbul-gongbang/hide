@@ -11,6 +11,7 @@ import { ChildChipRow, ReturnToParent, usePaneMenu, type TerminalMenuContext } f
 import { chordLabel, commandLabel } from "./shortcutLabels";
 import { keySystem } from "./host";
 import { useInterfaceTranslation } from "./i18n/client";
+import { statusText } from "./agentStatus";
 import { modChord, TERMINAL_COPY, TERMINAL_PASTE } from "./shortcuts";
 import { sleepCaption, wakingLine } from "./sleep";
 import type { AgentSleep, PaneRow, TerminalPane } from "./snapshot";
@@ -327,7 +328,7 @@ export const PaneView = memo(function PaneView({
         ) : caption ? (
           <span className="truncate text-muted-foreground">{caption.text}</span>
         ) : (
-          <span className="truncate text-muted-foreground">{pane.status_label}</span>
+          <span className="truncate text-muted-foreground">{statusText(t, pane.status_code)}</span>
         )}
         <Hint label={t("panes.actions", { name: title })}>
           <Button

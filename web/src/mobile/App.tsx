@@ -6,6 +6,7 @@ import { BellIcon, ChevronRightIcon, LaptopIcon, Loader2Icon, PlusIcon, XIcon } 
 import { useEffect, useState } from "react";
 import { useElapsed } from "../components/elapsed";
 import { useInterfaceTranslation } from "../i18n/translator";
+import { statusText } from "../agentStatus";
 import { Button } from "../components/ui/button";
 import { closeDetail, openDetail, openStartSheet, pairNow } from "./connection";
 import { Detail } from "./Detail";
@@ -175,8 +176,9 @@ function ListScreen() {
 const LINE_TONE = { error: "text-destructive", warning: "text-warning", news: "text-foreground" } as const;
 
 function AgentRow({ agent }: { agent: PhoneAgent }) {
+  const { t } = useInterfaceTranslation();
   const elapsed = useElapsed(agent.changed_at_unix_ms);
-  const label = [agent.status_label, agent.title, agent.place, agent.device_label, elapsed].filter(Boolean).join(", ");
+  const label = [statusText(t, agent.status_code), agent.title, agent.place, agent.device_label, elapsed].filter(Boolean).join(", ");
   return (
     <li>
       <button

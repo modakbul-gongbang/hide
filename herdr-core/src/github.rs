@@ -21,8 +21,8 @@ use hide_platform::process::OwnedChild;
 use serde::Deserialize;
 
 use crate::model::{
-    GithubProjectSnapshot, GithubSnapshot, GithubStatusSnapshot, PullRequestBadge,
-    PullRequestChecks, PullRequestSnapshot, ReviewDecision,
+    GithubFailureCategory, GithubProjectSnapshot, GithubSnapshot, GithubStatusSnapshot,
+    PullRequestBadge, PullRequestChecks, PullRequestSnapshot, ReviewDecision,
 };
 use crate::reader::BackgroundRead;
 
@@ -233,7 +233,7 @@ fn read_root(
             status: GithubStatusSnapshot {
                 available: false,
                 unavailable_reason: Some(reason.reason.clone()),
-                failure_category: Some(reason.category.to_owned()),
+                failure_category: Some(reason.category),
                 ..GithubStatusSnapshot::default()
             },
             ..GithubProjectSnapshot::default()
@@ -297,7 +297,7 @@ fn read_project(
                 unavailable_reason: warning
                     .as_ref()
                     .map(|reason| format!("Project metadata unavailable: {}", reason.reason)),
-                failure_category: warning.map(|reason| reason.category.to_owned()),
+                failure_category: warning.map(|reason| reason.category),
             },
         },
         Err(reason) => GithubProjectSnapshot {
@@ -479,7 +479,7 @@ fn read_issues(
             crate::diagnostic!(serde_json::json!({
                 "component": "github",
                 "kind": "issue_dependencies.unavailable",
-                "category": reason.category,
+                "category": reason.category.english(),
                 "message": reason.reason,
             }));
             Some(reason.reason)
@@ -967,7 +967,9 @@ fn resolve_repositories(
                 Ok(repository) => repository,
                 // A project with no GitHub remote is not one to search; any
                 // other failure means the search cannot say it covered it.
-                Err(failure) if failure.category == "no GitHub remote" => continue,
+                Err(failure) if failure.category == GithubFailureCategory::NoGithubRemote => {
+                    continue;
+                }
                 Err(failure) => {
                     return Err(format!(
                         "gh repo view in {}: {}",
@@ -1332,7 +1334,7 @@ fn failed(reason: GhFailure) -> GithubStatusSnapshot {
         stale: true,
         last_success_at_unix_ms: None,
         unavailable_reason: Some(reason.reason),
-        failure_category: Some(reason.category.to_owned()),
+        failure_category: Some(reason.category),
     }
 }
 
@@ -1417,7 +1419,8 @@ pub(crate) fn merged_pull_request_proofs(
     .map_err(|failure| {
         format!(
             "GitHub merge proof is unavailable ({}): {}",
-            failure.category, failure.reason
+            failure.category.english(),
+            failure.reason
         )
     })?;
     parse_merged_pull_request_proofs(&listed)
@@ -1780,14 +1783,14 @@ fn main_worktree(path: &Path) -> Option<PathBuf> {
 
 #[derive(Clone, Debug)]
 struct GhFailure {
-    category: &'static str,
+    category: GithubFailureCategory,
     reason: String,
 }
 
 impl GhFailure {
     fn network(reason: String) -> Self {
         Self {
-            category: "network or rate limit",
+            category: GithubFailureCategory::NetworkOrRateLimit,
             reason,
         }
     }
@@ -1802,15 +1805,15 @@ fn classify_failure(reason: String, exit_code: Option<i32>) -> GhFailure {
         || lower.contains("gh auth login")
         || lower.contains("token") && lower.contains("invalid")
     {
-        "not logged in"
+        GithubFailureCategory::NotLoggedIn
     } else if lower.contains("no git remotes")
         || lower.contains("none of the git remotes")
         || lower.contains("not a github repository")
         || lower.contains("no github remote")
     {
-        "no GitHub remote"
+        GithubFailureCategory::NoGithubRemote
     } else {
-        "network or rate limit"
+        GithubFailureCategory::NetworkOrRateLimit
     };
     GhFailure { category, reason }
 }
@@ -1877,9 +1880,9 @@ fn run_gh(
     }
     let mut child = OwnedChild::spawn(&mut command).map_err(|error| GhFailure {
         category: if error.kind() == std::io::ErrorKind::NotFound {
-            "not installed"
+            GithubFailureCategory::NotInstalled
         } else {
-            "network or rate limit"
+            GithubFailureCategory::NetworkOrRateLimit
         },
         reason: format!("gh could not be run: {error}"),
     })?;
@@ -2363,7 +2366,7 @@ esac"#,
             FIXTURE_DEADLINE,
         )
         .unwrap_err();
-        assert_eq!(failure.category, "not logged in");
+        assert_eq!(failure.category, GithubFailureCategory::NotLoggedIn);
         assert_eq!(failure.reason, "not logged into any GitHub hosts");
         assert!(
             run_gh(
@@ -2389,14 +2392,17 @@ esac"#,
             )
             .unwrap_err()
             .category,
-            "not installed"
+            GithubFailureCategory::NotInstalled
         );
         for (stderr, expected) in [
             (
                 "none of the git remotes configured for this repository point to a known GitHub host",
-                "no GitHub remote",
+                GithubFailureCategory::NoGithubRemote,
             ),
-            ("HTTP 429 rate limit exceeded", "network or rate limit"),
+            (
+                "HTTP 429 rate limit exceeded",
+                GithubFailureCategory::NetworkOrRateLimit,
+            ),
         ] {
             let fixture = GhFixture::new(&format!("printf '%s' '{stderr}' >&2; exit 1"));
             let failure =
@@ -2420,7 +2426,7 @@ esac"#,
             Duration::from_secs(3),
         )
         .unwrap_err();
-        assert_eq!(failure.category, "network or rate limit");
+        assert_eq!(failure.category, GithubFailureCategory::NetworkOrRateLimit);
         assert!(failure.reason.contains("timed out"));
         assert!(started.elapsed() < Duration::from_secs(5));
         let pid: u32 = std::fs::read_to_string(fixture.root.join("pid"))
@@ -2976,7 +2982,7 @@ esac"#,
                 &["api", "graphql", "-f", &format!("query={query}")],
                 COMMAND_TIMEOUT
             )
-            .is_err_and(|failure| failure.category == "not installed")
+            .is_err_and(|failure| failure.category == GithubFailureCategory::NotInstalled)
         );
 
         let answer = serde_json::json!({"data": {
@@ -3176,7 +3182,7 @@ esac"#,
                 Some("/unread") => Ok(r#"{"nameWithOwner":"ACME/Known"}"#.to_owned()),
                 Some("/new") => Ok(r#"{"nameWithOwner":"acme/new"}"#.to_owned()),
                 Some("/gitlab") => Err(GhFailure {
-                    category: "no GitHub remote",
+                    category: GithubFailureCategory::NoGithubRemote,
                     reason: "none of the git remotes point to a known GitHub host".into(),
                 }),
                 _ => Err(GhFailure::network("HTTP 502".into())),

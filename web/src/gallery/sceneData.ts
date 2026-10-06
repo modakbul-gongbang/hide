@@ -68,7 +68,7 @@ const TITLES: Record<SceneContent, Record<string, string>> = {
 };
 
 /** A scene names how long ago each agent changed (`42s`, `3m`, `2h`); the row counts on from there. */
-type AgentSpec = Partial<AgentRow> & Pick<AgentRow, "pane_id" | "group" | "symbol" | "status_label"> & { elapsed: string };
+type AgentSpec = Partial<AgentRow> & Pick<AgentRow, "pane_id" | "group" | "symbol" | "status_code"> & { elapsed: string };
 
 const UNIT_MS: Record<string, number> = { s: 1_000, m: 60_000, h: 3_600_000, d: 86_400_000 };
 
@@ -165,7 +165,7 @@ function pane(id: string) {
     herdr_label: null,
     terminal_title: null,
     cwd: ROOT,
-    status_label: "idle",
+    status_code: "idle" as const,
     requires_close_confirmation: false,
     requires_close_status_check: false,
     identity_label: id,
@@ -197,13 +197,13 @@ export function sidebarScene(content: SceneContent, folds: SceneFolds, nowMs: nu
   const title = TITLES[content];
   const unfolded = (id: string) => folds.expandedAgents.includes(id);
   const agents: AgentRow[] = [
-    agent({ pane_id: "tn1", identity_label: "회의록 요약", group: "seen", symbol: "○", status_label: "Idle", elapsed: "3h" }),
+    agent({ pane_id: "tn1", identity_label: "회의록 요약", group: "seen", symbol: "○", status_code: "idle", elapsed: "3h" }),
     agent({
       pane_id: "a1",
       identity_label: title.a1,
       group: "working",
       symbol: "●",
-      status_label: "Working",
+      status_code: "working",
       activity: "working",
       elapsed: "1m",
       lineage_child_pane_ids: ["a1c1", "a1c2"],
@@ -216,7 +216,7 @@ export function sidebarScene(content: SceneContent, folds: SceneFolds, nowMs: nu
       agent_kind: "codex",
       group: "working",
       symbol: "●",
-      status_label: "Working",
+      status_code: "working",
       activity: "working",
       elapsed: "42s",
       delegated: true,
@@ -224,13 +224,13 @@ export function sidebarScene(content: SceneContent, folds: SceneFolds, nowMs: nu
       lineage_depth: 1,
       lineage_worktree_badge: "feat/ui",
     }),
-    agent({ pane_id: "a1c2", identity_label: title.a1c2, group: "seen", symbol: "○", status_label: "Idle", elapsed: "38s", delegated: true, lineage_parent_pane_id: "a1", lineage_depth: 1 }),
+    agent({ pane_id: "a1c2", identity_label: title.a1c2, group: "seen", symbol: "○", status_code: "idle", elapsed: "38s", delegated: true, lineage_parent_pane_id: "a1", lineage_depth: 1 }),
     agent({
       pane_id: "a2",
       identity_label: title.a2,
       group: "working",
       symbol: "○",
-      status_label: "Done",
+      status_code: "done",
       activity: "stopped",
       elapsed: "2m",
       waiting_on_descendants: true,
@@ -243,7 +243,7 @@ export function sidebarScene(content: SceneContent, folds: SceneFolds, nowMs: nu
       identity_label: "인터뷰 질문 정리",
       group: "working",
       symbol: "?",
-      status_label: "Question",
+      status_code: "question",
       demand: "question",
       elapsed: "1m",
       delegated: true,
@@ -251,21 +251,21 @@ export function sidebarScene(content: SceneContent, folds: SceneFolds, nowMs: nu
       lineage_parent_pane_id: "a2",
       lineage_depth: 1,
     }),
-    agent({ pane_id: "a2c2", identity_label: "사례 조사", group: "working", symbol: "●", status_label: "Working", activity: "working", elapsed: "50s", delegated: true, lineage_parent_pane_id: "a2", lineage_depth: 1 }),
+    agent({ pane_id: "a2c2", identity_label: "사례 조사", group: "working", symbol: "●", status_code: "working", activity: "working", elapsed: "50s", delegated: true, lineage_parent_pane_id: "a2", lineage_depth: 1 }),
     agent({
       pane_id: "a3",
       identity_label: title.a3,
       group: "needs_you",
       symbol: "?",
-      status_label: "Question",
+      status_code: "question",
       demand: "question",
       elapsed: "30s",
       unread: true,
       detail: "프로덕션 배포 전에 변경 내용을 확인해 주세요",
     }),
-    agent({ pane_id: "q1", identity_label: "브라우저 표시 확인", group: "needs_you", symbol: "?", status_label: "Question", demand: "question", elapsed: "40m", detail: "주소 경계를 어디에 둘까요?" }),
-    agent({ pane_id: "q2", identity_label: "검색 팔레트", group: "done", symbol: "✓", status_label: "Done", activity: "stopped", elapsed: "1h" }),
-    agent({ pane_id: "e1", identity_label: "단축키 연결", group: "working", symbol: "●", status_label: "Working", activity: "working", elapsed: "2h" }),
+    agent({ pane_id: "q1", identity_label: "브라우저 표시 확인", group: "needs_you", symbol: "?", status_code: "question", demand: "question", elapsed: "40m", detail: "주소 경계를 어디에 둘까요?" }),
+    agent({ pane_id: "q2", identity_label: "검색 팔레트", group: "done", symbol: "✓", status_code: "done", activity: "stopped", elapsed: "1h" }),
+    agent({ pane_id: "e1", identity_label: "단축키 연결", group: "working", symbol: "●", status_code: "working", activity: "working", elapsed: "2h" }),
   ];
 
   if (devices !== "one") agents.push(...HOME_AGENTS[content]);
@@ -322,33 +322,33 @@ export function sidebarScene(content: SceneContent, folds: SceneFolds, nowMs: nu
 
 const HOME_AGENTS: Record<SceneContent, AgentRow[]> = {
   reference: [
-    agent({ pane_id: "h1", identity_label: "블로그 초안 정리", group: "needs_you", symbol: "?", status_label: "Question", demand: "question", elapsed: "2m", unread: true, detail: "톤을 이대로 갈까요?" }),
-    agent({ pane_id: "h2", identity_label: "두 프로젝트 비교 조사", agent_kind: "codex", group: "seen", symbol: "○", status_label: "Idle", elapsed: "14m" }),
+    agent({ pane_id: "h1", identity_label: "블로그 초안 정리", group: "needs_you", symbol: "?", status_code: "question", demand: "question", elapsed: "2m", unread: true, detail: "톤을 이대로 갈까요?" }),
+    agent({ pane_id: "h2", identity_label: "두 프로젝트 비교 조사", agent_kind: "codex", group: "seen", symbol: "○", status_code: "idle", elapsed: "14m" }),
   ],
   long: [
-    agent({ pane_id: "h1", identity_label: "여러 프로젝트에 걸친 블로그 초안 정리와 어투 통일 작업을 이어서 진행하는 에이전트", group: "needs_you", symbol: "?", status_label: "Question", demand: "question", elapsed: "2m", unread: true, detail: "톤을 이대로 갈까요, 아니면 조금 더 딱딱하게 다듬을까요?" }),
-    agent({ pane_id: "h2", identity_label: "두 프로젝트의 구조와 의존성을 나란히 비교 조사하는 작업", agent_kind: "codex", group: "seen", symbol: "○", status_label: "Idle", elapsed: "14m" }),
+    agent({ pane_id: "h1", identity_label: "여러 프로젝트에 걸친 블로그 초안 정리와 어투 통일 작업을 이어서 진행하는 에이전트", group: "needs_you", symbol: "?", status_code: "question", demand: "question", elapsed: "2m", unread: true, detail: "톤을 이대로 갈까요, 아니면 조금 더 딱딱하게 다듬을까요?" }),
+    agent({ pane_id: "h2", identity_label: "두 프로젝트의 구조와 의존성을 나란히 비교 조사하는 작업", agent_kind: "codex", group: "seen", symbol: "○", status_code: "idle", elapsed: "14m" }),
   ],
 };
 
 const REMOTE_AGENTS: Record<SceneContent, AgentRow[]> = {
   reference: [
-    agent({ pane_id: "remote:mini:pane:1", identity_label: "배치 감시", agent_kind: "codex", group: "needs_you", symbol: "?", status_label: "Question", demand: "question", elapsed: "5m", unread: true, detail: "풀 리퀘스트 머지할까요?" }),
-    agent({ pane_id: "remote:mini:pane:2", identity_label: "릴리스 빌드 확인", agent_kind: "codex", group: "working", symbol: "●", status_label: "Working", activity: "working", elapsed: "1m" }),
+    agent({ pane_id: "remote:mini:pane:1", identity_label: "배치 감시", agent_kind: "codex", group: "needs_you", symbol: "?", status_code: "question", demand: "question", elapsed: "5m", unread: true, detail: "풀 리퀘스트 머지할까요?" }),
+    agent({ pane_id: "remote:mini:pane:2", identity_label: "릴리스 빌드 확인", agent_kind: "codex", group: "working", symbol: "●", status_code: "working", activity: "working", elapsed: "1m" }),
   ],
   long: [
-    agent({ pane_id: "remote:mini:pane:1", identity_label: "밤새 도는 배치 작업의 실패 원인과 재시도 여부를 감시하는 에이전트", agent_kind: "codex", group: "needs_you", symbol: "?", status_label: "Question", demand: "question", elapsed: "5m", unread: true, detail: "풀 리퀘스트 머지할까요?" }),
-    agent({ pane_id: "remote:mini:pane:2", identity_label: "릴리스 빌드 확인", agent_kind: "codex", group: "working", symbol: "●", status_label: "Working", activity: "working", elapsed: "1m" }),
+    agent({ pane_id: "remote:mini:pane:1", identity_label: "밤새 도는 배치 작업의 실패 원인과 재시도 여부를 감시하는 에이전트", agent_kind: "codex", group: "needs_you", symbol: "?", status_code: "question", demand: "question", elapsed: "5m", unread: true, detail: "풀 리퀘스트 머지할까요?" }),
+    agent({ pane_id: "remote:mini:pane:2", identity_label: "릴리스 빌드 확인", agent_kind: "codex", group: "working", symbol: "●", status_code: "working", activity: "working", elapsed: "1m" }),
   ],
 };
 
 /** Enough more agents on `mini` for ten or more Needs You, past the Projects list's cap, an unseen Done and a second Working. */
 const BUSY_AGENTS: AgentRow[] = [
   ...Array.from({ length: 11 }, (_, index) =>
-    agent({ pane_id: `remote:mini:busy:${index}`, identity_label: `배치 ${index + 1}`, agent_kind: "codex", group: "needs_you", symbol: "?", status_label: "Question", demand: "question", elapsed: "3m", detail: "확인이 필요합니다" }),
+    agent({ pane_id: `remote:mini:busy:${index}`, identity_label: `배치 ${index + 1}`, agent_kind: "codex", group: "needs_you", symbol: "?", status_code: "question", demand: "question", elapsed: "3m", detail: "확인이 필요합니다" }),
   ),
-  agent({ pane_id: "remote:mini:done:1", identity_label: "빌드 정리", agent_kind: "codex", group: "done", symbol: "✓", status_label: "Done", activity: "stopped", elapsed: "9m" }),
-  agent({ pane_id: "remote:mini:working:2", identity_label: "로그 수집", agent_kind: "codex", group: "working", symbol: "●", status_label: "Working", activity: "working", elapsed: "2m" }),
+  agent({ pane_id: "remote:mini:done:1", identity_label: "빌드 정리", agent_kind: "codex", group: "done", symbol: "✓", status_code: "done", activity: "stopped", elapsed: "9m" }),
+  agent({ pane_id: "remote:mini:working:2", identity_label: "로그 수집", agent_kind: "codex", group: "working", symbol: "●", status_code: "working", activity: "working", elapsed: "2m" }),
 ];
 
 /** The registration the core keeps for a project on `deviceId`; `home` marks the device's Home. */

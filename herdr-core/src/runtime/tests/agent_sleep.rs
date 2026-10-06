@@ -172,7 +172,7 @@ fn a_slept_agent_keeps_its_row_after_herdr_forgets_it() {
             &slept["agent_kind"],
             &slept["identity_label"],
             &slept["symbol"],
-            &slept["status_label"],
+            &slept["status_code"],
             &slept["group"],
             &slept["sleep"]["state"],
         ),
@@ -181,7 +181,7 @@ fn a_slept_agent_keeps_its_row_after_herdr_forgets_it() {
             &serde_json::json!("claude"),
             &serde_json::json!("Review the parser"),
             &serde_json::json!("\u{263e}"),
-            &serde_json::json!("Sleeping \u{b7} resumes when opened"),
+            &serde_json::json!("sleeping"),
             &serde_json::json!("seen"),
             &serde_json::json!("sleeping"),
         )
@@ -245,7 +245,7 @@ fn visiting_the_tab_wakes_the_agent_once() {
     runtime.ingest_session(Ok(session(None)));
     assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2")));
     assert_eq!(row(&runtime)["sleep"]["state"], "waking");
-    assert_eq!(row(&runtime)["status_label"], "Waking\u{2026}");
+    assert_eq!(row(&runtime)["status_code"], "waking");
     assert!(!runtime.dispatch_json(&event(
         "agent_wake",
         serde_json::json!({"pane_id": SLEEPER})
@@ -276,10 +276,7 @@ fn a_failed_wake_says_why_and_can_be_retried_fresh() {
         failed["sleep"]["reason"],
         "The conversation couldn\u{2019}t be resumed."
     );
-    assert_eq!(
-        failed["status_label"],
-        "Sleeping \u{b7} couldn\u{2019}t resume"
-    );
+    assert_eq!(failed["status_code"], "sleep_failed");
     assert!(runtime.dispatch_json(&event(
         "agent_wake",
         serde_json::json!({"pane_id": SLEEPER, "fresh": true})

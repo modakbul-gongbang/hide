@@ -1523,7 +1523,7 @@ fn read_record_is_scoped_by_pane_id_namespace_across_servers() {
             .iter()
             .map(|agent| {
                 let mut projected = pane(&agent.pane_id, "/tmp/hide-remote-tree");
-                projected.status_label = agent.status_label.clone();
+                projected.status_code = agent.status_code;
                 projected.requires_close_confirmation = agent.requires_close_confirmation;
                 projected
             })
@@ -1578,7 +1578,7 @@ fn read_record_is_scoped_by_pane_id_namespace_across_servers() {
                         (
                             agent.pane_id.clone(),
                             (
-                                agent.status_label.clone(),
+                                agent.status_code,
                                 agent.requires_close_confirmation,
                                 agent.group.clone(),
                             ),
@@ -1606,7 +1606,7 @@ fn read_record_is_scoped_by_pane_id_namespace_across_servers() {
                     .map(|pane| {
                         (
                             pane.id.clone(),
-                            (pane.status_label.clone(), pane.requires_close_confirmation),
+                            (pane.status_code, pane.requires_close_confirmation),
                         )
                     })
                     .collect::<BTreeMap<_, _>>()
@@ -1639,12 +1639,12 @@ fn read_record_is_scoped_by_pane_id_namespace_across_servers() {
     let mini = stored_agents(&runtime, "mini");
     assert_eq!(
         mini["remote:mini:pane:w9:p1"],
-        ("Idle".to_owned(), false, "seen".to_owned()),
+        (AgentStatusCode::Idle, false, "seen".to_owned()),
         "a stopped remote pane the operator has read closes without a prompt"
     );
     assert_eq!(
         mini["remote:mini:pane:w9:p2"],
-        ("Done".to_owned(), false, "done".to_owned()),
+        (AgentStatusCode::Done, false, "done".to_owned()),
         "an unread completion does not create a close prompt"
     );
     // The pane tree is what the remote pane surface reads, so the read
@@ -1652,12 +1652,12 @@ fn read_record_is_scoped_by_pane_id_namespace_across_servers() {
     let tree = tree_panes(&runtime, "mini");
     assert_eq!(
         tree["remote:mini:pane:w9:p1"],
-        ("Idle".to_owned(), false),
+        (AgentStatusCode::Idle, false),
         "the remote pane tree carries the read pane's answer, not the projected one"
     );
     assert_eq!(
         tree["remote:mini:pane:w9:p2"],
-        ("Done".to_owned(), false),
+        (AgentStatusCode::Done, false),
         "the pane tree carries the completion protection decision"
     );
 
@@ -1788,14 +1788,17 @@ fn read_record_reaches_the_pane_tree_and_not_only_the_agent_rows() {
         .map(|pane| {
             (
                 pane.id.as_str(),
-                pane.status_label.as_str(),
+                pane.status_code,
                 pane.requires_close_confirmation,
             )
         })
         .collect::<Vec<_>>();
     assert_eq!(
         panes,
-        vec![("plain:p1", "Idle", false), ("plain:p2", "Done", false)],
+        vec![
+            ("plain:p1", AgentStatusCode::Idle, false),
+            ("plain:p2", AgentStatusCode::Done, false)
+        ],
         "the read pane and the unread completion both close without a prompt"
     );
 
@@ -1806,10 +1809,7 @@ fn read_record_reaches_the_pane_tree_and_not_only_the_agent_rows() {
             .expect("every agent pane is in the tree");
         assert_eq!(
             (pane.1, pane.2),
-            (
-                agent.status_label.as_str(),
-                agent.requires_close_confirmation
-            ),
+            (agent.status_code, agent.requires_close_confirmation),
             "pane {} disagrees with its agent row",
             agent.pane_id
         );

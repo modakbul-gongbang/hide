@@ -6,6 +6,9 @@
 
 import type { ProviderUsage } from "./generated/hided-ws";
 
+/** The status codes the core sends in `status_code`; the catalogs name one word for each (agents.status.*). */
+export type AgentStatusCode = "error" | "question" | "approval" | "working" | "done" | "idle" | "unknown" | "waiting" | "attached" | "sleeping" | "waking" | "sleep_failed";
+
 export type AgentRow = {
   id: string;
   pane_id: string;
@@ -18,7 +21,7 @@ export type AgentRow = {
   device_label?: string;
   symbol: string;
   group: string;
-  status_label: string;
+  status_code: AgentStatusCode;
   detail?: string | null;
   /** Everything the agent last said through its hooks, uncut: the request, then the progress, one per line; absent when it said nothing. */
   message?: string | null;
@@ -133,7 +136,7 @@ export type AgentChip = {
   activity: string;
   emphasized: boolean;
   symbol: string;
-  status_label: string;
+  status_code: AgentStatusCode;
   delegated: boolean;
 };
 
@@ -174,9 +177,12 @@ export type PullRequest = {
   closing_issues?: IssueReference[];
 };
 
+/** Why a `gh` lookup failed, as the core names it; the catalogs word each (issueSettings.gh*). */
+export type GithubFailureCategory = "not_installed" | "not_logged_in" | "no_github_remote" | "network_or_rate_limit";
+
 /** How a repository's `gh` lookup is doing, apart from what it found (`GithubStatusSnapshot`). */
 export type GithubStatus = {
-  failure_category: string | null;
+  failure_category: GithubFailureCategory | null;
   available: boolean;
   loading: boolean;
   stale: boolean;
@@ -387,7 +393,7 @@ export type PaneRow = {
   herdr_label: string | null;
   terminal_title: string | null;
   cwd: string;
-  status_label: string;
+  status_code: AgentStatusCode;
   requires_close_confirmation: boolean;
   requires_close_status_check: boolean;
   identity_label: string | null;
@@ -397,7 +403,7 @@ export type PaneRow = {
   sleep_action?: AgentSleepAction;
 };
 
-export type TabAgent = Pick<AgentRow, "agent_kind" | "symbol" | "demand" | "activity" | "emphasized" | "waiting_on_descendants" | "status_label">;
+export type TabAgent = Pick<AgentRow, "agent_kind" | "symbol" | "demand" | "activity" | "emphasized" | "waiting_on_descendants" | "status_code">;
 
 export type Tab = {
   agent?: TabAgent | null;

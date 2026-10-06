@@ -1,7 +1,7 @@
 //! The two approved human causes share the durable store reservation and
 //! existing external channels. No retry can follow a consumed reservation.
 use super::ledger::{Ledger, State};
-use super::worker::HumanNotice;
+use super::worker::{HumanNotice, HumanNoticeKind};
 
 const NOTICE_LIMIT: usize = 8;
 
@@ -44,8 +44,9 @@ pub(super) fn claim(ledger: &mut Ledger, now: u64) -> Vec<HumanNotice> {
         notices.push(HumanNotice {
             id: letter.id.clone(),
             actor: target.clone(),
-            title: "Hide: observer has not confirmed a warning".into(),
-            body: format!("{} has not confirmed the first inactivity warning about {} for 60 minutes. Inspect it with hide request show {}.", letter.recipient.name, target.name, letter.id),
+            kind: HumanNoticeKind::ObserverUnconfirmed,
+            recipient: letter.recipient.name.clone(),
+            about: target.name.clone(),
         });
         for receipt in ledger
             .letters
@@ -66,8 +67,9 @@ pub(super) fn claim(ledger: &mut Ledger, now: u64) -> Vec<HumanNotice> {
             notices.push(HumanNotice {
                 id: letter.id.clone(),
                 actor: letter.sender.clone(),
-                title: "Hide: letter undelivered".into(),
-                body: format!("{} did not receive {} within 60 minutes. Inspect it with hide request show {}.", letter.recipient.name, letter.id, letter.id),
+                kind: HumanNoticeKind::LetterUndelivered,
+                recipient: letter.recipient.name.clone(),
+                about: String::new(),
             });
         }
     }
@@ -116,6 +118,17 @@ mod tests {
         let notices = claim(&mut ledger, due);
         assert_eq!(notices.len(), 1);
         assert_eq!(notices[0].actor.pane_id, "target");
+        assert_eq!(notices[0].kind, HumanNoticeKind::ObserverUnconfirmed);
+        assert_eq!(
+            (notices[0].recipient.as_str(), notices[0].about.as_str()),
+            ("parent", "target")
+        );
+        assert!(
+            notices[0]
+                .english_body()
+                .ends_with(&format!("hide request show {}.", notices[0].id)),
+            "the Herdr notification names the command an agent runs"
+        );
         assert_eq!(ledger.letters.len(), 2);
         assert!(
             ledger.letters.iter().all(|letter| letter

@@ -56,7 +56,7 @@ function agent(pane: string, verb: RequestVerb | null, extra: Partial<AgentRow> 
     agent_kind: "claude",
     symbol: "●",
     group: verb === "working" ? "working" : "idle",
-    status_label: "",
+    status_code: "unknown",
     changed_at_unix_ms: NOW,
     emphasized: false,
     unread: false,

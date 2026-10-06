@@ -1,6 +1,7 @@
 import type { TFunction } from "i18next";
 import type { Subtree, SubtreeRow, SubtreeState } from "../close";
 import { useInterfaceTranslation } from "../i18n/client";
+import { statusText } from "../agentStatus";
 import type { MessageKey } from "../i18n/catalogs";
 import { markTone } from "../agentRow";
 import { DeviceChip } from "./device-chip";
@@ -61,6 +62,7 @@ export function SubtreeList({ subtree, targetDevice, scope = "close" }: { subtre
 }
 
 function SubtreeItem({ row, targetDevice }: { row: SubtreeRow; targetDevice: string | undefined }) {
+  const { t } = useInterfaceTranslation();
   const { agent } = row;
   const quiet = row.state === "quiet";
   const bright = row.target || !quiet;
@@ -68,17 +70,17 @@ function SubtreeItem({ row, targetDevice }: { row: SubtreeRow; targetDevice: str
   return (
     <li
       tabIndex={0}
-      aria-label={[agent.identity_label, device, agent.status_label].filter(Boolean).join(", ")}
+      aria-label={[agent.identity_label, device, statusText(t, agent.status_code)].filter(Boolean).join(", ")}
       data-subtree-row={agent.pane_id}
       data-subtree-state={row.state}
       data-subtree-target={row.target ? "true" : undefined}
       className={`flex min-w-0 items-start gap-xs rounded-xs px-xs py-xxs outline-none focus-visible:ring-2 focus-visible:ring-ring ${bright ? "" : "opacity-(--opacity-read-status)"}`}
       style={{ paddingInlineStart: `calc(var(--spacing-xs) + var(--spacing-lg) * ${row.depth})` }}
     >
-      <RowMark symbol={agent.symbol} tone={markTone(agent)} status={quiet ? agent.status_label : null} />
+      <RowMark symbol={agent.symbol} tone={markTone(agent)} status={quiet ? statusText(t, agent.status_code) : null} />
       <span className="flex min-w-0 flex-1 flex-wrap items-baseline gap-x-xs gap-y-xxs" aria-hidden="true">
         <span className={`min-w-0 break-words ${row.target ? "font-medium text-foreground" : "text-foreground"}`}>{agent.identity_label}</span>
-        {quiet ? null : <span className="shrink-0 text-caption text-subtle-foreground" data-subtree-status="true">{agent.status_label}</span>}
+        {quiet ? null : <span className="shrink-0 text-caption text-subtle-foreground" data-subtree-status="true">{statusText(t, agent.status_code)}</span>}
         {device ? <DeviceChip label={device} className="max-w-full" /> : null}
       </span>
     </li>

@@ -529,7 +529,7 @@ pub(crate) mod tests {
                 herdr_label: None,
                 terminal_title: None,
                 cwd: "/checkouts/fixture".into(),
-                status_label: "Attached".into(),
+                status_code: crate::model::AgentStatusCode::Attached,
                 requires_close_confirmation: false,
                 requires_close_status_check: false,
                 identity_label: None,

@@ -259,7 +259,7 @@ pub(crate) fn checkout_panes(
                         .or(pane.identity_label.as_ref())
                         .cloned()
                         .unwrap_or_else(|| pane.id.clone()),
-                    status: pane.status_label.clone(),
+                    status: pane.status_code.english().to_owned(),
                     session_id: agent.and_then(|a| a.session_id.clone()),
                     parent_pane_id: agent
                         .and_then(|a| a.spawned_from_pane_id.as_ref())
@@ -346,7 +346,7 @@ mod tests {
                         herdr_label: None,
                         terminal_title: None,
                         cwd: "/fixture".to_owned(),
-                        status_label: "Unknown".to_owned(),
+                        status_code: crate::model::AgentStatusCode::Unknown,
                         requires_close_confirmation: false,
                         requires_close_status_check: false,
                         identity_label: None,

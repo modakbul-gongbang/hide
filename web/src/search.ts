@@ -8,6 +8,7 @@ import { addressUrl } from "./browserViews";
 import { checkoutPlaces } from "./navigation";
 import { deviceConnected, frontDeviceId, localDeviceId } from "./devices";
 import type { TFunction } from "i18next";
+import { statusText } from "./agentStatus";
 import type { MessageKey } from "./i18n/catalogs";
 import { translate } from "./i18n/client";
 import { herdrPaneId, projectsOf } from "./remote";
@@ -169,7 +170,7 @@ function deviceChip(device: Device, front: string): SearchEntry["chip"] {
 }
 
 /** An agent's state as the sidebar colours it (`chipTone`'s rules, as tones). */
-function agentStatus(agent: Pick<AgentRow, "demand" | "activity" | "emphasized" | "status_label">): EntryStatus {
+function agentStatus(agent: Pick<AgentRow, "demand" | "activity" | "emphasized" | "status_code">, t: TFunction<"translation">): EntryStatus {
   const tone: Tone =
     agent.demand === "error"
       ? "failed"
@@ -180,11 +181,11 @@ function agentStatus(agent: Pick<AgentRow, "demand" | "activity" | "emphasized" 
           : agent.activity === "stopped" && agent.emphasized
             ? "done"
             : "muted";
-  return { tone, label: agent.status_label };
+  return { tone, label: statusText(t, agent.status_code) };
 }
 
-export function agentEntry(scope: SearchDevice, agent: AgentRow, place: string | null, front: string): SearchEntry {
-  const sentence = agent.detail || agent.status_label;
+export function agentEntry(scope: SearchDevice, agent: AgentRow, place: string | null, front: string, t: TFunction<"translation">): SearchEntry {
+  const sentence = agent.detail || statusText(t, agent.status_code);
   return {
     id: `agent:${agent.pane_id}`,
     title: agent.identity_label,
@@ -197,7 +198,7 @@ export function agentEntry(scope: SearchDevice, agent: AgentRow, place: string |
     deviceId: scope.device.id,
     chip: deviceChip(scope.device, front),
     agent,
-    status: agentStatus(agent),
+    status: agentStatus(agent, t),
   };
 }
 
@@ -381,7 +382,7 @@ export function searchEntries(rest: SnapshotRest | null, t: TFunction<"translati
   const devices = searchDevices(rest);
   for (const scope of devices) {
     const places = checkoutPlaces(scope.allWorkspaces);
-    for (const agent of scope.agents) entries.push(agentEntry(scope, agent, places.get(agent.pane_id) ?? null, front));
+    for (const agent of scope.agents) entries.push(agentEntry(scope, agent, places.get(agent.pane_id) ?? null, front, t));
     for (const workspace of scope.workspaces) {
       entries.push(projectEntry(scope, workspace, front));
       for (const checkout of workspace.checkouts) entries.push(checkoutEntry(scope, workspace, checkout, front));

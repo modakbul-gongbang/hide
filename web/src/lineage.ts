@@ -5,6 +5,7 @@
 // click's pending, failed and retry states are its answer, never a guess.
 
 import type { TFunction } from "i18next";
+import { statusText } from "./agentStatus";
 import type { AgentChip, LineageStep, PaneFocusRequest, PaneRow } from "./snapshot";
 
 /**
@@ -45,8 +46,8 @@ export function directChildren(pane: PaneRow): AgentChip[] {
 }
 
 /** A chip's full name for its tooltip and accessible name: who, what state, and what it said. */
-export function chipTitle(chip: AgentChip): string {
-  return [chip.label, chip.status_label, chip.detail].filter(Boolean).join(" · ");
+export function chipTitle(t: TFunction<"translation">, chip: AgentChip): string {
+  return [chip.label, statusText(t, chip.status_code), chip.detail].filter(Boolean).join(" · ");
 }
 
 /**

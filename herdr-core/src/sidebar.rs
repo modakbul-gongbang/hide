@@ -3,7 +3,7 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 use serde::Deserialize;
 use serde_json::Value;
 
-use crate::model::{PaneLayoutDirection, PaneReadRecord, SidebarAgentSnapshot};
+use crate::model::{AgentStatusCode, PaneLayoutDirection, PaneReadRecord, SidebarAgentSnapshot};
 
 /// Event provenance belongs to the local replica, not the external wire.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -613,23 +613,21 @@ pub fn sync_checkout_purposes(
 /// No view ever shows an axis value, so nothing underscored can reach the
 /// screen.
 /// The status word of a root waiting on its children.
-const WAITING_ON_DESCENDANTS_LABEL: &str = "Waiting";
-
-fn agent_status_label(
+fn agent_status_code(
     demand: AgentDemand,
     activity: AgentActivity,
     completed: bool,
     unread: bool,
-) -> &'static str {
+) -> AgentStatusCode {
     match demand {
-        AgentDemand::Error => "Error",
-        AgentDemand::Question => "Question",
-        AgentDemand::Approval => "Approval",
+        AgentDemand::Error => AgentStatusCode::Error,
+        AgentDemand::Question => AgentStatusCode::Question,
+        AgentDemand::Approval => AgentStatusCode::Approval,
         AgentDemand::None => match activity {
-            AgentActivity::Working => "Working",
-            AgentActivity::Stopped if completed && unread => "Done",
-            AgentActivity::Stopped => "Idle",
-            AgentActivity::Unknown => "Unknown",
+            AgentActivity::Working => AgentStatusCode::Working,
+            AgentActivity::Stopped if completed && unread => AgentStatusCode::Done,
+            AgentActivity::Stopped => AgentStatusCode::Idle,
+            AgentActivity::Unknown => AgentStatusCode::Unknown,
         },
     }
 }
@@ -1038,7 +1036,7 @@ pub fn agent_chip(agent: &SidebarAgentSnapshot) -> crate::model::AgentChipSnapsh
         activity: agent.activity.clone(),
         emphasized: agent.emphasized,
         symbol: agent.symbol.clone(),
-        status_label: agent.status_label.clone(),
+        status_code: agent.status_code,
         delegated: agent.delegated,
     }
 }
@@ -1280,12 +1278,11 @@ fn derive_from_axes(agent: &mut SidebarAgentSnapshot) {
     // A row the operator still has to deal with is drawn bright; everything
     // already read or merely running is subdued.
     agent.emphasized = matches!(group, AgentGroup::NeedsYou | AgentGroup::Done);
-    agent.status_label = if waiting {
-        WAITING_ON_DESCENDANTS_LABEL
+    agent.status_code = if waiting {
+        AgentStatusCode::Waiting
     } else {
-        agent_status_label(demand, activity, agent.completed, unread)
-    }
-    .to_owned();
+        agent_status_code(demand, activity, agent.completed, unread)
+    };
     let (status_word_visible, detail) = agent_second_line(
         group,
         demand,
@@ -1302,7 +1299,7 @@ fn derive_from_axes(agent: &mut SidebarAgentSnapshot) {
     // and word say that its process is gone until it is opened (PRD B10).
     if let Some(sleep) = &agent.sleep {
         agent.symbol = crate::agent_sleep::SLEEPING_SYMBOL.to_owned();
-        agent.status_label = crate::agent_sleep::status_label(sleep).to_owned();
+        agent.status_code = crate::agent_sleep::status_code(sleep);
     }
 }
 
@@ -1382,7 +1379,7 @@ fn project_agent(agent: SessionAgentPayload) -> Result<SidebarAgentSnapshot, Str
         group: String::new(),
         symbol: String::new(),
         emphasized: false,
-        status_label: String::new(),
+        status_code: AgentStatusCode::Unknown,
         requires_close_confirmation: false,
         requires_close_status_check: false,
         identity_label,
@@ -1959,7 +1956,9 @@ mod tests {
 
     #[test]
     fn workspace_summary_uses_physical_ownership_priority_and_unique_panes() {
-        use crate::model::{CheckoutSnapshot, PaneSnapshot, TabSnapshot, WorkspaceSnapshot};
+        use crate::model::{
+            AgentStatusCode, CheckoutSnapshot, PaneSnapshot, TabSnapshot, WorkspaceSnapshot,
+        };
         let checkout = |id: &str, panes: &[&str]| CheckoutSnapshot {
             id: id.to_owned(),
             tabs: vec![TabSnapshot {
@@ -1972,7 +1971,7 @@ mod tests {
                         herdr_label: None,
                         terminal_title: None,
                         cwd: "/fixture".to_owned(),
-                        status_label: "Unknown".to_owned(),
+                        status_code: AgentStatusCode::Unknown,
                         requires_close_confirmation: false,
                         requires_close_status_check: false,
                         identity_label: None,
@@ -2217,7 +2216,7 @@ mod tests {
             .find(|agent| agent.pane_id == "idle")
             .expect("idle agent");
         assert_eq!(idle.group, "seen");
-        assert_eq!(idle.status_label, "Idle");
+        assert_eq!(idle.status_code, AgentStatusCode::Idle);
         assert_eq!(idle.symbol, "○");
         let done = projection
             .agents
@@ -2225,7 +2224,7 @@ mod tests {
             .find(|agent| agent.pane_id == "done")
             .expect("completed agent");
         assert_eq!(done.group, "done");
-        assert_eq!(done.status_label, "Done");
+        assert_eq!(done.status_code, AgentStatusCode::Done);
         assert_eq!(done.symbol, "✓");
         assert_eq!(
             projection.agents.len(),
@@ -2409,69 +2408,70 @@ mod tests {
     /// AC10. No view builds a label out of an axis value, so nothing
     /// underscored can reach the screen.
     #[test]
-    fn axes_status_labels_are_short_human_words() {
+    fn axes_map_to_one_status_code_each() {
         let labels = [
             (
                 AgentDemand::Question,
                 AgentActivity::Unknown,
                 false,
                 true,
-                "Question",
+                AgentStatusCode::Question,
             ),
             (
                 AgentDemand::Approval,
                 AgentActivity::Unknown,
                 false,
                 true,
-                "Approval",
+                AgentStatusCode::Approval,
             ),
             (
                 AgentDemand::Error,
                 AgentActivity::Unknown,
                 false,
                 true,
-                "Error",
+                AgentStatusCode::Error,
             ),
             (
                 AgentDemand::None,
                 AgentActivity::Working,
                 false,
                 true,
-                "Working",
+                AgentStatusCode::Working,
             ),
             (
                 AgentDemand::None,
                 AgentActivity::Stopped,
                 true,
                 true,
-                "Done",
+                AgentStatusCode::Done,
             ),
             (
                 AgentDemand::None,
                 AgentActivity::Stopped,
                 false,
                 true,
-                "Idle",
+                AgentStatusCode::Idle,
             ),
             (
                 AgentDemand::None,
                 AgentActivity::Stopped,
                 true,
                 false,
-                "Idle",
+                AgentStatusCode::Idle,
             ),
             (
                 AgentDemand::None,
                 AgentActivity::Unknown,
                 false,
                 true,
-                "Unknown",
+                AgentStatusCode::Unknown,
             ),
         ];
         for (demand, activity, completed, unread, expected) in labels {
-            let label = agent_status_label(demand, activity, completed, unread);
-            assert_eq!(label, expected);
-            assert!(!label.contains('_'), "{label} leaks an axis value");
+            assert_eq!(
+                agent_status_code(demand, activity, completed, unread),
+                expected
+            );
         }
     }
 

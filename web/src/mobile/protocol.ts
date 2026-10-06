@@ -8,6 +8,7 @@
 
 import type { TFunction } from "i18next";
 import type { MessageKey } from "../i18n/catalogs";
+import type { AgentStatusCode } from "../snapshot";
 
 export type Tone = "error" | "warning" | "working" | "success" | "subtle";
 
@@ -25,7 +26,7 @@ export type PhoneAgent = {
   /** When the Mac's core last saw this agent change state (epoch ms); the phone counts the elapsed time from it. */
   changed_at_unix_ms: number | null;
   line: { text: string; tone: "error" | "warning" | "news" } | null;
-  status_label: string;
+  status_code: AgentStatusCode;
   demand: string;
 };
 
@@ -60,8 +61,10 @@ export type StartTarget = {
   /** `home:<device_id>` for a device's Home, else the checkout's id. */
   id: string;
   device_id: string;
-  label: string;
-  device_label: string;
+  /** The place on the device; null is the device's Home. */
+  place: string | null;
+  /** The device's name; null is this Mac. */
+  device_label: string | null;
   connected: boolean;
 };
 
@@ -77,7 +80,7 @@ export type StartCatalog = {
 
 export type ServerFrame =
   | { type: "paired"; credential: string; phone_id: string; name: string }
-  | { type: "hello"; mac_name: string; phone_id: string; name: string | null; vapid_public_key: string; notifications: Notifications }
+  | { type: "hello"; mac_name: string | null; phone_id: string; name: string | null; vapid_public_key: string; notifications: Notifications }
   | { type: "meta"; push_mode: PushMode; other_phones: number }
   /** `interface_language` is the core's explicit choice as stored (en, ko, zh-CN, ja), or null while the phone follows its own language. */
   | { type: "agents"; groups: AgentGroup[]; interface_language: string | null }

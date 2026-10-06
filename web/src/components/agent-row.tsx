@@ -58,7 +58,7 @@ export const AgentRowItem = memo(function AgentRowItem({
   const hasChildren = childRows.length > 0;
   const attention = agent.group === "needs_you" || agent.unread;
   const titleTone = agent.delegated && !attention ? "text-subtle-foreground" : attention || agent.emphasized ? "text-foreground" : "text-subtle-foreground";
-  const label = rowAccessibleName(agent, device);
+  const label = rowAccessibleName(t, agent, device);
   const hint = [device ? `${agent.identity_label} · ${device}` : agent.identity_label, line?.text].filter(Boolean).join("\n");
   const shownAtRest = line ? lineShownAtRest(line, selected) : false;
   return (
@@ -103,7 +103,7 @@ export const AgentRowItem = memo(function AgentRowItem({
       <StatusMark
         symbol={agent.symbol}
         className={`pointer-events-none mt-xxs ${markTone(agent)}`}
-        data-agent-status-mark={agent.waiting_on_descendants ? "waiting" : agent.status_label}
+        data-agent-status-mark={agent.waiting_on_descendants ? "waiting" : agent.status_code}
       />
       <AgentMark kind={agent.agent_kind} className="pointer-events-none" />
       {/* The row button's name already reads all of this out. */}

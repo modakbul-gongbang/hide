@@ -5,7 +5,8 @@
 // replies and the push subscription travel on /ws and are never cached here.
 //
 // A push carries data, not a sentence: the agent's title, its state
-// ("needs_you" | "done") and its place. The words for the state belong to the
+// ("needs_you" | "done" | "observer_unconfirmed" | "letter_undelivered") and
+// its place. The words for the state belong to the
 // language the phone page is in, so the page posts `{type: "words", words}` on
 // load, on every language change and when a subscription is created, and this
 // worker keeps them in the Cache API (a closed app must still notify). The
@@ -87,13 +88,14 @@ function isWord(value) {
   return typeof value === "string" && value.length > 0;
 }
 
-// Only the two state words are kept, whatever else a page sends.
+// Only the state words are kept, whatever else a page sends. The two
+// delivery words are optional, so a page from before them still works.
 self.addEventListener("message", (event) => {
   const data = event.data;
   if (!data || data.type !== "words" || !data.words || typeof data.words !== "object") return;
-  const { needs_you, done } = data.words;
+  const { needs_you, done, observer_unconfirmed, letter_undelivered } = data.words;
   if (!isWord(needs_you) || !isWord(done)) return;
-  const words = JSON.stringify({ needs_you, done });
+  const words = JSON.stringify({ needs_you, done, observer_unconfirmed, letter_undelivered });
   event.waitUntil(
     caches
       .open(WORDS_CACHE)
