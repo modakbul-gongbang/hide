@@ -8,6 +8,7 @@ another version). docs/BUILD.md, "One toolchain version", owns the reasons.
 """
 import re
 import subprocess
+import tempfile
 import tomllib
 import unittest
 from pathlib import Path
@@ -35,7 +36,8 @@ def tracked(*pathspecs):
                                    cwd=ROOT, text=True).split()
 
 
-def restatements(version, files):
+def restatements(version, root, files):
+    """Lines of `files`, named relative to `root`, that write `version`."""
     escaped = re.escape(version)
     # A whole token: `1.2.3` is not restated by `11.2.3` or `1.2.30`.
     pattern = re.compile(rf'(?:^|[^0-9.]){escaped}(?:$|[^0-9.]|\.(?:$|[^0-9]))')
@@ -43,7 +45,7 @@ def restatements(version, files):
     for relative in files:
         if relative == PIN:
             continue
-        for number, line in enumerate((ROOT / relative).read_text(errors='replace').splitlines(), start=1):
+        for number, line in enumerate((root / relative).read_text(errors='replace').splitlines(), start=1):
             if pattern.search(line):
                 found.append(f'{relative}:{number}: {line.strip()}')
     return found
@@ -59,18 +61,15 @@ class RustToolchainPin(unittest.TestCase):
                         'the rust lane runs rustfmt and Clippy from the pinned toolchain')
 
     def test_no_workflow_script_or_document_restates_the_version(self):
-        found = restatements(channel(), tracked(*RESTATE_SCOPE))
+        found = restatements(channel(), ROOT, tracked(*RESTATE_SCOPE))
         self.assertEqual(found, [], f'the Rust version is written only in {PIN}; '
                                     'refer to the file instead:\n' + '\n'.join(found))
 
     def test_a_restated_version_is_found_as_a_whole_token(self):
         version = channel()
-        probe = ROOT / 'scripts' / 'tests' / f'.probe-{version}.md'
-        try:
-            probe.write_text(f'Rust {version}.\nv1{version}\n{version}1\n')
-            found = restatements(version, [probe.relative_to(ROOT).as_posix()])
-        finally:
-            probe.unlink()
+        with tempfile.TemporaryDirectory() as folder:
+            (Path(folder) / 'probe.md').write_text(f'Rust {version}.\nv1{version}\n{version}1\n')
+            found = restatements(version, Path(folder), ['probe.md'])
         self.assertEqual(len(found), 1, found)
 
     def test_no_script_or_workflow_reaches_a_toolchain_around_rustup(self):

@@ -32,9 +32,9 @@ fn command(executable: &Path, home: &Path) -> Command {
         .env("HOME", home)
         .env("USERPROFILE", home)
         .env("PATH", "")
-        // The kit's program search asks the account's login shell and says in the
-        // log when none is named; the suite's own environment names none, so the
-        // fixture names the system's, and a quiet helper stays a quiet helper.
+        // The helper asks the login shell for the account's PATH and logs a
+        // missing `SHELL`; a fixed one keeps the test from depending on the
+        // environment that runs it (a cleared one has none).
         .env("SHELL", "/bin/sh")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())

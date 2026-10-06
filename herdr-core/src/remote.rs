@@ -3451,7 +3451,7 @@ impl Handler for KnownHostHandler {
         const MAX_FORWARD_CONNECTIONS: usize = 8;
         if self
             .active_forwards
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |current| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |current| {
                 (current < MAX_FORWARD_CONNECTIONS).then_some(current + 1)
             })
             .is_err()
