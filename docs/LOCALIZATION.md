@@ -54,7 +54,7 @@ The manifest has no description, since a static file cannot follow the language.
 
 ## Hardcoded text guard
 
-Product text outside the catalogs is caught by two rules in `web/eslint.config.js`, which `pnpm lint` and the `web checks` lane run on `web/src` (tests, `src/i18n` and `src/gallery` excepted).
+Product text outside the catalogs is caught by two rules in `web/eslint.config.js`, which `pnpm lint` and the `checks` lane run on `web/src` (tests, `src/i18n` and `src/gallery` excepted).
 `i18next/no-literal-string` flags JSX text and the attributes a person reads or hears (`aria-label`, `aria-description`, `aria-roledescription`, `title`, `placeholder`, `alt`, `label`, `description`).
 It lets a keycap name, a product name (Claude, Codex, OpenCode, GitHub, Herdr, Hide, Tailscale, Git), a symbol, a unit and an example path or address through, and does not look inside the `<Kbd>` component or a `t`, `data`, `cn` or label-lookup call; a new allowance is added to that file with the reason, never as an inline disable.
 `no-restricted-syntax` flags any Korean, Chinese or Japanese character in a string or template of product code, so a sentence written in a `.ts` helper is caught too, which is how the shell shipped its Korean text.
