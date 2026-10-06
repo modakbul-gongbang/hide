@@ -1452,6 +1452,29 @@ fn a_worker_its_usage_limit_stopped_waits_and_the_next_start_uses_the_other_runt
     assert_eq!(spawned, Some(Runtime::Codex));
 }
 
+#[test]
+fn a_finished_task_is_unread_until_a_person_opens_it() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let t = h.ready("Read me", &[]);
+    h.done(&f, &t);
+    tick_until(&mut h, &f, &t, TaskState::Done);
+    let unread = |h: &Bench| {
+        h.engine.summary().factories[0]
+            .columns
+            .iter()
+            .flat_map(|column| column.cards.iter())
+            .find(|card| card.task == t)
+            .unwrap()
+            .unread
+    };
+    assert!(unread(&h));
+    h.as_worker(&f, &t, Command::Show { task: t.clone() });
+    assert!(unread(&h), "a worker reading it is not the person");
+    h.op(Command::Show { task: t.clone() });
+    assert!(!unread(&h));
+}
+
 // ------------------------------------------------------------ control
 
 #[test]

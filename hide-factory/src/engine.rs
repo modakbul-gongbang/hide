@@ -588,6 +588,14 @@ impl Engine {
             Command::Status { project } => self.status(project.as_deref()),
             Command::Show { task } => {
                 let (factory, id) = self.resolve(role, &task)?;
+                // A person opening a finished Task has seen it (D-30).
+                if matches!(role, Role::Operator { .. })
+                    && self
+                        .task(&factory, &id)
+                        .is_some_and(|t| t.state == TaskState::Done && !t.seen)
+                {
+                    self.with_task(&factory, &id, |task| task.seen = true);
+                }
                 Ok(json!({"task": self.show(&factory, &id)}))
             }
             Command::Inbox => {

@@ -544,7 +544,7 @@ Fields are added and never renamed or removed.
 | `waiting_for` | For a waiting Task, the predecessors by display id, the environment hold, or `slot`; for a blocked one, `answer` or `predecessor`. |
 | `priority` | The Task's priority. |
 | `since` | When it entered its state. |
-| `unread` | A completion nobody has looked at. |
+| `unread` | A completion nobody has looked at: an operator's `show` of the Task, or answering a notice on it, clears it. |
 | `folded` | A completion older than 3 days, or a purged cancelled Task. |
 | `archived` | A finished Task older than 90 days. |
 | `failures` | Verification failures counted against it. |
