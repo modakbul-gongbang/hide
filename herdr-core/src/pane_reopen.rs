@@ -4,9 +4,13 @@
 //! agent sleep ends it and started again in the same pane with the agent's own
 //! resume arguments, a Codex on its own server (`--no-daemon`, see
 //! `codex_launch`). Nothing is ended before everything a start needs is known,
-//! so a refusal leaves the pane exactly as it was. Every call here runs on a
-//! worker thread, never under `Mutex<Runtime>`; the answer is a code the pane's
-//! popover turns into one line, and Herdr's own words stay in the diagnostic.
+//! so a refusal that is known first leaves the pane exactly as it was. A start
+//! that is refused after the end does not: the pane is left without an agent
+//! (`ReopenFailure::ended`), the conversation is kept, and the runtime tells
+//! the operator once through `last_error` (`pane_reopen.not_restarted`), which
+//! the shell turns into a notice. Every call here runs on a worker thread,
+//! never under `Mutex<Runtime>`; the answer is a code the pane's popover turns
+//! into one line, and Herdr's own words stay in the diagnostic.
 
 use std::path::Path;
 use std::thread;

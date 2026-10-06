@@ -4,6 +4,7 @@ import { useEffect, useMemo, useRef } from "react";
 import { createActions, type Actions } from "./actions";
 import { identity, moveBuffer, tabBufferKey, type BufferKey } from "./buffers";
 import { BrowserHost } from "./BrowserDisplay";
+import { freshError, watchErrorNotices } from "./errorNotice";
 import { DraftRecoveryLine, refreshRecoveryDrafts } from "./DraftRecovery";
 import { pruneDrafts, settleDraft } from "./editor/draft";
 import { ConnectionBadge } from "./badge";
@@ -31,7 +32,6 @@ import { primaryValue, readTheme, resolveTheme } from "./theme";
 import { TooltipProvider } from "./components/ui/tooltip";
 import { useUsageWindowHint } from "./components/weekly-usage";
 import { useUiStore } from "./ui";
-import { viewRefusal } from "./viewLayout";
 import { WorkspaceScreen } from "./WorkspaceScreen";
 import { connectShell, type DispatchFn } from "./ws";
 
@@ -90,32 +90,15 @@ export function App() {
     const unsubscribeScreen = useUiStore.subscribe((state, previous) => {
       if (state.screen !== previous.screen) observeRecent(useShellStore.getState().rest, true);
     });
+    // A failure the operator can act on is a notice rather than only a diagnostic (design 13); it is raised
+    // before the rest of this subscriber runs, as it always was.
+    const unsubscribeNotices = watchErrorNotices();
     const unsubscribe = useShellStore.subscribe((state, previous) => {
       if (state.rest === previous.rest) return;
       // A terminal lives as long as the core streams its pane; released or
       // vanished panes lose theirs here, never on a tab switch (D-05).
       if (state.rest?.terminal?.panes !== previous.rest?.terminal?.panes) retainTerminals();
-      // A command a remote host refused is one the operator can act on (a
-      // lost connection, a close that needs confirming), so it is a notice
-      // rather than only a diagnostic (design 13).
-      // A notice about one device's command does not outlive the device
-      // context it was about.
-      if (state.rest?.navigator?.focused_device_id !== previous.rest?.navigator?.focused_device_id) {
-        useUiStore.getState().setNotice(null);
-      }
-      const error = state.rest?.status?.last_error;
-      const fresh = error && error.occurred_at !== previous.rest?.status?.last_error?.occurred_at ? error : null;
-      if (fresh?.kind.startsWith("remote.control.")) {
-        useUiStore.getState().setNotice({ text: fresh.message, refreshable: fresh.kind === "remote.control.close_status_unknown" });
-      }
-      // A View action or open the core refused changed nothing, and the
-      // operator is told why in the core's words (S7 B19); the keyboard stays
-      // where it is rather than waiting for a move that will not land.
-      const refusal = viewRefusal(fresh);
-      if (refusal) {
-        useUiStore.getState().setNotice({ text: refusal, refreshable: false });
-        useUiStore.getState().setViewFocusRequest(null);
-      }
+      const fresh = freshError(state, previous);
       const waiting = state.rest?.workspace_view?.agent_layout?.waiting ?? 0;
       const previouslyWaiting = previous.rest?.workspace_view?.agent_layout?.waiting ?? 0;
       if (waiting !== previouslyWaiting || state.rest?.workspace_view?.path !== previous.rest?.workspace_view?.path) {
@@ -137,6 +120,7 @@ export function App() {
       window.removeEventListener("pointerdown", endCommit, true);
       window.removeEventListener("keydown", endCommit, true);
       unsubscribeScreen();
+      unsubscribeNotices();
       unsubscribe();
       keyboard();
       configurePaneVisits(() => {});

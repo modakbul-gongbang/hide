@@ -135,7 +135,9 @@ impl Runtime {
 
     /// The worker's answer. A reopened session is confirmed by its own hook
     /// reaching Hide, which is what turns the pane's chip off; a refusal
-    /// leaves the pane as it was with the reason published.
+    /// known before the agent was touched leaves the pane as it was with the
+    /// reason published, and one after the end leaves a pane with no agent
+    /// and the shell's notice (`pane_reopen.not_restarted`).
     pub(crate) fn ingest_pane_reopen(
         &mut self,
         pane_id: &str,
