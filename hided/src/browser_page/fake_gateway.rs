@@ -150,7 +150,8 @@ pub fn recording(
 /// As `recording`, but the gateway ends the commands nobody answers when the
 /// test says so (`Traffic::release`), not after a time: the test orders the
 /// end of what is held against the reads it makes, and nothing waits.
-/// The error answers go out with the next request the gateway receives.
+/// The error answers go out ahead of the answer to the next request the
+/// gateway receives.
 pub fn recording_held(
     script: impl FnMut(&Value) -> Vec<Value> + Send + 'static,
 ) -> (impl FnMut(&Value) -> Vec<Value> + Send + 'static, Seen) {
@@ -196,8 +197,10 @@ fn recording_by(
                 None => pending.push((now, error)),
             }
         }
-        replies.extend(ended);
-        replies
+        // The error answers precede the answer to this request on the socket,
+        // so a client that has read its answer has read them.
+        ended.extend(replies);
+        ended
     };
     (script, seen)
 }
