@@ -89,6 +89,15 @@ test.afterEach(async () => {
       const state = () => shell.evaluate(() => ({ visibility: document.visibilityState, focus: document.hasFocus(), cycle: document.querySelectorAll("[data-cycle]").length, layers: document.querySelectorAll('[data-radix-popper-content-wrapper],[role="dialog"],[role="alertdialog"],[data-slot$="-overlay"],[data-tools-overlay]').length }));
       const host = () => app!.evaluate(({ BrowserWindow }) => { const w = BrowserWindow.getAllWindows()[0]!; return { visible: w.isVisible(), focused: w.isFocused(), throttling: w.webContents.getBackgroundThrottling(), shellFocused: w.webContents.isFocused() }; });
       console.log(JSON.stringify({ ts: new Date().toISOString(), event: "temp.after_failure", shell: await state(), host: await host(), raf_ms: await frame() }));
+      const describe = () => shell.evaluate(() => {
+        const brief = (element: Element | null) => element && ({ tag: element.tagName, id: element.id || null, role: element.getAttribute("role"), slot: element.getAttribute("data-slot"), state: element.getAttribute("data-state"), data: [...element.attributes].filter((a) => a.name.startsWith("data-") || a.name.startsWith("aria-")).map((a) => `${a.name}=${a.value.slice(0, 40)}`).slice(0, 12), text: (element.textContent ?? "").trim().slice(0, 60) });
+        const layers = [...document.querySelectorAll('[data-radix-popper-content-wrapper],[role="dialog"],[role="alertdialog"],[data-slot$="-overlay"],[data-tools-overlay]')].map((element) => { const box = element.getBoundingClientRect(); return { ...brief(element), child: brief(element.firstElementChild), tooltip: element.querySelector('[data-slot="tooltip-content"]') !== null, rect: [box.left, box.top, box.width, box.height].map(Math.round) }; });
+        const hovered = [...document.querySelectorAll(":hover")].slice(-3).map(brief);
+        const opened = [...document.querySelectorAll('[data-state="open"],[data-state="delayed-open"],[data-state="instant-open"]')].map(brief);
+        return { layers, hovered, opened, active: brief(document.activeElement) };
+      });
+      const pointer = () => app!.evaluate(({ BrowserWindow, screen }) => ({ cursor: screen.getCursorScreenPoint(), bounds: BrowserWindow.getAllWindows()[0]!.getContentBounds() }));
+      console.log(JSON.stringify({ event: "temp.layers", dom: await describe(), native: await pointer() }));
       await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.invalidate());
       console.log(JSON.stringify({ ts: new Date().toISOString(), event: "temp.after_invalidate", raf_ms: await frame(), shell: await state() }));
       console.log(hostLog(run.env).filter((line) => String(line.event).startsWith("browser.page_visible") || String(line.event).startsWith("browser.window_return")).slice(-4).map((line) => JSON.stringify(line)).join("\n"));
