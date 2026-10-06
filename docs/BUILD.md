@@ -52,6 +52,7 @@ The version is written only in that file; `scripts/tests/test_rust_toolchain_pin
 A verification run under its own HOME still sources `scripts/toolchain-env.sh`, so rustup looks for the pinned version in the machine's `~/.rustup`: when it is installed there, nothing is downloaded; when it is not, rustup installs it there once, never under the runner HOME.
 
 Moving to a new version is a pull request that changes the file together with whatever the new compiler and Clippy ask of the code, proven by that pull request's CI; a finding is fixed, not silenced with `allow`.
+Dependabot proposes that pull request (`.github/dependabot.yml`), checking every Monday for a newer stable release; whoever takes it up pushes the fixes to it.
 
 ## Two entrypoints
 
