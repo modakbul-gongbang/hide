@@ -76,6 +76,34 @@ Their command, walk and storage bounds remain in the feature cost contracts belo
 Agent registration and spawn records share the durable delivery worker: 2,048 agent records, 4,096 spawn intents, 128 native arguments totaling 8 KiB, the 16 MiB ledger bound and a 64-slot admitted-operation queue.
 The shared `BackgroundRead` has one in-flight request and observes the latest desired request at its next poll; only owners that explicitly cancel and call `join_pending` obtain that shutdown guarantee (`reader.rs`, `session_sync/process_info.rs`).
 
+## The spawn guard hook on a shell call
+
+`PreToolUse` with the `Bash` matcher runs `hide-agent-hooks` before every shell call a Claude Code or Codex agent makes, so it is a high-frequency path that every agent pays and no operator sees (PRD herdr-spawn-guard B13).
+Per input it adds one process start: the helper reads the payload (at most 256 KiB, waiting at most 0.5 seconds), runs a byte test for `herdr` or `HERDR_BIN_PATH`, and exits with no output when neither is there, before it parses JSON, reads a file or starts a child.
+A call that mentions `herdr` without launching an agent (`pane split`, `agent list`) pays one JSON parse and the shell lexer, and still starts nothing.
+Only a launch in a Herdr pane starts a child: one `hide workspace bootstrap`, owned through `hide_platform::process` with the guard's 2.5 second deadline, a 16 KiB output cap, and an end of the child on success, failure and timeout alike.
+The guard keeps no state, runs no timer or worker, takes no lock of the runtime, publishes nothing and fans out no notification; the daemon sees one `bootstrap` request per refused launch, the call `SessionStart` already makes.
+The retained data is the refusal log, capped at 256 KiB with one rotation, and the throttled diagnostic store `delivery` already caps; crossing a cap rotates or suppresses, and never refuses a call.
+A defect, a missing `hide` or a daemon that does not answer lets the shell call run, so the worst the guard can add to an ordinary call is its own bounded wait, never a refusal.
+
+Measure it at the command boundary: the installed command line run as the runtime runs it (`sh -c`, the payload on stdin), wall time per call from the caller's side, against a process-spawn baseline, with the first ten calls discarded as warm-up.
+Report p50, p95 and the load average before and after, and report the idle and driven (launch) paths separately.
+`agents/runs/<slug>/live/bench-latency.py` of the run that introduced the guard is the harness; a release `hide-agent-hooks` on an Apple silicon Mac gave the following, with the machine's load average about 4, so these are not idle-machine floors:
+
+| Call | Samples | p50 | p95 |
+| --- | --- | --- | --- |
+| baseline `sh -c ':'` (process start only) | 300 | 2.8 ms | 4.3 ms |
+| Claude Code, ordinary call (`cargo test`) | 300 | 5.7 ms | 7.2 ms |
+| Codex, ordinary call (`cargo test`) | 300 | 5.6 ms | 8.0 ms |
+| Claude Code, mentions `herdr`, not a launch | 300 | 5.6 ms | 7.1 ms |
+| Claude Code, launch refused (stand-in `hide`) | 100 | 8.9 ms | 12.4 ms |
+| Claude Code, launch refused (real `hide` and daemon, from a Herdr pane) | 20 | 10 ms | 12 ms |
+
+An ordinary call therefore pays about 3 ms over the process-start baseline, and a refused launch about 10 ms in total.
+These numbers prove the helper's cost at that boundary; they do not prove the agent's own time to a first token, and a runtime that serializes hooks on its own schedule can add more.
+A non-`herdr` Bash call was also watched in both TUIs against a private Herdr server and showed no hook output and no visible delay.
+Regression owners are `hide-agent-hooks/tests/spawn_guard.rs` (nothing spawned for a payload without `herdr`, a slow `hide` stays under the budget) and the parser tests in `src/spawn_guard.rs`.
+
 ## Resident work cost review
 
 Every change adding resident work or touching a high-frequency path must explain its cost in the PR's Review section, even when it claims no performance improvement.
