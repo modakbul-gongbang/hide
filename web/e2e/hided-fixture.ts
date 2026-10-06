@@ -33,8 +33,10 @@ export type Daemon = {
  * `bundled` runs the daemon from a `hide.app/Contents/Resources` folder of copies of the debug
  * binaries, which is the one place a daemon installs the kit (`hide_kit::bundled_kit_dir`); the
  * kit then writes into the fixture's private HOME and nowhere else.
+ * `seedHideAi: false` leaves Hide AI unchosen, as a Mac that has never been asked is, for a spec
+ * about the first-run rule.
  */
-export async function startHided(herdr: HerdrFixture, label = "s2", homeOverride?: string, extraEnv: NodeJS.ProcessEnv = {}, bundled = false): Promise<Daemon> {
+export async function startHided(herdr: HerdrFixture, label = "s2", homeOverride?: string, extraEnv: NodeJS.ProcessEnv = {}, bundled = false, options: { seedHideAi?: boolean } = {}): Promise<Daemon> {
   // The daemon places pane-bootstrap.sock below this directory. Keep the
   // fixture root short enough for macOS's Unix socket path limit.
   const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "hde-")));
@@ -47,7 +49,7 @@ export async function startHided(herdr: HerdrFixture, label = "s2", homeOverride
   // Mac has no signed-in agent for the first-run rule to pick, so the operator here has
   // already chosen the `claude` fixture shim; a home that brought its own choice keeps it.
   const aiFile = aiSettingsFile(home);
-  if (!fs.existsSync(aiFile)) {
+  if (options.seedHideAi !== false && !fs.existsSync(aiFile)) {
     fs.mkdirSync(path.dirname(aiFile), { recursive: true });
     fs.writeFileSync(aiFile, JSON.stringify({ provider: "claude" }));
   }

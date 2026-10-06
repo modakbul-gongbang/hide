@@ -4,7 +4,7 @@ import { expect, test, type Page } from "@playwright/test";
 import fs from "node:fs";
 import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
-import { startHided, type Daemon } from "./hided-fixture";
+import { aiSettingsFile, startHided, type Daemon } from "./hided-fixture";
 import { screenshot } from "./wire";
 
 // The guidance hooks Apply writes are not written on Windows (their documentation names no shell there).
@@ -18,7 +18,7 @@ const read = (file: string) => (fs.existsSync(file) ? fs.readFileSync(file, "utf
  * A private HOME with two agents installed (a program in `~/.local/bin`, which the kit searches, and the
  * folder each agent makes), a kit record only when `record`, and a daemon that runs the kit.
  */
-async function start(record: boolean) {
+async function start(record: boolean, options: { seedHideAi?: boolean } = {}) {
   const herdr = await startHerdr();
   const home = path.join(fs.mkdtempSync(path.join(herdr.root, "ob-")), "home");
   for (const folder of [".claude", ".gemini"]) fs.mkdirSync(path.join(home, folder), { recursive: true });
@@ -28,7 +28,7 @@ async function start(record: boolean) {
     fs.mkdirSync(path.join(home, ".hide", "kit"), { recursive: true });
     fs.writeFileSync(path.join(home, ".hide", "kit", "installed.json"), JSON.stringify({ format: 1, installed: [] }));
   }
-  const daemon = await startHided(herdr, "agent-onboarding", home, {}, true);
+  const daemon = await startHided(herdr, "agent-onboarding", home, {}, true, options);
   return { daemon, home };
 }
 
@@ -64,6 +64,22 @@ test("a Mac with no kit record is asked once, the installed agents are on, and A
     await page.reload();
     await expect(page.locator("[data-open-settings], [data-sidebar-title-name]").first()).toBeVisible();
     await expect(modal(page)).toHaveCount(0);
+  } finally {
+    daemon.stop();
+  }
+});
+
+// D-18, B45, B46: with no Hide AI choice stored at all (the fixture's seed left out), the first-run
+// rule, not a seeded file, picks the first agent that is on and signed in.
+test("with no Hide AI choice stored, the first-run rule names the agent Hide AI will use", async ({ page }) => {
+  const { daemon, home } = await start(false, { seedHideAi: false });
+  try {
+    expect(fs.existsSync(aiSettingsFile(home))).toBe(false);
+    await open(page, daemon);
+    await expect(modal(page)).toBeVisible({ timeout: 60_000 });
+    await expect(page.locator("[data-onboarding-hide-ai]")).toHaveText("Hide AI uses Claude Code");
+    // Asking the question chose nothing: the choice is written by Apply, not by looking.
+    expect(fs.existsSync(aiSettingsFile(home))).toBe(false);
   } finally {
     daemon.stop();
   }
