@@ -32,6 +32,8 @@
 // The generator and checker share this effective color walk, addressed by each
 // full instance path, so separate instances never share an override by accident.
 
+import fs from 'node:fs';
+import path from 'node:path';
 import {read as readTokenPlan, loadCanvas, CANVAS} from './pen-tokens.mjs';
 import {BUTTON_VARIANTS, BADGE_VARIANTS, frame, icon, num, text} from './pen-system.mjs';
 import {diskCleanupRows} from './pen-screens-disk.mjs';
@@ -5070,9 +5072,10 @@ function buildOverview(tokens) {
 // The first-run agent choice (web/src/AgentOnboarding.tsx): a Dialog over a
 // grid of square tiles, one per adapter. A set-up agent's tile is on or off, an
 // agent that is not set up is dimmed with no switch. Logos are the bundled
-// marks of web/src/assets/agents (manifest.json names each source); an agent
-// with no mark that may be bundled draws a monogram, never a drawn logo.
-function buildOnboarding(tokens) {
+// marks web/src/assets/agents/manifest.json lists, read from it as
+// web/src/agentLogos.ts reads the files; an agent with no mark that may be
+// bundled draws a monogram, never a drawn logo.
+function buildOnboarding(tokens, root) {
   const W = num(tokens, '--size-onboarding-dialog-w');
   const LOGO = num(tokens, '--size-agent-logo');
   const GAP = num(tokens, '--spacing-sm');
@@ -5080,11 +5083,9 @@ function buildOnboarding(tokens) {
   const INNER = W - 2 * num(tokens, '--spacing-lg');
   const TILE = Math.floor((INNER - (COLUMNS - 1) * GAP) / COLUMNS);
   const dimmed = num(tokens, '--opacity-dimmed');
-  const MARKS = {
-    'claude-code': 'agent-claude.png', codex: 'agent-codex.png', opencode: 'agents/opencode.svg', cursor: 'agents/cursor.svg',
-    'qwen-code': 'agents/qwen-code.svg', goose: 'agents/goose.svg',
-    cline: 'agents/cline.svg', 'kilo-code': 'agents/kilo-code.svg', 'mistral-vibe': 'agents/mistral-vibe.svg',
-  };
+  // Each mark's path from design/, where this file lives.
+  const manifest = JSON.parse(fs.readFileSync(path.join(root, 'web/src/assets/agents/manifest.json'), 'utf8'));
+  const MARKS = Object.fromEntries([...manifest.existing, ...manifest.logos].map(({id, file}) => [id, path.posix.join('../web/src/assets/agents', file)]));
   // [id, label, state]: on, off, or none (not set up on this machine).
   const AGENTS = [
     ['claude-code', 'Claude Code', 'on'], ['codex', 'Codex', 'on'], ['opencode', 'OpenCode', 'on'], ['gemini-cli', 'Gemini CLI', 'off'],
@@ -5103,7 +5104,7 @@ function buildOnboarding(tokens) {
       const on = state === 'on';
       const plate = frame(id(`${agent}-plate`), 'Logo plate', {width: LOGO, height: LOGO, cornerRadius: '$--radius-md', fill: '$--logo-plate', layout: 'horizontal', alignItems: 'center', justifyContent: 'center', clip: true},
         MARKS[agent]
-          ? [frame(id(`${agent}-logo`), 'Logo', {width: LOGO - 8, height: LOGO - 8, fill: {type: 'image', enabled: true, url: `../web/src/assets/${MARKS[agent]}`, mode: 'fit'}}, [])]
+          ? [frame(id(`${agent}-logo`), 'Logo', {width: LOGO - 8, height: LOGO - 8, fill: {type: 'image', enabled: true, url: MARKS[agent], mode: 'fit'}}, [])]
           : [text(id(`${agent}-mono`), monogramOf(label), {mono: true, weight: '600', fill: '$--muted-foreground'})]);
       const children = [
         plate,
@@ -5154,6 +5155,6 @@ export function screenSheets(tokens, root) {
     {name: 'Screen / Projects Sidebar', build: () => buildProjectsSidebar(tokens)},
     {name: 'Screen / Mobile', build: () => buildMobile(tokens)},
     {name: 'Screen / Disk Cleanup', build: () => buildDiskCleanup(tokens)},
-    {name: 'Screen / Onboarding', build: () => buildOnboarding(tokens)},
+    {name: 'Screen / Onboarding', build: () => buildOnboarding(tokens, root)},
   ];
 }

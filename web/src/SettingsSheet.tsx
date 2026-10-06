@@ -573,13 +573,13 @@ function AgentsTab({ actions }: { actions: Actions }) {
         note={t("settings.agentHooksDescription")}
         data-agent-hooks="true"
       >
-        {machines.map(({ device, setUp, others, unavailable }) => (
+        {machines.map(({ device, listed, others, unavailable }) => (
           <div key={device.id} data-hook-machine={device.id}>
             <Row
               label={<span className="font-semibold">{device.id === "local" ? t("common.thisMac") : device.label}</span>}
               detail={unavailable ? <Note data-hook-unavailable={device.id}>{unavailable}</Note> : device.kit?.components.length === 0 ? <Note>{t("settings.notChecked")}</Note> : null}
             />
-            {setUp.map((agent) => {
+            {listed.map((agent) => {
               const line = kitAgentLine(agent, t);
               const switched = kitAgentSwitch(agent);
               return (
@@ -625,7 +625,7 @@ function AgentsTab({ actions }: { actions: Actions }) {
               );
             })}
             {others.length > 0 ? (
-              <Row label={<Note data-agents-not-set-up={device.id}>{t("settings.agentsNotSetUp", { agents: others.join(", ") })}</Note>} />
+              <Row label={<Note data-agents-not-installed={device.id}>{t("settings.agentsNotInstalled", { agents: others.join(", ") })}</Note>} />
             ) : null}
           </div>
         ))}

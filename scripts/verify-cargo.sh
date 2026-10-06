@@ -38,6 +38,15 @@ for name in $(compgen -e); do
     case "$name" in HERDR_*|HCOORD_*) unset "$name" ;; esac
 done
 
+# Each job's log names the toolchain that builds, the one rust-toolchain.toml
+# pins: a list of installed toolchains does not say which one ran. Once per
+# call, after the arguments are accepted, and on stderr, because `metadata`
+# hands its stdout to scripts/ci-plan.py. See docs/BUILD.md.
+report_toolchain() {
+    rustc --version >&2
+    cargo --version >&2
+}
+
 # Scoped modes cannot move the checkout or its artifacts through cargo flags.
 # Keep the legacy modes unchanged for sealed verification commands.
 case "${1:-}" in
@@ -53,6 +62,7 @@ case "${1:-}" in
                     ;;
             esac
         done
+        report_toolchain
         if [[ "$mode" == nextest ]]; then
             status=0
             cargo nextest run --locked "$@" || status=$?
@@ -68,21 +78,26 @@ case "${1:-}" in
         ;;
     test)
         shift
+        report_toolchain
         exec cargo test --locked --workspace "$@"
         ;;
     fmt-check)
+        report_toolchain
         exec cargo fmt --all --check
         ;;
     lint)
+        report_toolchain
         cargo fmt --all --check
         exec cargo clippy --locked --workspace --all-targets -- -D warnings
         ;;
     release)
         # The binaries the packaged app ships; release hided embeds web/dist,
         # so `pnpm --dir web build` runs first (desktop/scripts/package.mjs).
+        report_toolchain
         exec cargo build --release --locked -p hided --bins -p hide-host --bin hide-host-helper -p hide-agent-hooks --bin hide-agent-hooks
         ;;
     cli)
+        report_toolchain
         exec cargo build --locked -p hided --bins -p hide-host --bin hide-host-helper -p hide-agent-hooks --bin hide-agent-hooks
         ;;
     *)

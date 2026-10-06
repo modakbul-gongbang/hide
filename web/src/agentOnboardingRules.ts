@@ -3,7 +3,7 @@
 import type { KitAgent } from "./snapshot";
 
 /**
- * What the tiles show: an agent set up on the machine starts on, and the
+ * What the tiles show: an agent installed on the machine starts on, and the
  * operator's flips (the ids they toggled) turn it off. Read from the live
  * availability each time, so an agent that becomes available while the dialog
  * is open shows on, and Apply sends exactly what is drawn. The operator turns
@@ -13,7 +13,7 @@ export function selection(agents: readonly KitAgent[], flipped: ReadonlySet<stri
   return new Set(agents.filter((agent) => tileSwitchable(agent) && !flipped.has(agent.id)).map((agent) => agent.id));
 }
 
-/** A tile has a switch only where the agent is set up here. */
+/** A tile has a switch only where the agent is installed here. */
 export function tileSwitchable(agent: KitAgent): boolean {
   return agent.availability === "available";
 }

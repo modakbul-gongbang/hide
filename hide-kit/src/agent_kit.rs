@@ -20,8 +20,8 @@ use hide_agent_hooks::{HookStatus, InstallFailure};
 
 use crate::agents::{
     ADAPTERS, AgentAdapter, AgentReport, Detection, HookSupport, PieceReport, SkillDir,
-    SkillObserved, adapter_of_part, availability, install_skill, observe_skill, program_version,
-    remove_skill, skill_location,
+    SkillObserved, adapter_of_part, availability, install_skill, observe_skill, remove_skill,
+    skill_location,
 };
 use crate::record::Record;
 use crate::{ComponentId, ComponentState, KitTarget, Observed, RemoveOutcome, Scope};
@@ -135,8 +135,14 @@ fn observe_guidance(
         ));
     }
     let observed = match guidance::status(agent, &target.home) {
+        // Installed, but the agent has not made its settings folder yet; the
+        // hook goes in on the pass after it has.
         HookStatus::RuntimeAbsent => {
-            return Observed::Absent(format!("{} is not set up on this machine", adapter.label));
+            return Observed::Absent(format!(
+                "{} has not created {} yet; the hook is put in once it has",
+                adapter.label,
+                agent.home_directory(&target.home).display()
+            ));
         }
         // Reading a file never says Off: the kit's record does (`HookStatus::Off`).
         HookStatus::NotInstalled | HookStatus::Off => Observed::Missing,
@@ -169,7 +175,7 @@ fn observe_guidance(
             helper(target).display()
         ));
     }
-    match version_gate(adapter, detection, &target.home) {
+    match version_gate(adapter, detection) {
         Ok(()) => observed,
         // Nothing a Reinstall can change: the agent is too old, or its
         // version cannot be read, so the row says why and is not repairable.
@@ -179,13 +185,13 @@ fn observe_guidance(
 
 /// An agent with a documented minimum version gets the hook only when its
 /// CLI answers a version at or above it; one with none has no gate.
-fn version_gate(adapter: &AgentAdapter, detection: &Detection, home: &Path) -> Result<(), String> {
+fn version_gate(adapter: &AgentAdapter, detection: &Detection) -> Result<(), String> {
     let Some(minimum) = adapter.min_version else {
         return Ok(());
     };
     let version = detection
         .executable(adapter)
-        .and_then(|binary| program_version(binary, home));
+        .and_then(|binary| detection.version(binary));
     match version {
         Some(version) if hide_agent_hooks::version_at_least(&version, minimum) => Ok(()),
         Some(version) => Err(format!(
@@ -216,6 +222,17 @@ fn remove_guidance(target: &KitTarget, agent: GuidanceAgent) -> RemoveOutcome {
 }
 
 // --- One pass ------------------------------------------------------------------
+
+/// Why an agent that is on has nothing put in place: none of its programs is
+/// found here.
+fn not_found(adapter: &AgentAdapter) -> String {
+    let programs: Vec<String> = adapter
+        .executables
+        .iter()
+        .map(|name| format!("`{name}`"))
+        .collect();
+    format!("{} is not found on this machine", programs.join(" or "))
+}
 
 fn dir_state(
     observed: &SkillObserved,
@@ -263,7 +280,7 @@ pub(crate) fn status(
     let empty = Record::default();
     let scope = Scope::default();
     let readable = record.as_ref().unwrap_or(&empty);
-    let detection = Detection::probe(&target.home);
+    let detection = Detection::probe(target);
     let dirs = observe_dirs(target, readable, &scope, &detection);
     ADAPTERS
         .iter()
@@ -285,7 +302,7 @@ pub(crate) fn status(
 }
 
 /// The skill folders' states, with a folder wanted only while an agent that
-/// reads it is on and set up here.
+/// reads it is on and installed here.
 fn observe_dirs(
     target: &KitTarget,
     record: &Record,
@@ -299,7 +316,7 @@ fn observe_dirs(
                 adapter.skill_dir == dir
                     && adapter.skill_supported()
                     && enabled(record, scope, adapter)
-                    && detection.detected(adapter)
+                    && detection.installed(adapter)
                     && dir.writable(&target.home)
             });
             (dir, observe_skill(dir, &target.home), wanted)
@@ -319,11 +336,11 @@ fn report_agent(
     record_readable: bool,
     parts: &[PartView],
 ) -> AgentReport {
-    let detected = detection.detected(adapter);
+    let installed = detection.installed(adapter);
     // The switch works while either piece can be put here: Codex on a system
     // with no documented skill folder still has its hook to switch off.
     let availability = availability(
-        detected,
+        installed,
         adapter.skill_supported(),
         adapter.hook_supported(),
     );
@@ -346,17 +363,21 @@ fn report_agent(
                 location: Some(location),
             },
         }
-    } else if !detected || !adapter.skill_supported() {
+    } else if !installed {
+        // On, and its program is gone or was never here: a pass leaves what
+        // Hide put down in place, and the switch still takes it out.
         PieceReport {
             state: ComponentState::Absent,
-            reason: Some(if detected {
-                format!(
-                    "{}'s documentation gives no skill folder for this system",
-                    adapter.label
-                )
-            } else {
-                format!("{} is not set up on this machine", adapter.label)
-            }),
+            reason: Some(not_found(adapter)),
+            location: None,
+        }
+    } else if !adapter.skill_supported() {
+        PieceReport {
+            state: ComponentState::Absent,
+            reason: Some(format!(
+                "{}'s documentation gives no skill folder for this system",
+                adapter.label
+            )),
             location: None,
         }
     } else {
@@ -428,7 +449,7 @@ fn report_agent(
 }
 
 /// Hide's skill stub is still in the folder of an agent the operator switched
-/// off, with no agent that is on and set up reading it: the removal failed
+/// off, with no agent that is on and installed reading it: the removal failed
 /// or never ran, and the row must not read Off over it.
 fn left_behind(
     record: &Record,
@@ -485,10 +506,10 @@ fn guidance_piece(
             },
         };
     }
-    if !detection.detected(adapter) {
+    if !detection.installed(adapter) {
         return PieceReport {
             state: ComponentState::Absent,
-            reason: Some(format!("{} is not set up on this machine", adapter.label)),
+            reason: Some(not_found(adapter)),
             location: None,
         };
     }
@@ -537,18 +558,17 @@ pub(crate) fn apply(
     let mut failures = AgentFailures::default();
     let record_readable = record_failure.is_none();
     // Looked for once: every decision below reads this, not the PATH.
-    let detection = Detection::probe(&target.home);
+    let detection = Detection::probe(target);
 
     // What the operator chose now is the record's, whatever else this pass
-    // can or cannot do for the agent. A switch for an agent that is not set
-    // up here has nothing to switch.
+    // can or cannot do for the agent. A switch on for an agent that is not
+    // installed here has nothing to switch.
     if record_readable && answers_choice(scope) {
         changed |= record.answer_choice();
     }
     for adapter in ADAPTERS {
-        let detected = detection.detected(adapter);
         if record_readable {
-            if scope.agent_on.contains(adapter.id) && detected {
+            if scope.agent_on.contains(adapter.id) && detection.installed(adapter) {
                 changed |= record.set_agent_choice(adapter.id, true);
             } else if scope.agent_off.contains(adapter.id) {
                 changed |= record.set_agent_choice(adapter.id, false);
@@ -562,7 +582,6 @@ pub(crate) fn apply(
             continue;
         };
         let on = enabled(record, scope, adapter);
-        let detected = detection.detected(adapter);
         let code = hook_code(adapter);
         if !on {
             if scope.agent_off.contains(adapter.id) {
@@ -575,7 +594,9 @@ pub(crate) fn apply(
             }
             continue;
         }
-        if !detected {
+        // An agent whose program is gone keeps the hook Hide wrote: only the
+        // operator's switch takes it out (D-20, D-26).
+        if !detection.installed(adapter) {
             continue;
         }
         let observed = observe_guidance(target, adapter, agent, &detection);
@@ -610,12 +631,12 @@ pub(crate) fn apply(
         let wanted = readers().any(|adapter| {
             adapter.skill_supported()
                 && enabled(record, scope, adapter)
-                && detection.detected(adapter)
+                && detection.installed(adapter)
                 && dir.writable(&target.home)
         });
         let switched_off = readers().any(|adapter| scope.agent_off.contains(adapter.id));
         let switched_on = readers()
-            .any(|adapter| scope.agent_on.contains(adapter.id) && detection.detected(adapter));
+            .any(|adapter| scope.agent_on.contains(adapter.id) && detection.installed(adapter));
         let code = skill_code(dir);
         if wanted {
             let observed = observe_skill(dir, &target.home);

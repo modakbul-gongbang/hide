@@ -56,6 +56,31 @@
       "license": "Apache-2.0 (repository license) covers the file, grants no trademark rights",
       "modification": "as published",
       "retrieved": "2026-10-06"
+    },
+    {
+      "id": "gemini-cli",
+      "file": "gemini-cli.png",
+      "source_url": "https://raw.githubusercontent.com/google-gemini/gemini-cli/main/packages/vscode-ide-companion/assets/icon.png",
+      "license": "Apache-2.0 (repository license) covers the file and grants no trademark rights; Google's brand terms ask for a request before a Google logo is used and forbid altering one (https://partnermarketinghub.withgoogle.com/brands/google/trademarks-and-terms/); the vendor publishes no SVG and no brand page for this mark",
+      "modification": "as published: the 1645 px palette PNG (47 KB), not resized, since the terms forbid altering the mark",
+      "retrieved": "2026-10-06"
+    },
+    {
+      "id": "grok",
+      "file": "grok.svg",
+      "source_url": "https://data.x.ai/logos/SpaceXAI_Grok_Assets.zip",
+      "license": "xAI brand terms (https://x.ai/legal/brand-guidelines): a logo is used only as provided in this archive, without any alteration or adjustment, and only to refer to Grok; the permission can be withdrawn; no open-source licence",
+      "modification": "as published: the archive member SpaceXAI_Grok_Assets/Grok_Logomark_Dark.svg byte for byte, saved as grok.svg",
+      "retrieved": "2026-10-06"
+    },
+    {
+      "id": "pi",
+      "file": "pi.svg",
+      "source_url": "https://pi.dev/logo.svg",
+      "license": "the press kit (https://pi.dev/press-kit) offers the mark with an 'MIT License' site footer and states no grant or restriction for the logo",
+      "modification": "as published: the press kit primary logo, saved as pi.svg",
+      "note": "The primary logo rather than the press kit badge (https://pi.dev/favicon.svg): the badge turns #f6f6f6 under prefers-color-scheme: dark, which an <img> takes from the app's dark theme, so it nearly vanished on the white --logo-plate; the primary logo keeps its three colours in both themes and still reads at 18 px, though its mark fills about 60 percent of its frame.",
+      "retrieved": "2026-10-06"
     }
   ],
   "existing": [
@@ -71,10 +96,6 @@
     }
   ],
   "monogram": [
-    {
-      "id": "gemini-cli",
-      "reason": "the vendor's terms ask for its permission before a third-party product uses the mark, and no official brand page was reachable"
-    },
     {
       "id": "factory-droid",
       "reason": "the only candidate is a file in a repository with no license; no brand page"
@@ -96,16 +117,8 @@
       "reason": "the vendor's logos are offered only in a download archive with no terms, which was not extracted"
     },
     {
-      "id": "grok",
-      "reason": "the vendor's brand terms ask for logos exactly as provided in an archive that was not extracted"
-    },
-    {
       "id": "kimi-code",
       "reason": "the vendor's branding guide states all rights reserved and grants no use"
-    },
-    {
-      "id": "pi",
-      "reason": "the vendor's site states MIT only in its page footer and gives no grant for the logo (https://pi.dev/press-kit); an unclear grant is a monogram"
     },
     {
       "id": "amp",

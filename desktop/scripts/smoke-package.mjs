@@ -10,7 +10,7 @@
 // folder: Herdr reports the pinned version, the device helper and the hook
 // helper start, and the bundled
 // `hide connect` starts the bundled daemon, which serves the web shell it
-// embeds, installs the CLI and holds both agents for the first-run choice
+// embeds, installs the CLI and holds both installed agents for the first-run choice
 // (their files untouched), installs both hooks once that choice is answered
 // over the daemon's socket, and is replaced by a second
 // package fixture with a changed daemon hash, before `hide stop` ends it. Every process runs with a private home
@@ -135,6 +135,15 @@ try {
   });
   delete isolated.XDG_STATE_HOME;
 
+  // Both runtimes are installed: an agent counts only when its program is
+  // found, and the kit searches `~/.local/bin` on every system. The stand-ins
+  // answer nothing, and a version Hide cannot read does not hold a hook back.
+  const programs = path.join(home, ".local", "bin");
+  fs.mkdirSync(programs, { recursive: true });
+  for (const name of ["claude", "codex"]) {
+    if (process.platform === "win32") fs.writeFileSync(path.join(programs, `${name}.cmd`), "@exit /b 0\r\n");
+    else fs.writeFileSync(path.join(programs, name), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+  }
   // Both runtimes are configured, with an unrelated hook we must preserve.
   for (const [folder, file] of [[".claude", "settings.json"], [".codex", "hooks.json"]]) {
     fs.mkdirSync(path.join(home, folder));
