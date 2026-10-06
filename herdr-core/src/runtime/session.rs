@@ -2342,6 +2342,32 @@ impl Runtime {
                                 })
                                 .filter(|pane_id| focused_checkout_pane_set.contains(*pane_id))
                                 .or_else(|| {
+                                    // The tab this pass has the checkout
+                                    // showing is where the operator looks.
+                                    // Herdr's keyboard can be on another Agent
+                                    // area's tab, and landing there moves the
+                                    // screen with it: a reopen's seed tab,
+                                    // followed, went as its restored tab came
+                                    // (#425).
+                                    self.snapshot
+                                        .ui_state
+                                        .focused_checkout_id
+                                        .as_deref()
+                                        .and_then(|checkout_id| {
+                                            self.visible_tab_ids.get(checkout_id)
+                                        })
+                                        .and_then(|tab_id| {
+                                            payload
+                                                .layouts
+                                                .iter()
+                                                .find(|layout| &layout.tab_id == tab_id)
+                                        })
+                                        .map(|layout| layout.focused_pane_id.as_str())
+                                        .filter(|pane_id| {
+                                            focused_checkout_pane_set.contains(*pane_id)
+                                        })
+                                })
+                                .or_else(|| {
                                     payload.focused_pane_id.as_deref().filter(|pane_id| {
                                         focused_checkout_pane_set.contains(*pane_id)
                                     })
