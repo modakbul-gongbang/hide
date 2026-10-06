@@ -263,7 +263,7 @@ function TextField({ value, onCommit, placeholder, numeric = false, data }: { va
     <Input
       value={draft}
       type={numeric ? "number" : "text"}
-      className={numeric ? "w-(--size-control-lg)" : "w-(--size-settings-control-w)"}
+      className={numeric ? "w-[calc(var(--size-control-lg)*3)]" : "w-(--size-settings-control-w)"}
       placeholder={placeholder}
       aria-label={placeholder}
       data-factory-setting={data}

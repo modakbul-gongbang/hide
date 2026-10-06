@@ -272,7 +272,7 @@ function PageActions({ detail, task, send, sending, actions }: { detail: TaskDet
               button(action, () => setPriority(String(detail.card.priority)))
             ) : (
               <form key={action} className="flex items-center gap-xs" onSubmit={(event) => { event.preventDefault(); const value = Number(priority); if (Number.isInteger(value)) send({ verb: "priority", task, priority: value }); setPriority(null); }}>
-                <Input autoFocus type="number" className="w-(--size-control-lg)" value={priority} onChange={(event) => setPriority(event.target.value)} aria-label={t("factory.action.priority")} data-factory-priority="true" />
+                <Input autoFocus type="number" className="w-[calc(var(--size-control-lg)*3)]" value={priority} onChange={(event) => setPriority(event.target.value)} aria-label={t("factory.action.priority")} data-factory-priority="true" />
                 <Button type="submit" size="sm">{t("factory.task.set")}</Button>
               </form>
             );
