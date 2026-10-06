@@ -87,6 +87,10 @@ struct StoredUiState {
     theme: Option<String>,
     #[serde(default)]
     interface_language: Option<serde_json::Value>,
+    #[serde(default)]
+    agent_onboarding: Option<crate::model::AgentOnboarding>,
+    #[serde(default)]
+    agent_onboarding_agents: Vec<String>,
     #[serde(default = "default_sidebar_width")]
     sidebar_width: u32,
     #[serde(default = "default_font_size")]
@@ -289,6 +293,8 @@ fn decode(bytes: &[u8]) -> (UiStateSnapshot, PaneTerminalSizes, LoadDisposition)
             accent_hex: stored.accent_hex,
             theme,
             interface_language: stored.interface_language,
+            agent_onboarding: stored.agent_onboarding,
+            agent_onboarding_agents: stored.agent_onboarding_agents,
             sidebar_width: stored.sidebar_width,
             font_size: stored.font_size,
             pane_text_scales: stored.pane_text_scales,
@@ -377,6 +383,8 @@ pub fn save(
         accent_hex: state.accent_hex.clone(),
         theme: Some(state.theme.as_str().to_owned()),
         interface_language: state.interface_language.clone(),
+        agent_onboarding: state.agent_onboarding,
+        agent_onboarding_agents: state.agent_onboarding_agents.clone(),
         sidebar_width: state.sidebar_width,
         font_size: state.font_size,
         pane_text_scales: state.pane_text_scales.clone(),

@@ -77,6 +77,15 @@ pub(crate) enum DeviceKitAnswer {
     Removed(Result<hide_host::protocol::KitRemoved, String>),
 }
 
+/// Where one device stands with the first-run agent choice in this run.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum FirstRunChoice {
+    /// Its record waits for the choice and this run has not sent it.
+    Waiting,
+    /// This run sent it; a device that still waits after that is reported.
+    Sent,
+}
+
 /// Why Hide's kit does not run on a device.
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) enum KitDeclined {
@@ -230,9 +239,155 @@ impl Runtime {
                 "failures": legacy.failures,
             }));
         }
+        let mut changed = self.decide_agent_onboarding(device_id, report);
         let mut snapshot = KitSnapshot::from_report(report);
         snapshot.busy = self.kit_install_queued(device_id);
-        self.set_kit_state(device_id, snapshot)
+        changed |= self.set_kit_state(device_id, snapshot);
+        changed
+    }
+
+    /// What a machine's kit report says about the first-run agent choice.
+    ///
+    /// The kit's record is the one place that knows whether a machine was
+    /// asked and answered (`held_for_onboarding`); `ui_state.agent_onboarding`
+    /// follows it for this Mac and keeps the answer given, which is the choice
+    /// a device that connects later receives. This Mac's record waiting asks;
+    /// a record that never waited is an existing install, which is never
+    /// asked and keeps what it has on as the saved choice. A device whose own
+    /// record waits, once this Mac has answered, gets that choice sent once
+    /// per run by its own detection; before that nothing is installed there.
+    fn decide_agent_onboarding(&mut self, device_id: &str, report: &KitReport) -> bool {
+        use crate::model::AgentOnboarding;
+        // A pass that could not run (retirement refused, account lock) lists
+        // no agents and says nothing about the record, so it decides nothing.
+        if report.agents.is_empty() {
+            return false;
+        }
+        if device_id != LOCAL_DEVICE_ID {
+            if !report.held_for_onboarding {
+                self.device_first_run_choice.remove(device_id);
+                return false;
+            }
+            self.device_first_run_choice
+                .entry(device_id.to_owned())
+                .or_insert(FirstRunChoice::Waiting);
+            if self.snapshot.ui_state.agent_onboarding == Some(AgentOnboarding::Done) {
+                self.send_first_run_choice(device_id);
+            }
+            return false;
+        }
+        let before = self.snapshot.ui_state.agent_onboarding;
+        let after = if report.held_for_onboarding {
+            // An Apply just pressed has its install queued here: a report that
+            // was already on its way says the old thing and must not bring
+            // the question back for a moment.
+            if before == Some(AgentOnboarding::Done) && self.local_kit_pending.is_some() {
+                return false;
+            }
+            AgentOnboarding::Pending
+        } else {
+            AgentOnboarding::Done
+        };
+        if before == Some(after) {
+            return false;
+        }
+        self.snapshot.ui_state.agent_onboarding = Some(after);
+        if after == AgentOnboarding::Done && before != Some(AgentOnboarding::Done) {
+            // Never asked, or answered outside this app: what it has on today
+            // is the choice a device added later receives, so that device
+            // gets no less than before the choice existed.
+            self.snapshot.ui_state.agent_onboarding_agents = report
+                .agents
+                .iter()
+                .filter(|agent| agent.enabled)
+                .map(|agent| agent.id.clone())
+                .collect();
+            self.send_first_run_choice_to_waiting_devices();
+        }
+        self.persist_ui_state();
+        true
+    }
+
+    /// Sends the saved choice to a device that waits for it, once per run;
+    /// a second report from the same device that still waits is a failure
+    /// to answer, logged and not retried (engineering rules 11 and 15).
+    fn send_first_run_choice(&mut self, device_id: &str) {
+        if self.device_first_run_choice.get(device_id) == Some(&FirstRunChoice::Sent) {
+            crate::diagnostic!(serde_json::json!({
+                "component": "kit",
+                "kind": "first_run_choice.unanswered",
+                "device_id": device_id,
+            }));
+            return;
+        }
+        self.device_first_run_choice
+            .insert(device_id.to_owned(), FirstRunChoice::Sent);
+        let agents = self.snapshot.ui_state.agent_onboarding_agents.clone();
+        self.queue_device_kit(
+            device_id,
+            KitJob::Apply(Scope::first_run(agents.iter().map(String::as_str))),
+        );
+    }
+
+    /// A choice that was queued for a device and did not run is unsent again.
+    fn reopen_first_run_choice(&mut self, device_id: &str) {
+        if let Some(state) = self.device_first_run_choice.get_mut(device_id) {
+            *state = FirstRunChoice::Waiting;
+        }
+    }
+
+    fn send_first_run_choice_to_waiting_devices(&mut self) {
+        let waiting = self
+            .device_first_run_choice
+            .iter()
+            .filter(|(_, state)| **state == FirstRunChoice::Waiting)
+            .map(|(device_id, _)| device_id.clone())
+            .collect::<Vec<_>>();
+        for device_id in waiting {
+            self.send_first_run_choice(&device_id);
+        }
+    }
+
+    /// The operator applied the first-run choice: the agents left on are
+    /// switched on here and on every device that waits for it, each by its
+    /// own detection, and the choice is kept for devices that connect later.
+    pub(super) fn apply_agent_onboarding(&mut self, agents: Vec<String>) -> bool {
+        if let Some(unknown) = agents
+            .iter()
+            .find(|agent| hide_kit::agents::adapter(agent).is_none())
+        {
+            self.set_error(
+                "kit.unknown_agent",
+                format!("{unknown} is not an agent Hide knows"),
+                false,
+            );
+            return true;
+        }
+        let mut agents = agents;
+        agents.sort();
+        agents.dedup();
+        self.finish_agent_onboarding(agents)
+    }
+
+    /// Ends the first-run choice with `agents` on; only a pending choice can
+    /// end, so a second Apply or a stale client changes nothing
+    /// (engineering rule 11). The choice reads as made at once; this Mac's
+    /// record confirms it, and says otherwise (the question comes back) when
+    /// it could not be saved.
+    pub(super) fn finish_agent_onboarding(&mut self, agents: Vec<String>) -> bool {
+        use crate::model::AgentOnboarding;
+        if self.snapshot.ui_state.agent_onboarding != Some(AgentOnboarding::Pending) {
+            return false;
+        }
+        self.snapshot.ui_state.agent_onboarding = Some(AgentOnboarding::Done);
+        self.snapshot.ui_state.agent_onboarding_agents = agents.clone();
+        self.persist_ui_state();
+        self.queue_kit_scope(
+            LOCAL_DEVICE_ID,
+            Scope::first_run(agents.iter().map(String::as_str)),
+        );
+        self.send_first_run_choice_to_waiting_devices();
+        true
     }
 
     fn kit_install_queued(&self, device_id: &str) -> bool {
@@ -656,6 +811,9 @@ impl Runtime {
             DeviceKitAnswer::Removed(removed) => self.ingest_device_kit_removal(device_id, removed),
             DeviceKitAnswer::Report(Ok(report)) => self.ingest_kit_report(device_id, &report),
             DeviceKitAnswer::Report(Err(reason)) => {
+                // The call never ran to a report, so the choice it carried
+                // was not delivered: the next report that waits sends it again.
+                self.reopen_first_run_choice(device_id);
                 crate::diagnostic!(serde_json::json!({
                     "component": "kit",
                     "kind": "device.call_failed",
@@ -720,6 +878,7 @@ impl Runtime {
     /// nothing queued for it runs.
     pub(super) fn forget_device_kit_work(&mut self, device_id: &str) {
         self.device_kit_pending.remove(device_id);
+        self.reopen_first_run_choice(device_id);
         self.clear_kit_busy(device_id);
     }
 

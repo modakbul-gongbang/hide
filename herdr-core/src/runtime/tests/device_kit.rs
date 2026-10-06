@@ -108,6 +108,7 @@ fn report(states: &[(ComponentId, ComponentState)]) -> KitReport {
             })
             .collect(),
         agents: Vec::new(),
+        held_for_onboarding: false,
         labels_retirement: Default::default(),
         legacy_retirement: Default::default(),
     }
@@ -385,6 +386,310 @@ fn an_agent_switch_on_a_device_sends_the_agent_and_repeats_nothing() {
             agents(&["codex"]),
         ],
         "{actions:?}"
+    );
+}
+
+/// A pass that ran: it lists the agents, which a refused or failed pass never does.
+fn ran(mut report: KitReport) -> KitReport {
+    report.agents = vec![agent_report(
+        "codex",
+        hide_kit::Availability::Available,
+        false,
+        ComponentState::Off,
+    )];
+    report
+}
+
+fn held_report() -> KitReport {
+    let mut report = ran(report(&[(ComponentId::Cli, ComponentState::Installed)]));
+    report.held_for_onboarding = true;
+    report
+}
+
+fn onboarding(shared: &Mutex<Runtime>) -> Option<crate::model::AgentOnboarding> {
+    shared.lock().unwrap().snapshot.ui_state.agent_onboarding
+}
+
+/// First-run agent choice: this Mac's record decides whether to ask, Apply
+/// switches the chosen agents on here and on every device that waits for it,
+/// a second Apply is the same intent already met, and a device whose own
+/// record waits later gets the choice once on its first report.
+#[test]
+fn the_first_run_choice_is_asked_once_applied_everywhere_and_remembered_for_later_devices() {
+    use crate::model::AgentOnboarding::{Done, Pending};
+    let helper = KitDevice::answering(Ok(ran(report(&[(
+        ComponentId::Cli,
+        ComponentState::Installed,
+    )]))));
+    let shared = with_consent(Some(Arc::clone(&helper)));
+    assert_eq!(onboarding(&shared), None);
+
+    shared
+        .lock()
+        .unwrap()
+        .ingest_kit_report(crate::workspace::LOCAL_DEVICE_ID, &held_report());
+    assert_eq!(onboarding(&shared), Some(Pending));
+    // A device whose record waits too is not installed to while the Mac asks.
+    shared
+        .lock()
+        .unwrap()
+        .ingest_kit_report(DEVICE, &held_report());
+    settle(&shared);
+    assert!(helper.calls().is_empty());
+
+    dispatch(
+        &shared,
+        "agent_onboarding_apply",
+        serde_json::json!({ "agents": ["codex", "claude-code", "codex"] }),
+    );
+    settle(&shared);
+    assert_eq!(onboarding(&shared), Some(Done));
+    assert_eq!(
+        shared
+            .lock()
+            .unwrap()
+            .snapshot
+            .ui_state
+            .agent_onboarding_agents,
+        ["claude-code", "codex"]
+    );
+    let device_calls: Vec<KitAction> = helper.calls().into_iter().map(|call| call.0).collect();
+    assert_eq!(
+        device_calls,
+        vec![KitAction::Reinstall {
+            components: Vec::new(),
+            turn_off: Vec::new(),
+            agents_on: vec!["claude-code".to_owned(), "codex".to_owned()],
+            agents_off: Vec::new(),
+        }]
+    );
+    let local = shared.lock().unwrap().local_kit_pending.clone().unwrap();
+    assert_eq!(
+        local.agent_on.iter().collect::<Vec<_>>(),
+        ["claude-code", "codex"]
+    );
+
+    // The device's answered record clears its wait.
+    assert!(shared.lock().unwrap().device_first_run_choice.is_empty());
+
+    // The same press again, or a stale client, changes nothing.
+    dispatch(
+        &shared,
+        "agent_onboarding_apply",
+        serde_json::json!({ "agents": ["gemini-cli"] }),
+    );
+    settle(&shared);
+    assert_eq!(helper.calls().len(), 1);
+    assert_eq!(
+        shared
+            .lock()
+            .unwrap()
+            .snapshot
+            .ui_state
+            .agent_onboarding_agents,
+        ["claude-code", "codex"]
+    );
+
+    // A device whose own first pass held its agents gets the choice once.
+    shared
+        .lock()
+        .unwrap()
+        .ingest_kit_report(DEVICE, &held_report());
+    settle(&shared);
+    assert_eq!(helper.calls().len(), 2);
+}
+
+#[test]
+fn a_machine_that_already_had_the_kit_never_asks() {
+    use crate::model::AgentOnboarding::Done;
+    let shared = with_consent(None);
+    shared.lock().unwrap().ingest_kit_report(
+        crate::workspace::LOCAL_DEVICE_ID,
+        &ran(report(&[(ComponentId::Cli, ComponentState::Installed)])),
+    );
+    assert_eq!(onboarding(&shared), Some(Done));
+}
+
+/// The question is the kit record's: a launch after a quit between the hold
+/// and the answer, or after the core's own state was reset, still asks, and
+/// an Apply whose record did not save asks again; an Apply whose install is
+/// still queued is not undone by a report that was already on its way.
+#[test]
+fn the_question_comes_back_while_this_macs_record_still_waits() {
+    use crate::model::AgentOnboarding::{Done, Pending};
+    let shared = with_consent(None);
+    let local = crate::workspace::LOCAL_DEVICE_ID;
+    // The core thinks the choice was made; the record says it was not.
+    shared.lock().unwrap().snapshot.ui_state.agent_onboarding = Some(Done);
+    shared
+        .lock()
+        .unwrap()
+        .ingest_kit_report(local, &held_report());
+    assert_eq!(onboarding(&shared), Some(Pending));
+
+    dispatch(
+        &shared,
+        "agent_onboarding_apply",
+        serde_json::json!({ "agents": ["codex"] }),
+    );
+    assert_eq!(onboarding(&shared), Some(Done));
+    // A report that was already on its way, while the install is queued.
+    shared
+        .lock()
+        .unwrap()
+        .ingest_kit_report(local, &held_report());
+    assert_eq!(onboarding(&shared), Some(Done));
+    // The install ran and the record did not save.
+    shared.lock().unwrap().local_kit_pending = None;
+    shared
+        .lock()
+        .unwrap()
+        .ingest_kit_report(local, &held_report());
+    assert_eq!(onboarding(&shared), Some(Pending));
+}
+
+/// Apply with every tile off is still an answer: the Mac and a waiting device
+/// are sent the choice by naming the default agents off, so their records stop
+/// waiting, and nothing is installed.
+#[test]
+fn applying_with_nothing_chosen_answers_the_question_here_and_on_a_waiting_device() {
+    use crate::model::AgentOnboarding::Done;
+    let shared = with_consent(None);
+    shared
+        .lock()
+        .unwrap()
+        .ingest_kit_report(crate::workspace::LOCAL_DEVICE_ID, &held_report());
+    shared
+        .lock()
+        .unwrap()
+        .ingest_kit_report(DEVICE, &held_report());
+    dispatch(
+        &shared,
+        "agent_onboarding_apply",
+        serde_json::json!({ "agents": [] }),
+    );
+    assert_eq!(onboarding(&shared), Some(Done));
+    let runtime = shared.lock().unwrap();
+    assert!(runtime.snapshot.ui_state.agent_onboarding_agents.is_empty());
+    let off = |scope: &hide_kit::Scope| scope.agent_off.iter().cloned().collect::<Vec<_>>();
+    let local = runtime.local_kit_pending.clone().unwrap();
+    assert!(local.agent_on.is_empty());
+    assert_eq!(off(&local), ["claude-code", "codex"]);
+    let Some(KitJob::Apply(device)) = runtime.device_kit_pending.get(DEVICE) else {
+        panic!("the waiting device is sent the answer");
+    };
+    assert_eq!(off(device), ["claude-code", "codex"]);
+}
+
+/// A device that is not connected when Apply is pressed keeps waiting: the
+/// choice is queued for it, and when the queued work is lost the next report
+/// that still waits sends it again.
+#[test]
+fn a_device_that_was_not_ready_at_apply_still_receives_the_choice() {
+    let shared = with_consent(None);
+    shared
+        .lock()
+        .unwrap()
+        .ingest_kit_report(crate::workspace::LOCAL_DEVICE_ID, &held_report());
+    shared
+        .lock()
+        .unwrap()
+        .ingest_kit_report(DEVICE, &held_report());
+    dispatch(
+        &shared,
+        "agent_onboarding_apply",
+        serde_json::json!({ "agents": ["codex"] }),
+    );
+    assert!(
+        shared
+            .lock()
+            .unwrap()
+            .device_kit_pending
+            .contains_key(DEVICE)
+    );
+
+    // The queued work is dropped (consent withdrawn, host gone); the device's
+    // record still waits, so its next report brings the choice back.
+    shared.lock().unwrap().forget_device_kit_work(DEVICE);
+    assert!(
+        !shared
+            .lock()
+            .unwrap()
+            .device_kit_pending
+            .contains_key(DEVICE)
+    );
+    shared
+        .lock()
+        .unwrap()
+        .ingest_kit_report(DEVICE, &held_report());
+    let runtime = shared.lock().unwrap();
+    let Some(KitJob::Apply(scope)) = runtime.device_kit_pending.get(DEVICE) else {
+        panic!("the device is sent the choice again");
+    };
+    assert!(scope.agent_on.contains("codex"), "{scope:?}");
+}
+
+/// A device whose record will not save keeps reporting that it waits; the
+/// choice is sent once and the rest is logged, not queued on every report.
+#[test]
+fn a_device_that_keeps_waiting_is_sent_the_choice_once() {
+    let helper = KitDevice::answering(Ok(held_report()));
+    let shared = with_consent(Some(Arc::clone(&helper)));
+    shared
+        .lock()
+        .unwrap()
+        .ingest_kit_report(crate::workspace::LOCAL_DEVICE_ID, &held_report());
+    dispatch(
+        &shared,
+        "agent_onboarding_apply",
+        serde_json::json!({ "agents": ["codex"] }),
+    );
+    shared
+        .lock()
+        .unwrap()
+        .ingest_kit_report(DEVICE, &held_report());
+    settle(&shared);
+    for _ in 0..3 {
+        shared
+            .lock()
+            .unwrap()
+            .ingest_kit_report(DEVICE, &held_report());
+        settle(&shared);
+    }
+    let sent = helper
+        .calls()
+        .into_iter()
+        .filter(|call| matches!(call.0, KitAction::Reinstall { .. }))
+        .count();
+    assert_eq!(sent, 1, "{:?}", helper.calls());
+}
+
+#[test]
+fn applying_an_agent_hide_does_not_know_is_refused() {
+    let shared = with_consent(None);
+    shared
+        .lock()
+        .unwrap()
+        .ingest_kit_report(crate::workspace::LOCAL_DEVICE_ID, &held_report());
+    dispatch(
+        &shared,
+        "agent_onboarding_apply",
+        serde_json::json!({ "agents": ["not-an-agent"] }),
+    );
+    assert_eq!(
+        onboarding(&shared),
+        Some(crate::model::AgentOnboarding::Pending)
+    );
+    assert_eq!(
+        shared
+            .lock()
+            .unwrap()
+            .snapshot()
+            .status
+            .last_error
+            .as_ref()
+            .map(|error| error.kind.as_str()),
+        Some("kit.unknown_agent")
     );
 }
 
@@ -892,4 +1197,71 @@ fn the_latest_agent_switch_wins_over_one_still_queued() {
         assert!(scope.agent_off.contains("gemini-cli"), "{scope:?}");
         assert!(!scope.agent_on.contains("gemini-cli"), "{scope:?}");
     }
+}
+
+/// A first pass that could not run (the retirement preflight refused, the
+/// account lock timed out) says nothing about the record, so it must not end
+/// the choice: the next pass that runs is the one that decides.
+#[test]
+fn a_first_pass_that_did_not_run_does_not_decide_the_first_run_choice() {
+    use crate::model::AgentOnboarding::Pending;
+    let shared = with_consent(None);
+    shared.lock().unwrap().ingest_kit_report(
+        crate::workspace::LOCAL_DEVICE_ID,
+        &KitReport::unavailable("another Hide was still changing this account's kit"),
+    );
+    assert_eq!(onboarding(&shared), None);
+
+    shared
+        .lock()
+        .unwrap()
+        .ingest_kit_report(crate::workspace::LOCAL_DEVICE_ID, &held_report());
+    assert_eq!(onboarding(&shared), Some(Pending));
+}
+
+/// An existing Mac is never asked, and a device added later gets what the Mac
+/// has on today (Claude Code and Codex by default), as it did before the
+/// first-run choice existed.
+#[test]
+fn an_existing_macs_agents_become_the_saved_choice_a_later_device_receives() {
+    use crate::model::AgentOnboarding::Done;
+    use hide_kit::Availability::Available;
+    let shared = with_consent(None);
+    let mut existing = ran(report(&[(ComponentId::Cli, ComponentState::Installed)]));
+    existing.agents = vec![
+        agent_report("claude-code", Available, true, ComponentState::Installed),
+        agent_report("codex", Available, true, ComponentState::Installed),
+        agent_report("gemini-cli", Available, false, ComponentState::Off),
+    ];
+    shared
+        .lock()
+        .unwrap()
+        .ingest_kit_report(crate::workspace::LOCAL_DEVICE_ID, &existing);
+    assert_eq!(onboarding(&shared), Some(Done));
+    assert_eq!(
+        shared
+            .lock()
+            .unwrap()
+            .snapshot
+            .ui_state
+            .agent_onboarding_agents,
+        ["claude-code", "codex"]
+    );
+
+    shared
+        .lock()
+        .unwrap()
+        .ingest_kit_report(DEVICE, &held_report());
+    let runtime = shared.lock().unwrap();
+    let Some(KitJob::Apply(scope)) = runtime.device_kit_pending.get(DEVICE) else {
+        panic!("the device is given the Mac's agents");
+    };
+    assert_eq!(
+        scope
+            .agent_on
+            .iter()
+            .map(String::as_str)
+            .collect::<Vec<_>>(),
+        ["claude-code", "codex"]
+    );
 }

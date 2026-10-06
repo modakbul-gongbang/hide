@@ -605,6 +605,100 @@ fn the_switch_works_while_either_the_skill_or_the_hook_does_here() {
     );
 }
 
+#[test]
+fn a_machine_the_kit_has_never_touched_waits_for_the_first_choice_before_any_agent_gets_anything() {
+    let fixture = Fixture::fresh();
+    set_up(&fixture, ".codex");
+
+    let report = apply(&fixture.target, &Scope::automatic());
+
+    assert!(report.held_for_onboarding);
+    for id in ["claude-code", "codex"] {
+        let held = agent(&report, id);
+        assert!(!held.enabled, "{held:?}");
+        assert_eq!(held.skill.state, ComponentState::Off);
+    }
+    assert_eq!(
+        state(&report, ComponentId::ClaudeCodeHook),
+        ComponentState::Off
+    );
+    assert!(!fixture.settings().contains("hide-subagents@"));
+    assert!(
+        !fixture
+            .home()
+            .join(".claude/skills")
+            .join(SKILL_NAME)
+            .exists()
+    );
+    assert!(!shared_skill(&fixture).exists());
+    // The CLI link and the retirement stage are not agents and are applied.
+    assert_eq!(state(&report, ComponentId::Cli), ComponentState::Installed);
+
+    // The next pass is not the first, and still waits: the record says so,
+    // so a launch after a quit between the hold and the answer asks again.
+    let again = apply(&fixture.target, &Scope::automatic());
+    assert!(again.held_for_onboarding);
+    assert!(!agent(&again, "claude-code").enabled);
+    assert!(crate::status(&fixture.target).held_for_onboarding);
+
+    // The operator's choice puts back what they chose and nothing else.
+    let chosen = apply(&fixture.target, &Scope::agents(["claude-code"], []));
+    assert!(!chosen.held_for_onboarding);
+    assert!(agent(&chosen, "claude-code").enabled);
+    assert_eq!(
+        state(&chosen, ComponentId::ClaudeCodeHook),
+        ComponentState::Installed
+    );
+    assert!(!agent(&chosen, "codex").enabled);
+    assert!(!shared_skill(&fixture).exists());
+    assert!(!crate::status(&fixture.target).held_for_onboarding);
+}
+
+#[test]
+fn answering_with_nothing_chosen_is_still_an_answer() {
+    let fixture = Fixture::fresh();
+    set_up(&fixture, ".codex");
+    assert!(apply(&fixture.target, &Scope::automatic()).held_for_onboarding);
+
+    let answered = apply(&fixture.target, &Scope::first_run([]));
+
+    assert!(!answered.held_for_onboarding);
+    assert!(!agent(&answered, "claude-code").enabled);
+    assert!(!agent(&answered, "codex").enabled);
+    // Later passes and a status read agree, and nothing is asked again.
+    assert!(!apply(&fixture.target, &Scope::automatic()).held_for_onboarding);
+    assert!(!crate::status(&fixture.target).held_for_onboarding);
+}
+
+#[test]
+fn the_choice_made_in_the_first_pass_wins_over_the_hold() {
+    let fixture = Fixture::fresh();
+
+    let report = apply(&fixture.target, &Scope::agents(["claude-code"], []));
+
+    // The choice is an answer too: the machine does not ask afterwards.
+    assert!(!report.held_for_onboarding);
+    assert!(agent(&report, "claude-code").enabled);
+    assert_eq!(
+        state(&report, ComponentId::ClaudeCodeHook),
+        ComponentState::Installed
+    );
+}
+
+#[test]
+fn a_machine_with_a_record_keeps_what_it_had_when_this_build_arrives() {
+    let fixture = Fixture::new();
+
+    let report = apply(&fixture.target, &Scope::automatic());
+
+    assert!(!report.held_for_onboarding);
+    assert!(agent(&report, "claude-code").enabled);
+    assert_eq!(
+        state(&report, ComponentId::ClaudeCodeHook),
+        ComponentState::Installed
+    );
+}
+
 #[cfg(unix)]
 #[test]
 fn cursor_augment_and_junie_get_the_guidance_hook_with_the_switch_and_lose_it_with_it() {

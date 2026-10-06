@@ -4,7 +4,7 @@
 export default [
   {
     files: ["scripts/**/*.mjs"],
-    languageOptions: { globals: { process: "readonly", console: "readonly", fetch: "readonly", AbortSignal: "readonly" } },
+    languageOptions: { globals: { process: "readonly", console: "readonly", fetch: "readonly", AbortSignal: "readonly", WebSocket: "readonly" } },
   },
   {
     files: ["e2e/**/*.cjs"],

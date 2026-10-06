@@ -1740,6 +1740,32 @@
       "type": "number",
       "value": 20
     },
+    "--logo-plate": {
+      "type": "color",
+      "value": [
+        {
+          "value": "#FFFFFF"
+        },
+        {
+          "value": "#FFFFFF",
+          "theme": {
+            "Mode": "Dark"
+          }
+        }
+      ]
+    },
+    "--size-onboarding-dialog-w": {
+      "type": "number",
+      "value": 640
+    },
+    "--size-onboarding-tile": {
+      "type": "number",
+      "value": 120
+    },
+    "--size-agent-logo": {
+      "type": "number",
+      "value": 40
+    },
     "--font-ui": {
       "type": "string",
       "value": "Inter"
@@ -225127,6 +225153,3260 @@
       "width": "fit_content",
       "x": 0,
       "y": 44939
+    },
+    {
+      "type": "frame",
+      "id": "screen-onboarding",
+      "name": "Screen / Onboarding",
+      "children": [
+        {
+          "type": "text",
+          "id": "screen-onboarding-title",
+          "name": "Onboarding",
+          "content": "Onboarding",
+          "fill": "$--foreground",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-headline",
+          "fontWeight": "600"
+        },
+        {
+          "type": "text",
+          "id": "screen-onboarding-spec",
+          "name": "web/src/AgentOnboarding.tsx ",
+          "content": "web/src/AgentOnboarding.tsx over Dialog (agent adapters PRD, first-run choice): shown while the core says the choice is pending, and only Apply ends it. One square tile per adapter in four columns, each with its logo on a --logo-plate square (the bundled marks of web/src/assets/agents, each with its source in manifest.json) or, where no mark may be bundled, a monogram; never a drawn or approximated logo. An agent set up on the machine is on by default and shows its state as a word and a check mark as well as the primary border; an agent that is not set up is dimmed, reads Not installed and has no switch. Apply is the only button: Escape, a click outside and a close button do nothing, so a stray key cannot finish a choice that leaves Claude Code and Codex off; Apply installs the agents left on here and on every device that waits for the choice.",
+          "fill": "$--muted-foreground",
+          "fontFamily": "$--font-ui",
+          "fontSize": "$--text-caption",
+          "fontWeight": "400",
+          "textGrowth": "fixed-width",
+          "width": 960
+        },
+        {
+          "type": "frame",
+          "id": "screen-onboarding-light",
+          "name": "Light",
+          "children": [
+            {
+              "type": "frame",
+              "id": "onb-surface-l",
+              "name": "Surface",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "onb-surface-l-hdr",
+                  "name": "Header",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "onb-surface-l-title",
+                      "name": "Choose the agents Hide works",
+                      "content": "Choose the agents Hide works with",
+                      "fill": "$--foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-title",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "onb-surface-l-desc",
+                      "name": "Each agent you leave on gets",
+                      "content": "Each agent you leave on gets a skill for driving Hide’s browser and, where the agent supports one, a session hook. Hide edits only its own entries, and you can change this any time in Settings, Agents.",
+                      "fill": "$--subtle-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "400",
+                      "textGrowth": "fixed-width",
+                      "width": 608
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "padding": [
+                    "$--spacing-lg",
+                    "$--spacing-lg",
+                    0,
+                    "$--spacing-lg"
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "onb-surface-l-body",
+                  "name": "Body",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "onb-grid-l",
+                      "name": "Grid",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "onb-row-0-l",
+                          "name": "Row",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "onb-claude-code-tile-l",
+                              "name": "Tile · Claude Code · on",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "onb-claude-code-plate-l",
+                                  "name": "Logo plate",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "onb-claude-code-logo-l",
+                                      "name": "Logo",
+                                      "children": [],
+                                      "width": 32,
+                                      "height": 32,
+                                      "fill": {
+                                        "type": "image",
+                                        "enabled": true,
+                                        "url": "../web/src/assets/agent-claude.png",
+                                        "mode": "fit"
+                                      }
+                                    }
+                                  ],
+                                  "width": 40,
+                                  "height": 40,
+                                  "cornerRadius": "$--radius-md",
+                                  "fill": "$--logo-plate",
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "clip": true
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-claude-code-name-l",
+                                  "name": "Claude Code",
+                                  "content": "Claude Code",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-claude-code-state-l",
+                                  "name": "On",
+                                  "content": "On",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "onb-claude-code-check-l",
+                                  "name": "Check",
+                                  "children": [
+                                    {
+                                      "type": "icon",
+                                      "id": "onb-claude-code-checki-l",
+                                      "name": "Glyph",
+                                      "enabled": true,
+                                      "width": 12,
+                                      "height": 12,
+                                      "icon": "check",
+                                      "library": "lucide",
+                                      "fill": "$--primary-foreground"
+                                    }
+                                  ],
+                                  "width": 16,
+                                  "height": 16,
+                                  "cornerRadius": 8,
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "fill": "$--primary",
+                                  "stroke": "$--primary",
+                                  "strokeWidth": "$--size-hairline",
+                                  "strokeAlignment": "inner",
+                                  "layoutPosition": "absolute",
+                                  "x": 122,
+                                  "y": 8
+                                }
+                              ],
+                              "width": 146,
+                              "height": 146,
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "justifyContent": "center",
+                              "gap": "$--spacing-xs",
+                              "padding": "$--spacing-sm",
+                              "cornerRadius": "$--radius-md",
+                              "stroke": "$--primary",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
+                              "fill": "$--card"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "onb-codex-tile-l",
+                              "name": "Tile · Codex · on",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "onb-codex-plate-l",
+                                  "name": "Logo plate",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "onb-codex-logo-l",
+                                      "name": "Logo",
+                                      "children": [],
+                                      "width": 32,
+                                      "height": 32,
+                                      "fill": {
+                                        "type": "image",
+                                        "enabled": true,
+                                        "url": "../web/src/assets/agent-codex.png",
+                                        "mode": "fit"
+                                      }
+                                    }
+                                  ],
+                                  "width": 40,
+                                  "height": 40,
+                                  "cornerRadius": "$--radius-md",
+                                  "fill": "$--logo-plate",
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "clip": true
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-codex-name-l",
+                                  "name": "Codex",
+                                  "content": "Codex",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-codex-state-l",
+                                  "name": "On",
+                                  "content": "On",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "onb-codex-check-l",
+                                  "name": "Check",
+                                  "children": [
+                                    {
+                                      "type": "icon",
+                                      "id": "onb-codex-checki-l",
+                                      "name": "Glyph",
+                                      "enabled": true,
+                                      "width": 12,
+                                      "height": 12,
+                                      "icon": "check",
+                                      "library": "lucide",
+                                      "fill": "$--primary-foreground"
+                                    }
+                                  ],
+                                  "width": 16,
+                                  "height": 16,
+                                  "cornerRadius": 8,
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "fill": "$--primary",
+                                  "stroke": "$--primary",
+                                  "strokeWidth": "$--size-hairline",
+                                  "strokeAlignment": "inner",
+                                  "layoutPosition": "absolute",
+                                  "x": 122,
+                                  "y": 8
+                                }
+                              ],
+                              "width": 146,
+                              "height": 146,
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "justifyContent": "center",
+                              "gap": "$--spacing-xs",
+                              "padding": "$--spacing-sm",
+                              "cornerRadius": "$--radius-md",
+                              "stroke": "$--primary",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
+                              "fill": "$--card"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "onb-opencode-tile-l",
+                              "name": "Tile · OpenCode · on",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "onb-opencode-plate-l",
+                                  "name": "Logo plate",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "onb-opencode-logo-l",
+                                      "name": "Logo",
+                                      "children": [],
+                                      "width": 32,
+                                      "height": 32,
+                                      "fill": {
+                                        "type": "image",
+                                        "enabled": true,
+                                        "url": "../web/src/assets/agents/opencode.svg",
+                                        "mode": "fit"
+                                      }
+                                    }
+                                  ],
+                                  "width": 40,
+                                  "height": 40,
+                                  "cornerRadius": "$--radius-md",
+                                  "fill": "$--logo-plate",
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "clip": true
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-opencode-name-l",
+                                  "name": "OpenCode",
+                                  "content": "OpenCode",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-opencode-state-l",
+                                  "name": "On",
+                                  "content": "On",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "onb-opencode-check-l",
+                                  "name": "Check",
+                                  "children": [
+                                    {
+                                      "type": "icon",
+                                      "id": "onb-opencode-checki-l",
+                                      "name": "Glyph",
+                                      "enabled": true,
+                                      "width": 12,
+                                      "height": 12,
+                                      "icon": "check",
+                                      "library": "lucide",
+                                      "fill": "$--primary-foreground"
+                                    }
+                                  ],
+                                  "width": 16,
+                                  "height": 16,
+                                  "cornerRadius": 8,
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "fill": "$--primary",
+                                  "stroke": "$--primary",
+                                  "strokeWidth": "$--size-hairline",
+                                  "strokeAlignment": "inner",
+                                  "layoutPosition": "absolute",
+                                  "x": 122,
+                                  "y": 8
+                                }
+                              ],
+                              "width": 146,
+                              "height": 146,
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "justifyContent": "center",
+                              "gap": "$--spacing-xs",
+                              "padding": "$--spacing-sm",
+                              "cornerRadius": "$--radius-md",
+                              "stroke": "$--primary",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
+                              "fill": "$--card"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "onb-gemini-cli-tile-l",
+                              "name": "Tile · Gemini CLI · off",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "onb-gemini-cli-plate-l",
+                                  "name": "Logo plate",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "onb-gemini-cli-mono-l",
+                                      "name": "GC",
+                                      "content": "GC",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "600"
+                                    }
+                                  ],
+                                  "width": 40,
+                                  "height": 40,
+                                  "cornerRadius": "$--radius-md",
+                                  "fill": "$--logo-plate",
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "clip": true
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-gemini-cli-name-l",
+                                  "name": "Gemini CLI",
+                                  "content": "Gemini CLI",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-gemini-cli-state-l",
+                                  "name": "Off",
+                                  "content": "Off",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "onb-gemini-cli-check-l",
+                                  "name": "Check",
+                                  "children": [],
+                                  "width": 16,
+                                  "height": 16,
+                                  "cornerRadius": 8,
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "stroke": "$--border",
+                                  "strokeWidth": "$--size-hairline",
+                                  "strokeAlignment": "inner",
+                                  "layoutPosition": "absolute",
+                                  "x": 122,
+                                  "y": 8
+                                }
+                              ],
+                              "width": 146,
+                              "height": 146,
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "justifyContent": "center",
+                              "gap": "$--spacing-xs",
+                              "padding": "$--spacing-sm",
+                              "cornerRadius": "$--radius-md",
+                              "stroke": "$--border",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": 8
+                        },
+                        {
+                          "type": "frame",
+                          "id": "onb-row-1-l",
+                          "name": "Row",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "onb-cursor-tile-l",
+                              "name": "Tile · Cursor · none",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "onb-cursor-plate-l",
+                                  "name": "Logo plate",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "onb-cursor-logo-l",
+                                      "name": "Logo",
+                                      "children": [],
+                                      "width": 32,
+                                      "height": 32,
+                                      "fill": {
+                                        "type": "image",
+                                        "enabled": true,
+                                        "url": "../web/src/assets/agents/cursor.svg",
+                                        "mode": "fit"
+                                      }
+                                    }
+                                  ],
+                                  "width": 40,
+                                  "height": 40,
+                                  "cornerRadius": "$--radius-md",
+                                  "fill": "$--logo-plate",
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "clip": true
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-cursor-name-l",
+                                  "name": "Cursor",
+                                  "content": "Cursor",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-cursor-state-l",
+                                  "name": "Not installed",
+                                  "content": "Not installed",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": 146,
+                              "height": 146,
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "justifyContent": "center",
+                              "gap": "$--spacing-xs",
+                              "padding": "$--spacing-sm",
+                              "cornerRadius": "$--radius-md",
+                              "stroke": "$--border",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
+                              "opacity": 0.5
+                            },
+                            {
+                              "type": "frame",
+                              "id": "onb-copilot-cli-tile-l",
+                              "name": "Tile · Copilot CLI · none",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "onb-copilot-cli-plate-l",
+                                  "name": "Logo plate",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "onb-copilot-cli-mono-l",
+                                      "name": "CC",
+                                      "content": "CC",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "600"
+                                    }
+                                  ],
+                                  "width": 40,
+                                  "height": 40,
+                                  "cornerRadius": "$--radius-md",
+                                  "fill": "$--logo-plate",
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "clip": true
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-copilot-cli-name-l",
+                                  "name": "Copilot CLI",
+                                  "content": "Copilot CLI",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-copilot-cli-state-l",
+                                  "name": "Not installed",
+                                  "content": "Not installed",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": 146,
+                              "height": 146,
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "justifyContent": "center",
+                              "gap": "$--spacing-xs",
+                              "padding": "$--spacing-sm",
+                              "cornerRadius": "$--radius-md",
+                              "stroke": "$--border",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
+                              "opacity": 0.5
+                            },
+                            {
+                              "type": "frame",
+                              "id": "onb-amp-tile-l",
+                              "name": "Tile · Amp · none",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "onb-amp-plate-l",
+                                  "name": "Logo plate",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "onb-amp-mono-l",
+                                      "name": "AM",
+                                      "content": "AM",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "600"
+                                    }
+                                  ],
+                                  "width": 40,
+                                  "height": 40,
+                                  "cornerRadius": "$--radius-md",
+                                  "fill": "$--logo-plate",
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "clip": true
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-amp-name-l",
+                                  "name": "Amp",
+                                  "content": "Amp",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-amp-state-l",
+                                  "name": "Not installed",
+                                  "content": "Not installed",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": 146,
+                              "height": 146,
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "justifyContent": "center",
+                              "gap": "$--spacing-xs",
+                              "padding": "$--spacing-sm",
+                              "cornerRadius": "$--radius-md",
+                              "stroke": "$--border",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
+                              "opacity": 0.5
+                            },
+                            {
+                              "type": "frame",
+                              "id": "onb-factory-droid-tile-l",
+                              "name": "Tile · Factory Droid · none",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "onb-factory-droid-plate-l",
+                                  "name": "Logo plate",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "onb-factory-droid-mono-l",
+                                      "name": "FD",
+                                      "content": "FD",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "600"
+                                    }
+                                  ],
+                                  "width": 40,
+                                  "height": 40,
+                                  "cornerRadius": "$--radius-md",
+                                  "fill": "$--logo-plate",
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "clip": true
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-factory-droid-name-l",
+                                  "name": "Factory Droid",
+                                  "content": "Factory Droid",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-factory-droid-state-l",
+                                  "name": "Not installed",
+                                  "content": "Not installed",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": 146,
+                              "height": 146,
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "justifyContent": "center",
+                              "gap": "$--spacing-xs",
+                              "padding": "$--spacing-sm",
+                              "cornerRadius": "$--radius-md",
+                              "stroke": "$--border",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
+                              "opacity": 0.5
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": 8
+                        },
+                        {
+                          "type": "frame",
+                          "id": "onb-row-2-l",
+                          "name": "Row",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "onb-kiro-tile-l",
+                              "name": "Tile · Kiro · none",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "onb-kiro-plate-l",
+                                  "name": "Logo plate",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "onb-kiro-mono-l",
+                                      "name": "KI",
+                                      "content": "KI",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "600"
+                                    }
+                                  ],
+                                  "width": 40,
+                                  "height": 40,
+                                  "cornerRadius": "$--radius-md",
+                                  "fill": "$--logo-plate",
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "clip": true
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-kiro-name-l",
+                                  "name": "Kiro",
+                                  "content": "Kiro",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-kiro-state-l",
+                                  "name": "Not installed",
+                                  "content": "Not installed",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": 146,
+                              "height": 146,
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "justifyContent": "center",
+                              "gap": "$--spacing-xs",
+                              "padding": "$--spacing-sm",
+                              "cornerRadius": "$--radius-md",
+                              "stroke": "$--border",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
+                              "opacity": 0.5
+                            },
+                            {
+                              "type": "frame",
+                              "id": "onb-qwen-code-tile-l",
+                              "name": "Tile · Qwen Code · none",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "onb-qwen-code-plate-l",
+                                  "name": "Logo plate",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "onb-qwen-code-logo-l",
+                                      "name": "Logo",
+                                      "children": [],
+                                      "width": 32,
+                                      "height": 32,
+                                      "fill": {
+                                        "type": "image",
+                                        "enabled": true,
+                                        "url": "../web/src/assets/agents/qwen-code.svg",
+                                        "mode": "fit"
+                                      }
+                                    }
+                                  ],
+                                  "width": 40,
+                                  "height": 40,
+                                  "cornerRadius": "$--radius-md",
+                                  "fill": "$--logo-plate",
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "clip": true
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-qwen-code-name-l",
+                                  "name": "Qwen Code",
+                                  "content": "Qwen Code",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-qwen-code-state-l",
+                                  "name": "Not installed",
+                                  "content": "Not installed",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": 146,
+                              "height": 146,
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "justifyContent": "center",
+                              "gap": "$--spacing-xs",
+                              "padding": "$--spacing-sm",
+                              "cornerRadius": "$--radius-md",
+                              "stroke": "$--border",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
+                              "opacity": 0.5
+                            },
+                            {
+                              "type": "frame",
+                              "id": "onb-goose-tile-l",
+                              "name": "Tile · Goose · none",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "onb-goose-plate-l",
+                                  "name": "Logo plate",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "onb-goose-logo-l",
+                                      "name": "Logo",
+                                      "children": [],
+                                      "width": 32,
+                                      "height": 32,
+                                      "fill": {
+                                        "type": "image",
+                                        "enabled": true,
+                                        "url": "../web/src/assets/agents/goose.svg",
+                                        "mode": "fit"
+                                      }
+                                    }
+                                  ],
+                                  "width": 40,
+                                  "height": 40,
+                                  "cornerRadius": "$--radius-md",
+                                  "fill": "$--logo-plate",
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "clip": true
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-goose-name-l",
+                                  "name": "Goose",
+                                  "content": "Goose",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-goose-state-l",
+                                  "name": "Not installed",
+                                  "content": "Not installed",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": 146,
+                              "height": 146,
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "justifyContent": "center",
+                              "gap": "$--spacing-xs",
+                              "padding": "$--spacing-sm",
+                              "cornerRadius": "$--radius-md",
+                              "stroke": "$--border",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
+                              "opacity": 0.5
+                            },
+                            {
+                              "type": "frame",
+                              "id": "onb-cline-tile-l",
+                              "name": "Tile · Cline · none",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "onb-cline-plate-l",
+                                  "name": "Logo plate",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "onb-cline-logo-l",
+                                      "name": "Logo",
+                                      "children": [],
+                                      "width": 32,
+                                      "height": 32,
+                                      "fill": {
+                                        "type": "image",
+                                        "enabled": true,
+                                        "url": "../web/src/assets/agents/cline.svg",
+                                        "mode": "fit"
+                                      }
+                                    }
+                                  ],
+                                  "width": 40,
+                                  "height": 40,
+                                  "cornerRadius": "$--radius-md",
+                                  "fill": "$--logo-plate",
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "clip": true
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-cline-name-l",
+                                  "name": "Cline",
+                                  "content": "Cline",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-cline-state-l",
+                                  "name": "Not installed",
+                                  "content": "Not installed",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": 146,
+                              "height": 146,
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "justifyContent": "center",
+                              "gap": "$--spacing-xs",
+                              "padding": "$--spacing-sm",
+                              "cornerRadius": "$--radius-md",
+                              "stroke": "$--border",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
+                              "opacity": 0.5
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": 8
+                        },
+                        {
+                          "type": "frame",
+                          "id": "onb-row-3-l",
+                          "name": "Row",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "onb-kilo-code-tile-l",
+                              "name": "Tile · Kilo Code · none",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "onb-kilo-code-plate-l",
+                                  "name": "Logo plate",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "onb-kilo-code-logo-l",
+                                      "name": "Logo",
+                                      "children": [],
+                                      "width": 32,
+                                      "height": 32,
+                                      "fill": {
+                                        "type": "image",
+                                        "enabled": true,
+                                        "url": "../web/src/assets/agents/kilo-code.svg",
+                                        "mode": "fit"
+                                      }
+                                    }
+                                  ],
+                                  "width": 40,
+                                  "height": 40,
+                                  "cornerRadius": "$--radius-md",
+                                  "fill": "$--logo-plate",
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "clip": true
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-kilo-code-name-l",
+                                  "name": "Kilo Code",
+                                  "content": "Kilo Code",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-kilo-code-state-l",
+                                  "name": "Not installed",
+                                  "content": "Not installed",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": 146,
+                              "height": 146,
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "justifyContent": "center",
+                              "gap": "$--spacing-xs",
+                              "padding": "$--spacing-sm",
+                              "cornerRadius": "$--radius-md",
+                              "stroke": "$--border",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
+                              "opacity": 0.5
+                            },
+                            {
+                              "type": "frame",
+                              "id": "onb-crush-tile-l",
+                              "name": "Tile · Crush · none",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "onb-crush-plate-l",
+                                  "name": "Logo plate",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "onb-crush-mono-l",
+                                      "name": "CR",
+                                      "content": "CR",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "600"
+                                    }
+                                  ],
+                                  "width": 40,
+                                  "height": 40,
+                                  "cornerRadius": "$--radius-md",
+                                  "fill": "$--logo-plate",
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "clip": true
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-crush-name-l",
+                                  "name": "Crush",
+                                  "content": "Crush",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-crush-state-l",
+                                  "name": "Not installed",
+                                  "content": "Not installed",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": 146,
+                              "height": 146,
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "justifyContent": "center",
+                              "gap": "$--spacing-xs",
+                              "padding": "$--spacing-sm",
+                              "cornerRadius": "$--radius-md",
+                              "stroke": "$--border",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
+                              "opacity": 0.5
+                            },
+                            {
+                              "type": "frame",
+                              "id": "onb-junie-tile-l",
+                              "name": "Tile · Junie · none",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "onb-junie-plate-l",
+                                  "name": "Logo plate",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "onb-junie-mono-l",
+                                      "name": "JU",
+                                      "content": "JU",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "600"
+                                    }
+                                  ],
+                                  "width": 40,
+                                  "height": 40,
+                                  "cornerRadius": "$--radius-md",
+                                  "fill": "$--logo-plate",
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "clip": true
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-junie-name-l",
+                                  "name": "Junie",
+                                  "content": "Junie",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-junie-state-l",
+                                  "name": "Not installed",
+                                  "content": "Not installed",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": 146,
+                              "height": 146,
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "justifyContent": "center",
+                              "gap": "$--spacing-xs",
+                              "padding": "$--spacing-sm",
+                              "cornerRadius": "$--radius-md",
+                              "stroke": "$--border",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
+                              "opacity": 0.5
+                            },
+                            {
+                              "type": "frame",
+                              "id": "onb-augment-tile-l",
+                              "name": "Tile · Augment · none",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "onb-augment-plate-l",
+                                  "name": "Logo plate",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "onb-augment-mono-l",
+                                      "name": "AU",
+                                      "content": "AU",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "600"
+                                    }
+                                  ],
+                                  "width": 40,
+                                  "height": 40,
+                                  "cornerRadius": "$--radius-md",
+                                  "fill": "$--logo-plate",
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "clip": true
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-augment-name-l",
+                                  "name": "Augment",
+                                  "content": "Augment",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-augment-state-l",
+                                  "name": "Not installed",
+                                  "content": "Not installed",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": 146,
+                              "height": 146,
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "justifyContent": "center",
+                              "gap": "$--spacing-xs",
+                              "padding": "$--spacing-sm",
+                              "cornerRadius": "$--radius-md",
+                              "stroke": "$--border",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
+                              "opacity": 0.5
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": 8
+                        },
+                        {
+                          "type": "frame",
+                          "id": "onb-row-4-l",
+                          "name": "Row",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "onb-pi-tile-l",
+                              "name": "Tile · Pi · none",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "onb-pi-plate-l",
+                                  "name": "Logo plate",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "onb-pi-mono-l",
+                                      "name": "PI",
+                                      "content": "PI",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "600"
+                                    }
+                                  ],
+                                  "width": 40,
+                                  "height": 40,
+                                  "cornerRadius": "$--radius-md",
+                                  "fill": "$--logo-plate",
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "clip": true
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-pi-name-l",
+                                  "name": "Pi",
+                                  "content": "Pi",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-pi-state-l",
+                                  "name": "Not installed",
+                                  "content": "Not installed",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": 146,
+                              "height": 146,
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "justifyContent": "center",
+                              "gap": "$--spacing-xs",
+                              "padding": "$--spacing-sm",
+                              "cornerRadius": "$--radius-md",
+                              "stroke": "$--border",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
+                              "opacity": 0.5
+                            },
+                            {
+                              "type": "frame",
+                              "id": "onb-grok-tile-l",
+                              "name": "Tile · Grok · none",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "onb-grok-plate-l",
+                                  "name": "Logo plate",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "onb-grok-mono-l",
+                                      "name": "GR",
+                                      "content": "GR",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "600"
+                                    }
+                                  ],
+                                  "width": 40,
+                                  "height": 40,
+                                  "cornerRadius": "$--radius-md",
+                                  "fill": "$--logo-plate",
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "clip": true
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-grok-name-l",
+                                  "name": "Grok",
+                                  "content": "Grok",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-grok-state-l",
+                                  "name": "Not installed",
+                                  "content": "Not installed",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": 146,
+                              "height": 146,
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "justifyContent": "center",
+                              "gap": "$--spacing-xs",
+                              "padding": "$--spacing-sm",
+                              "cornerRadius": "$--radius-md",
+                              "stroke": "$--border",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
+                              "opacity": 0.5
+                            },
+                            {
+                              "type": "frame",
+                              "id": "onb-kimi-code-tile-l",
+                              "name": "Tile · Kimi Code · none",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "onb-kimi-code-plate-l",
+                                  "name": "Logo plate",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "onb-kimi-code-mono-l",
+                                      "name": "KC",
+                                      "content": "KC",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "600"
+                                    }
+                                  ],
+                                  "width": 40,
+                                  "height": 40,
+                                  "cornerRadius": "$--radius-md",
+                                  "fill": "$--logo-plate",
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "clip": true
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-kimi-code-name-l",
+                                  "name": "Kimi Code",
+                                  "content": "Kimi Code",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-kimi-code-state-l",
+                                  "name": "Not installed",
+                                  "content": "Not installed",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": 146,
+                              "height": 146,
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "justifyContent": "center",
+                              "gap": "$--spacing-xs",
+                              "padding": "$--spacing-sm",
+                              "cornerRadius": "$--radius-md",
+                              "stroke": "$--border",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
+                              "opacity": 0.5
+                            },
+                            {
+                              "type": "frame",
+                              "id": "onb-mistral-vibe-tile-l",
+                              "name": "Tile · Mistral Vibe · none",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "onb-mistral-vibe-plate-l",
+                                  "name": "Logo plate",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "onb-mistral-vibe-logo-l",
+                                      "name": "Logo",
+                                      "children": [],
+                                      "width": 32,
+                                      "height": 32,
+                                      "fill": {
+                                        "type": "image",
+                                        "enabled": true,
+                                        "url": "../web/src/assets/agents/mistral-vibe.svg",
+                                        "mode": "fit"
+                                      }
+                                    }
+                                  ],
+                                  "width": 40,
+                                  "height": 40,
+                                  "cornerRadius": "$--radius-md",
+                                  "fill": "$--logo-plate",
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "clip": true
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-mistral-vibe-name-l",
+                                  "name": "Mistral Vibe",
+                                  "content": "Mistral Vibe",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-mistral-vibe-state-l",
+                                  "name": "Not installed",
+                                  "content": "Not installed",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": 146,
+                              "height": 146,
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "justifyContent": "center",
+                              "gap": "$--spacing-xs",
+                              "padding": "$--spacing-sm",
+                              "cornerRadius": "$--radius-md",
+                              "stroke": "$--border",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
+                              "opacity": 0.5
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": 8
+                        }
+                      ],
+                      "layout": "vertical",
+                      "gap": 8
+                    },
+                    {
+                      "type": "text",
+                      "id": "onb-devices-l",
+                      "name": "Connected devices get the sa",
+                      "content": "Connected devices get the same choice, each by what is installed there.",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "400",
+                      "textGrowth": "fixed-width",
+                      "width": 608
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-md",
+                  "padding": [
+                    0,
+                    "$--spacing-lg"
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "onb-surface-l-ftr",
+                  "name": "Footer",
+                  "children": [
+                    {
+                      "id": "onb-apply-l",
+                      "type": "ref",
+                      "ref": "hideui:btn-m",
+                      "name": "Apply",
+                      "fill": "$--primary",
+                      "descendants": {
+                        "hideui:btn-ic": {
+                          "fill": "$--primary-foreground",
+                          "enabled": false
+                        },
+                        "hideui:btn-lb": {
+                          "fill": "$--primary-foreground",
+                          "content": "Apply"
+                        }
+                      }
+                    }
+                  ],
+                  "layout": "horizontal",
+                  "justifyContent": "end",
+                  "alignItems": "center",
+                  "gap": "$--spacing-sm",
+                  "width": "fill_container",
+                  "padding": [
+                    0,
+                    "$--spacing-lg",
+                    "$--spacing-lg",
+                    "$--spacing-lg"
+                  ]
+                }
+              ],
+              "width": 640,
+              "cornerRadius": "$--radius-lg",
+              "fill": "$--popover",
+              "stroke": "$--border",
+              "strokeWidth": "$--size-hairline",
+              "strokeAlignment": "inner",
+              "layout": "vertical",
+              "gap": "$--spacing-md"
+            }
+          ],
+          "theme": {
+            "Mode": "Light"
+          },
+          "layout": "horizontal",
+          "gap": "$--spacing-lg",
+          "alignItems": "start",
+          "padding": "$--spacing-lg",
+          "fill": "$--background",
+          "cornerRadius": "$--radius-md",
+          "width": "fit_content"
+        },
+        {
+          "type": "frame",
+          "id": "screen-onboarding-dark",
+          "name": "Dark",
+          "children": [
+            {
+              "type": "frame",
+              "id": "onb-surface-d",
+              "name": "Surface",
+              "children": [
+                {
+                  "type": "frame",
+                  "id": "onb-surface-d-hdr",
+                  "name": "Header",
+                  "children": [
+                    {
+                      "type": "text",
+                      "id": "onb-surface-d-title",
+                      "name": "Choose the agents Hide works",
+                      "content": "Choose the agents Hide works with",
+                      "fill": "$--foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-title",
+                      "fontWeight": "600"
+                    },
+                    {
+                      "type": "text",
+                      "id": "onb-surface-d-desc",
+                      "name": "Each agent you leave on gets",
+                      "content": "Each agent you leave on gets a skill for driving Hide’s browser and, where the agent supports one, a session hook. Hide edits only its own entries, and you can change this any time in Settings, Agents.",
+                      "fill": "$--subtle-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-body",
+                      "fontWeight": "400",
+                      "textGrowth": "fixed-width",
+                      "width": 608
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-xs",
+                  "padding": [
+                    "$--spacing-lg",
+                    "$--spacing-lg",
+                    0,
+                    "$--spacing-lg"
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "onb-surface-d-body",
+                  "name": "Body",
+                  "children": [
+                    {
+                      "type": "frame",
+                      "id": "onb-grid-d",
+                      "name": "Grid",
+                      "children": [
+                        {
+                          "type": "frame",
+                          "id": "onb-row-0-d",
+                          "name": "Row",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "onb-claude-code-tile-d",
+                              "name": "Tile · Claude Code · on",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "onb-claude-code-plate-d",
+                                  "name": "Logo plate",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "onb-claude-code-logo-d",
+                                      "name": "Logo",
+                                      "children": [],
+                                      "width": 32,
+                                      "height": 32,
+                                      "fill": {
+                                        "type": "image",
+                                        "enabled": true,
+                                        "url": "../web/src/assets/agent-claude.png",
+                                        "mode": "fit"
+                                      }
+                                    }
+                                  ],
+                                  "width": 40,
+                                  "height": 40,
+                                  "cornerRadius": "$--radius-md",
+                                  "fill": "$--logo-plate",
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "clip": true
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-claude-code-name-d",
+                                  "name": "Claude Code",
+                                  "content": "Claude Code",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-claude-code-state-d",
+                                  "name": "On",
+                                  "content": "On",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "onb-claude-code-check-d",
+                                  "name": "Check",
+                                  "children": [
+                                    {
+                                      "type": "icon",
+                                      "id": "onb-claude-code-checki-d",
+                                      "name": "Glyph",
+                                      "enabled": true,
+                                      "width": 12,
+                                      "height": 12,
+                                      "icon": "check",
+                                      "library": "lucide",
+                                      "fill": "$--primary-foreground"
+                                    }
+                                  ],
+                                  "width": 16,
+                                  "height": 16,
+                                  "cornerRadius": 8,
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "fill": "$--primary",
+                                  "stroke": "$--primary",
+                                  "strokeWidth": "$--size-hairline",
+                                  "strokeAlignment": "inner",
+                                  "layoutPosition": "absolute",
+                                  "x": 122,
+                                  "y": 8
+                                }
+                              ],
+                              "width": 146,
+                              "height": 146,
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "justifyContent": "center",
+                              "gap": "$--spacing-xs",
+                              "padding": "$--spacing-sm",
+                              "cornerRadius": "$--radius-md",
+                              "stroke": "$--primary",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
+                              "fill": "$--card"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "onb-codex-tile-d",
+                              "name": "Tile · Codex · on",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "onb-codex-plate-d",
+                                  "name": "Logo plate",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "onb-codex-logo-d",
+                                      "name": "Logo",
+                                      "children": [],
+                                      "width": 32,
+                                      "height": 32,
+                                      "fill": {
+                                        "type": "image",
+                                        "enabled": true,
+                                        "url": "../web/src/assets/agent-codex.png",
+                                        "mode": "fit"
+                                      }
+                                    }
+                                  ],
+                                  "width": 40,
+                                  "height": 40,
+                                  "cornerRadius": "$--radius-md",
+                                  "fill": "$--logo-plate",
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "clip": true
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-codex-name-d",
+                                  "name": "Codex",
+                                  "content": "Codex",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-codex-state-d",
+                                  "name": "On",
+                                  "content": "On",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "onb-codex-check-d",
+                                  "name": "Check",
+                                  "children": [
+                                    {
+                                      "type": "icon",
+                                      "id": "onb-codex-checki-d",
+                                      "name": "Glyph",
+                                      "enabled": true,
+                                      "width": 12,
+                                      "height": 12,
+                                      "icon": "check",
+                                      "library": "lucide",
+                                      "fill": "$--primary-foreground"
+                                    }
+                                  ],
+                                  "width": 16,
+                                  "height": 16,
+                                  "cornerRadius": 8,
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "fill": "$--primary",
+                                  "stroke": "$--primary",
+                                  "strokeWidth": "$--size-hairline",
+                                  "strokeAlignment": "inner",
+                                  "layoutPosition": "absolute",
+                                  "x": 122,
+                                  "y": 8
+                                }
+                              ],
+                              "width": 146,
+                              "height": 146,
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "justifyContent": "center",
+                              "gap": "$--spacing-xs",
+                              "padding": "$--spacing-sm",
+                              "cornerRadius": "$--radius-md",
+                              "stroke": "$--primary",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
+                              "fill": "$--card"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "onb-opencode-tile-d",
+                              "name": "Tile · OpenCode · on",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "onb-opencode-plate-d",
+                                  "name": "Logo plate",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "onb-opencode-logo-d",
+                                      "name": "Logo",
+                                      "children": [],
+                                      "width": 32,
+                                      "height": 32,
+                                      "fill": {
+                                        "type": "image",
+                                        "enabled": true,
+                                        "url": "../web/src/assets/agents/opencode.svg",
+                                        "mode": "fit"
+                                      }
+                                    }
+                                  ],
+                                  "width": 40,
+                                  "height": 40,
+                                  "cornerRadius": "$--radius-md",
+                                  "fill": "$--logo-plate",
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "clip": true
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-opencode-name-d",
+                                  "name": "OpenCode",
+                                  "content": "OpenCode",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-opencode-state-d",
+                                  "name": "On",
+                                  "content": "On",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "onb-opencode-check-d",
+                                  "name": "Check",
+                                  "children": [
+                                    {
+                                      "type": "icon",
+                                      "id": "onb-opencode-checki-d",
+                                      "name": "Glyph",
+                                      "enabled": true,
+                                      "width": 12,
+                                      "height": 12,
+                                      "icon": "check",
+                                      "library": "lucide",
+                                      "fill": "$--primary-foreground"
+                                    }
+                                  ],
+                                  "width": 16,
+                                  "height": 16,
+                                  "cornerRadius": 8,
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "fill": "$--primary",
+                                  "stroke": "$--primary",
+                                  "strokeWidth": "$--size-hairline",
+                                  "strokeAlignment": "inner",
+                                  "layoutPosition": "absolute",
+                                  "x": 122,
+                                  "y": 8
+                                }
+                              ],
+                              "width": 146,
+                              "height": 146,
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "justifyContent": "center",
+                              "gap": "$--spacing-xs",
+                              "padding": "$--spacing-sm",
+                              "cornerRadius": "$--radius-md",
+                              "stroke": "$--primary",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
+                              "fill": "$--card"
+                            },
+                            {
+                              "type": "frame",
+                              "id": "onb-gemini-cli-tile-d",
+                              "name": "Tile · Gemini CLI · off",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "onb-gemini-cli-plate-d",
+                                  "name": "Logo plate",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "onb-gemini-cli-mono-d",
+                                      "name": "GC",
+                                      "content": "GC",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "600"
+                                    }
+                                  ],
+                                  "width": 40,
+                                  "height": 40,
+                                  "cornerRadius": "$--radius-md",
+                                  "fill": "$--logo-plate",
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "clip": true
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-gemini-cli-name-d",
+                                  "name": "Gemini CLI",
+                                  "content": "Gemini CLI",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-gemini-cli-state-d",
+                                  "name": "Off",
+                                  "content": "Off",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                },
+                                {
+                                  "type": "frame",
+                                  "id": "onb-gemini-cli-check-d",
+                                  "name": "Check",
+                                  "children": [],
+                                  "width": 16,
+                                  "height": 16,
+                                  "cornerRadius": 8,
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "stroke": "$--border",
+                                  "strokeWidth": "$--size-hairline",
+                                  "strokeAlignment": "inner",
+                                  "layoutPosition": "absolute",
+                                  "x": 122,
+                                  "y": 8
+                                }
+                              ],
+                              "width": 146,
+                              "height": 146,
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "justifyContent": "center",
+                              "gap": "$--spacing-xs",
+                              "padding": "$--spacing-sm",
+                              "cornerRadius": "$--radius-md",
+                              "stroke": "$--border",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner"
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": 8
+                        },
+                        {
+                          "type": "frame",
+                          "id": "onb-row-1-d",
+                          "name": "Row",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "onb-cursor-tile-d",
+                              "name": "Tile · Cursor · none",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "onb-cursor-plate-d",
+                                  "name": "Logo plate",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "onb-cursor-logo-d",
+                                      "name": "Logo",
+                                      "children": [],
+                                      "width": 32,
+                                      "height": 32,
+                                      "fill": {
+                                        "type": "image",
+                                        "enabled": true,
+                                        "url": "../web/src/assets/agents/cursor.svg",
+                                        "mode": "fit"
+                                      }
+                                    }
+                                  ],
+                                  "width": 40,
+                                  "height": 40,
+                                  "cornerRadius": "$--radius-md",
+                                  "fill": "$--logo-plate",
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "clip": true
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-cursor-name-d",
+                                  "name": "Cursor",
+                                  "content": "Cursor",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-cursor-state-d",
+                                  "name": "Not installed",
+                                  "content": "Not installed",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": 146,
+                              "height": 146,
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "justifyContent": "center",
+                              "gap": "$--spacing-xs",
+                              "padding": "$--spacing-sm",
+                              "cornerRadius": "$--radius-md",
+                              "stroke": "$--border",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
+                              "opacity": 0.5
+                            },
+                            {
+                              "type": "frame",
+                              "id": "onb-copilot-cli-tile-d",
+                              "name": "Tile · Copilot CLI · none",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "onb-copilot-cli-plate-d",
+                                  "name": "Logo plate",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "onb-copilot-cli-mono-d",
+                                      "name": "CC",
+                                      "content": "CC",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "600"
+                                    }
+                                  ],
+                                  "width": 40,
+                                  "height": 40,
+                                  "cornerRadius": "$--radius-md",
+                                  "fill": "$--logo-plate",
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "clip": true
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-copilot-cli-name-d",
+                                  "name": "Copilot CLI",
+                                  "content": "Copilot CLI",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-copilot-cli-state-d",
+                                  "name": "Not installed",
+                                  "content": "Not installed",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": 146,
+                              "height": 146,
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "justifyContent": "center",
+                              "gap": "$--spacing-xs",
+                              "padding": "$--spacing-sm",
+                              "cornerRadius": "$--radius-md",
+                              "stroke": "$--border",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
+                              "opacity": 0.5
+                            },
+                            {
+                              "type": "frame",
+                              "id": "onb-amp-tile-d",
+                              "name": "Tile · Amp · none",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "onb-amp-plate-d",
+                                  "name": "Logo plate",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "onb-amp-mono-d",
+                                      "name": "AM",
+                                      "content": "AM",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "600"
+                                    }
+                                  ],
+                                  "width": 40,
+                                  "height": 40,
+                                  "cornerRadius": "$--radius-md",
+                                  "fill": "$--logo-plate",
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "clip": true
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-amp-name-d",
+                                  "name": "Amp",
+                                  "content": "Amp",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-amp-state-d",
+                                  "name": "Not installed",
+                                  "content": "Not installed",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": 146,
+                              "height": 146,
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "justifyContent": "center",
+                              "gap": "$--spacing-xs",
+                              "padding": "$--spacing-sm",
+                              "cornerRadius": "$--radius-md",
+                              "stroke": "$--border",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
+                              "opacity": 0.5
+                            },
+                            {
+                              "type": "frame",
+                              "id": "onb-factory-droid-tile-d",
+                              "name": "Tile · Factory Droid · none",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "onb-factory-droid-plate-d",
+                                  "name": "Logo plate",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "onb-factory-droid-mono-d",
+                                      "name": "FD",
+                                      "content": "FD",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "600"
+                                    }
+                                  ],
+                                  "width": 40,
+                                  "height": 40,
+                                  "cornerRadius": "$--radius-md",
+                                  "fill": "$--logo-plate",
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "clip": true
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-factory-droid-name-d",
+                                  "name": "Factory Droid",
+                                  "content": "Factory Droid",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-factory-droid-state-d",
+                                  "name": "Not installed",
+                                  "content": "Not installed",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": 146,
+                              "height": 146,
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "justifyContent": "center",
+                              "gap": "$--spacing-xs",
+                              "padding": "$--spacing-sm",
+                              "cornerRadius": "$--radius-md",
+                              "stroke": "$--border",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
+                              "opacity": 0.5
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": 8
+                        },
+                        {
+                          "type": "frame",
+                          "id": "onb-row-2-d",
+                          "name": "Row",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "onb-kiro-tile-d",
+                              "name": "Tile · Kiro · none",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "onb-kiro-plate-d",
+                                  "name": "Logo plate",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "onb-kiro-mono-d",
+                                      "name": "KI",
+                                      "content": "KI",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "600"
+                                    }
+                                  ],
+                                  "width": 40,
+                                  "height": 40,
+                                  "cornerRadius": "$--radius-md",
+                                  "fill": "$--logo-plate",
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "clip": true
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-kiro-name-d",
+                                  "name": "Kiro",
+                                  "content": "Kiro",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-kiro-state-d",
+                                  "name": "Not installed",
+                                  "content": "Not installed",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": 146,
+                              "height": 146,
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "justifyContent": "center",
+                              "gap": "$--spacing-xs",
+                              "padding": "$--spacing-sm",
+                              "cornerRadius": "$--radius-md",
+                              "stroke": "$--border",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
+                              "opacity": 0.5
+                            },
+                            {
+                              "type": "frame",
+                              "id": "onb-qwen-code-tile-d",
+                              "name": "Tile · Qwen Code · none",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "onb-qwen-code-plate-d",
+                                  "name": "Logo plate",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "onb-qwen-code-logo-d",
+                                      "name": "Logo",
+                                      "children": [],
+                                      "width": 32,
+                                      "height": 32,
+                                      "fill": {
+                                        "type": "image",
+                                        "enabled": true,
+                                        "url": "../web/src/assets/agents/qwen-code.svg",
+                                        "mode": "fit"
+                                      }
+                                    }
+                                  ],
+                                  "width": 40,
+                                  "height": 40,
+                                  "cornerRadius": "$--radius-md",
+                                  "fill": "$--logo-plate",
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "clip": true
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-qwen-code-name-d",
+                                  "name": "Qwen Code",
+                                  "content": "Qwen Code",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-qwen-code-state-d",
+                                  "name": "Not installed",
+                                  "content": "Not installed",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": 146,
+                              "height": 146,
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "justifyContent": "center",
+                              "gap": "$--spacing-xs",
+                              "padding": "$--spacing-sm",
+                              "cornerRadius": "$--radius-md",
+                              "stroke": "$--border",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
+                              "opacity": 0.5
+                            },
+                            {
+                              "type": "frame",
+                              "id": "onb-goose-tile-d",
+                              "name": "Tile · Goose · none",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "onb-goose-plate-d",
+                                  "name": "Logo plate",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "onb-goose-logo-d",
+                                      "name": "Logo",
+                                      "children": [],
+                                      "width": 32,
+                                      "height": 32,
+                                      "fill": {
+                                        "type": "image",
+                                        "enabled": true,
+                                        "url": "../web/src/assets/agents/goose.svg",
+                                        "mode": "fit"
+                                      }
+                                    }
+                                  ],
+                                  "width": 40,
+                                  "height": 40,
+                                  "cornerRadius": "$--radius-md",
+                                  "fill": "$--logo-plate",
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "clip": true
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-goose-name-d",
+                                  "name": "Goose",
+                                  "content": "Goose",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-goose-state-d",
+                                  "name": "Not installed",
+                                  "content": "Not installed",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": 146,
+                              "height": 146,
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "justifyContent": "center",
+                              "gap": "$--spacing-xs",
+                              "padding": "$--spacing-sm",
+                              "cornerRadius": "$--radius-md",
+                              "stroke": "$--border",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
+                              "opacity": 0.5
+                            },
+                            {
+                              "type": "frame",
+                              "id": "onb-cline-tile-d",
+                              "name": "Tile · Cline · none",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "onb-cline-plate-d",
+                                  "name": "Logo plate",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "onb-cline-logo-d",
+                                      "name": "Logo",
+                                      "children": [],
+                                      "width": 32,
+                                      "height": 32,
+                                      "fill": {
+                                        "type": "image",
+                                        "enabled": true,
+                                        "url": "../web/src/assets/agents/cline.svg",
+                                        "mode": "fit"
+                                      }
+                                    }
+                                  ],
+                                  "width": 40,
+                                  "height": 40,
+                                  "cornerRadius": "$--radius-md",
+                                  "fill": "$--logo-plate",
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "clip": true
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-cline-name-d",
+                                  "name": "Cline",
+                                  "content": "Cline",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-cline-state-d",
+                                  "name": "Not installed",
+                                  "content": "Not installed",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": 146,
+                              "height": 146,
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "justifyContent": "center",
+                              "gap": "$--spacing-xs",
+                              "padding": "$--spacing-sm",
+                              "cornerRadius": "$--radius-md",
+                              "stroke": "$--border",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
+                              "opacity": 0.5
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": 8
+                        },
+                        {
+                          "type": "frame",
+                          "id": "onb-row-3-d",
+                          "name": "Row",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "onb-kilo-code-tile-d",
+                              "name": "Tile · Kilo Code · none",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "onb-kilo-code-plate-d",
+                                  "name": "Logo plate",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "onb-kilo-code-logo-d",
+                                      "name": "Logo",
+                                      "children": [],
+                                      "width": 32,
+                                      "height": 32,
+                                      "fill": {
+                                        "type": "image",
+                                        "enabled": true,
+                                        "url": "../web/src/assets/agents/kilo-code.svg",
+                                        "mode": "fit"
+                                      }
+                                    }
+                                  ],
+                                  "width": 40,
+                                  "height": 40,
+                                  "cornerRadius": "$--radius-md",
+                                  "fill": "$--logo-plate",
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "clip": true
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-kilo-code-name-d",
+                                  "name": "Kilo Code",
+                                  "content": "Kilo Code",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-kilo-code-state-d",
+                                  "name": "Not installed",
+                                  "content": "Not installed",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": 146,
+                              "height": 146,
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "justifyContent": "center",
+                              "gap": "$--spacing-xs",
+                              "padding": "$--spacing-sm",
+                              "cornerRadius": "$--radius-md",
+                              "stroke": "$--border",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
+                              "opacity": 0.5
+                            },
+                            {
+                              "type": "frame",
+                              "id": "onb-crush-tile-d",
+                              "name": "Tile · Crush · none",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "onb-crush-plate-d",
+                                  "name": "Logo plate",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "onb-crush-mono-d",
+                                      "name": "CR",
+                                      "content": "CR",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "600"
+                                    }
+                                  ],
+                                  "width": 40,
+                                  "height": 40,
+                                  "cornerRadius": "$--radius-md",
+                                  "fill": "$--logo-plate",
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "clip": true
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-crush-name-d",
+                                  "name": "Crush",
+                                  "content": "Crush",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-crush-state-d",
+                                  "name": "Not installed",
+                                  "content": "Not installed",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": 146,
+                              "height": 146,
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "justifyContent": "center",
+                              "gap": "$--spacing-xs",
+                              "padding": "$--spacing-sm",
+                              "cornerRadius": "$--radius-md",
+                              "stroke": "$--border",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
+                              "opacity": 0.5
+                            },
+                            {
+                              "type": "frame",
+                              "id": "onb-junie-tile-d",
+                              "name": "Tile · Junie · none",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "onb-junie-plate-d",
+                                  "name": "Logo plate",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "onb-junie-mono-d",
+                                      "name": "JU",
+                                      "content": "JU",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "600"
+                                    }
+                                  ],
+                                  "width": 40,
+                                  "height": 40,
+                                  "cornerRadius": "$--radius-md",
+                                  "fill": "$--logo-plate",
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "clip": true
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-junie-name-d",
+                                  "name": "Junie",
+                                  "content": "Junie",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-junie-state-d",
+                                  "name": "Not installed",
+                                  "content": "Not installed",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": 146,
+                              "height": 146,
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "justifyContent": "center",
+                              "gap": "$--spacing-xs",
+                              "padding": "$--spacing-sm",
+                              "cornerRadius": "$--radius-md",
+                              "stroke": "$--border",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
+                              "opacity": 0.5
+                            },
+                            {
+                              "type": "frame",
+                              "id": "onb-augment-tile-d",
+                              "name": "Tile · Augment · none",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "onb-augment-plate-d",
+                                  "name": "Logo plate",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "onb-augment-mono-d",
+                                      "name": "AU",
+                                      "content": "AU",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "600"
+                                    }
+                                  ],
+                                  "width": 40,
+                                  "height": 40,
+                                  "cornerRadius": "$--radius-md",
+                                  "fill": "$--logo-plate",
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "clip": true
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-augment-name-d",
+                                  "name": "Augment",
+                                  "content": "Augment",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-augment-state-d",
+                                  "name": "Not installed",
+                                  "content": "Not installed",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": 146,
+                              "height": 146,
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "justifyContent": "center",
+                              "gap": "$--spacing-xs",
+                              "padding": "$--spacing-sm",
+                              "cornerRadius": "$--radius-md",
+                              "stroke": "$--border",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
+                              "opacity": 0.5
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": 8
+                        },
+                        {
+                          "type": "frame",
+                          "id": "onb-row-4-d",
+                          "name": "Row",
+                          "children": [
+                            {
+                              "type": "frame",
+                              "id": "onb-pi-tile-d",
+                              "name": "Tile · Pi · none",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "onb-pi-plate-d",
+                                  "name": "Logo plate",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "onb-pi-mono-d",
+                                      "name": "PI",
+                                      "content": "PI",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "600"
+                                    }
+                                  ],
+                                  "width": 40,
+                                  "height": 40,
+                                  "cornerRadius": "$--radius-md",
+                                  "fill": "$--logo-plate",
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "clip": true
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-pi-name-d",
+                                  "name": "Pi",
+                                  "content": "Pi",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-pi-state-d",
+                                  "name": "Not installed",
+                                  "content": "Not installed",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": 146,
+                              "height": 146,
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "justifyContent": "center",
+                              "gap": "$--spacing-xs",
+                              "padding": "$--spacing-sm",
+                              "cornerRadius": "$--radius-md",
+                              "stroke": "$--border",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
+                              "opacity": 0.5
+                            },
+                            {
+                              "type": "frame",
+                              "id": "onb-grok-tile-d",
+                              "name": "Tile · Grok · none",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "onb-grok-plate-d",
+                                  "name": "Logo plate",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "onb-grok-mono-d",
+                                      "name": "GR",
+                                      "content": "GR",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "600"
+                                    }
+                                  ],
+                                  "width": 40,
+                                  "height": 40,
+                                  "cornerRadius": "$--radius-md",
+                                  "fill": "$--logo-plate",
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "clip": true
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-grok-name-d",
+                                  "name": "Grok",
+                                  "content": "Grok",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-grok-state-d",
+                                  "name": "Not installed",
+                                  "content": "Not installed",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": 146,
+                              "height": 146,
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "justifyContent": "center",
+                              "gap": "$--spacing-xs",
+                              "padding": "$--spacing-sm",
+                              "cornerRadius": "$--radius-md",
+                              "stroke": "$--border",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
+                              "opacity": 0.5
+                            },
+                            {
+                              "type": "frame",
+                              "id": "onb-kimi-code-tile-d",
+                              "name": "Tile · Kimi Code · none",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "onb-kimi-code-plate-d",
+                                  "name": "Logo plate",
+                                  "children": [
+                                    {
+                                      "type": "text",
+                                      "id": "onb-kimi-code-mono-d",
+                                      "name": "KC",
+                                      "content": "KC",
+                                      "fill": "$--muted-foreground",
+                                      "fontFamily": "$--font-mono",
+                                      "fontSize": "$--text-body",
+                                      "fontWeight": "600"
+                                    }
+                                  ],
+                                  "width": 40,
+                                  "height": 40,
+                                  "cornerRadius": "$--radius-md",
+                                  "fill": "$--logo-plate",
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "clip": true
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-kimi-code-name-d",
+                                  "name": "Kimi Code",
+                                  "content": "Kimi Code",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-kimi-code-state-d",
+                                  "name": "Not installed",
+                                  "content": "Not installed",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": 146,
+                              "height": 146,
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "justifyContent": "center",
+                              "gap": "$--spacing-xs",
+                              "padding": "$--spacing-sm",
+                              "cornerRadius": "$--radius-md",
+                              "stroke": "$--border",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
+                              "opacity": 0.5
+                            },
+                            {
+                              "type": "frame",
+                              "id": "onb-mistral-vibe-tile-d",
+                              "name": "Tile · Mistral Vibe · none",
+                              "children": [
+                                {
+                                  "type": "frame",
+                                  "id": "onb-mistral-vibe-plate-d",
+                                  "name": "Logo plate",
+                                  "children": [
+                                    {
+                                      "type": "frame",
+                                      "id": "onb-mistral-vibe-logo-d",
+                                      "name": "Logo",
+                                      "children": [],
+                                      "width": 32,
+                                      "height": 32,
+                                      "fill": {
+                                        "type": "image",
+                                        "enabled": true,
+                                        "url": "../web/src/assets/agents/mistral-vibe.svg",
+                                        "mode": "fit"
+                                      }
+                                    }
+                                  ],
+                                  "width": 40,
+                                  "height": 40,
+                                  "cornerRadius": "$--radius-md",
+                                  "fill": "$--logo-plate",
+                                  "layout": "horizontal",
+                                  "alignItems": "center",
+                                  "justifyContent": "center",
+                                  "clip": true
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-mistral-vibe-name-d",
+                                  "name": "Mistral Vibe",
+                                  "content": "Mistral Vibe",
+                                  "fill": "$--foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-body",
+                                  "fontWeight": "600"
+                                },
+                                {
+                                  "type": "text",
+                                  "id": "onb-mistral-vibe-state-d",
+                                  "name": "Not installed",
+                                  "content": "Not installed",
+                                  "fill": "$--muted-foreground",
+                                  "fontFamily": "$--font-ui",
+                                  "fontSize": "$--text-caption",
+                                  "fontWeight": "400"
+                                }
+                              ],
+                              "width": 146,
+                              "height": 146,
+                              "layout": "vertical",
+                              "alignItems": "center",
+                              "justifyContent": "center",
+                              "gap": "$--spacing-xs",
+                              "padding": "$--spacing-sm",
+                              "cornerRadius": "$--radius-md",
+                              "stroke": "$--border",
+                              "strokeWidth": "$--size-hairline",
+                              "strokeAlignment": "inner",
+                              "opacity": 0.5
+                            }
+                          ],
+                          "layout": "horizontal",
+                          "gap": 8
+                        }
+                      ],
+                      "layout": "vertical",
+                      "gap": 8
+                    },
+                    {
+                      "type": "text",
+                      "id": "onb-devices-d",
+                      "name": "Connected devices get the sa",
+                      "content": "Connected devices get the same choice, each by what is installed there.",
+                      "fill": "$--muted-foreground",
+                      "fontFamily": "$--font-ui",
+                      "fontSize": "$--text-caption",
+                      "fontWeight": "400",
+                      "textGrowth": "fixed-width",
+                      "width": 608
+                    }
+                  ],
+                  "layout": "vertical",
+                  "gap": "$--spacing-md",
+                  "padding": [
+                    0,
+                    "$--spacing-lg"
+                  ]
+                },
+                {
+                  "type": "frame",
+                  "id": "onb-surface-d-ftr",
+                  "name": "Footer",
+                  "children": [
+                    {
+                      "id": "onb-apply-d",
+                      "type": "ref",
+                      "ref": "hideui:btn-m",
+                      "name": "Apply",
+                      "fill": "$--primary",
+                      "descendants": {
+                        "hideui:btn-ic": {
+                          "fill": "$--primary-foreground",
+                          "enabled": false
+                        },
+                        "hideui:btn-lb": {
+                          "fill": "$--primary-foreground",
+                          "content": "Apply"
+                        }
+                      }
+                    }
+                  ],
+                  "layout": "horizontal",
+                  "justifyContent": "end",
+                  "alignItems": "center",
+                  "gap": "$--spacing-sm",
+                  "width": "fill_container",
+                  "padding": [
+                    0,
+                    "$--spacing-lg",
+                    "$--spacing-lg",
+                    "$--spacing-lg"
+                  ]
+                }
+              ],
+              "width": 640,
+              "cornerRadius": "$--radius-lg",
+              "fill": "$--popover",
+              "stroke": "$--border",
+              "strokeWidth": "$--size-hairline",
+              "strokeAlignment": "inner",
+              "layout": "vertical",
+              "gap": "$--spacing-md"
+            }
+          ],
+          "theme": {
+            "Mode": "Dark"
+          },
+          "layout": "horizontal",
+          "gap": "$--spacing-lg",
+          "alignItems": "start",
+          "padding": "$--spacing-lg",
+          "fill": "$--background",
+          "cornerRadius": "$--radius-md",
+          "width": "fit_content"
+        }
+      ],
+      "layout": "vertical",
+      "gap": "$--spacing-xl",
+      "padding": "$--spacing-xl",
+      "fill": "#EDEDEE",
+      "width": "fit_content",
+      "x": 0,
+      "y": 0
     }
   ]
 }

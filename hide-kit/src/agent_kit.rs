@@ -52,6 +52,30 @@ pub(crate) fn enabled(record: &Record, scope: &Scope, adapter: &AgentAdapter) ->
         .unwrap_or(adapter.default_on)
 }
 
+/// A machine the kit has never been applied to waits for the operator's first
+/// choice before any agent gets anything: the agents that are on by default
+/// are recorded off, the record is marked as awaiting the choice, and an
+/// operator's switch on in the same pass still wins. A machine with a record
+/// keeps what it had, so an upgrade changes nothing. The mark lives in the
+/// record, so it outlasts a quit between the hold and the answer.
+/// True when this pass changed the record.
+pub(crate) fn hold_for_onboarding(record: &mut Record) -> bool {
+    if !record.is_fresh() {
+        return false;
+    }
+    for adapter in ADAPTERS.iter().filter(|adapter| adapter.default_on) {
+        record.set_agent_choice(adapter.id, false);
+    }
+    record.await_choice()
+}
+
+/// A scope that names an agent is the operator's explicit choice, which
+/// answers the first-run question (the choices themselves are recorded by
+/// [`apply`]).
+fn answers_choice(scope: &Scope) -> bool {
+    !scope.agent_on.is_empty() || !scope.agent_off.is_empty()
+}
+
 /// What the agent switch says about the kit part that is its hook.
 #[derive(Clone, Copy, Debug)]
 pub(crate) struct PartGate {
@@ -63,8 +87,20 @@ pub(crate) struct PartGate {
     pub(crate) turning_on: bool,
 }
 
-/// The gate of a hook part, `None` for a part no agent switch governs.
+/// The gate of a part an agent switch governs, `None` for any other part.
+/// The hook parts follow their agent's switch in every way; Codex's
+/// per-pane setting follows only whether Codex is on, so a Mac that has not
+/// answered the first-run choice, or has Codex off, is not written to, while
+/// the part's own switch keeps its own choices.
 pub(crate) fn part_gate(record: &Record, scope: &Scope, part: ComponentId) -> Option<PartGate> {
+    if part == ComponentId::CodexPerPane {
+        let codex = crate::agents::adapter("codex")?;
+        return Some(PartGate {
+            enabled: enabled(record, scope, codex),
+            turning_off: false,
+            turning_on: false,
+        });
+    }
     let adapter = adapter_of_part(part)?;
     Some(PartGate {
         enabled: enabled(record, scope, adapter),
@@ -73,10 +109,10 @@ pub(crate) fn part_gate(record: &Record, scope: &Scope, part: ComponentId) -> Op
     })
 }
 
-/// Whether a hook part that is gone is the operator's switch rather than a
-/// removal by hand: only when the agent is off.
+/// Whether a part that is gone is the operator's switch rather than a
+/// removal by hand: only when the agent that governs it is off.
 pub(crate) fn part_is_off(record: &Record, part: ComponentId) -> bool {
-    adapter_of_part(part).is_some_and(|adapter| !enabled(record, &Scope::default(), adapter))
+    part_gate(record, &Scope::default(), part).is_some_and(|gate| !gate.enabled)
 }
 
 // --- A guidance hook -----------------------------------------------------------
@@ -504,6 +540,9 @@ pub(crate) fn apply(
     // What the operator chose now is the record's, whatever else this pass
     // can or cannot do for the agent. A switch for an agent that is not set
     // up here has nothing to switch.
+    if record_readable && answers_choice(scope) {
+        changed |= record.answer_choice();
+    }
     for adapter in ADAPTERS {
         let detected = detection.detected(adapter);
         if record_readable {

@@ -1254,6 +1254,10 @@ export type SnapshotRest = {
     theme?: string;
     /** Core-confirmed explicit choice; null follows this client's system language. */
     interface_language?: "en" | "ko" | "zh-CN" | "ja" | null;
+    /** The first-run agent choice (`contracts/snapshot-wire-enums.json`: `agent_onboarding`): absent until this Mac's kit answered, `pending` while its kit record waits for the operator's answer. */
+    agent_onboarding?: "pending" | "done" | null;
+    /** The agents left on in that choice. */
+    agent_onboarding_agents?: string[];
     font_size?: number;
     /** The sidebar's width in CSS pixels, 220 to 440; the core refuses anything else (PRD sidebar-typography D-09). */
     sidebar_width?: number;

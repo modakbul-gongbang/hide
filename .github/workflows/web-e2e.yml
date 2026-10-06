@@ -113,7 +113,9 @@ jobs:
           retention-days: 1
       - name: Build hided for Playwright
         timeout-minutes: 20
-        run: bash scripts/verify-cargo.sh build -p hided
+        # The first-run choice spec runs the kit from a copy laid out as an installed app,
+        # which needs the agent hooks beside `hided`.
+        run: bash scripts/verify-cargo.sh build -p hided -p hide-agent-hooks
       - name: Keep the binaries for the shards
         uses: actions/upload-artifact@v7
         timeout-minutes: 5
@@ -122,6 +124,7 @@ jobs:
           path: |
             target/debug/hided${{ runner.os == 'Windows' && '.exe' || '' }}
             target/debug/hide${{ runner.os == 'Windows' && '.exe' || '' }}
+            target/debug/hide-agent-hooks${{ runner.os == 'Windows' && '.exe' || '' }}
           if-no-files-found: error
           retention-days: 1
 
@@ -168,7 +171,7 @@ jobs:
       - name: Build hided for Playwright
         if: ${{ inputs.shards == 1 }}
         timeout-minutes: 20
-        run: bash scripts/verify-cargo.sh build -p hided
+        run: bash scripts/verify-cargo.sh build -p hided -p hide-agent-hooks
       - name: Fetch hided from the build job
         if: ${{ inputs.shards > 1 }}
         uses: actions/download-artifact@v8
@@ -179,7 +182,7 @@ jobs:
       - name: Mark the binaries executable
         if: ${{ inputs.shards > 1 && runner.os != 'Windows' }}
         # An artifact does not keep the executable bit.
-        run: chmod +x target/debug/hided target/debug/hide
+        run: chmod +x target/debug/hided target/debug/hide target/debug/hide-agent-hooks
       - name: Install web dependencies
         timeout-minutes: 5
         run: bash scripts/verify-web.sh install

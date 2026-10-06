@@ -188,6 +188,7 @@ Its web files are `web/src/SettingsSheet.tsx` and `web/src/settings.ts`.
 
 Palette is `Screen / Palette`.
 It draws the sidebar's Search icon with its `Search ⌘K` hint, the ⌘K palette's wide list-and-detail layout with its relation list, grouped results, collapsed, no-match and GitHub states, and the ⌘P file palette on the same shell.
+`/gallery?scene=agent-onboarding&theme=light|dark` is the first-run agent choice over a synthetic local device that lists all 20 adapters (`web/src/gallery/AgentOnboardingScene.tsx`).
 `/gallery?scene=search-palette` is the real ⌘K over `web/src/gallery/cmdkSceneData.ts` (`front=agent|agent-short|terminal|none`, `github=results|pending|failed|empty`), which answers `github_search` as the core would.
 Its web files are `web/src/Palette.tsx`, `web/src/SearchPalette.tsx`, `web/src/search.ts`, and `web/src/components/sidebar-header.tsx`.
 

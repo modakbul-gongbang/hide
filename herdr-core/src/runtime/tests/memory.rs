@@ -434,6 +434,7 @@ fn hook_repair_resumes_only_the_enable_intent_the_operator_approved() {
                 codex_daemon: None,
             }],
             agents: Vec::new(),
+            held_for_onboarding: false,
             labels_retirement: Default::default(),
             legacy_retirement: Default::default(),
         },

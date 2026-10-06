@@ -1124,6 +1124,11 @@ pub struct Runtime {
     /// The kit call each device's helper runs next, merged across requests,
     /// keyed by device id.
     device_kit_pending: BTreeMap<String, KitJob>,
+    /// The devices whose last kit report said they wait for the first-run
+    /// agent choice, and whether this run already sent it: a device is sent
+    /// the choice once, so a device that keeps waiting (its record would not
+    /// save) is reported once instead of asked on every report.
+    device_first_run_choice: BTreeMap<String, kit::FirstRunChoice>,
     /// Devices whose kit worker is running; at most one per device.
     device_kit_running: BTreeSet<String>,
     /// The removal each removed device's kit worker runs next, holding the
@@ -1734,6 +1739,7 @@ impl Runtime {
             local_kit_next_status: None,
             local_kit_check_requested: false,
             device_kit_pending: BTreeMap::new(),
+            device_first_run_choice: BTreeMap::new(),
             device_kit_running: BTreeSet::new(),
             device_kit_removals: BTreeMap::new(),
             device_kit_removing: BTreeSet::new(),

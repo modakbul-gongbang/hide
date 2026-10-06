@@ -28,8 +28,13 @@ export type Daemon = {
   restart: (beforeStart?: (stateDir: string) => void | Promise<void>) => Promise<Daemon>;
 };
 
-/** `extraEnv` is laid over the daemon's environment; an undefined value leaves that variable unset. */
-export async function startHided(herdr: HerdrFixture, label = "s2", homeOverride?: string, extraEnv: NodeJS.ProcessEnv = {}): Promise<Daemon> {
+/**
+ * `extraEnv` is laid over the daemon's environment; an undefined value leaves that variable unset.
+ * `bundled` runs the daemon from a `hide.app/Contents/Resources` folder of copies of the debug
+ * binaries, which is the one place a daemon installs the kit (`hide_kit::bundled_kit_dir`); the
+ * kit then writes into the fixture's private HOME and nowhere else.
+ */
+export async function startHided(herdr: HerdrFixture, label = "s2", homeOverride?: string, extraEnv: NodeJS.ProcessEnv = {}, bundled = false): Promise<Daemon> {
   // The daemon places pane-bootstrap.sock below this directory. Keep the
   // fixture root short enough for macOS's Unix socket path limit.
   const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "hde-")));
@@ -38,14 +43,28 @@ export async function startHided(herdr: HerdrFixture, label = "s2", homeOverride
   fs.mkdirSync(path.join(home, "projects", ".hidden"), { recursive: true });
   fs.writeFileSync(path.join(home, "projects", "notes.txt"), "x");
   linkFixtureTranscripts(herdr, home);
-  return launch(herdr, label, dir, home, "0", extraEnv);
+  return launch(herdr, label, dir, home, "0", extraEnv, bundled ? bundledBinary(dir) : undefined);
 }
 
-async function launch(herdr: HerdrFixture, label: string, dir: string, home: string, port: string, extraEnv: NodeJS.ProcessEnv): Promise<Daemon> {
+/** Copies of the debug binaries laid out as an installed app, so the daemon runs the kit. */
+function bundledBinary(dir: string): string {
+  const resources = path.join(dir, "hide.app", "Contents", "Resources");
+  fs.mkdirSync(resources, { recursive: true });
+  for (const name of ["hided", "hide", "hide-agent-hooks"]) {
+    const target = path.join(resources, fixtureExecutable(name));
+    const built = path.resolve("..", "target", "debug", fixtureExecutable(name));
+    if (!fs.existsSync(built)) throw new Error(`${built} is missing; the lane must build it (cargo build -p hided -p hide-agent-hooks)`);
+    fs.copyFileSync(built, target);
+    fs.chmodSync(target, 0o755);
+  }
+  return path.join(resources, fixtureExecutable("hided"));
+}
+
+async function launch(herdr: HerdrFixture, label: string, dir: string, home: string, port: string, extraEnv: NodeJS.ProcessEnv, bundledAt?: string): Promise<Daemon> {
   const env = inheritedFixtureEnv();
   const statePath = path.join(dir, "hide", "hided.json");
   fs.rmSync(statePath, { force: true });
-  const binary = path.resolve("..", "target", "debug", fixtureExecutable("hided"));
+  const binary = bundledAt ?? path.resolve("..", "target", "debug", fixtureExecutable("hided"));
   const child = spawn(binary, [], {
     env: {
       ...env,
@@ -139,7 +158,7 @@ async function launch(herdr: HerdrFixture, label: string, dir: string, home: str
             await beforeStart?.(path.join(dir, "hide"));
             // The next daemon takes over the directory and its removal.
             disown();
-            return launch(herdr, label, dir, home, String(state.port), extraEnv);
+            return launch(herdr, label, dir, home, String(state.port), extraEnv, bundledAt);
           };
           return { pid: child.pid!, origin, token: state.token, home: fs.realpathSync(home), stateDir: path.join(dir, "hide"), hostId, stop, restart };
         }
