@@ -1795,3 +1795,196 @@ fn a_retried_view_shows_opening_while_its_read_is_in_flight() {
     f.wait_for_document("gone.txt", "the retried read", |_| true);
     assert_eq!(state(), (ViewDisplayState::Open, false));
 }
+
+impl Fixture {
+    fn explorer(&self, kind: &str, mut payload: Value) {
+        payload["root"] = Value::from(self.root_text());
+        payload["device_id"] = Value::from(DEVICE);
+        self.dispatch(kind, payload);
+    }
+
+    /// Waits until the device holds the running change, so what is asked
+    /// next arrives while it is still working.
+    fn wait_held(&self) {
+        self.wait("the change to reach the device", |_| {
+            self.device.waiting() > 0
+        });
+    }
+
+    fn settled(&self, kind: &str, path: &str, phase: &str) {
+        self.wait(&format!("{kind} of {path} to be {phase}"), |runtime| {
+            runtime
+                .snapshot
+                .explorer_operation
+                .as_ref()
+                .is_some_and(|operation| {
+                    operation.kind == kind && operation.path == path && operation.phase == phase
+                })
+        });
+    }
+
+    fn root_text(&self) -> String {
+        self.root.to_string_lossy().into_owned()
+    }
+
+    fn diagnostics(&self, kind: &str) -> usize {
+        let runtime = self.shared.lock().unwrap();
+        runtime
+            .snapshot
+            .status
+            .diagnostics
+            .iter()
+            .filter(|diagnostic| diagnostic.kind == kind)
+            .count()
+    }
+}
+
+/// An Explorer change asked for while another one runs waits for it and
+/// then runs, in order: a folder trashed right after a file was dragged into
+/// it goes once the move lands, where it used to be refused as busy with
+/// nothing logged and nothing on screen (#630).
+#[test]
+fn a_trash_asked_while_a_move_runs_waits_for_the_move_and_then_runs() {
+    let f = Fixture::new();
+    let (_, folder_name) = crate::files::tests::unique_trash_names();
+    let folder = f.root.join(&folder_name);
+    std::fs::create_dir(&folder).unwrap();
+
+    f.device.hold();
+    f.explorer(
+        "path_move",
+        serde_json::json!({"path": f.path("a.txt"), "destination": f.path(&folder_name)}),
+    );
+    f.wait_held();
+    f.explorer(
+        "path_trash",
+        serde_json::json!({"path": f.path(&folder_name), "select_after": f.root_text()}),
+    );
+    f.device.release();
+
+    f.settled("path_trash", &f.path(&folder_name), "finished");
+    assert!(
+        !folder.exists(),
+        "the folder went, with the moved file in it"
+    );
+    assert!(!f.root.join("a.txt").exists());
+    crate::files::tests::remove_from_trash(&[&folder_name]);
+}
+
+/// At most four changes wait behind the running one; the newest past that is
+/// refused and logged, and the four run in the order they were asked.
+#[test]
+fn explorer_changes_past_four_waiting_are_refused_and_logged() {
+    let f = Fixture::new();
+    f.device.hold();
+    f.explorer(
+        "dir_create",
+        serde_json::json!({"parent": f.root_text(), "name": "d0"}),
+    );
+    f.wait_held();
+    for name in ["d1", "d2", "d3", "d4", "d5"] {
+        f.explorer(
+            "dir_create",
+            serde_json::json!({"parent": f.root_text(), "name": name}),
+        );
+    }
+    assert_eq!(
+        f.diagnostics("explorer.busy"),
+        1,
+        "the fifth waiting change is refused"
+    );
+    f.device.release();
+
+    f.settled("dir_create", &f.path("d4"), "finished");
+    for name in ["d0", "d1", "d2", "d3", "d4"] {
+        assert!(f.root.join(name).is_dir(), "{name} was made");
+    }
+    assert!(
+        !f.root.join("d5").exists(),
+        "the refused change made nothing"
+    );
+}
+
+/// A waiting change is planned again when its turn comes: one whose item
+/// went while it waited fails at its row like any change, and the changes
+/// behind it are dropped with one diagnostic rather than run past a failure
+/// the operator has not seen.
+#[test]
+fn a_waiting_change_whose_item_went_fails_at_its_row_and_drops_the_rest() {
+    let f = Fixture::new();
+    std::fs::write(f.root.join("b.txt"), "b\n").unwrap();
+    f.device.hold();
+    f.explorer(
+        "dir_create",
+        serde_json::json!({"parent": f.root_text(), "name": "d0"}),
+    );
+    f.wait_held();
+    f.explorer(
+        "path_rename",
+        serde_json::json!({"path": f.path("b.txt"), "name": "c.txt"}),
+    );
+    f.explorer(
+        "dir_create",
+        serde_json::json!({"parent": f.root_text(), "name": "d1"}),
+    );
+    std::fs::remove_file(f.root.join("b.txt")).unwrap();
+    f.device.release();
+
+    f.settled("path_rename", &f.path("b.txt"), "failed");
+    let message = f
+        .shared
+        .lock()
+        .unwrap()
+        .snapshot
+        .explorer_operation
+        .as_ref()
+        .unwrap()
+        .message
+        .clone();
+    assert!(message.is_some(), "the failure says why");
+    assert!(f.root.join("d0").is_dir());
+    assert!(!f.root.join("c.txt").exists());
+    assert!(!f.root.join("d1").exists(), "nothing runs past the failure");
+    assert_eq!(f.diagnostics("explorer.queue_dropped"), 1);
+}
+
+/// Waiting changes belong to the checkout that was in front when they were
+/// asked; once another one is in front they are dropped with one
+/// diagnostic, and the running change still lands.
+#[test]
+fn waiting_explorer_changes_are_dropped_when_the_checkout_in_front_changes() {
+    let f = Fixture::new();
+    f.device.hold();
+    f.explorer(
+        "dir_create",
+        serde_json::json!({"parent": f.root_text(), "name": "d0"}),
+    );
+    f.wait_held();
+    f.explorer(
+        "dir_create",
+        serde_json::json!({"parent": f.root_text(), "name": "d1"}),
+    );
+    f.shared
+        .lock()
+        .unwrap()
+        .snapshot
+        .navigator
+        .focused_checkout_id = Some("checkout:elsewhere".to_owned());
+    f.device.release();
+
+    f.settled("dir_create", &f.path("d0"), "finished");
+    f.wait("the waiting change to be dropped", |runtime| {
+        runtime
+            .snapshot
+            .status
+            .diagnostics
+            .iter()
+            .any(|diagnostic| diagnostic.kind == "explorer.queue_dropped")
+    });
+    assert!(f.root.join("d0").is_dir(), "the running change landed");
+    assert!(
+        !f.root.join("d1").exists(),
+        "the dropped change made nothing"
+    );
+    assert_eq!(f.diagnostics("explorer.queue_dropped"), 1);
+}

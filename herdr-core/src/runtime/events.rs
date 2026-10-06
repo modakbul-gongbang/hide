@@ -2883,60 +2883,50 @@ impl Runtime {
                 {
                     return true;
                 }
-                self.start_explorer_operation(
-                    |root| {
-                        files::ExplorerOperation::create(
-                            files::ExplorerOperationKind::FileCreate,
-                            root,
-                            &payload.parent,
-                            &payload.name,
-                        )
+                self.request_explorer_change(ExplorerRequest {
+                    root: payload.root,
+                    device: payload.device_id,
+                    change: ExplorerChange::Create {
+                        kind: files::ExplorerOperationKind::FileCreate,
+                        parent: payload.parent,
+                        name: payload.name,
                     },
-                    &payload.root,
-                    &payload.parent,
-                    payload.device_id.as_deref(),
-                )
+                })
             }
-            Event::DirCreate(payload) => self.start_explorer_operation(
-                |root| {
-                    files::ExplorerOperation::create(
-                        files::ExplorerOperationKind::DirCreate,
-                        root,
-                        &payload.parent,
-                        &payload.name,
-                    )
+            Event::DirCreate(payload) => self.request_explorer_change(ExplorerRequest {
+                root: payload.root,
+                device: payload.device_id,
+                change: ExplorerChange::Create {
+                    kind: files::ExplorerOperationKind::DirCreate,
+                    parent: payload.parent,
+                    name: payload.name,
                 },
-                &payload.root,
-                &payload.parent,
-                payload.device_id.as_deref(),
-            ),
-            Event::PathRename(payload) => self.start_explorer_operation(
-                |root| files::ExplorerOperation::rename(root, &payload.path, &payload.name),
-                &payload.root,
-                &payload.path,
-                payload.device_id.as_deref(),
-            ),
-            Event::PathMove(payload) => self.start_explorer_operation(
-                |root| {
-                    files::ExplorerOperation::move_into(root, &payload.path, &payload.destination)
+            }),
+            Event::PathRename(payload) => self.request_explorer_change(ExplorerRequest {
+                root: payload.root,
+                device: payload.device_id,
+                change: ExplorerChange::Rename {
+                    path: payload.path,
+                    name: payload.name,
                 },
-                &payload.root,
-                &payload.path,
-                payload.device_id.as_deref(),
-            ),
-            Event::PathTrash(payload) => self.start_explorer_operation(
-                |root| {
-                    files::ExplorerOperation::trash(
-                        root,
-                        &payload.path,
-                        &payload.select_after,
-                        payload.inode,
-                    )
+            }),
+            Event::PathMove(payload) => self.request_explorer_change(ExplorerRequest {
+                root: payload.root,
+                device: payload.device_id,
+                change: ExplorerChange::Move {
+                    path: payload.path,
+                    destination: payload.destination,
                 },
-                &payload.root,
-                &payload.path,
-                payload.device_id.as_deref(),
-            ),
+            }),
+            Event::PathTrash(payload) => self.request_explorer_change(ExplorerRequest {
+                root: payload.root,
+                device: payload.device_id,
+                change: ExplorerChange::Trash {
+                    path: payload.path,
+                    select_after: payload.select_after,
+                    inode: payload.inode,
+                },
+            }),
             Event::TerminalClick(payload) => {
                 // D8 explicitly chooses Herdr's detected agent as the policy
                 // boundary until its frame protocol carries mouse mode.
