@@ -220,7 +220,7 @@ impl Core {
         let runtime = Arc::new(Mutex::new(Runtime::new(
             options.clone(),
             environment,
-            own_node,
+            Arc::clone(&own_node),
         )));
         let notifier = ChangeNotifier::new();
         lock_recover(&runtime).install_worker_context(Arc::downgrade(&runtime), notifier.clone());
@@ -334,6 +334,7 @@ impl Core {
             live::install(
                 &runtime,
                 notifier.clone(),
+                own_node,
                 socket_path,
                 options.herdr_bin_path.as_deref(),
                 usage_paths,

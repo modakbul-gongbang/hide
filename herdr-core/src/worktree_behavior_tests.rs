@@ -579,7 +579,7 @@ fn idle_and_working_tree_edits_do_not_reread_but_manual_refresh_does() {
     std::fs::write(repo.0.join("tracked"), "original").unwrap();
     git(&repo.0, &["add", "tracked"]).unwrap();
     git(&repo.0, &["commit", "-m", "tracked"]).unwrap();
-    let mut reader = WorktreeReader::new();
+    let mut reader = WorktreeReader::new(std::sync::Arc::new(hide_node::Local));
     let mut request = WorktreeRequest {
         projects: vec![WorktreeProjectRequest {
             root_path: repo.0.clone(),
@@ -714,7 +714,7 @@ fn linked_worktrees_carry_their_creation_time_and_the_main_worktree_none() {
 fn a_commit_in_one_project_does_not_rerun_status_in_another() {
     let changing = Repository::new();
     let quiet = Repository::new();
-    let mut reader = WorktreeReader::new();
+    let mut reader = WorktreeReader::new(std::sync::Arc::new(hide_node::Local));
     let request = WorktreeRequest {
         projects: [&changing, &quiet]
             .into_iter()
@@ -774,7 +774,7 @@ fn moved_remote_ref_refreshes_one_project_once_after_a_burst() {
         &["branch", "--set-upstream-to=origin/main", "main"],
     )
     .unwrap();
-    let mut reader = WorktreeReader::new();
+    let mut reader = WorktreeReader::new(std::sync::Arc::new(hide_node::Local));
     let request = WorktreeRequest {
         projects: [&changing, &quiet]
             .into_iter()
@@ -815,7 +815,7 @@ fn moved_remote_ref_refreshes_one_project_once_after_a_burst() {
 #[test]
 fn a_watch_change_during_a_read_keeps_the_old_answer_stale() {
     let repo = Repository::new();
-    let mut reader = WorktreeReader::new();
+    let mut reader = WorktreeReader::new(std::sync::Arc::new(hide_node::Local));
     let (started_tx, started_rx) = std::sync::mpsc::channel();
     let (release_tx, release_rx) = std::sync::mpsc::channel();
     let release_rx = std::sync::Mutex::new(release_rx);

@@ -93,8 +93,8 @@ fn run_coordinator(
     // checkout's size on this disk. All three run their subprocess on a worker
     // thread, so a slow `gh` or `du` costs no coordinator latency.
     let mut worktree_reader = context
-        .is_local()
-        .then(crate::worktrees::WorktreeReader::new);
+        .node()
+        .map(|node| crate::worktrees::WorktreeReader::new(Arc::clone(node)));
     let mut github_reader = context.is_local().then(crate::github::GithubReader::new);
     let mut disk_reader = context.is_local().then(crate::disk::DiskReader::new);
     // The provider probe starts a `codex app-server` child and runs
@@ -1702,13 +1702,18 @@ mod worktree_observer_tests {
             let runtime = Arc::new(Mutex::new(runtime));
             let (core, notifier) = Core::for_runtime_fixture(Arc::clone(&runtime));
             let socket_path = root.join("unused.sock");
-            let context = SessionSyncContext::local(&LiveContext {
-                socket_path: socket_path.clone(),
-                herdr_bin: None,
-                runtime: Arc::downgrade(&runtime),
-                notifier,
-                api_connector: Arc::new(hide_herdr_client::LocalSocketConnector::new(&socket_path)),
-            });
+            let context = SessionSyncContext::local(
+                &LiveContext {
+                    socket_path: socket_path.clone(),
+                    herdr_bin: None,
+                    runtime: Arc::downgrade(&runtime),
+                    notifier,
+                    api_connector: Arc::new(hide_herdr_client::LocalSocketConnector::new(
+                        &socket_path,
+                    )),
+                },
+                std::sync::Arc::new(hide_node::Local),
+            );
             let baseline: Value = serde_json::from_slice(&core.snapshot_delta(0, 0))
                 .expect("initial observer snapshot");
             assert_eq!(
@@ -1940,13 +1945,16 @@ mod focus_readback_order_tests {
     }
 
     fn context_for(runtime: &Arc<Mutex<Runtime>>, herdr: &FakeHerdr) -> SessionSyncContext {
-        SessionSyncContext::local(&LiveContext {
-            socket_path: herdr.socket_path().to_path_buf(),
-            herdr_bin: None,
-            runtime: Arc::downgrade(runtime),
-            notifier: ChangeNotifier::noop(),
-            api_connector: Arc::new(herdr.connector()),
-        })
+        SessionSyncContext::local(
+            &LiveContext {
+                socket_path: herdr.socket_path().to_path_buf(),
+                herdr_bin: None,
+                runtime: Arc::downgrade(runtime),
+                notifier: ChangeNotifier::noop(),
+                api_connector: Arc::new(herdr.connector()),
+            },
+            std::sync::Arc::new(hide_node::Local),
+        )
     }
 
     /// Herdr's answer to the focus readback: `pane.layout` waits for the test
@@ -2128,13 +2136,16 @@ mod pane_cwd_confirmation_tests {
     }
 
     fn context_for(herdr: &FakeHerdr) -> SessionSyncContext {
-        SessionSyncContext::local(&LiveContext {
-            socket_path: herdr.socket_path().to_path_buf(),
-            herdr_bin: None,
-            runtime: Weak::new(),
-            notifier: ChangeNotifier::noop(),
-            api_connector: Arc::new(herdr.connector()),
-        })
+        SessionSyncContext::local(
+            &LiveContext {
+                socket_path: herdr.socket_path().to_path_buf(),
+                herdr_bin: None,
+                runtime: Weak::new(),
+                notifier: ChangeNotifier::noop(),
+                api_connector: Arc::new(herdr.connector()),
+            },
+            std::sync::Arc::new(hide_node::Local),
+        )
     }
 
     /// A Herdr whose `pane.get` answers `cwd` for the pane it is asked about.

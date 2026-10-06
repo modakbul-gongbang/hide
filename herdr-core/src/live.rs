@@ -2896,6 +2896,7 @@ impl SessionFetchError {
 pub(crate) fn install(
     runtime: &Arc<Mutex<Runtime>>,
     notifier: ChangeNotifier,
+    own_node: Arc<dyn crate::node_access::NodeLink>,
     socket_path: &str,
     herdr_bin: Option<&str>,
     usage_paths: crate::usage::UsagePaths,
@@ -2911,7 +2912,7 @@ pub(crate) fn install(
         guard.set_live(context.clone());
     }
     match crate::session_sync::spawn(
-        crate::session_sync::SessionSyncContext::local(&context),
+        crate::session_sync::SessionSyncContext::local(&context, own_node),
         Some(usage_paths),
     ) {
         Ok(handle) => Some(handle),

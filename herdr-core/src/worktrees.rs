@@ -256,11 +256,12 @@ pub struct WorktreeReader {
 }
 
 impl WorktreeReader {
-    pub fn new() -> Self {
+    /// Reads the repositories of the node `node` links to.
+    pub fn new(node: std::sync::Arc<dyn crate::node_access::NodeLink>) -> Self {
         Self {
             inner: BackgroundRead::on_change(Duration::ZERO, {
                 let cache = std::sync::Mutex::new(ProjectCache::new());
-                move |request: &ObservedRequest| read_observed(&cache, request)
+                move |request: &ObservedRequest| read_observed(node.as_ref(), &cache, request)
             }),
             git_watch: GitWatch::new(),
             git_generations: BTreeMap::new(),
@@ -327,6 +328,7 @@ type ProjectCache = BTreeMap<PathBuf, (u64, ProjectObservation, Option<ProjectWo
 /// worker because only the worker produces what it holds; a project that
 /// leaves the request leaves the cache with it.
 fn read_observed(
+    node: &dyn crate::node_access::NodeLink,
     cache: &std::sync::Mutex<ProjectCache>,
     request: &ObservedRequest,
 ) -> (ObservedRequest, Vec<ProjectAnswer>) {
@@ -345,7 +347,7 @@ fn read_observed(
             {
                 return (root, project.clone());
             }
-            let project = read(&observation.request);
+            let project = read(node, &observation.request);
             cache.insert(
                 root.clone(),
                 (*generation, observation.clone(), project.clone()),
@@ -354,12 +356,6 @@ fn read_observed(
         })
         .collect();
     ((*generation, *removals, observations.clone()), answers)
-}
-
-impl Default for WorktreeReader {
-    fn default() -> Self {
-        Self::new()
-    }
 }
 
 /// The sole deletion policy, consumed by all three presentation surfaces.
@@ -473,17 +469,43 @@ pub fn deletion_gate(
     }
 }
 
-/// One project's rows: the host's Git facts with this machine's policy and
-/// decoration slots on them. The facts come from `hide_host::worktrees`, the
-/// same code a device's helper runs for a device's repository.
-fn read(project: &WorktreeProjectRequest) -> Option<ProjectWorktreesSnapshot> {
-    let facts = hide_host::worktrees::read(
-        &project.root_path,
-        &project.bases,
-        project.base_override.as_deref(),
-    )?;
-    Some(project_snapshot(facts))
+/// One project's rows: the node's Git facts with this machine's policy and
+/// decoration slots on them, asked the way a device's repository is
+/// (`Call::Worktrees`). A refusal is the project's unavailable reason.
+fn read(
+    node: &dyn crate::node_access::NodeLink,
+    project: &WorktreeProjectRequest,
+) -> Option<ProjectWorktreesSnapshot> {
+    let unavailable = |reason: String| {
+        Some(ProjectWorktreesSnapshot {
+            root_path: project.root_path.to_string_lossy().into_owned(),
+            unavailable_reason: Some(reason),
+            ..Default::default()
+        })
+    };
+    let Some(path) = project.root_path.to_str() else {
+        return unavailable(format!(
+            "Repository path is not valid UTF-8: {}",
+            project.root_path.display()
+        ));
+    };
+    match crate::node_access::call_as::<Option<hide_host::worktrees::RepositoryWorktrees>>(
+        node,
+        hide_host::protocol::Call::Worktrees {
+            path: path.to_owned(),
+            bases: project.bases.clone(),
+            base_override: project.base_override.clone(),
+        },
+        WORKTREES_TIMEOUT,
+    ) {
+        Ok(facts) => facts.map(project_snapshot),
+        Err(crate::node_access::LinkError::Refused(error)) => unavailable(error.message),
+        Err(error) => unavailable(error.to_string()),
+    }
 }
+
+/// How long one repository's read may take on its node.
+const WORKTREES_TIMEOUT: Duration = Duration::from_secs(60);
 
 #[cfg(test)]
 fn read_project(

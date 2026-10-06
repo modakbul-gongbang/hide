@@ -96,17 +96,24 @@ pub(crate) enum SessionSyncTarget {
 #[derive(Clone)]
 pub(crate) struct SessionSyncContext {
     target: SessionSyncTarget,
+    /// The link to the node this target's machine work goes to, for a
+    /// target the core reads that work from (PRD core-host-node D-21).
+    node: Option<Arc<dyn crate::node_access::NodeLink>>,
     api_connector: Arc<dyn ApiConnector>,
     runtime: Weak<Mutex<Runtime>>,
     notifier: ChangeNotifier,
 }
 
 impl SessionSyncContext {
-    pub(crate) fn local(context: &LiveContext) -> Self {
+    pub(crate) fn local(
+        context: &LiveContext,
+        node: Arc<dyn crate::node_access::NodeLink>,
+    ) -> Self {
         Self {
             target: SessionSyncTarget::Local {
                 socket_path: context.socket_path.clone(),
             },
+            node: Some(node),
             api_connector: Arc::clone(&context.api_connector),
             runtime: context.runtime.clone(),
             notifier: context.notifier.clone(),
@@ -125,6 +132,7 @@ impl SessionSyncContext {
                 target_id: target_id.into(),
                 label: label.into(),
             },
+            node: None,
             api_connector,
             runtime,
             notifier,
@@ -140,6 +148,10 @@ impl SessionSyncContext {
 
     fn is_local(&self) -> bool {
         matches!(self.target, SessionSyncTarget::Local { .. })
+    }
+
+    fn node(&self) -> Option<&Arc<dyn crate::node_access::NodeLink>> {
+        self.node.as_ref()
     }
 }
 
