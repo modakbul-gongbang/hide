@@ -47,6 +47,11 @@ OS_CRATES = {
     "hide-kit",
     "hide-platform",
 }
+# The remote mailbox lane builds `hided`, `hide`, the host helper and the hook
+# binary, and runs `herdr-core`'s `remote_delivery` test against them over
+# private SSH; a change to any crate they link, or to the test, can change its
+# result, and nothing else can.
+MAILBOX_CRATES = {"herdr-core", "hided", "hide-agent-hooks", "hide-host"}
 OS_LANES = ("os-contract", "windows-check", "windows-e2e", "web-e2e-platform", "desktop-e2e")
 
 # Web files the desktop host imports or drives through native input: the host
@@ -230,6 +235,8 @@ def classify(path, status, crates, root):
             lanes.add("web-e2e")
         if crate["name"] in OS_CRATES:
             lanes.update(OS_LANES)
+        if packages & MAILBOX_CRATES:
+            lanes.add("remote-mailbox")
         return lanes, f"crate {crate['name']}: {path}", packages
     if parts[0] == "web" and len(parts) > 1:
         if parts[1] == "e2e" and len(parts) == 3 and path.name.endswith(".spec.ts"):
@@ -293,10 +300,6 @@ def select(entries, crates, root=ROOT, full_reason=None):
         for lane in LANES:
             reasons[lane] = list(full)
         packages = {crate["name"] for crate in crates.values()}
-    # The remote mailbox lane has its own job but the reach `web-e2e-platform`
-    # had when it ran there: every change that plans the platform lane plans it.
-    if reasons["web-e2e-platform"] and not reasons["remote-mailbox"]:
-        reasons["remote-mailbox"].append("the remote mailbox lane follows the macOS @platform lane")
     # The OS contract's macOS leg runs inside `desktop e2e`.
     if reasons["os-contract"] and not reasons["desktop-e2e"]:
         reasons["desktop-e2e"].append("the OS contract's macOS leg")

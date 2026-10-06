@@ -437,11 +437,15 @@ jobs:
   # servers and a loopback SSH server. It has its own job because it was the
   # tail of `web e2e (macOS)` (6.8 minutes of `@platform` tests, then 3.2 of
   # this lane after a 4.4-minute build of every CLI binary, 14.4 minutes in
-  # all, the longest job of a run on 2026-10-05) and it runs on Linux: it
-  # checks the SSH return route, helper attestation and the durable mailbox,
-  # none of which the operating system changes. What differs by system under
-  # it (process lookup, files, the local stream) is `os-contract`'s and
-  # `windows check`'s to prove. It is planned with `web-e2e-platform`.
+  # all, the longest job of a run on 2026-10-05) and it runs on Linux, which
+  # drops its macOS execution: nightly.yml ran it there through `verify`, which
+  # plans every lane, and no run of it on macOS remains. Its macOS-only fixture
+  # branches (codesign of the staged binaries, BSD `ps` and `strip`, the SFTP
+  # server path) go unrun until a nightly macOS run of the lane exists. The lane
+  # checks the SSH return route, helper attestation and the durable mailbox; what
+  # differs by system under it (process lookup, files, the local stream) is
+  # `os-contract`'s and `windows check`'s to prove. It is planned by the crates
+  # it builds and tests (`MAILBOX_CRATES` in scripts/ci-plan.py).
   remote-mailbox:
     name: remote mailbox
     needs: plan
@@ -503,7 +507,8 @@ jobs:
         run: python3 scripts/ci-flaky-report.py --suite rust --junit target/nextest/ci/junit*.xml
       - name: Keep the lane's run directory
         # The daemon's and both Herdr servers' logs behind a failed run, without
-        # the staged binaries and the fixture's SSH keys.
+        # the staged binaries, the copies of them the install places in each
+        # account's helper and bin folders, and the fixture's SSH keys.
         if: ${{ failure() }}
         uses: actions/upload-artifact@v7
         with:
@@ -511,7 +516,9 @@ jobs:
           path: |
             agents/runs/rd-*
             !agents/runs/rd-*/cli/**
-            !agents/runs/rd-*/*/home/.ssh/**
+            !agents/runs/rd-*/*/*/.ssh/**
+            !agents/runs/rd-*/*/*/helper/**
+            !agents/runs/rd-*/*/*/bin/**
           if-no-files-found: ignore
 
   # The OS contract's Linux and Windows legs (see os-contract.yml). Its macOS

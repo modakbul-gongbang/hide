@@ -12,7 +12,7 @@ SPEC.loader.exec_module(ci)
 ROOT = Path(__file__).parents[2]
 CRATES = ci.cargo_crates(ROOT)
 EVERY_PACKAGE = sorted(crate["name"] for crate in CRATES.values())
-E2E = {"web-e2e", "web-e2e-platform", "remote-mailbox", "windows-e2e", "desktop-e2e"}
+E2E = {"web-e2e", "web-e2e-platform", "windows-e2e", "desktop-e2e"}
 
 
 def plan(*paths, status="M"):
@@ -56,20 +56,29 @@ class Selection(unittest.TestCase):
 
     def test_a_platform_spec_keeps_its_platform_lanes(self):
         lanes = set(plan("web/e2e/s3.spec.ts")["lanes"])
-        self.assertTrue({"web-e2e", "web-e2e-platform", "remote-mailbox", "windows-e2e"} <= lanes)
+        self.assertTrue({"web-e2e", "web-e2e-platform", "windows-e2e"} <= lanes)
         lanes = set(plan("web/e2e/new-tab.spec.ts")["lanes"])
         self.assertEqual(lanes, {"policy", "web-checks", "web-e2e"})
 
-    def test_the_remote_mailbox_lane_is_planned_exactly_when_the_macos_platform_lane_is(self):
+    def test_the_remote_mailbox_lane_follows_the_crates_it_builds_and_tests(self):
         for path in (
-            "web/e2e/s3.spec.ts", "web/e2e/new-tab.spec.ts", "web/src/host.ts", "web/src/Overview.tsx",
-            "web/playwright.config.ts", "desktop/src/main/wirePath.ts", "hide-platform/src/process.rs",
-            "hide-session/src/lib.rs", "herdr-core/src/lib.rs", "desktop/src/preload/index.ts", "docs/TESTING.md",
+            "herdr-core/src/lib.rs", "herdr-core/tests/remote_delivery.rs", "hided/src/main.rs",
+            "hide-host/src/lib.rs", "hide-agent-hooks/src/lib.rs", "hide-platform/src/process.rs",
+            "hide-session/src/lib.rs", "hide-ai/src/lib.rs",
         ):
             with self.subTest(path=path):
-                lanes = set(plan(path)["lanes"])
-                self.assertEqual("remote-mailbox" in lanes, "web-e2e-platform" in lanes)
-        self.assertIn("remote-mailbox", plan("web/e2e/gone.spec.ts", status="D")["lanes"])
+                self.assertIn("remote-mailbox", plan(path)["lanes"])
+        # Web and desktop files and documentation cannot
+        # change it.
+        for path in (
+            "web/e2e/s3.spec.ts", "web/e2e/new-tab.spec.ts", "web/src/host.ts", "web/src/Overview.tsx",
+            "web/playwright.config.ts", "desktop/src/main/wirePath.ts", "desktop/src/preload/index.ts",
+            "docs/TESTING.md",
+        ):
+            with self.subTest(path=path):
+                self.assertNotIn("remote-mailbox", plan(path)["lanes"])
+        # A change no rule claims plans every lane, this one included.
+        self.assertIn("remote-mailbox", plan("scripts/verify-cargo.sh")["lanes"])
 
     def test_desktop_changes_run_the_desktop_lanes(self):
         result = plan("desktop/src/preload/index.ts")
@@ -214,7 +223,7 @@ class NamedPaths(unittest.TestCase):
                 self.assertFalse(result["full"])
 
     def test_web_e2e_helpers_reach_the_desktop_and_windows_lanes_but_not_rust(self):
-        want = {"policy", "web-checks", "web-e2e", "web-e2e-platform", "remote-mailbox", "windows-e2e", "desktop-checks", "desktop-e2e", "windows-check"}
+        want = {"policy", "web-checks", "web-e2e", "web-e2e-platform", "windows-e2e", "desktop-checks", "desktop-e2e", "windows-check"}
         for path in ("web/e2e/herdr-fixture.ts", "web/e2e/shims/build.ts", "web/e2e/shims/noop.c", "web/e2e/test-size-baseline.json"):
             with self.subTest(path=path):
                 self.assertEqual(self.lanes(path), want)
@@ -226,7 +235,7 @@ class NamedPaths(unittest.TestCase):
 
     def test_configuration_names_the_lanes_that_read_it(self):
         expected = {
-            "web/playwright.config.ts": {"web-checks", "web-e2e", "web-e2e-platform", "remote-mailbox", "windows-e2e"},
+            "web/playwright.config.ts": {"web-checks", "web-e2e", "web-e2e-platform", "windows-e2e"},
             "web/eslint.config.js": {"web-checks", "desktop-checks"},
             "web/eslint.e2e.mjs": {"web-checks", "desktop-checks"},
             "web/eslint-rules/hide-e2e.mjs": {"web-checks", "desktop-checks"},
