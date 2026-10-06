@@ -401,7 +401,7 @@ Retry keeps immutable prepared bytes; cancel discards held input explicitly.
 Missing, closed, released or reconnected targets retire the intent and cannot forward its data to a replacement session or fall back to the local host.
 Only admission, completion and actionable failure transitions publish a notice through `status.async_operations`; terminal-specific actions render in the originating pane.
 
-`terminal_attachments.rs` reads only explicitly selected regular files, rejects final-component symlinks, special files, control-character paths and files that change while read, and constructs ordered quoted terminal input.
+The node that holds the picked files reads them (`hide-host/src/attachments.rs`, the `read_attachments` call, asking the core before each file whether to go on, so a cancel stops the read between files): only explicitly selected regular files, refusing final-component symlinks, special files, control-character paths and files that change while read; `terminal_attachments.rs` keeps the limits' admission and constructs ordered quoted terminal input.
 The bounds are eight files, 20 MiB per file and 40 MiB per intent; clipboard decoding additionally allows at most 16 megapixels.
 `remote/attachments.rs` transfers the immutable bytes with the existing authenticated `RusshSftpTransport`, not a shell command or a subprocess, and returns only remote paths.
 Remote staging lives in the remote user's private `.hide-terminal-attachments` directory, with generated exclusive filenames, 0700 directory and 0600 file permissions, ownership checks and same-byte verification before adopting a completed upload on retry.

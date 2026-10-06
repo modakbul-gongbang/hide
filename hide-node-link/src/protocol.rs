@@ -278,6 +278,12 @@ pub enum Call {
         root: String,
         command: crate::git::GitCommand,
     },
+    /// Reads files the operator picked to attach to a terminal
+    /// (`attachments::ReadFile`, in order), reporting before each file; a
+    /// report answered with false ends the read as cancelled.
+    ReadAttachments {
+        paths: Vec<String>,
+    },
     /// `SIGTERM` to every member of the process group `leader` leads: a
     /// pane's foreground job, ended for agent sleep. A group of 1 or less is
     /// refused unsent, since kill(-0) and kill(-1) reach far more.

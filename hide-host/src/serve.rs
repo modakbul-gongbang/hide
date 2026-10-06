@@ -440,6 +440,10 @@ pub fn handle_with_progress(
         Call::Git { root, command } => {
             to_value(crate::git_command::run(&absolute(&root)?, &command)?)
         }
+        Call::ReadAttachments { paths } => to_value(
+            crate::attachments::read_sources(&paths, &mut |index| progress(Value::from(index)))
+                .map_err(|reason| HostError::new(ErrorCode::InvalidPath, reason))?,
+        ),
         Call::TerminateGroup { leader } => {
             if leader <= 1 {
                 return Err(HostError::new(
