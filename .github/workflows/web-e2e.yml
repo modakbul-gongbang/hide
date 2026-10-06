@@ -226,6 +226,12 @@ jobs:
             bin=$(zsh scripts/fetch-herdr-runtime.sh --platform "$HERDR_PLATFORM")
           fi
           echo "bin=$bin" >> "$GITHUB_OUTPUT"
+      - name: TEMP CPU burners to widen timing windows
+        if: ${{ runner.os == 'Windows' }}
+        shell: bash
+        run: |
+          for i in 1 2 3 4; do nohup bash -c 'while :; do :; done' >/dev/null 2>&1 & done
+          echo started burners
       - name: End-to-end
         timeout-minutes: 20
         env:
