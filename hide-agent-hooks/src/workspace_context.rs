@@ -35,7 +35,7 @@ pub fn live_context() -> Option<String> {
         .and_then(|answer| format_context(&program, &reference, &answer))
 }
 
-fn cli_program() -> Option<OsString> {
+pub fn cli_program() -> Option<OsString> {
     let sibling = std::env::current_exe()
         .ok()?
         .parent()?

@@ -263,16 +263,29 @@ fn hook_group(helper: &Path, runtime: AgentRuntime, event: HookEvent) -> Value {
 
 /// The matcher Hide writes on the group of `event`'s entry, `None` for an
 /// entry that fires on every occurrence. Both the writer above and the Codex
-/// trust step read it here, so an event that gains a matcher (a PreToolUse
-/// guard) is written and recognised as Hide's by the same line.
-pub(crate) fn hook_matcher(_runtime: AgentRuntime, _event: HookEvent) -> Option<&'static str> {
-    None
+/// trust step read it here, so an event that has a matcher is written and
+/// recognised as Hide's by the same line.
+///
+/// `PreToolUse` selects the shell tool, which both runtimes name `Bash`
+/// (observed on Claude Code 2.1.292 and codex-cli 0.160.0, 2026-10-07), so
+/// the helper does not start for a file edit or a search.
+pub(crate) fn hook_matcher(_runtime: AgentRuntime, event: HookEvent) -> Option<&'static str> {
+    match event {
+        HookEvent::PreToolUse => Some("Bash"),
+        _ => None,
+    }
 }
 
-/// The arguments the helper runs with, after its path.
+/// The arguments the helper runs with, after its path. The guard reads no
+/// Memory, so its entry does not ask for the Memory input.
 fn helper_arguments(runtime: AgentRuntime, event: HookEvent) -> String {
+    let memory = if event == HookEvent::PreToolUse {
+        ""
+    } else {
+        " --memory-injection"
+    };
     format!(
-        "hook --runtime {} --event {} --memory-injection --source {}",
+        "hook --runtime {} --event {}{memory} --source {}",
         runtime.id(),
         event.name(),
         hook_source_id()
@@ -865,6 +878,91 @@ mod tests {
                 "{}",
                 event.name()
             );
+        }
+    }
+
+    /// Another tool's `PreToolUse` entries, which the guard's event shares.
+    const OTHER_PRE_TOOL_USE: &str = r#"{
+      "hooks": {
+        "PreToolUse": [
+          {"matcher": "Bash", "hooks": [{"type": "command", "command": "/opt/guard/root-only.sh", "timeout": 10}]},
+          {"hooks": [{"type": "command", "command": "/opt/audit/every-tool.sh"}]}
+        ]
+      }
+    }"#;
+
+    #[test]
+    fn the_guard_entry_selects_the_shell_tool_and_asks_for_no_memory() {
+        for runtime in AgentRuntime::ALL {
+            let fixture = Fixture::new("guard-entry");
+            install(runtime, fixture.home(), &helper(&fixture)).unwrap();
+            let written = fixture.read(runtime);
+            let group = &written["hooks"]["PreToolUse"][0];
+            assert_eq!(group["matcher"], "Bash", "{runtime:?}");
+            let hook = &group["hooks"][0];
+            let text = hook_texts(hook).collect::<Vec<_>>().join(" ");
+            assert!(text.contains("--event PreToolUse"), "{text}");
+            assert!(!text.contains("--memory-injection"), "{text}");
+            assert!(text.contains(&hook_source_id()), "{text}");
+            // The other five events keep the form version 6 wrote.
+            let start = hook_texts(&written["hooks"]["SessionStart"][0]["hooks"][0])
+                .collect::<Vec<_>>()
+                .join(" ");
+            assert!(start.contains("--memory-injection"), "{start}");
+            assert!(written["hooks"]["SessionStart"][0].get("matcher").is_none());
+        }
+    }
+
+    #[test]
+    fn installing_beside_another_tools_pre_tool_use_entries_keeps_them_and_converges() {
+        for runtime in AgentRuntime::ALL {
+            let fixture = Fixture::new("guard-shared");
+            fixture.write(runtime, OTHER_PRE_TOOL_USE);
+            let path = helper(&fixture);
+            let first = install(runtime, fixture.home(), &path).unwrap();
+            assert!(first.changed);
+            let after = fixture.read(runtime);
+            let groups = after["hooks"]["PreToolUse"].as_array().unwrap();
+            assert_eq!(groups.len(), 3, "two of theirs and one of Hide's");
+            assert_eq!(groups[0]["hooks"][0]["command"], "/opt/guard/root-only.sh");
+            assert_eq!(groups[1]["hooks"][0]["command"], "/opt/audit/every-tool.sh");
+            assert!(group_marker_version(&groups[2]).is_some());
+            let second = install(runtime, fixture.home(), &path).unwrap();
+            assert!(!second.changed, "a second install writes nothing");
+            assert_eq!(fixture.read(runtime), after);
+            let removed = remove(runtime, fixture.home()).unwrap();
+            assert_eq!(removed.removed_entries, HookEvent::ALL.len());
+            let left = fixture.read(runtime);
+            assert_eq!(
+                left["hooks"]["PreToolUse"].as_array().unwrap().len(),
+                2,
+                "only Hide's entry left with the guard, theirs stay"
+            );
+        }
+    }
+
+    #[test]
+    fn a_file_with_the_five_earlier_events_reads_outdated_until_the_guard_is_added() {
+        // What every machine that installed Hide before the guard has.
+        for runtime in AgentRuntime::ALL {
+            let fixture = Fixture::new("guard-upgrade");
+            let path = helper(&fixture);
+            install(runtime, fixture.home(), &path).unwrap();
+            let mut document = fixture.read(runtime);
+            document["hooks"]
+                .as_object_mut()
+                .unwrap()
+                .remove("PreToolUse");
+            fixture.write(runtime, &serde_json::to_string_pretty(&document).unwrap());
+            assert!(
+                matches!(status(runtime, fixture.home()), HookStatus::Outdated { version } if version == crate::runtime::HOOK_VERSION),
+                "{runtime:?}"
+            );
+            install(runtime, fixture.home(), &path).unwrap();
+            assert!(matches!(
+                status(runtime, fixture.home()),
+                HookStatus::Installed { .. }
+            ));
         }
     }
 

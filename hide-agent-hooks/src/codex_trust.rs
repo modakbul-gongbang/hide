@@ -833,7 +833,8 @@ mod tests {
                 "userPromptSubmit",
                 "subagentStart",
                 "subagentStop",
-                "stop"
+                "stop",
+                "preToolUse"
             ]
         );
     }
@@ -887,26 +888,43 @@ mod tests {
             "wrong-event",
         );
         assert!(select(&[hook]).is_empty());
-        let unregistered = listed(
+        let guard_event = listed(
             "preToolUse",
             &hide_command(HookEvent::SessionStart),
             "untrusted",
-            "unregistered",
+            "guard-event",
         );
-        assert!(select(&[unregistered]).is_empty());
+        assert!(select(&[guard_event]).is_empty());
     }
 
     #[test]
     fn each_event_matches_only_its_own_command() {
         for event in HookEvent::ALL {
-            let hook = listed(
+            let mut hook = listed(
                 &wire_event_name(event),
                 &hide_command(event),
                 "untrusted",
                 event.name(),
             );
+            hook.matcher = hook_matcher(AgentRuntime::Codex, event).map(str::to_owned);
             assert_eq!(select(&[hook]), [event.name()]);
         }
+    }
+
+    #[test]
+    fn the_guard_entry_is_trusted_only_with_the_matcher_hide_wrote() {
+        let command = hide_command(HookEvent::PreToolUse);
+        let with = |matcher: Option<&str>| {
+            let mut hook = listed("preToolUse", &command, "untrusted", "guard");
+            hook.matcher = matcher.map(str::to_owned);
+            select(&[hook])
+        };
+        assert_eq!(with(Some("Bash")), ["guard"]);
+        // Codex hashes the matcher into the key, so an entry that runs Hide's
+        // command on every tool, or on another one, is not the entry Hide wrote.
+        assert!(with(None).is_empty());
+        assert!(with(Some("*")).is_empty());
+        assert!(with(Some("apply_patch")).is_empty());
     }
 
     #[test]
