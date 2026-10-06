@@ -267,7 +267,7 @@ test("Main, Overview and a Workspace with its columns, tools and delegated child
     const childHost = page.locator(`[data-pane-view="${child}"] [data-terminal-host]`);
     await childHost.click({ position: { x: 40, y: 60 } });
     await expect(page.locator(`[data-pane-view="${child}"]`)).toHaveAttribute("data-focused", "true", { timeout: 15_000 });
-    await expect.poll(() => last.get("focus_pane")).toEqual({ pane_id: child, origin: "operator" });
+    await expect.poll(() => last.get("focus_pane")).toMatchObject({ pane_id: child, origin: "operator" });
     await page.keyboard.type("typed beside the columns");
     await expect.poll(() => fs.readFileSync(herdr.inputLogs[1], "utf8"), { timeout: 10_000 }).toContain("typed beside the columns");
     await expect(workspace).toHaveAttribute("data-file-views", "shown");

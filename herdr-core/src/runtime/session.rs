@@ -2707,6 +2707,59 @@ impl Runtime {
         true
     }
 
+    /// Records the number a page gave an operator focus, so the next snapshot
+    /// tells that page how much of what it sent the focused pane already
+    /// includes (`OperatorFocusAck`).
+    ///
+    /// Called for every operator focus the core receives, before it decides
+    /// what to do with it: a refused or redundant focus still answers the page.
+    /// The record is capped by page, oldest evicted, and an eviction is logged
+    /// because the evicted page then reads as having nothing in flight.
+    pub(super) fn acknowledge_operator_focus(
+        &mut self,
+        client_id: Option<&str>,
+        sequence: Option<u64>,
+    ) {
+        let (client_id, sequence) = match (client_id, sequence) {
+            (None, None) => return,
+            (Some(client_id), Some(sequence))
+                if !client_id.is_empty() && client_id.len() <= OPERATOR_FOCUS_CLIENT_ID_LIMIT =>
+            {
+                (client_id, sequence)
+            }
+            _ => {
+                self.push_diagnostic(
+                    "pane.focus.sequence_invalid",
+                    "An operator focus carried an unusable client id or sequence".to_owned(),
+                );
+                return;
+            }
+        };
+        let acks = &mut self.snapshot.focused.operator_focus;
+        let applied = match acks.iter().position(|ack| ack.client_id == client_id) {
+            Some(index) => {
+                let mut ack = acks.remove(index);
+                ack.sequence = ack.sequence.max(sequence);
+                ack
+            }
+            None => OperatorFocusAck {
+                client_id: client_id.to_owned(),
+                sequence,
+            },
+        };
+        acks.push(applied);
+        if acks.len() > OPERATOR_FOCUS_CLIENT_LIMIT {
+            let evicted = acks.remove(0);
+            self.push_diagnostic(
+                "pane.focus.sequence_evicted",
+                format!(
+                    "Dropped the operator focus record of page {} (limit {OPERATOR_FOCUS_CLIENT_LIMIT})",
+                    evicted.client_id
+                ),
+            );
+        }
+    }
+
     /// Moves the keyboard focus to a pane and tells Herdr afterwards.
     ///
     /// Hide owns the focused pane, so the focus ring and the first responder

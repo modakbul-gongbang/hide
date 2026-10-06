@@ -1225,7 +1225,11 @@ export type SnapshotRest = {
   worktree_removal?: WorktreeRemoval | null;
   tab?: Tab;
   zoomed?: string | null;
-  focused?: { pane_id?: string | null };
+  focused?: {
+    pane_id?: string | null;
+    /** The last operator `focus_pane` number the core applied, per page (`operatorFocus.ts`). */
+    operator_focus?: { client_id: string; sequence: number }[];
+  };
   pane_layouts?: PaneLayout[];
   terminal?: { pane_id?: string | null; panes?: TerminalPane[] };
   ui_state?: {
