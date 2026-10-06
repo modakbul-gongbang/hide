@@ -1726,6 +1726,38 @@ fn an_unnamed_merge_lands_once_named_and_one_that_did_not_merge_is_checked_again
 }
 
 #[test]
+fn a_network_failure_reading_an_unnamed_merge_keeps_it_unnamed() {
+    let mut h = Bench::new(true);
+    let f = github_factory(&mut h, MergeMode::Auto);
+    let t = h.ready("Read fails once", &[]);
+    h.world().merge_unnamed = 1;
+    h.done(&f, &t);
+    for _ in 0..3 {
+        h.engine.tick();
+    }
+    let premerges = h.world().premerge_calls;
+    h.world().merged_read_failure = Some(Failure::environment(
+        "github.merged",
+        EnvSignal::Network,
+        "connection reset",
+    ));
+    h.advance(31_000);
+    h.engine.tick();
+    assert_eq!(h.world().merged_reads, 1);
+    h.advance(2 * MINUTE_MS);
+    h.engine.tick();
+    assert_eq!(h.world().merged_reads, 2, "read again, not merged again");
+    assert!(h.state(&f, &t).merged(), "{:?}", h.state(&f, &t));
+    assert!(h.task(&f, &t).merge_sha.is_some());
+    assert_eq!(h.world().merge_attempts, 1);
+    assert_eq!(
+        h.world().premerge_calls,
+        premerges,
+        "no check reruns on merged work"
+    );
+}
+
+#[test]
 fn a_merge_failing_on_a_signal_after_an_old_back_off_is_not_retried_every_tick() {
     let mut h = Bench::new(true);
     let f = github_factory(&mut h, MergeMode::Auto);

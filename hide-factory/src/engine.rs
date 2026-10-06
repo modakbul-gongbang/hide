@@ -3427,7 +3427,12 @@ impl Engine {
             (None, None) => None,
         };
         let since = self.merge_retry.get(&key).and_then(|(_, since)| *since);
-        let unnamed = failure.again_in_ms.is_some().then(|| since.unwrap_or(now));
+        // A signal while reading an unnamed merge keeps it unnamed: the
+        // merge may already have happened, and the 10 minutes still count
+        // from GitHub's first answer.
+        let unnamed = (failure.again_in_ms.is_some()
+            || (failure.signal.is_some() && since.is_some()))
+        .then(|| since.unwrap_or(now));
         if unnamed.is_some_and(|since| now.saturating_sub(since) >= MERGE_UNNAMED_LIMIT_MS) {
             // GitHub never named the commit: a person looks (rule 15).
             self.merge_retry.remove(&key);

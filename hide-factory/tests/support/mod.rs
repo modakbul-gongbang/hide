@@ -44,6 +44,8 @@ pub struct World {
     pub merged_reads: u32,
     /// The pull request turns out not to have merged (a queue dropped it).
     pub merge_dropped: bool,
+    /// The next read of whether a merge landed fails with this failure.
+    pub merged_read_failure: Option<Failure>,
     pub merge_attempts: u32,
     /// Every push is refused with this failure.
     pub publish_refusal: Option<Failure>,
@@ -307,6 +309,9 @@ impl MergeTarget for Shared {
     ) -> Result<Option<String>, Failure> {
         let mut world = self.world();
         world.merged_reads += 1;
+        if let Some(failure) = world.merged_read_failure.take() {
+            return Err(failure);
+        }
         if world.merge_dropped {
             world.merge_dropped = false;
             return Ok(None);
