@@ -192,20 +192,24 @@ test("Set as default checkout moves the home glyph and the first place to the wo
   } finally { stop(); }
 });
 
-test("the agent row's menu copies Herdr's session id and the row's title", async ({ page }) => {
-  const { agentRow, stop } = await startMenus(page);
+test("the agent row's menu copies Herdr's session id, the row's title and the pane's Herdr id", async ({ page }) => {
+  const { agentRow, worktreePane, stop } = await startMenus(page);
   try {
     // B7, B8
     await page.locator('[data-sidebar-mode="agents"]').click();
     await expect(agentRow).toBeVisible();
     let menu = await openMenu(page, agentRow, "사이드바 메뉴 구현 actions");
-    expect(await menuLines(menu)).toEqual(["Show", "─", "Copy title", "Copy session id", "─", "Close tab…"]);
+    expect(await menuLines(menu)).toEqual(["Show", "─", "Copy title", "Copy session id", "Copy pane ID", "─", "Close tab…"]);
     await screenshot(page, "sidebar-menus-agent-dark");
     await menu.locator('[data-menu-item="copy_session_id"]').click();
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(SESSION);
     menu = await openMenu(page, agentRow, "사이드바 메뉴 구현 actions");
     await menu.locator('[data-menu-item="copy_title"]').click();
     await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe("사이드바 메뉴 구현");
+    // The id `herdr pane list` names this pane by, the one ⌘K finds it by.
+    menu = await openMenu(page, agentRow, "사이드바 메뉴 구현 actions");
+    await menu.locator('[data-menu-item="copy_pane_id"]').click();
+    await expect.poll(() => page.evaluate(() => navigator.clipboard.readText())).toBe(worktreePane);
   } finally { stop(); }
 });
 

@@ -6,11 +6,12 @@ import { CheckoutCardHint } from "./components/pr-card";
 import { Elapsed } from "./components/elapsed";
 import { StatusMark } from "./components/status-mark";
 import { Badge } from "./components/ui/badge";
+import { Tabs, TabsList, TabsTrigger } from "./components/ui/tabs";
 import { Hint, Tooltip, TooltipContent, TooltipTrigger, useHintOpen } from "./components/ui/tooltip";
 import { useInterfaceTranslation } from "./i18n/client";
 import { requireInterfaceLanguage } from "./i18n/locale";
 import { cn } from "./lib/utils";
-import { ageWords, type AgentBucket, type Tile, type TileSegment } from "./overviewLens";
+import { ageWords, type Tile, type TileSegment } from "./overviewLens";
 import { prChip } from "./projectBoard";
 import type { Actions } from "./actions";
 import { laneCheckoutCard, shownPullRequest } from "./projects";
@@ -20,7 +21,7 @@ import { useUiStore, type OverviewTab } from "./ui";
 import { holdsCommandKey } from "./host";
 
 // The Overview's lenses (PRD overview-lenses-tiles-agents, agents-graph-view):
-// the tiles in the tab row's place, and the chips, popover and fold line the
+// the lens tabs, and the chips, popover and fold line the
 // Agents graph (`GraphView.tsx`) and the other tabs share. The rules are
 // `overviewLens.ts`'s and `agentGraph.ts`'s; this file draws them and routes
 // the clicks. Hover, focus and a half-second rest are local: they brighten a
@@ -86,105 +87,76 @@ function legend(segments: readonly TileSegment[]): string {
 }
 
 /**
- * The tiles where the tab row was (D-02, B1-B6): same width each, the chosen
- * one outlined, a click choosing its tab. A tile holds its name, the yellow
- * badge of the operator's turn, the big number and its unit, and one bar;
- * the bar's legend and the badge's breakdown are in their popovers, and a
- * failed read is a ⚠ by the name whose popover says what failed and how old
- * the value is. Two rows once the window is narrower than four tiles.
+ * The lens tabs where the tiles were: one row, each tab its name, its number
+ * (absent until read), the yellow count of what waits on the operator and a
+ * ⚠ when its read failed. The chosen tab carries its bar as a thin line along
+ * its foot; resting on a tab shows its unit, the badge's breakdown, the bar's
+ * legend and what failed, in one popover.
  */
-export function LensTiles({ tiles, selected, onSelect, onSegment }: { tiles: readonly Tile[]; selected: OverviewTab; onSelect: (tab: OverviewTab) => void; onSegment?: (bucket: AgentBucket) => void }) {
+export function LensTabs({ tiles, selected, onSelect }: { tiles: readonly Tile[]; selected: OverviewTab; onSelect: (tab: OverviewTab) => void }) {
   const { t } = useInterfaceTranslation();
   return (
-    <div role="tablist" aria-label={t("overview.projectView")} className="grid gap-md" style={{ gridTemplateColumns: "repeat(auto-fit, minmax(var(--lens-tile-min), 1fr))" }} data-lens-tiles="true">
-      {tiles.map((tile) => (
-        <TileView key={tile.id} tile={tile} selected={tile.id === selected} onSelect={() => onSelect(tile.id)} onSegment={tile.id === "agents" ? onSegment : undefined} />
-      ))}
-    </div>
+    <Tabs value={selected} onValueChange={(value) => onSelect(value as OverviewTab)}>
+      <TabsList aria-label={t("overview.projectView")} data-lens-tiles="true">
+        {tiles.map((tile) => (
+          <LensTab key={tile.id} tile={tile} selected={tile.id === selected} />
+        ))}
+      </TabsList>
+    </Tabs>
   );
 }
 
-function TileView({ tile, selected, onSelect, onSegment }: { tile: Tile; selected: boolean; onSelect: () => void; onSegment?: (bucket: AgentBucket) => void }) {
+function LensTab({ tile, selected }: { tile: Tile; selected: boolean }) {
   const { t } = useInterfaceTranslation();
   const badgeWords = tile.badge ? `${tile.badge.label ?? t("board.prGroup.turn")} ${tile.badge.count}` : null;
-  const named = [
-    tile.label,
-    tile.value === null ? null : `${tile.value}${tile.unit ? ` ${tile.unit}` : ""}`,
-    badgeWords,
+  const named = [tile.label, tile.value === null ? null : `${tile.value}${tile.unit ? ` ${tile.unit}` : ""}`, badgeWords, tile.failure].filter(Boolean).join(", ");
+  const popover = [
+    tile.value !== null && tile.unit ? `${tile.value} ${tile.unit}` : null,
+    badgeWords && tile.badge ? (tile.badge.parts.length > 0 ? `${badgeWords} (${tile.badge.parts.map((part) => `${part.label} ${part.count}`).join(" · ")})` : badgeWords) : null,
+    tile.bar ? legend(tile.bar) : null,
     tile.failure,
   ]
     .filter(Boolean)
-    .join(", ");
+    .join("\n");
+  const trigger = (
+    <TabsTrigger
+      value={tile.id}
+      aria-label={named}
+      className="relative"
+      data-lens-tile-button={tile.id}
+      data-lens-tile-bar={tile.bar ? tile.bar.map((segment) => `${segment.key}:${segment.count}`).join(" ") : undefined}
+    >
+      {tile.label}
+      {tile.failure ? <TriangleAlertIcon aria-hidden="true" className="size-(--size-icon-sm) text-warning" data-lens-tile-failure={tile.id} /> : null}
+      <span className={cn("font-mono text-caption text-muted-foreground", tile.value === null && "hidden")} data-lens-tile-value={tile.value ?? "unread"}>
+        {tile.value}
+      </span>
+      {tile.badge ? (
+        // Raised beside the number, so the two counts never read as one.
+        <span className="-ml-xxs self-start pt-xs font-mono text-micro leading-none text-warning" data-lens-tile-badge={tile.badge.count}>
+          {tile.badge.count}
+        </span>
+      ) : null}
+      {selected && tile.bar ? <TabBar tile={tile} bar={tile.bar} /> : null}
+    </TabsTrigger>
+  );
   return (
-    <div className="relative min-w-0" data-lens-tile={tile.id} data-selected={selected ? "true" : undefined}>
-      <button
-        type="button"
-        role="tab"
-        aria-selected={selected}
-        aria-label={named}
-        onClick={onSelect}
-        className={cn("absolute inset-0 rounded-md border bg-card outline-none hover:bg-accent focus-visible:ring-1 focus-visible:ring-ring", selected ? "border-primary" : "border-border")}
-        data-lens-tile-button={tile.id}
-      />
-      <div className="pointer-events-none relative flex min-w-0 flex-col gap-xs p-sm">
-        <div className="flex min-w-0 items-center gap-xs text-body font-medium text-foreground">
-          <span className="truncate">{tile.label}</span>
-          {tile.failure ? (
-            <Hint label={tile.failure}>
-              <span className="pointer-events-auto text-warning" data-lens-tile-failure={tile.id}>
-                <TriangleAlertIcon aria-hidden="true" className="size-(--size-icon-sm)" />
-              </span>
-            </Hint>
-          ) : null}
-          <span className="flex-1" />
-          {tile.badge ? (
-            <Hint label={[badgeWords, tile.badge.parts.map((part) => `${part.label} ${part.count}`).join(" · ")].filter(Boolean).join("\n")}>
-              <span className="pointer-events-auto rounded-xs px-xs font-mono text-caption text-warning" data-lens-tile-badge={tile.badge.count}>
-                {tile.badge.count}
-              </span>
-            </Hint>
-          ) : null}
-        </div>
-        <div className="flex min-h-(--size-control) items-baseline gap-xs" data-lens-tile-value={tile.value ?? "unread"}>
-          {tile.value === null ? null : (
-            <>
-              <span className="font-mono text-headline font-semibold text-foreground">{tile.value}</span>
-              {tile.unit ? <span className="text-caption text-muted-foreground">{tile.unit}</span> : null}
-            </>
-          )}
-        </div>
-        {tile.bar ? (
-          <Hint label={legend(tile.bar)}>
-            <span className="pointer-events-auto flex h-(--lens-bar-height) w-full gap-xxs" data-lens-tile-bar={tile.bar.map((segment) => `${segment.key}:${segment.count}`).join(" ")}>
-              {tile.bar.every((segment) => segment.count === 0) ? (
-                <span className="flex-1 rounded-full bg-muted" />
-              ) : (
-                tile.bar
-                  .filter((segment) => segment.count > 0)
-                  .map((segment) =>
-                    onSegment ? (
-                      // A segment of the Agents bar lights its status chip alone and opens the graph (agents-graph-view B25).
-                      <button
-                        key={segment.key}
-                        type="button"
-                        aria-label={t("overview.showOnly", { label: segment.label, count: segment.count })}
-                        data-lens-tile-segment={segment.key}
-                        className={cn("pointer-events-auto rounded-full outline-none focus-visible:ring-1 focus-visible:ring-ring", segmentTone(tile, segment))}
-                        style={{ flexGrow: segment.count }}
-                        onClick={() => onSegment(segment.key as AgentBucket)}
-                      />
-                    ) : (
-                      <span key={segment.key} className={cn("rounded-full", segmentTone(tile, segment))} style={{ flexGrow: segment.count }} />
-                    ),
-                  )
-              )}
-            </span>
-          </Hint>
-        ) : (
-          <span className="h-(--lens-bar-height)" />
-        )}
-      </div>
-    </div>
+    <span className="inline-flex" data-lens-tile={tile.id} data-selected={selected ? "true" : undefined}>
+      {popover ? <Hint label={popover}>{trigger}</Hint> : trigger}
+    </span>
+  );
+}
+
+/** The chosen tab's bar: its parts by count along the tab's foot, a muted line when every part is zero. */
+function TabBar({ tile, bar }: { tile: Tile; bar: readonly TileSegment[] }) {
+  return (
+    <span aria-hidden="true" className="absolute inset-x-sm bottom-0 flex h-(--lens-tab-bar-height) gap-xxs" data-lens-tab-bar="true">
+      {bar.every((segment) => segment.count === 0) ? (
+        <span className="flex-1 rounded-full bg-muted" />
+      ) : (
+        bar.filter((segment) => segment.count > 0).map((segment) => <span key={segment.key} className={cn("rounded-full", segmentTone(tile, segment))} style={{ flexGrow: segment.count }} />)
+      )}
+    </span>
   );
 }
 

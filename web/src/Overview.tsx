@@ -71,7 +71,7 @@ export function OverviewModal({ actions }: { actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const open = useUiStore((s) => s.overviewOpen);
   return <Dialog baseEscape open={open} onOpenChange={(next) => { if (!next) actions.closeOverview(); }}>
-    {open ? <DialogContent initialFocus="container" aria-describedby={undefined} className="h-(--size-settings-sheet-h) w-(--size-settings-sheet-w)" data-overview-modal="true" returnFocusTo={() => useUiStore.getState().overviewReturnFocus}>
+    {open ? <DialogContent initialFocus="container" aria-describedby={undefined} className="h-[calc(100%-2*var(--size-settings-sheet-window-inset))] max-h-(--size-overview-sheet-h) w-[calc(100%-2*var(--size-settings-sheet-window-inset))] max-w-(--size-overview-sheet-w)" data-overview-modal="true" returnFocusTo={() => useUiStore.getState().overviewReturnFocus}>
       <DialogTitle className="sr-only">{t("overview.title")}</DialogTitle>
       <OverviewPage actions={actions} />
     </DialogContent> : null}

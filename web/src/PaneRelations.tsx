@@ -8,6 +8,7 @@ import { EntryPointMenu, type MenuEntry } from "./components/entry-menu";
 import { StatusMark } from "./components/status-mark";
 import { DeviceChip } from "./components/device-chip";
 import { chipTitle, chipTone, directChildren, parentStep, relationEntries, relationState } from "./lineage";
+import { herdrPaneId } from "./remote";
 import type { PaneRow, SnapshotRest, Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { copySelection, pasteClipboard, selectAllText } from "./terminals";
@@ -169,6 +170,7 @@ type PaneMenuId =
   | `open:${string}`
   | "sleep_agent"
   | "copy_name"
+  | "copy_pane_id"
   | "close_pane"
   | "copy"
   | "paste"
@@ -180,7 +182,7 @@ type PaneMenuId =
 
 /**
  * What the pane header offers about this pane (B16, B18): its relatives,
- * each opened only by choosing it, its name to copy, and closing it. Opening
+ * each opened only by choosing it, its name and Herdr id to copy, and closing it. Opening
  * the menu moves no focus and marks nothing read.
  */
 export function paneMenuItems(pane: PaneRow, title: string): MenuEntry<PaneMenuId>[] {
@@ -201,6 +203,7 @@ export function paneMenuItems(pane: PaneRow, title: string): MenuEntry<PaneMenuI
     });
   }
   items.push({ id: "copy_name", label: translate("panes.menu.copyName"), unavailable: null, separated: items.length > 0 && !pane.sleep_action });
+  items.push({ id: "copy_pane_id", label: translate("panes.menu.copyPaneId"), unavailable: null });
   items.push({ id: "close_pane", label: translate("panes.close", { name: title }), unavailable: null, separated: true });
   return items;
 }
@@ -250,8 +253,9 @@ export function usePaneMenu(pane: PaneRow, title: string, actions: Actions) {
   const select = (id: PaneMenuId) => {
     switch (id) {
       case "copy_name":
-        void navigator.clipboard?.writeText(title).catch(() => undefined);
-        return;
+        return actions.copyText(title, "pane name");
+      case "copy_pane_id":
+        return actions.copyText(herdrPaneId(pane.id), "pane id");
       case "close_pane":
         return actions.closePane(pane.id);
       case "sleep_agent":

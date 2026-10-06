@@ -13,8 +13,8 @@ import { FACT, FACTS_LINE, OpeningStatus, UnavailableNotice } from "./MainScreen
 import { overviewProject } from "./navigation";
 import { useNewIssueShortcut } from "./IssueDialogs";
 import { AgentGraph, GraphFilterControls } from "./GraphView";
-import { chipOfBucket, foldId } from "./agentGraph";
-import { LensTiles, lensHandlers } from "./OverviewLenses";
+import { foldId } from "./agentGraph";
+import { LensTabs, lensHandlers } from "./OverviewLenses";
 import { agentsTile, issuesTile, lastIssueRead, prsTile, scopeAgents, sessionsTile } from "./overviewLens";
 import { RequestView } from "./RequestView";
 import { requestRows, requestsTile } from "./requestList";
@@ -30,10 +30,10 @@ import { toggledFold, useUiStore, type OverviewLens } from "./ui";
 // A Project's Overview (PRD web-project-overview, task-agents-views, the
 // issue-first rework and overview-lenses-tiles-agents): the Project scope the
 // shared Overview's scope tab opens. Under its title sits repository
-// facts with the chosen tile's mode control at its right end, then the lens
-// tiles, Requests, Agents, Issues, PRs and Sessions, where the tab row was. Every
-// way in opens the request view (overview-request-view D-05), with the box in
-// front kept for the Agents graph; the lens rides
+// facts, then one row of lens tabs, Agents, Requests, Issues, PRs and
+// Sessions, with the chosen tab's controls at its right end, as All projects'
+// tab row has them. Every way in opens the Agents graph with the box in
+// front selected; the lens rides
 // on the screen, so only Recent Panels brings back one as it was left
 // (`OverviewLens`). Issues is the issue-first Tasks board under its new name;
 // the boards are `TaskBoards.tsx`'s and the lenses `OverviewLenses.tsx`'s.
@@ -69,7 +69,7 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
   const tiles = useMemo(
     () =>
       tasks && workspace && found && pullRequests
-        ? [requestsTile(rows, found.availability, t), agentsTile(lensAgents, found.availability, t), issuesTile(tasks, Date.now(), lastIssueRead(workspace), requireInterfaceLanguage(i18n.language), t), prsTile(pullRequests, t), sessionsTile(sessions, workspace.id, Date.now(), t)]
+        ? [agentsTile(lensAgents, found.availability, t), requestsTile(rows, found.availability, t), issuesTile(tasks, Date.now(), lastIssueRead(workspace), requireInterfaceLanguage(i18n.language), t), prsTile(pullRequests, t), sessionsTile(sessions, workspace.id, Date.now(), t)]
         : [],
     [tasks, workspace, found, rows, lensAgents, sessions, pullRequests, t, i18n.language],
   );
@@ -140,7 +140,7 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
       data-overview-state={state}
       data-overview-view={view}
     >
-      <header className="flex shrink-0 flex-col gap-sm border-b border-border px-lg py-sm">
+      <header className="flex shrink-0 flex-col gap-xs border-b border-border px-lg py-sm">
         <div className="flex min-w-0 items-center gap-lg">
           <nav aria-label={t("overview.location")} className="flex min-w-0 items-center gap-xs">
             <button type="button" className="shrink-0 rounded-xs px-xs text-caption text-subtle-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent" data-go-main="true" onClick={() => setProject(null)}>
@@ -167,32 +167,26 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
             </Button>
           ) : null}
         </div>
-        <div className="flex min-w-0 flex-wrap items-center justify-between gap-md">
-          <Stats workspace={project} stats={stats} refreshing={!!rest?.git_worktrees_loading || project.checkouts.some((checkout) => checkout.github?.loading)} onMerged={showCleanup} />
-          {view === "agents" ? (
-            <GraphFilterControls agents={lensAgents} filter={lens.graph} onChange={(graph) => setLens({ graph })} />
-          ) : view === "issues" ? (
-            <span className="flex items-center gap-xs" data-issues-controls="true">
-              <IssueFilterControl filter={lens.filter} labels={tasks ? boardLabels(tasks, lens.filter.labels) : []} onChange={(filter) => setLens({ filter })} />
-              <TasksModeToggle mode={lens.tasksMode} onChange={(tasksMode) => setLens({ tasksMode })} />
-            </span>
-          ) : null}
-        </div>
-        <LensTiles
-          tiles={tiles}
-          selected={view}
-          onSelect={(tab) => setLens({ tab, focusTask: null, panel: null, prs: { ...lens.prs, focus: null } })}
-          onSegment={(bucket) => setLens({ tab: "agents", focusTask: null, panel: null, graph: { ...lens.graph, chips: [chipOfBucket(bucket)] } })}
-        />
+        <Stats workspace={project} stats={stats} refreshing={!!rest?.git_worktrees_loading || project.checkouts.some((checkout) => checkout.github?.loading)} onMerged={showCleanup} />
       </header>
       <OpeningStatus actions={actions} />
+      <div className="flex shrink-0 flex-wrap items-center justify-between gap-md px-lg py-sm" data-overview-view-row="true">
+        <LensTabs tiles={tiles} selected={view} onSelect={(tab) => setLens({ tab, focusTask: null, panel: null, prs: { ...lens.prs, focus: null } })} />
+        {view === "agents" ? (
+          <GraphFilterControls agents={lensAgents} filter={lens.graph} onChange={(graph) => setLens({ graph })} />
+        ) : view === "issues" ? (
+          <span className="flex items-center gap-xs" data-issues-controls="true">
+            <IssueFilterControl filter={lens.filter} labels={tasks ? boardLabels(tasks, lens.filter.labels) : []} onChange={(filter) => setLens({ filter })} />
+            <TasksModeToggle mode={lens.tasksMode} onChange={(tasksMode) => setLens({ tasksMode })} />
+          </span>
+        ) : null}
+      </div>
       {device ? <UnavailableNotice device={device} availability={availability} actions={actions} /> : null}
       {availability.state === "loading" ? (
         <p role="status" className="shrink-0 px-lg pt-sm text-caption text-muted-foreground" data-device-loading="true">
           {availability.text}
         </p>
       ) : null}
-      <div className="h-(--spacing-md) shrink-0" />
       {view === "sessions" ? (
         <div className="flex min-h-0 flex-1 border-t border-border">
           {/* Keyed by the Project, so another Project starts with its own filters and asks for itself. */}

@@ -652,11 +652,8 @@ fn pane_focus_request_waits_for_its_matching_authoritative_confirmation() {
 /// then the session event from that pane confirms the same request.
 #[test]
 fn pane_focus_request_moves_to_the_checkout_that_owns_the_target() {
-    let fixture_root = std::env::temp_dir().join(format!(
-        "herdr-core-cross-checkout-{}-{}",
-        std::process::id(),
-        NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed)
-    ));
+    let fixture_root_folder = scratch_dir("herdr-core-cross-checkout-");
+    let fixture_root = fixture_root_folder.path().to_path_buf();
     let root_a = fixture_root.join("alpha");
     let root_b = fixture_root.join("beta");
     std::fs::create_dir_all(&root_a).expect("first registered checkout");

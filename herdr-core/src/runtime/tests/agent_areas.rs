@@ -1,9 +1,9 @@
-use super::workspace_view::{views_path, with_views};
+use super::workspace_view::with_new_views;
 use super::*;
 
 fn setup() -> (Runtime, String) {
     let (runtime, checkout) = tab_order_runtime("/agent-groups");
-    let mut runtime = with_views(runtime, &views_path("agent-groups"));
+    let mut runtime = with_new_views(runtime, "agent-groups");
     ingest(&mut runtime, &["w-order:t1", "w-order:t2", "w-order:t3"]);
     (runtime, checkout)
 }
@@ -923,7 +923,7 @@ fn cross_machine_lineage_updates_agent_tab_placement_in_every_arrival_order() {
 /// close result reaches the runtime only when the test hands it over.
 fn live_setup() -> (Runtime, String) {
     let (runtime, checkout) = live_tab_order_runtime("/agent-groups");
-    let mut runtime = with_views(runtime, &views_path("agent-groups-close"));
+    let mut runtime = with_new_views(runtime, "agent-groups-close");
     ingest(&mut runtime, &["w-order:t1", "w-order:t2", "w-order:t3"]);
     (runtime, checkout)
 }
@@ -1152,7 +1152,7 @@ fn closing_a_tab_in_the_background_takes_its_chip_and_leaves_the_operator_in_pla
 #[test]
 fn a_close_that_needs_a_replacement_shell_keeps_its_tab_in_place() {
     let (runtime, _) = live_tab_order_runtime("/agent-groups");
-    let mut runtime = with_views(runtime, &views_path("agent-groups-shell"));
+    let mut runtime = with_new_views(runtime, "agent-groups-shell");
     ingest(&mut runtime, &["w-order:t1"]);
     let primary = crate::domain::WorktreeProjection {
         repo_key: "repo".into(),

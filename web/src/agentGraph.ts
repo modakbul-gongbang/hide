@@ -63,8 +63,8 @@ export function graphFilterActive(filter: GraphFilter): boolean {
   return filter.chips.length > 0 || filter.query.trim() !== "" || filter.device !== null;
 }
 
-/** The chip a bucket belongs to; a tile bar's segment lights the same one (D-35). */
-export function chipOfBucket(bucket: AgentBucket): StatusChip {
+/** The chip a bucket belongs to (D-35). */
+function chipOfBucket(bucket: AgentBucket): StatusChip {
   return bucket === "turn" ? "turn" : bucket === "resting" ? "resting" : "working";
 }
 

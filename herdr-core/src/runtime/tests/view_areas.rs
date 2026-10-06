@@ -1,4 +1,6 @@
-use super::workspace_view::{active_label, layout, second_checkout, views_path, with_views};
+use super::workspace_view::{
+    active_label, layout, second_checkout, views_path, with_new_views, with_views,
+};
 use super::*;
 use crate::model::{ViewDisplaySnapshot, ViewDisplayState, ViewLayoutSnapshot, ViewNodeSnapshot};
 use crate::workspace_control::Action;
@@ -141,7 +143,7 @@ fn files(directory: &Path, names: &[&str]) {
 
 fn views_runtime(name: &str) -> (Runtime, String, PathBuf) {
     let (runtime, checkout_id, directory) = strip_checkout(name);
-    let runtime = with_views(runtime, &views_path(name));
+    let runtime = with_new_views(runtime, name);
     (runtime, checkout_id, directory)
 }
 
@@ -800,7 +802,7 @@ fn moving_an_areas_last_display_away_collapses_the_area() {
 fn an_action_for_a_workspace_no_longer_in_front_changes_nothing() {
     let (mut runtime, checkout_id, directory) = strip_checkout("view-stale-workspace");
     let (other, other_checkout) = second_checkout(&mut runtime, &directory);
-    let mut runtime = with_views(runtime, &views_path("view-stale-workspace"));
+    let mut runtime = with_new_views(runtime, "view-stale-workspace");
     files(&other, &["b.md", "c.md"]);
     let identity = |runtime: &mut Runtime| {
         runtime.sync_workspace_view();
@@ -1364,8 +1366,11 @@ fn a_renamed_file_keeps_its_display() {
 #[test]
 fn a_restart_restores_the_view_tree_and_marks_a_missing_file_unavailable() {
     let (runtime, checkout_id, directory) = strip_checkout("view-restart");
-    let state = views_path("view-restart");
+    let (_views, state) = views_path("view-restart");
     let mut runtime = with_views(runtime, &state);
+    // The test keeps the checkout folder: it restarts on that checkout after
+    // the runtime is gone.
+    let _checkout = hold_dirs(&mut runtime);
     files(&directory, &["a.md", "b.md", "gone.md"]);
     open(
         &mut runtime,
@@ -1477,7 +1482,7 @@ fn a_restart_restores_the_view_tree_and_marks_a_missing_file_unavailable() {
 #[test]
 fn open_to_the_side_of_a_restored_file_that_came_back_opens_it_beside() {
     let (runtime, checkout_id, directory) = strip_checkout("view-back-beside");
-    let state = views_path("view-back-beside");
+    let (_views, state) = views_path("view-back-beside");
     let gone = directory.join("gone.md");
     let mut views = crate::workspace_views::WorkspaceViews::default();
     let layout = &mut views
@@ -1521,7 +1526,7 @@ fn open_to_the_side_of_a_restored_file_that_came_back_opens_it_beside() {
 /// stored with the Changes group `committed`.
 fn restored_diff(name: &str, committed: Option<bool>) -> (Runtime, PathBuf) {
     let (runtime, _checkout_id, directory) = strip_checkout(name);
-    let state = views_path(name);
+    let (_views, state) = views_path(name);
     let mut views = crate::workspace_views::WorkspaceViews::default();
     let layout = &mut views
         .entry(workspace::LOCAL_DEVICE_ID, &directory.to_string_lossy())
@@ -1610,7 +1615,7 @@ fn retry_on_a_diff_view_without_its_tab_opens_the_diff_again() {
 #[test]
 fn a_schema_1_views_file_migrates_into_one_area() {
     let (runtime, _checkout_id, directory) = strip_checkout("view-v1");
-    let state = views_path("view-v1");
+    let (_views, state) = views_path("view-v1");
     std::fs::write(directory.join("b.md"), "b\n").expect("fixture");
     let file = |name: &str, preview: bool| serde_json::json!({"path": directory.join(name), "kind": "file", "preview": preview});
     let v1 = serde_json::json!({"schema_version": 1, "workspaces": [{
@@ -2285,7 +2290,7 @@ fn a_page_records_where_it_went_and_the_toolbar_loads_what_was_typed() {
 #[test]
 fn a_page_survives_a_restart_and_closes_like_any_view() {
     let (runtime, checkout_id, directory) = strip_checkout("browser-restart");
-    let state = views_path("browser-restart");
+    let (_views, state) = views_path("browser-restart");
     let mut runtime = with_views(runtime, &state);
     files(&directory, &["a.md", "report.html"]);
     let report = format!("file://{}", directory.join("report.html").to_string_lossy());
@@ -2348,7 +2353,7 @@ fn a_checkout_focus_naming_a_display_brings_it_forward_on_that_display() {
     let (runtime, checkout_id, directory) = strip_checkout("view-focus-display");
     let mut runtime = runtime;
     let (other, other_checkout) = second_checkout(&mut runtime, &directory);
-    let mut runtime = with_views(runtime, &views_path("view-focus-display"));
+    let mut runtime = with_new_views(runtime, "view-focus-display");
     files(&directory, &["a.md", "b.md"]);
     open(
         &mut runtime,
@@ -2481,7 +2486,7 @@ fn empty_browser_open_targets_the_named_area_and_navigation_keeps_its_id() {
 fn a_reveal_calls_the_file_views_of_its_own_checkout() {
     let (mut runtime, checkout_id, directory) = strip_checkout("view-reveal-own");
     let (other, other_checkout) = second_checkout(&mut runtime, &directory);
-    let mut runtime = with_views(runtime, &views_path("view-reveal-own"));
+    let mut runtime = with_new_views(runtime, "view-reveal-own");
     files(&other, &["b.md"]);
     open(
         &mut runtime,

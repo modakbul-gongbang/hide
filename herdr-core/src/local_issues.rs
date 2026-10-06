@@ -326,14 +326,8 @@ mod tests {
 
     #[test]
     fn the_store_survives_a_round_trip_and_a_missing_file_is_empty() {
-        let directory = std::env::temp_dir().join(format!(
-            "hide-local-issues-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
+        let folder = tempfile::tempdir().unwrap();
+        let directory = folder.path().to_path_buf();
         let path = directory.join("local-issues.json");
         assert!(load(&path).unwrap().projects.is_empty());
         let mut store = LocalIssueStore::default();
@@ -344,6 +338,5 @@ mod tests {
         assert_eq!(load(&path).unwrap(), store);
         std::fs::write(&path, b"{not json").unwrap();
         assert!(load(&path).is_err());
-        let _ = std::fs::remove_dir_all(&directory);
     }
 }

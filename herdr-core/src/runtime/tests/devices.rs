@@ -119,19 +119,16 @@ fn testing_an_unconnected_device_reports_the_way_out() {
 }
 
 fn runtime_with_home() -> Runtime {
-    let state_id = NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed);
+    let folder = scratch_dir("herdr-core-devices-");
     let options = CoreOptions {
         schema_version: SCHEMA_VERSION,
         home: None,
         machine_id: None,
         herdr_socket_path: None,
         herdr_bin_path: None,
-        app_state_path: std::env::temp_dir()
-            .join(format!(
-                "herdr-core-devices-runtime-{}-{}.json",
-                std::process::id(),
-                state_id
-            ))
+        app_state_path: folder
+            .path()
+            .join("state.json")
             .to_string_lossy()
             .into_owned(),
         host_helper_dir: None,
@@ -142,18 +139,16 @@ fn runtime_with_home() -> Runtime {
         local_issues_path: None,
         kit_dir: None,
     };
-    Runtime::new(
+    let mut runtime = Runtime::new(
         options,
         environment::EnvironmentReport {
             statuses: Vec::new(),
-            home_path: Some(std::env::temp_dir().join(format!(
-                "herdr-core-devices-home-{}-{}",
-                std::process::id(),
-                state_id
-            ))),
+            home_path: Some(folder.path().join("home")),
             codex_home: None,
         },
-    )
+    );
+    runtime.test_dirs.push(folder);
+    runtime
 }
 
 /// Retry is a new attempt, not a repaint of the last answer: fixing the SSH

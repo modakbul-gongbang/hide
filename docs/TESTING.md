@@ -79,6 +79,7 @@ When the behavior depends on the order of two events, the test fixes that order;
 - Hold one side at a real boundary and release it after the competing event has been observed.
   `herdrGate` in `web/e2e/herdr-gate.ts` is the shared gate, used by `web/e2e/pane-focus-ordering.spec.ts`: a proxy on the private Herdr socket that holds one request of the method the test arms, forwards everything else, and lets the test release it, so every answer still comes from the pinned Herdr.
 - The page's own side of an order rule holds the daemon's frames instead: `holdSnapshots` in `web/e2e/stale-snapshot-focus.spec.ts` routes the WebSocket (`page.routeWebSocket`), buffers what the daemon sends, and hands the page the frames the test chooses, so which snapshot the page has seen when the operator's last click is already sent is the test's decision.
+  A frame that changes nothing on the screen gives no sign it arrived, so `read` waits until the page's probe (`arrivals`, with `?probe=1`) has counted every frame handed over before the test reads the result.
   Fence the page's effects with two animation frames before asserting that something did not move; a check that passes on the first poll proves nothing about an effect that has not run yet.
 - A rule the core decides is gated one layer lower, in `herdr-core/src/runtime/tests/control_order.rs`: `FakeHerdr` records what actually left over the socket, and the test hands the runtime each answer itself (`complete_lane_tab`, `complete_lane_pane_focus`), so late, replaced, refused and lost answers arrive in the order the test chooses.
   Put an order rule there; an e2e spec keeps one representative journey that shows the pieces are connected.
@@ -277,6 +278,8 @@ The crate's own `AGENTS.md` says where the file goes; this section says how the 
 7. **Own and remove what the test starts.**
    Put a child process, a thread, a socket or a temp folder behind a value that cleans up on `Drop`, as `FakeHerdr` does: it wakes its accept loop, joins the thread, and re-raises a panic from the responder on the test thread.
    Use a private folder per test and never a fixed name in `/tmp`.
+   A private folder comes from `tempfile` and is removed with its owner, never named from the pid: nextest starts each test in a process of its own, so a pid-named path is one an earlier test process may have left state under, and a herdr-core runtime that loaded such a state file started from someone else's selection instead of the defaults its test assumed.
+   In `herdr-core` runtime tests that is `scratch_dir`; the runtime keeps the folders made for it, and a test that drops a runtime and restarts on its files takes them first with `hold_dirs`.
    Why: a leaked process or file is inherited by the next test and by the next run.
 8. **Retries are a classification.**
    CI runs every Rust lane (Linux, macOS, Windows, the OS contract and nightly) with `scripts/verify-cargo.sh nextest --profile ci` (`retries = 1` in `.config/nextest.toml`), so a test that fails once and then passes is reported as flaky and recorded in an issue with an expiry; two failures fail the lane.

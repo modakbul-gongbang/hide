@@ -87,6 +87,9 @@ fn asleep() -> (Runtime, String) {
 fn the_sleep_setting_survives_a_restart_and_a_ui_state_update() {
     let mut runtime = runtime();
     let path = runtime.state_path.clone();
+    // The test keeps the state folder: it restarts on that file after the
+    // runtime is gone.
+    let _state = hold_dirs(&mut runtime);
     assert!(runtime.dispatch_json(&event(
         "agent_sleep_set",
         serde_json::json!({"after_hours": 24})

@@ -1523,6 +1523,12 @@ pub struct Runtime {
     workspace_views: Option<WorkspaceViewStore>,
     workspace_actions: VecDeque<workspace_control::RecordedAction>,
     browser_pages: HashMap<(String, String, String), workspace_control::ReportedBrowserPage>,
+    /// The folders a test made for this runtime, its state file's and its
+    /// fixtures'. Each is new, so nothing an earlier test process left can be
+    /// read, and each goes with the runtime. Declared last so it is dropped
+    /// after everything that may hold a file in it.
+    #[cfg(test)]
+    test_dirs: Vec<tempfile::TempDir>,
 }
 
 #[derive(Clone)]
@@ -1892,6 +1898,8 @@ impl Runtime {
             workspace_views,
             workspace_actions: VecDeque::new(),
             browser_pages: HashMap::new(),
+            #[cfg(test)]
+            test_dirs: Vec::new(),
         };
         runtime.resync_navigator_focus();
         runtime.apply_persisted_pet_state();

@@ -116,6 +116,9 @@ fn a_record_carries_the_names_a_row_is_drawn_from() {
 fn the_list_survives_a_restart_and_a_shared_ui_state_save() {
     let mut runtime = runtime_with(&["alpha", "beta"]);
     let path = runtime.state_path.clone();
+    // The test keeps the state folder: it restarts on that file after the
+    // runtime is gone.
+    let _state = hold_dirs(&mut runtime);
     bring_front(&mut runtime, "alpha");
     bring_front(&mut runtime, "beta");
 

@@ -352,20 +352,36 @@ fn context_payload() -> SessionSnapshotPayload {
     })).unwrap()
 }
 
+/// A new folder under the system temp folder, removed when it is dropped.
+///
+/// It is never named by the pid: nextest starts every test in a process of
+/// its own, so a name made of the pid and a counter of that process is one an
+/// earlier test process may have left a file under, and a runtime started
+/// there loads that state instead of the defaults the test assumes.
+pub(super) fn scratch_dir(prefix: &str) -> tempfile::TempDir {
+    tempfile::Builder::new()
+        .prefix(prefix)
+        .tempdir()
+        .expect("a new scratch folder")
+}
+
+/// Hands the runtime's folders to the test, which keeps them past the
+/// runtime: a restart test drops the runtime and starts another on its files.
+pub(super) fn hold_dirs(runtime: &mut Runtime) -> Vec<tempfile::TempDir> {
+    std::mem::take(&mut runtime.test_dirs)
+}
+
 pub(super) fn runtime() -> Runtime {
-    let state_id = NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed);
+    let state = scratch_dir("herdr-core-runtime-");
     let options = CoreOptions {
         schema_version: SCHEMA_VERSION,
         home: None,
         machine_id: None,
         herdr_socket_path: Some("/tmp/herdr-core-pet-runtime.sock".to_owned()),
         herdr_bin_path: None,
-        app_state_path: std::env::temp_dir()
-            .join(format!(
-                "herdr-core-pet-runtime-{}-{}.json",
-                std::process::id(),
-                state_id
-            ))
+        app_state_path: state
+            .path()
+            .join("state.json")
             .to_string_lossy()
             .into_owned(),
         host_helper_dir: None,
@@ -376,14 +392,16 @@ pub(super) fn runtime() -> Runtime {
         local_issues_path: None,
         kit_dir: None,
     };
-    Runtime::new(
+    let mut runtime = Runtime::new(
         options,
         environment::EnvironmentReport {
             statuses: Vec::new(),
             home_path: None,
             codex_home: None,
         },
-    )
+    );
+    runtime.test_dirs.push(state);
+    runtime
 }
 
 /// A runtime with a live context pointed at a socket that does not exist.
@@ -897,13 +915,8 @@ fn strip_labels(runtime: &Runtime, checkout_id: &str) -> Vec<String> {
 /// repository, because a directory inside another repository is
 /// catalogued under that repository's root instead.
 fn strip_checkout(name: &str) -> (Runtime, String, PathBuf) {
-    let directory = std::env::temp_dir().join(format!(
-        "hide-strip-{name}-{}-{}",
-        std::process::id(),
-        NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed)
-    ));
-    std::fs::create_dir_all(&directory).expect("checkout directory");
-    let directory = directory.canonicalize().expect("a real checkout path");
+    let folder = scratch_dir(&format!("hide-strip-{name}-"));
+    let directory = folder.path().canonicalize().expect("a real checkout path");
     assert!(
         std::process::Command::new("git")
             .args(["init", "-q", "-b", "main"])
@@ -913,7 +926,8 @@ fn strip_checkout(name: &str) -> (Runtime, String, PathBuf) {
             .success()
     );
     std::fs::write(directory.join("notes.md"), "notes\n").expect("fixture file");
-    let (runtime, checkout_id) = tab_order_runtime(&directory.to_string_lossy());
+    let (mut runtime, checkout_id) = tab_order_runtime(&directory.to_string_lossy());
+    runtime.test_dirs.push(folder);
     (runtime, checkout_id, directory)
 }
 
@@ -1053,13 +1067,8 @@ fn open_file(runtime: &mut Runtime, checkout_id: &str, path: &Path) {
 /// Herdr workspace, which is how a workspace comes to span two checkouts.
 /// Returns the runtime, the repository's checkout id, and both directories.
 fn split_workspace_checkouts(name: &str) -> (Runtime, String, PathBuf, PathBuf) {
-    let root = std::env::temp_dir().join(format!(
-        "hide-split-{name}-{}-{}",
-        std::process::id(),
-        NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed)
-    ));
-    std::fs::create_dir_all(&root).expect("fixture root");
-    let root = root.canonicalize().expect("a real fixture path");
+    let folder = scratch_dir(&format!("hide-split-{name}-"));
+    let root = folder.path().canonicalize().expect("a real fixture path");
     let repository = root.join("repo");
     std::fs::create_dir_all(&repository).expect("repository directory");
     let git = |arguments: &[&str], directory: &Path| {
@@ -1103,7 +1112,8 @@ fn split_workspace_checkouts(name: &str) -> (Runtime, String, PathBuf, PathBuf) 
         ],
         &repository,
     );
-    let (runtime, checkout_id) = tab_order_runtime(&repository.to_string_lossy());
+    let (mut runtime, checkout_id) = tab_order_runtime(&repository.to_string_lossy());
+    runtime.test_dirs.push(folder);
     (runtime, checkout_id, repository, worktree)
 }
 
@@ -1205,14 +1215,12 @@ fn web_sources() -> Vec<(String, String)> {
 /// `deep/nested/leaf/target.txt`, which is the shape SC1 and SC2 describe.
 fn reveal_runtime() -> (Runtime, PathBuf, String, PathBuf, String) {
     let mut roots = Vec::new();
+    let mut folders = Vec::new();
     for name in ["one", "two"] {
-        let directory = std::env::temp_dir().join(format!(
-            "hide-reveal-{name}-{}-{}",
-            std::process::id(),
-            NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed)
-        ));
-        std::fs::create_dir_all(directory.join("deep/nested/leaf")).expect("fixture tree");
-        let directory = directory.canonicalize().expect("a real checkout path");
+        let folder = scratch_dir(&format!("hide-reveal-{name}-"));
+        std::fs::create_dir_all(folder.path().join("deep/nested/leaf")).expect("fixture tree");
+        let directory = folder.path().canonicalize().expect("a real checkout path");
+        folders.push(folder);
         assert!(
             std::process::Command::new("git")
                 .args(["init", "-q", "-b", "main"])
@@ -1226,6 +1234,7 @@ fn reveal_runtime() -> (Runtime, PathBuf, String, PathBuf, String) {
         roots.push(directory);
     }
     let mut runtime = runtime();
+    runtime.test_dirs.extend(folders);
     runtime.snapshot.ui_state.workspace_registrations = roots
         .iter()
         .enumerate()
@@ -1272,15 +1281,12 @@ fn reveal_event(workspace_id: &str, checkout_id: &str, path: &Path, is_directory
 }
 
 fn explorer_runtime() -> (Runtime, PathBuf) {
-    let root = std::env::temp_dir().join(format!(
-        "hide-explorer-runtime-{}-{}",
-        std::process::id(),
-        NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed)
-    ));
+    let folder = scratch_dir("hide-explorer-runtime-");
+    let root = folder.path().canonicalize().expect("a real root");
     std::fs::create_dir_all(root.join("src/nested")).expect("fixture tree");
     std::fs::write(root.join("src/lib.rs"), "lib\n").expect("fixture file");
-    let root = root.canonicalize().expect("a real root");
     let mut runtime = runtime();
+    runtime.test_dirs.push(folder);
     focus_local_checkout(&mut runtime, &root);
     (runtime, root)
 }

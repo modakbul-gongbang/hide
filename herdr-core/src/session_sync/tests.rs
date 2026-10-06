@@ -1709,11 +1709,11 @@ fn focus_events_move_the_projected_focused_workspace() {
 /// listening first is what keeps an event between the two from being lost.
 #[test]
 fn coordinator_rebuilds_from_a_fresh_snapshot_after_a_clean_disconnect() {
-    let root = socket_parent().join(format!(
-        "herdr-core-session-rebuild-contract-{}",
-        std::process::id()
-    ));
-    std::fs::create_dir_all(&root).expect("create socket directory");
+    let folder = tempfile::Builder::new()
+        .prefix("herdr-core-session-rebuild-contract-")
+        .tempdir_in(socket_parent())
+        .expect("create socket directory");
+    let root = folder.path().to_path_buf();
     let socket_path = root.join("herdr.sock");
     let state_path = root.join("state.json");
     let listener = LocalListener::bind(&socket_path).expect("bind fake Herdr socket");
@@ -1799,11 +1799,11 @@ fn coordinator_rebuilds_from_a_fresh_snapshot_after_a_clean_disconnect() {
 /// navigator stops listing the closed tab without waiting for a deadline.
 #[test]
 fn coordinator_reads_the_replacement_active_tab_when_herdr_names_none() {
-    let root = socket_parent().join(format!(
-        "herdr-core-session-active-tab-read-{}",
-        std::process::id()
-    ));
-    std::fs::create_dir_all(&root).expect("create socket directory");
+    let folder = tempfile::Builder::new()
+        .prefix("herdr-core-session-active-tab-read-")
+        .tempdir_in(socket_parent())
+        .expect("create socket directory");
+    let root = folder.path().to_path_buf();
     let socket_path = root.join("herdr.sock");
     let state_path = root.join("state.json");
     let listener = LocalListener::bind(&socket_path).expect("bind fake Herdr socket");
@@ -1883,11 +1883,11 @@ fn coordinator_reads_the_replacement_active_tab_when_herdr_names_none() {
 
 #[test]
 fn coordinator_recovers_a_stream_error_with_one_fresh_snapshot_and_stops_its_reader() {
-    let root = socket_parent().join(format!(
-        "herdr-core-session-stream-error-contract-{}",
-        std::process::id()
-    ));
-    std::fs::create_dir_all(&root).expect("create socket directory");
+    let folder = tempfile::Builder::new()
+        .prefix("herdr-core-session-stream-error-contract-")
+        .tempdir_in(socket_parent())
+        .expect("create socket directory");
+    let root = folder.path().to_path_buf();
     let socket_path = root.join("herdr.sock");
     let state_path = root.join("state.json");
     let listener = LocalListener::bind(&socket_path).expect("bind fake Herdr socket");

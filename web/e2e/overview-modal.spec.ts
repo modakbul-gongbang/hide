@@ -23,6 +23,8 @@ test("shared Overview preserves work, returns the keyboard and has direct sideba
     const modal = page.getByRole("dialog", { name: "Overview", exact: true });
     await page.keyboard.press(chord("overview"));
     await expect(modal).toBeVisible();
+    // On a 1920 × 1080 window the modal stops at its cap, 1440 × 960.
+    expect(await modal.boundingBox().then((box) => [box?.width, box?.height])).toEqual([1440, 960]);
     await expect(sidebar).toHaveAttribute("aria-current", "page");
     await expect(home).not.toHaveAttribute("aria-current");
     await expect(page.locator("[data-project-overview]")).toHaveCount(0);
@@ -112,9 +114,9 @@ test("shared Overview preserves work, returns the keyboard and has direct sideba
     await expect(page.locator("[data-workspace-screen]")).toBeVisible();
     await page.setViewportSize({ width: 720, height: 640 });
     await page.locator("[data-open-overview]").click();
+    // Below the cap it takes the window less a 40 px inset on every side.
     const bounds = (await modal.boundingBox())!;
-    expect(bounds.x).toBeGreaterThanOrEqual(0);
-    expect(bounds.x + bounds.width).toBeLessThanOrEqual(720);
+    expect([bounds.x, bounds.y, bounds.width, bounds.height]).toEqual([40, 40, 640, 560]);
     expect(await modal.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
     await screenshot(page, "overview-modal-narrow-dark");
   } finally {

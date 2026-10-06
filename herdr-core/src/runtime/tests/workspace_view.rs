@@ -6,14 +6,20 @@ use crate::workspace_views::Tool;
 // after a restart; a shell without View areas keeps its
 // document-in-place-of-terminal rule (Risks: older wire).
 
-pub(super) fn views_path(name: &str) -> PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "hide-workspace-views-{name}-{}-{}",
-        std::process::id(),
-        NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed)
-    ));
-    std::fs::create_dir_all(&dir).expect("state directory");
-    dir.join("workspace-views.json")
+/// A new folder for a views file, and that file's path in it; whoever keeps
+/// the folder keeps the file.
+pub(super) fn views_path(name: &str) -> (tempfile::TempDir, PathBuf) {
+    let folder = scratch_dir(&format!("hide-workspace-views-{name}-"));
+    let path = folder.path().join("workspace-views.json");
+    (folder, path)
+}
+
+/// `with_views` on a new views file whose folder the runtime keeps.
+pub(super) fn with_new_views(runtime: Runtime, name: &str) -> Runtime {
+    let (folder, path) = views_path(name);
+    let mut runtime = with_views(runtime, &path);
+    runtime.test_dirs.push(folder);
+    runtime
 }
 
 /// A daemon runtime whose local checkout roots are open.
@@ -350,7 +356,7 @@ fn a_terminal_tab_choice_keeps_the_workspace_document_only_with_separate_areas()
     for separate in [true, false] {
         let (runtime, checkout_id, directory) = strip_checkout("keeps-document");
         let mut runtime = if separate {
-            with_views(runtime, &views_path("keeps-document"))
+            with_new_views(runtime, "keeps-document")
         } else {
             runtime
         };
@@ -382,7 +388,7 @@ fn a_terminal_tab_choice_keeps_the_workspace_document_only_with_separate_areas()
 #[test]
 fn a_file_open_turns_file_views_on_and_an_agent_choice_changes_no_column() {
     let (runtime, checkout_id, directory) = strip_checkout("area-intent");
-    let mut runtime = with_views(runtime, &views_path("area-intent"));
+    let mut runtime = with_new_views(runtime, "area-intent");
     with_tabs(&mut runtime, &directory);
     assert_eq!(columns(&runtime), (false, false), "Agent Views alone");
     assert_eq!(
@@ -425,7 +431,7 @@ fn a_file_open_turns_file_views_on_and_an_agent_choice_changes_no_column() {
 #[test]
 fn each_column_toggles_by_its_own_result_value_and_keeps_the_other() {
     let (runtime, checkout_id, directory) = strip_checkout("columns");
-    let state = views_path("columns");
+    let (_views, state) = views_path("columns");
     let mut runtime = with_views(runtime, &state);
     with_tabs(&mut runtime, &directory);
     open(&mut runtime, &checkout_id, &directory.join("notes.md"));
@@ -485,7 +491,7 @@ fn each_column_toggles_by_its_own_result_value_and_keeps_the_other() {
 #[test]
 fn file_views_turned_on_with_no_view_opens_a_new_tab_page() {
     let (runtime, _checkout_id, _directory) = strip_checkout("views-empty");
-    let mut runtime = with_views(runtime, &views_path("views-empty"));
+    let mut runtime = with_new_views(runtime, "views-empty");
     layout(&mut runtime, serde_json::json!({"views": true}));
     let view = runtime.snapshot.workspace_view.as_ref().unwrap();
     assert!(view.views);
@@ -530,7 +536,7 @@ fn file_views_turned_on_with_no_view_opens_a_new_tab_page() {
 #[test]
 fn a_tool_or_a_reveal_turns_tools_on_and_leaves_file_views_alone() {
     let (runtime, _checkout_id, directory) = strip_checkout("tool-opens");
-    let mut runtime = with_views(runtime, &views_path("tool-opens"));
+    let mut runtime = with_new_views(runtime, "tool-opens");
     let tools = |runtime: &Runtime| {
         let view = runtime.snapshot.workspace_view.as_ref().unwrap();
         (view.tool, view.tools)
@@ -617,7 +623,7 @@ fn a_tool_or_a_reveal_turns_tools_on_and_leaves_file_views_alone() {
 #[test]
 fn workspace_tools_drive_the_panel_the_changes_reader_gates_on() {
     let (runtime, _checkout_id, _directory) = strip_checkout("tools");
-    let mut runtime = with_views(runtime, &views_path("tools"));
+    let mut runtime = with_new_views(runtime, "tools");
     layout(&mut runtime, serde_json::json!({"tool": "changes"}));
     assert!(runtime.snapshot.ui_state.right_panel_visible);
     assert_eq!(
@@ -657,8 +663,11 @@ fn workspace_tools_drive_the_panel_the_changes_reader_gates_on() {
 #[test]
 fn a_restore_waits_for_the_daemon_to_open_the_checkout_root() {
     let (runtime, checkout_id, directory) = strip_checkout("waits-for-root");
-    let state = views_path("waits-for-root");
+    let (_views, state) = views_path("waits-for-root");
     let mut runtime = with_views(runtime, &state);
+    // The test keeps the checkout folder: it restarts on that checkout after
+    // the runtime is gone.
+    let _checkout = hold_dirs(&mut runtime);
     open(&mut runtime, &checkout_id, &directory.join("notes.md"));
     drop(runtime);
 
@@ -730,7 +739,7 @@ fn a_restore_waits_for_the_daemon_to_open_the_checkout_root() {
 /// defaults load with a diagnostic, never a screen alert.
 #[test]
 fn an_unreadable_views_file_is_kept_and_reported_in_the_diagnostic_log() {
-    let state = views_path("unreadable");
+    let (_views, state) = views_path("unreadable");
     std::fs::write(&state, b"{broken").expect("fixture");
     let (store, diagnostics) = WorkspaceViewStore::open(state.clone(), Default::default());
     drop(store);
@@ -759,7 +768,7 @@ fn an_unreadable_views_file_is_kept_and_reported_in_the_diagnostic_log() {
 #[test]
 fn returning_to_a_workspace_without_agent_tabs_keeps_its_active_view_tab() {
     let (runtime, checkout_id, directory) = strip_checkout("return-active");
-    let mut runtime = with_views(runtime, &views_path("return-active"));
+    let mut runtime = with_new_views(runtime, "return-active");
     let other = directory.with_file_name(format!(
         "{}-other",
         directory.file_name().unwrap().to_string_lossy()
@@ -816,7 +825,7 @@ fn returning_to_a_workspace_without_agent_tabs_keeps_its_active_view_tab() {
 #[test]
 fn a_reveal_shows_the_explorer_and_unfolds_the_folders_in_one_event() {
     let (runtime, _checkout_id, directory) = strip_checkout("reveal");
-    let mut runtime = with_views(runtime, &views_path("reveal"));
+    let mut runtime = with_new_views(runtime, "reveal");
     layout(&mut runtime, serde_json::json!({"tools": false}));
     let root = directory.to_string_lossy().into_owned();
 
@@ -898,8 +907,11 @@ fn saved_displays(runtime: &Runtime, path: &Path) -> Vec<String> {
 #[test]
 fn a_restore_waits_while_the_front_moved_since_the_last_sync() {
     let (runtime, checkout_id, directory) = strip_checkout("front-moved");
-    let state = views_path("front-moved");
+    let (_views, state) = views_path("front-moved");
     let mut runtime = with_views(runtime, &state);
+    // The test keeps the checkout folder: it restarts on that checkout after
+    // the runtime is gone.
+    let _checkout = hold_dirs(&mut runtime);
     open(&mut runtime, &checkout_id, &directory.join("notes.md"));
     drop(runtime);
 
@@ -942,8 +954,11 @@ fn a_restore_waits_while_the_front_moved_since_the_last_sync() {
 #[test]
 fn opening_a_file_that_came_back_clears_its_unavailable_tab() {
     let (runtime, checkout_id, directory) = strip_checkout("came-back");
-    let state = views_path("came-back");
+    let (_views, state) = views_path("came-back");
     let mut runtime = with_views(runtime, &state);
+    // The test keeps the checkout folder: it restarts on that checkout after
+    // the runtime is gone.
+    let _checkout = hold_dirs(&mut runtime);
     std::fs::write(directory.join("gone.md"), "gone\n").expect("fixture");
     open(&mut runtime, &checkout_id, &directory.join("gone.md"));
     drop(runtime);
@@ -987,7 +1002,7 @@ fn opening_a_file_that_came_back_clears_its_unavailable_tab() {
 #[test]
 fn only_the_workspace_the_operator_chose_is_resumed() {
     let (runtime, checkout_id, directory) = strip_checkout("resumed");
-    let state = views_path("resumed");
+    let (_views, state) = views_path("resumed");
     let mut runtime = with_views(runtime, &state);
     let resumed = |runtime: &Runtime| runtime.snapshot.workspace_view.as_ref().map(|v| v.resumed);
     assert_eq!(resumed(&runtime), Some(false), "a first run starts on Main");
@@ -1021,7 +1036,7 @@ fn workspace_tools_never_reach_the_older_settings_file() {
         runtime.snapshot.ui_state.right_panel_visible,
         runtime.snapshot.ui_state.right_panel_section,
     );
-    let mut runtime = with_views(runtime, &views_path("settings"));
+    let mut runtime = with_new_views(runtime, "settings");
     layout(
         &mut runtime,
         serde_json::json!({"tool": "explorer", "tools": !saved.0}),
@@ -1039,7 +1054,7 @@ fn workspace_tools_never_reach_the_older_settings_file() {
 #[test]
 fn removing_a_device_forgets_its_workspace_views() {
     let (runtime, _checkout_id, directory) = strip_checkout("device-views");
-    let mut runtime = with_views(runtime, &views_path("device-views"));
+    let mut runtime = with_new_views(runtime, "device-views");
     runtime
         .snapshot
         .ui_state
@@ -1080,7 +1095,7 @@ fn removing_a_device_forgets_its_workspace_views() {
 #[test]
 fn workspace_column_calls_forget_evicted_workspaces() {
     let (runtime, _, _) = strip_checkout("column-calls-cap");
-    let mut runtime = with_views(runtime, &views_path("column-calls-cap"));
+    let mut runtime = with_new_views(runtime, "column-calls-cap");
     for index in 0..=crate::workspace_views::MAX_WORKSPACES {
         let key = ("studio".to_owned(), format!("/srv/workspace-{index}"));
         runtime.apply_area_intent_to(&key, AreaIntent::Views);
@@ -1108,7 +1123,7 @@ fn closing_the_last_view_turns_file_views_off_and_keeps_tools() {
     for tools in [true, false] {
         for browser in [true, false] {
             let (runtime, checkout_id, directory) = strip_checkout("last-view-columns");
-            let state = views_path("last-view-columns");
+            let (_views, state) = views_path("last-view-columns");
             let mut runtime = with_views(runtime, &state);
             with_tabs(&mut runtime, &directory);
             if browser {
@@ -1139,8 +1154,11 @@ fn closing_the_last_view_turns_file_views_off_and_keeps_tools() {
 #[test]
 fn workspace_width_requests_are_bounded_ephemeral_and_confirm_exact_intents() {
     let (runtime, _checkout_id, directory) = strip_checkout("width-requests");
-    let state = views_path("width-requests");
+    let (_views, state) = views_path("width-requests");
     let mut runtime = with_views(runtime, &state);
+    // The test keeps the checkout folder: it restarts on that checkout after
+    // the runtime is gone.
+    let _checkout = hold_dirs(&mut runtime);
     with_tabs(&mut runtime, &directory);
     layout(
         &mut runtime,

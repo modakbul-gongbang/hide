@@ -27,14 +27,12 @@ fn runtime_at(path: &std::path::Path) -> Runtime {
     )
 }
 
-fn state_path(name: &str) -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join(format!(
-        "herdr-core-appearance-{name}-{}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("state dir");
-    dir.join("state.json")
+/// A new folder for a state file, and that file's path in it; the test keeps
+/// the folder across the restarts it makes.
+fn state_path(name: &str) -> (tempfile::TempDir, std::path::PathBuf) {
+    let folder = scratch_dir(&format!("herdr-core-appearance-{name}-"));
+    let path = folder.path().join("state.json");
+    (folder, path)
 }
 
 fn theme_set(theme: &str) -> Vec<u8> {
@@ -56,7 +54,7 @@ fn a_store_without_a_theme_opens_dark() {
 /// B2, B4, D-15: one event changes the theme, and the choice survives a restart.
 #[test]
 fn theme_set_changes_the_theme_and_a_restart_keeps_it() {
-    let path = state_path("roundtrip");
+    let (_state, path) = state_path("roundtrip");
     let mut runtime = runtime_at(&path);
     assert!(runtime.dispatch_json(&theme_set("light")));
     assert_eq!(runtime.snapshot().ui_state.theme, ThemePreference::Light);
@@ -86,7 +84,7 @@ fn theme_set_changes_the_theme_and_a_restart_keeps_it() {
 /// recorded only as a diagnostic, never as an error the screen shows.
 #[test]
 fn an_unknown_stored_theme_opens_dark_with_a_diagnostic() {
-    let path = state_path("unknown");
+    let (_state, path) = state_path("unknown");
     let mut runtime = runtime_at(&path);
     assert!(runtime.dispatch_json(&theme_set("light")));
     drop(runtime);
@@ -153,7 +151,7 @@ pub(super) fn ui_state_update(runtime: &Runtime, patch: serde_json::Value) -> Ve
 /// field out keeps it, and a store from before the toggle shows the rail.
 #[test]
 fn a_hidden_device_rail_survives_a_restart() {
-    let path = state_path("device-rail");
+    let (_state, path) = state_path("device-rail");
     let mut runtime = runtime_at(&path);
     assert!(runtime.snapshot().ui_state.device_rail_visible);
     let event = ui_state_update(&runtime, serde_json::json!({"device_rail_visible": false}));
@@ -181,7 +179,7 @@ fn a_hidden_device_rail_survives_a_restart() {
 /// from before the drag opens at the default.
 #[test]
 fn a_dragged_sidebar_width_survives_a_restart() {
-    let path = state_path("sidebar-width");
+    let (_state, path) = state_path("sidebar-width");
     let mut runtime = runtime_at(&path);
     assert_eq!(runtime.snapshot().ui_state.sidebar_width, 292);
     let event = ui_state_update(&runtime, serde_json::json!({"sidebar_width": 360}));
@@ -211,7 +209,7 @@ fn a_dragged_sidebar_width_survives_a_restart() {
 /// the rest of the event applies.
 #[test]
 fn an_out_of_range_sidebar_width_is_refused_into_the_log() {
-    let path = state_path("sidebar-width-range");
+    let (_state, path) = state_path("sidebar-width-range");
     let mut runtime = runtime_at(&path);
     let event = ui_state_update(&runtime, serde_json::json!({"sidebar_width": 300}));
     assert!(runtime.dispatch_json(&event));
@@ -262,7 +260,7 @@ fn an_out_of_range_sidebar_width_is_refused_into_the_log() {
 /// A stored width the drag could not have produced opens at the default, with a diagnostic.
 #[test]
 fn an_out_of_range_stored_sidebar_width_opens_at_the_default() {
-    let path = state_path("sidebar-width-stored");
+    let (_state, path) = state_path("sidebar-width-stored");
     let mut runtime = runtime_at(&path);
     let event = ui_state_update(&runtime, serde_json::json!({"sidebar_width": 400}));
     assert!(runtime.dispatch_json(&event));
@@ -295,7 +293,7 @@ fn language_set(language: serde_json::Value) -> Vec<u8> {
 
 #[test]
 fn language_choices_survive_restart_and_unrelated_stale_saves() {
-    let path = state_path("interface-language");
+    let (_state, path) = state_path("interface-language");
     let mut runtime = runtime_at(&path);
     assert_eq!(
         serde_json::to_value(runtime.snapshot()).unwrap()["ui_state"]["interface_language"],
@@ -343,12 +341,11 @@ fn language_choices_survive_restart_and_unrelated_stale_saves() {
         runtime_at(&path).snapshot().ui_state.interface_language,
         None
     );
-    std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
 }
 
 #[test]
 fn invalid_stored_languages_publish_english_and_remain_stored() {
-    let path = state_path("interface-language-invalid");
+    let (_state, path) = state_path("interface-language-invalid");
     let mut runtime = runtime_at(&path);
     runtime.dispatch_json(&language_set(serde_json::json!("ko")));
     drop(runtime);
@@ -387,5 +384,4 @@ fn invalid_stored_languages_publish_english_and_remain_stored() {
             serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
         assert_eq!(saved["interface_language"], invalid);
     }
-    std::fs::remove_dir_all(path.parent().unwrap()).unwrap();
 }
