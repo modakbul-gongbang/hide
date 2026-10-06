@@ -182,7 +182,8 @@ fn factory() -> Factory {
         "id": "f-1", "project": "/work/r", "project_name": "r", "source": "github", "repo": "o/r",
         "default_branch": "main", "config": Config { verification: Verification::Ci { checks: vec!["test".into()] }, ..Config::default() },
         "closed": false, "created_at": 0, "next_task": 2, "next_local_issue": 1, "main": MainHealth::default(),
-        "outside_read_at": null, "outside_read_failures": 0, "watch_day": 0, "watch_sent_today": 0, "watch_last_at": null
+        "outside_read_at": null, "outside_read_failures": 0, "watch_day": 0, "watch_sent_today": 0, "watch_last_at": null,
+        "github_approval": {"account": "octo", "repo": "o/r", "at": 0}
     }))
     .unwrap()
 }
@@ -332,6 +333,42 @@ fn every_report_pushes_and_a_merged_pull_request_is_not_reused() {
     let reland = p.open_pr(&factory, &t, "body").unwrap().unwrap();
     assert_ne!(reland.number, first.number);
     assert!(reland.by_factory);
+}
+
+#[test]
+fn a_factory_without_a_recorded_approval_writes_nothing_to_github() {
+    let gh = FakeGh::default();
+    let mut p = projects(&gh);
+    let factory = Factory {
+        github_approval: None,
+        ..factory()
+    };
+    let mut t = task("T-1", Some(1));
+    t.pr = Some(PullRequest {
+        number: 2,
+        url: String::new(),
+        head: "factory/1-add-it".into(),
+        by_factory: true,
+        open: true,
+    });
+    let pr = t.pr.clone().unwrap();
+    let refusals = [
+        p.prepare(&factory).err(),
+        p.create_issue(&factory, &task("T-2", None), "body").err(),
+        p.label_issue(&factory, &IssueRef::Github { number: 1 })
+            .err(),
+        p.open_pr(&factory, &task("T-3", Some(3)), "body").err(),
+        p.close_pr(&factory, &pr).err(),
+        p.reopen_pr(&factory, &pr).err(),
+        p.merge(&factory, &t, MergeMethod::Squash).err(),
+        p.rerun_main(&factory, "headsha").err(),
+    ];
+    for refusal in refusals {
+        assert_eq!(refusal.expect("refused").stage, "github.approval");
+    }
+    let hub = gh.0.lock().unwrap();
+    assert!(hub.writes.is_empty(), "{:?}", hub.writes);
+    assert!(hub.pushes.is_empty(), "{:?}", hub.pushes);
 }
 
 #[test]

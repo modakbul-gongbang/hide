@@ -22,6 +22,8 @@ pub const PROJECT: &str = "/work/fixture";
 pub struct World {
     pub now: UnixMs,
     pub github: bool,
+    /// The GitHub login `gh api user` answers; `None` when logged out.
+    pub account: Option<String>,
     /// Every external write, in order: `verb target`.
     pub writes: Vec<String>,
     pub next_issue: u64,
@@ -119,6 +121,7 @@ impl TaskSource for Shared {
         Ok(ProjectProbe {
             github,
             repo: github.then(|| "owner/fixture".into()),
+            account: github.then(|| self.world().account.clone()).flatten(),
             required_checks: if github {
                 vec!["test".into()]
             } else {
@@ -129,13 +132,6 @@ impl TaskSource for Shared {
             default_branch: "main".into(),
             runtimes: self.world().runtimes.clone(),
         })
-    }
-    fn planned_writes(&self, probe: &ProjectProbe) -> Vec<String> {
-        if probe.github {
-            vec!["label factory".into()]
-        } else {
-            Vec::new()
-        }
     }
     fn prepare(&mut self, factory: &Factory) -> Result<(), Failure> {
         if factory.source == SourceKind::Github {
@@ -579,6 +575,7 @@ impl Bench {
         let dir = tempfile::tempdir().expect("state folder");
         let world = World {
             now: 1_000 * DAY_MS,
+            account: Some("octo".into()),
             github,
             head: "sha0000-base".into(),
             diff_lines: 40,

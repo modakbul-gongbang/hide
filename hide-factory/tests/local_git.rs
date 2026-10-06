@@ -376,6 +376,11 @@ fn a_report_after_the_remote_deleted_the_task_branch_still_pushes() {
     let mut factory = factory(&fx.project, &[]);
     factory.source = SourceKind::Github;
     factory.repo = Some("o/r".into());
+    factory.github_approval = Some(GithubApproval {
+        account: "octo".into(),
+        repo: "o/r".into(),
+        at: 0,
+    });
     let t = task(&fx, "T-1", "b.txt", "two\n");
     let branch = t.worker.as_ref().unwrap().branch.clone();
     let worktree = PathBuf::from(&t.worker.as_ref().unwrap().worktree);

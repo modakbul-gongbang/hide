@@ -116,6 +116,8 @@ impl EnvSignal {
 pub struct ProjectProbe {
     pub github: bool,
     pub repo: Option<String>,
+    /// The `gh` login a GitHub Factory acts as.
+    pub account: Option<String>,
     /// Required checks of the default branch's protection.
     pub required_checks: Vec<String>,
     /// Verify command candidates read from repository files.
@@ -167,8 +169,6 @@ pub enum OutsideEvent {
 /// Issues, labels and outside work (GitHub or local).
 pub trait TaskSource {
     fn probe(&mut self, project: &str) -> Result<ProjectProbe, Failure>;
-    /// Writes needed when the Factory is created (the `factory` label).
-    fn planned_writes(&self, probe: &ProjectProbe) -> Vec<String>;
     fn prepare(&mut self, factory: &Factory) -> Result<(), Failure>;
     /// Creates the Task's issue with the card summary and the label; converges
     /// on an existing issue carrying the same Task marker (B73).

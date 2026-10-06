@@ -16,6 +16,7 @@ A Factory is one project's work queue.
 A project has at most one Factory, named by the project's canonical primary checkout path; its id is `f-` and the first ten hex digits of that path's SHA-256.
 A Factory whose project has a `github.com` origin takes its Tasks from GitHub issues and merges pull requests (a GitHub Factory).
 Any other Factory keeps its issues in the core's local issue store as `L-<number>` and merges into the local default branch (a local Factory).
+A GitHub Factory acts as the login `gh` is signed in as, and only after a person approved that account, the repository and the list of reads and writes `init` shows; the Factory keeps that approval as `github_approval`, and a Factory without one refuses every GitHub write (`github.approval`) before calling `gh` or pushing.
 Closing a Factory keeps its records, and creating a Factory for the same project again brings them back.
 
 | Owner | What it owns |
@@ -508,7 +509,7 @@ Add --json to print the answer as JSON.
 
 | Command | Does |
 | --- | --- |
-| `init` | Without `--confirm`, shows the source, the verification candidates the code detected (the branch's required checks and verify commands read from `Cargo.toml`, `package.json`, `Makefile` or `pyproject.toml`), the merge mode and the GitHub writes it would make, and writes nothing. With `--confirm` and a verification choice, creates the Factory and, on GitHub, creates the `factory` label. A closed Factory is reopened with `--confirm`. A project that already has an open Factory answers with it. |
+| `init` | Without `--confirm`, shows the source, the verification candidates the code detected (the branch's required checks and verify commands read from `Cargo.toml`, `package.json`, `Makefile` or `pyproject.toml`), the merge mode and, on GitHub, the login `gh api user` names, the repository, and everything the Factory reads and writes there, and writes nothing. With `--confirm` and a verification choice, creates the Factory, records that approval (account, repository, time) in its history as `github.approved`, and, on GitHub, creates the `factory` label. A closed Factory is reopened with `--confirm`. A project that already has an open Factory answers with it. |
 | `add` | Creates a Task or updates the named one. A positional issue reads its title and body for missing fields. `--prd` copies the file into the store. |
 | `status`, `show`, `inbox` | Read the board, one Task page, and the inbox. |
 | `answer` | Answers a question and records who relayed it. |
@@ -521,7 +522,7 @@ A project path is made absolute by the CLI.
 `--json` prints the engine's answer as one JSON object, and without it the answer is printed for a person.
 Every answer carries `ok`.
 A refusal prints `refused: <reason>`, the current state and allowed actions or the invalid fields when it has them, and `next: <action>`, and exits non-zero; its JSON is `{"ok": false, "reason", "next_action", "detail"}`.
-`add` answers `{result, task, questions}`, `init` a preview, `created` or `existing` object, `show` `{task: <TaskDetail>}`, `inbox` `{count, items}`, `status` a `FactorySummary`, and `config` `{config, machine}`.
+`add` answers `{result, task, questions}`, `init` a preview (its `github` is `{account, repo, reads, writes}` or `null` for a local project), `created` or `existing` object, `show` `{task: <TaskDetail>}`, `inbox` `{count, items}`, `status` a `FactorySummary`, and `config` `{config, machine}`.
 Other actions answer `{message, task}` with the Task's id, display id and new state.
 Common refusal reasons are `role_not_allowed`, `task_not_found`, `task_ambiguous`, `factory_not_found`, `factory_ambiguous`, `factory_closed`, `card_invalid`, `action_not_allowed_in_state`, `config_invalid`, `auto_needs_verification`, `github_login_required`, `github_permission_missing`, `main_dirty` and `revive_expired`.
 

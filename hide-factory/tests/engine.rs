@@ -60,7 +60,44 @@ fn init_previews_without_writing_and_creates_once_confirmed() {
     assert_eq!(preview["preview"], true, "{preview}");
     assert!(h.world().writes.is_empty(), "a preview writes nothing");
     assert!(h.engine.factories().next().is_none());
-    assert_eq!(preview["writes"], json!(["label factory"]));
+    // The preview names who acts, where, and everything read and written
+    // there, before anything is written (B1).
+    assert_eq!(preview["github"]["account"], "octo", "{preview}");
+    assert_eq!(preview["github"]["repo"], "owner/fixture", "{preview}");
+    let named = |list: &serde_json::Value| -> Vec<String> {
+        list.as_array()
+            .unwrap()
+            .iter()
+            .map(|item| item.as_str().unwrap().to_owned())
+            .collect()
+    };
+    let reads = named(&preview["github"]["reads"]);
+    for read in [
+        "issues",
+        "pull requests",
+        "check runs",
+        "workflow runs",
+        "required checks",
+    ] {
+        assert!(
+            reads.iter().any(|r| r.contains(read)),
+            "{read} in {reads:?}"
+        );
+    }
+    let writes = named(&preview["github"]["writes"]);
+    for write in [
+        "factory label",
+        "issue create",
+        "branch push",
+        "merge",
+        "revert",
+        "rerun",
+    ] {
+        assert!(
+            writes.iter().any(|w| w.contains(write)),
+            "{write} in {writes:?}"
+        );
+    }
 
     // Auto merge needs a verification (B2).
     let refused = h.op(Command::Init {
@@ -83,6 +120,24 @@ fn init_previews_without_writing_and_creates_once_confirmed() {
     assert_eq!(h.writes("label.create"), vec!["label.create factory"]);
     let factory = h.engine.factories().next().unwrap().clone();
     assert_eq!(factory.config.default_runtime, Runtime::Claude);
+    // Confirming records the approval: the account, the repository, when.
+    let approval = factory
+        .github_approval
+        .clone()
+        .expect("a recorded approval");
+    assert_eq!(
+        (approval.account.as_str(), approval.repo.as_str()),
+        ("octo", "owner/fixture")
+    );
+    assert_eq!(approval.at, h.world().now);
+    let approved: Vec<_> = h
+        .engine
+        .events(&factory.id, None, 50)
+        .into_iter()
+        .filter(|e| e.kind == "github.approved")
+        .collect();
+    assert_eq!(approved.len(), 1);
+    assert_eq!(approved[0].detail["account"], "octo");
 
     // The same project again shows the existing Factory (B5).
     let again = h.op(Command::Init {
@@ -93,6 +148,42 @@ fn init_previews_without_writing_and_creates_once_confirmed() {
     });
     assert_eq!(again["existing"], true, "{again}");
     assert_eq!(h.writes("label.create").len(), 1);
+}
+
+#[test]
+fn a_local_project_names_no_github_access_and_records_no_approval() {
+    let mut h = Bench::new(false);
+    let preview = h.op(Command::Init {
+        project: PROJECT.into(),
+        verification: None,
+        merge_mode: None,
+        confirm: false,
+    });
+    assert_eq!(preview["github"], serde_json::Value::Null, "{preview}");
+    h.op(Command::Init {
+        project: PROJECT.into(),
+        verification: Some(VerificationChoice::Commands {
+            commands: vec!["true".into()],
+        }),
+        merge_mode: None,
+        confirm: true,
+    });
+    let factory = h.engine.factories().next().unwrap().clone();
+    assert!(factory.github_approval.is_none());
+}
+
+#[test]
+fn a_github_project_without_a_logged_in_account_is_not_created() {
+    let mut h = Bench::new(true);
+    h.world().account = None;
+    let refused = h.op(Command::Init {
+        project: PROJECT.into(),
+        verification: None,
+        merge_mode: None,
+        confirm: false,
+    });
+    assert_eq!(refused["reason"], "github_login_required", "{refused}");
+    assert!(h.engine.factories().next().is_none());
 }
 
 #[test]

@@ -115,6 +115,18 @@ fn same_repo(prs: &[Value]) -> Option<&Value> {
         .find(|pr| pr["isCrossRepository"].as_bool() == Some(false))
 }
 
+/// The repository of a GitHub write: refused until a person approved the
+/// Factory's GitHub access at `init --confirm` (D-62).
+fn write_repo(factory: &Factory) -> Result<String, Failure> {
+    if factory.github_approval.is_none() {
+        return Err(Failure::task(
+            "github.approval",
+            "no recorded GitHub approval: confirm the Factory with hide factory init --confirm",
+        ));
+    }
+    repo(factory)
+}
+
 fn repo(factory: &Factory) -> Result<String, Failure> {
     factory
         .repo
@@ -399,6 +411,10 @@ impl TaskSource for SharedProjects {
             let view = this.gh_json("probe", &["repo", "view", remote.trim(), "--json", "nameWithOwner,defaultBranchRef,mergeCommitAllowed,squashMergeAllowed,rebaseMergeAllowed"])?;
             probe.github = true;
             probe.repo = view["nameWithOwner"].as_str().map(str::to_owned);
+            // The login every GitHub read and write runs as (D-62).
+            probe.account = this.gh_json("probe", &["api", "user"])?["login"]
+                .as_str()
+                .map(str::to_owned);
             if let Some(branch) = view["defaultBranchRef"]["name"].as_str() {
                 probe.default_branch = branch.to_owned();
             }
@@ -434,22 +450,11 @@ impl TaskSource for SharedProjects {
         Ok(probe)
     }
 
-    fn planned_writes(&self, probe: &ProjectProbe) -> Vec<String> {
-        if probe.github {
-            vec![format!(
-                "GitHub label `{LABEL}` on {}",
-                probe.repo.clone().unwrap_or_default()
-            )]
-        } else {
-            Vec::new()
-        }
-    }
-
     fn prepare(&mut self, factory: &Factory) -> Result<(), Failure> {
         if factory.source != SourceKind::Github {
             return Ok(());
         }
-        let repo = repo(factory)?;
+        let repo = write_repo(factory)?;
         self.lock().gh(
             "github.label",
             &[
@@ -484,7 +489,7 @@ impl TaskSource for SharedProjects {
                 Ok(IssueRef::Local { number })
             }
             SourceKind::Github => {
-                let repo = repo(factory)?;
+                let repo = write_repo(factory)?;
                 let search = format!("\"{marker}\" in:body");
                 let found = this.gh_json(
                     "github.issue_find",
@@ -536,7 +541,7 @@ impl TaskSource for SharedProjects {
         let IssueRef::Github { number } = issue else {
             return Ok(());
         };
-        let repo = repo(factory)?;
+        let repo = write_repo(factory)?;
         let number = number.to_string();
         self.lock().gh(
             "github.label_issue",
@@ -849,7 +854,7 @@ impl MergeTarget for SharedProjects {
         if factory.source != SourceKind::Github {
             return Ok(None);
         }
-        let repo = repo(factory)?;
+        let repo = write_repo(factory)?;
         let branch = task
             .worker
             .as_ref()
@@ -952,7 +957,7 @@ impl MergeTarget for SharedProjects {
     }
 
     fn close_pr(&mut self, factory: &Factory, pr: &PullRequest) -> Result<(), Failure> {
-        let repo = repo(factory)?;
+        let repo = write_repo(factory)?;
         let number = pr.number.to_string();
         let mut this = self.lock();
         let state = this.pr_view(factory, pr.number)?;
@@ -967,7 +972,7 @@ impl MergeTarget for SharedProjects {
     }
 
     fn reopen_pr(&mut self, factory: &Factory, pr: &PullRequest) -> Result<(), Failure> {
-        let repo = repo(factory)?;
+        let repo = write_repo(factory)?;
         let number = pr.number.to_string();
         let mut this = self.lock();
         let state = this.pr_view(factory, pr.number)?;
@@ -1155,7 +1160,7 @@ impl MergeTarget for SharedProjects {
                     .to_owned())
             }
             SourceKind::Github => {
-                let repo = repo(factory)?;
+                let repo = write_repo(factory)?;
                 let pr = task
                     .pr
                     .clone()
@@ -1216,7 +1221,7 @@ impl MergeTarget for SharedProjects {
         let mut this = self.lock();
         match &factory.config.verification {
             Verification::Ci { .. } => {
-                let repo = repo(factory)?;
+                let repo = write_repo(factory)?;
                 let path = format!("repos/{repo}/actions/runs?head_sha={sha}&per_page=50");
                 let runs = this.gh_json("github.runs", &["api", &path])?;
                 for run in runs["workflow_runs"].as_array().into_iter().flatten() {
@@ -1272,7 +1277,7 @@ impl MergeTarget for SharedProjects {
                 commit: Some(commit),
             });
         }
-        let repo = repo(factory)?;
+        let repo = write_repo(factory)?;
         let branch = format!("factory/revert-{}", task.id.to_ascii_lowercase());
         let refspec = format!("HEAD:refs/heads/{branch}");
         this.git(
@@ -1359,7 +1364,7 @@ impl MergeTarget for SharedProjects {
         let commit = revert.commit.clone().unwrap_or_default();
         match (factory.source, revert.pr) {
             (SourceKind::Github, Some(number)) => {
-                let repo = repo(factory)?;
+                let repo = write_repo(factory)?;
                 let view = this.pr_view(factory, number)?;
                 if view["state"].as_str() != Some("MERGED") {
                     let number = number.to_string();

@@ -364,8 +364,19 @@ fn render_init(answer: &Value) -> String {
     if let Some(note) = answer["auto_unavailable"].as_str() {
         text.push_str(&format!("auto: unavailable ({note})\n"));
     }
-    for write in answer["writes"].as_array().into_iter().flatten() {
-        text.push_str(&format!("will write: {}\n", write.as_str().unwrap_or("")));
+    let github = &answer["github"];
+    if github.is_object() {
+        text.push_str(&format!(
+            "GitHub: acts as {} on {}\n",
+            github["account"].as_str().unwrap_or("?"),
+            github["repo"].as_str().unwrap_or("?")
+        ));
+        for key in ["reads", "writes"] {
+            text.push_str(&format!("  {key}:\n"));
+            for item in github[key].as_array().into_iter().flatten() {
+                text.push_str(&format!("    - {}\n", item.as_str().unwrap_or("")));
+            }
+        }
     }
     text.push_str("Nothing was written. Choose a verification and add --confirm.");
     text

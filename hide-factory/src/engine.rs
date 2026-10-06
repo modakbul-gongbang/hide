@@ -72,6 +72,23 @@ pub const REPORT_LIMIT: usize = 500;
 const MAIN_CHECK_EVERY_MS: u64 = 30_000;
 /// When a merge that GitHub answered without its commit is asked again.
 pub const MERGE_COMMIT_AGAIN_MS: u64 = 30_000;
+/// What a GitHub Factory reads, as `init` names it before a person confirms.
+pub const GITHUB_READS: [&str; 5] = [
+    "issues labelled factory",
+    "pull requests",
+    "check runs and commit statuses",
+    "workflow runs",
+    "the default branch's required checks",
+];
+/// What a GitHub Factory writes, as `init` names it before a person confirms.
+pub const GITHUB_WRITES: [&str; 6] = [
+    "the factory label",
+    "issue create and edit",
+    "branch push to factory/*",
+    "pull request open, merge and close",
+    "revert pull request",
+    "rerun of a failed workflow run",
+];
 /// How long a merge GitHub answered without naming its commit is read again
 /// before a person looks.
 pub const MERGE_UNNAMED_LIMIT_MS: u64 = 10 * 60_000;
@@ -1127,7 +1144,6 @@ impl Engine {
         for command in &probe.verify_candidates {
             candidates.push(json!({"kind": "verify", "value": command}));
         }
-        let writes = self.ports.source.planned_writes(&probe);
         let verification = match verification {
             Some(VerificationChoice::Ci { checks }) => {
                 if !probe.github {
@@ -1182,6 +1198,27 @@ impl Engine {
             )
             .with(json!({"candidates": candidates})));
         }
+        // A GitHub Factory names the login it acts as, the repository and
+        // everything it reads and writes there before a person confirms
+        // (D-62); the create screen shows this same list.
+        let github = match (probe.github, &probe.repo) {
+            (false, _) => None,
+            (true, Some(repo)) => {
+                let Some(account) = probe.account.clone() else {
+                    return Err(refuse(
+                        "github_login_required",
+                        "Run gh auth login, then retry",
+                    ));
+                };
+                Some((account, repo.clone()))
+            }
+            (true, None) => {
+                return Err(refuse(
+                    "init_failed",
+                    "GitHub did not name the repository; check the origin remote and retry",
+                ));
+            }
+        };
         if !confirm {
             return Ok(json!({
                 "preview": true,
@@ -1191,7 +1228,12 @@ impl Engine {
                 "merge_mode": "auto",
                 "auto_unavailable": auto_unavailable,
                 "default_runtime": probe.runtimes.first().copied().unwrap_or(Runtime::Claude),
-                "writes": writes,
+                "github": github.as_ref().map(|(account, repo)| json!({
+                    "account": account,
+                    "repo": repo,
+                    "reads": GITHUB_READS,
+                    "writes": GITHUB_WRITES,
+                })),
             }));
         }
         if !matches!(
@@ -1239,10 +1281,16 @@ impl Engine {
             watch_day: 0,
             watch_sent_today: 0,
             watch_last_at: None,
+            github_approval: github.map(|(account, repo)| GithubApproval {
+                account,
+                repo,
+                at: now,
+            }),
         };
         if let Err(failure) = self.ports.source.prepare(&factory) {
             return Err(self.github_refusal(&failure, "init"));
         }
+        let approval = factory.github_approval.clone();
         self.factories.insert(id.clone(), factory);
         self.tasks.entry(id.clone()).or_default();
         self.save_factory(&id);
@@ -1252,6 +1300,14 @@ impl Engine {
             "factory.created",
             json!({"source": source_name(source)}),
         );
+        if let Some(approval) = approval {
+            self.record(
+                &id,
+                None,
+                "github.approved",
+                json!({"account": approval.account, "repo": approval.repo, "at": approval.at}),
+            );
+        }
         Ok(json!({"created": true, "factory": {"id": id, "project": project}}))
     }
 

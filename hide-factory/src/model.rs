@@ -49,6 +49,20 @@ pub struct Factory {
     pub watch_day: u64,
     pub watch_sent_today: u32,
     pub watch_last_at: Option<UnixMs>,
+    /// The person's approval of this Factory's GitHub reads and writes; no
+    /// GitHub write happens without it (D-62).
+    #[serde(default)]
+    pub github_approval: Option<GithubApproval>,
+}
+
+/// Who approved a GitHub Factory's access, for which repository, and when,
+/// recorded at `init --confirm` (D-62).
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct GithubApproval {
+    /// The `gh` login the Factory acts as.
+    pub account: String,
+    pub repo: String,
+    pub at: UnixMs,
 }
 
 fn default_branch() -> String {
