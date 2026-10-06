@@ -826,9 +826,9 @@ impl Engine {
             TaskState::MergeWaiting => vec!["merge", "request-changes", "cancel"],
             TaskState::Stopped => vec!["retry", "cancel"],
             TaskState::Landed | TaskState::Done | TaskState::Relanding => vec![],
-            TaskState::Outside => vec!["revive"],
+            TaskState::Outside if !task.purged => vec!["revive"],
             TaskState::Cancelled if !task.purged => vec!["revive"],
-            TaskState::Cancelled => vec![],
+            TaskState::Cancelled | TaskState::Outside => vec![],
         };
         if task.open_questions().next().is_some() {
             actions.insert(0, "answer");
@@ -2065,7 +2065,11 @@ impl Engine {
                 task.card.depends_on.push(new_id.to_owned());
             }
         });
-        if waits && self.task(factory, id).is_some_and(|t| t.state == TaskState::Running) {
+        if waits
+            && self
+                .task(factory, id)
+                .is_some_and(|t| t.state == TaskState::Running)
+        {
             self.put_to_sleep(factory, id);
             self.set_state(factory, id, TaskState::Blocked);
         }
@@ -2935,19 +2939,33 @@ impl Engine {
         }
         self.save_factory(factory_id);
         // Worker tab and worktree go once main is green (B43).
-        if let Some(worker) = self.task(factory_id, id).and_then(|t| t.worker.clone()) {
-            let _ = self.ports.workers.stop(&worker);
-            if let Err(failure) = self.ports.workers.remove_worktree(&worker) {
-                self.record(
-                    factory_id,
-                    Some(id),
-                    "cleanup.failed",
-                    json!({"stage": failure.stage}),
-                );
-            }
-        }
+        self.release_worker(factory_id, id);
         // A finished Task is a watch event (D-32).
         self.watch_due(factory_id, true);
+    }
+
+    /// A finished Task's worker ends and its worktree goes; the branch stays
+    /// with the merge. A failure is logged and the disk recovery retries it.
+    fn release_worker(&mut self, factory_id: &str, id: &str) {
+        let Some(worker) = self.task(factory_id, id).and_then(|t| t.worker.clone()) else {
+            return;
+        };
+        let _ = self.ports.workers.stop(&worker);
+        match self.ports.workers.remove_worktree(&worker, false) {
+            Ok(()) => {
+                self.with_task(factory_id, id, |t| t.purged = true);
+            }
+            Err(failure) => self.cleanup_failed(factory_id, id, &failure),
+        }
+    }
+
+    fn cleanup_failed(&mut self, factory_id: &str, id: &str, failure: &Failure) {
+        self.record(
+            factory_id,
+            Some(id),
+            "cleanup.failed",
+            json!({"stage": failure.stage, "detail": failure.detail}),
+        );
     }
 
     // ------------------------------------------------------------- main break
@@ -4312,10 +4330,9 @@ impl Engine {
                             "outside.merged",
                             json!({"pr": pr}),
                         );
-                        if let Some(worker) = &task.worker {
-                            let _ = self.ports.workers.stop(worker);
-                        }
+                        self.cancel_verification(factory_id, &task.id);
                         self.set_state(factory_id, &task.id, TaskState::Done);
+                        self.release_worker(factory_id, &task.id);
                     }
                     TaskState::Outside => {}
                     TaskState::Running
@@ -4358,6 +4375,7 @@ impl Engine {
                 if task.state == TaskState::Outside {
                     // Its outside PR closed the issue: follow it to done.
                     self.set_state(factory_id, &task.id, TaskState::Done);
+                    self.release_worker(factory_id, &task.id);
                     return;
                 }
                 self.cancel(factory_id, &task.id);
@@ -4605,7 +4623,9 @@ impl Engine {
             .env_failures
             .iter()
             .rev()
-            .find(|note| note.kind == FailureKind::Task && note.factory == factory && note.task == id)
+            .find(|note| {
+                note.kind == FailureKind::Task && note.factory == factory && note.task == id
+            })
             .map(|note| note.stage.clone());
         let Some(stage) = stage else { return false };
         let tasks: BTreeSet<String> = self
@@ -4766,7 +4786,7 @@ impl Engine {
                     .get(&t.factory)
                     .map_or(7 * DAY_MS, |f| f.config.cancel_keep_ms);
                 t.state == TaskState::Done
-                    || (t.state == TaskState::Cancelled
+                    || (matches!(t.state, TaskState::Cancelled | TaskState::Outside)
                         && t.cancelled_at
                             .is_some_and(|at| now.saturating_sub(at) > keep))
             })
@@ -4777,17 +4797,15 @@ impl Engine {
             })
             .collect();
         for (factory, id, worker) in targets {
-            match self.ports.workers.remove_worktree(&worker) {
+            let finished = self
+                .task(&factory, &id)
+                .is_some_and(|t| t.state == TaskState::Done);
+            match self.ports.workers.remove_worktree(&worker, !finished) {
                 Ok(()) => {
                     self.with_task(&factory, &id, |t| t.purged = true);
                     self.record(&factory, Some(&id), "cleanup.worktree", json!({}));
                 }
-                Err(failure) => self.record(
-                    &factory,
-                    Some(&id),
-                    "cleanup.failed",
-                    json!({"stage": failure.stage}),
-                ),
+                Err(failure) => self.cleanup_failed(&factory, &id, &failure),
             }
         }
     }
@@ -5024,11 +5042,13 @@ impl Engine {
 
     // --------------------------------------------------------------- retention
 
+    /// Cancelled Tasks, and Tasks an outside pull request took, past their
+    /// keep period lose their worktree and local branch (D-58, B50).
     fn retention(&mut self) {
         let now = self.now();
         let expired: Vec<(String, String)> = self
             .all_tasks()
-            .filter(|t| t.state == TaskState::Cancelled && !t.purged)
+            .filter(|t| matches!(t.state, TaskState::Cancelled | TaskState::Outside) && !t.purged)
             .filter(|t| {
                 let keep = self
                     .factories
@@ -5041,14 +5061,9 @@ impl Engine {
             .collect();
         for (factory, id) in expired {
             if let Some(worker) = self.task(&factory, &id).and_then(|t| t.worker.clone())
-                && let Err(failure) = self.ports.workers.remove_worktree(&worker)
+                && let Err(failure) = self.ports.workers.remove_worktree(&worker, true)
             {
-                self.record(
-                    &factory,
-                    Some(&id),
-                    "cleanup.failed",
-                    json!({"stage": failure.stage}),
-                );
+                self.cleanup_failed(&factory, &id, &failure);
                 continue;
             }
             self.with_task(&factory, &id, |t| t.purged = true);

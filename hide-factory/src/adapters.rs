@@ -324,8 +324,14 @@ pub trait WorkerRuntime {
     fn wake(&mut self, worker: &crate::model::WorkerRef, body: &str) -> Result<(), Failure>;
     fn status(&mut self, worker: &crate::model::WorkerRef) -> WorkerStatus;
     fn stop(&mut self, worker: &crate::model::WorkerRef) -> Result<(), Failure>;
-    /// Removes the Task's worktree and local branch (B43, B62, B71).
-    fn remove_worktree(&mut self, worker: &crate::model::WorkerRef) -> Result<(), Failure>;
+    /// Removes the Task's worktree (B43, B62, B71) and, with
+    /// `delete_branch`, its local branch (D-58); the remote branch stays.
+    /// Removing what is already gone succeeds.
+    fn remove_worktree(
+        &mut self,
+        worker: &crate::model::WorkerRef,
+        delete_branch: bool,
+    ) -> Result<(), Failure>;
     fn usage_limited(&mut self, runtime: Runtime) -> Option<UnixMs>;
 }
 

@@ -888,7 +888,17 @@ impl WorkerRuntime for CoreWorkers {
         .map_err(|reason| Failure::task("worker.stop", reason))
     }
 
-    fn remove_worktree(&mut self, worker: &WorkerRef) -> Result<(), Failure> {
+    fn remove_worktree(&mut self, worker: &WorkerRef, delete_branch: bool) -> Result<(), Failure> {
+        let checkout = Path::new(&worker.worktree);
+        let mut runner = SystemRunner {
+            stop: Arc::new(AtomicBool::new(false)),
+        };
+        // The repository the worktree belongs to, read before it goes; a
+        // folder already gone leaves only the branch to delete.
+        let root = match checkout.exists() {
+            true => Some(repository_root(&mut runner, checkout)?),
+            false => None,
+        };
         let runtime = self.runtime()?;
         let connector = guard(&runtime).delivery_connector("local");
         drop(runtime);
@@ -904,16 +914,19 @@ impl WorkerRuntime for CoreWorkers {
             crate::live::CONFIRM_TIMEOUT,
         )
         .map_err(|reason| Failure::task("worktree.close", reason))?;
-        let mut runner = SystemRunner {
-            stop: Arc::new(AtomicBool::new(false)),
+        let Some(root) = root else {
+            return Ok(());
         };
-        if Path::new(&worker.worktree).exists() {
+        // The Factory made this worktree, so what is left in it goes too.
+        hide_host::worktrees::remove_worktree(&root, checkout, true)
+            .map_err(|reason| Failure::task("worktree.remove", reason))?;
+        if delete_branch {
             hide_factory::exec::checked(
                 &mut runner,
-                "worktree.remove",
+                "branch.delete",
                 "git",
-                &["worktree", "remove", "--force", &worker.worktree],
-                Path::new(&worker.worktree).parent(),
+                &["branch", "-D", "--", &worker.branch],
+                Some(&root),
             )?;
         }
         Ok(())
@@ -922,6 +935,23 @@ impl WorkerRuntime for CoreWorkers {
     fn usage_limited(&mut self, _runtime: AgentRuntime) -> Option<UnixMs> {
         None
     }
+}
+
+/// The main checkout of the repository a linked worktree belongs to.
+fn repository_root(runner: &mut SystemRunner, checkout: &Path) -> Result<PathBuf, Failure> {
+    let output = hide_factory::exec::checked(
+        runner,
+        "worktree.root",
+        "git",
+        &["rev-parse", "--path-format=absolute", "--git-common-dir"],
+        Some(checkout),
+    )?;
+    let common = PathBuf::from(output.trim());
+    common
+        .parent()
+        .filter(|_| common.file_name().is_some_and(|name| name == ".git"))
+        .map(Path::to_path_buf)
+        .ok_or_else(|| Failure::task("worktree.root", "the repository has no main checkout"))
 }
 
 fn spawn_failure(reason: &str) -> Failure {
@@ -1251,5 +1281,62 @@ fn judge_loop(shared: Arc<JudgeShared>, runtime: Weak<Mutex<Runtime>>, home: Opt
                 outcome,
             });
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn git(cwd: &Path, args: &[&str]) {
+        let status = std::process::Command::new("git")
+            .arg("-C")
+            .arg(cwd)
+            .args(args)
+            .status()
+            .unwrap();
+        assert!(status.success(), "git {args:?}");
+    }
+
+    #[test]
+    fn a_worker_worktree_outside_its_repository_resolves_to_the_main_checkout() {
+        let root = tempfile::tempdir().unwrap();
+        let main = root.path().join("project");
+        std::fs::create_dir(&main).unwrap();
+        git(&main, &["init", "--quiet", "-b", "main"]);
+        git(
+            &main,
+            &[
+                "-c",
+                "user.email=f@example.com",
+                "-c",
+                "user.name=F",
+                "commit",
+                "--quiet",
+                "--allow-empty",
+                "-m",
+                "base",
+            ],
+        );
+        // Spawned worktrees live in a folder of their own, not in the repository.
+        let worktree = root.path().join("worktrees/project/factory-l1-task");
+        git(
+            &main,
+            &[
+                "worktree",
+                "add",
+                "--quiet",
+                "-b",
+                "factory/1-task",
+                worktree.to_str().unwrap(),
+            ],
+        );
+        let mut runner = SystemRunner {
+            stop: Arc::new(AtomicBool::new(false)),
+        };
+        let found = repository_root(&mut runner, &worktree).unwrap();
+        assert_eq!(found.canonicalize().unwrap(), main.canonicalize().unwrap());
+        hide_host::worktrees::remove_worktree(&found, &worktree, true).unwrap();
+        assert!(!worktree.exists());
     }
 }

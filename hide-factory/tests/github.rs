@@ -292,7 +292,11 @@ fn running_checks_are_not_asked_again_on_every_tick() {
     assert_eq!(p.main_check(&factory, "abc").unwrap(), MainCheck::Pending);
     assert_eq!(gh.0.lock().unwrap().check_reads, 1);
     assert_eq!(p.main_check(&factory, "def").unwrap(), MainCheck::Pending);
-    assert_eq!(gh.0.lock().unwrap().check_reads, 2, "each commit is asked once");
+    assert_eq!(
+        gh.0.lock().unwrap().check_reads,
+        2,
+        "each commit is asked once"
+    );
 }
 
 #[test]

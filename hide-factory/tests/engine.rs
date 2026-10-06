@@ -1208,6 +1208,12 @@ fn an_outside_pull_request_takes_a_running_task_and_its_merge_finishes_it() {
     h.advance(3 * MINUTE_MS);
     h.engine.tick();
     assert_eq!(h.state(&f, &t), TaskState::Done);
+    assert_eq!(
+        h.world().removed,
+        vec![t.clone()],
+        "its merge frees the worktree"
+    );
+    assert!(h.world().branches_deleted.is_empty());
     tick_until(&mut h, &f, &after, TaskState::Running);
 }
 
@@ -1348,11 +1354,13 @@ fn pause_resume_cancel_and_revive_keep_the_same_worker_and_pull_request() {
     assert_eq!(h.writes("pr.reopen"), vec!["pr.reopen 1"]);
     assert_eq!(h.world().spawned.len(), 1);
 
-    // Past the keep period the worktree goes and revive is refused.
+    // Past the keep period the worktree and local branch go and revive is
+    // refused (D-58).
     h.op(Command::Cancel { task: t.clone() });
     h.advance(8 * DAY_MS);
     h.engine.tick();
     assert!(h.world().removed.contains(&t));
+    assert!(h.world().branches_deleted.contains(&t));
     let refused = h.op(Command::Revive { task: t.clone() });
     assert_eq!(refused["reason"], "revive_expired");
 }

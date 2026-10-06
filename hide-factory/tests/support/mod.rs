@@ -47,6 +47,7 @@ pub struct World {
     pub wakes: Vec<(String, String)>,
     pub stops: Vec<String>,
     pub removed: Vec<String>,
+    pub branches_deleted: Vec<String>,
     pub spawn_failure: Option<Failure>,
     /// Judgments submitted and not yet answered.
     pub submitted: Vec<Judgment>,
@@ -345,8 +346,11 @@ impl WorkerRuntime for Shared {
         self.world().stops.push(task_of(worker));
         Ok(())
     }
-    fn remove_worktree(&mut self, worker: &WorkerRef) -> Result<(), Failure> {
+    fn remove_worktree(&mut self, worker: &WorkerRef, delete_branch: bool) -> Result<(), Failure> {
         self.world().removed.push(task_of(worker));
+        if delete_branch {
+            self.world().branches_deleted.push(task_of(worker));
+        }
         Ok(())
     }
     fn usage_limited(&mut self, _runtime: Runtime) -> Option<UnixMs> {

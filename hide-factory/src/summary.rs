@@ -288,14 +288,14 @@ pub fn card_view(
     };
     let finished_at = match task.state {
         TaskState::Done => task.done_at,
-        TaskState::Cancelled => task.cancelled_at,
+        TaskState::Cancelled | TaskState::Outside => task.cancelled_at,
         _ => None,
     };
     let folded = match task.state {
         TaskState::Done => {
             finished_at.is_some_and(|at| now.saturating_sub(at) > factory.config.done_fold_ms)
         }
-        TaskState::Cancelled => task.purged,
+        TaskState::Cancelled | TaskState::Outside => task.purged,
         _ => false,
     };
     let archived =
@@ -322,7 +322,9 @@ pub fn card_view(
         external: task.card.external.clone(),
         revive_until: task
             .cancelled_at
-            .filter(|_| task.state == TaskState::Cancelled && !task.purged)
+            .filter(|_| {
+                matches!(task.state, TaskState::Cancelled | TaskState::Outside) && !task.purged
+            })
             .map(|at| at + factory.config.cancel_keep_ms),
         worker_pane: task
             .worker
@@ -341,7 +343,7 @@ pub fn inbox_items(
 ) -> Vec<InboxItem> {
     let mut items = Vec::new();
     for task in tasks.values() {
-        if matches!(task.state, TaskState::Cancelled) && task.purged {
+        if matches!(task.state, TaskState::Cancelled | TaskState::Outside) && task.purged {
             continue;
         }
         let base = |group: &str, rank: u8, text: String, since: UnixMs| InboxItem {
