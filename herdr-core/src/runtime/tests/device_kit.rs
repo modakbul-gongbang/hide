@@ -926,6 +926,56 @@ fn a_failed_kit_call_on_an_unread_device_says_why() {
     );
 }
 
+/// B10: Check again shows a read under way until an answer lands; an answer
+/// that is a failure leaves the report the device last gave and says only a
+/// code, and the next read that lands clears it.
+#[test]
+#[allow(clippy::disallowed_methods)] // a bounded poll inside the test: it sleeps between observations of a state, bounded by a deadline
+fn check_again_shows_a_read_under_way_and_a_failed_one_as_a_code_beside_the_last_report() {
+    let (helper, release) =
+        KitDevice::held(Ok(report(&[(ComponentId::Cli, ComponentState::Installed)])));
+    let shared = with_consent(Some(Arc::clone(&helper)));
+    dispatch(&shared, "kit_check", serde_json::json!({}));
+    assert!(kit(&shared).checking, "the read is queued");
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while helper.calls().is_empty() {
+        assert!(Instant::now() < deadline, "the read never started");
+        std::thread::sleep(Duration::from_millis(5));
+    }
+    assert!(kit(&shared).checking, "the read is still under way");
+    release.send(()).unwrap();
+    settle(&shared);
+    let read = kit(&shared);
+    assert!(!read.checking && read.check_failed.is_none(), "{read:?}");
+    assert_eq!(read.components.len(), 1);
+
+    *helper.answer.lock().unwrap() = Err("The device did not answer in time".to_owned());
+    dispatch(&shared, "kit_check", serde_json::json!({}));
+    settle(&shared);
+    let failed = kit(&shared);
+    assert!(!failed.checking, "{failed:?}");
+    assert_eq!(
+        failed.check_failed,
+        Some(crate::model::KitCheckFailure::ReadFailed)
+    );
+    assert_eq!(failed.components, read.components, "the last report stays");
+    assert!(
+        failed.unavailable.is_none(),
+        "a list exists, so no blanket reason"
+    );
+    let wire = serde_json::to_value(&failed).unwrap();
+    assert_eq!(wire["check_failed"], "read_failed");
+    assert!(
+        !wire.to_string().contains("did not answer"),
+        "words stay in the log"
+    );
+
+    *helper.answer.lock().unwrap() = Ok(report(&[(ComponentId::Cli, ComponentState::Installed)]));
+    dispatch(&shared, "kit_check", serde_json::json!({}));
+    settle(&shared);
+    assert!(kit(&shared).check_failed.is_none());
+}
+
 fn registered(shared: &Mutex<Runtime>) -> bool {
     shared
         .lock()

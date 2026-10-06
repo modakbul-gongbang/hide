@@ -6,6 +6,7 @@
   "editor_tab_kind": ["file", "diff", "session", "memory"],
   "kit_agent_availability": ["available", "not_installed", "unsupported_system"],
   "codex_daemon_off_failure": ["codex_missing", "codex_refused", "timed_out", "unreachable"],
+  "kit_check_failure": ["read_failed"],
   "kit_component_id": ["cli", "claude_code_hook", "codex_hook", "coordination_retirement"],
   "kit_component_state": ["installed", "outdated", "not_installed", "removed", "failed", "absent", "off"],
   "kit_feature": ["skill", "guidance", "letters", "memory", "subagents", "herdr_integration", "sleep", "fork", "start", "titles"],

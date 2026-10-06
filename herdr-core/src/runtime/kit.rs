@@ -194,6 +194,7 @@ impl Runtime {
             .is_none_or(|state| state.unavailable.is_none())
         {
             self.local_kit_check_requested = true;
+            self.set_kit_checking(LOCAL_DEVICE_ID);
         }
         let ready = self
             .device_hosts
@@ -206,9 +207,21 @@ impl Runtime {
                 && !self.device_kit_running.contains(&device_id)
             {
                 self.queue_device_kit(&device_id, KitJob::Status);
+                self.set_kit_checking(&device_id);
             }
         }
         false
+    }
+
+    /// A read asked with Check again is on its way: the machine's row shows
+    /// it until an answer lands, report or failure (B10). It publishes only
+    /// the flip, so a re-read every few seconds adds nothing while Settings
+    /// is open.
+    fn set_kit_checking(&mut self, device_id: &str) {
+        let mut state = self.kit_state(device_id);
+        state.checking = true;
+        state.check_failed = None;
+        self.set_kit_state(device_id, state);
     }
 
     /// Stores what a check or an install found on one machine. A report that
@@ -836,6 +849,8 @@ impl Runtime {
                 }));
                 let mut state = self.kit_state(device_id);
                 state.busy = self.kit_install_queued(device_id);
+                state.checking = false;
+                state.check_failed = Some(crate::model::KitCheckFailure::ReadFailed);
                 if state.components.is_empty() {
                     state.unavailable = Some(format!(
                         "Hide could not read its kit on this device: {reason}"
@@ -898,8 +913,9 @@ impl Runtime {
     /// Queued work cannot run now: the row stops saying it is working.
     pub(super) fn clear_kit_busy(&mut self, device_id: &str) {
         let mut state = self.kit_state(device_id);
-        if state.busy {
+        if state.busy || state.checking {
             state.busy = false;
+            state.checking = false;
             self.set_kit_state(device_id, state);
         }
     }

@@ -651,6 +651,21 @@ pub struct KitSnapshot {
     /// How the last turn-off of the shared server ended, until the next one
     /// starts; the pane popover reads it (B30).
     pub codex_daemon_off: Option<CodexDaemonOffSnapshot>,
+    /// A read asked with Check again is under way on this machine: set when
+    /// the request is queued and cleared by whatever answer lands first (B10).
+    pub checking: bool,
+    /// Why this machine's last read failed, until a read lands; the report
+    /// the machine last gave stays as it was (B10).
+    pub check_failed: Option<KitCheckFailure>,
+}
+
+/// Why a kit read did not come back with a report. A code, never the call's
+/// own words (the words go to the diagnostic log).
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum KitCheckFailure {
+    /// The call to the machine's helper ended without a report.
+    ReadFailed,
 }
 
 /// The outcome of the operator's request to turn Codex's shared server off on
@@ -841,6 +856,8 @@ impl KitSnapshot {
                         CodexDaemonOffSnapshot::Failed { reason: *reason }
                     }
                 }),
+            checking: false,
+            check_failed: None,
         }
     }
 
@@ -5123,6 +5140,15 @@ mod wire_enum_tests {
         }
         assert_wire(&contract, "codex_daemon_off_failure", &daemon_failures);
         checked.insert("codex_daemon_off_failure");
+
+        let check_failures = [KitCheckFailure::ReadFailed];
+        for variant in check_failures {
+            match variant {
+                KitCheckFailure::ReadFailed => {}
+            }
+        }
+        assert_wire(&contract, "kit_check_failure", &check_failures);
+        checked.insert("kit_check_failure");
 
         let unchecked = contract
             .keys()
