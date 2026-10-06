@@ -3379,17 +3379,22 @@ impl Runtime {
     pub(super) fn await_tab_focus(&mut self, next: PendingViewFocus) {
         let next_target_id = next.target_id.clone();
         // Only a request that already left can be answered late. One still
-        // waiting on the control lane is replaced there and never reaches
-        // Herdr, so nothing of it is remembered.
+        // waiting on the control lane is remembered when it leaves, if it
+        // does (`mark_tab_focus_sent`); a newer tab focus replaces it there,
+        // so it never does.
         if let Some(previous) = self.pending_tab_focus.replace(next)
             && previous.target_id != next_target_id
             && previous.sent
         {
-            self.superseded_tab_focus.retain(|held| {
-                held.scope_id != previous.scope_id || held.target_id != previous.target_id
-            });
-            self.superseded_tab_focus.push(previous);
+            self.supersede_tab_focus(previous);
         }
+    }
+    /// Remembers a tab notification Herdr will answer after Hide has moved
+    /// on, so the answer is consumed rather than followed.
+    pub(super) fn supersede_tab_focus(&mut self, held: PendingViewFocus) {
+        self.superseded_tab_focus
+            .retain(|kept| kept.scope_id != held.scope_id || kept.target_id != held.target_id);
+        self.superseded_tab_focus.push(held);
         if self.superseded_tab_focus.len() > SUPERSEDED_TAB_FOCUS_LIMIT {
             let evicted = self.superseded_tab_focus.remove(0);
             crate::diagnostic!(serde_json::json!({
@@ -3440,6 +3445,20 @@ impl Runtime {
         {
             self.pending_tab_focus = None;
         }
+    }
+    pub(super) fn checkout_holding_tab(&self, tab_id: &str) -> Option<String> {
+        self.snapshot
+            .navigator
+            .workspaces
+            .iter()
+            .flat_map(|workspace| &workspace.checkouts)
+            .find(|checkout| {
+                checkout
+                    .tabs
+                    .iter()
+                    .any(|tab| tab.id.as_deref() == Some(tab_id))
+            })
+            .map(|checkout| checkout.id.clone())
     }
     fn checkout_tab_holding_pane(&self, pane_id: &str) -> Option<(String, String)> {
         self.snapshot
