@@ -170,7 +170,7 @@ impl Selection {
 
 #[derive(Clone, Debug, Eq, Hash, PartialEq)]
 struct DedupKey {
-    feature_id: &'static str,
+    feature_id: std::borrow::Cow<'static, str>,
     subject_id: String,
     input_hash: u64,
 }
@@ -453,7 +453,7 @@ impl AiRouter {
             return Err(AiError::Disabled);
         }
         let key = DedupKey {
-            feature_id: request.feature_id,
+            feature_id: request.feature_id.clone(),
             subject_id: request.subject_id.clone(),
             input_hash: input_hash(request),
         };
@@ -473,7 +473,7 @@ impl AiRouter {
         };
         if !leader {
             self.log(request, |event| {
-                event.event = "ai.request.joined";
+                event.event = "ai.request.joined".into();
             });
             return self.join(&flight, cancel);
         }
@@ -490,8 +490,8 @@ impl AiRouter {
         // provider's). It is not counted against a specific provider.
         if let Err(over) = self.admit() {
             self.log(request, |event| {
-                event.event = "ai.budget.exceeded";
-                event.outcome_class = Some(over.class());
+                event.event = "ai.budget.exceeded".into();
+                event.outcome_class = Some(over.class().into());
                 event.detail = Some(over.to_string());
             });
             guard.settle(Err(over.clone()));
@@ -651,7 +651,7 @@ impl AiRouter {
             }
             if let Some(from) = previous {
                 self.log(request, |event| {
-                    event.event = "ai.fallback";
+                    event.event = "ai.fallback".into();
                     event.provider = Some(provider);
                     event.detail = Some(format!("from={from};to={provider}"));
                 });
@@ -744,9 +744,9 @@ impl AiRouter {
             match result {
                 Ok(response) => {
                     self.log(request, |event| {
-                        event.event = "ai.attempt";
+                        event.event = "ai.attempt".into();
                         event.provider = Some(provider);
-                        event.outcome_class = Some("ok");
+                        event.outcome_class = Some("ok".into());
                         event.attempt = Some(attempt);
                         event.output_tokens = response.usage.output_tokens;
                     });
@@ -760,9 +760,9 @@ impl AiRouter {
                 }
                 Err(error) => {
                     self.log(request, |event| {
-                        event.event = "ai.attempt";
+                        event.event = "ai.attempt".into();
                         event.provider = Some(provider);
-                        event.outcome_class = Some(error.class());
+                        event.outcome_class = Some(error.class().into());
                         event.attempt = Some(attempt);
                     });
                     let attempts = match &error {
@@ -863,9 +863,9 @@ impl AiRouter {
                 let active = active_provider(selection);
                 let reason = chosen.detail();
                 self.log(request, |event| {
-                    event.event = "ai.provider.degraded";
+                    event.event = "ai.provider.degraded".into();
                     event.provider = active;
-                    event.outcome_class = Some(chosen.availability().class());
+                    event.outcome_class = Some(chosen.availability().class().into());
                     event.detail = Some(format!(
                         "selected={selected};reason={reason};active={}",
                         active.map_or("none".to_owned(), |provider| provider.to_string())
@@ -875,9 +875,9 @@ impl AiRouter {
             (Some(_), true) => {
                 self.lock().announced_degraded = None;
                 self.log(request, |event| {
-                    event.event = "ai.provider.recovered";
+                    event.event = "ai.provider.recovered".into();
                     event.provider = Some(selected);
-                    event.outcome_class = Some("ready");
+                    event.outcome_class = Some("ready".into());
                     event.detail = Some(format!("selected={selected}"));
                 });
             }
@@ -984,9 +984,9 @@ impl AiRouter {
             Err(error) => error.class(),
         };
         self.log(request, |event| {
-            event.event = "ai.request.finished";
+            event.event = "ai.request.finished".into();
             event.provider = provider;
-            event.outcome_class = Some(class);
+            event.outcome_class = Some(class.into());
             event.duration_ms =
                 Some((self.now)().saturating_duration_since(started).as_millis() as u64);
             event.attempt = Some(attempt);
@@ -1062,9 +1062,9 @@ impl AiRouter {
             *entry
         };
         self.log(request, |event| {
-            event.event = "ai.app_server.over_budget";
+            event.event = "ai.app_server.over_budget".into();
             event.provider = Some(provider);
-            event.outcome_class = Some("over_budget");
+            event.outcome_class = Some("over_budget".into());
             event.app_server_pid = Some(app_server_pid);
             event.descendants = Some(descendants);
             event.rss_bytes = Some(rss_bytes);
@@ -1085,9 +1085,9 @@ impl AiRouter {
     fn log(&self, request: &AiRequest, fill: impl FnOnce(&mut AiLogEvent)) {
         let mut event = AiLogEvent::new("ai.event");
         event.request_id = Some(request.request_id.0.clone());
-        event.feature_id = Some(request.feature_id);
+        event.feature_id = Some(request.feature_id.clone());
         event.input_chars = Some(request.input.chars().count());
-        event.schema_version = Some(request.schema_version);
+        event.schema_version = Some(request.schema_version.clone());
         fill(&mut event);
         self.sink.log(event);
     }
@@ -1326,14 +1326,14 @@ mod tests {
 
     fn request(subject: &str, input: &str) -> AiRequest {
         AiRequest {
-            feature_id: "test_feature",
+            feature_id: "test_feature".into(),
             request_id: RequestId(format!("r-{subject}")),
             subject_id: subject.to_owned(),
             system: "sys".to_owned(),
             input: input.to_owned(),
             output_schema: schema(),
             deadline: Duration::from_secs(5),
-            schema_version: "test.v1",
+            schema_version: "test.v1".into(),
         }
     }
 
@@ -1385,7 +1385,7 @@ mod tests {
         let finished = sink.events("ai.request.finished");
         assert_eq!(finished.len(), 1);
         assert_eq!(finished[0].provider, Some(ProviderId::CODEX));
-        assert_eq!(finished[0].outcome_class, Some("ok"));
+        assert_eq!(finished[0].outcome_class.as_deref(), Some("ok"));
         assert_eq!(finished[0].request_id.as_deref(), Some("r-p1"));
         // A measurable backend whose process cannot be measured records that
         // on the line rather than a zero (B9); a real codex on macOS carries
@@ -1440,7 +1440,7 @@ mod tests {
             assert!(sink.events("ai.fallback").is_empty());
             let finished = sink.events("ai.request.finished");
             assert_eq!(finished.len(), 1);
-            assert_eq!(finished[0].outcome_class, Some(error.class()));
+            assert_eq!(finished[0].outcome_class.as_deref(), Some(error.class()));
             // The provider is not marked unavailable: the next intent is new.
             assert_eq!(
                 router
@@ -1656,7 +1656,7 @@ mod tests {
         // Another feature and subject on the same account is parked too,
         // without spending a call.
         let mut other = request("p2", "y");
-        other.feature_id = "other_feature";
+        other.feature_id = "other_feature".into();
         let second = router.execute(&other, &CancelToken::new()).unwrap_err();
         assert!(matches!(
             second,
@@ -2067,7 +2067,7 @@ mod tests {
         let recovered = sink.events("ai.provider.recovered");
         assert_eq!(recovered.len(), 1);
         assert_eq!(recovered[0].provider, Some(ProviderId::CODEX));
-        assert_eq!(recovered[0].outcome_class, Some("ready"));
+        assert_eq!(recovered[0].outcome_class.as_deref(), Some("ready"));
     }
 
     #[test]
@@ -2085,8 +2085,8 @@ mod tests {
             assert!(!rendered.contains("private transcript"), "{rendered}");
             assert!(!rendered.contains("confidential"), "{rendered}");
             assert!(!rendered.contains("secret summary"), "{rendered}");
-            assert_eq!(event.feature_id, Some("test_feature"));
-            assert_eq!(event.schema_version, Some("test.v1"));
+            assert_eq!(event.feature_id.as_deref(), Some("test_feature"));
+            assert_eq!(event.schema_version.as_deref(), Some("test.v1"));
             assert_eq!(event.input_chars, Some(req.input.chars().count()));
         }
     }

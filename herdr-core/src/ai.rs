@@ -173,7 +173,7 @@ fn diagnostic_record(event: &AiLogEvent) -> serde_json::Value {
         .unwrap_or_else(|error| serde_json::json!({ "serialize_error": error.to_string() }));
     if let Some(fields) = record.as_object_mut() {
         fields.remove("event");
-        fields.insert("kind".to_owned(), event.event.into());
+        fields.insert("kind".to_owned(), event.event.as_ref().into());
         fields.insert("component".to_owned(), "ai".into());
     }
     record
@@ -447,7 +447,7 @@ pub(crate) fn suggest_worktree_name(
 ) -> Result<String, String> {
     let body: String = body.chars().take(WORKTREE_NAME_BODY_LIMIT).collect();
     let request = hide_ai::AiRequest {
-        feature_id: "worktree_name",
+        feature_id: "worktree_name".into(),
         request_id: hide_ai::RequestId(format!("worktree-name-{subject}")),
         subject_id: subject.to_owned(),
         system: WORKTREE_NAME_SYSTEM.to_owned(),
@@ -459,7 +459,7 @@ pub(crate) fn suggest_worktree_name(
             "additionalProperties": false,
         }),
         deadline: Duration::from_secs(30),
-        schema_version: "1",
+        schema_version: "1".into(),
     };
     let router = memory_router(settings);
     let answer = router

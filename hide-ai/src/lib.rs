@@ -36,6 +36,7 @@ pub use settings::{AiSettings, FallbackEntry, FallbackRefusal};
 pub use text_cli::TextCliConfig;
 pub use unproven::UnprovenReadOnlyBackend;
 
+use std::borrow::Cow;
 use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -49,7 +50,7 @@ use serde_json::Value;
 /// A provider that cannot be asked reports the reason rather than an empty
 /// list, because an empty list and an unanswered question look the same to a
 /// menu and only one of them is a real answer.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub enum ModelCatalog {
     /// The list the provider's own CLI or account answered.
     Offered(Vec<String>),
@@ -84,7 +85,8 @@ impl ModelCatalog {
 
 /// Caller-generated idempotency key. It travels to the provider as the client
 /// message id and is the only identifier a log line carries for the request.
-#[derive(Clone, Debug, Eq, Hash, PartialEq)]
+#[derive(Clone, Debug, Eq, Hash, PartialEq, Deserialize, Serialize)]
+#[serde(transparent)]
 pub struct RequestId(pub String);
 
 impl fmt::Display for RequestId {
@@ -95,9 +97,9 @@ impl fmt::Display for RequestId {
 
 /// What a feature submits. Everything a provider needs to answer, and nothing
 /// about how any provider works.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct AiRequest {
-    pub feature_id: &'static str,
+    pub feature_id: Cow<'static, str>,
     pub request_id: RequestId,
     /// Identifies what the request is about (a pane, a checkout); together
     /// with the feature and the input hash it forms the duplicate key.
@@ -109,7 +111,7 @@ pub struct AiRequest {
     pub output_schema: Value,
     pub deadline: Duration,
     /// Version of the feature's prompt and schema pair, for the log only.
-    pub schema_version: &'static str,
+    pub schema_version: Cow<'static, str>,
 }
 
 /// Provider readiness as the router sees it. Every variant except `Ready`
@@ -158,7 +160,7 @@ impl Availability {
 /// outcome (`Timeout`, `Cancelled`, `CompletionUnknown`) means the request
 /// was submitted and its fate is not known; it is final on that provider
 /// and is never re-run anywhere.
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub enum AiError {
     /// Not retried until availability changes.
     NotAuthenticated,
@@ -252,14 +254,14 @@ impl fmt::Display for AiError {
 impl std::error::Error for AiError {}
 
 /// Token accounting a provider reports for one answer, for the log only.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub struct AiUsage {
     pub input_tokens: Option<u64>,
     pub output_tokens: Option<u64>,
 }
 
 /// One provider answer before the router validates it.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct AiResponse {
     pub value: Value,
     pub usage: AiUsage,

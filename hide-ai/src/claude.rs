@@ -693,14 +693,14 @@ mod tests {
         });
         assert_eq!(backend.availability(), Availability::NotInstalled);
         let request = AiRequest {
-            feature_id: "test",
+            feature_id: "test".into(),
             request_id: crate::RequestId("r".to_owned()),
             subject_id: "s".to_owned(),
             system: "sys".to_owned(),
             input: "in".to_owned(),
             output_schema: schema(),
             deadline: Duration::from_secs(1),
-            schema_version: "v1",
+            schema_version: "v1".into(),
         };
         assert_eq!(
             backend.execute(&request, &CancelToken::new()).unwrap_err(),
