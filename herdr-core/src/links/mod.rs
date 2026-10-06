@@ -216,6 +216,64 @@ pub struct SessionPrChip {
     pub created: bool,
 }
 
+/// Which record a panel reads: a pull request by number, or an issue by its
+/// task key.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, serde::Deserialize)]
+#[serde(tag = "kind", rename_all = "snake_case", deny_unknown_fields)]
+pub enum LinkTarget {
+    Pr { number: u64 },
+    Issue { key: String },
+}
+
+impl Default for LinkTarget {
+    fn default() -> Self {
+        Self::Pr { number: 0 }
+    }
+}
+
+/// A pull request as the record holds it.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct LinkedPr {
+    pub number: u64,
+    pub branch: String,
+    pub title: String,
+    pub url: String,
+    pub created_at_unix_ms: Option<u64>,
+    pub closed_at_unix_ms: Option<u64>,
+    pub merged_at_unix_ms: Option<u64>,
+    pub issues: Vec<LinkedIssue>,
+    /// The worktrees recorded for its branch, newest first; whether each is
+    /// still there is the navigator's to say (B5).
+    pub worktrees: Vec<String>,
+}
+
+/// The `link_panel` section: the record for the one pull request or issue a
+/// panel shows, on its own delta revision (D-45). Failures are codes the
+/// shell words (B44).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct LinkPanelSnapshot {
+    pub workspace_id: String,
+    pub target: LinkTarget,
+    pub loading: bool,
+    pub failure: Option<String>,
+    /// The pull request a `pr` target names, when the record has it.
+    pub pr: Option<LinkedPr>,
+    /// The pull requests an `issue` target is linked to, newest first.
+    pub prs: Vec<u64>,
+    /// At most [`PANEL_SESSION_LIMIT`] lines, newest first.
+    pub sessions: Vec<LinkedSession>,
+    /// Every line the record holds for the target.
+    pub total: usize,
+}
+
+/// The `link_summaries` section: each project's counts and chips by
+/// workspace id, and whether files are still being read (B24).
+#[derive(Clone, Debug, Default, PartialEq, Eq, Serialize)]
+pub struct LinkSummariesSnapshot {
+    pub projects: BTreeMap<String, ProjectLinkSummary>,
+    pub filling: bool,
+}
+
 /// The most sessions a project's summary names chips for.
 pub const SUMMARY_SESSION_LIMIT: usize = 2_000;
 
