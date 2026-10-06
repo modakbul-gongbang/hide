@@ -11,9 +11,9 @@
 //! one contract (PRD S5.5 D-05, D-06).
 
 pub mod bytes;
+pub mod cleanup;
 pub mod clone;
 pub mod disk;
-pub mod cleanup;
 pub mod disk_layers;
 pub mod document;
 #[cfg(all(test, unix))]

@@ -829,7 +829,8 @@ impl WalkBudget {
     pub fn left(&self) -> (usize, Duration) {
         (
             self.entries,
-            self.until.saturating_duration_since(std::time::Instant::now()),
+            self.until
+                .saturating_duration_since(std::time::Instant::now()),
         )
     }
 

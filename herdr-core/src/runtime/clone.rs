@@ -2,15 +2,24 @@
 //! worker off the lock, reported in the `repository_clone` slot, and handed to
 //! the ordinary local registration once the folder is in place.
 //!
-//! The worker is the clone's only owner. It runs `hide_host::clone`, which
-//! stops Git's whole process group and removes the staging folder on every
-//! exit path; it asks the runtime's cancel flag between reads, and a runtime
-//! that has gone away reads as a cancel, so the clone ends with its owner.
+//! The worker is the clone's only owner. It asks the core's own node for the
+//! clone (`hide_host::clone` on the node), which stops Git's whole process
+//! group and removes the staging folder on every exit path; the node reports
+//! at least once a second, the worker answers each report with the runtime's
+//! cancel flag, and a runtime that has gone away answers as a cancel, so the
+//! clone ends with its owner.
 //! The URL is kept here, never in the snapshot or a log line, because it can
 //! carry credentials; the host is what the shell shows and the log records.
 
 use super::*;
+use hide_node_link::clone::{CloneAnswer, CloneFailure, CloneProgress, CloneReport, CloneSource};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::time::Duration;
+
+/// The longest one clone may run; Git silent for two minutes is already
+/// ended by the node as stalled, so this bounds only a clone that keeps
+/// making progress.
+const CLONE_TIMEOUT: Duration = Duration::from_secs(6 * 60 * 60);
 
 /// The clone the worker is running, with what only the core may hold.
 pub(super) struct CloneJob {
@@ -25,7 +34,7 @@ impl Runtime {
     /// running for the same URL and folder. `parent` is the canonical folder
     /// hided's `$HOME` line checked, and `name` the one it found free.
     pub(super) fn clone_repository(&mut self, url: &str, parent: &str, name: &str) -> bool {
-        let source = match hide_host::clone::CloneSource::parse(url) {
+        let source = match CloneSource::parse(url) {
             Ok(source) => source,
             Err(message) => {
                 self.set_error("repository.clone_invalid", message, false);
@@ -102,7 +111,7 @@ impl Runtime {
             "host": source.host(),
         }));
         if let Err(message) = spawn_clone(context, id, source, PathBuf::from(parent), cancel) {
-            self.settle_repository_clone(id, Err(hide_host::clone::CloneFailure::Io(message)));
+            self.settle_repository_clone(id, Err(CloneFailure::Io(message)));
         }
         true
     }
@@ -133,7 +142,7 @@ impl Runtime {
     pub(crate) fn note_repository_clone_progress(
         &mut self,
         id: u64,
-        progress: hide_host::clone::CloneProgress,
+        progress: CloneProgress,
     ) -> bool {
         let Some(clone) = self
             .snapshot
@@ -153,7 +162,7 @@ impl Runtime {
     pub(crate) fn settle_repository_clone(
         &mut self,
         id: u64,
-        result: Result<PathBuf, hide_host::clone::CloneFailure>,
+        result: Result<PathBuf, CloneFailure>,
     ) -> bool {
         let Some(clone) = self
             .snapshot
@@ -166,7 +175,7 @@ impl Runtime {
         self.repository_clone_job = None;
         let (phase, message) = match &result {
             Ok(_) => ("finished", None),
-            Err(hide_host::clone::CloneFailure::Cancelled) => ("cancelled", None),
+            Err(CloneFailure::Cancelled) => ("cancelled", None),
             Err(failure) => ("failed", Some(failure.message())),
         };
         clone.phase = phase.to_owned();
@@ -178,7 +187,7 @@ impl Runtime {
             "kind": phase,
             "id": id,
             "host": clone.host,
-            "reason": result.as_ref().err().map(hide_host::clone::CloneFailure::code),
+            "reason": result.as_ref().err().map(CloneFailure::code),
         }));
         let Ok(path) = result else {
             return true;
@@ -204,7 +213,7 @@ impl Runtime {
 fn spawn_clone(
     context: live::LiveContext,
     id: u64,
-    source: hide_host::clone::CloneSource,
+    source: CloneSource,
     parent: PathBuf,
     cancel: Arc<AtomicBool>,
 ) -> Result<(), String> {
@@ -229,21 +238,34 @@ fn spawn_clone(
             // left `cloning` would refuse every later clone. Git's group and
             // the staging folder are released by their guards on unwinding.
             let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                hide_host::clone::clone_repository(
-                    &source,
-                    &parent,
-                    hide_host::clone::STALL_LIMIT,
-                    // The runtime going away ends the clone with it.
-                    &|| cancel.load(Ordering::SeqCst) || runtime.strong_count() == 0,
-                    &mut |progress| {
-                        publish(&mut |guard| {
-                            guard.note_repository_clone_progress(id, progress.clone())
-                        })
+                let call = hide_node_link::protocol::Call::RepositoryClone {
+                    source,
+                    parent: parent.to_string_lossy().into_owned(),
+                };
+                let answer = crate::node_access::call_as_with_progress::<CloneAnswer, CloneReport>(
+                    context.node.as_ref(),
+                    call,
+                    CLONE_TIMEOUT,
+                    |report| {
+                        if let CloneReport::Progress { progress } = report {
+                            publish(&mut |guard| {
+                                guard.note_repository_clone_progress(id, progress.clone())
+                            });
+                        }
+                        // The runtime going away ends the clone with it.
+                        !cancel.load(Ordering::SeqCst) && runtime.strong_count() > 0
                     },
-                )
+                );
+                match answer {
+                    Ok(CloneAnswer::Cloned { path }) => Ok(path),
+                    Ok(CloneAnswer::Failed { failure }) => Err(failure),
+                    Err(error) => Err(CloneFailure::Io(format!(
+                        "The clone could not be asked for: {error}"
+                    ))),
+                }
             }))
             .unwrap_or_else(|_| {
-                Err(hide_host::clone::CloneFailure::Io(
+                Err(CloneFailure::Io(
                     "The clone stopped unexpectedly; nothing was kept.".to_owned(),
                 ))
             });

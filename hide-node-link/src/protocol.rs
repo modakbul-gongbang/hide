@@ -265,6 +265,13 @@ pub enum Call {
         ours: Vec<String>,
         wait_ms: u64,
     },
+    /// Clones `source` into `parent/<name>` (`clone::CloneAnswer`),
+    /// reporting while Git runs (`clone::CloneReport`); a report answered
+    /// with false cancels the clone.
+    RepositoryClone {
+        source: crate::clone::CloneSource,
+        parent: String,
+    },
     /// One fixed git command in the repository at `root`; answers its
     /// output, trimmed.
     Git {

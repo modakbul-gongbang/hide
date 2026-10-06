@@ -19,17 +19,15 @@ use crate::worktrees::{self, WalkBudget};
 pub fn real_paths(paths: &[PathBuf]) -> Vec<PathState> {
     paths
         .iter()
-        .map(
-            |path| match hide_platform::fs::identity::canonical(path) {
-                Ok(real) => PathState::Real {
-                    path: real.to_string_lossy().into_owned(),
-                },
-                Err(error) if error.kind() == std::io::ErrorKind::NotFound => PathState::Missing,
-                Err(error) => PathState::Unreadable {
-                    reason: error.to_string(),
-                },
+        .map(|path| match hide_platform::fs::identity::canonical(path) {
+            Ok(real) => PathState::Real {
+                path: real.to_string_lossy().into_owned(),
             },
-        )
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => PathState::Missing,
+            Err(error) => PathState::Unreadable {
+                reason: error.to_string(),
+            },
+        })
         .collect()
 }
 

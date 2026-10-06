@@ -402,13 +402,14 @@ pub fn handle_with_progress(
             walk,
         )),
         Call::SetAsideFolder { common, folder } => to_value(
-            worktrees::set_aside_folder(&absolute(&common)?, &absolute(&folder)?)
-                .map_err(|error| {
+            worktrees::set_aside_folder(&absolute(&common)?, &absolute(&folder)?).map_err(
+                |error| {
                     HostError::new(
                         ErrorCode::Io,
                         format!("The folder could not be moved aside: {error}"),
                     )
-                })?,
+                },
+            )?,
         ),
         Call::WorktreeRemoveClean {
             root,
@@ -428,6 +429,14 @@ pub fn handle_with_progress(
             &ours,
             std::time::Duration::from_millis(wait_ms),
         )),
+        Call::RepositoryClone { source, parent } => {
+            let parent = absolute(&parent)?;
+            to_value(crate::clone::clone_reporting(
+                &source,
+                &parent,
+                &mut |report| serde_json::to_value(report).map_or(true, &mut *progress),
+            ))
+        }
         Call::Git { root, command } => {
             to_value(crate::git_command::run(&absolute(&root)?, &command)?)
         }

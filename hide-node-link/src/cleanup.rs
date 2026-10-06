@@ -14,10 +14,14 @@ use crate::worktrees::RemovalOutcome;
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum PathState {
     /// The path with every link and alias resolved.
-    Real { path: String },
+    Real {
+        path: String,
+    },
     Missing,
     /// It may exist, but the node could not read it.
-    Unreadable { reason: String },
+    Unreadable {
+        reason: String,
+    },
 }
 
 /// A repository's folders as its `.git` names them, read from the files.
@@ -54,10 +58,14 @@ pub enum FolderVerdict {
     /// Still ignored, still its layer, reached through no link, holding no
     /// repository.
     Fits,
-    Refused { refusal: FolderRefusal },
+    Refused {
+        refusal: FolderRefusal,
+    },
     NestedRepository,
     /// The look for a nested repository could not finish.
-    Unverified { reason: String },
+    Unverified {
+        reason: String,
+    },
 }
 
 /// The verdicts in the order the folders were named, and what is left of
