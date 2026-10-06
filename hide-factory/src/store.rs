@@ -16,8 +16,6 @@ use sha2::{Digest, Sha256};
 use crate::model::{Attachment, Factory, Task, UnixMs};
 
 pub const SCHEMA_VERSION: i64 = 1;
-pub const STORE_FILE: &str = "factory.sqlite3";
-pub const FILES_DIR: &str = "factory-files";
 /// A verify or CI log copy keeps at most its last 1 MiB per attempt (D-58).
 pub const LOG_TAIL_LIMIT: usize = 1024 * 1024;
 /// A PRD attachment larger than this is refused.
@@ -119,16 +117,17 @@ pub struct Loaded {
 }
 
 impl Store {
-    /// Opens or creates the store in `state_dir`; the files folder is made
-    /// private (0700) on Unix.
-    pub fn open(state_dir: &Path) -> Result<Self, StoreError> {
-        fs::create_dir_all(state_dir)?;
-        let files = state_dir.join(FILES_DIR);
+    /// Opens or creates the store at `path` with its private files folder
+    /// (0700 on Unix); `hide_kit::layout` names both.
+    pub fn open(path: &Path, files: &Path) -> Result<Self, StoreError> {
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let files = files.to_owned();
         fs::create_dir_all(&files)?;
         private_dir(&files)?;
-        let path = state_dir.join(STORE_FILE);
-        let connection = Connection::open(&path)?;
-        private_file(&path)?;
+        let connection = Connection::open(path)?;
+        private_file(path)?;
         connection.pragma_update(None, "journal_mode", "WAL")?;
         connection.pragma_update(None, "synchronous", "NORMAL")?;
         connection.pragma_update(None, "foreign_keys", "ON")?;
@@ -421,20 +420,35 @@ mod tests {
     #[test]
     fn a_newer_schema_is_refused_rather_than_read() {
         let folder = tempfile::tempdir().unwrap();
-        drop(Store::open(folder.path()).unwrap());
-        let connection = Connection::open(folder.path().join(STORE_FILE)).unwrap();
+        drop(
+            Store::open(
+                &folder.path().join("factory.sqlite3"),
+                &folder.path().join("factory-files"),
+            )
+            .unwrap(),
+        );
+        let connection = Connection::open(folder.path().join("factory.sqlite3")).unwrap();
         connection
             .pragma_update(None, "user_version", SCHEMA_VERSION + 1)
             .unwrap();
         drop(connection);
-        let error = Store::open(folder.path()).err().unwrap();
+        let error = Store::open(
+            &folder.path().join("factory.sqlite3"),
+            &folder.path().join("factory-files"),
+        )
+        .err()
+        .unwrap();
         assert!(error.0.contains("newer"), "{error}");
     }
 
     #[test]
     fn a_log_copy_keeps_only_its_last_mebibyte() {
         let folder = tempfile::tempdir().unwrap();
-        let store = Store::open(folder.path()).unwrap();
+        let store = Store::open(
+            &folder.path().join("factory.sqlite3"),
+            &folder.path().join("factory-files"),
+        )
+        .unwrap();
         let mut bytes = vec![b'a'; LOG_TAIL_LIMIT];
         bytes.extend_from_slice(b"tail");
         let path = store.keep_log("f", "T-1", 1, "task", &bytes).unwrap();
@@ -446,7 +460,11 @@ mod tests {
     #[test]
     fn an_attachment_is_a_private_read_only_copy_named_by_its_hash() {
         let folder = tempfile::tempdir().unwrap();
-        let store = Store::open(&folder.path().join("state")).unwrap();
+        let store = Store::open(
+            &folder.path().join("state/factory.sqlite3"),
+            &folder.path().join("state/factory-files"),
+        )
+        .unwrap();
         let source = folder.path().join("prd.md");
         fs::write(&source, "# PRD\n").unwrap();
         let attachment = store.attach("f", "T-1", &source, 1).unwrap();

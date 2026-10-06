@@ -295,6 +295,8 @@ impl WorkerRuntime for Shared {
         world.spawned.push(request.clone());
         world.worker_status.remove(&request.task);
         Ok(WorkerRef {
+            factory: String::new(),
+            agent: None,
             name: request.name.clone(),
             pane: Some(format!("pane-{}", request.task)),
             runtime: request.runtime,
@@ -411,7 +413,7 @@ impl Notifier for Shared {
     fn macos(&mut self, title: &str, _body: &str) {
         self.world().macos.push(title.to_owned());
     }
-    fn producer(&mut self, pane: &str, body: &str) -> bool {
+    fn producer(&mut self, _factory: &str, pane: &str, body: &str) -> bool {
         self.world()
             .producer
             .push((pane.to_owned(), body.to_owned()));
@@ -464,7 +466,12 @@ impl Bench {
             ..World::default()
         };
         let shared = Shared(Arc::new(Mutex::new(world)));
-        let engine = Engine::open(dir.path(), ports(&shared)).expect("engine opens");
+        let engine = Engine::open(
+            &dir.path().join("factory.sqlite3"),
+            &dir.path().join("factory-files"),
+            ports(&shared),
+        )
+        .expect("engine opens");
         Self {
             dir,
             shared,
@@ -480,7 +487,12 @@ impl Bench {
             engine,
         } = self;
         drop(engine);
-        let engine = Engine::open(dir.path(), ports(&shared)).expect("engine reopens");
+        let engine = Engine::open(
+            &dir.path().join("factory.sqlite3"),
+            &dir.path().join("factory-files"),
+            ports(&shared),
+        )
+        .expect("engine reopens");
         Self {
             dir,
             shared,

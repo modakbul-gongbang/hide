@@ -18,6 +18,7 @@ mod devices;
 mod documents;
 mod editor;
 mod events;
+mod factory;
 mod home;
 mod hosts;
 mod issues;
@@ -1068,6 +1069,9 @@ pub struct Runtime {
     delivery_ledger: Result<Arc<crate::delivery::ledger::Ledger>, String>,
     delivery_client: Option<crate::delivery::worker::Client>,
     delivery_observations: HashMap<String, delivery::Observation>,
+    /// Open Factories' code-owned recipients (`factory:<id>`), set by the
+    /// Factory host; a letter to any other `factory:` name has no recipient.
+    factory_recipients: std::collections::BTreeSet<String>,
     delivery_overflow: HashSet<String>,
     delivery_connected: HashSet<String>,
     /// Stable identities are separate from device labels: labels are mutable
@@ -1772,6 +1776,7 @@ impl Runtime {
             delivery_ledger,
             delivery_client: None,
             delivery_observations: HashMap::new(),
+            factory_recipients: std::collections::BTreeSet::new(),
             delivery_overflow: HashSet::new(),
             delivery_connected: HashSet::new(),
             local_machine_id: options.machine_id.clone(),

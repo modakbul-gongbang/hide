@@ -82,6 +82,7 @@ pub struct Core {
     _session_search: Option<crate::runtime::session_search::SearchWorker>,
     _links: Option<crate::links::worker::LinkWorker>,
     labels: Option<Arc<crate::labels::LabelServices>>,
+    factory: Option<crate::factory::FactoryHost>,
     runtime: Arc<Mutex<Runtime>>,
     notifier: ChangeNotifier,
     owner_thread: ThreadId,
@@ -89,6 +90,11 @@ pub struct Core {
 
 impl Drop for Core {
     fn drop(&mut self) {
+        // First: the Factory engine sends through delivery and ends the
+        // verify runs and judgments it started (rule 14).
+        if let Some(mut factory) = self.factory.take() {
+            factory.shutdown();
+        }
         self._delivery.take();
         // Reserve cancellation before any coordinator shutdown can wait: a
         // completing attachment must not enqueue input during destruction.
@@ -172,6 +178,7 @@ impl Core {
             _links: None,
             _delivery: None,
             labels: None,
+            factory: None,
             runtime,
             notifier: notifier.clone(),
             owner_thread: thread::current().id(),
@@ -295,6 +302,24 @@ impl Core {
                 None
             }
         };
+        // The Software Factory engine; it opens its store only when a Factory
+        // exists or is asked for.
+        let factory = std::path::Path::new(&options.app_state_path)
+            .parent()
+            .filter(|directory| !directory.as_os_str().is_empty())
+            .and_then(|state_dir| {
+                crate::factory::FactoryHost::start(
+                    state_dir,
+                    environment_home.clone(),
+                    Arc::downgrade(&runtime),
+                )
+                .map_err(|message| {
+                    crate::diagnostic!(
+                        serde_json::json!({"component":"factory","kind":"host.start_failed","message":message})
+                    );
+                })
+                .ok()
+            });
         let session_sync = if let Some(socket_path) = options.herdr_socket_path.as_deref() {
             live::install(
                 &runtime,
@@ -390,6 +415,7 @@ impl Core {
             _session_search: session_search,
             _links: links,
             labels,
+            factory,
             runtime,
             notifier,
             owner_thread: thread::current().id(),
@@ -425,6 +451,28 @@ impl Core {
             return Err("delivery_unavailable".into());
         }
         lock_recover(&self.runtime).prepare_delivery(device, caller, expected, hint, command)
+    }
+
+    /// A `hide factory` command from a pane or checkout capability: the
+    /// caller is checked as delivery checks it, and the engine decides the
+    /// role from its own record of workers (D-33).
+    pub fn prepare_factory(
+        &self,
+        device: &str,
+        caller: &str,
+        expected: &crate::workspace_control::Context,
+        hint: Option<&str>,
+        command: hide_factory::Command,
+    ) -> Result<crate::factory::PreparedFactory, String> {
+        if !check_owner_thread(self, "factory.prepare") {
+            return Err("factory_unavailable".into());
+        }
+        if device != "local" {
+            return Err("factory_local_only".into());
+        }
+        let factory = self.factory.as_ref().ok_or("factory_unavailable")?;
+        let caller = lock_recover(&self.runtime).factory_caller(caller, expected, hint)?;
+        Ok(factory.prepare(caller, command))
     }
 
     pub fn prepare_delivery_human(&self) -> Result<crate::delivery::worker::PreparedHuman, String> {

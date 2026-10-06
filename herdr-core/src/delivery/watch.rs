@@ -68,6 +68,16 @@ impl Watch {
     }
 }
 
+/// How long a watch waits before its first warning: a Factory observer
+/// stops a quiet worker after 30 minutes, every other observer after 20.
+pub fn inactivity_window(watch: &Watch) -> u64 {
+    if watch.parent.code_owned() {
+        super::FACTORY_INACTIVITY_MS
+    } else {
+        INACTIVITY_MS
+    }
+}
+
 pub fn start(
     ledger: &mut Ledger,
     parent: &Actor,
@@ -279,7 +289,7 @@ pub fn tick(ledger: &mut Ledger, readings: &[Reading], now: u64) -> Result<Tick,
             watch.last_activity_at_unix_ms
         };
         let due = match (watch.warning_count, watch.first_warning_at_unix_ms) {
-            (0, _) => now.saturating_sub(activity) >= INACTIVITY_MS,
+            (0, _) => now.saturating_sub(activity) >= inactivity_window(watch),
             (1, Some(first)) => now.saturating_sub(first) >= SECOND_WARNING_MS,
             _ => false,
         };
@@ -537,6 +547,19 @@ mod tests {
             "native_identity_required"
         );
         assert_eq!(ledger, before);
+    }
+
+    #[test]
+    fn a_factory_observer_warns_after_thirty_quiet_minutes_not_twenty() {
+        let mut ledger = Ledger::default();
+        let factory = Actor::factory("f-1");
+        let watch = start(&mut ledger, &factory, &actor("worker"), 10).unwrap();
+        tick(&mut ledger, &[reading(&watch.id, 10)], 10 + INACTIVITY_MS).unwrap();
+        assert!(ledger.letters.is_empty());
+        tick(&mut ledger, &[reading(&watch.id, 10)], 10 + 30 * 60_000 - 1).unwrap();
+        assert!(ledger.letters.is_empty());
+        tick(&mut ledger, &[reading(&watch.id, 10)], 10 + 30 * 60_000).unwrap();
+        assert_eq!(ledger.letters.len(), 1);
     }
 
     #[test]

@@ -36,6 +36,24 @@ pub(crate) struct Observation {
     pub host_scope: Option<String>,
 }
 
+impl Observation {
+    /// A Factory's recipient as a letter target: no pane, no status.
+    pub(crate) fn code_owned(actor: Actor) -> Self {
+        Self {
+            raw_pane_id: actor.pane_id.clone(),
+            actor,
+            status: "idle".into(),
+            state_change_seq: None,
+            status_changed_at_unix_ms: 0,
+            last_input_at_unix_ms: 0,
+            last_submit_at_unix_ms: 0,
+            entered_working_at_unix_ms: 0,
+            session: None,
+            host_scope: None,
+        }
+    }
+}
+
 impl Runtime {
     pub(crate) fn observe_delivery(
         &mut self,
@@ -240,6 +258,10 @@ impl Runtime {
             .actor
             .clone();
         actor.require_native_identity()?;
+        if crate::delivery::reserved_name(&actor.name) {
+            // A pane named like a Factory would read as one (D-14).
+            return Err("reserved_name".into());
+        }
         // Only the pane's own session proves its composer was submitted, so a
         // stray `hide inbox --hook` from a tool in the pane clears no draft.
         // The id is not a secret (D-18 external input stays outside this). The id is checked before it is
@@ -304,6 +326,19 @@ impl Runtime {
         };
         let target = match &command {
             Command::Send { .. } if repeated => None,
+            Command::Send { target, .. }
+            | Command::WatchStart { target, .. }
+            | Command::WatchAssign {
+                observer: target, ..
+            } if target.starts_with(crate::delivery::FACTORY_PREFIX) => {
+                // A Factory is addressed by its code-owned name only; no
+                // pane can stand in for it.
+                let actor = Actor::factory(&target[crate::delivery::FACTORY_PREFIX.len()..]);
+                if !self.factory_recipient_current(&actor) {
+                    return Err("target_unavailable".into());
+                }
+                Some(Observation::code_owned(actor))
+            }
             Command::Send { target, .. }
             | Command::WatchStart { target, .. }
             | Command::WatchAssign {
@@ -393,6 +428,51 @@ impl Runtime {
         self.delivery_ledger = Ok(ledger);
         self.feed_link_parents();
         changed
+    }
+
+    /// The Factory host publishes which Factories exist.
+    pub(crate) fn set_factory_recipients(&mut self, ids: std::collections::BTreeSet<String>) {
+        self.factory_recipients = ids;
+    }
+
+    /// A code-owned recipient is current while its Factory exists and the
+    /// actor is exactly the one the host constructs.
+    pub(crate) fn factory_recipient_current(&self, actor: &Actor) -> bool {
+        actor
+            .pane_id
+            .strip_prefix(crate::delivery::FACTORY_PREFIX)
+            .is_some_and(|id| self.factory_recipients.contains(id) && *actor == Actor::factory(id))
+    }
+
+    /// The authority the Factory host acts with: its own recipient, never a
+    /// pane's.
+    pub(crate) fn factory_authority_current(&self, caller: &str, actor: &Actor) -> bool {
+        caller == actor.pane_id && self.factory_recipient_current(actor)
+    }
+
+    /// A delivery client and authority for the Factory host (D-14).
+    pub(crate) fn factory_delivery(
+        &self,
+        id: &str,
+    ) -> Result<(crate::delivery::worker::Client, Authority, Actor), String> {
+        let actor = Actor::factory(id);
+        if !self.factory_recipient_current(&actor) {
+            return Err("factory_unavailable".into());
+        }
+        let context = Context {
+            device_id: "local".into(),
+            workspace_id: actor.pane_id.clone(),
+            checkout_id: actor.pane_id.clone(),
+            checkout_path: String::new(),
+        };
+        Ok((
+            self.delivery_client.clone().ok_or("delivery_unavailable")?,
+            Authority {
+                caller: actor.pane_id.clone(),
+                context,
+            },
+            actor,
+        ))
     }
 
     pub(crate) fn delivery_identity_current(&self, actor: &Actor) -> bool {
@@ -955,6 +1035,78 @@ pub(crate) mod tests {
             .unwrap();
         assert_eq!(written(&mut guard), (false, false, false));
         drop(guard);
+        drop(worker);
+    }
+
+    #[test]
+    fn a_pane_reaches_a_factory_only_while_it_exists_and_only_the_factory_sends_as_it() {
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, _, _, path) = fixture(root.path());
+        let (worker, client) = Worker::spawn(
+            Arc::downgrade(&runtime),
+            ChangeNotifier::noop(),
+            path.clone(),
+        )
+        .unwrap();
+        let mut guard = runtime.lock().unwrap();
+        guard.install_delivery_client(client);
+        let context = guard
+            .workspace_control_query("local", "sender", Query::Info)
+            .unwrap()
+            .context;
+        let send = |intent: &str| Command::Send {
+            target: "factory:f-1".into(),
+            intent: intent.into(),
+            body: "done".into(),
+            kind: "report".into(),
+        };
+        assert_eq!(
+            guard
+                .prepare_delivery("local", "sender", &context, None, send("early"))
+                .err()
+                .as_deref(),
+            Some("target_unavailable"),
+            "no Factory f-1 exists yet"
+        );
+        assert_eq!(
+            guard.factory_delivery("f-1").err().as_deref(),
+            Some("factory_unavailable")
+        );
+        guard.set_factory_recipients(["f-1".to_owned()].into());
+        let prepared = guard
+            .prepare_delivery("local", "sender", &context, None, send("once"))
+            .unwrap();
+        drop(guard);
+        let result = prepared.run(Duration::from_secs(5)).unwrap();
+        assert_eq!(result["recipient"]["pane_id"], "factory:f-1");
+        assert_eq!(result["recipient"]["kind"], "factory");
+
+        // The Factory answers as itself; a pane cannot borrow its authority.
+        let guard = runtime.lock().unwrap();
+        assert!(!guard.factory_authority_current("sender", &Actor::factory("f-1")));
+        assert!(guard.factory_authority_current("factory:f-1", &Actor::factory("f-1")));
+        let forged = Actor {
+            session: Some("forged".into()),
+            ..Actor::factory("f-1")
+        };
+        assert!(!guard.factory_recipient_current(&forged));
+        let prepared = guard
+            .factory_prepare(
+                "f-1",
+                Some("sender"),
+                Command::Send {
+                    target: "sender".into(),
+                    intent: "factory-answer".into(),
+                    body: "noted".into(),
+                    kind: "report".into(),
+                },
+            )
+            .unwrap();
+        drop(guard);
+        let result = prepared.run(Duration::from_secs(5)).unwrap();
+        assert_eq!(result["sender"]["pane_id"], "factory:f-1");
+        let stored = crate::delivery::ledger::load(&path).unwrap();
+        assert_eq!(stored.letters.len(), 2);
         drop(worker);
     }
 

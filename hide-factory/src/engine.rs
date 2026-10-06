@@ -124,8 +124,8 @@ fn refuse(reason: &str, next: &str) -> Refusal {
 }
 
 impl Engine {
-    pub fn open(state_dir: &Path, ports: Ports) -> Result<Self, StoreError> {
-        let store = Store::open(state_dir)?;
+    pub fn open(store: &Path, files: &Path, ports: Ports) -> Result<Self, StoreError> {
+        let store = Store::open(store, files)?;
         let loaded = store.load()?;
         let mut engine = Self {
             store,
@@ -1565,7 +1565,7 @@ impl Engine {
             answer["task"]["display_id"].as_str().unwrap_or(id),
             answer["result"].as_str().unwrap_or("pending")
         );
-        if !self.ports.notifier.producer(&pane, &body) {
+        if !self.ports.notifier.producer(factory, &pane, &body) {
             self.with_task(factory, id, |task| task.producer_pane = None);
         }
     }
@@ -3492,6 +3492,17 @@ impl Engine {
                         config.recovery.push(action);
                     }
                 }
+                "worker_args" => {
+                    // `claude=--flag --other`: the runtime's whole list.
+                    let (runtime, args) = value.split_once('=').ok_or_else(bad)?;
+                    let runtime = Runtime::parse(runtime).ok_or_else(bad)?;
+                    let args: Vec<String> = args.split_whitespace().map(str::to_owned).collect();
+                    if args.is_empty() {
+                        config.worker_args.remove(runtime.as_str());
+                    } else {
+                        config.worker_args.insert(runtime.as_str().to_owned(), args);
+                    }
+                }
                 "risk_paths" => {
                     config.risk_paths = value
                         .split(',')
@@ -4009,6 +4020,12 @@ impl Engine {
                     project: factory.project.clone(),
                     branch: worker.branch.clone(),
                     prompt: worker_prompt(&task, &factory, true),
+                    args: factory
+                        .config
+                        .worker_args
+                        .get(runtime.as_str())
+                        .cloned()
+                        .unwrap_or_default(),
                     resume: Some(worker.clone()),
                 };
                 self.ports.workers.spawn(&request).map(Some)
@@ -4044,6 +4061,12 @@ impl Engine {
                 project: factory.project.clone(),
                 branch: task.branch_slug(),
                 prompt: worker_prompt(&task, &factory, false),
+                args: factory
+                    .config
+                    .worker_args
+                    .get(runtime.as_str())
+                    .cloned()
+                    .unwrap_or_default(),
                 resume: None,
             };
             match self.ports.workers.spawn(&request) {

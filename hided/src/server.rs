@@ -872,6 +872,21 @@ async fn client_loop(
     client_gone(&state, connection, renderer, desktop);
 }
 
+/// A Factory card carries a goal, criteria and decisions; a PRD travels as
+/// a path, so the request stays small.
+const FACTORY_REQUEST_LIMIT: usize = 256 * 1024;
+/// `add` waits for its intake review up to 90 s (B11); the rest answer at once.
+const FACTORY_ANSWER_TIMEOUT: Duration = Duration::from_secs(100);
+
+fn valid_caller_hint(value: &serde_json::Value) -> bool {
+    value.get("caller_pane").is_none_or(|hint| {
+        hint.is_null()
+            || hint.as_str().is_some_and(|hint| {
+                !hint.is_empty() && hint.len() <= 256 && !hint.chars().any(char::is_control)
+            })
+    })
+}
+
 enum ScopedRequest {
     Query(herdr_core::workspace_control::Query),
     Action(herdr_core::workspace_control::Action),
@@ -880,6 +895,8 @@ enum ScopedRequest {
     /// connection, then this socket carries the CDP frames.
     BrowserRelay(String),
     Delivery(herdr_core::delivery::Command, Option<String>),
+    /// `hide factory`: the Factory engine answers; it needs no shell.
+    Factory(hide_factory::Command, Option<String>),
     /// `hide links`: a read of the link record, which needs no shell.
     Links(herdr_core::links::query::LinksQuery),
 }
@@ -888,7 +905,10 @@ impl ScopedRequest {
     /// A request a shell must be open to answer. Delivery and the link
     /// record are the daemon's own and answer without one (B43).
     fn needs_renderer(&self) -> bool {
-        !matches!(self, Self::Delivery(..) | Self::Links(..))
+        !matches!(
+            self,
+            Self::Delivery(..) | Self::Factory(..) | Self::Links(..)
+        )
     }
 }
 
@@ -961,16 +981,7 @@ async fn scoped_client_loop(
                                 value["command"].clone(),
                             )
                             .ok()
-                            .filter(|_| {
-                                value.get("caller_pane").is_none_or(|hint| {
-                                    hint.is_null()
-                                        || hint.as_str().is_some_and(|hint| {
-                                            !hint.is_empty()
-                                                && hint.len() <= 256
-                                                && !hint.chars().any(char::is_control)
-                                        })
-                                })
-                            })
+                            .filter(|_| valid_caller_hint(&value))
                             .map(|command| {
                                 ScopedRequest::Delivery(
                                     command,
@@ -978,10 +989,24 @@ async fn scoped_client_loop(
                                 )
                             })
                         }
+                        Some("factory") => serde_json::from_value::<hide_factory::Command>(
+                            value["command"].clone(),
+                        )
+                        .ok()
+                        .filter(|_| valid_caller_hint(&value))
+                        .map(|command| {
+                            ScopedRequest::Factory(
+                                command,
+                                value["caller_pane"].as_str().map(str::to_owned),
+                            )
+                        }),
                         _ => None,
                     };
                     if command.is_none()
-                        || (value["type"] != "delivery" && text.len() > 16 * 1024)
+                        || (value["type"] != "delivery"
+                            && value["type"] != "factory"
+                            && text.len() > 16 * 1024)
+                        || (value["type"] == "factory" && text.len() > FACTORY_REQUEST_LIMIT)
                         || request_id.is_empty()
                         || request_id.len() > 64
                         || !request_id
@@ -1061,6 +1086,11 @@ async fn scoped_client_loop(
                                     core.prepare_delivery(&cap.context.device_id, &cap.pane_id, &cap.context, hint, command)
                                         .and_then(|prepared| prepared.run(Duration::from_secs(5)))
                                         .map_err(|code| (code, "Check the current agent pane and retry the same intent"))?
+                                }
+                                ScopedRequest::Factory(command, hint) => {
+                                    core.prepare_factory(&cap.context.device_id, &cap.pane_id, &cap.context, hint, command)
+                                        .and_then(|prepared| prepared.run(FACTORY_ANSWER_TIMEOUT))
+                                        .map_err(|code| (code, "Check that Hide is running and retry"))?
                                 }
                                 ScopedRequest::Links(query) => {
                                     let scope = core.links_scope(&cap.context).ok_or((

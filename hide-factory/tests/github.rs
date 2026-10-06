@@ -169,6 +169,8 @@ fn task(id: &str, issue: Option<u64>) -> Task {
     }
     let mut task: Task = serde_json::from_value(value).unwrap();
     task.worker = Some(WorkerRef {
+        factory: String::new(),
+        agent: None,
         name: "w".into(),
         pane: None,
         runtime: Runtime::Claude,

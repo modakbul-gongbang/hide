@@ -32,7 +32,7 @@ pub const HOOK_VERSION: u32 = 6;
 /// Both runtimes accept the same `hookSpecificOutput.additionalContext`
 /// envelope, while the runtime argument remains explicit in the installed
 /// command so a future protocol difference has one dispatch point.
-pub const PURPOSE_CONTEXT: &str = "When you create a worktree, set its one-line purpose in 40 characters or fewer by running `herdr workspace report-metadata <workspace> --source <you> --token purpose=\"…\"`. Delegate new work with `hide agent spawn --parent here …` so its lineage remains visible.";
+pub const PURPOSE_CONTEXT: &str = "When you create a worktree, set its one-line purpose in 40 characters or fewer by running `herdr workspace report-metadata <workspace> --source <you> --token purpose=\"…\"`. Delegate new work with `hide agent spawn --parent here …` so its lineage remains visible. To put work into a Factory, run `hide factory add` rather than adding a GitHub label.";
 
 pub fn hook_stdout(runtime: AgentRuntime, event: HookEvent) -> Option<String> {
     hook_stdout_with_context(runtime, event, None)
@@ -335,6 +335,13 @@ mod tests {
             serde_json::from_str::<serde_json::Value>(&ascii).unwrap(),
             serde_json::from_str::<serde_json::Value>(&json).unwrap()
         );
+    }
+
+    #[test]
+    fn session_guidance_sends_factory_work_through_the_factory_command() {
+        // PRD software-factory B18: a request to put work into a Factory
+        // uses `hide factory add`, not a label.
+        assert!(PURPOSE_CONTEXT.contains("`hide factory add`"));
     }
 
     #[test]

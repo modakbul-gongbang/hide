@@ -688,6 +688,14 @@ fn run(
                     .lock()
                     .map_err(|_| "delivery_unavailable".to_owned())
                     .and_then(|guard| {
+                        if actor.code_owned() {
+                            // Only the core's Factory host holds this
+                            // authority; it has no pane to re-check.
+                            return guard
+                                .factory_authority_current(&authority.caller, actor)
+                                .then_some(())
+                                .ok_or_else(|| "caller_identity_changed".into());
+                        }
                         let context = guard
                             .workspace_control_query(
                                 &actor.device_id,
@@ -718,18 +726,28 @@ fn run(
                         .lock()
                         .map_err(|_| "delivery_unavailable".to_owned())
                         .and_then(|guard| {
-                            for caller in [&authority.caller, &actor.pane_id] {
-                                let current = guard
-                                    .workspace_control_query(&actor.device_id, caller, Query::Info)
-                                    .map_err(|_| "caller_context_changed")?
-                                    .context;
-                                if current != authority.context {
-                                    return Err("caller_context_changed".into());
+                            if actor.code_owned() {
+                                if !guard.factory_authority_current(&authority.caller, actor) {
+                                    return Err("caller_identity_changed".into());
                                 }
-                            }
-                            actor.require_native_identity()?;
-                            if !guard.delivery_identity_current(actor) {
-                                return Err("caller_identity_changed".into());
+                            } else {
+                                for caller in [&authority.caller, &actor.pane_id] {
+                                    let current = guard
+                                        .workspace_control_query(
+                                            &actor.device_id,
+                                            caller,
+                                            Query::Info,
+                                        )
+                                        .map_err(|_| "caller_context_changed")?
+                                        .context;
+                                    if current != authority.context {
+                                        return Err("caller_context_changed".into());
+                                    }
+                                }
+                                actor.require_native_identity()?;
+                                if !guard.delivery_identity_current(actor) {
+                                    return Err("caller_identity_changed".into());
+                                }
                             }
                             if target_required {
                                 let target = target.as_ref().ok_or("target_unavailable")?;
@@ -739,7 +757,12 @@ fn run(
                                 ) {
                                     target.actor.require_native_identity()?;
                                 }
-                                if !guard.delivery_identity_current(&target.actor) {
+                                let current = if target.actor.code_owned() {
+                                    guard.factory_recipient_current(&target.actor)
+                                } else {
+                                    guard.delivery_identity_current(&target.actor)
+                                };
+                                if !current {
                                     return Err("target_identity_changed".into());
                                 }
                             }

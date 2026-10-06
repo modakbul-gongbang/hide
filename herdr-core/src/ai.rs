@@ -160,6 +160,17 @@ pub(crate) fn memory_router(settings: &AiSettings) -> AiRouter {
     )
 }
 
+/// The Software Factory's own router (PRD software-factory D-13, D-44): the
+/// operator's provider choice with one request in flight, separate from the
+/// label and Project Memory routers so its queue never takes their budget.
+pub(crate) fn factory_router(settings: &AiSettings) -> AiRouter {
+    AiRouter::new(
+        backends(&settings.models),
+        settings.router_config(),
+        Arc::new(DiagnosticLogSink),
+    )
+}
+
 /// The same provider boundary for agent labels (PRD labels-in-hided D-05):
 /// the operator's provider and model choice, and the router's own retry,
 /// cooldown and budget rules.

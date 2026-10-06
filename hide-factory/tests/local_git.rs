@@ -138,6 +138,8 @@ fn task(fixture: &Fixture, id: &str, file: &str, text: &str) -> Task {
     git(&worktree, &["add", "."]);
     git(&worktree, &["commit", "--quiet", "-m", id]);
     task.worker = Some(WorkerRef {
+        factory: String::new(),
+        agent: None,
         name: id.into(),
         pane: None,
         runtime: Runtime::Claude,

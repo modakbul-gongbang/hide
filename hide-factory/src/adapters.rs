@@ -272,6 +272,8 @@ pub struct WorkerSpawn {
     pub project: String,
     pub branch: String,
     pub prompt: String,
+    /// The runtime's extra arguments from the Factory's configuration.
+    pub args: Vec<String>,
     /// Reuse the worktree and session (retry, wake, relanding).
     pub resume: Option<crate::model::WorkerRef>,
 }
@@ -335,5 +337,5 @@ pub trait Notifier {
     fn macos(&mut self, title: &str, body: &str);
     /// Sends a pending review's result to the producer pane; false when the
     /// pane is gone (B11).
-    fn producer(&mut self, pane: &str, body: &str) -> bool;
+    fn producer(&mut self, factory: &str, pane: &str, body: &str) -> bool;
 }

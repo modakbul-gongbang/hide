@@ -244,8 +244,9 @@ hide factory inbox
 hide factory answer <task> [--question <id>] [--choose suggestion|default|<choice>] [--text <answer>]
 hide factory ask --question <text> --suggestion <text> --default <action> [--deadline-hours <n>]
 hide factory block --question <text> --suggestion <text> [--deadline-hours <n>]
-hide factory propose --class in-scope|decision|scope-change|prerequisite|unrelated --text <text> [--title <t> --goal <g> --criterion <c>...]
+hide factory propose --class in-scope|decision|scope-change|prerequisite|unrelated --text <text> [--title <t> --goal <g> --criterion <c>...] [--autonomy <scope>] [--reclassify <discovery>]
 hide factory done [--summary <text>] [--breaking]
+hide factory decide --text <decision>
 hide factory config [--project <path>] [--set <key>=<value>]...
 hide factory priority <task> <n>
 hide factory dep add|remove <task> --on <task>

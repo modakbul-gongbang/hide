@@ -223,6 +223,10 @@ pub struct Config {
     pub checks: Vec<UserCheck>,
     pub prd_in_issue: bool,
     pub macos_notifications: bool,
+    /// Extra arguments each runtime's worker starts with, such as a
+    /// permission mode the operator chose.
+    #[serde(default)]
+    pub worker_args: std::collections::BTreeMap<String, Vec<String>>,
 }
 
 impl Default for Config {
@@ -255,6 +259,7 @@ impl Default for Config {
             checks: Vec::new(),
             prd_in_issue: false,
             macos_notifications: false,
+            worker_args: std::collections::BTreeMap::new(),
         }
     }
 }
@@ -676,6 +681,12 @@ impl StopReason {
 /// The worker a Task runs, as the runtime adapter reported it.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct WorkerRef {
+    /// The Factory that spawned it.
+    #[serde(default)]
+    pub factory: String,
+    /// The coordination agent id, which ends it.
+    #[serde(default)]
+    pub agent: Option<String>,
     pub name: String,
     pub pane: Option<String>,
     pub runtime: Runtime,
