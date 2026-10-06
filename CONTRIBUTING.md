@@ -84,7 +84,7 @@ Package smoke and simulated hooks prove private fixture behavior; physical IME/c
 Run the platform set after the web build with `bash scripts/verify-web.sh web e2e --grep @platform`.
 Press an editor or clipboard chord in a spec with `ControlOrMeta`: Playwright binds its editing commands (copy, start of document) to the host system, so a `Meta` press only works on macOS.
 
-The remote mailbox crate-boundary lane is the `remote mailbox` job, on a Linux runner, planned with the macOS `@platform` web e2e job (`web e2e (macOS)`).
+The remote mailbox crate-boundary lane is the `remote mailbox` job, on a Linux runner, planned by the crates it builds and tests; no CI job runs it on macOS.
 Run it locally with `HIDE_E2E_HERDR_BIN=<pinned-binary> bash scripts/verify-cargo.sh test-scoped -p herdr-core --test remote_delivery -- --ignored`.
 It starts only private Herdr servers and a loopback SSH account, with no external device.
 
