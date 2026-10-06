@@ -649,7 +649,6 @@ impl Runtime {
                 };
                 bytes.extend_from_slice(&pending.queued);
                 let pane_id = pending.pane_id.clone();
-                let submits = crate::labels::input::submits(&pending.queued);
                 if let Some(session) = self.terminal_sessions.get(&pane_id) {
                     if session.write_bytes(&bytes).is_err() {
                         self.fail_attachment(
@@ -661,9 +660,9 @@ impl Runtime {
                 } else {
                     self.append_terminal_chunk(pane_id.clone(), live::encode_base64(&bytes));
                 }
-                // The paste is composer text the operator has not sent; only
-                // an Enter held behind it submits.
-                self.note_delivery_key(&pane_id, submits);
+                // The paste is composer text the operator has not sent, and
+                // an Enter held behind it does not send it either.
+                self.note_delivery_key(&pane_id);
                 self.attachment = None;
             }
         }
@@ -837,7 +836,7 @@ mod tests {
     }
 
     #[test]
-    fn a_pasted_attachment_is_a_draft_for_the_doorbell_until_a_held_enter_sends_it() {
+    fn a_pasted_attachment_is_a_draft_for_the_doorbell_even_with_an_enter_held_behind_it() {
         let mut runtime = runtime();
         let payload: crate::sidebar::SessionSnapshotPayload = serde_json::from_value(
             serde_json::json!({"agents":[{"id":"a","pane_id":"pane-one","agent":"claude","agent_status":"idle","state_change_seq":1,"lineage_session":"s"}]}),
@@ -864,7 +863,7 @@ mod tests {
         runtime.hold_attachment_input(&key("pane-one", b"\r"));
         runtime.finish_attachment(OTHER_ID, None, Ok(vec!["/remote/file.png".to_owned()]));
         let (input, submit) = clocks(&mut runtime);
-        assert!(input > 0 && submit >= input, "a held Enter sends the paste");
+        assert!(input > 0 && submit == 0, "an Enter is not proof of a send");
     }
 
     #[test]

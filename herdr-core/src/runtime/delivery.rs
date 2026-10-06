@@ -155,26 +155,26 @@ impl Runtime {
         self.delivery_connected.insert(device.to_owned());
     }
 
-    /// A key hide routed to a pane. It restarts the quiet period; a submitting
-    /// key also ends the draft it completed. Like the label input record, an
-    /// Enter while Herdr reports the pane blocked answers a menu, not the
-    /// conversation, so it submits nothing.
-    pub(crate) fn note_delivery_key(&mut self, pane_id: &str, submits: bool) {
-        let Some(observation) = self.delivery_observations.get_mut(pane_id) else {
-            return;
-        };
-        let now = unix_milliseconds();
-        observation.last_input_at_unix_ms = now;
-        if submits && observation.status != "blocked" {
-            observation.last_submit_at_unix_ms = now;
+    /// A key, paste or phone write hide routed to a pane: a draft may have
+    /// grown there, so the quiet period restarts. No key ends a draft, not
+    /// even Enter: a built-in picker (`/model`, `/resume`) is opened with
+    /// Enter and reads `done` to Herdr, so only a prompt hook of the pane's
+    /// own session, a phone reply, or the pane entering work proves the
+    /// composer was sent.
+    pub(crate) fn note_delivery_key(&mut self, pane_id: &str) {
+        if let Some(observation) = self.delivery_observations.get_mut(pane_id) {
+            observation.last_input_at_unix_ms = unix_milliseconds();
         }
     }
 
-    /// The submit half of a key whose write was accepted. The input half is
-    /// noted when the key arrives, so a key the shell then drops or holds for
-    /// an attachment restarts the quiet period but ends no draft.
-    pub(crate) fn note_delivery_submit(&mut self, pane_id: &str) {
-        self.note_delivery_key(pane_id, true);
+    /// The phone's reply is text hide sent and submitted in one write to an
+    /// agent waiting on the operator, so it is a key and a submit.
+    pub(crate) fn note_delivery_reply(&mut self, pane_id: &str) {
+        if let Some(observation) = self.delivery_observations.get_mut(pane_id) {
+            let now = unix_milliseconds();
+            observation.last_input_at_unix_ms = now;
+            observation.last_submit_at_unix_ms = now;
+        }
     }
 
     /// A prompt hook ran in the pane, so whatever was in its composer was
@@ -746,7 +746,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_hide_key_is_a_draft_until_a_submit_and_a_menu_answer_submits_nothing() {
+    fn no_hide_key_ends_a_draft_not_even_the_enter_that_opens_a_picker() {
         let root = tempfile::tempdir().unwrap();
         let (runtime, _, _, _) = fixture(root.path());
         let mut guard = runtime.lock().unwrap();
@@ -754,26 +754,25 @@ pub(crate) mod tests {
         clocks(&mut guard, "recipient", true);
         clocks(&mut guard, "sender", true);
 
-        guard.dispatch_json(&key_event("recipient", b"draft"));
-        assert_eq!(written(&mut guard), (true, false, false));
-        // Esc and a newline inside the composer submit nothing either.
-        guard.dispatch_json(&key_event("recipient", b"\x1b"));
-        assert_eq!(written(&mut guard), (true, false, false));
-        guard.dispatch_json(&key_event("recipient", b"\x1b\r"));
-        assert_eq!(written(&mut guard), (true, false, false));
-        guard.dispatch_json(&key_event("recipient", b"\r"));
-        assert_eq!(written(&mut guard), (true, true, false));
+        // `/model` and Enter: the picker is open and Herdr reads the pane
+        // `done`, so the bell must keep holding on a draft.
+        for keys in [&b"/model"[..], b"\x1b", b"\x1b\r", b"\r"] {
+            guard.dispatch_json(&key_event("recipient", keys));
+            assert_eq!(written(&mut guard), (true, false, false), "{keys:?}");
+        }
+        let observation = guard.delivery_observations.get_mut("recipient").unwrap();
+        observation.last_input_at_unix_ms = unix_milliseconds().saturating_sub(120_000);
+        observation.status_changed_at_unix_ms = unix_milliseconds().saturating_sub(120_000);
+        let held = guard
+            .delivery_observations
+            .get("recipient")
+            .map(|observation| crate::delivery::doorbell::judge(observation, unix_milliseconds()));
+        assert_eq!(held, Some(Err(crate::delivery::doorbell::Hold::Draft)));
         assert_eq!(
             clocks(&mut guard, "sender", false),
             (0, 0, 0),
             "another pane's clocks do not move"
         );
-
-        // An Enter while Herdr reports the pane blocked answers a menu.
-        observe_recipient_status(&mut guard, "blocked", 3);
-        clocks(&mut guard, "recipient", true);
-        guard.dispatch_json(&key_event("recipient", b"\r"));
-        assert_eq!(written(&mut guard), (true, false, false));
 
         // The phone's reply is a hide key and a submit.
         observe_recipient_status(&mut guard, "idle", 4);

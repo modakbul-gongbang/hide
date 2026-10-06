@@ -358,7 +358,7 @@ A close Hide asked for, or a pane Herdr has already stopped listing, projects `c
 
 The core's delivery worker owns a separate private ledger and returns mutation success only after atomic persistence outside `Mutex<Runtime>`.
 Runtime holds an immutable ledger projection; one bounded writer queue and separately owned doorbell/watch producers stop and join with Core outside the lock.
-The existing pane input path adds only timestamp assignments (the last key, and the last submission when the key submits); the observation adds the time the pane entered `working`; watch snapshots publish start, warning and end transitions.
+The existing pane input path adds only timestamp assignments (the last input, from a key, paste, phone write or agent-find key; a submission is stamped only by a phone reply or a prompt hook of the pane's own session); the observation adds the time the pane entered `working`; watch snapshots publish start, warning and end transitions.
 The daemon exposes typed `hide request`, `inbox` and `watch` commands through the existing caller-bound Workspace boundary without requiring a renderer.
 The doorbell decides from hide-owned facts only (`doorbell::judge` over the pane's observation, never a screen read) and writes only to a pane at rest, and prompt-hook stdout flush precedes durable intake confirmation.
 Pending delivery becomes undelivered after 60 minutes; watch warnings use 20-minute inactivity and first-warning time plus 60 minutes, with persistent counts and activity reset.

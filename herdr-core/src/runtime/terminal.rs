@@ -514,7 +514,7 @@ impl Runtime {
         }));
         if route == PaneFindRoute::Agent {
             // The keys went into the agent's own search box.
-            self.note_delivery_key(pane_id, false);
+            self.note_delivery_key(pane_id);
         }
         self.snapshot.find = PaneFindSnapshot {
             pane_id: Some(pane_id.to_owned()),

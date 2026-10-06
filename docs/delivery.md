@@ -45,14 +45,18 @@ It is typed when every one of these hide-owned facts holds, and the verdict read
 
 - Herdr reports the pane `idle` or `done`, and has for 30 seconds.
 - Hide has routed no key to the pane for 30 seconds.
-- No key hide routed is newer than the later of the pane's last submission (a submitting key hide routed, a phone reply, or a prompt hook that ran) and the last time it entered `working`.
-  A key before either was consumed by it, such as an answer to a menu, and a key after both is an unsent draft, an Esc-restored prompt or a recalled input.
+- No input hide routed is newer than the later of the pane's last submission and the last time it entered `working`.
+  Typed keys, a pasted attachment, a phone key and the keys of an agent's own find box all count as input, and none of them, Enter included, counts as a submission.
+  A submission is a prompt hook that ran with the pane's own native session id, which the hook passes to `hide inbox --hook --session`, or a phone reply.
+  A pane that entered `working` was submitted to as well, which is how an answered menu or a custom slash command that starts a turn clears the hold.
+  A key after both is an unsent draft, an Esc-restored prompt or a recalled input; a pane held by one stays held until the next real prompt.
 - The pane still hosts the native session the letter was written for, and the agent kind is one the bell targets.
 
 Herdr's `blocked` status is the only menu guard, so only kinds whose permission and selection menus were observed to read `blocked` are bell targets.
 Today those are Claude Code and Codex.
 Gemini, Grok and Cursor are not targets because their menus were not observed (no logged-in CLI was available for the check); OpenCode, Pi and every other kind keep today's behavior, with letters read through `hide inbox` or a prompt hook.
-Herdr 0.9.1 reads a built-in slash picker such as `/model` as `done`, not `blocked`, for both targets; a bell typed into an open picker is accepted by it, so this is a residual risk until Herdr reports pickers or hide stops counting the Enter that opened one as a submission.
+Herdr 0.9.1 reads a built-in slash picker such as `/model` or `/resume` as `done`, not `blocked`, for both targets, and a bell typed into an open picker is accepted by it.
+Hide therefore does not take the Enter that opens a picker for a submission: the pane holds as a draft, and stays held after `/clear`, `/model` or `/help` until the next real prompt runs its hook.
 A letter that cannot be belled waits, and the reason (`working`, `blocked`, `draft`, `quiet_period`, `kind_not_belled`, `session_changed`, `pane_unavailable`, `status_not_at_rest`, `changed_before_input`) is logged once per change with the letter and pane ids, never with its body and never on screen.
 After a hided restart every pane starts with no key known and a 30 second grace; a draft typed before the restart cannot be known.
 The adapter never copies, clears or restores a draft.
@@ -66,6 +70,7 @@ When the prompt is exactly the bell (`hide inbox --hook --bell`), it pulls the o
 For any other prompt, the operator's own included (`hide inbox --hook`), it adds at most one line, `Hide 편지 N통 대기 중, 이 턴이 끝난 뒤 전달`, counting the letters a bell will still bring, and confirms nothing; the prompt text is never changed and no letter body reaches an operator's turn.
 A letter whose three bells are spent stays pending for `hide inbox` and expires undelivered.
 A payload that is truncated, unreadable or not read within 0.5 seconds counts as an operator prompt.
+Both pulls carry the payload's `session_id`; the core takes the pull as proof the pane's composer was sent only when that session is the pane's own native session, so another process in the pane running `hide inbox --hook` clears no draft.
 A prompt hook that runs inside an agent with no prompt hook of its own (Grok or OpenCode loading Claude Code's hook) receives nothing and confirms nothing.
 An agent with no prompt hook reads letters with `hide inbox`, which shows an `ack_command` for each, and `hide request ack` is its receipt: it records `hook_confirmed` and ends a matching report watch, as the flushed hook confirmation does for the others.
 Transport arrival and the doorbell alone do not confirm intake.

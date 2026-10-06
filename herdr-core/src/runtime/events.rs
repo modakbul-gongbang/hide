@@ -1583,7 +1583,7 @@ impl Runtime {
             Event::AttachmentAction(payload) => self.attachment_action(payload),
             Event::Key(payload) => {
                 let submits = crate::labels::input::key_submits(&payload.bytes_base64);
-                self.note_delivery_key(&payload.pane_id, false);
+                self.note_delivery_key(&payload.pane_id);
                 if let Some(changed) = self.drop_input_to_sleeping_pane(&payload.pane_id) {
                     return changed;
                 }
@@ -1597,7 +1597,6 @@ impl Runtime {
                 self.ensure_terminal_pane(&payload.pane_id);
                 self.sync_focused_terminal_projection();
                 if submits {
-                    self.note_delivery_submit(&payload.pane_id);
                     self.record_operator_submit(&payload.pane_id);
                 }
                 if self.live.is_some()
@@ -1627,14 +1626,14 @@ impl Runtime {
             Event::AgentSleep(payload) => self.request_agent_sleep(&payload.pane_id),
             // The phone's reply reached the pane; nothing on screen moves.
             Event::PaneInputSubmitted(payload) => {
-                self.note_delivery_key(&payload.pane_id, true);
+                self.note_delivery_reply(&payload.pane_id);
                 self.record_operator_submit(&payload.pane_id);
                 false
             }
             // A phone key or reply is on its way to the pane: a draft may
             // grow there, which the doorbell must not type over.
             Event::PaneInputSent(payload) => {
-                self.note_delivery_key(&payload.pane_id, false);
+                self.note_delivery_key(&payload.pane_id);
                 false
             }
             Event::PaneVisit(payload) => self.record_pane_visit(payload.pane_id),
