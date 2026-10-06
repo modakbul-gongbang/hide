@@ -99,6 +99,13 @@ pub struct Frames {
     pub slow_enable_once: bool,
     /// The first healthy frame leaves its first snapshot read unanswered.
     pub slow_read_once: bool,
+    /// The first healthy frame answers everything but the look for its own
+    /// frames (`Target.setAutoAttach`).
+    pub scan_silent: bool,
+    /// The top document reports that a cross-origin frame holds the focus.
+    pub opaque_focus: bool,
+    /// The healthy frame `okN` that holds the focus (0: none does).
+    pub focus_in: usize,
 }
 
 /// A top document with `hung` frames that never answer `Page.enable` and
@@ -147,6 +154,7 @@ pub fn page_with_frames(
                 messages.push(reply(request, json!({})));
                 messages
             }
+            ("Target.setAutoAttach", "ok1") if frames.scan_silent => Vec::new(),
             ("Target.setAutoAttach", _) => vec![reply(request, json!({}))],
             ("Page.enable", "f1") => before.clone().into_iter().collect(),
             ("Page.enable", session) if session.starts_with('f') => Vec::new(),
@@ -163,6 +171,12 @@ pub fn page_with_frames(
                 request,
                 json!({"result": {"type": "number", "value": 0}}),
             )],
+            ("Runtime.evaluate", "top") if expression.contains("\"activeOpaqueFrame\"") => {
+                vec![reply(
+                    request,
+                    json!({"result": {"value": {"opaque": frames.opaque_focus}}}),
+                )]
+            }
             ("Runtime.evaluate", "top") if expression.contains("\"waitText\"") => vec![reply(
                 request,
                 json!({"result": {"value": {"found": frames.wait_found}}}),
@@ -198,6 +212,15 @@ pub fn page_with_frames(
                             json!({"result": {"value": {"previous": format!("# OOPIF k7q{} origin=http://ok.test:9\nold", n + 1)}}}),
                         ),
                     );
+                }
+                if expression.contains("\"hasFocus\"") {
+                    if frames.stops_on_read {
+                        return Vec::new();
+                    }
+                    return vec![reply(
+                        request,
+                        json!({"result": {"value": {"focus": frames.focus_in == n}}}),
+                    )];
                 }
                 if expression.contains("\"waitSelector\"") {
                     if frames.stops_on_read {

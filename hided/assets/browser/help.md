@@ -52,7 +52,7 @@ Password, card number, CVC, one-time code and similar values are never shown; yo
 `@N` names an element of the top document, including open shadow roots and same-origin frames.
 A ref stays the same across snapshots of the same document, new elements get the next numbers, and a navigation starts again at `@1`.
 A cross-origin frame shows as its own section, `# OOPIF <tag> origin=<origin>`, and its elements are `@<tag>:N`; its values and links show only their origin.
-A frame that answers nothing in time shows as `# OOPIF unresponsive origin=<origin>` with no refs, and the rest of the page is read; its script may never yield, or a dialog it opened is waiting for the operator. Each read of the page asks such a frame again, so a frame that was only slow shows up in the next snapshot or poll; `wait` names the frames it could not read when it times out, and an action that could not read a frame says so instead of reporting that nothing changed.
+A frame that answers nothing in time shows as `# OOPIF unresponsive origin=<origin>` with no refs, and the rest of the page is read; its script may never yield, or a dialog it opened is waiting for the operator. Each read of the page asks such a frame again, so a frame that was only slow shows up in the next snapshot or poll; `wait` names the frames it could not read when it times out, and an action that could not read a frame says so instead of reporting that nothing changed, and `type` or `press` that cannot tell which frame holds the focus, because a frame did not answer, sends nothing and fails `page_unresponsive`.
 A ref from an older document, or from a frame that navigated, fails `ref_stale` instead of touching another element: take a fresh snapshot.
 
 ## Acting and checking

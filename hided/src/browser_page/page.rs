@@ -93,6 +93,52 @@ pub struct Composite {
     pub top: String,
     pub sections: Vec<(String, String)>,
     pub silent: Vec<String>,
+    /// The session and origin of each frame this read could not read.
+    pub unread: Vec<(String, String)>,
+}
+
+/// Two reads of the page set side by side: what they can be compared on.
+pub struct Comparison {
+    pub before: String,
+    pub after: String,
+    /// The origins of the frames that could not be read in one read or the
+    /// other.
+    pub unread: Vec<String>,
+}
+
+/// Compares like with like. A frame one of the reads could not read is left
+/// out of both, with its note, so a frame that answered in one read and not
+/// the other is never a content change.
+pub fn compare(before: &Composite, after: &Composite) -> Comparison {
+    let excluded = |session: &str| {
+        before
+            .unread
+            .iter()
+            .chain(&after.unread)
+            .any(|(unread, _)| unread == session)
+    };
+    let text = |composite: &Composite| {
+        let sections: Vec<String> = composite
+            .sections
+            .iter()
+            .filter(|(session, _)| !excluded(session))
+            .map(|(_, text)| text.clone())
+            .collect();
+        compose(&composite.top, &sections)
+    };
+    let mut unread: Vec<String> = before
+        .unread
+        .iter()
+        .chain(&after.unread)
+        .map(|(_, origin)| origin.clone())
+        .collect();
+    unread.sort();
+    unread.dedup();
+    Comparison {
+        before: text(before),
+        after: text(after),
+        unread,
+    }
 }
 
 impl Composite {
@@ -632,10 +678,12 @@ impl Page {
         {
             return Ok(Lookup::Found(frame));
         }
-        let unreadable = self
-            .known
-            .iter()
-            .any(|frame| frame.document.is_none() && frame.silent);
+        // A frame with no document may be the one, and so may the children of
+        // a frame whose own frames could not be looked for.
+        let unreadable = self.known.iter().any(|frame| {
+            frame.document.is_none() && frame.silent
+                || frame.document.is_some() && !self.scanned.contains(&frame.session)
+        });
         Ok(if unreadable {
             Lookup::Unknown
         } else {
@@ -776,6 +824,7 @@ impl Page {
             top: top_text,
             sections,
             silent: self.notes(),
+            unread: self.unreadable(),
         })
     }
 
@@ -790,17 +839,21 @@ impl Page {
     pub fn notes(&self) -> Vec<String> {
         self.unreadable()
             .iter()
-            .map(|origin| note(origin))
+            .map(|(_, origin)| note(origin))
             .collect()
     }
 
-    /// The origins of those frames, in attach order.
-    pub fn unreadable(&self) -> Vec<String> {
+    /// The session and origin of those frames, in attach order.
+    pub fn unreadable(&self) -> Vec<(String, String)> {
         self.known
             .iter()
             .filter_map(|frame| match &frame.document {
-                None if frame.silent => Some(frame.attached_origin.clone()),
-                Some((_, origin)) if self.unread.contains(&frame.session) => Some(origin.clone()),
+                None if frame.silent => {
+                    Some((frame.session.clone(), frame.attached_origin.clone()))
+                }
+                Some((_, origin)) if self.unread.contains(&frame.session) => {
+                    Some((frame.session.clone(), origin.clone()))
+                }
                 _ => None,
             })
             .collect()
@@ -851,6 +904,7 @@ impl Page {
             .retain(|(session, _)| !silent.contains(session));
         self.unread.extend(silent);
         composite.silent = self.notes();
+        composite.unread = self.unreadable();
         let top = self.top.clone();
         let previous_top = self
             .dom(
@@ -970,11 +1024,46 @@ mod tests {
                 "# OOPIF k7q2 origin=http://b\n@k7q2:1 link \"B\"".into(),
             )],
             silent: Vec::new(),
+            unread: Vec::new(),
         };
         assert_eq!(
             composite.text(),
             "# T\n# http://a/\n\n@1 button \"A\"\n\n# OOPIF k7q2 origin=http://b\n@k7q2:1 link \"B\"\n"
         );
+    }
+
+    fn composite(top: &str, sections: &[(&str, &str)], unread: &[(&str, &str)]) -> Composite {
+        Composite {
+            top: top.into(),
+            sections: sections
+                .iter()
+                .map(|(session, text)| ((*session).into(), (*text).into()))
+                .collect(),
+            silent: Vec::new(),
+            unread: unread
+                .iter()
+                .map(|(session, origin)| ((*session).into(), (*origin).into()))
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn two_reads_are_compared_on_the_frames_both_could_read() {
+        let top = "# T\n# http://a/\n\n@1 button \"A\"\n";
+        let read = composite(top, &[("s1", "# OOPIF k7q2\n@k7q2:1 link \"B\"")], &[]);
+        let unread = composite(top, &[], &[("s1", "http://b.test")]);
+        // The frame answered in one read and not the other, in either order:
+        // it is in neither text, and it is named.
+        for (before, after) in [(&read, &unread), (&unread, &read)] {
+            let seen = compare(before, after);
+            assert_eq!(seen.before, seen.after);
+            assert_eq!(seen.unread, ["http://b.test"]);
+        }
+        // Two reads that both answered compare in full.
+        let other = composite(top, &[("s1", "# OOPIF k7q2\n@k7q2:1 link \"C\"")], &[]);
+        let seen = compare(&read, &other);
+        assert_ne!(seen.before, seen.after);
+        assert!(seen.unread.is_empty());
     }
 
     use super::super::fake_gateway::{self as fake, Frames, page, page_with_frames};
