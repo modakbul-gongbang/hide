@@ -884,6 +884,25 @@ fn a_worker_s_reports_stop_at_the_cap() {
 }
 
 #[test]
+fn an_agent_a_worker_spawned_acts_as_that_worker() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let t = h.ready("Parent", &[]);
+    let agent = h.task(&f, &t).worker.unwrap().agent.unwrap();
+    // The child's own pane and folder name no Task; its lineage does.
+    assert_eq!(
+        h.engine.role_for(Some("child-pane"), Some("/elsewhere")),
+        None
+    );
+    assert_eq!(
+        h.engine
+            .role_for_agents(&["agent-child".into(), agent, "agent-factory".into()]),
+        Some((f.clone(), t.clone()))
+    );
+    assert_eq!(h.engine.role_for_agents(&["agent-other".into()]), None);
+}
+
+#[test]
 fn a_worker_cannot_act_as_a_person() {
     let mut h = Bench::new(false);
     let f = h.factory(true);

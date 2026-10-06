@@ -59,6 +59,12 @@ fn guard(runtime: &Arc<Mutex<Runtime>>) -> MutexGuard<'_, Runtime> {
 pub struct FactoryCaller {
     pub pane: Option<String>,
     pub cwd: Option<String>,
+    /// A pane the caller named but could not be checked against: it can only
+    /// make the caller a worker, never an operator.
+    pub claimed: Option<String>,
+    /// The agents above the caller in the spawn lineage, nearest first: a
+    /// worker's child is a worker of the same Task (D-33).
+    pub ancestors: Vec<String>,
 }
 
 enum Request {
@@ -502,7 +508,18 @@ fn handle(
     caller: &FactoryCaller,
     command: Command,
 ) -> Value {
-    let role = match engine.role_for(caller.pane.as_deref(), caller.cwd.as_deref()) {
+    // Everything that names a worker binds to it: the caller's own pane or
+    // folder, a pane it claimed, or an agent above it in the spawn lineage.
+    let bound = engine
+        .role_for(caller.pane.as_deref(), caller.cwd.as_deref())
+        .or_else(|| {
+            caller
+                .claimed
+                .as_deref()
+                .and_then(|pane| engine.role_for(Some(pane), None))
+        })
+        .or_else(|| engine.role_for_agents(&caller.ancestors));
+    let role = match bound {
         Some((factory, task)) => Role::Worker { factory, task },
         None => Role::Operator {
             pane: caller.pane.clone().unwrap_or_else(|| "checkout".into()),

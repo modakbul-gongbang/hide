@@ -22,6 +22,9 @@ pub(crate) struct WorkerProbe {
     pub status_changed_at_unix_ms: u64,
 }
 
+/// How far up the spawn lineage a caller is followed to its worker.
+const LINEAGE_LIMIT: usize = 16;
+
 impl Runtime {
     /// Checks a local caller like a delivery request does and names the pane
     /// and checkout it speaks from.
@@ -47,10 +50,48 @@ impl Runtime {
                 })
                 .map(str::to_owned),
         };
+        let claimed = hint
+            .filter(|hint| pane.as_deref() != Some(*hint))
+            .map(str::to_owned);
+        let ancestors = pane
+            .as_deref()
+            .or(claimed.as_deref())
+            .map(|pane| self.factory_lineage(pane))
+            .unwrap_or_default();
         Ok(crate::factory::FactoryCaller {
             pane,
             cwd: Some(context.checkout_path.clone()).filter(|path| !path.is_empty()),
+            claimed,
+            ancestors,
         })
+    }
+
+    /// The agent ids above `pane` in the spawn lineage, nearest first, from
+    /// the ledger in memory; at most [`LINEAGE_LIMIT`] steps.
+    fn factory_lineage(&self, pane: &str) -> Vec<String> {
+        let Ok(ledger) = self.delivery_state() else {
+            return Vec::new();
+        };
+        let parent_of = |agent: &crate::coordination::AgentRecord| agent.parent.clone();
+        let mut next = ledger
+            .agents
+            .iter()
+            .rev()
+            .find(|agent| agent.pane == pane)
+            .and_then(parent_of);
+        let mut ancestors = Vec::new();
+        while let Some(id) = next {
+            if ancestors.len() >= LINEAGE_LIMIT || ancestors.contains(&id) {
+                break;
+            }
+            next = ledger
+                .agents
+                .iter()
+                .find(|agent| agent.id == id)
+                .and_then(parent_of);
+            ancestors.push(id);
+        }
+        ancestors
     }
 
     /// A delivery command the Factory sends as its own recipient, to the pane
@@ -274,7 +315,59 @@ fn usage_limit(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::coordination::AgentRecord;
+    use crate::delivery::ledger::Ledger;
     use crate::model::{ProviderUsageBucketSnapshot, ProviderUsageSnapshot};
+    use std::sync::Arc;
+
+    fn agent(id: &str, pane: &str, parent: Option<&str>) -> AgentRecord {
+        AgentRecord {
+            id: id.into(),
+            name: id.into(),
+            machine: "local".into(),
+            host_scope: "fixture".into(),
+            native_machine: "fixture-machine".into(),
+            session: id.into(),
+            instance: pane.into(),
+            pane: pane.into(),
+            parent: parent.map(str::to_owned),
+            project: None,
+            actor: Actor {
+                pane_id: pane.into(),
+                name: id.into(),
+                kind: "claude".into(),
+                device_id: "local".into(),
+                session: crate::wire::session_digest(id),
+            },
+            ended: false,
+        }
+    }
+
+    #[test]
+    fn a_caller_s_lineage_names_every_agent_above_it_and_stops_at_a_loop() {
+        let mut runtime = crate::runtime::tests::runtime();
+        runtime.delivery_ledger = Ok(Arc::new(Ledger {
+            agents: vec![
+                agent("agent-factory", "factory:f-1", None),
+                agent("agent-worker", "w1:p1", Some("agent-factory")),
+                agent("agent-child", "w2:p1", Some("agent-worker")),
+                agent("agent-grandchild", "w3:p1", Some("agent-child")),
+                agent("agent-a", "w9:p1", Some("agent-b")),
+                agent("agent-b", "w9:p2", Some("agent-a")),
+            ],
+            ..Ledger::default()
+        }));
+        assert_eq!(
+            runtime.factory_lineage("w3:p1"),
+            vec!["agent-child", "agent-worker", "agent-factory"]
+        );
+        assert!(runtime.factory_lineage("w0:p1").is_empty());
+        assert_eq!(
+            runtime.factory_lineage("w9:p1"),
+            vec!["agent-b", "agent-a"],
+            "a loop ends the walk"
+        );
+    }
 
     fn row(provider: &str, used: f64, bucket: Option<(f64, u64)>) -> ProviderUsageSnapshot {
         ProviderUsageSnapshot {

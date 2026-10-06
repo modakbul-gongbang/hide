@@ -345,6 +345,21 @@ impl Engine {
         self.store.events(factory, task, limit).unwrap_or_default()
     }
 
+    /// The Task whose worker is one of `agents` (a caller's spawn lineage):
+    /// a worker's child acts as that worker (D-33).
+    pub fn role_for_agents(&self, agents: &[String]) -> Option<(String, String)> {
+        let bound = |task: &&Task| {
+            task.worker
+                .as_ref()
+                .and_then(|worker| worker.agent.as_ref())
+                .is_some_and(|agent| agents.contains(agent))
+        };
+        let finished = |task: &&Task| matches!(task.state, TaskState::Cancelled | TaskState::Done);
+        let live = self.all_tasks().filter(|t| !finished(t)).find(&bound);
+        live.or_else(|| self.all_tasks().filter(&finished).find(&bound))
+            .map(|task| (task.factory.clone(), task.id.clone()))
+    }
+
     /// The role of a caller (D-33): a pane the Factory spawned, or a cwd
     /// inside a Factory worktree, is a worker of that Task. A finished or
     /// cancelled Task's worker stays a worker, so its pane never gains the

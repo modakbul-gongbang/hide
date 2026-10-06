@@ -340,7 +340,7 @@ impl WorkerRuntime for Shared {
         world.worker_status.remove(&request.task);
         Ok(WorkerRef {
             factory: String::new(),
-            agent: None,
+            agent: Some(format!("agent-{}", request.task)),
             name: request.name.clone(),
             pane: Some(format!("pane-{}", request.task)),
             runtime: request.runtime,

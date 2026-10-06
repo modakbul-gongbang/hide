@@ -143,6 +143,7 @@ Adding a dependency to a running Task whose predecessor is unmerged puts the Tas
 Each command runs with a role the engine decides from its own store, never from the caller's claim or a file.
 A caller is a worker when its pane is the pane of a Task's worker, or when its working folder is inside a Task's worktree.
 A `cancelled` or `done` Task's worker stays a worker, so its pane never gains an operator's commands, and the Task's state refuses its reports; a live Task wins when a pane or folder was reused.
+An agent a worker spawned acts as that worker: the host follows the caller's spawn lineage in the delivery ledger (up to 16 agents up), and a pane a checkout caller names but cannot prove only ever makes it a worker, never an operator.
 Every other caller is an operator, recorded by pane id, or `checkout` when the caller has no pane.
 The engine itself acts as a third role for deadlines and timers and is never a command caller.
 A capability file holds only a token, so editing it cannot change a role.
