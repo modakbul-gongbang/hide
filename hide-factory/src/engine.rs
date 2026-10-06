@@ -1388,7 +1388,16 @@ impl Engine {
                 "Revive it first with hide factory revive",
             ));
         }
-        let card = self.validate_card(factory_id, Some(id), &input, Some(&task.card))?;
+        let mut card = self.validate_card(factory_id, Some(id), &input, Some(&task.card))?;
+        // A producer adds dependencies but never removes one a review or a
+        // person added: removal is a person's `dep remove` (D-02, D-08).
+        let mut depends_on = task.card.depends_on.clone();
+        for dependency in card.depends_on.drain(..) {
+            if !depends_on.contains(&dependency) {
+                depends_on.push(dependency);
+            }
+        }
+        card.depends_on = depends_on;
         let attachment = match &input.prd {
             Some(prd) => {
                 let version = task.attachments.last().map_or(1, |a| a.version + 1);

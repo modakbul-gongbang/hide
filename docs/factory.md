@@ -226,6 +226,7 @@ The review sees only the card, its attachment, the repository's file names and g
 
 Adding again with `--task <id>` or the same issue updates the same Task and reviews it again; the same content changes nothing.
 A re-add on a Task that already runs does not rewrite its card: it adds a scope-change question that a person approves or rejects.
+A re-add adds dependencies but never drops one the review or a person added, so a producer that resends the card it knows changes nothing; removing a dependency is a person's `dep remove`.
 The producer's open decisions become intake questions, and a Task is Ready only when the review is done and no question besides a notice is open.
 Ready creates the issue: a GitHub Task gets an issue labelled `factory` whose body carries a hidden Task marker, the goal, the criteria and the out-of-scope items, and a local Task gets an `L-<number>`.
 A Task added from an existing issue gets the label instead.

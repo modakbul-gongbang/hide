@@ -257,6 +257,42 @@ fn review_questions_hold_the_task_until_answered_and_re_adding_is_idempotent() {
 }
 
 #[test]
+fn a_re_add_keeps_a_dependency_a_person_added() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let a = h.ready("First", &[]);
+    let b = h.add("Second", &[])["task"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let added = h.op(Command::Dep {
+        task: b.clone(),
+        on: a.clone(),
+        remove: false,
+    });
+    assert_eq!(added["ok"], true, "{added}");
+    h.engine.tick();
+    // The producer sends the card it knows, without that edge.
+    for _ in 0..2 {
+        h.op(Command::Add {
+            project: None,
+            task: Some(b.clone()),
+            issue: None,
+            card: card("Second", &[]),
+            producer_pane: None,
+        });
+    }
+    let task = h.task(&f, &b);
+    assert_eq!(task.card.depends_on, vec![a.clone()]);
+    assert!(
+        !task
+            .open_questions()
+            .any(|q| matches!(q.kind, QuestionKind::ScopeChange { .. })),
+        "the same card is no scope change"
+    );
+}
+
+#[test]
 fn a_prd_changed_while_running_becomes_the_task_s_only_once_approved() {
     let mut h = Bench::new(false);
     let f = h.factory(true);
