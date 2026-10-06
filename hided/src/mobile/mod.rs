@@ -538,16 +538,15 @@ impl Mobile {
         }
         {
             let mut inner = self.lock();
-            // A code exists for someone looking at Settings > Mobile; the
-            // minute pass with no one watching mints none.
-            if exposed
-                && !inner.observers.is_empty()
-                && inner
-                    .phones
-                    .code()
-                    .is_none_or(|(_, expires)| expires <= now_ms())
+            // A code is minted only by `mobile_show_code`; a pass here only
+            // lets an expired one go, so the frame never offers a QR no
+            // phone can pair with.
+            if inner
+                .phones
+                .code()
+                .is_some_and(|(_, expires)| expires <= now_ms())
             {
-                inner.phones.new_code(now_ms());
+                inner.phones.clear_code();
             }
         }
         self.settle(exposure, Some(checklist));
@@ -1038,14 +1037,16 @@ impl Mobile {
                 let reread = {
                     let mut inner = self.lock();
                     if observing {
+                        // Opening Settings > Mobile issues no code and voids
+                        // none (B58); only `mobile_show_code` does.
                         inner.observers.insert(connection);
-                        // Opening Settings > Mobile again shows a new code (B10).
-                        if matches!(inner.exposure, Exposure::Exposed { .. }) {
-                            inner.phones.new_code(now_ms());
-                        }
                         inner.settings.enabled
                     } else {
                         inner.observers.remove(&connection);
+                        // The last Mobile page closing takes the QR with it.
+                        if inner.observers.is_empty() {
+                            inner.phones.clear_code();
+                        }
                         false
                     }
                 };
@@ -1055,7 +1056,7 @@ impl Mobile {
                     tokio::spawn(async move { mobile.reconcile().await });
                 }
             }
-            "mobile_new_code" => {
+            "mobile_show_code" => {
                 {
                     let mut inner = self.lock();
                     if !matches!(inner.exposure, Exposure::Exposed { .. }) {
@@ -1063,6 +1064,10 @@ impl Mobile {
                     }
                     inner.phones.new_code(now_ms());
                 }
+                self.publish();
+            }
+            "mobile_hide_code" => {
+                self.lock().phones.clear_code();
                 self.publish();
             }
             "mobile_revoke" => {
@@ -1092,7 +1097,14 @@ impl Mobile {
 
     /// A renderer connection closed: it no longer watches Settings > Mobile.
     pub fn release(&self, connection: u64) {
-        let removed = self.lock().observers.remove(&connection);
+        let removed = {
+            let mut inner = self.lock();
+            let removed = inner.observers.remove(&connection);
+            if removed && inner.observers.is_empty() {
+                inner.phones.clear_code();
+            }
+            removed
+        };
         if removed {
             self.publish();
         }
@@ -1148,14 +1160,7 @@ impl Mobile {
             } else {
                 Err(PairRefusal::CodeExpired)
             };
-            // The code is spent; Settings > Mobile, while open, shows the next
-            // one at once for the next phone instead of an empty QR place.
-            if result.is_ok()
-                && !inner.observers.is_empty()
-                && matches!(inner.exposure, Exposure::Exposed { .. })
-            {
-                inner.phones.new_code(now_ms());
-            }
+            // The code is spent; the next phone needs `mobile_show_code`.
             result
         };
         match &result {

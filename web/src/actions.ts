@@ -933,7 +933,7 @@ export function createActions(send: DispatchFn) {
       dispatch({ schema_version: 2, kind: "mobile_observe", payload: { observing } });
     },
     newMobileCode() {
-      dispatch({ schema_version: 2, kind: "mobile_new_code", payload: {} });
+      dispatch({ schema_version: 2, kind: "mobile_show_code", payload: {} });
     },
     revokePhone(phoneId: string) {
       dispatch({ schema_version: 2, kind: "mobile_revoke", payload: { phone_id: phoneId } });
