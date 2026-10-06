@@ -9,12 +9,12 @@ export default defineConfig({
   // them in parallel makes them contend for the runner's cores, and a timing
   // assertion that fails under load reads as a product failure. One worker
   // keeps a runner deterministic; CI deals the tests out across runners
-  // (`--shard`), which is where the suite's parallelism lives.
+  // (scripts/web-e2e-shard.py), which is where the suite's parallelism lives.
   workers: 1,
   // Every test is its own unit: each starts and stops its own stack, so none
-  // depends on the one before it. Saying so lets `--shard` deal out tests
-  // instead of whole files, which is what keeps the CI shards even
-  // (s3 alone is a third of the suite).
+  // depends on the one before it. Saying so lets the CI shards deal out tests
+  // instead of whole files, which is what keeps them even (s3 alone is a
+  // third of the suite).
   fullyParallel: true,
   // CI retries a failed test once. A test that passes the retry is flaky, not
   // failing: the run passes and `scripts/ci-flaky-report.py` files it as an
