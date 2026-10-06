@@ -1878,12 +1878,19 @@ impl Engine {
                 .any(|q| q.text.starts_with("검토를 하지 못했습니다"))
         });
         if !already {
+            // Hide AI off, or no agent chosen to run it, refuses every
+            // judgment as `disabled`; fixing a provider would not help.
+            let text = if reason == "disabled" {
+                "검토를 하지 못했습니다. Settings › Hide AI에서 Hide AI를 켜고 Runs on을 고른 뒤 다시 검토하세요."
+            } else {
+                "검토를 하지 못했습니다. Settings › Hide AI에서 provider를 고친 뒤 다시 검토하세요."
+            };
             self.add_question(
                 factory,
                 id,
                 QuestionOrigin::Engine,
                 QuestionKind::Action,
-                "검토를 하지 못했습니다. Settings › Background AI에서 provider를 고친 뒤 다시 검토하세요.",
+                text,
                 "retry-review",
                 None,
                 None,

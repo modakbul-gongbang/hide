@@ -90,6 +90,8 @@ pub struct World {
     /// Scripted watch answers, oldest first; no warnings when empty.
     pub watch: VecDeque<Value>,
     pub judge_down: bool,
+    /// Every judgment answers as failed with this reason.
+    pub judgment_failure: Option<String>,
     /// The environment diagnosis's answer; an unknown cause when absent.
     pub env_diagnosis: Option<Value>,
     pub hold_judgments: bool,
@@ -489,6 +491,15 @@ impl Judge for Shared {
         let submitted = std::mem::take(&mut world.submitted);
         let mut answers = Vec::new();
         for judgment in submitted {
+            if let Some(reason) = world.judgment_failure.clone() {
+                answers.push(JudgmentAnswer {
+                    id: judgment.id.clone(),
+                    factory: judgment.factory.clone(),
+                    task: judgment.task.clone(),
+                    outcome: JudgmentOutcome::Failed { reason },
+                });
+                continue;
+            }
             let value = match &judgment.input {
                 JudgmentInput::IntakeReview { card, .. } => {
                     world.intake.get(&card.title).cloned().unwrap_or_else(

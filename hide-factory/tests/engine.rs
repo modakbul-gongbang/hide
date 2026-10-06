@@ -292,6 +292,24 @@ fn a_dependency_that_closes_a_loop_is_refused_with_its_path() {
 }
 
 #[test]
+fn a_review_refused_because_hide_ai_is_off_says_to_turn_it_on_once() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    h.world().judgment_failure = Some("disabled".into());
+    let answer = h.add("Needs review", &[]);
+    let id = answer["task"]["id"].as_str().unwrap().to_owned();
+    h.engine.tick();
+    h.engine.tick();
+    let questions: Vec<String> = h
+        .task(&f, &id)
+        .open_questions()
+        .map(|q| q.text.clone())
+        .collect();
+    assert_eq!(questions.len(), 1, "{questions:?}");
+    assert!(questions[0].contains("Hide AI를 켜고"), "{questions:?}");
+}
+
+#[test]
 fn a_review_that_cannot_run_keeps_the_task_drafting_and_asks_for_the_provider() {
     let mut h = Bench::new(false);
     let f = h.factory(true);
@@ -306,7 +324,7 @@ fn a_review_that_cannot_run_keeps_the_task_drafting_and_asks_for_the_provider() 
         inbox["items"][0]["text"]
             .as_str()
             .unwrap()
-            .contains("Background AI"),
+            .contains("Settings › Hide AI"),
         "{inbox}"
     );
 

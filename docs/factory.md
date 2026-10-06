@@ -259,6 +259,7 @@ Questions that a drift or check judgment adds always carry a default action, tak
 A drift question keeps the Task in `verifying`, does not wake the worker, and holds auto merge until it is answered or its deadline passes; an answer that differs from the default wakes the worker to apply it.
 A judgment that cannot run is never skipped and never read as a pass.
 A failed review marks the Task and puts a retry-or-cancel question in the inbox, and `add` answers `pending`.
+While Hide AI is off or no agent is chosen to run it, every judgment fails as `disabled`, and the question says to turn it on in Settings › Hide AI.
 A failed drift or check sends the Task to `merge_waiting` for a person.
 A failed watch or diagnosis changes no Task and is logged.
 
@@ -531,7 +532,8 @@ Common refusal reasons are `role_not_allowed`, `task_not_found`, `task_ambiguous
 `FactorySummary` and `TaskDetail` are the contract for any screen of the Factory, and `status`, `inbox` and `show --json` print them as they are.
 Every number in them is derived in `hide-factory/src/summary.rs` from the stored Tasks, and a screen computes nothing.
 Fields are added and never renamed or removed.
-Every sentence the engine writes into them (`state_label`, `waiting_for`, `text`, `result`, `remaining`, `gates`, `stop`) has a code beside it, so a screen can say it in any language; the codes are listed under [Codes](#codes) and pinned by `every_summary_code_is_pinned` in `summary.rs`.
+The engine's sentences in `state_label`, `waiting_for`, `result`, `remaining`, `gates` and `stop` have a code beside them, so a screen can say them in any language; the codes are listed under [Codes](#codes) and pinned by `every_summary_code_is_pinned` in `summary.rs`.
+An inbox item's `text` carries only its `kind`, and a question's own text, a split's piece count, a stop's detail and `TaskDetail.verification` have no code yet.
 
 **`FactorySummary`**
 
@@ -572,7 +574,7 @@ Every sentence the engine writes into them (`state_label`, `waiting_for`, `text`
 | `needs_person` | The Task is blocked, stopped, `merge_waiting`, or has an open question that is not a notice. |
 | `waiting_for` | For a waiting Task, the predecessors by display id, the environment hold, or `slot`; for a blocked one, `answer` or `predecessor`. |
 | `waiting_code` | The same as a `WaitingFor` code. |
-| `waiting_on` | For `predecessors` on a waiting Task, the predecessors' display ids. |
+| `waiting_on` | For `predecessors` on a waiting Task, the display ids of the predecessors it waits on, for a waiting or blocked Task. |
 | `env_hold` | For `environment`, the `EnvHold` code. |
 | `stop` | For a stopped Task, the `StopReason` code behind `state_label`. |
 | `priority` | The Task's priority. |
