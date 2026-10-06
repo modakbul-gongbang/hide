@@ -49,7 +49,11 @@ pub enum CommandKind {
         action: Action,
         request_id: Option<String>,
     },
+    /// `hide links`: a read of the link record (PRD link-graph D-19).
+    Links(herdr_core::links::query::LinksQuery),
 }
+
+const LINKS_USAGE: &str = "usage: hide links pr <number> | issue <number> | branch <name> | session <id> [--all-projects]";
 
 const BROWSER_USAGE: &str = "usage: hide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>] | connect [--display <id>] | help | <command> <display> ... (see hide browser help)";
 
@@ -82,8 +86,49 @@ pub fn parse_args(args: &[String]) -> Result<CommandKind, String> {
         Some("file") => parse_open(iter, true),
         Some("diff") => parse_open(iter, false),
         Some("view") => parse_view(iter),
+        Some("links") => parse_links(iter),
         Some(other) => Err(format!("unknown command: {other}")),
     }
+}
+
+fn parse_links<'a>(iter: impl Iterator<Item = &'a String>) -> Result<CommandKind, String> {
+    use herdr_core::links::query::{LinksQuery, QueryTarget};
+    let mut all_projects = false;
+    let mut words = Vec::new();
+    for word in iter {
+        if word == "--all-projects" && !all_projects {
+            all_projects = true;
+        } else if word.starts_with('-') {
+            return Err(LINKS_USAGE.to_owned());
+        } else {
+            words.push(word.as_str());
+        }
+    }
+    let number = |value: &str| {
+        value
+            .strip_prefix('#')
+            .unwrap_or(value)
+            .parse::<u64>()
+            .ok()
+            .filter(|number| *number > 0)
+    };
+    let target = match words.as_slice() {
+        ["pr", value] => number(value).map(|number| QueryTarget::Pr { number }),
+        ["issue", value] => number(value).map(|number| QueryTarget::Issue { number }),
+        ["branch", name] => Some(QueryTarget::Branch {
+            name: (*name).to_owned(),
+        }),
+        ["session", id] => Some(QueryTarget::Session {
+            id: (*id).to_owned(),
+        }),
+        _ => None,
+    }
+    .filter(QueryTarget::valid)
+    .ok_or(LINKS_USAGE)?;
+    Ok(CommandKind::Links(LinksQuery {
+        target,
+        all_projects,
+    }))
 }
 
 fn parse_open<'a>(
@@ -273,7 +318,7 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
         println!("{}", crate::delivery_cli::USAGE);
         println!("{}", crate::agent_cli::USAGE);
         println!(
-            "hide workspace info\nhide file open <path> [--beside] [--reveal] [--request-id <id>]\nhide diff open <path> [--beside] [--reveal] [--request-id <id>]\nhide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>]\nhide browser connect [--display <id>]\nhide browser snapshot|click|fill|type|press|hover|drag|scroll|wait|screenshot|eval|console|network <display> ...\nhide browser help\nhide view list\nhide view status <view-id>\nhide view select <view-id> [--reveal] [--request-id <id>]\nhide view close <view-id> [--request-id <id>]\nhide view split <view-id> --area <area-id> --edge left|right|up|down [--request-id <id>]\nhide view move <view-id> --area <area-id> --index <n> [--request-id <id>]\nEach Workspace command requires a live Hide renderer and a caller Hide can bind to a checkout, an attested Herdr pane or a shell inside a registered checkout; it never starts Hide."
+            "hide workspace info\nhide file open <path> [--beside] [--reveal] [--request-id <id>]\nhide diff open <path> [--beside] [--reveal] [--request-id <id>]\nhide browser open <url-or-path> [--reveal] [--wait] [--request-id <id>]\nhide browser connect [--display <id>]\nhide browser snapshot|click|fill|type|press|hover|drag|scroll|wait|screenshot|eval|console|network <display> ...\nhide browser help\nhide view list\nhide view status <view-id>\nhide view select <view-id> [--reveal] [--request-id <id>]\nhide view close <view-id> [--request-id <id>]\nhide view split <view-id> --area <area-id> --edge left|right|up|down [--request-id <id>]\nhide view move <view-id> --area <area-id> --index <n> [--request-id <id>]\nhide links pr <number> | issue <number> | branch <name> | session <id> [--all-projects]\nEach Workspace command requires a live Hide renderer and a caller Hide can bind to a checkout, an attested Herdr pane or a shell inside a registered checkout; it never starts Hide. hide links needs only the caller and a running Hide, and reads the caller's Project unless --all-projects is given."
         );
         return Ok(());
     }
@@ -296,6 +341,7 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
                     | CommandKind::BrowserConnect { .. }
                     | CommandKind::BrowserPage(_)
                     | CommandKind::WorkspaceAction { .. }
+                    | CommandKind::Links(_)
             ) =>
         {
             return workspace_refusal(
@@ -350,6 +396,37 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
         CommandKind::WorkspaceAction { action, request_id } => {
             workspace_action(&env, action, request_id.as_deref())
         }
+        CommandKind::Links(query) => links(&env, &query),
+    }
+}
+
+/// Prints the record's answer as one line; a refusal prints its reason and
+/// next action and exits non-zero (B42, B43).
+fn links(env: &Env, query: &herdr_core::links::query::LinksQuery) -> Result<(), String> {
+    let (reference, ephemeral) = match workspace_reference(env) {
+        Ok(reference) => reference,
+        Err(reason) => return query_refusal(&reason, bootstrap_next_action(&reason), true),
+    };
+    let _reference_owner =
+        ephemeral.then(|| crate::workspace_cli::OneShotReference(reference.clone()));
+    let answer = match crate::workspace_cli::request_links(&reference, query) {
+        Ok(answer) => answer,
+        Err(reason) => {
+            return query_refusal(
+                &reason,
+                "Check Hide status, reconnect the pane, and retry",
+                true,
+            );
+        }
+    };
+    println!("{answer}");
+    if answer["ok"] == true {
+        Ok(())
+    } else {
+        Err(answer["reason"]
+            .as_str()
+            .unwrap_or("links_request_failed")
+            .to_owned())
     }
 }
 
@@ -1441,6 +1518,55 @@ mod tests {
             ],
         ] {
             assert_eq!(parse(bad), Err(BROWSER_USAGE.to_owned()), "{bad:?}");
+        }
+    }
+
+    #[test]
+    fn links_reads_one_target_and_has_no_write_command() {
+        use herdr_core::links::query::{LinksQuery, QueryTarget};
+        let parse = |line: &[&str]| {
+            parse_args(&line.iter().map(|arg| (*arg).to_owned()).collect::<Vec<_>>())
+        };
+        assert_eq!(
+            parse(&["hide", "links", "pr", "#317"]),
+            Ok(CommandKind::Links(LinksQuery {
+                target: QueryTarget::Pr { number: 317 },
+                all_projects: false,
+            }))
+        );
+        assert_eq!(
+            parse(&["hide", "links", "--all-projects", "branch", "feat/x"]),
+            Ok(CommandKind::Links(LinksQuery {
+                target: QueryTarget::Branch {
+                    name: "feat/x".into()
+                },
+                all_projects: true,
+            }))
+        );
+        assert_eq!(
+            parse(&["hide", "links", "session", "a1b2"]),
+            Ok(CommandKind::Links(LinksQuery {
+                target: QueryTarget::Session { id: "a1b2".into() },
+                all_projects: false,
+            }))
+        );
+        for bad in [
+            &["hide", "links"][..],
+            &["hide", "links", "pr", "0"],
+            &["hide", "links", "pr", "abc"],
+            &["hide", "links", "issue"],
+            &["hide", "links", "add", "pr", "1"],
+            &["hide", "links", "pr", "1", "--project", "other"],
+            &[
+                "hide",
+                "links",
+                "pr",
+                "1",
+                "--all-projects",
+                "--all-projects",
+            ],
+        ] {
+            assert_eq!(parse(bad), Err(LINKS_USAGE.to_owned()), "{bad:?}");
         }
     }
 

@@ -74,14 +74,14 @@ fn repo() -> Repo {
 
 /// A runtime connected to one device whose session holds the repository,
 /// with that device's worktree facts already read through its helper.
-fn device_runtime(repo: &Repo) -> Arc<Mutex<Runtime>> {
+fn device_runtime(repo: &Repo) -> SharedRuntime {
     device_runtime_with_host(repo, FakeDevice::new())
 }
 
 fn device_runtime_with_host(
     repo: &Repo,
     host: Arc<dyn crate::host_access::HostChannel>,
-) -> Arc<Mutex<Runtime>> {
+) -> SharedRuntime {
     let mut runtime = runtime();
     let workspace_id = format!("remote:{DEVICE}:workspace:w1");
     let checkout_id = format!("remote:{DEVICE}:checkout:w1");
@@ -125,7 +125,7 @@ fn device_runtime_with_host(
         },
     );
     runtime.request_device_worktrees(DEVICE, true);
-    let shared = Arc::new(Mutex::new(runtime));
+    let shared = SharedRuntime::new(runtime);
     let mut runtime = shared.lock().unwrap();
     // No pane sits in the worktree, so the deletion never reaches Herdr.
     let connector: Arc<dyn hide_herdr_client::ApiConnector> = Arc::new(
@@ -134,10 +134,10 @@ fn device_runtime_with_host(
     runtime.install_remote_control(RemoteControlContext::new(
         DEVICE,
         connector,
-        Arc::downgrade(&shared),
+        shared.weak(),
         ChangeNotifier::noop(),
     ));
-    runtime.install_worker_context(Arc::downgrade(&shared), ChangeNotifier::noop());
+    runtime.install_worker_context(shared.weak(), ChangeNotifier::noop());
     drop(runtime);
     shared
 }

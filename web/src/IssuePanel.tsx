@@ -14,6 +14,9 @@ import { PullRequestChip } from "./OverviewLenses";
 import { STAGES, issueDate, type CardSubIssue, type TaskCard } from "./projectBoard";
 import type { IssueDetail } from "./snapshot";
 import { useShellStore } from "./store";
+import { LinkSessions } from "./LinkSessions";
+import { sameIssue } from "./linkPanel";
+import { shownPullRequest } from "./projects";
 import { CardAgentRow, EDIT_HINT, IssueLabelView, IssueMenu, PR_TONE, ReviewMarks, START_HINT, TaskGlyph, neighbourCard, type BoardHandlers } from "./TaskBoards";
 import { useEscapeLayer } from "./components/ui/layer";
 import { holdsCommandKey } from "./host";
@@ -146,6 +149,7 @@ export function IssuePanel({
       <Properties card={card} read={read} stage={stage} />
       <SubIssues card={card} handlers={handlers} />
       <WorkDone card={card} handlers={handlers} focusedPaneId={focusedPaneId} actions={actions} />
+      <IssueSessions card={card} actions={actions} />
       {editing ? null : <Body card={card} read={read} onEdit={() => setEditing(true)} onRetry={readIssue} />}
       {github && !editing && read.detail ? <Comments detail={read.detail} /> : null}
     </aside>
@@ -500,5 +504,35 @@ function LocalEditor({ card, body, actions, onCancel, onSaved }: { card: TaskCar
         </Button>
       </div>
     </div>
+  );
+}
+
+/**
+ * The sessions of the pull requests the issue is linked to (PRD link-graph
+ * B34): the PR panel's section with each made-it chip naming its PR, read from
+ * the record when the panel opens; an issue no PR is linked to has none.
+ */
+function IssueSessions({ card, actions }: { card: TaskCard; actions: Actions }) {
+  const { t } = useInterfaceTranslation();
+  const project = card.owner;
+  const key = card.task.key;
+  const held = useShellStore((s) => s.linkPanel);
+  const record = held && held.workspace_id === project.id && held.target.kind === "issue" && sameIssue(held.target.key, key) ? held : null;
+  useEffect(() => {
+    actions.openLinks(project.id, { kind: "issue", key });
+  }, [actions, project.id, key]);
+  useEffect(() => () => actions.closeLinks(), [actions]);
+  if (!record || (record.prs.length === 0 && !record.failure)) return null;
+  const branchOf = (pr: number) => project.checkouts.find((checkout) => shownPullRequest(checkout)?.number === pr)?.branch ?? null;
+  return (
+    <LinkSessions
+      panel={record}
+      project={project}
+      branchOf={branchOf}
+      onRetry={() => actions.openLinks(project.id, { kind: "issue", key })}
+      onOpenPr={(number) => actions.openPullRequestRow(project.id, number)}
+      empty={<p className="text-caption text-muted-foreground" data-link-none="true">{t("links.noIssueSessions")}</p>}
+      actions={actions}
+    />
   );
 }

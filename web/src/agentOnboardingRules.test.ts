@@ -1,5 +1,7 @@
+import fs from "node:fs";
+import path from "node:path";
 import { describe, expect, it } from "vitest";
-import { monogram } from "./agentLogos";
+import { agentLogo, monogram } from "./agentLogos";
 import { appliedAgents, selection, tileSwitchable } from "./agentOnboardingRules";
 import type { KitAgent } from "./snapshot";
 
@@ -26,6 +28,14 @@ describe("the first-run agent choice", () => {
   it("sends the agents still on in the adapters' order, and nothing for a tile with no switch", () => {
     expect(appliedAgents(agents, new Set())).toEqual(["claude-code", "codex"]);
     expect(appliedAgents(agents, new Set(["claude-code", "codex", "cursor"]))).toEqual([]);
+  });
+
+  it("draws every mark the logo manifest lists, in whatever format it is bundled, and a monogram for the rest", () => {
+    type Entry = { id: string };
+    const manifest = JSON.parse(fs.readFileSync(path.resolve(__dirname, "assets/agents/manifest.json"), "utf8")) as Record<"logos" | "existing" | "monogram", Entry[]>;
+    const drawn = [...manifest.logos, ...manifest.existing].map(({ id }) => id);
+    expect(drawn.filter((id) => agentLogo(id) === null)).toEqual([]);
+    expect(manifest.monogram.filter(({ id }) => agentLogo(id) !== null)).toEqual([]);
   });
 
   it("makes a monogram from a name without drawing anything", () => {

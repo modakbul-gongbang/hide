@@ -20,6 +20,7 @@ import { nativeCatalogs, nativeEnglish } from "./resources/native";
 import { overviewCatalogs, overviewEnglish } from "./resources/overview";
 import { prWorkCatalogs, prWorkEnglish } from "./resources/prWork";
 import { prListCatalogs, prListEnglish } from "./resources/prList";
+import { linksCatalogs, linksEnglish } from "./resources/links";
 import { requestsCatalogs, requestsEnglish } from "./resources/requests";
 import { settingsCatalogs, settingsEnglish } from "./resources/settings";
 import { workspaceCatalogs, workspaceEnglish } from "./resources/workspace";
@@ -50,6 +51,7 @@ export const english = {
   ...prWorkEnglish,
   ...boardEnglish,
   ...prListEnglish,
+  ...linksEnglish,
   ...overviewEnglish,
 } as const;
 
@@ -82,6 +84,7 @@ export const catalogs = {
     ...prWorkCatalogs.ko,
     ...boardCatalogs.ko,
     ...prListCatalogs.ko,
+    ...linksCatalogs.ko,
     ...overviewCatalogs.ko,
   },
   "zh-CN": {
@@ -109,6 +112,7 @@ export const catalogs = {
     ...prWorkCatalogs["zh-CN"],
     ...boardCatalogs["zh-CN"],
     ...prListCatalogs["zh-CN"],
+    ...linksCatalogs["zh-CN"],
     ...overviewCatalogs["zh-CN"],
   },
   ja: {
@@ -136,6 +140,7 @@ export const catalogs = {
     ...prWorkCatalogs.ja,
     ...boardCatalogs.ja,
     ...prListCatalogs.ja,
+    ...linksCatalogs.ja,
     ...overviewCatalogs.ja,
   },
 } satisfies Catalogs<typeof english>;

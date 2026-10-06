@@ -59,6 +59,7 @@ export function SearchPalette({ actions }: { actions: Actions }) {
   const { t, i18n } = useInterfaceTranslation();
   const language = requireInterfaceLanguage(i18n.language);
   const rest = useShellStore((s) => s.rest);
+  const linkSummaries = useShellStore((s) => s.linkSummaries);
   const close = useUiStore((s) => s.closeOverlay);
   const [query, setQuery] = useState("");
   const [highlighted, setHighlighted] = useState("");
@@ -173,7 +174,7 @@ export function SearchPalette({ actions }: { actions: Actions }) {
 
   const reads = (entry: SearchEntry): ProjectRead => (entry.kind === "checkout" && entry.workspace ? projectRead(entry.workspace, askedProjects, now, t, language) : null);
 
-  const detail: Detail | null = selectedEntry ? detailOf(rest, selectedEntry, now, t, language) : null;
+  const detail: Detail | null = selectedEntry ? detailOf(rest, selectedEntry, now, t, language, linkSummaries) : null;
 
   return (
     <CommandDialog

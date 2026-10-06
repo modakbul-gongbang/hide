@@ -45,6 +45,7 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
   const sessions = useShellStore((s) => s.projectSessions);
   const setProject = useUiStore((s) => s.setOverviewProject);
   const setLens = useUiStore((s) => s.setLens);
+  const clearSessionTarget = useCallback(() => setLens({ session: null }), [setLens]);
   const onRequestLens = useCallback((requests: Partial<OverviewLens["requests"]>) => setLens({ requests: { ...lens.requests, ...requests } }), [setLens, lens.requests]);
   const lensActions = useMemo(() => lensHandlers(actions, {
     openIssue: (_owner, task) => setLens({ tab: "issues", focusTask: task.key, panel: task.key }),
@@ -127,7 +128,7 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
   // An issue chip opens the Issues tile at its card with the issue's panel open.
   const view = lens.tab;
   // With the issue panel open the board and the panel scroll on their own, under a header that stays (D-43).
-  const split = view === "issues" && panelCard(tasks, lens.panel) !== null;
+  const split = (view === "issues" && panelCard(tasks, lens.panel) !== null) || (view === "prs" && lens.prs.panel !== null);
   const state =
     view === "issues" ? (tasks.cards.length === 0 ? "empty" : "board") : view === "agents" || view === "requests" ? (lensAgents.length === 0 ? "empty" : "board") : view === "prs" ? (pullRequests.groups.length === 0 ? "empty" : "board") : "sessions";
   const sessionsView = view === "sessions";
@@ -152,7 +153,7 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
       </header>
       <OpeningStatus actions={actions} />
       <div className="flex shrink-0 flex-wrap items-center justify-between gap-md px-lg py-sm" data-overview-view-row="true">
-        <LensTabs tiles={tiles} selected={view} onSelect={(tab) => setLens({ tab, focusTask: null, panel: null, prs: { ...lens.prs, focus: null } })} />
+        <LensTabs tiles={tiles} selected={view} onSelect={(tab) => setLens({ tab, focusTask: null, panel: null, session: null, prs: { ...lens.prs, focus: null, panel: null } })} />
         {view === "agents" ? (
           <GraphFilterControls agents={lensAgents} filter={lens.graph} onChange={(graph) => setLens({ graph })} />
         ) : view === "issues" ? (
@@ -171,10 +172,10 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
       {view === "sessions" ? (
         <div className="flex min-h-0 flex-1 border-t border-border">
           {/* Keyed by the Project, so another Project starts with its own filters and asks for itself. */}
-          <ProjectSessions key={`${project.device_id}:${project.id}`} workspace={project} actions={actions} />
+          <ProjectSessions key={`${project.device_id}:${project.id}`} workspace={project} actions={actions} target={lens.session} onTarget={clearSessionTarget} />
         </div>
       ) : view === "prs" ? (
-        <PullRequestsView board={pullRequests} project={project} lens={lens.prs} onLens={(prs) => setLens({ prs: { ...lens.prs, ...prs } })} handlers={lensActions} now={now} />
+        <PullRequestsView board={pullRequests} project={project} lens={lens.prs} onLens={(prs) => setLens({ prs: { ...lens.prs, ...prs } })} handlers={lensActions} actions={actions} now={now} />
       ) : view === "requests" ? (
         availability.state === "ready" ? (
           <RequestView rows={rows} scope="project" lens={lens.requests} onLens={onRequestLens} handlers={lensActions} actions={actions} onNewAgent={rows.length === 0 ? newAgent : undefined} />

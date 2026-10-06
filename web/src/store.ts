@@ -90,6 +90,8 @@ export type Frame = {
     documents?: DocumentsSection | null;
     project_sessions?: ProjectSessions;
     session_search?: import("./snapshot").SessionSearch;
+    link_panel?: import("./snapshot").LinkPanel;
+    link_summaries?: import("./snapshot").LinkSummaries;
     find?: PaneFind;
     chunks?: TerminalChunk[];
   } & Partial<DirectoryList> &
@@ -149,6 +151,10 @@ type Store = {
    */
   projectSessions: ProjectSessions | null;
   sessionSearch: import("./snapshot").SessionSearch | null;
+  /** The link record of the open PR or issue panel (`link_panel`); null until one opens. */
+  linkPanel: import("./snapshot").LinkPanel | null;
+  /** Each Project's link counts and chips (`link_summaries`). */
+  linkSummaries: import("./snapshot").LinkSummaries | null;
   agents: AgentRow[];
   /**
    * The keyboard-focus pane of the context on screen: the core's
@@ -280,6 +286,8 @@ export const useShellStore = create<Store>((set, get) => ({
   documents: NO_DOCUMENTS,
   projectSessions: null,
   sessionSearch: null,
+  linkPanel: null,
+  linkSummaries: null,
   agents: [],
   focusedPaneId: null,
   operatorFocusSent: 0,
@@ -369,12 +377,15 @@ export const useShellStore = create<Store>((set, get) => ({
         documents: payload.documents ? mergeDocuments(NO_DOCUMENTS, payload.documents) : NO_DOCUMENTS,
         projectSessions: payload.project_sessions ?? null,
         sessionSearch: payload.session_search ?? null,
+        linkPanel: payload.link_panel ?? null,
+        linkSummaries: payload.link_summaries ?? null,
       });
     } else if (
       payload.editor !== undefined ||
       payload.changes !== undefined ||
       payload.documents !== undefined ||
-      payload.project_sessions !== undefined || payload.session_search !== undefined
+      payload.project_sessions !== undefined || payload.session_search !== undefined ||
+      payload.link_panel !== undefined || payload.link_summaries !== undefined
     ) {
       set({
         editor: payload.editor ?? get().editor,
@@ -382,6 +393,8 @@ export const useShellStore = create<Store>((set, get) => ({
         documents: payload.documents ? mergeDocuments(get().documents, payload.documents) : get().documents,
         projectSessions: payload.project_sessions ?? get().projectSessions,
         sessionSearch: payload.session_search && (payload.revision ?? get().revision) >= get().revision ? share(get().sessionSearch, payload.session_search) : get().sessionSearch,
+        linkPanel: payload.link_panel ? share(get().linkPanel, payload.link_panel) : get().linkPanel,
+        linkSummaries: payload.link_summaries ? share(get().linkSummaries, payload.link_summaries) : get().linkSummaries,
       });
     }
     if (frame.type === "directory_list") {
