@@ -108,7 +108,7 @@ function AddAgent({ ai, actions, onChange }: { ai: BackgroundAi; actions: Action
             {t("hideAi.addAgent")}
           </Button>
         </DropdownMenuTrigger>
-        <DropdownMenuContent align="start" data-ai-add-menu="true">
+        <DropdownMenuContent align="end" data-ai-add-menu="true">
           {addable.map((provider) => (
             <DropdownMenuItem
               key={provider.id}

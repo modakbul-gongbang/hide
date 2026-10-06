@@ -95,7 +95,7 @@ export function Status({ tone, children, ...data }: { tone: Tone; children: Reac
 /** One line a row carries about itself: a failure, a warning, or what happens next. */
 export function Note({ tone = "muted", children, ...data }: { tone?: Tone; children: ReactNode } & Record<`data-${string}`, string>) {
   return (
-    <p role={tone === "error" ? "alert" : undefined} className={`break-words text-body ${TONE_TEXT[tone]}`} {...data}>
+    <p role={tone === "error" ? "alert" : undefined} className={`break-words break-keep text-body ${TONE_TEXT[tone]}`} {...data}>
       {children}
     </p>
   );

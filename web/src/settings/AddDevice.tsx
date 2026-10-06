@@ -61,7 +61,7 @@ export function AddDevice({ actions, devices, helperRoot, cliDir }: { actions: A
   if (choices.length === 0) return <NoHosts />;
   return (
     <div className="space-y-md" data-add-device-form="true">
-      <p className="text-body text-muted-foreground">{t("devices.addDescription")}</p>
+      <p className="break-keep text-body text-muted-foreground">{t("devices.addDescription")}</p>
       <RadioGroup
         value={chosen ?? ""}
         onValueChange={choose}
@@ -135,7 +135,7 @@ function HostRow({ choice, disabled }: { choice: HostChoice; disabled: boolean }
         {address ? <span className="break-all font-mono text-body text-muted-foreground">{address}</span> : null}
       </span>
       {reason ? (
-        <span id={note} className="max-w-1/2 shrink-0 break-words text-right text-body text-muted-foreground" data-ssh-host-note={choice.alias}>
+        <span id={note} className="max-w-1/2 shrink-0 break-words break-keep text-right text-body text-muted-foreground" data-ssh-host-note={choice.alias}>
           {reason}
         </span>
       ) : null}
