@@ -294,10 +294,10 @@ jobs:
       # differently and rebuilt the crates under it: herdr-core compiled three
       # times and compiling took about 6 of the job's 11 minutes (2026-10-05).
       TEST_TARGETS: >-
-        -p hided -p hide-host -p hide-kit -p hide-agent-hooks -p herdr-core
+        -p hided -p hide-host -p hide-kit -p hide-agent-hooks -p herdr-core -p hide-ai
         --lib --bin hide-agent-hooks
         --test opener_lifecycle --test connect_stop --test handshake --test real_herdr
-        --test hook_deadline --test windows_hook_command
+        --test hook_deadline --test windows_hook_command --test claude_cli
     steps:
       - name: Keep line endings as committed
         # The runner converts to CRLF by default, which would make the unit
@@ -330,6 +330,15 @@ jobs:
           bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'package(hide-host) & kind(lib) & test(workspace_bridge)'
           bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'binary_id(hided::connect_stop)'
           bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'binary_id(hided::handshake)'
+      - name: The weekly usage child's environment
+        # The `/usage` child is started with a restricted environment, which
+        # on Windows has to carry what Node and the CLI need to start, and the
+        # reset time it prints is read through a tz database Windows lacks.
+        if: ${{ !cancelled() && steps.tests.outcome == 'success' }}
+        timeout-minutes: 10
+        run: |
+          bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'binary_id(hide-ai::claude_cli) & test(usage::)'
+          bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'package(herdr-core) & kind(lib) & (test(zoneinfo::) | test(usage::tests))'
       - name: Install kit and its Windows command shim
         if: ${{ !cancelled() && steps.tests.outcome == 'success' }}
         timeout-minutes: 10

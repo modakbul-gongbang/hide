@@ -1,75 +1,47 @@
-//! Wall-clock time in a named zone, from the system's own tz database.
+//! Wall-clock time in a named zone, from a real tz database.
 //!
 //! `claude -p /usage` prints a reset as a local wall time and an IANA zone
 //! name (`Sep 24 at 1pm (Asia/Seoul)`), and the popover needs the instant.
-//! The core carries no calendar dependency, so this reads the zone's TZif
-//! file under `/usr/share/zoneinfo`, the same data `zoneinfo(3)` and Python's
-//! `ZoneInfo` answer from. It reads the version 2 block, whose transition
-//! times are 64-bit, and is deliberately narrow: it answers for instants the
-//! file's transition table covers, and reports the ones it does not.
-//!
-//! macOS ships "fat" files whose tables run to 2037, so the footer rule for
-//! later years is not parsed; a zone with a DST rule asked about an instant
-//! past its last transition is refused as `zone_range` rather than answered
-//! with the wrong offset. A zone without a rule (`Asia/Seoul`) keeps its last
-//! offset indefinitely, which is what the footer would say.
+//! The core carries no calendar arithmetic of its own, so the zone's rules
+//! come from `jiff`: the system database under `/usr/share/zoneinfo` on macOS
+//! and Linux, and the database `jiff` bundles on Windows, which has none. The
+//! footer rule of a zone with DST is applied, so any year answers.
 
 use std::path::{Component, Path, PathBuf};
 
-const ZONEINFO_ROOT: &str = "/usr/share/zoneinfo";
-/// The largest zone file in a distribution is a few kilobytes; this refuses a
-/// path that resolved to something else.
-const MAX_FILE_BYTES: u64 = 256 * 1024;
+use jiff::Timestamp;
+use jiff::tz::TimeZone;
 
+/// A zone's rules, read from the tz database.
 pub(crate) struct Zone {
-    /// `(utc_seconds, utoff_seconds)` per transition, ascending.
-    transitions: Vec<(i64, i32)>,
-    /// The offset before the first transition, or always when there is none.
-    first_offset: i32,
-    /// True when the footer names a DST rule for years past the table.
-    footer_has_rule: bool,
+    zone: TimeZone,
 }
 
 impl Zone {
     /// Loads a zone by IANA name. The name is validated as a relative path of
-    /// plain components before it touches the filesystem.
+    /// plain components before it reaches the database.
     pub(crate) fn load(name: &str) -> Result<Self, &'static str> {
-        Self::load_from(Path::new(ZONEINFO_ROOT), name)
-    }
-
-    fn load_from(root: &Path, name: &str) -> Result<Self, &'static str> {
-        let relative = zone_path(name).ok_or("zone_name")?;
-        let path = root.join(relative);
-        let size = std::fs::metadata(&path).map_err(|_| "zone_file")?.len();
-        if size > MAX_FILE_BYTES {
-            return Err("zone_file");
-        }
-        let bytes = std::fs::read(&path).map_err(|_| "zone_file")?;
-        Self::parse(&bytes)
+        zone_path(name).ok_or("zone_name")?;
+        let zone = TimeZone::get(name).map_err(|_| "zone_file")?;
+        Ok(Self { zone })
     }
 
     /// The UTC offset in force at `unix`.
     pub(crate) fn offset_at(&self, unix: i64) -> Result<i32, &'static str> {
-        let index = self.transitions.partition_point(|(at, _)| *at <= unix);
-        if index == 0 {
-            return Ok(self.first_offset);
-        }
-        if index == self.transitions.len() && self.footer_has_rule {
-            return Err("zone_range");
-        }
-        Ok(self.transitions[index - 1].1)
+        let at = Timestamp::from_second(unix).map_err(|_| "zone_range")?;
+        Ok(self.zone.to_offset(at).seconds())
     }
 
     /// Every instant at which the zone's wall clock reads `local` (seconds
     /// since the epoch as if the wall time were UTC): one normally, none
-    /// inside a spring-forward gap, two inside a fall-back overlap.
+    /// inside a spring-forward gap, two inside a fall-back overlap. A zone
+    /// changes offset at most once within a day of any instant, so the
+    /// offsets worth trying are the ones in force a day either side.
     pub(crate) fn instants_of(&self, local: i64) -> Result<Vec<i64>, &'static str> {
-        let mut offsets = self
-            .transitions
-            .iter()
-            .map(|(_, offset)| *offset)
-            .chain(std::iter::once(self.first_offset))
-            .collect::<Vec<_>>();
+        let mut offsets = Vec::with_capacity(3);
+        for day in -1..=1 {
+            offsets.push(self.offset_at(local + day * 86_400)?);
+        }
         offsets.sort_unstable();
         offsets.dedup();
         let mut instants = Vec::new();
@@ -80,105 +52,7 @@ impl Zone {
             }
         }
         instants.sort_unstable();
-        instants.dedup();
         Ok(instants)
-    }
-
-    fn parse(bytes: &[u8]) -> Result<Self, &'static str> {
-        let first = Header::read(bytes, 0)?;
-        if first.version < 2 {
-            return Err("zone_format");
-        }
-        // Skip the 32-bit block: the 64-bit one repeats it with wider times.
-        let second_at = Header::LEN + first.block_len(4);
-        let header = Header::read(bytes, second_at)?;
-        let mut cursor = second_at + Header::LEN;
-        let take = |cursor: &mut usize, len: usize| -> Result<&[u8], &'static str> {
-            let slice = bytes.get(*cursor..*cursor + len).ok_or("zone_format")?;
-            *cursor += len;
-            Ok(slice)
-        };
-        let times = take(&mut cursor, header.timecnt * 8)?
-            .as_chunks::<8>()
-            .0
-            .iter()
-            .map(|chunk| i64::from_be_bytes(*chunk))
-            .collect::<Vec<_>>();
-        let indices = take(&mut cursor, header.timecnt)?.to_vec();
-        let types = take(&mut cursor, header.typecnt * 6)?
-            .as_chunks::<6>()
-            .0
-            .iter()
-            .map(|chunk| i32::from_be_bytes(chunk[..4].try_into().expect("4 bytes")))
-            .collect::<Vec<_>>();
-        cursor += header.charcnt + header.leapcnt * 12 + header.isstdcnt + header.isutcnt;
-        let footer = bytes.get(cursor..).ok_or("zone_format")?;
-        let first_offset = *types.first().ok_or("zone_format")?;
-        let mut transitions = Vec::with_capacity(times.len());
-        for (at, index) in times.into_iter().zip(indices) {
-            let offset = *types.get(usize::from(index)).ok_or("zone_format")?;
-            transitions.push((at, offset));
-        }
-        if transitions.windows(2).any(|pair| pair[0].0 >= pair[1].0) {
-            return Err("zone_format");
-        }
-        Ok(Self {
-            transitions,
-            first_offset,
-            // A POSIX TZ string with a comma carries DST rules
-            // (`EST5EDT,M3.2.0,M11.1.0`); without one it is a fixed offset.
-            footer_has_rule: footer.contains(&b','),
-        })
-    }
-}
-
-struct Header {
-    version: u8,
-    isutcnt: usize,
-    isstdcnt: usize,
-    leapcnt: usize,
-    timecnt: usize,
-    typecnt: usize,
-    charcnt: usize,
-}
-
-impl Header {
-    const LEN: usize = 44;
-
-    fn read(bytes: &[u8], at: usize) -> Result<Self, &'static str> {
-        let header = bytes.get(at..at + Self::LEN).ok_or("zone_format")?;
-        if &header[..4] != b"TZif" {
-            return Err("zone_format");
-        }
-        let version = match header[4] {
-            0 => 1,
-            digit @ b'2'..=b'9' => digit - b'0',
-            _ => return Err("zone_format"),
-        };
-        let count = |index: usize| -> usize {
-            let start = 20 + index * 4;
-            u32::from_be_bytes(header[start..start + 4].try_into().expect("4 bytes")) as usize
-        };
-        Ok(Self {
-            version,
-            isutcnt: count(0),
-            isstdcnt: count(1),
-            leapcnt: count(2),
-            timecnt: count(3),
-            typecnt: count(4),
-            charcnt: count(5),
-        })
-    }
-
-    /// The data block's length for the given transition-time width.
-    fn block_len(&self, time_width: usize) -> usize {
-        self.timecnt * time_width
-            + self.timecnt
-            + self.typecnt * 6
-            + self.charcnt
-            + self.leapcnt * (time_width + 4)
-            + self.isstdcnt
-            + self.isutcnt
     }
 }
 
@@ -278,14 +152,15 @@ mod tests {
     }
 
     #[test]
-    fn a_rule_zone_refuses_years_past_its_table_and_a_fixed_zone_does_not() {
-        let year_2050 = local(2050, 6, 1, 12, 0);
+    fn a_rule_zone_answers_years_far_past_its_last_transition() {
+        // Summer 2050 in New York is EDT (UTC-4), winter EST (UTC-5).
+        let zone = Zone::load("America/New_York").unwrap();
+        assert_eq!(zone.offset_at(local(2050, 6, 1, 12, 0)), Ok(-4 * 3_600));
+        assert_eq!(zone.offset_at(local(2050, 12, 1, 12, 0)), Ok(-5 * 3_600));
         assert_eq!(
-            Zone::load("America/New_York").unwrap().offset_at(year_2050),
-            Err("zone_range")
-        );
-        assert_eq!(
-            Zone::load("Asia/Seoul").unwrap().offset_at(year_2050),
+            Zone::load("Asia/Seoul")
+                .unwrap()
+                .offset_at(local(2050, 6, 1, 12, 0)),
             Ok(9 * 3_600)
         );
     }
