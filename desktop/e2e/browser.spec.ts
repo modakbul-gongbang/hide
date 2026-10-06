@@ -76,7 +76,9 @@ test.afterEach(async () => {
     if (released.status !== 0) releaseFailure = String(released.stderr) || "native modifier release failed";
   }
   const info = test.info();
-  if (info.status !== info.expectedStatus) console.log(hostLog(run.env).map((line) => JSON.stringify(line)).join("\n"));
+  // TEMP evidence run for #511: every repetition's focus events, passed or failed.
+  console.log(`=== ${info.title} repeat ${info.repeatEachIndex} ${info.status}`);
+  console.log(hostLog(run.env).filter((line) => String(line.event).startsWith("browser.") && !String(line.event).startsWith("browser.cdp") && !String(line.event).startsWith("browser.view_created") && !String(line.event).startsWith("browser.control")).map((line) => JSON.stringify(line)).join("\n"));
   await app?.close().catch(() => undefined);
   app = null;
   if (extraWorkspace) herdr.run(["workspace", "close", extraWorkspace]);
