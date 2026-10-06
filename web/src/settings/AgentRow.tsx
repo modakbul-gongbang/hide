@@ -1,7 +1,7 @@
 import { ChevronRightIcon, ExternalLinkIcon } from "lucide-react";
 import { useId, useState } from "react";
 import type { Actions } from "../actions";
-import { AgentMark } from "../components/agent-mark";
+import { AgentLogo } from "../components/agent-logo";
 import { Note, Row, Status } from "../components/settings-rows";
 import { Button } from "../components/ui/button";
 import { Switch } from "../components/ui/switch";
@@ -32,7 +32,7 @@ function OutLink({ href, label, aria, className = "", ...data }: { href: string;
 function Name({ agent }: { agent: KitAgent }) {
   return (
     <span className="flex min-w-0 items-center gap-sm">
-      <AgentMark agent={agent.id} label={agent.label} />
+      <AgentLogo agent={agent.id} label={agent.label} />
       <span className="min-w-0 truncate font-semibold">{agent.label}</span>
     </span>
   );

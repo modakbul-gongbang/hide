@@ -6,7 +6,7 @@ import { agentLogo, monogram } from "../agentLogos";
  * Decorative: the name always sits beside it. An agent with no bundled mark
  * draws its monogram, never an invented logo (design 10).
  */
-export function AgentMark({ agent, label }: { agent: string; label: string }) {
+export function AgentLogo({ agent, label }: { agent: string; label: string }) {
   const logo = agentLogo(agent);
   return (
     <span aria-hidden="true" className="flex size-(--size-icon-lg) shrink-0 items-center justify-center overflow-hidden rounded-sm bg-(--logo-plate)">

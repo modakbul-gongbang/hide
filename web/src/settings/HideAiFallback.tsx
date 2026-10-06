@@ -1,6 +1,6 @@
 import { PlusIcon, XIcon } from "lucide-react";
 import type { Actions } from "../actions";
-import { AgentMark } from "../components/agent-mark";
+import { AgentLogo } from "../components/agent-logo";
 import { Button } from "../components/ui/button";
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuLabel, DropdownMenuSeparator, DropdownMenuTrigger } from "../components/ui/dropdown-menu";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
@@ -48,7 +48,7 @@ function FallbackRow({ index, provider, model, actions, onChange }: { index: num
           <span aria-hidden="true" className="w-md shrink-0 text-center font-mono text-body text-muted-foreground" data-ai-fallback-order="true">
             {index + 1}
           </span>
-          <AgentMark agent={provider.agent} label={provider.label} />
+          <AgentLogo agent={provider.agent} label={provider.label} />
           <span className="min-w-0 break-words">{provider.label}</span>
         </span>
       }
@@ -118,7 +118,7 @@ function AddAgent({ ai, actions, onChange }: { ai: BackgroundAi; actions: Action
                 actions.addAiFallback(provider.id);
               }}
             >
-              <AgentMark agent={provider.agent} label={provider.label} />
+              <AgentLogo agent={provider.agent} label={provider.label} />
               <span className="min-w-0 flex-1">{provider.label}</span>
               <span className="text-caption text-muted-foreground">{state(provider).text}</span>
             </DropdownMenuItem>
@@ -127,7 +127,7 @@ function AddAgent({ ai, actions, onChange }: { ai: BackgroundAi; actions: Action
           {unusable.length > 0 ? <DropdownMenuLabel>{t("hideAi.cantUse")}</DropdownMenuLabel> : null}
           {unusable.map((provider) => (
             <DropdownMenuItem key={provider.id} disabled data-ai-unusable-item={provider.id}>
-              <AgentMark agent={provider.agent} label={provider.label} />
+              <AgentLogo agent={provider.agent} label={provider.label} />
               <span className="min-w-0 flex-1">{provider.label}</span>
               <span className="text-caption text-muted-foreground">{state(provider).text}</span>
             </DropdownMenuItem>

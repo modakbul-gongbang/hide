@@ -1,6 +1,6 @@
 import { useState } from "react";
 import type { Actions } from "../actions";
-import { AgentMark } from "../components/agent-mark";
+import { AgentLogo } from "../components/agent-logo";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../components/ui/select";
 import { Switch } from "../components/ui/switch";
 import { Group, Note, Row, Status } from "../components/settings-rows";
@@ -99,7 +99,7 @@ export function HideAiTab({ actions }: { actions: Actions }) {
               <SelectContent>
                 {choices.map((provider) => (
                   <SelectItem key={provider.id} value={provider.id}>
-                    <AgentMark agent={provider.agent} label={provider.label} />
+                    <AgentLogo agent={provider.agent} label={provider.label} />
                     {provider.label}
                   </SelectItem>
                 ))}
