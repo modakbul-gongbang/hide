@@ -1,7 +1,7 @@
 import type { StoredBuffer } from "./buffers";
 import { create } from "zustand";
 import type { ConnectionState } from "./connection";
-import { appliedIn } from "./operatorFocus";
+import { appliedAfter } from "./operatorFocus";
 import { remoteContext, remoteView } from "./remote";
 import { share } from "./share";
 import {
@@ -534,7 +534,7 @@ export const useShellStore = create<Store>((set, get) => ({
         viewGeneration: frame.type === "snapshot" ? get().viewGeneration + 1 : get().viewGeneration,
         ...cursors,
         focusedPaneId: focusedPaneOf(rest),
-        operatorFocusApplied: Math.max(get().operatorFocusApplied, appliedIn(rest) ?? 0),
+        operatorFocusApplied: appliedAfter(rest, get()),
         herdrState: rest.status?.herdr?.state ?? get().herdrState,
       });
     } else {

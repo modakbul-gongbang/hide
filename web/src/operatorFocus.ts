@@ -36,6 +36,22 @@ export function appliedIn(rest: SnapshotRest): number | null {
   return entry ? entry.sequence : null;
 }
 
+/**
+ * What the page takes as applied once `rest` has arrived.
+ *
+ * The core keeps the newest number per page and drops the oldest page when 16
+ * others have spoken since. A page whose entry was seen and is now gone has
+ * been dropped, and the core then reads it as having nothing in flight, so the
+ * page does the same: it takes everything it sent as applied rather than wait
+ * for an answer that cannot come. Before the first answer an absent entry
+ * means only that the core has not applied one yet.
+ */
+export function appliedAfter(rest: SnapshotRest, state: { operatorFocusSent: number; operatorFocusApplied: number }): number {
+  const applied = appliedIn(rest);
+  if (applied !== null) return Math.max(state.operatorFocusApplied, applied);
+  return state.operatorFocusApplied > 0 ? Math.max(state.operatorFocusApplied, state.operatorFocusSent) : 0;
+}
+
 /** Whether the snapshot includes every operator focus this page has sent on the open connection. */
 export function caughtUp(state: { operatorFocusSent: number; operatorFocusApplied: number }): boolean {
   return state.operatorFocusApplied >= state.operatorFocusSent;
