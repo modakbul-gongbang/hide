@@ -47,8 +47,6 @@ export const mobileSetupEnglish = {
   "mobileSetup.notificationsOff": "Notifications off",
   "mobileSetup.autoRevoke_one": "Automatically revoked in {{count}} day",
   "mobileSetup.autoRevoke_other": "Automatically revoked in {{count}} days",
-  "mobilePush.needsYou": "Needs your attention · {{place}}",
-  "mobilePush.done": "Done · {{place}}",
 } as const;
 
 const ko = {
@@ -98,8 +96,6 @@ const ko = {
   "mobileSetup.notificationsOff": "알림 꺼짐",
   "mobileSetup.autoRevoke_one": "{{count}}일 뒤 자동 해지",
   "mobileSetup.autoRevoke_other": "{{count}}일 뒤 자동 해지",
-  "mobilePush.needsYou": "내 확인 대기 · {{place}}",
-  "mobilePush.done": "끝 · {{place}}",
 } satisfies Catalog<typeof mobileSetupEnglish>;
 
 const zhCN = {
@@ -149,8 +145,6 @@ const zhCN = {
   "mobileSetup.notificationsOff": "通知已关闭",
   "mobileSetup.autoRevoke_one": "{{count}} 天后自动撤销连接",
   "mobileSetup.autoRevoke_other": "{{count}} 天后自动撤销连接",
-  "mobilePush.needsYou": "需要你确认 · {{place}}",
-  "mobilePush.done": "已完成 · {{place}}",
 } satisfies Catalog<typeof mobileSetupEnglish>;
 
 const ja = {
@@ -200,8 +194,6 @@ const ja = {
   "mobileSetup.notificationsOff": "通知はオフ",
   "mobileSetup.autoRevoke_one": "{{count}}日後に自動解除",
   "mobileSetup.autoRevoke_other": "{{count}}日後に自動解除",
-  "mobilePush.needsYou": "確認待ち · {{place}}",
-  "mobilePush.done": "完了 · {{place}}",
 } satisfies Catalog<typeof mobileSetupEnglish>;
 
 export const mobileSetupCatalogs = { en: mobileSetupEnglish, ko, "zh-CN": zhCN, ja } satisfies Catalogs<typeof mobileSetupEnglish>;

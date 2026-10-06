@@ -17,7 +17,7 @@ const agent = (id: string, availability: KitAgent["availability"]): KitAgent => 
 });
 
 describe("the first-run agent choice", () => {
-  const agents = [agent("claude-code", "available"), agent("cursor", "not_installed"), agent("codex", "available"), agent("amp", "unsupported_system")];
+  const agents = [agent("claude-code", "available"), agent("cursor", "not_installed"), agent("codex", "available"), agent("opencode", "unsupported_system")];
 
   it("starts with the agents that are installed on, and never switches on one that is not", () => {
     expect([...selection(agents, new Set())]).toEqual(["claude-code", "codex"]);
