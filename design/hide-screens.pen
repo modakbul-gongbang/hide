@@ -218371,14 +218371,18 @@
                                   "name": "Logo plate",
                                   "children": [
                                     {
-                                      "type": "text",
-                                      "id": "onb-gemini-cli-mono-l",
-                                      "name": "GC",
-                                      "content": "GC",
-                                      "fill": "$--muted-foreground",
-                                      "fontFamily": "$--font-mono",
-                                      "fontSize": "$--text-body",
-                                      "fontWeight": "600"
+                                      "type": "frame",
+                                      "id": "onb-gemini-cli-logo-l",
+                                      "name": "Logo",
+                                      "children": [],
+                                      "width": 32,
+                                      "height": 32,
+                                      "fill": {
+                                        "type": "image",
+                                        "enabled": true,
+                                        "url": "../web/src/assets/agents/gemini-cli.png",
+                                        "mode": "fit"
+                                      }
                                     }
                                   ],
                                   "width": 40,
@@ -219276,14 +219280,18 @@
                                   "name": "Logo plate",
                                   "children": [
                                     {
-                                      "type": "text",
-                                      "id": "onb-pi-mono-l",
-                                      "name": "PI",
-                                      "content": "PI",
-                                      "fill": "$--muted-foreground",
-                                      "fontFamily": "$--font-mono",
-                                      "fontSize": "$--text-body",
-                                      "fontWeight": "600"
+                                      "type": "frame",
+                                      "id": "onb-pi-logo-l",
+                                      "name": "Logo",
+                                      "children": [],
+                                      "width": 32,
+                                      "height": 32,
+                                      "fill": {
+                                        "type": "image",
+                                        "enabled": true,
+                                        "url": "../web/src/assets/agents/pi.svg",
+                                        "mode": "fit"
+                                      }
                                     }
                                   ],
                                   "width": 40,
@@ -219340,14 +219348,18 @@
                                   "name": "Logo plate",
                                   "children": [
                                     {
-                                      "type": "text",
-                                      "id": "onb-grok-mono-l",
-                                      "name": "GR",
-                                      "content": "GR",
-                                      "fill": "$--muted-foreground",
-                                      "fontFamily": "$--font-mono",
-                                      "fontSize": "$--text-body",
-                                      "fontWeight": "600"
+                                      "type": "frame",
+                                      "id": "onb-grok-logo-l",
+                                      "name": "Logo",
+                                      "children": [],
+                                      "width": 32,
+                                      "height": 32,
+                                      "fill": {
+                                        "type": "image",
+                                        "enabled": true,
+                                        "url": "../web/src/assets/agents/grok.svg",
+                                        "mode": "fit"
+                                      }
                                     }
                                   ],
                                   "width": 40,
@@ -219980,14 +219992,18 @@
                                   "name": "Logo plate",
                                   "children": [
                                     {
-                                      "type": "text",
-                                      "id": "onb-gemini-cli-mono-d",
-                                      "name": "GC",
-                                      "content": "GC",
-                                      "fill": "$--muted-foreground",
-                                      "fontFamily": "$--font-mono",
-                                      "fontSize": "$--text-body",
-                                      "fontWeight": "600"
+                                      "type": "frame",
+                                      "id": "onb-gemini-cli-logo-d",
+                                      "name": "Logo",
+                                      "children": [],
+                                      "width": 32,
+                                      "height": 32,
+                                      "fill": {
+                                        "type": "image",
+                                        "enabled": true,
+                                        "url": "../web/src/assets/agents/gemini-cli.png",
+                                        "mode": "fit"
+                                      }
                                     }
                                   ],
                                   "width": 40,
@@ -220885,14 +220901,18 @@
                                   "name": "Logo plate",
                                   "children": [
                                     {
-                                      "type": "text",
-                                      "id": "onb-pi-mono-d",
-                                      "name": "PI",
-                                      "content": "PI",
-                                      "fill": "$--muted-foreground",
-                                      "fontFamily": "$--font-mono",
-                                      "fontSize": "$--text-body",
-                                      "fontWeight": "600"
+                                      "type": "frame",
+                                      "id": "onb-pi-logo-d",
+                                      "name": "Logo",
+                                      "children": [],
+                                      "width": 32,
+                                      "height": 32,
+                                      "fill": {
+                                        "type": "image",
+                                        "enabled": true,
+                                        "url": "../web/src/assets/agents/pi.svg",
+                                        "mode": "fit"
+                                      }
                                     }
                                   ],
                                   "width": 40,
@@ -220949,14 +220969,18 @@
                                   "name": "Logo plate",
                                   "children": [
                                     {
-                                      "type": "text",
-                                      "id": "onb-grok-mono-d",
-                                      "name": "GR",
-                                      "content": "GR",
-                                      "fill": "$--muted-foreground",
-                                      "fontFamily": "$--font-mono",
-                                      "fontSize": "$--text-body",
-                                      "fontWeight": "600"
+                                      "type": "frame",
+                                      "id": "onb-grok-logo-d",
+                                      "name": "Logo",
+                                      "children": [],
+                                      "width": 32,
+                                      "height": 32,
+                                      "fill": {
+                                        "type": "image",
+                                        "enabled": true,
+                                        "url": "../web/src/assets/agents/grok.svg",
+                                        "mode": "fit"
+                                      }
                                     }
                                   ],
                                   "width": 40,
