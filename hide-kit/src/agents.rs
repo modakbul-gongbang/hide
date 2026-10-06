@@ -597,21 +597,26 @@ fn login_shell_path(target: &KitTarget) -> Option<OsString> {
         return answer.path.clone();
     }
     let asked = Instant::now();
-    let path = hide_platform::host::login_shell_path(
+    let path = match hide_platform::host::login_shell_path(
         shell,
         &target.home,
         LOGIN_SHELL_DEADLINE,
         &target.stop,
-    )
-    .inspect_err(|error| {
-        eprintln!(
-            "kit.login_shell_unread shell={} kind={:?} elapsed_ms={}",
-            shell.display(),
-            error.kind(),
-            asked.elapsed().as_millis()
-        );
-    })
-    .ok();
+    ) {
+        Ok(path) => Some(path),
+        // The kit's owner is going away (Hide quitting, a device's
+        // connection closed): nothing failed, and nothing is remembered.
+        Err(error) if error.kind() == std::io::ErrorKind::Interrupted => return None,
+        Err(error) => {
+            eprintln!(
+                "kit.login_shell_unread shell={} kind={:?} elapsed_ms={}",
+                shell.display(),
+                error.kind(),
+                asked.elapsed().as_millis()
+            );
+            None
+        }
+    };
     if let Ok(mut answer) = ANSWER.lock() {
         *answer = Some(ShellAnswer {
             shell: shell.to_path_buf(),
