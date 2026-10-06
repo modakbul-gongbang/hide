@@ -109,8 +109,8 @@ it("lists the installed agents in the supported order with a switch each, and fo
     "https://pi.dev/",
     "https://cursor.com/docs/cli/installation",
   ]);
-  // Docs is on each installed row (shown on hover or focus) and points at the kit's page.
-  expect(q('[data-agent-docs="codex"]')?.getAttribute("href")).toBe("https://docs.example.test/codex");
+  // Docs is on each installed row (shown on hover or focus) and points at this build's page for the agent, never the kit's `doc_url`.
+  expect(q('[data-agent-docs="codex"]')?.getAttribute("href")).toBe("https://learn.chatgpt.com/docs/build-skills");
   // One machine: no switch at the top.
   expect(q("[data-agents-machines]")).toBeNull();
   await unmount();
@@ -202,20 +202,67 @@ it("lists one machine at a time under a switch that appears only with a device, 
   await click(down.q('[data-agents-retry="studio"]'));
   expect(sent(down.events, "retry_connect")[0]?.payload).toEqual({ target_id: "studio" });
   await down.unmount();
+
+  // Still connecting, the Devices tab withholds Retry and so does this tab; a device switched off there points at Devices.
+  const connecting = await mount({ ...state([device("local"), { ...studio, state: "unavailable" }]), rest: { ...state([device("local"), { ...studio, state: "unavailable" }]).rest, status: { remote: [{ target_id: "studio", state: "connecting" }] } } } as never);
+  await click(connecting.q('[data-agents-machine="studio"]'));
+  expect(connecting.q('[data-agents-blocked="connecting:studio"]')?.textContent).toBe("Connecting to Studio…");
+  expect(connecting.q("[data-agents-retry]")).toBeNull();
+  expect(connecting.q("[data-agents-unreachable]")).toBeNull();
+  await connecting.unmount();
+  const off = await mount(state([device("local"), { ...studio, state: "disabled" }]));
+  await click(off.q('[data-agents-machine="studio"]'));
+  expect(off.q('[data-agents-blocked="disabled:studio"]')?.textContent).toBe("Studio is switched off in Devices.");
+  expect(off.q("[data-agents-retry]")).toBeNull();
+  await off.unmount();
 });
 
-it("Check again reads the machine and rests as it was; a machine whose kit cannot run says why while its list stays (B10)", async () => {
+it("Check again asks the kit and shows the kit's own state: under way while it reads, the old list and one reason when it failed (B10)", async () => {
   const { q, click, events, unmount } = await mount(state([device("local", { kit: kit(SEVEN, { unavailable: "A daemon outside the package installs nothing" }) })]));
   expect(q("[data-agents-unavailable]")?.textContent).toBe("A daemon outside the package installs nothing");
   expect(q('[data-agent-row="local:claude-code:on"]')).not.toBeNull();
   expect(q("[data-agents-check]")?.getAttribute("data-agents-check")).toBe("idle");
-  // The tab reads the kit once as it opens (the demand hook); the button asks again.
+  // The tab reads the kit once as it opens (the demand hook); the button asks again and keeps no clock of its own.
   const opened = sent(events, "kit_check").length;
   await click(q("[data-agents-check]"));
   expect(sent(events, "kit_check")).toHaveLength(opened + 1);
-  expect(q("[data-agents-check]")?.getAttribute("data-agents-check")).toBe("checking");
-  expect(q("[data-agents-check]")?.hasAttribute("disabled")).toBe(true);
+  expect(q("[data-agents-check]")?.getAttribute("data-agents-check")).toBe("idle");
   await unmount();
+
+  const reading = await mount(state([device("local", { kit: kit(SEVEN, { checking: true }) })]));
+  expect(reading.q("[data-agents-check]")?.getAttribute("data-agents-check")).toBe("checking");
+  expect(reading.q("[data-agents-check]")?.hasAttribute("disabled")).toBe(true);
+  expect(reading.q("[data-agents-check]")?.getAttribute("aria-busy")).toBe("true");
+  await reading.unmount();
+
+  const failed = await mount(state([device("local", { kit: kit(SEVEN, { check_failed: "timed_out" }) })]));
+  expect(failed.q("[data-agents-check-failed]")?.textContent).toBe("Couldn't check again: it took too long");
+  expect(failed.all("[data-agent-row]")).toHaveLength(7);
+  await failed.unmount();
+});
+
+it("draws no Docs link from a URL a machine reports, whatever its scheme (W7)", async () => {
+  const hostile = [agent("claude-code", { doc_url: "javascript:alert(1)" }), agent("codex", { doc_url: "file:///etc/passwd" }), ...SEVEN.slice(2)];
+  const { all, q, unmount } = await mount(state([device("local", { kit: kit(hostile) })]));
+  const hrefs = all("a[href]").map((link) => link.getAttribute("href") ?? "");
+  expect(hrefs.filter((href) => !href.startsWith("https://"))).toEqual([]);
+  expect(q('[data-agent-docs="claude-code"]')?.getAttribute("href")).toBe("https://code.claude.com/docs/en/skills");
+  await unmount();
+});
+
+it("lists an agent that is on only by default, with no program, as not installed and never Ready (B9)", async () => {
+  const set = [agent("claude-code", { availability: "not_installed", enabled: true, chosen: false, sessions: sessions(0) }), agent("codex", { sessions: sessions(0) }), ...SEVEN.slice(2)];
+  const { all, text, q, unmount } = await mount(state([device("local", { kit: kit(set) })]));
+  expect(all("[data-agent-row]").map((row) => row.getAttribute("data-agent-row"))).toContain("claude-code:not-installed");
+  expect(q('[data-agent-row="local:claude-code:on"]')).toBeNull();
+  expect(text()).toContain("Installed 3");
+  await unmount();
+  // An agent the operator switched on keeps its row and switch after its program went away.
+  const kept = [agent("claude-code", { availability: "not_installed", enabled: true, chosen: true, sessions: sessions(0) }), ...SEVEN.slice(1)];
+  const again = await mount(state([device("local", { kit: kit(kept) })]));
+  expect(again.q('[data-agent-row="local:claude-code:on"]')).not.toBeNull();
+  expect(again.q('[data-agent-status="local:claude-code:ready"]')).toBeNull();
+  await again.unmount();
 });
 
 it("opens the Partial popover from the chip, lists every feature with a mark and a word, and says how Gemini CLI's status is judged (B15, B18)", async () => {

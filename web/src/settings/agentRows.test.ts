@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 import type { Device, KitAgent, KitPiece } from "../snapshot";
-import { agentInstalled, agentLeftover, agentMachines, agentProblems, agentStatus, installDocUrl, supportedAgents, SUPPORTED_AGENTS } from "./agentRows";
+import { agentInstalled, agentLeftover, checkFailedReason, docsUrl, agentMachines, agentProblems, agentStatus, installDocUrl, supportedAgents, SUPPORTED_AGENTS } from "./agentRows";
 
 const piece = (state: KitPiece["state"], reason: string | null = null): KitPiece => ({ state, reason, location: null });
 const agent = (id: string, patch: Partial<KitAgent> = {}): KitAgent => ({
@@ -41,11 +41,21 @@ describe("the agents of a machine (B8, B9, D-06)", () => {
     expect(SUPPORTED_AGENTS).toHaveLength(7);
   });
 
-  it("calls an agent installed when its program was found, or when it is on and keeps its switch", () => {
+  it("calls an agent installed only when its program was found; an agent the operator switched on keeps its switch after its program goes (B9)", () => {
+    // The program is there.
     expect(agentInstalled(agent("codex"))).toBe(true);
+    // The program is not there and nothing is on: not installed.
     expect(agentInstalled(agent("codex", { availability: "not_installed", enabled: false }))).toBe(false);
-    expect(agentInstalled(agent("codex", { availability: "not_installed", enabled: true }))).toBe(true);
     expect(agentInstalled(agent("codex", { availability: "unsupported_system", enabled: false }))).toBe(false);
+    // On only because Claude Code and Codex are on by default (no recorded choice): not installed, and never Ready.
+    const byDefault = agent("codex", { availability: "not_installed", enabled: true, chosen: false, sessions: sessions(0, 0) });
+    expect(agentInstalled(byDefault)).toBe(false);
+    expect(agentInstalled(agent("codex", { availability: "not_installed", enabled: true }))).toBe(false);
+    expect(agentStatus(byDefault)).toEqual({ kind: "none" });
+    // The operator switched it on and its program then went away: it stays listed so it can be switched off.
+    const gone = agent("codex", { availability: "not_installed", enabled: true, chosen: true, sessions: sessions(0, 0) });
+    expect(agentInstalled(gone)).toBe(true);
+    expect(agentStatus(gone)).toEqual({ kind: "none" });
   });
 
   it("splits each machine into the installed and the not installed, This Mac first, and says why a machine has no list", () => {
@@ -64,9 +74,30 @@ describe("the agents of a machine (B8, B9, D-06)", () => {
     expect(machines[3]).toMatchObject({ blocked: null, unread: true });
   });
 
+  it("says why a machine shows no list in the Devices tab's own words: connecting is not unreachable, and Switched off points at Devices (B11)", () => {
+    const set = [agent("claude-code")];
+    const down = device({ id: "box", state: "unavailable", agents: set });
+    const remote = (state: "not_connected" | "connecting" | "ready" | "failed"): never => [{ target_id: "box", state }] as never;
+    expect(agentMachines([down], remote("connecting"))[0]?.blocked).toBe("connecting");
+    expect(agentMachines([down], remote("not_connected"))[0]?.blocked).toBe("connecting");
+    expect(agentMachines([down], remote("failed"))[0]?.blocked).toBe("unreachable");
+    expect(agentMachines([down])[0]?.blocked).toBe("unreachable");
+    expect(agentMachines([{ ...down, state: "disabled" } as Device], remote("failed"))[0]?.blocked).toBe("disabled");
+    expect(agentMachines([{ ...down, state: "ready" } as Device], remote("failed"))[0]?.blocked).toBeNull();
+  });
+
   it("opens each agent's installation guide and none for an agent Hide does not support", () => {
     for (const id of SUPPORTED_AGENTS) expect(installDocUrl(id)).toMatch(/^https:\/\//);
     expect(installDocUrl("kiro")).toBeNull();
+    // The Docs link is this build's table, never a URL a machine reports (a device's helper supplies `doc_url`).
+    for (const id of SUPPORTED_AGENTS) expect(docsUrl(id)).toMatch(/^https:\/\//);
+    expect(docsUrl("kiro")).toBeNull();
+  });
+
+  it("words a failed check from a code and reads a code it does not know as the general line (B10, B68)", () => {
+    expect(checkFailedReason("unreachable")).toBe("agents.checkReason.unreachable");
+    expect(checkFailedReason("timed_out")).toBe("agents.checkReason.timed_out");
+    expect(checkFailedReason("something_new")).toBe("agents.checkReason.failed");
   });
 });
 

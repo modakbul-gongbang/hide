@@ -17,7 +17,7 @@ import { deviceIdFor, socketProblem } from "../settings";
 import type { Device } from "../snapshot";
 import { defaultDeviceName, hostChoices, pickableAliases, type HostChoice } from "../sshHosts";
 import { useShellStore } from "../store";
-import { useErrorSince } from "./useErrorSince";
+import { useRefusalSince } from "./useErrorSince";
 
 const HOST_EXAMPLE = "Host studio\n  HostName studio.local\n  User you";
 
@@ -29,7 +29,7 @@ export function AddDevice({ actions, devices, helperRoot, cliDir }: { actions: A
   const [nameEdited, setNameEdited] = useState(false);
   const [socket, setSocket] = useState("");
   const [submitted, setSubmitted] = useState<{ id: string; at: number } | null>(null);
-  const error = useErrorSince(submitted?.at ?? null, ["device."]);
+  const error = useRefusalSince(submitted?.at ?? null, ["device."]);
   const choices = hostChoices(hosts?.hosts ?? []);
   const pickable = pickableAliases(choices);
   // The dialog opening is the one request: hided reads the config then, not on a timer.

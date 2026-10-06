@@ -178,7 +178,7 @@ export function herdrProtocolText(herdr: HerdrStatus | undefined, t: Translate):
  * `disabled`; the remote status beside it adds whether an attempt is still
  * pending, so "never tried", "trying" and "failed" read differently.
  */
-function deviceState(device: Device, remote: RemoteStatus | undefined): { state: "local" | "ready" | "disabled" | "connecting" | "unavailable"; tone: "ok" | "warn" | "pending" | "local" } {
+export function deviceState(device: Device, remote: RemoteStatus | undefined): { state: "local" | "ready" | "disabled" | "connecting" | "unavailable"; tone: "ok" | "warn" | "pending" | "local" } {
   if (device.kind !== "remote") return { state: "local", tone: "local" };
   if (device.state === "ready") return { state: "ready", tone: "ok" };
   if (device.state === "disabled") return { state: "disabled", tone: "warn" };

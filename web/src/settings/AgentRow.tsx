@@ -9,7 +9,7 @@ import { useInterfaceTranslation } from "../i18n/client";
 import { kitPartText } from "../settings";
 import type { Device, KitAgent } from "../snapshot";
 import { useUiStore } from "../ui";
-import { agentLeftover, agentProblems, agentStatus, installDocUrl } from "./agentRows";
+import { agentLeftover, agentProblems, agentStatus, docsUrl, installDocUrl } from "./agentRows";
 import { PartialChip } from "./PartialChip";
 
 /** The link an agent row offers, as the row words it: a label and the arrow that says it leaves the app. */
@@ -69,6 +69,7 @@ export function AgentRow({ device, agent, actions, onAct }: { device: Device; ag
   const [open, setOpen] = useState(false);
   const listId = useId();
   const sessions = agent.sessions;
+  const docs = docsUrl(agent.id);
   const hidden = sessions?.not_connected_hidden ?? 0;
   const worst = problems.some(({ piece }) => piece.state === "failed") ? "error" : "warn";
   return (
@@ -77,13 +78,15 @@ export function AgentRow({ device, agent, actions, onAct }: { device: Device; ag
       label={
         <span className="flex min-w-0 flex-wrap items-center gap-x-sm gap-y-xs">
           <Name agent={agent} />
-          <OutLink
-            href={agent.doc_url}
-            label={t("agents.docs")}
-            aria={t("agents.docsAria", { agent: agent.label })}
-            className="opacity-0 transition-opacity focus-visible:opacity-100 group-focus-within/agent:opacity-100 group-hover/agent:opacity-100 [@media(hover:none)]:opacity-100"
-            data-agent-docs={agent.id}
-          />
+          {docs ? (
+            <OutLink
+              href={docs}
+              label={t("agents.docs")}
+              aria={t("agents.docsAria", { agent: agent.label })}
+              className="opacity-0 transition-opacity focus-visible:opacity-100 group-focus-within/agent:opacity-100 group-hover/agent:opacity-100 [@media(hover:none)]:opacity-100"
+              data-agent-docs={agent.id}
+            />
+          ) : null}
         </span>
       }
       data-agent-row={`${device.id}:${agent.id}:${agent.enabled ? "on" : "off"}`}
@@ -184,7 +187,7 @@ export function AgentRow({ device, agent, actions, onAct }: { device: Device; ag
           onAct();
           actions.setKitAgent(device.id, agent.id, checked);
         }}
-        aria-label={t(agent.enabled ? "agents.switchOff" : "agents.switchOn", { agent: agent.label })}
+        aria-label={agent.label}
         data-agent-switch={`${device.id}:${agent.id}:${agent.enabled ? "on" : "off"}`}
       />
     </Row>

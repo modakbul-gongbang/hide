@@ -33,7 +33,7 @@ import {
 import { bindingProblemText, sheetRowTitle } from "../shortcutLabels";
 import { useShellStore } from "../store";
 import { useUiStore } from "../ui";
-import { useErrorSince } from "./useErrorSince";
+import { useRefusalSince } from "./useErrorSince";
 
 export function ShortcutsTab({ actions }: { actions: Actions }) {
   const { t } = useInterfaceTranslation();
@@ -45,7 +45,7 @@ export function ShortcutsTab({ actions }: { actions: Actions }) {
   const { registry, diagnostic } = resolvedRegistry(stored, host, system);
   const [sentAt, setSentAt] = useState<number | null>(null);
   const [sent, setSent] = useState<Record<string, string> | null>(null);
-  const saveError = useErrorSince(sentAt, ["ui_state."]);
+  const saveError = useRefusalSince(sentAt, ["ui_state."]);
   const saving = sent !== null && JSON.stringify(sent) !== JSON.stringify(stored ?? {}) && saveError === null;
   const apply = (bindings: Record<string, string>) => {
     setSent(bindings);

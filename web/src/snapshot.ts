@@ -978,6 +978,12 @@ export type KitAgent = {
   label: string;
   availability: KitAgentAvailability;
   enabled: boolean;
+  /**
+   * The machine's record holds the operator's own choice for this agent. An
+   * agent that is on only by default (Claude Code, Codex) has none, so it is
+   * not kept under Installed once its program is gone (B9).
+   */
+  chosen?: boolean;
   skill: KitPiece;
   hook: KitPiece | null;
   /** Herdr's own integration for the agent; null for an agent the pinned Herdr has none for (Gemini CLI). */
@@ -1036,6 +1042,10 @@ export type Kit = {
   components: KitComponent[];
   /** Every agent Hide has an adapter for; empty until the machine was checked. */
   agents: KitAgent[];
+  /** A kit read asked with Check again is under way on this machine (B10). */
+  checking?: boolean;
+  /** Why the machine's last read failed, a code; null when it did not (B10). */
+  check_failed?: string | null;
   offers_reinstall: boolean;
   shares_account_with: string | null;
   /** What the machine's Codex answered about its shared daemon: true has it, false is older, null no answer. */

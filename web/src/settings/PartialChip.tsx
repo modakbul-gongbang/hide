@@ -3,6 +3,7 @@ import { Badge } from "../components/ui/badge";
 import { Popover, PopoverContent, PopoverTrigger } from "../components/ui/popover";
 import { useInterfaceTranslation } from "../i18n/client";
 import type { KitAgent } from "../snapshot";
+import { docsUrl } from "./agentRows";
 
 /**
  * The Partial chip of an agent Hide does only some things for, on or off (PRD
@@ -15,6 +16,7 @@ import type { KitAgent } from "../snapshot";
 export function PartialChip({ agent }: { agent: KitAgent }) {
   const { t } = useInterfaceTranslation();
   const features = agent.features ?? [];
+  const docs = docsUrl(agent.id);
   const screenOnly = features.some((feature) => feature.id === "herdr_integration" && !feature.supported);
   return (
     <Popover>
@@ -43,16 +45,18 @@ export function PartialChip({ agent }: { agent: KitAgent }) {
         </ul>
         {/* B15: an agent Herdr has no integration for says how its status is judged. */}
         {screenOnly ? <p className="mt-sm text-caption text-muted-foreground">{t("agents.screenOnly", { agent: agent.label })}</p> : null}
-        <a
-          href={agent.doc_url}
-          target="_blank"
-          rel="noopener noreferrer"
-          className="mt-sm inline-flex items-center gap-xs text-caption text-primary outline-none focus-visible:ring-1 focus-visible:ring-ring"
-          aria-label={t("agents.docsAria", { agent: agent.label })}
-        >
-          {t("agents.docs")}
-          <ExternalLinkIcon aria-hidden="true" className="size-(--size-icon-sm)" />
-        </a>
+        {docs ? (
+          <a
+            href={docs}
+            target="_blank"
+            rel="noopener noreferrer"
+            className="mt-sm inline-flex items-center gap-xs text-caption text-primary outline-none focus-visible:ring-1 focus-visible:ring-ring"
+            aria-label={t("agents.docsAria", { agent: agent.label })}
+          >
+            {t("agents.docs")}
+            <ExternalLinkIcon aria-hidden="true" className="size-(--size-icon-sm)" />
+          </a>
+        ) : null}
       </PopoverContent>
     </Popover>
   );

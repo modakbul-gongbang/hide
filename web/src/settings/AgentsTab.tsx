@@ -1,24 +1,17 @@
 import { RefreshCwIcon } from "lucide-react";
-import { useEffect, useState } from "react";
+import { useState } from "react";
 import type { Actions } from "../actions";
 import { Disclosure, Group, Note, Row } from "../components/settings-rows";
 import { Button } from "../components/ui/button";
 import { ToggleGroup, ToggleGroupItem } from "../components/ui/toggle-group";
 import { useInterfaceTranslation } from "../i18n/client";
 import { useShellStore } from "../store";
-import { agentMachines, type AgentMachine } from "./agentRows";
+import { agentMachines, checkFailedReason, type AgentMachine } from "./agentRows";
 import { AgentRow, NotInstalledRow } from "./AgentRow";
 import { IdleAgentsGroup } from "./IdleAgentsGroup";
 import { StartingWorkGroup } from "./StartingWorkGroup";
 import { useAgentsDemand } from "./useAgentsDemand";
 import { useErrorSince } from "./useErrorSince";
-
-/**
- * How long Check again reads as under way. The core publishes only what
- * changed, so a read that finds nothing new sends no frame to end it: the
- * button rests again after this bound, and a failed read shows its reason.
- */
-const CHECKING_MS = 1500;
 
 /**
  * Agents (PRD settings-cleanup D-06 to D-13): the seven supported agents of one
@@ -30,9 +23,10 @@ const CHECKING_MS = 1500;
 export function AgentsTab({ actions }: { actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const devices = useShellStore((s) => s.rest?.navigator?.devices);
+  const remote = useShellStore((s) => s.rest?.status?.remote);
   const [selected, setSelected] = useState("local");
   useAgentsDemand(actions, true);
-  const machines = agentMachines(devices ?? []);
+  const machines = agentMachines(devices ?? [], remote);
   const machine = machines.find((row) => row.device.id === selected) ?? machines[0];
   return (
     <>
@@ -63,17 +57,20 @@ export function AgentsTab({ actions }: { actions: Actions }) {
 function MachineAgents({ machine, actions }: { machine: AgentMachine; actions: Actions }) {
   const { t } = useInterfaceTranslation();
   const { device } = machine;
-  const [pressed, setPressed] = useState<{ at: number; check: boolean } | null>(null);
-  const [checking, setChecking] = useState(false);
-  const failure = useErrorSince(pressed?.at ?? null, ["kit."]);
-  useEffect(() => {
-    if (!checking) return;
-    const timer = window.setTimeout(() => setChecking(false), CHECKING_MS);
-    return () => window.clearTimeout(timer);
-  }, [checking]);
-  const act = () => setPressed({ at: Date.now(), check: false });
+  const [actedAt, setActedAt] = useState<number | null>(null);
+  // A refused switch or Reinstall: the core's `kit.` error after the press.
+  const failure = useErrorSince(actedAt, ["kit."]);
+  const act = () => setActedAt(Date.now());
 
-  // B11: a device that cannot be reached shows one line and a way to try again, not its last list.
+  // B11: a device still connecting or switched off in Devices says so and offers no retry there does not;
+  // one that cannot be reached shows one line and a way to try again, not its last list.
+  if (machine.blocked === "connecting" || machine.blocked === "disabled") {
+    return (
+      <Group>
+        <Row label={<Note data-agents-blocked={`${machine.blocked}:${device.id}`}>{t(machine.blocked === "connecting" ? "agents.connecting" : "agents.disabled", { device: device.label })}</Note>} />
+      </Group>
+    );
+  }
   if (machine.blocked === "unreachable") {
     return (
       <Group>
@@ -85,7 +82,9 @@ function MachineAgents({ machine, actions }: { machine: AgentMachine; actions: A
       </Group>
     );
   }
-  const reading = device.kit?.busy === true || checking;
+  // The core says when a read is under way and when the last one failed (B10); nothing here keeps time.
+  const reading = device.kit?.busy === true || device.kit?.checking === true;
+  const checkFailed = device.kit?.check_failed ?? null;
   return (
     <div data-agents-machine-list={device.id}>
       {machine.blocked === "unavailable" && device.kit?.unavailable ? <Note data-agents-unavailable={device.id}>{device.kit.unavailable}</Note> : null}
@@ -100,11 +99,8 @@ function MachineAgents({ machine, actions }: { machine: AgentMachine; actions: A
                 size="sm"
                 disabled={reading}
                 aria-label={t("agents.checkAgainAria")}
-                onClick={() => {
-                  setPressed({ at: Date.now(), check: true });
-                  setChecking(true);
-                  actions.checkKit();
-                }}
+                aria-busy={reading}
+                onClick={() => actions.checkKit()}
                 data-agents-check={reading ? "checking" : "idle"}
               >
                 <RefreshCwIcon aria-hidden="true" className={reading ? "animate-spin" : ""} />
@@ -117,9 +113,14 @@ function MachineAgents({ machine, actions }: { machine: AgentMachine; actions: A
               <AgentRow key={agent.id} device={device} agent={agent} actions={actions} onAct={act} />
             ))}
           </Group>
+          {checkFailed ? (
+            <Note tone="error" data-agents-check-failed={checkFailed}>
+              {t("agents.checkFailed", { reason: t(checkFailedReason(checkFailed)) })}
+            </Note>
+          ) : null}
           {failure ? (
             <Note tone="error" data-agents-error="true">
-              {pressed?.check ? t("agents.checkFailed", { reason: failure }) : failure}
+              {failure}
             </Note>
           ) : null}
           {machine.notInstalled.length > 0 ? (
