@@ -363,7 +363,7 @@ export type ExplorerMenuId = "new-file" | "new-folder" | "open-beside" | "open-b
  * The empty area below the rows (`row` null) stands for the root and offers
  * only the two creations.
  */
-export function explorerMenuItems({ isDirectory, row, html, besideReason, reveal, device }: {
+export function explorerMenuItems({ isDirectory, row, html, besideReason, reveal, device, node }: {
   isDirectory: boolean;
   row: Pick<ExplorerRow, "path"> | null;
   /** The file is HTML, which a browser display can show (issue 155). */
@@ -372,6 +372,8 @@ export function explorerMenuItems({ isDirectory, row, html, besideReason, reveal
   besideReason: string | null;
   reveal: RevealHost;
   device: string;
+  /** The core's own node id: the OS file manager reveals only its files. */
+  node: string;
 }): MenuEntry<ExplorerMenuId>[] {
   const items: MenuEntry<ExplorerMenuId>[] = [];
   if (isDirectory) {
@@ -382,7 +384,7 @@ export function explorerMenuItems({ isDirectory, row, html, besideReason, reveal
     if (html) items.push({ id: "open-browser", label: translate("explorer.openBrowser"), unavailable: null });
   }
   if (!row) return items;
-  const external = revealExternalEntry(reveal, device, translate, null, true);
+  const external = revealExternalEntry(reveal, device, node, translate, null, true);
   items.push(...external);
   items.push({ id: "rename", label: translate("common.rename"), unavailable: null, ...(external.length ? { separated: true } : {}) });
   items.push({ id: "trash", label: translate("explorer.moveToTrash"), unavailable: null, separated: true, destructive: true });

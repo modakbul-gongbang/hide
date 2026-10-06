@@ -112,8 +112,8 @@ export function besideUnavailable(
 
 // --- a display's menu --------------------------------------------------------
 
-/** The OS file manager's reveal as a display's menu offers it: the host's item, and the device the Workspace's files are on. */
-export type ExternalReveal = { host: RevealHost; device: string };
+/** The OS file manager's reveal as a display's menu offers it: the host's item, the device the Workspace's files are on, and the core's own node. */
+export type ExternalReveal = { host: RevealHost; device: string; node: string };
 
 export type ViewMenuId =
   | "keep_open"
@@ -164,7 +164,7 @@ function displayCommands(
     const label = labelOf();
     if (id === "reveal_external") {
       // A page is not a file of the checkout.
-      const [entry] = display.kind === "browser" ? [] : revealExternalEntry(external.host, external.device, translate, revealBlocked(display));
+      const [entry] = display.kind === "browser" ? [] : revealExternalEntry(external.host, external.device, external.node, translate, revealBlocked(display));
       return entry ? { ...entry, hidden: false } : { id, label, unavailable: null, hidden: true };
     }
     const edge = menuEdge(id);

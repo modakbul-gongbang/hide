@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { Actions } from "./actions";
-import { allBuffers, bufferDecision, bufferFor, claimLegacyBuffer, deleteBuffer, draftStorageHold, flushBuffer, identity, MAX_STORED_BYTES, queueBuffer, tabBufferKey, type BufferKey } from "./buffers";
+import { adoptNodeDrafts, allBuffers, bufferDecision, bufferFor, claimLegacyBuffer, deleteBuffer, draftStorageHold, flushBuffer, identity, MAX_STORED_BYTES, queueBuffer, tabBufferKey, type BufferKey } from "./buffers";
 import { useInterfaceTranslation } from "./i18n/client";
 import { Button } from "./components/ui/button";
 import { Hint } from "./components/ui/tooltip";
@@ -9,7 +9,7 @@ import { PatchView } from "./editor/PatchView";
 import { clearDraft, closingWithSave, latestDraft, noteDraft } from "./editor/draft";
 import { downloadFile } from "./fileBytes";
 import { relativeTo } from "./explorer";
-import { changesFor, editorTabFor, frontCheckout, type EditorDocumentSnapshot, type EditorTabSnapshot, type ViewDisplaySnapshot } from "./snapshot";
+import { changesFor, editorTabFor, frontCheckout, localDeviceId, type EditorDocumentSnapshot, type EditorTabSnapshot, type ViewDisplaySnapshot } from "./snapshot";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
 import { FileViewer } from "./viewers/FileViewer";
@@ -174,7 +174,8 @@ export function DocumentKeeper({ tabId, actions }: { tabId: string; actions: Act
     const key = documentBufferKey(useShellStore.getState(), tabId);
     if (connection !== "live" || !key || !hasDocument) return;
     let live = true;
-    void flushBuffer(key).then(() => claimLegacyBuffer(key)).then(allBuffers).then((buffers) => {
+    const node = localDeviceId(useShellStore.getState().rest);
+    void flushBuffer(key).then(() => adoptNodeDrafts(key.host, node)).then(() => claimLegacyBuffer(key, node)).then(allBuffers).then((buffers) => {
       if (!live) return;
       const buffer = bufferFor(buffers, key);
       checked.current = true;

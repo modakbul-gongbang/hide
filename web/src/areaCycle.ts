@@ -5,7 +5,7 @@
 import { areaFrame } from "./areaFrames";
 import { areasOf, findArea } from "./areaLayout";
 import { displaySurface, paneItem, paneKey, panelItem, recentEntries, recentPanes, tabSurface, type CycleItem, type Surface } from "./recent";
-import { frontCheckout, type SnapshotRest } from "./snapshot";
+import { frontCheckout, localDeviceId, type SnapshotRest } from "./snapshot";
 import { focusedPaneOf } from "./store";
 import { workspaceViewOf } from "./workspace";
 import { useUiStore, type Cycle } from "./ui";
@@ -39,13 +39,13 @@ export function scopedSurfaces(rest: SnapshotRest | null, scope: CycleScope): { 
   if (!checkout || checkout.id !== scope.checkoutId || checkout.path !== scope.path || !frame || frame.workspace.device_id !== scope.deviceId || frame.workspace.path !== scope.path || (useUiStore.getState().screen?.kind !== "workspace" || useUiStore.getState().overviewOpen)) return null;
   const view = workspaceViewOf(rest);
   if (!view || view.device_id !== scope.deviceId || view.path !== scope.path || (scope.kind === "view" && !view.views)) return null;
-  const layout = scope.kind === "view" ? view.layout : scope.deviceId === "local" ? view.agent_layout : frame.layout;
+  const layout = scope.kind === "view" ? view.layout : scope.deviceId === localDeviceId(rest) ? view.agent_layout : frame.layout;
   if (!layout) return null;
   const area = findArea(layout.root, scope.areaId);
   if (!area || !frame.geometry.areas.some((box) => box.id === scope.areaId)) return null;
   const surfaces = scope.kind === "agent"
     ? area.displays.filter((item) => checkout.tabs.some((tab) => tab.id === item.id)).map((item) => tabSurface(checkout, item.id, scope.deviceId))
-    : area.displays.map((item) => ({ ...displaySurface(checkout, item as import("./snapshot").ViewDisplaySnapshot), deviceId: scope.deviceId }));
+    : area.displays.map((item) => displaySurface(checkout, item as import("./snapshot").ViewDisplaySnapshot, scope.deviceId));
   return { surfaces, active: area.active };
 }
 

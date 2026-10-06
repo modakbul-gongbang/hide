@@ -58,8 +58,8 @@ function ConnectionPopover({
   // otherwise send again, because the core's pending state has not arrived.
   const sentAgainst = useRef<unknown>(null);
   const rest = useShellStore((s) => s.rest);
-  const device = local ? rest?.navigator?.devices?.find((row) => row.id === "local") : remoteContext(rest)?.device;
-  const machineId = local ? "local" : (device?.id ?? null);
+  const device = local ? rest?.navigator?.devices?.find((row) => row.kind !== "remote") : remoteContext(rest)?.device;
+  const machineId = device?.id ?? null;
   const copy = connectionCopy(connection.reason);
   const pending = reopenPending(connection);
   const failure = reopenFailureKey(connection);

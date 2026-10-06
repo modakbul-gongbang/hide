@@ -30,7 +30,7 @@ import { closeDecision, statusUnknownNotice, subtreeOf } from "./close";
 import { draftExported, unstoredDeviceDrafts, type SettingsTab } from "./settings";
 import { latestDraft, noteClosing, noteSent } from "./editor/draft";
 import { RELATION_ANSWER_TIMEOUT_MS, relationState } from "./lineage";
-import { railShown } from "./devices";
+import { frontDeviceId, localDeviceId, railShown } from "./devices";
 import { allAgents, projectEntryLens, pullRequestLens, type OpenTarget } from "./navigation";
 import { expectSurface, type Surface } from "./recent";
 import { useStartPanel } from "./startDraft";
@@ -82,9 +82,9 @@ import {
 } from "./viewLayout";
 import { workspaceViewOf, type Column, type SideColumn, type Tool } from "./workspace";
 
-/** The `device_id` an event carries: none for this machine, which the core takes as the default. */
-function deviceField(device: string): { device_id?: string } {
-  return device === "local" ? {} : { device_id: device };
+/** The `device_id` an event carries: none for the core's own node, which the core takes as the default. */
+function deviceField(device: string, node: string): { device_id?: string } {
+  return device === node || device === "" ? {} : { device_id: device };
 }
 
 export type Actions = ReturnType<typeof createActions>;
@@ -147,7 +147,7 @@ export function createActions(send: DispatchFn) {
   const explorerTarget = (): { root: string; device_id?: string } | null => {
     const context = explorerContext(rest());
     if (!context.checkout) return null;
-    return { root: context.checkout.path, ...deviceField(context.device) };
+    return { root: context.checkout.path, ...deviceField(context.device, localDeviceId(rest())) };
   };
 
   const setLeftSidebarVisible = (visible: boolean) => {
@@ -426,7 +426,7 @@ export function createActions(send: DispatchFn) {
 
   /** The ui_state field that holds one device's expanded folders. */
   const expandedPatch = (device: string, paths: string[]) =>
-    device === "local"
+    device === localDeviceId(rest())
       ? { expanded_paths: paths }
       : { device_expanded_paths: { ...(rest()?.ui_state?.device_expanded_paths ?? {}), [device]: paths } };
 
@@ -454,7 +454,7 @@ export function createActions(send: DispatchFn) {
         checkout_id: here.checkout.id,
         preview: beside ? false : preview,
         ...(beside ? { beside: true } : {}),
-        ...deviceField(here.device),
+        ...deviceField(here.device, localDeviceId(rest())),
       },
     });
   };
@@ -591,7 +591,7 @@ export function createActions(send: DispatchFn) {
         // The core checks the save against the revision it read when it
         // opened the file; the shell sends only the draft.
         contents_utf8: contents,
-        ...deviceField(device),
+        ...deviceField(device, localDeviceId(rest())),
       },
     });
     if (sent === false) return false;
@@ -627,6 +627,7 @@ export function createActions(send: DispatchFn) {
       hostId: state.daemon?.host_id,
       tabIds: (state.editor?.tabs ?? []).map((row) => row.id),
       deviceIds: (state.rest?.navigator?.devices ?? []).map((row) => row.id),
+      node: localDeviceId(state.rest),
       workspace: view ? workspaceKey(view) : null,
       displayIds: layout ? areasOf(layout.root).flatMap((area) => area.displays.map((display) => display.id)) : [],
       error: state.rest?.status?.last_error ?? null,
@@ -1090,7 +1091,7 @@ export function createActions(send: DispatchFn) {
     focusDevice(deviceId: string) {
       const screen = ui().screen;
       if (screen?.kind === "main" && screen.deviceId !== deviceId) ui().setScreen({ kind: "main", deviceId });
-      if ((rest()?.navigator?.focused_device_id ?? "local") === deviceId) return;
+      if (frontDeviceId(rest()) === deviceId) return;
       dispatch({ schema_version: 2, kind: "focus_device", payload: { device_id: deviceId } });
     },
 
@@ -1107,7 +1108,7 @@ export function createActions(send: DispatchFn) {
     startHomeTab(deviceId: string) {
       const requestId = remoteRequestId();
       ui().setHomeStart({ requestId, deviceId, refusal: null });
-      dispatch({ schema_version: 2, kind: "agent_start_in_checkout", payload: { home: true, provider: "terminal", request_id: requestId, ...deviceField(deviceId) } });
+      dispatch({ schema_version: 2, kind: "agent_start_in_checkout", payload: { home: true, provider: "terminal", request_id: requestId, ...deviceField(deviceId, localDeviceId(rest())) } });
     },
 
     /**
@@ -1118,13 +1119,13 @@ export function createActions(send: DispatchFn) {
      */
     openWorkspace(deviceId: string, workspaceId: string, checkoutId: string, expanded?: FocusCheckoutPayload["expanded"], projectExpanded?: boolean) {
       const path =
-        (deviceId === "local" ? rest()?.navigator?.workspaces : rest()?.status?.remote?.find((row) => row.target_id === deviceId)?.session?.workspaces)
+        (deviceId === localDeviceId(rest()) ? rest()?.navigator?.workspaces : rest()?.status?.remote?.find((row) => row.target_id === deviceId)?.session?.workspaces)
           ?.flatMap((row) => row.checkouts)
           .find((row) => row.id === checkoutId)?.path ?? null;
       beginOpening({ checkoutId, deviceId, path, workspaceId, expanded });
-      const front = rest()?.navigator?.focused_device_id ?? "local";
+      const front = frontDeviceId(rest());
       if (front === deviceId) return focusCheckout(workspaceId, checkoutId, expanded, projectExpanded);
-      if (deviceId === "local") {
+      if (deviceId === localDeviceId(rest())) {
         dispatch({ schema_version: 2, kind: "focus_checkout", payload: { workspace_id: workspaceId, checkout_id: checkoutId, focus_device: true, ...(expanded === undefined ? {} : { expanded }), ...(projectExpanded === undefined ? {} : { project_expanded: projectExpanded }) } });
         return;
       }
@@ -1153,7 +1154,7 @@ export function createActions(send: DispatchFn) {
      * (PRD S8 D-03, B4, B5). The Project is named whatever is focused.
      */
     refreshProjectSessions(workspaceId: string, deviceId: string) {
-      dispatch({ schema_version: 2, kind: "sessions_refresh", payload: { workspace_id: workspaceId, ...deviceField(deviceId) } });
+      dispatch({ schema_version: 2, kind: "sessions_refresh", payload: { workspace_id: workspaceId, ...deviceField(deviceId, localDeviceId(rest())) } });
     },
 
     /**
@@ -1198,7 +1199,7 @@ export function createActions(send: DispatchFn) {
         kind: "agent_start_in_checkout",
         payload: {
           ...("checkoutPath" in request.target ? { checkout_path: request.target.checkoutPath } : { home: true }),
-          ...(request.deviceId && request.deviceId !== "local" ? { device_id: request.deviceId } : {}),
+          ...(request.deviceId ? deviceField(request.deviceId, localDeviceId(rest())) : {}),
           provider: request.provider,
           ...(request.model ? { model: request.model } : {}),
           ...(request.prompt ? { prompt: request.prompt } : {}),
@@ -1320,7 +1321,7 @@ export function createActions(send: DispatchFn) {
       const modal = state.screen?.kind === "workspace" && Boolean(frontCheckout(rest()) && rest()?.workspace_view);
       const target = state.overlay === "search" ? state.searchReturnFocus : document.activeElement instanceof HTMLElement ? document.activeElement : null;
       useUiStore.setState({ overviewProjectId: projectId, overviewLens: selected, overviewOpen: modal, overviewReturnFocus: target, overlay: "none", ...(!modal ? { screen: { kind: "main" as const, deviceId } } : {}) });
-      if ((rest()?.navigator?.focused_device_id ?? "local") !== deviceId) dispatch({ schema_version: 2, kind: "focus_device", payload: { device_id: deviceId } });
+      if (frontDeviceId(rest()) !== deviceId) dispatch({ schema_version: 2, kind: "focus_device", payload: { device_id: deviceId } });
     },
 
     /** ⌘K's `GitHub에서 "…" 검색` row: one search of this Mac's GitHub projects, answered in `issue_work.search` by `requestId`. */
@@ -1365,9 +1366,10 @@ export function createActions(send: DispatchFn) {
     /** An agent chosen on an Overview or in the Agents list: its Workspace and pane (B12). */
     openAgent(paneId: string) {
       beginOpening({ paneId });
-      const target = remoteTargetOfPane(rest(), paneId) ?? "local";
-      const forward = (rest()?.navigator?.focused_device_id ?? "local") !== target;
-      if (target !== "local") {
+      const node = localDeviceId(rest());
+      const target = remoteTargetOfPane(rest(), paneId) ?? node;
+      const forward = frontDeviceId(rest()) !== target;
+      if (target !== node) {
         const event = remoteControl(target, { action: "focus_pane", pane_id: paneId });
         return dispatch(forward ? withDeviceForward(event) : event);
       }
@@ -1390,7 +1392,7 @@ export function createActions(send: DispatchFn) {
      */
     newTabIn(deviceId: string, checkout: Checkout) {
       beginOpening({ checkoutId: checkout.id, deviceId, path: checkout.path, workspaceId: checkout.workspace_id });
-      if (deviceId !== "local") {
+      if (deviceId !== localDeviceId(rest())) {
         const host = remoteHost("shell.command.newTab");
         if (!host) return ui().setOpening(null);
         if (host.targetId !== deviceId) return diagnostic(`create_tab: ${checkout.id} is not on the device in front`);
@@ -1533,7 +1535,7 @@ export function createActions(send: DispatchFn) {
      * into the display once the core shows it.
      */
     openSurface(surface: Surface) {
-      if (surface.deviceId !== "local") {
+      if (surface.deviceId !== localDeviceId(rest())) {
         // A device's tab comes forward on that device's Herdr, bringing the device with it: one event for rail, sidebar and center (D-16).
         const status = rest()?.status?.remote?.find((row) => row.target_id === surface.deviceId);
         const checkout = status?.session?.workspaces.flatMap((row) => row.checkouts).find((row) => row.id === surface.checkoutId);
@@ -1545,15 +1547,16 @@ export function createActions(send: DispatchFn) {
       }
       const checkout = rest()?.navigator?.workspaces?.flatMap((row) => row.checkouts).find((row) => row.id === surface.checkoutId);
       if (!checkout) return diagnostic(`recent: ${surface.checkoutId} is no longer open`);
-      const focusDevice = (rest()?.navigator?.focused_device_id ?? "local") !== "local" ? { focus_device: true } : {};
+      const node = localDeviceId(rest());
+      const focusDevice = frontDeviceId(rest()) !== node ? { focus_device: true } : {};
       const ids = { workspace_id: surface.workspaceId, checkout_id: surface.checkoutId };
       expectSurface(surface.key);
-      beginOpening({ checkoutId: checkout.id, deviceId: "local", path: checkout.path, workspaceId: surface.workspaceId });
+      beginOpening({ checkoutId: checkout.id, deviceId: node, path: checkout.path, workspaceId: surface.workspaceId });
       if (surface.kind === "herdr") {
         dispatch({ schema_version: 2, kind: "focus_tab", payload: { ...ids, tab_id: surface.id, ...focusDevice } });
         return;
       }
-      ui().setViewFocusRequest({ workspace: workspaceKey({ device_id: "local", path: checkout.path }), displayId: surface.id, from: null });
+      ui().setViewFocusRequest({ workspace: workspaceKey({ device_id: node, path: checkout.path }), displayId: surface.id, from: null });
       dispatch({ schema_version: 2, kind: "focus_checkout", payload: { ...ids, display_id: surface.id, ...focusDevice } });
     },
 
@@ -1932,7 +1935,7 @@ export function createActions(send: DispatchFn) {
 
     /** Asks for the index of `root` on `device`; a device's is walked by its helper. */
     requestFileIndex(root: string, query: string, device: string) {
-      dispatch({ schema_version: 2, kind: "file_index", payload: { root, query, ...deviceField(device) } });
+      dispatch({ schema_version: 2, kind: "file_index", payload: { root, query, ...deviceField(device, localDeviceId(rest())) } });
     },
 
     /** A palette pick opens in the checkout's preview tab (B12) and closes the palette. */
@@ -1952,8 +1955,8 @@ export function createActions(send: DispatchFn) {
     },
 
     /** Registers a folder on `deviceId`; a device's own helper judges it against that device's home. */
-    createWorkspace(path: string, label: string, deviceId = "local") {
-      dispatch({ schema_version: 2, kind: "create_workspace", payload: { ...deviceField(deviceId), path, label, initialize_git: false } });
+    createWorkspace(path: string, label: string, deviceId = localDeviceId(rest())) {
+      dispatch({ schema_version: 2, kind: "create_workspace", payload: { ...deviceField(deviceId, localDeviceId(rest())), path, label, initialize_git: false } });
     },
 
     /** Asks hided whether a clone could land at `parent/name`; answered as a `clone_target` frame. */
@@ -1988,7 +1991,7 @@ export function createActions(send: DispatchFn) {
     /** One checkout folder's children, answered by hided as a `directory_list`. */
     listChildren(root: string, path: string) {
       const device = explorerContext(rest()).device;
-      dispatch({ schema_version: 2, kind: "file_list", payload: { root, path, ...deviceField(device) } });
+      dispatch({ schema_version: 2, kind: "file_list", payload: { root, path, ...deviceField(device, localDeviceId(rest())) } });
     },
 
     /** The core owns which folders the tree has expanded, per device; this replaces the selected device's set. */
@@ -2043,7 +2046,7 @@ export function createActions(send: DispatchFn) {
 
     /** A checkout's pull request (PRD checkout-pr-glyph-card D-02, D-11): a link, and the default browser's for an SSH device's checkout. */
     openPullRequest(url: string, deviceId: string, external: boolean) {
-      this.openLink(url, external || deviceId !== "local");
+      this.openLink(url, external || deviceId !== localDeviceId(rest()));
     },
 
     /**
@@ -2059,7 +2062,7 @@ export function createActions(send: DispatchFn) {
       if (!bridge) return diagnostic("terminal link: this host cannot open a path");
       if (external) return bridge.openPath(found.real);
       const checkouts = (rest()?.navigator?.workspaces ?? [])
-        .filter((workspace) => workspace.device_id === "local")
+        .filter((workspace) => workspace.device_id === localDeviceId(rest()))
         .flatMap((workspace) => workspace.checkouts)
         .filter((checkout) => checkout.exists);
       void probePaths(checkouts.map((checkout) => checkout.path), (paths) => bridge.probePaths(paths)).then((roots) => {

@@ -9,7 +9,7 @@ import { FindBar } from "./Overlays";
 import { PaneCanvas } from "./PaneGrid";
 import { RelationStatus } from "./PaneRelations";
 import { commandLabel } from "./shortcutLabels";
-import type { Checkout } from "./snapshot";
+import { localDeviceId, type Checkout } from "./snapshot";
 import { useShellStore } from "./store";
 import { numberOf, numberedTabs } from "./numbering";
 import { useUiStore } from "./ui";
@@ -20,14 +20,16 @@ import { useKeyboardOwner } from "./viewFocus";
 import { useInterfaceTranslation } from "./i18n/client";
 
 const SharedAgentTree = createAreaTree<AgentItem>("agent");
-export function AgentAreas({ checkout, actions, deviceId = "local", remoteBody }: { checkout: Checkout; actions: Actions; deviceId?: string; remoteBody?: React.ReactNode }) {
+export function AgentAreas({ checkout, actions, deviceId, remoteBody }: { checkout: Checkout; actions: Actions; deviceId?: string; remoteBody?: React.ReactNode }) {
   const { t } = useInterfaceTranslation();
   const [renaming, setRenaming] = useState<string | null>(null);
   const saved = useShellStore((s) => workspaceViewOf(s.rest)?.agent_layout);
   const numbered = useUiStore((s) => s.hint === "tabs");
   const owner = useKeyboardOwner();
   const entries = agentEntries(checkout);
-  const remote = deviceId !== "local";
+  const node = useShellStore((s) => localDeviceId(s.rest));
+  const device = deviceId ?? node;
+  const remote = device !== node;
   const remoteLayout = useMemo<AgentLayout>(() => ({
     root: { area: { id: "a1", active: checkout.active_tab_id, displays: agentEntries(checkout).map((entry) => ({ id: entry.source_id })) } },
     active_area: "a1", canvases: {}, limits: { areas: 1, depth: 0, displays: 64 }, display_count: agentEntries(checkout).length,
@@ -35,7 +37,7 @@ export function AgentAreas({ checkout, actions, deviceId = "local", remoteBody }
   const layout = remote ? remoteLayout : saved;
   if (!layout) return <AreaEmpty state="agent-layout-missing" text={t("panes.agent.waiting")} />;
   const numbers = numbered ? numberedTabs(checkout, layout) : null;
-  const workspace = { device_id: deviceId, path: checkout.path };
+  const workspace = { device_id: device, path: checkout.path };
   const label = (id: string) => entries.find((entry) => entry.source_id === id)?.label ?? id;
   const adapter: AreaAdapter<AgentItem> = {
     words: AGENT_WORDS,
@@ -64,7 +66,7 @@ export function AgentAreas({ checkout, actions, deviceId = "local", remoteBody }
     </>,
     empty: (area) => <AreaEmpty state="no-agent-tab" text={t("panes.agent.noTab")}><Button variant="secondary" onClick={() => actions.createTab(area.id)} data-empty-new-tab="true">{t("panes.area.newTab")}</Button></AreaEmpty>,
     floating: (item) => <span className="truncate">{label(item.id)}</span>,
-    menu: (id, geometry, sizes) => agentMenu({ workspace, layout, geometry, sizes }, id),
+    menu: (id, geometry, sizes) => agentMenu({ workspace, remote, layout, geometry, sizes }, id),
     runMenu: (command, id) => command === "rename_tab" ? setRenaming(id) : actions.runAgentCommand(command as AgentCommand, id),
     onMenuCloseAutoFocus: (event) => { if (renaming) event.preventDefault(); },
     focus: (id) => remote ? actions.focusTab(id) : actions.agentLayout({ action: "focus", tab_id: id }),
@@ -85,7 +87,7 @@ export function AgentAreas({ checkout, actions, deviceId = "local", remoteBody }
     newTabLabel: t("panes.agent.newTabNamed", { label: checkout.next_tab_label }),
     tabListLabel: t("panes.agent.tabList"), actionsLabel: t("panes.agent.tabActions"),
     newTabShortcut: commandLabel("new_tab"),
-    onDraw: (frame) => noteAreaFrame("agent", frame ? { ...frame, layout, workspace } : null),
+    onDraw: (frame) => noteAreaFrame("agent", frame ? { ...frame, layout, workspace, remote } : null),
   };
   return <SharedAgentTree key={`${deviceId}\0${checkout.path}`} layout={layout} adapter={adapter} />;
 }
