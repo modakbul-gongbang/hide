@@ -2,7 +2,8 @@
 //! each request is answered by the messages a script returns, events first,
 //! and none leaves it silent, the way a page held by a script is.
 
-use std::time::Duration;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use serde_json::{Value, json};
 
@@ -48,14 +49,79 @@ pub async fn gateway(mut script: impl FnMut(&Value) -> Vec<Value> + Send + 'stat
     let (socket, _) = tokio_tungstenite::connect_async(format!("ws://{address}"))
         .await
         .unwrap();
-    Cdp::new(socket)
+    Cdp::new(socket).holding(HOLD)
 }
 
 /// A page whose calls wait this long for an answer, not the production step.
 pub const STEP: Duration = Duration::from_millis(500);
 
+/// How long the scripted gateway keeps a command nobody answers pending, the
+/// way the real one does for ten seconds against the production step of
+/// eight.
+pub const HOLD: Duration = Duration::from_millis(625);
+
 pub async fn page(script: impl FnMut(&Value) -> Vec<Value> + Send + 'static) -> Page {
-    Page::for_test(gateway(script).await, STEP)
+    page_within(script, STEP).await
+}
+
+/// A page whose calls wait `step` for an answer: a long one lets a test see
+/// that a read is bounded by something other than the step.
+pub async fn page_within(
+    script: impl FnMut(&Value) -> Vec<Value> + Send + 'static,
+    step: Duration,
+) -> Page {
+    Page::for_test(gateway(script).await, step)
+}
+
+/// What the scripted gateway saw: every request, and the most commands it
+/// held at once.
+#[derive(Default)]
+pub struct Traffic {
+    requests: Vec<(String, String)>,
+    pub most_pending: usize,
+}
+
+impl Traffic {
+    /// How many requests of a method went to a session.
+    pub fn sent(&self, method: &str, session: &str) -> usize {
+        self.requests
+            .iter()
+            .filter(|(sent, to)| sent == method && to == session)
+            .count()
+    }
+}
+
+pub type Seen = Arc<Mutex<Traffic>>;
+
+/// Wraps a script with the gateway's own bookkeeping: a command no reply
+/// answers stays pending until `HOLD` after it arrived, and one that arrives
+/// while 32 are pending closes the connection with 1013, as the real gateway
+/// does.
+pub fn recording(
+    mut script: impl FnMut(&Value) -> Vec<Value> + Send + 'static,
+) -> (impl FnMut(&Value) -> Vec<Value> + Send + 'static, Seen) {
+    let seen = Seen::default();
+    let log = Arc::clone(&seen);
+    let mut pending: Vec<Instant> = Vec::new();
+    let script = move |request: &Value| {
+        let now = Instant::now();
+        pending.retain(|arrived| now < *arrived + HOLD);
+        let mut seen = log.lock().unwrap();
+        seen.requests.push((
+            request["method"].as_str().unwrap_or("").to_owned(),
+            request["sessionId"].as_str().unwrap_or("").to_owned(),
+        ));
+        if pending.len() >= 32 {
+            return vec![close(1013)];
+        }
+        seen.most_pending = seen.most_pending.max(pending.len() + 1);
+        let replies = script(request);
+        if !replies.iter().any(|reply| reply["id"] == request["id"]) {
+            pending.push(now);
+        }
+        replies
+    };
+    (script, seen)
 }
 
 pub fn reply(request: &Value, result: Value) -> Value {

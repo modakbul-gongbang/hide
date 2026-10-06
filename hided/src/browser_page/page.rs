@@ -5,6 +5,7 @@
 use std::time::Duration;
 
 use serde_json::{Value, json};
+use tokio::time::Instant;
 
 use super::Failure;
 use super::cdp::{Cdp, CdpError, Event};
@@ -21,6 +22,12 @@ const OVERLAY: Duration = Duration::from_secs(1);
 /// Nested cross-origin frames a snapshot follows; the gateway admits 64
 /// sessions per client.
 const MAX_FRAMES: usize = 24;
+/// How many rounds in one command may go unanswered by the same frame before
+/// it is noted and left alone for the rest of the command: the one that found
+/// it silent, and one more in case it was only slow. Every read of a page
+/// asks the frames again, so without this a frame that never answers costs a
+/// whole step on each read of a command.
+pub const MISS_LIMIT: u8 = 2;
 
 /// A cross-origin frame: its own session, the session of the document that
 /// embeds it, and the tag its document carries for `@<tag>:N` refs.
@@ -36,7 +43,8 @@ pub struct Frame {
 /// A cross-origin frame an attach event named, and what is known of it. Not
 /// answering is something one read observed, not something the frame is: a
 /// frame with no document yet is asked again by the next `frames()`, and one
-/// that missed a read is asked again by the next.
+/// that missed a read is asked again by the next, until it has missed
+/// `MISS_LIMIT` rounds of this command.
 struct Known {
     session: String,
     target: String,
@@ -49,6 +57,8 @@ struct Known {
     silent: bool,
     /// Its document's tag and origin, once read.
     document: Option<(String, String)>,
+    /// How many rounds of this command it left unanswered.
+    misses: u8,
 }
 
 fn note(origin: &str) -> String {
@@ -76,10 +86,16 @@ pub struct Page {
     /// How long a call waits for an answer: `STEP`, shorter in a test that
     /// lets one lapse.
     pub step: Duration,
+    /// When the command's own time runs out, if it has less than the whole
+    /// command: no call waits past it.
+    deadline: Option<Instant>,
     /// The frames attach events have named, in attach order.
     known: Vec<Known>,
     /// Sessions whose own frames have been looked for.
     scanned: Vec<String>,
+    /// The sessions whose look for their own frames went unanswered, once for
+    /// each round it did.
+    scan_misses: Vec<String>,
     /// Sessions of tagged frames that went unanswered in the last multi-frame
     /// read, for the notes and the timeout detail of a command.
     unread: Vec<String>,
@@ -223,8 +239,10 @@ impl Page {
             top: "top".into(),
             selected: true,
             step,
+            deadline: None,
             known: Vec::new(),
             scanned: Vec::new(),
+            scan_misses: Vec::new(),
             unread: Vec::new(),
         }
     }
@@ -245,8 +263,10 @@ impl Page {
             top: String::new(),
             selected,
             step,
+            deadline: None,
             known: Vec::new(),
             scanned: Vec::new(),
+            scan_misses: Vec::new(),
             unread: Vec::new(),
         };
         let targets = page
@@ -284,6 +304,37 @@ impl Page {
         Ok(page)
     }
 
+    /// How long a call may wait now: a step, or less when the command's own
+    /// time runs out sooner.
+    pub fn budget(&self) -> Duration {
+        match self.deadline {
+            Some(deadline) => self
+                .step
+                .min(deadline.saturating_duration_since(Instant::now())),
+            None => self.step,
+        }
+    }
+
+    /// Ends every later wait of this command at `deadline`.
+    pub fn end_at(&mut self, deadline: Instant) {
+        self.deadline = Some(deadline);
+    }
+
+    /// Whether this command has stopped asking the frame, because it has
+    /// left too many rounds unanswered.
+    fn given_up(&self, session: &str) -> bool {
+        self.known
+            .iter()
+            .any(|frame| frame.session == session && frame.misses >= MISS_LIMIT)
+    }
+
+    /// Records that a round of this command got no answer from the frame.
+    fn missed(&mut self, session: &str) {
+        if let Some(frame) = self.known.iter_mut().find(|frame| frame.session == session) {
+            frame.misses = frame.misses.saturating_add(1);
+        }
+    }
+
     /// Turns on the dialog events of the top document. An open JavaScript
     /// dialog holds the renderer, so nothing on a new session answers and the
     /// dialog event is not sent again; a top document silent for a whole step
@@ -292,7 +343,7 @@ impl Page {
     async fn enable(&mut self, session: &str) -> Result<(), Failure> {
         match self
             .cdp
-            .call("Page.enable", json!({}), Some(session), self.step)
+            .call("Page.enable", json!({}), Some(session), self.budget())
             .await
         {
             Ok(_) => Ok(()),
@@ -330,28 +381,43 @@ impl Page {
     /// Evaluates a page-side expression and returns its value; an asset that
     /// returns `{error}` becomes that reason.
     pub async fn eval(&mut self, session: &str, expression: &str) -> Result<Value, Failure> {
+        if self.given_up(session) {
+            return Err(self.blocked(CdpError::Timeout));
+        }
         let answer = self
             .cdp
             .call(
                 "Runtime.evaluate",
                 json!({"expression": expression, "returnByValue": true}),
                 Some(session),
-                self.step,
+                self.budget(),
             )
             .await;
-        self.value_of(answer)
+        let outcome = self.value_of(answer);
+        if matches!(&outcome, Err(failure) if failure.silent) {
+            self.missed(session);
+        }
+        outcome
     }
 
     /// Evaluates one expression in each of several sessions, all sent before
     /// any answer is read and read under one deadline, so frames a page holds
     /// cost one wait between them. Each session's outcome is its own; only
-    /// the connection ending fails the batch.
+    /// the connection ending fails the batch. A frame this command has given
+    /// up on is not asked: its outcome is the silence it already showed.
     pub async fn eval_all(
         &mut self,
         calls: &[(&str, String)],
     ) -> Result<Vec<Result<Value, Failure>>, Failure> {
+        let skipped: Vec<bool> = calls
+            .iter()
+            .map(|(session, _)| self.given_up(session))
+            .collect();
         let requests: Vec<(&str, Value, &str)> = calls
             .iter()
+            .zip(&skipped)
+            .filter(|(_, skipped)| !**skipped)
+            .map(|(call, _)| call)
             .map(|(session, expression)| {
                 (
                     "Runtime.evaluate",
@@ -362,13 +428,22 @@ impl Page {
             .collect();
         let answers = self
             .cdp
-            .call_all(&requests, self.step)
+            .call_all(&requests, self.budget())
             .await
             .map_err(|error| self.failure(error))?;
-        Ok(answers
-            .into_iter()
-            .map(|answer| self.value_of(answer))
-            .collect())
+        let mut answers = answers.into_iter();
+        let mut outcomes = Vec::with_capacity(calls.len());
+        for ((session, _), skipped) in calls.iter().zip(skipped) {
+            let outcome = match skipped {
+                true => Err(self.blocked(CdpError::Timeout)),
+                false => self.value_of(answers.next().unwrap_or(Err(CdpError::Timeout))),
+            };
+            if matches!(&outcome, Err(failure) if failure.silent) {
+                self.missed(session);
+            }
+            outcomes.push(outcome);
+        }
+        Ok(outcomes)
     }
 
     /// What a `Runtime.evaluate` answer says: its value, or the reason it
@@ -448,8 +523,10 @@ impl Page {
     /// read, found by auto-attach. Nested frames attach under their parent
     /// frame. Every call folds in frames that attached or detached since and
     /// asks again the frames that gave no answer before, all of one kind
-    /// together under one deadline, so a frame a page holds costs one wait
-    /// per call between them and is never given up on.
+    /// together under one deadline, so the frames a page holds cost one wait
+    /// per round between them. A frame that has left `MISS_LIMIT` rounds of
+    /// this command unanswered is not asked again in it: it stays known,
+    /// unread, and the next command asks it afresh.
     pub async fn frames(&mut self) -> Result<Vec<Frame>, Failure> {
         let detached: Vec<String> = self
             .cdp
@@ -470,24 +547,22 @@ impl Page {
                 self.known
                     .iter()
                     .filter(|frame| {
-                        frame.document.is_some() && !self.scanned.contains(&frame.session)
+                        frame.document.is_some()
+                            && !self.scanned.contains(&frame.session)
+                            && self.scan_misses(&frame.session) < MISS_LIMIT
                     })
                     .map(|frame| frame.session.clone()),
             );
-            for parent in parents {
-                match self.scan(&parent).await {
-                    Ok(()) => self.scanned.push(parent),
-                    // A frame that stopped answering is scanned by a later
-                    // call.
-                    Err(failure) if failure.silent && parent != self.top => {}
-                    Err(failure) => return Err(failure),
-                }
-            }
+            self.scan(&parents).await?;
             self.collect_attached();
             let todo: Vec<String> = self
                 .known
                 .iter()
-                .filter(|frame| frame.document.is_none() && !tried.contains(&frame.session))
+                .filter(|frame| {
+                    frame.document.is_none()
+                        && frame.misses < MISS_LIMIT
+                        && !tried.contains(&frame.session)
+                })
                 .map(|frame| frame.session.clone())
                 .collect();
             if todo.is_empty() {
@@ -495,10 +570,11 @@ impl Page {
             }
             tried.extend(todo.iter().cloned());
             self.attach_round(&todo).await?;
-            let unscanned = self
-                .known
-                .iter()
-                .any(|frame| frame.document.is_some() && !self.scanned.contains(&frame.session));
+            let unscanned = self.known.iter().any(|frame| {
+                frame.document.is_some()
+                    && !self.scanned.contains(&frame.session)
+                    && self.scan_misses(&frame.session) < MISS_LIMIT
+            });
             if !unscanned {
                 break;
             }
@@ -529,19 +605,80 @@ impl Page {
             .collect())
     }
 
-    /// Looks for the frames attached under one session.
-    async fn scan(&mut self, parent: &str) -> Result<(), Failure> {
-        self.cdp
-            .call(
-                "Target.setAutoAttach",
-                json!({"autoAttach": true, "waitForDebuggerOnStart": false, "flatten": true,
-                    "filter": [{"type": "iframe", "exclude": false}, {"exclude": true}]}),
-                Some(parent),
-                self.step,
-            )
+    /// How many rounds the look for a session's own frames went unanswered.
+    fn scan_misses(&self, session: &str) -> u8 {
+        let misses = self.scan_misses.iter().filter(|s| *s == session).count();
+        u8::try_from(misses).unwrap_or(u8::MAX)
+    }
+
+    /// Looks for the frames attached under each of the sessions, all
+    /// together: the auto-attach calls, then a round trip each to see that the
+    /// attach events they sent have arrived. A frame that stops answering is
+    /// looked into by a later call, within its budget; the top document's
+    /// silence is the page's.
+    async fn scan(&mut self, parents: &[String]) -> Result<(), Failure> {
+        let attach: Vec<(&str, Value, &str)> = parents
+            .iter()
+            .map(|parent| {
+                (
+                    "Target.setAutoAttach",
+                    json!({"autoAttach": true, "waitForDebuggerOnStart": false, "flatten": true,
+                        "filter": [{"type": "iframe", "exclude": false}, {"exclude": true}]}),
+                    parent.as_str(),
+                )
+            })
+            .collect();
+        let budget = self.budget();
+        let answers = self
+            .cdp
+            .call_all(&attach, budget)
             .await
-            .map_err(|error| self.blocked(error))?;
-        self.flush(parent).await
+            .map_err(|error| self.failure(error))?;
+        let mut attached = Vec::new();
+        for (parent, answer) in parents.iter().zip(answers) {
+            match answer {
+                Ok(_) => attached.push(parent.as_str()),
+                Err(error) => {
+                    let failure = self.blocked(error);
+                    self.scan_missed(parent, failure)?;
+                }
+            }
+        }
+        let flushes: Vec<(&str, Value, &str)> = attached
+            .iter()
+            .map(|parent| {
+                (
+                    "Runtime.evaluate",
+                    json!({"expression": "0", "returnByValue": true}),
+                    *parent,
+                )
+            })
+            .collect();
+        let budget = self.budget();
+        let answers = self
+            .cdp
+            .call_all(&flushes, budget)
+            .await
+            .map_err(|error| self.failure(error))?;
+        for (parent, answer) in attached.into_iter().zip(answers) {
+            match answer {
+                Ok(_) => self.scanned.push(parent.to_owned()),
+                Err(error) => {
+                    let failure = self.blocked(error);
+                    self.scan_missed(parent, failure)?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn scan_missed(&mut self, parent: &str, failure: Failure) -> Result<(), Failure> {
+        if failure.silent && parent != self.top {
+            self.scan_misses.push(parent.to_owned());
+            Ok(())
+        } else {
+            Err(failure)
+        }
     }
 
     /// Enables the dialog events of the given frames and reads their tags,
@@ -559,9 +696,10 @@ impl Page {
             .iter()
             .map(|(_, _, session)| (*session).to_owned())
             .collect();
+        let budget = self.budget();
         let answers = self
             .cdp
-            .call_all(&enables, self.step)
+            .call_all(&enables, budget)
             .await
             .map_err(|error| self.failure(error))?;
         for (session, answer) in enabling.iter().zip(answers) {
@@ -578,7 +716,10 @@ impl Page {
             };
             match outcome {
                 Ok(()) => frame.enabled = true,
-                Err(failure) if failure.silent => frame.silent = true,
+                Err(failure) if failure.silent => {
+                    frame.silent = true;
+                    frame.misses = frame.misses.saturating_add(1);
+                }
                 Err(failure) if failure.page_side() => frame.silent = false,
                 Err(failure) => return Err(failure),
             }
@@ -647,6 +788,7 @@ impl Page {
                     enabled: false,
                     silent: false,
                     document: None,
+                    misses: 0,
                 });
             }
         }
@@ -659,7 +801,7 @@ impl Page {
                 "Runtime.evaluate",
                 json!({"expression": "0", "returnByValue": true}),
                 Some(session),
-                self.step,
+                self.budget(),
             )
             .await
             .map(|_| ())
@@ -698,8 +840,16 @@ impl Page {
         match self.lookup(tag).await? {
             Lookup::Found(frame) => Ok(frame),
             Lookup::Stale => Err(Failure::new("ref_stale", Some(format!("frame {tag}")))),
+            // A frame that did not answer cannot be told from the one that
+            // carries the tag, so the ref is not known stale; a ref from an
+            // older snapshot is the likelier cause, and its remedy is the same
+            // whether or not the silent frame was ever the ref's.
             Lookup::Unknown => Err(Failure {
                 silent: true,
+                next_action: Some(format!(
+                    "A frame that did not answer may hold frame {tag}, so the ref cannot be told stale. If it came from an earlier snapshot, take a fresh snapshot (hide browser snapshot {}) and use its refs; otherwise retry, or ask the operator to check the page",
+                    self.display
+                )),
                 ..Failure::new(
                     "page_unresponsive",
                     Some(format!("a frame that did not answer may hold frame {tag}")),
@@ -721,7 +871,7 @@ impl Page {
                     "DOM.getFrameOwner",
                     json!({"frameId": current.target}),
                     Some(&current.parent),
-                    self.step,
+                    self.budget(),
                 )
                 .await
                 .map_err(|error| self.blocked(error))?;
@@ -731,7 +881,7 @@ impl Page {
                     "DOM.getBoxModel",
                     json!({"backendNodeId": owner["backendNodeId"]}),
                     Some(&current.parent),
-                    self.step,
+                    self.budget(),
                 )
                 .await
                 .map_err(|error| self.blocked(error))?;
@@ -924,7 +1074,7 @@ impl Page {
         let top = self.top.clone();
         let tree = self
             .cdp
-            .call("Page.getFrameTree", json!({}), Some(&top), self.step)
+            .call("Page.getFrameTree", json!({}), Some(&top), self.budget())
             .await
             .map_err(|error| self.blocked(error))?;
         let world = self
@@ -933,7 +1083,7 @@ impl Page {
                 "Page.createIsolatedWorld",
                 json!({"frameId": tree["frameTree"]["frame"]["id"], "worldName": "hide-browser"}),
                 Some(&top),
-                self.step,
+                self.budget(),
             )
             .await
             .map_err(|error| self.blocked(error))?;
@@ -943,7 +1093,7 @@ impl Page {
                 "Runtime.evaluate",
                 json!({"expression": call(RENDER_JS, op, &args), "contextId": world["executionContextId"], "returnByValue": true}),
                 Some(&top),
-                self.step,
+                self.budget(),
             )
             .await
             .map_err(|error| self.blocked(error))?;
@@ -1177,6 +1327,72 @@ mod tests {
         let answers = cdp.call_all(&calls, fake::STEP).await.unwrap();
         assert_eq!(answers.len(), 70);
         assert!(answers.iter().all(Result::is_ok));
+    }
+
+    #[tokio::test]
+    async fn commands_an_earlier_round_gave_up_on_count_against_the_gateways_cap() {
+        // 24 frames never answer `Page.enable`. The second call asks them
+        // again once the step has lapsed, while the gateway still holds the
+        // first call's 24 until its own, longer deadline: sent at once, that
+        // is 48 pending and the gateway closes the connection.
+        let (script, seen) = fake::recording(page_with_frames(
+            Frames {
+                hung: 24,
+                ..Frames::default()
+            },
+            None,
+        ));
+        let mut page = page(script).await;
+        page.frames().await.unwrap();
+        page.frames().await.unwrap();
+        let seen = seen.lock().unwrap();
+        assert!(seen.most_pending >= 24, "{}", seen.most_pending);
+        assert!(seen.most_pending <= 32, "{}", seen.most_pending);
+        // Both rounds were sent: the cap made the second wait, not give up.
+        assert_eq!(seen.sent("Page.enable", "f1"), 2);
+    }
+
+    #[tokio::test]
+    async fn a_frame_is_asked_again_only_within_the_budget_of_the_command() {
+        let (script, seen) = fake::recording(page_with_frames(
+            Frames {
+                hung: 1,
+                ..Frames::default()
+            },
+            None,
+        ));
+        let mut page = page(script).await;
+        for _ in 0..5 {
+            assert!(page.frames().await.unwrap().is_empty());
+        }
+        assert_eq!(
+            seen.lock().unwrap().sent("Page.enable", "f1"),
+            MISS_LIMIT as usize
+        );
+        // Not asking is not knowing: the frame stays unread, and no ref is
+        // stale while it may carry one.
+        assert!(matches!(page.lookup("k7q2").await, Ok(Lookup::Unknown)));
+        assert_eq!(page.notes().len(), 1);
+    }
+
+    #[tokio::test]
+    async fn a_ref_no_frame_carries_beside_a_silent_frame_says_to_take_a_fresh_snapshot() {
+        let mut page = page(page_with_frames(
+            Frames {
+                hung: 1,
+                ..Frames::default()
+            },
+            None,
+        ))
+        .await;
+        let failure = page.frame("old1").await.unwrap_err();
+        assert_eq!(failure.reason, "page_unresponsive");
+        assert!(failure.silent);
+        let next = failure.next_action.unwrap();
+        assert!(
+            next.contains("take a fresh snapshot (hide browser snapshot browser-1)"),
+            "{next}"
+        );
     }
 
     #[tokio::test]

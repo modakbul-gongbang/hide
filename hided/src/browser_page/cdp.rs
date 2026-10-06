@@ -2,7 +2,7 @@
 //! ids, and the events that arrive between replies. One command owns one
 //! client, and dropping it closes the socket, which ends the gateway lease.
 
-use std::collections::VecDeque;
+use std::collections::{HashMap, VecDeque};
 use std::time::Duration;
 
 use futures_util::{SinkExt, StreamExt};
@@ -24,9 +24,16 @@ const KEPT: &[&str] = &[
 /// messages, so the count never drops one a command reads; the byte bound
 /// keeps a page that logs large values from growing the client.
 const MAX_EVENTS: usize = 4096;
-/// Calls one round of `call_all` keeps in flight: the gateway's pending cap
-/// per client (`MAX_PENDING` in `browserCdp.ts`).
-const MAX_BATCH: usize = 32;
+/// Commands the gateway holds per client (`MAX_PENDING` in `browserCdp.ts`);
+/// a client that sends one more has its connection closed.
+const MAX_PENDING: usize = 32;
+/// How long the gateway keeps an unanswered command pending
+/// (`REQUEST_TIMEOUT_MS` in `browserCdp.ts`). A call this client gave up on
+/// after its own, shorter step is still counted against the cap until then.
+const GATEWAY_DEADLINE: Duration = Duration::from_secs(10);
+/// The gateway starts that clock when the command reaches it, a little after
+/// this client sent it, so a command is counted for this much longer.
+const GATEWAY_SLACK: Duration = Duration::from_millis(250);
 const MAX_EVENT_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Debug)]
@@ -62,6 +69,11 @@ pub struct Cdp {
     next_id: u64,
     events: VecDeque<(Event, usize)>,
     event_bytes: usize,
+    /// The commands sent and not yet answered, with when each was sent: the
+    /// gateway still holds them, however long this client waited for them.
+    pending: HashMap<u64, Instant>,
+    /// How long the gateway holds a command nobody answers.
+    hold: Duration,
     /// A JavaScript dialog the page opened while this client listened.
     pub dialog: Option<Value>,
 }
@@ -73,8 +85,18 @@ impl Cdp {
             next_id: 0,
             events: VecDeque::new(),
             event_bytes: 0,
+            pending: HashMap::new(),
+            hold: GATEWAY_DEADLINE,
             dialog: None,
         }
+    }
+
+    /// A client whose gateway holds an unanswered command for `hold`, for a
+    /// test that lets calls lapse on a step shorter than the production one.
+    #[cfg(test)]
+    pub fn holding(mut self, hold: Duration) -> Self {
+        self.hold = hold;
+        self
     }
 
     pub async fn call(
@@ -114,8 +136,11 @@ impl Cdp {
         timeout: Duration,
         stop_on_dialog: bool,
     ) -> Result<Option<Value>, CdpError> {
-        let id = self.send(method, params, session).await?;
         let deadline = Instant::now() + timeout;
+        if !self.reserve(1, deadline).await? {
+            return Err(CdpError::Timeout);
+        }
+        let id = self.send(method, params, session).await?;
         loop {
             let (value, bytes) = self.next_message(deadline).await?;
             if value["id"].as_u64() == Some(id) {
@@ -139,9 +164,11 @@ impl Cdp {
         // The gateway keeps `MAX_PENDING` (32) commands in flight per client
         // and answers each as its page does, not in order, so a batch is one
         // round of concurrent calls, each under the same deadline from the
-        // moment it was sent; a larger one goes in rounds of that size.
+        // moment it was sent; a larger one goes in rounds of that size. A
+        // round also waits for room: commands an earlier round gave up on
+        // are pending until the gateway's own deadline, and count.
         let mut answers = Vec::with_capacity(calls.len());
-        for chunk in calls.chunks(MAX_BATCH) {
+        for chunk in calls.chunks(MAX_PENDING) {
             answers.extend(self.call_round(chunk, timeout).await?);
         }
         Ok(answers)
@@ -152,12 +179,17 @@ impl Cdp {
         calls: &[(&str, Value, &str)],
         timeout: Duration,
     ) -> Result<Vec<Result<Value, CdpError>>, CdpError> {
+        let deadline = Instant::now() + timeout;
+        // Without room before the deadline nothing is sent, and every call is
+        // as unanswered as one the page held.
+        if !self.reserve(calls.len(), deadline).await? {
+            return Ok(calls.iter().map(|_| Err(CdpError::Timeout)).collect());
+        }
         let mut ids = Vec::with_capacity(calls.len());
         for (method, params, session) in calls {
             ids.push(self.send(method, params.clone(), Some(session)).await?);
         }
         let mut answers: Vec<Option<Result<Value, CdpError>>> = ids.iter().map(|_| None).collect();
-        let deadline = Instant::now() + timeout;
         while answers.iter().any(Option::is_none) {
             let (value, bytes) = match self.next_message(deadline).await {
                 Ok(message) => message,
@@ -180,6 +212,33 @@ impl Cdp {
             .collect())
     }
 
+    /// Waits until the gateway can take `count` more commands, or says it
+    /// cannot before `deadline`. The commands it holds are those sent and not
+    /// answered, until the gateway's own deadline ends each.
+    async fn reserve(&mut self, count: usize, deadline: Instant) -> Result<bool, CdpError> {
+        loop {
+            let (now, held_for) = (Instant::now(), self.hold + GATEWAY_SLACK);
+            self.pending.retain(|_, sent| now < *sent + held_for);
+            if self.pending.len() + count <= MAX_PENDING {
+                return Ok(true);
+            }
+            let Some(free) = self.pending.values().map(|sent| *sent + held_for).min() else {
+                return Ok(true);
+            };
+            if free >= deadline {
+                return Ok(false);
+            }
+            // A late answer frees its place sooner than the deadline does.
+            match self.next_message(free).await {
+                Ok((value, bytes)) => {
+                    self.note(&value, bytes);
+                }
+                Err(CdpError::Timeout) => {}
+                Err(error) => return Err(error),
+            }
+        }
+    }
+
     async fn send(
         &mut self,
         method: &str,
@@ -188,6 +247,7 @@ impl Cdp {
     ) -> Result<u64, CdpError> {
         self.next_id += 1;
         let id = self.next_id;
+        self.pending.insert(id, Instant::now());
         let mut message = json!({"id": id, "method": method, "params": params});
         if let Some(session) = session {
             message["sessionId"] = json!(session);
@@ -224,6 +284,11 @@ impl Cdp {
                 Some(Err(_)) | None => return Err(self.closed_error()),
             };
             if let Ok(value) = serde_json::from_str::<Value>(&text) {
+                // An answer, whoever waits for it, ends its command's place
+                // in the gateway.
+                if let Some(id) = value["id"].as_u64() {
+                    self.pending.remove(&id);
+                }
                 return Ok((value, text.len()));
             }
         }
