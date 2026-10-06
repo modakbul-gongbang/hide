@@ -1638,6 +1638,7 @@ impl Engine {
                 other_tasks,
                 repo_files,
                 guide,
+                autonomy_scope: self.autonomy_scope(factory, &task),
             },
         };
         self.with_task(factory, id, |task| {
@@ -1726,13 +1727,53 @@ impl Engine {
         }
     }
 
+    /// The description of the enabled scope a Task claims.
+    fn autonomy_scope(&self, factory: &str, task: &Task) -> Option<String> {
+        let scope = task.autonomy.as_ref()?;
+        self.factories
+            .get(factory)?
+            .config
+            .autonomy
+            .iter()
+            .find(|s| s.id == *scope && s.enabled)
+            .map(|s| s.description.clone())
+    }
+
     fn apply_intake(&mut self, factory: &str, id: &str, value: &Value) {
         let verdict = match judgment::parse_intake(value) {
             Ok(verdict) => verdict,
             Err(reason) => return self.review_failed(factory, id, &reason),
         };
-        let result = verdict.result();
+        let mut result = verdict.result();
         let now = self.now();
+        // A worker's claim is not the fit: only a review that says the card
+        // fits its enabled scope lets it start without a person (B30).
+        if let Some(task) = self.task(factory, id).cloned()
+            && task.autonomy.is_some()
+            && verdict.fits_scope != Some(true)
+        {
+            let scope = self
+                .autonomy_scope(factory, &task)
+                .unwrap_or_else(|| task.autonomy.clone().unwrap_or_default());
+            self.with_task(factory, id, |task| task.autonomy = None);
+            self.record(factory, Some(id), "review.outside_scope", json!({}));
+            self.add_question(
+                factory,
+                id,
+                QuestionOrigin::Review,
+                QuestionKind::Intake,
+                &format!(
+                    "worker가 자율 처리 범위 '{}'로 제안한 Task인데 검토가 범위에 맞다고 보지 않았습니다. 사람이 승인하면 진행합니다.",
+                    judgment::cut(&scope, 200)
+                ),
+                "진행",
+                None,
+                None,
+                Vec::new(),
+                None,
+            );
+            result = ReviewResult::NeedsAnswers;
+        }
         // The review only adds (D-02, B8): questions, dependencies, flags.
         for question in &verdict.questions {
             self.add_question(

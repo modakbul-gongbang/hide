@@ -239,7 +239,7 @@ Every judgment is a tool-less, one-shot call whose input the code bundles and cu
 
 | Feature id | Asked | Input | The answer may |
 | --- | --- | --- | --- |
-| `factory_intake_review` | On add and re-add, an edited issue body, a label-path card, a split piece, an approved proposal | The card, its attachment (24 KiB), up to 100 other Tasks, up to 400 file names, the repository guide (8 KiB) | Add questions, dependencies on listed Tasks, a split, and flags |
+| `factory_intake_review` | On add and re-add, an edited issue body, a label-path card, a split piece, an approved proposal | The card, its attachment (24 KiB), up to 100 other Tasks, up to 400 file names, the repository guide (8 KiB), and the description of an autonomy scope the Task claims | Add questions, dependencies on listed Tasks, a split, and flags, and say whether the card fits the claimed scope |
 | `factory_drift` | After `done` | The card, the diff against main (24 KiB), the decisions | Pass, or add questions, and flags |
 | `factory_check` | At intake or after `done` for each natural-language check | The instruction, the card, the diff | The same as drift |
 | `factory_watch` | See [The watch](#the-watch) | The Factory's board summary | Warnings, each with an optional action |
@@ -388,7 +388,8 @@ A worker may report five classes of discovery with `hide factory propose --class
 `--reclassify <discovery>` may only move a discovery toward a person, in the order `in-scope`, `decision`, `prerequisite`, `scope-change` and `unrelated` (the last two being equal); the reverse answers `reclassify_away_from_person`.
 A prerequisite needs a card.
 A Task that was itself proposed or started by autonomy may not propose a Task (`proposal_depth_exceeded`), and each Task may propose `new_task_limit` Tasks (3 by default) before it stops with the "new-Task cap" question.
-A proposal that names an enabled `--autonomy` scope drafts the Task now and makes the proposer depend on it and sleep as `blocked`; any other proposal is a question that a person approves before the Task is drafted, and approving it does not make the proposer wait.
+A proposal that names an enabled `--autonomy` scope drafts the Task now and makes the proposer depend on it and sleep as `blocked`; any other proposal is a question that a person approves before the Task is drafted, and approving a prerequisite makes the proposer wait on it the same way.
+The worker's claim is not the fit: the intake review reads the scope's description and must answer that the card fits it, or the Task loses its autonomy and stays `drafting` with a question a person answers before it runs.
 
 Autonomy scopes are the kinds of Task a worker may start without a person.
 The presets are `flaky_test`, `dependency_patch`, `lint_format` and `docs_links`, all off, and a person may add scopes by name.

@@ -419,7 +419,7 @@ impl Judge for Shared {
             let value = match &judgment.input {
                 JudgmentInput::IntakeReview { card, .. } => {
                     world.intake.get(&card.title).cloned().unwrap_or_else(
-                        || json!({"questions": [], "dependencies": [], "flags": [], "split": []}),
+                        || json!({"questions": [], "dependencies": [], "flags": [], "split": [], "fits_scope": true}),
                     )
                 }
                 JudgmentInput::Drift { .. } | JudgmentInput::Check { .. } => judgment

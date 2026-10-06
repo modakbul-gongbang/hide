@@ -1008,6 +1008,50 @@ fn a_proposed_task_waits_for_a_person_and_its_worker_cannot_propose() {
 }
 
 #[test]
+fn a_proposal_the_review_finds_outside_its_scope_waits_for_a_person() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    h.op(Command::Config {
+        project: None,
+        set: vec![("autonomy".into(), "lint_format=on".into())],
+    });
+    h.world().intake.insert(
+        "Rewrite the parser".into(),
+        json!({"questions": [], "dependencies": [], "flags": [], "split": [], "fits_scope": false}),
+    );
+    let t = h.ready("Parent", &[]);
+    let answer = h.as_worker(
+        &f,
+        &t,
+        Command::Propose {
+            class: DiscoveryClass::Prerequisite,
+            text: "needs a new parser".into(),
+            card: Some(card("Rewrite the parser", &[])),
+            autonomy: Some("lint_format".into()),
+            reclassify: None,
+            letter: None,
+        },
+    );
+    let child = answer["task"].as_str().unwrap().to_owned();
+    for _ in 0..5 {
+        h.engine.tick();
+    }
+    let task = h.task(&f, &child);
+    assert_eq!(task.state, TaskState::Drafting, "it does not start alone");
+    assert_eq!(task.autonomy, None);
+    let question = open_question(&h, &f, &child);
+    assert!(question.text.contains("Lint and format"), "{}", question.text);
+    // A person's approval lets it run as an ordinary Task.
+    h.op(Command::Answer {
+        task: child.clone(),
+        question: Some(question.id),
+        choice: Some("suggestion".into()),
+        text: None,
+    });
+    tick_until(&mut h, &f, &child, TaskState::Running);
+}
+
+#[test]
 fn an_enabled_autonomy_scope_starts_alone_and_the_third_new_task_stops_the_parent() {
     let mut h = Bench::new(false);
     let f = h.factory(true);
