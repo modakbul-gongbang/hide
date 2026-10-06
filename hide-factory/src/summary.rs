@@ -10,10 +10,75 @@ use serde::{Deserialize, Serialize};
 
 use crate::dag;
 use crate::model::{
-    Attachment, AttemptOutcome, AttemptStage, Column, DAY_MS, DecisionRecord, Discovery, Factory,
-    MergeMode, PullRequest, Question, QuestionKind, SourceKind, Task, TaskState, UnixMs,
-    Verification,
+    Attachment, AttemptOutcome, AttemptStage, Column, DAY_MS, DecisionRecord, Discovery, EnvHold,
+    Factory, Gate, MergeMode, PullRequest, Question, QuestionKind, SourceKind, StopReason, Task,
+    TaskState, UnixMs, Verification,
 };
+
+/// What a card waits for, as a code beside `waiting_for`'s words, so a
+/// screen can say it in any language (stage 2 B24).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum WaitingFor {
+    /// Tasks it depends on; `waiting_on` names them.
+    Predecessors,
+    /// A free worker slot.
+    Slot,
+    /// The machine holds new starts; `env_hold` says why.
+    Environment,
+    /// A person's answer to a blocking question.
+    Answer,
+}
+
+impl WaitingFor {
+    pub const ALL: [Self; 4] = [
+        Self::Predecessors,
+        Self::Slot,
+        Self::Environment,
+        Self::Answer,
+    ];
+}
+
+/// What sending an inbox item's preselected answer does, as a code beside
+/// `result`'s words; `unblocks` names the Tasks it frees.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ResultCode {
+    /// The sleeping worker wakes and continues.
+    WakeWorker,
+    /// An answer that differs from the default goes to the worker; the same
+    /// one goes on to merge.
+    ApplyOrMerge,
+    /// With no question left the Task is Ready.
+    Ready,
+    /// The Task is split into the proposed pieces.
+    Split,
+    /// The approved Task enters drafting.
+    Drafting,
+    /// The chosen of split, continue or stop.
+    NewTaskCapChoice,
+    /// The chosen action runs.
+    RunAction,
+    Acknowledge,
+    Merge,
+    /// The worker restarts in the same worktree.
+    RestartWorker,
+}
+
+impl ResultCode {
+    pub const ALL: [Self; 10] = [
+        Self::WakeWorker,
+        Self::ApplyOrMerge,
+        Self::Ready,
+        Self::Split,
+        Self::Drafting,
+        Self::NewTaskCapChoice,
+        Self::RunAction,
+        Self::Acknowledge,
+        Self::Merge,
+        Self::RestartWorker,
+    ];
+}
 
 #[derive(Clone, Debug, Default, PartialEq, Eq, Serialize, Deserialize)]
 pub struct FactorySummary {
@@ -76,6 +141,14 @@ pub struct CardView {
     pub needs_person: bool,
     /// What a waiting Task waits for, in words (D-36).
     pub waiting_for: Option<String>,
+    /// The same as a code.
+    pub waiting_code: Option<WaitingFor>,
+    /// The display ids of the predecessors it waits on.
+    pub waiting_on: Vec<String>,
+    /// Why the machine holds new starts, for `environment`.
+    pub env_hold: Option<EnvHold>,
+    /// The stop reason behind a stopped card's `state_label`.
+    pub stop: Option<StopReason>,
     pub priority: i32,
     pub since: UnixMs,
     /// A completion the person has not looked at (D-30).
@@ -126,9 +199,19 @@ pub struct InboxItem {
     pub choices: Vec<String>,
     pub deadline: Option<UnixMs>,
     pub remaining: Option<String>,
+    /// Whole hours left before the deadline, rounded up; 0 once it passed.
+    pub remaining_hours: Option<u64>,
     pub waiting_since: UnixMs,
     /// Whole days a blocking question has waited.
     pub waiting_days: u64,
+    /// `result` as a code.
+    pub result_code: ResultCode,
+    /// The display ids of waiting Tasks this item frees once it is done.
+    pub unblocks: Vec<String>,
+    /// Why a merge item waits for a person.
+    pub gates: Vec<Gate>,
+    /// Why a stopped item stopped.
+    pub stop: Option<StopReason>,
 }
 
 pub fn build(factories: &[&Factory], tasks: &[&Task], now: UnixMs) -> FactorySummary {
@@ -264,28 +347,42 @@ pub fn card_view(
     now: UnixMs,
 ) -> CardView {
     let waiting = dag::waiting_for(task, tasks);
-    let waiting_for = match task.state {
-        TaskState::Waiting if !waiting.is_empty() => Some(
-            waiting
-                .iter()
-                .map(|id| {
-                    tasks
-                        .get(id)
-                        .map(Task::display_id)
-                        .unwrap_or_else(|| id.clone())
-                })
-                .collect::<Vec<_>>()
-                .join(", "),
-        ),
-        TaskState::Waiting => task.held.clone().or_else(|| Some("slot".into())),
-        TaskState::Blocked => Some(
-            task.open_questions()
-                .find(|question| matches!(question.kind, QuestionKind::Blocking))
-                .map(|_| "answer".to_owned())
-                .unwrap_or_else(|| "predecessor".to_owned()),
-        ),
+    let waiting_on: Vec<String> = waiting
+        .iter()
+        .map(|id| {
+            tasks
+                .get(id)
+                .map(Task::display_id)
+                .unwrap_or_else(|| id.clone())
+        })
+        .collect();
+    let waiting_code = match task.state {
+        TaskState::Waiting if !waiting_on.is_empty() => Some(WaitingFor::Predecessors),
+        TaskState::Waiting if task.held.is_some() || task.held_code.is_some() => {
+            Some(WaitingFor::Environment)
+        }
+        TaskState::Waiting => Some(WaitingFor::Slot),
+        TaskState::Blocked
+            if task
+                .open_questions()
+                .any(|question| matches!(question.kind, QuestionKind::Blocking)) =>
+        {
+            Some(WaitingFor::Answer)
+        }
+        TaskState::Blocked => Some(WaitingFor::Predecessors),
         _ => None,
     };
+    let waiting_for = match waiting_code {
+        Some(WaitingFor::Predecessors) if task.state == TaskState::Waiting => {
+            Some(waiting_on.join(", "))
+        }
+        Some(WaitingFor::Predecessors) => Some("predecessor".to_owned()),
+        Some(WaitingFor::Environment) => task.held.clone(),
+        Some(WaitingFor::Slot) => Some("slot".to_owned()),
+        Some(WaitingFor::Answer) => Some("answer".to_owned()),
+        None => None,
+    };
+    let stop = task.stop.filter(|_| task.state == TaskState::Stopped);
     let finished_at = match task.state {
         TaskState::Done => task.done_at,
         TaskState::Cancelled | TaskState::Outside => task.cancelled_at,
@@ -306,12 +403,20 @@ pub fn card_view(
         column: task.state.column().map(|column| column.as_str().to_owned()),
         title: task.card.title.clone(),
         state: task.state.as_str().to_owned(),
-        state_label: task
-            .stop
-            .filter(|_| task.state == TaskState::Stopped)
+        state_label: stop
             .map(|reason| format!("{} ({})", task.state.label(), reason.label()))
             .unwrap_or_else(|| task.state.label().to_owned()),
         needs_person: task.needs_person(),
+        waiting_on: if waiting_code == Some(WaitingFor::Predecessors) {
+            waiting_on
+        } else {
+            Vec::new()
+        },
+        env_hold: task
+            .held_code
+            .filter(|_| waiting_code == Some(WaitingFor::Environment)),
+        waiting_code,
+        stop,
         waiting_for,
         priority: task.human.priority,
         since: task.state_since,
@@ -363,9 +468,15 @@ pub fn inbox_items(
             choices: Vec::new(),
             deadline: None,
             remaining: None,
+            remaining_hours: None,
             waiting_since: since,
             waiting_days: 0,
+            result_code: ResultCode::Acknowledge,
+            unblocks: Vec::new(),
+            gates: Vec::new(),
+            stop: None,
         };
+        let frees = waiting_on_this(task, tasks);
         for question in task.open_questions() {
             let (group, rank) = match question.kind {
                 QuestionKind::Blocking => ("answer", 0),
@@ -376,6 +487,11 @@ pub fn inbox_items(
             let mut item = base(group, rank, question.text.clone(), question.asked_at);
             item.kind = question_kind(&question.kind).to_owned();
             item.result = answer_result(task, &question.kind, tasks);
+            item.result_code = answer_code(&question.kind);
+            item.stop = task.stop.filter(|_| task.state == TaskState::Stopped);
+            if matches!(question.kind, QuestionKind::Blocking) {
+                item.unblocks = frees.clone();
+            }
             if matches!(question.kind, QuestionKind::Blocking) {
                 item.waiting_days = now.saturating_sub(question.asked_at) / DAY_MS;
             }
@@ -384,6 +500,13 @@ pub fn inbox_items(
             item.default_action = question.default_action.clone();
             item.choices = question.choices.clone();
             item.deadline = question.deadline;
+            item.remaining_hours = match (&question.kind, question.deadline) {
+                (QuestionKind::Blocking, _) => None,
+                (_, Some(deadline)) => {
+                    Some(deadline.saturating_sub(now).div_ceil(crate::model::HOUR_MS))
+                }
+                _ => None,
+            };
             item.remaining = match (&question.kind, question.deadline) {
                 (QuestionKind::Blocking, _) => {
                     let days = now.saturating_sub(question.asked_at) / DAY_MS;
@@ -414,6 +537,9 @@ pub fn inbox_items(
                 item.choices = vec!["merge".into(), "request-changes".into(), "cancel".into()];
                 item.suggestion = "merge".into();
                 item.result = unblocks("머지", task, tasks);
+                item.result_code = ResultCode::Merge;
+                item.unblocks = frees.clone();
+                item.gates = task.gates.clone();
                 items.push(item);
             }
             TaskState::Stopped
@@ -442,6 +568,8 @@ pub fn inbox_items(
                 item.choices = vec!["retry".into(), "cancel".into()];
                 item.suggestion = "retry".into();
                 item.result = "같은 worktree에서 worker를 다시 시작".into();
+                item.result_code = ResultCode::RestartWorker;
+                item.stop = task.stop;
                 items.push(item);
             }
             _ => {}
@@ -482,14 +610,32 @@ fn answer_result(task: &Task, kind: &QuestionKind, tasks: &BTreeMap<String, Task
     }
 }
 
-/// `"<what> , 끝나면 #421이 풀림"` when a waiting Task depends on this one.
-fn unblocks(what: &str, task: &Task, tasks: &BTreeMap<String, Task>) -> String {
-    let waiting: Vec<String> = tasks
+fn answer_code(kind: &QuestionKind) -> ResultCode {
+    match kind {
+        QuestionKind::Blocking => ResultCode::WakeWorker,
+        QuestionKind::Default | QuestionKind::ScopeChange { .. } => ResultCode::ApplyOrMerge,
+        QuestionKind::Intake | QuestionKind::ConfirmCard => ResultCode::Ready,
+        QuestionKind::Split { .. } => ResultCode::Split,
+        QuestionKind::ProposedTask { .. } => ResultCode::Drafting,
+        QuestionKind::NewTaskCap => ResultCode::NewTaskCapChoice,
+        QuestionKind::Action | QuestionKind::Proposal { .. } => ResultCode::RunAction,
+        QuestionKind::Notice => ResultCode::Acknowledge,
+    }
+}
+
+/// The waiting Tasks that depend on `task`, by display id.
+fn waiting_on_this(task: &Task, tasks: &BTreeMap<String, Task>) -> Vec<String> {
+    tasks
         .values()
         .filter(|other| other.card.depends_on.contains(&task.id))
         .filter(|other| matches!(other.state, TaskState::Waiting | TaskState::Blocked))
         .map(Task::display_id)
-        .collect();
+        .collect()
+}
+
+/// `"<what> , 끝나면 #421이 풀림"` when a waiting Task depends on this one.
+fn unblocks(what: &str, task: &Task, tasks: &BTreeMap<String, Task>) -> String {
+    let waiting = waiting_on_this(task, tasks);
     if waiting.is_empty() {
         what.to_owned()
     } else {
@@ -520,9 +666,13 @@ pub struct TaskDetail {
     pub discoveries: Vec<Discovery>,
     /// Why merge waits for a person (D-25).
     pub gates: Vec<String>,
+    /// The same as codes.
+    pub gate_codes: Vec<Gate>,
     /// The actions this state allows (Q29).
     pub allowed: Vec<String>,
     pub stop: Option<String>,
+    /// `stop` as a code.
+    pub stop_code: Option<StopReason>,
     pub merge_sha: Option<String>,
     pub worker_name: Option<String>,
     pub worktree: Option<String>,
@@ -620,8 +770,10 @@ pub fn detail(
             .iter()
             .map(|gate| gate.reason().to_owned())
             .collect(),
+        gate_codes: task.gates.clone(),
         allowed: allowed.into_iter().map(str::to_owned).collect(),
         stop: task.stop.map(|reason| reason.label().to_owned()),
+        stop_code: task.stop,
         merge_sha: task.merge_sha.clone(),
         worker_name: task.worker.as_ref().map(|worker| worker.name.clone()),
         worktree: task.worker.as_ref().map(|worker| worker.worktree.clone()),
@@ -639,4 +791,132 @@ fn log_tail(path: &str) -> Option<String> {
     let mut bytes = Vec::new();
     file.read_to_end(&mut bytes).ok()?;
     Some(String::from_utf8_lossy(&bytes).into_owned())
+}
+
+#[cfg(test)]
+mod tests {
+    //! The codes stage 2 decodes are a contract. Each list is matched
+    //! exhaustively, so a new variant fails to compile here until it is
+    //! listed, and then fails until its wire value is pinned below and in
+    //! `docs/factory.md`.
+    use super::*;
+
+    fn wire<T: Serialize>(values: &[T]) -> Vec<String> {
+        values
+            .iter()
+            .map(|value| match serde_json::to_value(value).unwrap() {
+                serde_json::Value::String(text) => text,
+                other => panic!("a code serializes as a string, got {other}"),
+            })
+            .collect()
+    }
+
+    fn complete<T: Copy>(all: &[T], index: fn(T) -> usize) {
+        let indexes: Vec<usize> = all.iter().map(|value| index(*value)).collect();
+        assert_eq!(
+            indexes,
+            (0..all.len()).collect::<Vec<_>>(),
+            "ALL lists every variant once, in order"
+        );
+    }
+
+    #[test]
+    fn every_summary_code_is_pinned() {
+        complete(&Gate::ALL, |gate| match gate {
+            Gate::ReviewDirectly => 0,
+            Gate::ApprovedScopeChange => 1,
+            Gate::BreakingChange => 2,
+            Gate::NoVerification => 3,
+            Gate::RiskPath => 4,
+            Gate::ManualMode => 5,
+            Gate::OpenQuestion => 6,
+            Gate::CheckFailed => 7,
+            Gate::AutonomyDiff => 8,
+            Gate::DirtyMain => 9,
+            Gate::MergeRefused => 10,
+        });
+        assert_eq!(
+            wire(&Gate::ALL),
+            [
+                "review_directly",
+                "approved_scope_change",
+                "breaking_change",
+                "no_verification",
+                "risk_path",
+                "manual_mode",
+                "open_question",
+                "check_failed",
+                "autonomy_diff",
+                "dirty_main",
+                "merge_refused",
+            ]
+        );
+        complete(&StopReason::ALL, |reason| match reason {
+            StopReason::NoReport => 0,
+            StopReason::Stalled => 1,
+            StopReason::VerifyFailed => 2,
+            StopReason::NewTaskCap => 3,
+            StopReason::EnvironmentRepeated => 4,
+            StopReason::WorkerStart => 5,
+            StopReason::PublishRefused => 6,
+        });
+        assert_eq!(
+            wire(&StopReason::ALL),
+            [
+                "no_report",
+                "stalled",
+                "verify_failed",
+                "new_task_cap",
+                "environment_repeated",
+                "worker_start",
+                "publish_refused",
+            ]
+        );
+        complete(&EnvHold::ALL, |hold| match hold {
+            EnvHold::DiskFloor => 0,
+            EnvHold::DiskFull => 1,
+            EnvHold::MemoryCritical => 2,
+        });
+        assert_eq!(
+            wire(&EnvHold::ALL),
+            ["disk_floor", "disk_full", "memory_critical"]
+        );
+        complete(&WaitingFor::ALL, |waiting| match waiting {
+            WaitingFor::Predecessors => 0,
+            WaitingFor::Slot => 1,
+            WaitingFor::Environment => 2,
+            WaitingFor::Answer => 3,
+        });
+        assert_eq!(
+            wire(&WaitingFor::ALL),
+            ["predecessors", "slot", "environment", "answer"]
+        );
+        complete(&ResultCode::ALL, |code| match code {
+            ResultCode::WakeWorker => 0,
+            ResultCode::ApplyOrMerge => 1,
+            ResultCode::Ready => 2,
+            ResultCode::Split => 3,
+            ResultCode::Drafting => 4,
+            ResultCode::NewTaskCapChoice => 5,
+            ResultCode::RunAction => 6,
+            ResultCode::Acknowledge => 7,
+            ResultCode::Merge => 8,
+            ResultCode::RestartWorker => 9,
+        });
+        assert_eq!(
+            wire(&ResultCode::ALL),
+            [
+                "wake_worker",
+                "apply_or_merge",
+                "ready",
+                "split",
+                "drafting",
+                "new_task_cap_choice",
+                "run_action",
+                "acknowledge",
+                "merge",
+                "restart_worker",
+            ]
+        );
+    }
 }

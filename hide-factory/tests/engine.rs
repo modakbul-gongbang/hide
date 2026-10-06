@@ -38,6 +38,20 @@ fn tick_until(h: &mut Bench, factory: &str, id: &str, state: TaskState) {
     );
 }
 
+/// The summary card of `id`, as the JSON stage 2 reads.
+fn card_json(h: &Bench, id: &str) -> serde_json::Value {
+    let summary = serde_json::to_value(h.engine.summary()).unwrap();
+    summary["factories"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|f| f["columns"].as_array().unwrap().iter())
+        .flat_map(|c| c["cards"].as_array().unwrap().iter())
+        .find(|card| card["task"] == id)
+        .cloned()
+        .unwrap_or_else(|| panic!("no card {id}"))
+}
+
 fn open_question(h: &Bench, factory: &str, id: &str) -> Question {
     h.task(factory, id)
         .open_questions()
@@ -554,6 +568,9 @@ fn a_dependent_starts_only_after_its_predecessor_merged_not_when_it_is_verifying
     );
     let card = h.engine.summary().factories[0].columns[1].cards.clone();
     assert_eq!(card[0].waiting_for.as_deref(), Some("L-1"));
+    let card = card_json(&h, &b);
+    assert_eq!(card["waiting_code"], "predecessors", "{card}");
+    assert_eq!(card["waiting_on"], json!(["L-1"]));
     tick_until(&mut h, &f, &a, TaskState::Done);
     tick_until(&mut h, &f, &b, TaskState::Running);
 }
@@ -661,6 +678,28 @@ fn a_different_answer_before_the_deadline_sends_the_worker_back() {
 }
 
 #[test]
+fn a_blocking_answer_names_the_waiting_tasks_it_frees() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let a = h.ready("Blocks", &[]);
+    let b = h.ready("After", &[&a]);
+    h.as_worker(
+        &f,
+        &a,
+        Command::Block {
+            text: "Which?".into(),
+            suggestion: "this one".into(),
+            deadline_hours: Some(24),
+            letter: None,
+        },
+    );
+    let inbox = h.op(Command::Inbox);
+    let item = &inbox["items"][0];
+    assert_eq!(item["result_code"], "wake_worker", "{inbox}");
+    assert_eq!(item["unblocks"], json!([h.task(&f, &b).display_id()]));
+}
+
+#[test]
 fn a_question_needs_a_suggestion_and_a_deadline() {
     let mut h = Bench::new(false);
     let f = h.factory(true);
@@ -710,6 +749,9 @@ fn a_blocking_question_releases_the_slot_and_the_answer_wakes_the_same_session()
     );
     assert_eq!(h.state(&f, &blocked), TaskState::Blocked);
     assert!(h.world().sleeps.contains(&blocked));
+    assert_eq!(card_json(&h, &blocked)["waiting_code"], "answer");
+    let inbox = h.op(Command::Inbox);
+    assert_eq!(inbox["items"][0]["result_code"], "wake_worker", "{inbox}");
     h.engine.tick();
     assert_eq!(
         h.state(&f, &other),
@@ -780,6 +822,19 @@ fn verification_fails_count_toward_the_limit_and_then_stop_the_task() {
         (task.state, task.stop),
         (TaskState::Stopped, Some(StopReason::VerifyFailed))
     );
+    assert_eq!(card_json(&h, &t)["stop"], "verify_failed");
+    let inbox = h.op(Command::Inbox);
+    let stopped = inbox["items"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["group"] == "stopped")
+        .cloned()
+        .unwrap();
+    assert_eq!(stopped["stop"], "verify_failed", "{stopped}");
+    assert_eq!(stopped["result_code"], "run_action");
+    let shown = h.op(Command::Show { task: t.clone() });
+    assert_eq!(shown["task"]["stop_code"], "verify_failed", "{shown}");
     assert_eq!(
         h.world().verify_runs.len(),
         3,
@@ -1493,6 +1548,19 @@ fn a_manual_task_waits_for_merge_and_every_github_write_happens_once() {
     assert_eq!(h.task(&f, &t).gates, vec![Gate::ManualMode]);
     let inbox = h.op(Command::Inbox);
     assert_eq!(inbox["items"][0]["group"], "merge", "{inbox}");
+    // Codes beside the sentences, for a screen in any language.
+    assert_eq!(
+        inbox["items"][0]["gates"],
+        json!(["manual_mode"]),
+        "{inbox}"
+    );
+    assert_eq!(inbox["items"][0]["result_code"], "merge");
+    let shown = h.op(Command::Show { task: t.clone() });
+    assert_eq!(
+        shown["task"]["gate_codes"],
+        json!(["manual_mode"]),
+        "{shown}"
+    );
     for _ in 0..5 {
         h.engine.tick();
     }
@@ -2247,6 +2315,9 @@ fn a_low_disk_holds_new_starts_and_the_hold_clears_on_recheck() {
     let t = h.ready("Held", &[]);
     assert_eq!(h.state(&f, &t), TaskState::Waiting);
     assert!(h.task(&f, &t).held.is_some());
+    let card = card_json(&h, &t);
+    assert_eq!(card["waiting_code"], "environment", "{card}");
+    assert_eq!(card["env_hold"], "disk_floor");
     h.world().disk_free = Some(100 << 30);
     h.engine.tick();
     assert_eq!(

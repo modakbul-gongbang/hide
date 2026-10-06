@@ -671,6 +671,20 @@ pub enum Gate {
 }
 
 impl Gate {
+    pub const ALL: [Self; 11] = [
+        Self::ReviewDirectly,
+        Self::ApprovedScopeChange,
+        Self::BreakingChange,
+        Self::NoVerification,
+        Self::RiskPath,
+        Self::ManualMode,
+        Self::OpenQuestion,
+        Self::CheckFailed,
+        Self::AutonomyDiff,
+        Self::DirtyMain,
+        Self::MergeRefused,
+    ];
+
     pub fn reason(self) -> &'static str {
         match self {
             Self::ReviewDirectly => "직접 확인 표시",
@@ -702,6 +716,16 @@ pub enum StopReason {
 }
 
 impl StopReason {
+    pub const ALL: [Self; 7] = [
+        Self::NoReport,
+        Self::Stalled,
+        Self::VerifyFailed,
+        Self::NewTaskCap,
+        Self::EnvironmentRepeated,
+        Self::WorkerStart,
+        Self::PublishRefused,
+    ];
+
     pub fn label(self) -> &'static str {
         match self {
             Self::NoReport => "보고 없이 멈춤",
@@ -711,6 +735,29 @@ impl StopReason {
             Self::EnvironmentRepeated => "같은 환경 실패 반복",
             Self::WorkerStart => "worker 시작 실패",
             Self::PublishRefused => "push 거절됨",
+        }
+    }
+}
+
+/// Why no new worker starts on this machine (B57).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum EnvHold {
+    /// Free disk is below the Factory's floor.
+    DiskFloor,
+    /// A command failed with no space left on the device.
+    DiskFull,
+    MemoryCritical,
+}
+
+impl EnvHold {
+    pub const ALL: [Self; 3] = [Self::DiskFloor, Self::DiskFull, Self::MemoryCritical];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::DiskFloor => "디스크 여유가 기준보다 작음",
+            Self::DiskFull => "디스크 부족",
+            Self::MemoryCritical => "메모리 압박 critical",
         }
     }
 }
@@ -832,6 +879,9 @@ pub struct Task {
     pub writes: BTreeSet<String>,
     /// Environment hold: a start was refused by the pre-start check (B57).
     pub held: Option<String>,
+    /// The same hold as a code.
+    #[serde(default)]
+    pub held_code: Option<EnvHold>,
     pub label_path: bool,
     pub source_body_hash: Option<String>,
 }
@@ -904,6 +954,7 @@ impl Task {
             idle_since: None,
             writes: BTreeSet::new(),
             held: None,
+            held_code: None,
             label_path: false,
             source_body_hash: None,
         }

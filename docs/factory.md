@@ -531,6 +531,7 @@ Common refusal reasons are `role_not_allowed`, `task_not_found`, `task_ambiguous
 `FactorySummary` and `TaskDetail` are the contract for any screen of the Factory, and `status`, `inbox` and `show --json` print them as they are.
 Every number in them is derived in `hide-factory/src/summary.rs` from the stored Tasks, and a screen computes nothing.
 Fields are added and never renamed or removed.
+Every sentence the engine writes into them (`state_label`, `waiting_for`, `text`, `result`, `remaining`, `gates`, `stop`) has a code beside it, so a screen can say it in any language; the codes are listed under [Codes](#codes) and pinned by `every_summary_code_is_pinned` in `summary.rs`.
 
 **`FactorySummary`**
 
@@ -570,6 +571,10 @@ Fields are added and never renamed or removed.
 | `state`, `state_label` | The state id and its label, with the stop reason for a stopped Task. |
 | `needs_person` | The Task is blocked, stopped, `merge_waiting`, or has an open question that is not a notice. |
 | `waiting_for` | For a waiting Task, the predecessors by display id, the environment hold, or `slot`; for a blocked one, `answer` or `predecessor`. |
+| `waiting_code` | The same as a `WaitingFor` code. |
+| `waiting_on` | For `predecessors` on a waiting Task, the predecessors' display ids. |
+| `env_hold` | For `environment`, the `EnvHold` code. |
+| `stop` | For a stopped Task, the `StopReason` code behind `state_label`. |
 | `priority` | The Task's priority. |
 | `since` | When it entered its state. |
 | `unread` | A completion nobody has looked at: an operator's `show` of the Task, or answering a notice on it, clears it. |
@@ -592,9 +597,14 @@ Fields are added and never renamed or removed.
 | `text` | Why it is the person's turn. |
 | `suggestion` | The preselected answer. |
 | `result` | What sending the preselected answer does. |
+| `result_code` | The same as a `ResultCode`. |
+| `unblocks` | For a blocking question or a merge, the display ids of the waiting Tasks that depend on this one. |
+| `gates` | For a merge item, the `Gate` codes it waits on. |
+| `stop` | For an item of a stopped Task, the `StopReason` code. |
 | `default_action` | What the worker does meanwhile. |
 | `choices` | The listed answers. |
 | `deadline`, `remaining` | The deadline, and a short phrase for it or for how many days a blocking question has waited. |
+| `remaining_hours` | Whole hours left before the deadline, rounded up, 0 once it passed; none for a blocking question. |
 | `waiting_since`, `waiting_days` | When it started waiting, and whole days for a blocking question. |
 
 The inbox lists each open question, each `merge_waiting` Task, and each stopped Task that has no action question, in order of rank and, within a rank, the item waiting longest first.
@@ -621,8 +631,10 @@ Inside a column the cards a person must look at (blocked, stopped, merge waiting
 | `questions` | Every question with its answer and who relayed it. |
 | `discoveries` | The discoveries with their class. |
 | `gates` | The reasons a merge waits for a person. |
+| `gate_codes` | The same as `Gate` codes. |
 | `allowed` | The actions the state allows. |
 | `stop` | The stop reason's label. |
+| `stop_code` | The same as a `StopReason` code. |
 | `merge_sha` | The merge commit. |
 | `worker_name`, `worktree`, `branch` | The worker's name, folder and branch. |
 
@@ -637,6 +649,16 @@ Inside a column the cards a person must look at (blocked, stopped, merge waiting
 | `check` | The failing check or command. |
 | `link` | The CI link or the log path. |
 | `log_tail` | The last 4 KiB of a local log. |
+
+### Codes
+
+| Code | Values |
+| --- | --- |
+| `WaitingFor` | `predecessors`, `slot`, `environment`, `answer` |
+| `EnvHold` | `disk_floor` (free disk below the floor), `disk_full` (a command found no space), `memory_critical` |
+| `StopReason` | `no_report`, `stalled`, `verify_failed`, `new_task_cap`, `environment_repeated`, `worker_start`, `publish_refused` |
+| `Gate` | `review_directly`, `approved_scope_change`, `breaking_change`, `no_verification`, `risk_path`, `manual_mode`, `open_question`, `check_failed`, `autonomy_diff`, `dirty_main`, `merge_refused` |
+| `ResultCode` | `wake_worker`, `apply_or_merge`, `ready`, `split`, `drafting`, `new_task_cap_choice`, `run_action`, `acknowledge`, `merge`, `restart_worker` |
 
 ## Performance boundaries
 

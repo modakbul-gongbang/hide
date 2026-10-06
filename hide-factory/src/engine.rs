@@ -199,7 +199,7 @@ pub struct Engine {
     env_problem_since: Option<UnixMs>,
     env_diagnosed: bool,
     hold_checked_at: Option<UnixMs>,
-    hold_reason: Option<String>,
+    hold_reason: Option<EnvHold>,
     /// A runtime unavailable until its usage resets (B58).
     runtime_blocked: BTreeMap<Runtime, UnixMs>,
     github_backoff: BTreeMap<String, (u32, UnixMs)>,
@@ -4791,24 +4791,29 @@ impl Engine {
                 .disk_free(&project)
                 .is_some_and(|free| free < floor)
             {
-                self.hold_reason = Some("디스크 여유가 기준보다 작음".into());
+                self.hold_reason = Some(EnvHold::DiskFloor);
             } else if self.ports.environment.memory_pressure() == MemoryPressure::Critical {
-                self.hold_reason = Some("메모리 압박 critical".into());
+                self.hold_reason = Some(EnvHold::MemoryCritical);
             }
         }
-        if let Some(reason) = self.hold_reason.clone() {
+        if let Some(reason) = self.hold_reason {
             self.env_problem_since.get_or_insert(now);
             for task in &candidates {
-                if task.held.as_deref() != Some(reason.as_str()) {
-                    let held = reason.clone();
-                    self.with_task(&task.factory, &task.id, |t| t.held = Some(held));
+                if task.held_code != Some(reason) {
+                    self.with_task(&task.factory, &task.id, |t| {
+                        t.held = Some(reason.label().to_owned());
+                        t.held_code = Some(reason);
+                    });
                 }
             }
             return;
         }
         for task in &candidates {
-            if task.held.is_some() {
-                self.with_task(&task.factory, &task.id, |t| t.held = None);
+            if task.held.is_some() || task.held_code.is_some() {
+                self.with_task(&task.factory, &task.id, |t| {
+                    t.held = None;
+                    t.held_code = None;
+                });
             }
         }
         let mut free = self
@@ -5534,7 +5539,7 @@ impl Engine {
                 }
             }
             EnvSignal::DiskFull => {
-                self.hold_reason = Some("디스크 부족".into());
+                self.hold_reason = Some(EnvHold::DiskFull);
                 self.hold_checked_at = Some(now);
                 self.remove_finished_worktrees(None);
             }
@@ -5646,7 +5651,7 @@ impl Engine {
         };
         self.env_diagnosed = true;
         let facts = json!({
-            "hold": self.hold_reason,
+            "hold": self.hold_reason.map(EnvHold::label),
             "halted": self.halt_until.is_some_and(|u| u > now),
             "recent_failures": self.env_failures.iter().map(|note| json!({"task": note.task, "stage": note.stage, "kind": note.kind.as_str()})).collect::<Vec<_>>(),
             "disk_free": self.ports.environment.disk_free(&factory.project),
