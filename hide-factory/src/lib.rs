@@ -12,6 +12,7 @@
 pub mod adapters;
 pub mod command;
 pub mod dag;
+pub mod engine;
 pub mod judgment;
 pub mod model;
 pub mod role;
@@ -19,6 +20,7 @@ pub mod store;
 pub mod summary;
 
 pub use command::{Command, Refusal};
+pub use engine::{Engine, Inbound, Ports};
 pub use model::{Factory, Task, TaskState};
 pub use role::Role;
 pub use summary::FactorySummary;

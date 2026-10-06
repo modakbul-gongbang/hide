@@ -231,6 +231,8 @@ pub trait MergeTarget {
     fn reopen_pr(&mut self, factory: &Factory, pr: &PullRequest) -> Result<(), Failure>;
     fn diff_lines(&mut self, factory: &Factory, task: &Task) -> Result<u32, Failure>;
     fn changed_paths(&mut self, factory: &Factory, task: &Task) -> Result<Vec<String>, Failure>;
+    /// The Task's diff against main, for the drift and user checks (D-44).
+    fn diff_text(&mut self, factory: &Factory, task: &Task) -> Result<String, Failure>;
     /// merge-tree against the current main and the quick check (B38).
     fn premerge(&mut self, factory: &Factory, task: &Task) -> Result<PreMerge, Failure>;
     /// Whether the local main checkout has uncommitted changes (B42).

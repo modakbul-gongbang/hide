@@ -78,6 +78,10 @@ pub enum Command {
         text: String,
         /// A prerequisite or unrelated Task's card.
         card: Option<CardInput>,
+        /// An enabled autonomy scope the new Task claims (B32).
+        autonomy: Option<String>,
+        /// Moves an earlier discovery to `class`; only toward a person (B30).
+        reclassify: Option<String>,
         letter: Option<String>,
     },
     Done {
