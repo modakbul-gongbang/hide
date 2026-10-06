@@ -67,7 +67,7 @@ function AgentOnboarding({ actions, agents }: { actions: Actions; agents: KitAge
 /**
  * One square tile: the agent's logo (or a monogram when no official mark may
  * be bundled) and its name. On or off is a mark and a word as well as a
- * colour; a tile for an agent that is not set up here is dimmed and has no
+ * colour; a tile for an agent that is not installed here is dimmed and has no
  * switch.
  */
 function AgentTile({ agent, on, onToggle }: { agent: KitAgent; on: boolean; onToggle: () => void }) {
