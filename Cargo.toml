@@ -6,6 +6,7 @@ members = [
     "hide-kit",
     "hide-agent-hooks",
     "hide-ai",
+    "hide-factory",
     "hide-memory",
     "hide-platform",
     "hide-project",
@@ -37,6 +38,9 @@ debug = "line-tables-only"
 debug = "line-tables-only"
 
 [profile.dev.package.hide-ai]
+debug = "line-tables-only"
+
+[profile.dev.package.hide-factory]
 debug = "line-tables-only"
 
 [profile.dev.package.hide-herdr-client]
