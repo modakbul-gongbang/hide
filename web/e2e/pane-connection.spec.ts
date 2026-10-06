@@ -1,14 +1,10 @@
-// The Not connected chip on an isolated pinned Herdr and hided (PRD settings-cleanup B26, B28, B31): a
-// Claude Code pane that was running when Hide's hook was installed wears the chip, its popover offers
-// Reopen and Not now, the pane's own SessionStart hook (the real helper, run the way the agent runs it)
-// turns the chip off, and a refused Reopen leaves the pane as it was and says why in the popover.
-// A Reopen that succeeds is not here: the core starts the agent straight after ending it, and against a
-// named agent the pinned Herdr still holds the name for a moment, so `agent.start` is refused as
-// `agent_name_taken` and the pane is left on its shell. That is the core's to fix before this spec can
-// follow a Reopen through to a connected pane.
-// The Codex shared-server reasons need a Codex pane Herdr detects and a machine kit that read it, which
-// this fixture has no program for: `PaneConnection.test.tsx` and the core's `runtime::tests::agent_connection`
-// own them.
+// The Not connected chip on an isolated pinned Herdr and hided (PRD settings-cleanup B26, B28, B29, B31):
+// a Claude Code pane that was running when Hide's hook was installed wears the chip, its popover offers
+// Reopen and Not now, Reopen ends the agent and starts the same conversation in the same pane, and the
+// pane's own SessionStart hook (the real helper, run the way the agent would run it) turns the chip off.
+// A refused Reopen leaves the pane as it was and says why in the popover. The Codex shared-server reasons
+// need a Codex pane Herdr detects and a machine kit that read it, which this fixture has no program for:
+// `PaneConnection.test.tsx` and the core's `runtime::tests::agent_connection` own them.
 
 import { expect, test, type Page } from "@playwright/test";
 import { execFileSync } from "node:child_process";
@@ -63,7 +59,7 @@ async function start(page: Page, label: string): Promise<{ herdr: HerdrFixture; 
 const processArgv = (herdr: HerdrFixture, pane: string) =>
   (herdr.run(["pane", "process-info", "--pane", pane]) as ProcessInfo).result.process_info.foreground_processes.map((process) => process.argv?.join(" "));
 
-test("a session started before the hook wears the chip, Not now keeps it, and the session's own hook turns it off", async ({ page }) => {
+test("a session started before the hook wears the chip, Not now keeps it, and Reopen continues the conversation and connects it", async ({ page }) => {
   const { herdr, daemon, pane, sent } = await start(page, "pane-connection");
   try {
     const view = page.locator(`[data-pane-view="${pane}"]`);
@@ -82,10 +78,13 @@ test("a session started before the hook wears the chip, Not now keeps it, and th
     await expect(popover).toHaveCount(0);
     await expect(chip).toBeVisible();
 
-    // B26: a session whose own SessionStart hook reaches Hide (the real helper, run the way the agent runs
-    // it) is connected: its chip goes, with the popover that was open, and the other pane keeps its chip.
+    // B29: Reopen sends one event and the same conversation starts again in the same pane.
     await chip.click();
-    await expect(popover).toBeVisible();
+    await popover.locator(`[data-pane-reopen="${pane}"]`).dblclick();
+    await expect.poll(() => sent.get("pane_reopen")).toBe(1);
+    await expect.poll(() => processArgv(herdr, pane), { timeout: 40_000 }).toContain(`claude --resume ${SESSION}`);
+
+    // The resumed agent runs its own SessionStart hook, which is what tells Hide it is listening.
     execFileSync(HELPER, ["hook", "--runtime", "claude-code", "--event", "SessionStart", "--memory-injection", "--source", "hide-subagents@6"], {
       input: "{}",
       env: { ...process.env, HOME: daemon.home, HERDR_PANE_ID: pane, HERDR_SOCKET_PATH: herdr.socket, HERDR_ENV: "1" },
@@ -95,7 +94,7 @@ test("a session started before the hook wears the chip, Not now keeps it, and th
     await expect(page.locator("[data-pane-connection-popover]")).toHaveCount(0);
     // Only the pane that connected lost its chip.
     await expect(other).toBeVisible();
-    expect(sent.get("pane_reopen")).toBeUndefined();
+    expect(sent.get("pane_reopen")).toBe(1);
   } finally {
     daemon.stop();
     herdr.stop();
@@ -114,9 +113,8 @@ test("a Reopen the core refuses leaves the pane as it was and the popover says w
     await page.locator(`[data-pane-reopen="${pane}"]`).click();
     await expect.poll(() => sent.get("pane_reopen")).toBe(1);
     const failure = page.locator("[data-pane-reopen-failed]");
-    // The agent's state in the core's rows lags the screen Herdr reads, so a busy agent is refused up front
-    // (`agent_busy`) or by the end itself (`end_refused`); either way nothing was touched.
-    await expect(failure).toHaveAttribute("data-pane-reopen-failed", /^(agent_busy|end_refused)$/, { timeout: 20_000 });
+    await expect(failure).toHaveAttribute("data-pane-reopen-failed", "agent_busy", { timeout: 20_000 });
+    await expect(failure).toContainText("working or waiting");
     await screenshot(page, "pane-connection-refused");
     // Everything knowable first was refused first: the agent was not touched.
     expect(processArgv(herdr, pane)).toEqual(before);

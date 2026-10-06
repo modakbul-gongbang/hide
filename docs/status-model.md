@@ -368,7 +368,10 @@ The shared server's setting is the machine's last kit read (`KitSnapshot.codex_d
 
 Reopen is one event, `pane_reopen { pane_id }`, and reuses the session-sleep path rather than a second one: the agent is ended the way sleep ends it and started again in the same pane with its own resume arguments, a Codex with `--no-daemon` first (`herdr-core/src/pane_reopen.rs`).
 Everything knowable before the agent is touched is refused before it is touched, so a refusal leaves the pane as it was: an agent that is working or waiting (`agent_busy`), a session Herdr never reported an id for or one with no resume arguments (`session_gone`), a Codex whose capability was never read (`codex_unread`), and a folder that is gone (`start_refused`).
-An end Herdr or the agent refuses is `end_refused`, and a start Herdr refuses after the end is `start_refused`.
+The agent is read again just before it is signalled, because the list the decision used can be a second old: one that has started working or is waiting since is `agent_busy` too, with nothing signalled.
+Any other end Herdr or the agent refuses is `end_refused`, and a start Herdr refuses after the end is `start_refused`.
+The pinned Herdr keeps an ended agent's name for a moment, and refuses `agent.start` under it as `agent_name_taken` until it lets go; a Reopen, and a wake after a sleep, send the same start again on exactly that refusal for at most ten seconds (`agent_start::start_at_shell_reusing_name`), never before the end has been confirmed, and a name that is still held then is `start_refused`.
+Every other start takes that refusal as Herdr's answer, because its name is someone else's.
 The core keeps one entry per pane, so a second press while one runs starts nothing; the pane's `connection.reopen` is `{"state":"pending"}` while it runs and `{"state":"failed","reason":<code>}` after a refusal, and the entry goes with the need for it: when the pane connects, when it leaves, or when it shows no chip.
 A start that lands publishes nothing more by itself: the session's own hook reaching Hide is what turns the chip off.
 Herdr's words for a refusal go to the diagnostic log (`pane_reopen.answered`), never to the screen.

@@ -14,7 +14,7 @@ use std::thread;
 use hide_herdr_client::ApiConnector;
 
 use crate::agent_sleep::WakeMode;
-use crate::agent_sleep_herdr::{self, WakeOutcome, WakeRequest};
+use crate::agent_sleep_herdr::{self, EndError, WakeOutcome, WakeRequest};
 use crate::live::LiveContext;
 use crate::model::PaneReopenFailure;
 use crate::recent_closed::ClosedAgent;
@@ -80,8 +80,15 @@ pub(crate) fn reopen(
             format!("{cwd} is not a directory"),
         ));
     }
-    agent_sleep_herdr::end_agent(connector, &request.pane_id, &request.kind)
-        .map_err(|detail| failure(PaneReopenFailure::EndRefused, detail))?;
+    agent_sleep_herdr::end_agent(connector, &request.pane_id, &request.kind).map_err(|error| {
+        match error {
+            // The decision was made on a list up to a second old, so an agent
+            // that started working since is told as busy, and nothing was
+            // signalled.
+            EndError::Busy(detail) => failure(PaneReopenFailure::AgentBusy, detail),
+            EndError::Failed(detail) => failure(PaneReopenFailure::EndRefused, detail),
+        }
+    })?;
     match agent_sleep_herdr::start_agent(
         connector,
         &WakeRequest {
@@ -200,7 +207,7 @@ mod tests {
         });
         let error = reopen(&herdr.connector(), &request("claude", CodexDaemon::Unknown))
             .expect_err("working");
-        assert_eq!(error.code, PaneReopenFailure::EndRefused);
+        assert_eq!(error.code, PaneReopenFailure::AgentBusy);
         assert_eq!(herdr.methods(), ["agent.get"]);
     }
 
@@ -309,6 +316,50 @@ mod tests {
             error.detail.contains("agent_name_taken"),
             "{}",
             error.detail
+        );
+    }
+
+    /// Herdr keeps the ended agent's name for a moment, so the first starts
+    /// are refused as `agent_name_taken`; the reopen waits that out instead
+    /// of leaving the pane on its shell.
+    #[test]
+    fn a_name_herdr_has_not_released_yet_is_waited_out_and_the_session_starts() {
+        let mut child =
+            process::OwnedChild::spawn(Command::new("/bin/sleep").arg("60")).expect("sleep starts");
+        let pid = child.id();
+        let exited = Arc::new(AtomicBool::new(false));
+        let seen = Arc::clone(&exited);
+        let starts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let attempts = Arc::clone(&starts);
+        let herdr =
+            FakeHerdr::start_with_errors("pane-reopen-name", move |method, _| match method {
+                "agent.get" => Ok(agent_info("claude", "idle")),
+                "pane.process_info" => {
+                    let shell = std::process::id();
+                    let gone = !process::is_alive(pid) || seen.load(Ordering::SeqCst);
+                    Ok(process_info(shell, if gone { shell } else { pid }))
+                }
+                "agent.start" if attempts.fetch_add(1, Ordering::SeqCst) < 2 => Err((
+                    "agent_name_taken".into(),
+                    "agent name reviewer is already used".into(),
+                )),
+                "agent.start" => Ok(json!({"type": "agent_started", "argv": [], "agent": {
+                    "pane_id": "w1:p1", "tab_id": "w1:t1", "workspace_id": "w1",
+                    "terminal_id": "term_1", "agent_status": "idle", "focused": false,
+                    "revision": 1
+                }})),
+                other => panic!("unexpected {other}"),
+            });
+        let reaper = thread::spawn(move || {
+            let _ = child.wait();
+            exited.store(true, Ordering::SeqCst);
+        });
+        reopen(&herdr.connector(), &request("claude", CodexDaemon::Unknown)).expect("reopened");
+        reaper.join().expect("reaped");
+        assert_eq!(
+            starts.load(Ordering::SeqCst),
+            3,
+            "two refusals, then the start"
         );
     }
 }

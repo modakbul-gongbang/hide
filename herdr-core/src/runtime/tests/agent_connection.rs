@@ -566,3 +566,114 @@ fn a_machine_with_no_kit_or_no_such_device_refuses_the_request_with_an_error() {
         Some("kit.unknown_machine")
     );
 }
+
+/// B29 end to end through the runtime and its worker: the agent's process
+/// ends, Herdr still holds its name for two answers, and the reopen settles
+/// as done, with nothing left published and the calls in the order that
+/// never mutates before Herdr has confirmed.
+#[test]
+fn a_reopen_through_the_worker_waits_for_herdr_to_release_the_name() {
+    use crate::fake_herdr::FakeHerdr;
+    use hide_platform::process;
+    use serde_json::json;
+    use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+
+    let mut child = process::OwnedChild::spawn(std::process::Command::new("/bin/sleep").arg("60"))
+        .expect("sleep starts");
+    let pid = child.id();
+    let exited = Arc::new(AtomicBool::new(false));
+    let gone_flag = Arc::clone(&exited);
+    let starts = Arc::new(AtomicUsize::new(0));
+    let attempts = Arc::clone(&starts);
+    let herdr = FakeHerdr::start_with_errors("runtime-reopen-name", move |method, _| {
+        let info = |shell: u32, foreground: u32| {
+            json!({"type": "pane_process_info", "process_info": {
+                "pane_id": "w1:p2", "shell_pid": shell, "foreground_process_group_id": foreground,
+                "foreground_processes": [{"pid": shell, "name": "zsh"}]
+            }})
+        };
+        match method {
+            "agent.get" => Ok(json!({"type": "agent_info", "agent": {
+                "pane_id": "w1:p2", "tab_id": "w1:t1", "workspace_id": "w1",
+                "terminal_id": "term_1", "agent": "claude", "agent_status": "idle",
+                "state_change_seq": 2, "focused": false, "interactive_ready": true, "revision": 0
+            }})),
+            "pane.process_info" => {
+                let shell = std::process::id();
+                let gone = !process::is_alive(pid) || gone_flag.load(Ordering::SeqCst);
+                Ok(info(shell, if gone { shell } else { pid }))
+            }
+            "agent.start" if attempts.fetch_add(1, Ordering::SeqCst) < 2 => Err((
+                "agent_name_taken".into(),
+                "agent name agent-w1:p2 is already used".into(),
+            )),
+            "agent.start" => Ok(json!({"type": "agent_started", "argv": [], "agent": {
+                "pane_id": "w1:p2", "tab_id": "w1:t1", "workspace_id": "w1",
+                "terminal_id": "term_1", "agent_status": "idle", "focused": false, "revision": 1
+            }})),
+            other => panic!("unexpected {other}"),
+        }
+    });
+    let reaper = std::thread::spawn(move || {
+        let _ = child.wait();
+        exited.store(true, Ordering::SeqCst);
+    });
+
+    let mut runtime = runtime();
+    kit_rows(&mut runtime, None);
+    runtime.ingest_hook_diagnosis(diagnosis(installed(), installed()));
+    feed(
+        &mut runtime,
+        &[("w1:p1", "claude", true), ("w1:p2", "claude", false)],
+    );
+    // The reopen starts in the pane's own folder, which must exist.
+    for pane in runtime
+        .snapshot
+        .navigator
+        .workspaces
+        .iter_mut()
+        .flat_map(|workspace| workspace.checkouts.iter_mut())
+        .flat_map(|checkout| checkout.tabs.iter_mut())
+        .flat_map(|tab| tab.panes.iter_mut())
+    {
+        pane.cwd = std::env::temp_dir().to_string_lossy().into_owned();
+    }
+    let shared = Arc::new(Mutex::new(runtime));
+    {
+        let mut runtime = shared.lock().unwrap();
+        runtime.live = Some(crate::live::LiveContext {
+            socket_path: herdr.socket_path().to_path_buf(),
+            herdr_bin: None,
+            runtime: Arc::downgrade(&shared),
+            notifier: crate::handle::ChangeNotifier::noop(),
+            api_connector: Arc::new(herdr.connector()),
+        });
+        assert!(reopen(&mut runtime, "w1:p2"));
+        assert_eq!(
+            reopen_of(&runtime, "w1:p2"),
+            Some(PaneReopenSnapshot::Pending)
+        );
+    }
+    wait(&shared, "the reopen to settle", |runtime| {
+        runtime.pane_reopens.is_empty() || {
+            matches!(
+                reopen_of(runtime, "w1:p2"),
+                Some(PaneReopenSnapshot::Failed { .. })
+            )
+        }
+    });
+    reaper.join().expect("reaped");
+    assert_eq!(
+        reopen_of(&shared.lock().unwrap(), "w1:p2"),
+        None,
+        "the name was released, so the session started and nothing is left to say"
+    );
+    assert_eq!(starts.load(Ordering::SeqCst), 3);
+    let methods = herdr.methods();
+    assert_eq!(
+        methods[0], "agent.get",
+        "the agent is read before it is touched"
+    );
+    let first_start = methods.iter().position(|m| m == "agent.start").unwrap();
+    assert!(methods[..first_start].iter().all(|m| m != "agent.start"));
+}
