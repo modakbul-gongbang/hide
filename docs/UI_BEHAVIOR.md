@@ -526,7 +526,7 @@ Unchanged request, agent, descendant and issue/PR inputs keep the row tree aslee
 
 The Agents view is one graph, laid out by PRD agents-graph-view, which replaced the checkout and lineage modes: a checkout is a box, an agent is a row in it, and a delegation into another checkout is a line between two boxes.
 Its web owners are `web/src/GraphView.tsx` (the renderer, with the filter controls), `web/src/agentGraph.ts` (the pure layout, routing and filter rules), `web/src/graphMotion.ts` (the glide) and `web/src/graphGeometry.ts` (the `--graph-*` sizes read from the tokens); the chips, popover and fold line it shares with the other tabs are in `web/src/OverviewLenses.tsx`.
-There is no mode control: the facts line's right end carries the filter instead.
+There is no mode control: the tab row's right end carries the filter instead.
 
 A box stands for each checkout that holds an agent; the agents working there are its rows, one line each, and a box is drawn quieter while every row in it rests.
 A delegation inside one checkout has no line: the child row stands one step right under its parent, joined by a corner arrow.
