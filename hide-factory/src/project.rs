@@ -6,7 +6,7 @@
 //! marker, a pull request is found by its head branch, a merge by its pull
 //! request's state, a label create is `--force`.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, MutexGuard};
 use std::time::{Duration, Instant};
@@ -47,7 +47,14 @@ pub struct Projects {
     /// only after `ci_poll_every`, not on every engine tick (B75).
     ci_pending: BTreeMap<String, Instant>,
     ci_poll_every: Duration,
+    /// The last held issue each Factory looked up by number, so the next
+    /// read continues after it.
+    held_cursor: BTreeMap<String, u64>,
 }
+
+/// Held issues looked up by number in one outside read; the rest wait for
+/// the next read and keep their Tasks meanwhile.
+pub const HELD_LOOKUP_LIMIT: usize = 20;
 
 /// How often a commit whose checks are still running is asked again.
 pub const CI_POLL_EVERY: Duration = Duration::from_secs(30);
@@ -67,6 +74,7 @@ impl SharedProjects {
             bodies: BTreeMap::new(),
             ci_pending: BTreeMap::new(),
             ci_poll_every: CI_POLL_EVERY,
+            held_cursor: BTreeMap::new(),
         })))
     }
 
@@ -638,14 +646,29 @@ impl TaskSource for SharedProjects {
             .filter_map(|issue| issue["number"].as_u64().map(|n| (n, issue.clone())))
             .collect();
         // The list holds the newest issues only, so a held issue missing from
-        // it is asked for by number before its label counts as removed.
-        for (number, task) in &held {
-            if labelled.contains_key(number)
-                || matches!(task.state, TaskState::Done | TaskState::Cancelled)
-            {
-                continue;
-            }
-            let issue = this.gh_json(
+        // it is asked for by number before its label counts as removed: a
+        // capped number per read, continuing where the last read stopped.
+        // One that cannot be read now keeps its Task; a deleted one is gone.
+        let missing: Vec<u64> = held
+            .iter()
+            .filter(|(number, task)| {
+                !labelled.contains_key(number)
+                    && !matches!(task.state, TaskState::Done | TaskState::Cancelled)
+            })
+            .map(|(number, _)| *number)
+            .collect();
+        let after = this.held_cursor.get(&factory.id).copied().unwrap_or(0);
+        let start = missing.iter().position(|n| *n > after).unwrap_or(0);
+        let asked: Vec<u64> = missing
+            .iter()
+            .cycle()
+            .skip(start)
+            .take(missing.len().min(HELD_LOOKUP_LIMIT))
+            .copied()
+            .collect();
+        let mut unread: BTreeSet<u64> = missing.iter().copied().collect();
+        for number in &asked {
+            let issue = match this.gh_json(
                 "github.observe",
                 &[
                     "issue",
@@ -656,7 +679,16 @@ impl TaskSource for SharedProjects {
                     "--json",
                     "number,title,body,state,labels",
                 ],
-            )?;
+            ) {
+                Ok(issue) => issue,
+                Err(failure) if failure.signal.is_some() => return Err(failure),
+                Err(failure) if failure.detail.contains("Could not resolve to an issue") => {
+                    unread.remove(number);
+                    continue;
+                }
+                Err(_) => continue,
+            };
+            unread.remove(number);
             let still = issue["labels"]
                 .as_array()
                 .into_iter()
@@ -666,6 +698,22 @@ impl TaskSource for SharedProjects {
                 labelled.insert(*number, issue);
             }
         }
+        if let Some(last) = asked.last() {
+            this.held_cursor.insert(factory.id.clone(), *last);
+        }
+        // Pull requests this Factory's own Tasks opened never take another
+        // Task, whatever a worker wrote in them (D-33).
+        let own_prs: BTreeSet<u64> = tasks
+            .iter()
+            .filter_map(|task| task.pr.as_ref().map(|pr| pr.number))
+            .collect();
+        let own_heads: BTreeSet<String> = tasks
+            .iter()
+            .flat_map(|task| {
+                [Some(task.branch_slug()), task.worker.as_ref().map(|w| w.branch.clone())]
+            })
+            .flatten()
+            .collect();
         for (number, issue) in &labelled {
             let issue_ref = IssueRef::Github { number: *number };
             let body = issue["body"].as_str().unwrap_or_default();
@@ -708,12 +756,13 @@ impl TaskSource for SharedProjects {
                                 .any(|i| i["number"].as_u64() == Some(*number))
                         })
                         .filter(|pr| {
-                            task.pr
-                                .as_ref()
-                                .is_none_or(|own| pr["number"].as_u64() != Some(own.number))
+                            pr["number"].as_u64().is_none_or(|n| !own_prs.contains(&n))
                         })
                         .filter(|pr| {
-                            pr["headRefName"].as_str() != Some(task.branch_slug().as_str())
+                            pr["isCrossRepository"].as_bool() == Some(true)
+                                || pr["headRefName"]
+                                    .as_str()
+                                    .is_none_or(|head| !own_heads.contains(head))
                         })
                         // Anyone can open a pull request from a fork: it takes
                         // a Task only once a maintainer merged it (D-27).
@@ -748,6 +797,7 @@ impl TaskSource for SharedProjects {
         }
         for (number, task) in held {
             if !labelled.contains_key(&number)
+                && !unread.contains(&number)
                 && !matches!(task.state, TaskState::Done | TaskState::Cancelled)
             {
                 events.push(OutsideEvent::LabelRemoved {

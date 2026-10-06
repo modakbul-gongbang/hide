@@ -345,10 +345,11 @@ A recovery that cannot name one merge, cannot make or merge the revert, or finds
 The person wins outside the Factory, and the Factory follows.
 Each open Factory reads GitHub every `outside_read_minutes` (2 by default): up to 200 issues labelled `factory` and 100 pull requests, or, locally, its local issues.
 A failed read backs off 1, 2, 5, 15 and then 30 minutes on a rate-limit, server or network signal; three failures in a row mark the Factory's read stale.
+A held issue missing from that list is looked up by number, at most 20 per read and continuing where the last read stopped; one that cannot be read now keeps its Task, and a deleted one counts as its label removed.
 
 | What the Factory sees | What it does |
 | --- | --- |
-| A pull request the Factory did not open closes a Task's issue, and it is open | A pull request from a fork counts only once it is merged, since anyone can open one. Otherwise the Task becomes `outside`. A running worker is stopped, its worktree stays for the keep period, and a notice offers `revive`. |
+| A pull request the Factory did not open closes a Task's issue, and it is open | A pull request one of the Factory's own Tasks opened never counts, whatever its worker wrote; the decisions a worker records sit in a code block in its pull request body, so a "Fixes #N" there stays text. A pull request from a fork counts only once it is merged, since anyone can open one. Otherwise the Task becomes `outside`. A running worker is stopped, its worktree stays for the keep period, and a notice offers `revive`. |
 | That pull request merges | The Task is `done`, and a dependent Task's predecessor counts as merged. A stopped worker's worktree still waits out its keep period. |
 | The issue closes with no pull request, or the `factory` label is removed | The Task is cancelled with a notice, kept for the keep period. |
 | A person edits the issue body | A Task before its start goes back to `drafting` and is reviewed again. A running Task gets a scope-change question. |

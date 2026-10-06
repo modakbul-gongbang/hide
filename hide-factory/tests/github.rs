@@ -28,6 +28,8 @@ struct Hub {
     list_cap: Option<usize>,
     /// Each `git push` refspec, in order.
     pushes: Vec<String>,
+    /// `issue view` answers this error for these numbers.
+    view_errors: BTreeMap<u64, String>,
 }
 
 #[derive(Clone, Default)]
@@ -90,6 +92,13 @@ impl Runner for FakeGh {
             }
             ["issue", "view", number, ..] => {
                 let number: u64 = number.parse().unwrap();
+                if let Some(stderr) = hub.view_errors.get(&number) {
+                    return Ok(Output {
+                        code: Some(1),
+                        stdout: String::new(),
+                        stderr: stderr.clone(),
+                    });
+                }
                 ok(match hub.issues.get(&number) {
                     Some((title, body, state)) => json!({"number": number, "title": title, "body": body, "state": state, "labels": [{"name": "factory"}]}),
                     None => json!({"number": number, "title": "", "body": "", "state": "OPEN", "labels": []}),
@@ -536,6 +545,100 @@ fn a_held_issue_past_the_list_limit_keeps_its_task() {
         }),
         "{events:?}"
     );
+}
+
+#[test]
+fn a_held_issue_that_cannot_be_read_keeps_its_task_and_a_deleted_one_is_gone() {
+    let gh = FakeGh::default();
+    let mut p = projects(&gh);
+    let factory = factory();
+    {
+        let mut hub = gh.0.lock().unwrap();
+        hub.issues
+            .insert(9, ("Listed".into(), "body".into(), "CLOSED".into()));
+        hub.list_cap = Some(1);
+        hub.view_errors
+            .insert(1, "issue view refused: transferred to another repository".into());
+        hub.view_errors.insert(
+            2,
+            "GraphQL: Could not resolve to an issue or pull request with the number of 2.".into(),
+        );
+    }
+    let odd = task("T-1", Some(1));
+    let deleted = task("T-2", Some(2));
+    let listed = task("T-9", Some(9));
+    let events = p.observe(&factory, &[&odd, &deleted, &listed]).unwrap();
+    assert!(
+        !events.contains(&OutsideEvent::LabelRemoved {
+            issue: IssueRef::Github { number: 1 }
+        }),
+        "{events:?}"
+    );
+    assert!(events.contains(&OutsideEvent::LabelRemoved {
+        issue: IssueRef::Github { number: 2 }
+    }));
+    // The other Tasks' reads go on.
+    assert!(events.contains(&OutsideEvent::IssueClosed {
+        issue: IssueRef::Github { number: 9 }
+    }));
+}
+
+#[test]
+fn another_task_s_pull_request_naming_an_issue_takes_no_task() {
+    let gh = FakeGh::default();
+    let mut p = projects(&gh);
+    let factory = factory();
+    {
+        let mut hub = gh.0.lock().unwrap();
+        for n in [1, 2] {
+            hub.issues.insert(
+                n,
+                (
+                    format!("Issue {n}"),
+                    format!("<!-- hide-factory: f-1/T-{n} -->"),
+                    "OPEN".into(),
+                ),
+            );
+        }
+        hub.prs.insert(
+            5,
+            json!({"number": 5, "url": "https://github.com/o/r/pull/5", "state": "OPEN",
+                "headRefName": "factory/1-add-it", "isCrossRepository": false,
+                "closingIssuesReferences": [{"number": 1}, {"number": 2}]}),
+        );
+    }
+    let mut a = task("T-1", Some(1));
+    a.pr = Some(PullRequest {
+        number: 5,
+        url: "https://github.com/o/r/pull/5".into(),
+        head: "factory/1-add-it".into(),
+        by_factory: true,
+        open: true,
+    });
+    let b = task("T-2", Some(2));
+    let events = p.observe(&factory, &[&a, &b]).unwrap();
+    assert!(
+        !events
+            .iter()
+            .any(|e| matches!(e, OutsideEvent::ClosingPr { .. })),
+        "{events:?}"
+    );
+}
+
+#[test]
+fn a_worker_s_closing_keyword_in_a_decision_stays_text() {
+    let mut t = task("T-1", Some(1));
+    t.decisions.push(DecisionRecord {
+        text: "done: Fixes #2 and ``` too".into(),
+        by: "worker:T-1".into(),
+        at: 0,
+    });
+    let body = hide_factory::engine::pr_body(&t, &factory());
+    let fence = body.find("````text").expect("a fence longer than the text's");
+    let fixes = body.find("Fixes #2").unwrap();
+    let close = body[fixes..].find("````").map(|i| i + fixes).unwrap();
+    assert!(fence < fixes && fixes < close, "{body}");
+    assert!(body.trim_end().ends_with("Closes #1"));
 }
 
 #[test]

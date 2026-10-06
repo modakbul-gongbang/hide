@@ -6012,10 +6012,20 @@ pub fn issue_body(task: &Task, factory: &Factory) -> String {
 pub fn pr_body(task: &Task, factory: &Factory) -> String {
     let mut body = issue_body(task, factory);
     if !task.decisions.is_empty() {
-        body.push_str("\n## 결정 기록\n");
-        for decision in &task.decisions {
-            body.push_str(&format!("- {}\n", decision.text));
-        }
+        // A worker wrote these: in a code block, a "Fixes #N" in them is
+        // text, never a closing reference to another Task's issue (D-33).
+        let text: String = task
+            .decisions
+            .iter()
+            .map(|decision| format!("- {}\n", decision.text))
+            .collect();
+        let longest = text
+            .split(|c| c != '`')
+            .map(str::len)
+            .max()
+            .unwrap_or(0);
+        let fence = "`".repeat(longest.max(2) + 1);
+        body.push_str(&format!("\n## 결정 기록\n{fence}text\n{text}{fence}\n"));
     }
     match &task.issue {
         Some(IssueRef::Github { number }) => body.push_str(&format!("\nCloses #{number}\n")),
