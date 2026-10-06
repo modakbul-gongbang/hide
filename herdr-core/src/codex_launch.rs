@@ -6,17 +6,16 @@
 //! a start from an issue or PR, a reopen, a fork and a wake, goes through
 //! [`crate::wire::agent_start_params`], which takes the machine's answer here
 //! and puts the flag first. Whether the operator turned the kit's
-//! `Codex를 pane마다 실행` off does not matter: that switch is about a Codex
-//! started by hand (D-24).
+//! kit's setting does not matter: the kit no longer turns the daemon off by
+//! itself (PRD settings-cleanup D-14), and a machine where it was turned off
+//! earlier keeps it off.
 //!
 //! An older Codex has no daemon and refuses the flag, so the flag goes only
 //! where the machine's kit read a Codex that has the daemon setting; a
 //! machine whose kit has not answered yet refuses a start with a next action.
 //!
-//! A transition path: it goes away with the kit part once openai/codex#48500
-//! runs a daemon's hooks in each window's environment (D-26).
-
-use hide_kit::{ComponentId, ComponentState};
+//! A transition path: it goes away once openai/codex#48500 runs a daemon's
+//! hooks in each window's environment.
 
 use crate::model::KitSnapshot;
 
@@ -40,25 +39,10 @@ impl CodexDaemon {
         if kit.unavailable.is_some() {
             return Self::Unknown;
         }
-        let Some(part) = kit
-            .components
-            .iter()
-            .find(|part| part.id == ComponentId::CodexPerPane)
-        else {
-            return Self::Unknown;
-        };
-        match part.state {
-            // These states come only from an actual daemon setting read.
-            ComponentState::Installed
-            | ComponentState::Off
-            | ComponentState::NotInstalled
-            | ComponentState::Removed => Self::Present,
-            ComponentState::Absent => match part.codex_daemon {
-                Some(true) => Self::Present,
-                Some(false) => Self::Unsupported,
-                None => Self::Unknown,
-            },
-            ComponentState::Failed | ComponentState::Outdated => Self::Unknown,
+        match kit.codex_daemon {
+            Some(true) => Self::Present,
+            Some(false) => Self::Unsupported,
+            None => Self::Unknown,
         }
     }
 }
@@ -84,18 +68,10 @@ pub(crate) fn start_arguments(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::model::KitComponentSnapshot;
 
-    fn kit(state: ComponentState) -> KitSnapshot {
+    fn kit(codex_daemon: Option<bool>) -> KitSnapshot {
         KitSnapshot {
-            components: vec![KitComponentSnapshot {
-                id: ComponentId::CodexPerPane,
-                label: ComponentId::CodexPerPane.label().to_owned(),
-                state,
-                reason: None,
-                location: None,
-                codex_daemon: None,
-            }],
+            codex_daemon,
             ..KitSnapshot::default()
         }
     }
@@ -106,7 +82,7 @@ mod tests {
 
     #[test]
     fn a_codex_with_the_daemon_starts_without_it_on_every_kind_of_start() {
-        let present = CodexDaemon::from_kit(&kit(ComponentState::Installed));
+        let present = CodexDaemon::from_kit(&kit(Some(true)));
         assert_eq!(
             start_arguments("codex", present, strings(&["resume", "abc"])),
             Ok(strings(&["--no-daemon", "resume", "abc"]))
@@ -115,10 +91,8 @@ mod tests {
             start_arguments("codex", present, strings(&["--", "fix the bug"])),
             Ok(strings(&["--no-daemon", "--", "fix the bug"]))
         );
-        // The operator's switch is about a Codex started by hand.
-        let off = CodexDaemon::from_kit(&kit(ComponentState::Off));
         assert_eq!(
-            start_arguments("codex", off, Vec::new()),
+            start_arguments("codex", present, Vec::new()),
             Ok(strings(&["--no-daemon"]))
         );
         // Never twice.
@@ -130,8 +104,7 @@ mod tests {
 
     #[test]
     fn only_a_confirmed_older_codex_gets_no_flag() {
-        let mut older = kit(ComponentState::Absent);
-        older.components[0].codex_daemon = Some(false);
+        let mut older = kit(Some(false));
         assert_eq!(
             start_arguments(
                 "codex",
@@ -140,7 +113,7 @@ mod tests {
             ),
             Ok(strings(&["resume", "a"]))
         );
-        older.components[0].codex_daemon = Some(true);
+        older.codex_daemon = Some(true);
         assert_eq!(
             start_arguments("codex", CodexDaemon::from_kit(&older), vec![]),
             Ok(strings(&["--no-daemon"]))
@@ -152,13 +125,10 @@ mod tests {
     }
 
     #[test]
-    fn unread_failed_missing_and_outdated_capability_refuse_the_common_start_boundary() {
-        for kit in [
-            kit(ComponentState::Absent),
-            kit(ComponentState::Failed),
-            kit(ComponentState::Outdated),
-            KitSnapshot::default(),
-        ] {
+    fn an_unread_capability_or_an_unavailable_kit_refuses_the_common_start_boundary() {
+        let mut unavailable = kit(Some(true));
+        unavailable.unavailable = Some("no kit here".to_owned());
+        for kit in [kit(None), unavailable, KitSnapshot::default()] {
             for args in [vec![], strings(&["resume", "a"]), strings(&["--no-daemon"])] {
                 let error = crate::wire::agent_start_params(
                     "pane",

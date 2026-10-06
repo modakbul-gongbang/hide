@@ -21,7 +21,6 @@
 mod agent_kit;
 pub mod agents;
 mod cli;
-mod codex_per_pane;
 mod coordination_retirement;
 mod device;
 mod hooks;
@@ -31,6 +30,7 @@ pub mod legacy;
 mod local;
 pub mod process;
 mod record;
+mod retired_agents;
 pub mod retirement_inspection;
 
 use std::collections::BTreeSet;
@@ -61,18 +61,14 @@ pub enum ComponentId {
     CodexHook,
     /// One-release retirement of the old coordination installation.
     CoordinationRetirement,
-    /// Codex's shared daemon turned off, so each Codex runs in its own pane
-    /// (PRD overview-request-view D-21).
-    CodexPerPane,
 }
 
 impl ComponentId {
-    pub const ALL: [ComponentId; 5] = [
+    pub const ALL: [ComponentId; 4] = [
         Self::Cli,
         Self::ClaudeCodeHook,
         Self::CodexHook,
         Self::CoordinationRetirement,
-        Self::CodexPerPane,
     ];
 
     /// The stable name the wire and the record carry.
@@ -82,7 +78,6 @@ impl ComponentId {
             Self::ClaudeCodeHook => "claude_code_hook",
             Self::CodexHook => "codex_hook",
             Self::CoordinationRetirement => "coordination_retirement",
-            Self::CodexPerPane => "codex_per_pane",
         }
     }
 
@@ -93,15 +88,7 @@ impl ComponentId {
             Self::ClaudeCodeHook => "Claude Code hook",
             Self::CodexHook => "Codex hook",
             Self::CoordinationRetirement => "Coordination retirement",
-            Self::CodexPerPane => "Codex를 pane마다 실행",
         }
-    }
-
-    /// Whether the operator can turn the part off from its row, which then
-    /// stays off until they turn it on (D-24). Every other part is taken
-    /// away by hand and brought back with Reinstall.
-    pub fn can_turn_off(self) -> bool {
-        matches!(self, Self::CodexPerPane)
     }
 
     pub fn from_code(code: &str) -> Option<Self> {
@@ -129,13 +116,10 @@ pub enum ComponentState {
     /// The machine has nothing for this part to attach to, such as an agent
     /// runtime that is not set up there.
     Absent,
-    /// The operator turned the part off, or undid it outside Hide, or the
-    /// agent whose switch governs it is off, whether or not Hide ever
-    /// installed it; no pass puts it back and nothing asks them to (D-24,
+    /// The agent whose switch governs the part is off, whether or not Hide
+    /// ever installed it; no pass puts it back and nothing asks them to (D-24,
     /// B36). Every reader treats it as a choice, never as damage: the machine
-    /// row offers no Reinstall, a device's hook reads "switched off", and
-    /// the Codex launch reads the daemon setting as there (`herdr-core`'s
-    /// `codex_launch`).
+    /// row offers no Reinstall and a device's hook reads "switched off".
     Off,
 }
 
@@ -159,10 +143,6 @@ pub struct ComponentReport {
     /// The file, link or folder the part lives at on that machine.
     #[serde(default)]
     pub location: Option<String>,
-    /// The actual Codex binary supports the shared daemon setting. Unknown
-    /// on a missing or failed probe; independent of this part's switch.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub codex_daemon: Option<bool>,
 }
 
 /// Every part's state on one machine, in [`ComponentId::ALL`] order.
@@ -173,6 +153,12 @@ pub struct KitReport {
     /// #517); empty in a report from a build that predates them.
     #[serde(default)]
     pub agents: Vec<AgentReport>,
+    /// The machine's Codex has the shared daemon setting, so Hide starts it
+    /// with `--no-daemon` (`herdr-core`'s `codex_launch`); `Some(false)` is a
+    /// Codex read to be older than the setting, `None` no Codex or a failed
+    /// read. Hide reads it and never changes it (PRD settings-cleanup D-12).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub codex_daemon: Option<bool>,
     /// The machine's record says the operator has not answered the first-run
     /// agent choice: its first pass left the agents that are on by default off
     /// until they do, and an explicit agent choice clears it. It reads the
@@ -206,10 +192,10 @@ impl KitReport {
                     state: ComponentState::Failed,
                     reason: Some(reason.to_owned()),
                     location: None,
-                    codex_daemon: None,
                 })
                 .collect(),
             agents: Vec::new(),
+            codex_daemon: None,
             held_for_onboarding: false,
             labels_retirement: Retirement::default(),
             legacy_retirement: Retirement::default(),
@@ -269,8 +255,6 @@ pub struct Scope {
     /// they are installed again even when they were taken away. Parts that
     /// are in place are not touched (B8).
     pub restore: BTreeSet<ComponentId>,
-    /// Parts the operator turned off ([`ComponentId::can_turn_off`]).
-    pub turn_off: BTreeSet<ComponentId>,
     /// Agents the operator switched on, by adapter id: the choice is
     /// recorded and each of the agent's pieces is installed again, even one
     /// that was taken away (issue #517).
@@ -289,13 +273,6 @@ impl Scope {
     pub fn reinstall(parts: impl IntoIterator<Item = ComponentId>) -> Self {
         Self {
             restore: parts.into_iter().collect(),
-            ..Self::default()
-        }
-    }
-
-    pub fn turn_off(parts: impl IntoIterator<Item = ComponentId>) -> Self {
-        Self {
-            turn_off: parts.into_iter().collect(),
             ..Self::default()
         }
     }
@@ -342,23 +319,13 @@ impl Scope {
     }
 
     pub fn is_automatic(&self) -> bool {
-        self.restore.is_empty()
-            && self.turn_off.is_empty()
-            && self.agent_on.is_empty()
-            && self.agent_off.is_empty()
+        self.restore.is_empty() && self.agent_on.is_empty() && self.agent_off.is_empty()
     }
 
-    /// Two requests for one machine as one; for a part named by both, the
+    /// Two requests for one machine as one; for an agent named by both, the
     /// later choice wins.
     pub fn merge(mut self, later: Scope) -> Scope {
-        for id in later.restore {
-            self.turn_off.remove(&id);
-            self.restore.insert(id);
-        }
-        for id in later.turn_off {
-            self.restore.remove(&id);
-            self.turn_off.insert(id);
-        }
+        self.restore.extend(later.restore);
         for id in later.agent_on {
             self.agent_off.remove(&id);
             self.agent_on.insert(id);
@@ -386,10 +353,8 @@ pub(crate) enum Observed {
     Blocked(String),
     /// Nothing on the machine for the part to attach to.
     Absent(String),
-    /// A Codex was read and has no shared daemon setting.
+    /// A hook that cannot be written on this system or for this version.
     Unsupported(String),
-    /// A supported Codex was read, but its account is not set up yet.
-    SupportedAbsent(String),
 }
 
 fn observe(id: ComponentId, target: &KitTarget) -> Observed {
@@ -400,7 +365,6 @@ fn observe(id: ComponentId, target: &KitTarget) -> Observed {
         }
         ComponentId::CodexHook => hooks::observe(target, hide_agent_hooks::AgentRuntime::Codex),
         ComponentId::CoordinationRetirement => coordination_retirement::observe(target),
-        ComponentId::CodexPerPane => codex_per_pane::observe(target),
     }
 }
 
@@ -412,15 +376,12 @@ fn install(id: ComponentId, target: &KitTarget) -> Result<(), String> {
         }
         ComponentId::CodexHook => hooks::install(target, hide_agent_hooks::AgentRuntime::Codex),
         ComponentId::CoordinationRetirement => coordination_retirement::install(target).map(|_| ()),
-        ComponentId::CodexPerPane => codex_per_pane::install(target),
     }
 }
 
-/// Undoes a part the operator turned off; only the parts
-/// [`ComponentId::can_turn_off`] names have an undo.
+/// Takes a part out because the agent whose hook it is was switched off.
 fn turn_off(id: ComponentId, target: &KitTarget) -> Result<(), String> {
     match id {
-        ComponentId::CodexPerPane => codex_per_pane::turn_off(target),
         // An agent's switch turns its hook part off (`agent_kit::part_gate`).
         ComponentId::ClaudeCodeHook => {
             hooks::turn_off(target, hide_agent_hooks::AgentRuntime::ClaudeCode)
@@ -446,7 +407,6 @@ fn location(id: ComponentId, target: &KitTarget) -> String {
         ComponentId::CoordinationRetirement => coordination_retirement::location(target)
             .display()
             .to_string(),
-        ComponentId::CodexPerPane => codex_per_pane::location(target).display().to_string(),
     }
 }
 
@@ -458,18 +418,8 @@ fn report(
     switched_off: bool,
     failure: Option<String>,
 ) -> ComponentReport {
-    let codex_daemon = (id == ComponentId::CodexPerPane)
-        .then_some(match &observed {
-            Observed::Current | Observed::Missing | Observed::SupportedAbsent(_) => Some(true),
-            Observed::Unsupported(_) => Some(false),
-            _ => None,
-        })
-        .flatten();
     let (state, reason) = match (failure, observed) {
         (Some(failure), _) => (ComponentState::Failed, Some(failure)),
-        (None, Observed::Current) if id == ComponentId::CodexPerPane => {
-            (ComponentState::Installed, codex_per_pane::note(target))
-        }
         (None, Observed::Current) => (ComponentState::Installed, None),
         // An agent that is switched off gets nothing from a pass, so a hook
         // that is out of date or cannot be judged is not a repair to offer.
@@ -479,28 +429,22 @@ fn report(
         (None, Observed::Stale(reason)) => (ComponentState::Outdated, Some(reason)),
         // Gone after Hide applied it: the operator turned it off or undid it
         // by hand, and either way it is theirs now (B36).
-        (None, Observed::Missing) if switched_off || (recorded && id.can_turn_off()) => {
-            (ComponentState::Off, None)
-        }
+        (None, Observed::Missing) if switched_off => (ComponentState::Off, None),
         (None, Observed::Missing) if recorded => (
             ComponentState::Removed,
             Some("taken out after Hide installed it; Reinstall puts it back".to_owned()),
         ),
         (None, Observed::Missing) => (ComponentState::NotInstalled, None),
         (None, Observed::Blocked(reason)) => (ComponentState::Failed, Some(reason)),
-        (
-            None,
-            Observed::Absent(reason)
-            | Observed::Unsupported(reason)
-            | Observed::SupportedAbsent(reason),
-        ) => (ComponentState::Absent, Some(reason)),
+        (None, Observed::Absent(reason) | Observed::Unsupported(reason)) => {
+            (ComponentState::Absent, Some(reason))
+        }
     };
     ComponentReport {
         id,
         state,
         reason,
         location: Some(location(id, target)),
-        codex_daemon,
     }
 }
 
@@ -569,6 +513,7 @@ pub fn status(target: &KitTarget) -> KitReport {
     KitReport {
         components,
         agents,
+        codex_daemon: codex_daemon(target),
         held_for_onboarding: held,
         labels_retirement: Retirement::default(),
         legacy_retirement: Retirement::default(),
@@ -636,7 +581,7 @@ pub fn apply(target: &KitTarget, scope: &Scope) -> KitReport {
         // out; switched on now, it is Reinstall's (issue #517).
         let gate = agent_kit::part_gate(&record, scope, id);
         let agent_off = gate.is_some_and(|gate| !gate.enabled);
-        let turning_off = scope.turn_off.contains(&id) || gate.is_some_and(|gate| gate.turning_off);
+        let turning_off = gate.is_some_and(|gate| gate.turning_off);
         let restoring = scope.restores(id) || gate.is_some_and(|gate| gate.turning_on);
         let install_now = !turning_off
             && !agent_off
@@ -646,8 +591,7 @@ pub fn apply(target: &KitTarget, scope: &Scope) -> KitReport {
                 Observed::Current
                 | Observed::Blocked(_)
                 | Observed::Absent(_)
-                | Observed::Unsupported(_)
-                | Observed::SupportedAbsent(_) => false,
+                | Observed::Unsupported(_) => false,
             };
         // A hook part comes out whatever blocks judging it (a missing helper,
         // an older CLI): only Hide's marked entries are taken.
@@ -691,7 +635,7 @@ pub fn apply(target: &KitTarget, scope: &Scope) -> KitReport {
         let off = agent_off || agent_kit::part_is_off(&record, id);
         components.push(report(id, target, after, recorded_now, off, failure));
     }
-    let (agents, agents_changed) = agent_kit::apply(
+    let (agents, agents_changed, agents_retirement) = agent_kit::apply(
         target,
         scope,
         &mut record,
@@ -699,6 +643,15 @@ pub fn apply(target: &KitTarget, scope: &Scope) -> KitReport {
         &agent_kit::part_views(&components),
     );
     changed |= agents_changed;
+    legacy_retirement.removed.extend(agents_retirement.removed);
+    legacy_retirement
+        .failures
+        .extend(agents_retirement.failures);
+    // The part an earlier build recorded for the Codex setting it used to
+    // switch is gone; its record entry goes with it.
+    if record_failure.is_none() {
+        changed |= record.forget_piece("codex_per_pane");
+    }
     // What the record says after this pass: a machine that was held and not
     // answered still waits, and a save that fails below leaves the file as it
     // was, so the next pass holds again rather than reading a lost hold as an
@@ -725,9 +678,22 @@ pub fn apply(target: &KitTarget, scope: &Scope) -> KitReport {
     KitReport {
         components,
         agents,
+        codex_daemon: codex_daemon(target),
         held_for_onboarding,
         labels_retirement,
         legacy_retirement,
+    }
+}
+
+/// Whether the machine's Codex has the shared daemon setting, read without
+/// changing it (`KitReport::codex_daemon`).
+fn codex_daemon(target: &KitTarget) -> Option<bool> {
+    use hide_agent_hooks::codex_daemon::{DaemonSetting, read_setting};
+    let codex = target.codex.as_deref()?;
+    match read_setting(codex, &target.home, &target.stop) {
+        Ok(DaemonSetting::Unsupported) => Some(false),
+        Ok(DaemonSetting::On | DaemonSetting::Off) => Some(true),
+        Err(_) => None,
     }
 }
 
@@ -802,14 +768,6 @@ pub fn remove(target: &KitTarget) -> RemoveReport {
             ComponentId::CodexHook => hooks::remove(target, hide_agent_hooks::AgentRuntime::Codex),
             ComponentId::CoordinationRetirement => RemoveOutcome::Kept {
                 reason: "retirement preserves the old ledger folder".to_owned(),
-            },
-            // Hide cannot tell its own switch from the operator's choice, and
-            // a Codex left per pane harms nothing.
-            ComponentId::CodexPerPane => RemoveOutcome::Kept {
-                reason: format!(
-                    "Codex keeps running per pane; `codex features enable {}` gives it its shared daemon back",
-                    hide_agent_hooks::codex_daemon::DAEMON_FEATURE
-                ),
             },
         };
         components.push((id, outcome));

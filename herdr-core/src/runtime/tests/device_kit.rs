@@ -104,13 +104,13 @@ fn report(states: &[(ComponentId, ComponentState)]) -> KitReport {
                 state: *state,
                 reason: None,
                 location: Some(format!("/home/me/{}", id.code())),
-                codex_daemon: None,
             })
             .collect(),
         agents: Vec::new(),
         held_for_onboarding: false,
         labels_retirement: Default::default(),
         legacy_retirement: Default::default(),
+        codex_daemon: None,
     }
 }
 
@@ -289,7 +289,6 @@ fn reinstall_on_a_device_retries_failed_retirement_and_restores_removed_hooks() 
                 ComponentId::ClaudeCodeHook,
                 ComponentId::CoordinationRetirement
             ],
-            turn_off: Vec::new(),
             agents_on: Vec::new(),
             agents_off: Vec::new(),
         }
@@ -328,7 +327,7 @@ fn an_agent_switch_on_a_device_sends_the_agent_and_repeats_nothing() {
     let mut answer = report(&[(ComponentId::Cli, ComponentState::Installed)]);
     answer.agents = vec![
         agent_report("gemini-cli", Available, false, ComponentState::Off),
-        agent_report("qwen-code", NotInstalled, false, ComponentState::Off),
+        agent_report("grok", NotInstalled, false, ComponentState::Off),
         agent_report("codex", Available, true, ComponentState::Removed),
     ];
     let helper = KitDevice::answering(Ok(answer));
@@ -354,7 +353,7 @@ fn an_agent_switch_on_a_device_sends_the_agent_and_repeats_nothing() {
     dispatch(
         &shared,
         "kit_agent_set",
-        serde_json::json!({ "device_id": DEVICE, "agent": "qwen-code", "enabled": true }),
+        serde_json::json!({ "device_id": DEVICE, "agent": "grok", "enabled": true }),
     );
     dispatch(
         &shared,
@@ -372,7 +371,6 @@ fn an_agent_switch_on_a_device_sends_the_agent_and_repeats_nothing() {
     let actions: Vec<KitAction> = helper.calls().into_iter().map(|call| call.0).collect();
     let agents = |on: &[&str]| KitAction::Reinstall {
         components: Vec::new(),
-        turn_off: Vec::new(),
         agents_on: on.iter().map(|id| (*id).to_owned()).collect(),
         agents_off: Vec::new(),
     };
@@ -458,7 +456,6 @@ fn the_first_run_choice_is_asked_once_applied_everywhere_and_remembered_for_late
         device_calls,
         vec![KitAction::Reinstall {
             components: Vec::new(),
-            turn_off: Vec::new(),
             agents_on: vec!["claude-code".to_owned(), "codex".to_owned()],
             agents_off: Vec::new(),
         }]

@@ -991,6 +991,8 @@ export type Kit = {
   agents: KitAgent[];
   offers_reinstall: boolean;
   shares_account_with: string | null;
+  /** What the machine's Codex answered about its shared daemon: true has it, false is older, null no answer. */
+  codex_daemon?: boolean | null;
 };
 
 /** One pane's rectangle in a remote tab, as fractions of the tab's area (`RemotePaneLayoutFrame`). */

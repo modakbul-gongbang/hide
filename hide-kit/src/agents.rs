@@ -18,7 +18,7 @@
 //!   get the SessionStart guidance hook ([`HookSupport::Guidance`]);
 //! - nothing else. What Hide never writes is listed in `docs/agent-hooks.md`.
 
-use std::ffi::{OsStr, OsString};
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::sync::{LazyLock, Mutex};
 use std::time::{Duration, Instant, SystemTime};
@@ -55,31 +55,16 @@ pub enum SkillDir {
     Shared,
     /// `~/.claude/skills`: Claude Code does not read the shared folder.
     Claude,
-    /// `~/.kiro/skills`.
-    Kiro,
-    /// `~/.qwen/skills`.
-    Qwen,
-    /// `~/.cline/skills`.
-    Cline,
 }
 
 impl SkillDir {
-    pub const ALL: [SkillDir; 5] = [
-        Self::Shared,
-        Self::Claude,
-        Self::Kiro,
-        Self::Qwen,
-        Self::Cline,
-    ];
+    pub const ALL: [SkillDir; 2] = [Self::Shared, Self::Claude];
 
     /// The stable name the record carries.
     pub fn code(self) -> &'static str {
         match self {
             Self::Shared => "agents",
             Self::Claude => "claude",
-            Self::Kiro => "kiro",
-            Self::Qwen => "qwen",
-            Self::Cline => "cline",
         }
     }
 
@@ -87,9 +72,6 @@ impl SkillDir {
         match self {
             Self::Shared => [".agents", "skills"],
             Self::Claude => [".claude", "skills"],
-            Self::Kiro => [".kiro", "skills"],
-            Self::Qwen => [".qwen", "skills"],
-            Self::Cline => [".cline", "skills"],
         }
     }
 
@@ -110,14 +92,17 @@ impl SkillDir {
         self == Self::Shared || home.join(folder).is_dir()
     }
 
-    /// The skill folder's own folder, `~/.<agent>/skills/hide-browser`.
-    fn skill_folder(self, home: &Path) -> PathBuf {
-        self.path(home).join(SKILL_NAME)
-    }
-
     fn skill_file(self, home: &Path) -> PathBuf {
-        self.skill_folder(home).join("SKILL.md")
+        skill_file_in(&self.path(home))
     }
+}
+
+fn skill_folder_in(root: &Path) -> PathBuf {
+    root.join(SKILL_NAME)
+}
+
+fn skill_file_in(root: &Path) -> PathBuf {
+    skill_folder_in(root).join("SKILL.md")
 }
 
 /// What Hide writes into an agent's hook configuration, if anything.
@@ -151,9 +136,6 @@ pub struct AgentAdapter {
     /// The systems the agent's documentation confirms that folder on.
     pub skill_os: &'static [Os],
     pub hook: HookSupport,
-    /// The oldest agent version whose documentation has the hook Hide
-    /// writes; `None` when the documentation names none.
-    pub min_version: Option<&'static str>,
     /// Whether the agent is on without the operator choosing, as Claude Code
     /// and Codex have been since their hooks became part of the kit.
     pub default_on: bool,
@@ -173,7 +155,6 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         skill_dir: SkillDir::Claude,
         skill_os: ALL_OS,
         hook: HookSupport::Part(ComponentId::ClaudeCodeHook),
-        min_version: Some("2.1.278"),
         default_on: true,
         doc_url: "https://code.claude.com/docs/en/skills",
     },
@@ -184,20 +165,8 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         skill_dir: SkillDir::Shared,
         skill_os: UNIX_OS,
         hook: HookSupport::Part(ComponentId::CodexHook),
-        min_version: Some("0.155.1"),
         default_on: true,
         doc_url: "https://learn.chatgpt.com/docs/build-skills",
-    },
-    AgentAdapter {
-        id: "opencode",
-        label: "OpenCode",
-        executables: &["opencode"],
-        skill_dir: SkillDir::Shared,
-        skill_os: UNIX_OS,
-        hook: HookSupport::None,
-        min_version: None,
-        default_on: false,
-        doc_url: "https://opencode.ai/docs/skills/",
     },
     AgentAdapter {
         id: "gemini-cli",
@@ -206,152 +175,8 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         skill_dir: SkillDir::Shared,
         skill_os: UNIX_OS,
         hook: HookSupport::Guidance(GuidanceAgent::Gemini),
-        min_version: None,
         default_on: false,
         doc_url: "https://geminicli.com/docs/cli/skills/",
-    },
-    AgentAdapter {
-        id: "cursor",
-        label: "Cursor",
-        executables: &["cursor-agent"],
-        skill_dir: SkillDir::Shared,
-        skill_os: UNIX_OS,
-        hook: HookSupport::Guidance(GuidanceAgent::Cursor),
-        min_version: None,
-        default_on: false,
-        doc_url: "https://cursor.com/docs/context/skills",
-    },
-    AgentAdapter {
-        id: "copilot-cli",
-        label: "GitHub Copilot CLI",
-        executables: &["copilot"],
-        skill_dir: SkillDir::Shared,
-        skill_os: ALL_OS,
-        hook: HookSupport::Guidance(GuidanceAgent::Copilot),
-        min_version: None,
-        default_on: false,
-        doc_url: "https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-skills",
-    },
-    AgentAdapter {
-        id: "amp",
-        label: "Amp",
-        executables: &["amp"],
-        skill_dir: SkillDir::Shared,
-        skill_os: UNIX_OS,
-        hook: HookSupport::None,
-        min_version: None,
-        default_on: false,
-        doc_url: "https://ampcode.com/docs/customize/skills",
-    },
-    AgentAdapter {
-        id: "factory-droid",
-        label: "Factory Droid",
-        executables: &["droid"],
-        skill_dir: SkillDir::Shared,
-        skill_os: UNIX_OS,
-        hook: HookSupport::Guidance(GuidanceAgent::Droid),
-        min_version: None,
-        default_on: false,
-        doc_url: "https://docs.factory.com/cli/configuration/skills",
-    },
-    AgentAdapter {
-        id: "kiro",
-        label: "Kiro",
-        executables: &["kiro-cli"],
-        skill_dir: SkillDir::Kiro,
-        skill_os: UNIX_OS,
-        hook: HookSupport::Guidance(GuidanceAgent::Kiro),
-        min_version: Some("3.0.0"),
-        default_on: false,
-        doc_url: "https://kiro.dev/docs/skills/",
-    },
-    AgentAdapter {
-        id: "qwen-code",
-        label: "Qwen Code",
-        executables: &["qwen"],
-        skill_dir: SkillDir::Qwen,
-        skill_os: UNIX_OS,
-        hook: HookSupport::Guidance(GuidanceAgent::Qwen),
-        min_version: None,
-        default_on: false,
-        doc_url: "https://qwenlm.github.io/qwen-code-docs/en/users/features/skills/",
-    },
-    AgentAdapter {
-        id: "goose",
-        label: "Goose",
-        executables: &["goose"],
-        skill_dir: SkillDir::Shared,
-        skill_os: UNIX_OS,
-        hook: HookSupport::None,
-        min_version: None,
-        default_on: false,
-        doc_url: "https://goose-docs.ai/docs/guides/context-engineering/using-skills/",
-    },
-    AgentAdapter {
-        id: "cline",
-        label: "Cline",
-        executables: &["cline"],
-        skill_dir: SkillDir::Cline,
-        skill_os: ALL_OS,
-        hook: HookSupport::None,
-        min_version: None,
-        default_on: false,
-        doc_url: "https://docs.cline.bot/customization/skills",
-    },
-    AgentAdapter {
-        id: "kilo-code",
-        label: "Kilo Code",
-        executables: &["kilo"],
-        skill_dir: SkillDir::Shared,
-        skill_os: ALL_OS,
-        hook: HookSupport::None,
-        min_version: None,
-        default_on: false,
-        doc_url: "https://github.com/Kilo-Org/kilocode/blob/main/packages/kilo-docs/pages/customize/skills.md",
-    },
-    AgentAdapter {
-        id: "crush",
-        label: "Crush",
-        executables: &["crush"],
-        skill_dir: SkillDir::Shared,
-        skill_os: ALL_OS,
-        hook: HookSupport::None,
-        min_version: None,
-        default_on: false,
-        doc_url: "https://github.com/charmbracelet/crush/blob/main/README.md",
-    },
-    AgentAdapter {
-        id: "junie",
-        label: "Junie",
-        executables: &["junie"],
-        skill_dir: SkillDir::Shared,
-        skill_os: ALL_OS,
-        hook: HookSupport::Guidance(GuidanceAgent::Junie),
-        min_version: None,
-        default_on: false,
-        doc_url: "https://junie.jetbrains.com/docs/agent-skills.html",
-    },
-    AgentAdapter {
-        id: "augment",
-        label: "Augment",
-        executables: &["auggie"],
-        skill_dir: SkillDir::Shared,
-        skill_os: UNIX_OS,
-        hook: HookSupport::Guidance(GuidanceAgent::Augment),
-        min_version: None,
-        default_on: false,
-        doc_url: "https://docs.augmentcode.com/cli/skills",
-    },
-    AgentAdapter {
-        id: "pi",
-        label: "Pi",
-        executables: &["pi"],
-        skill_dir: SkillDir::Shared,
-        skill_os: ALL_OS,
-        hook: HookSupport::None,
-        min_version: None,
-        default_on: false,
-        doc_url: "https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/skills.md",
     },
     AgentAdapter {
         id: "grok",
@@ -360,31 +185,38 @@ pub const ADAPTERS: &[AgentAdapter] = &[
         skill_dir: SkillDir::Shared,
         skill_os: UNIX_OS,
         hook: HookSupport::None,
-        min_version: None,
         default_on: false,
         doc_url: "https://docs.x.ai/build/features/skills-plugins-marketplaces",
     },
     AgentAdapter {
-        id: "kimi-code",
-        label: "Kimi Code",
-        executables: &["kimi"],
+        id: "opencode",
+        label: "OpenCode",
+        executables: &["opencode"],
         skill_dir: SkillDir::Shared,
         skill_os: UNIX_OS,
         hook: HookSupport::None,
-        min_version: None,
         default_on: false,
-        doc_url: "https://github.com/MoonshotAI/kimi-code/blob/main/docs/en/customization/skills.md",
+        doc_url: "https://opencode.ai/docs/skills/",
     },
     AgentAdapter {
-        id: "mistral-vibe",
-        label: "Mistral Vibe",
-        executables: &["vibe"],
+        id: "pi",
+        label: "Pi",
+        executables: &["pi"],
+        skill_dir: SkillDir::Shared,
+        skill_os: ALL_OS,
+        hook: HookSupport::None,
+        default_on: false,
+        doc_url: "https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/skills.md",
+    },
+    AgentAdapter {
+        id: "cursor",
+        label: "Cursor",
+        executables: &["cursor-agent"],
         skill_dir: SkillDir::Shared,
         skill_os: UNIX_OS,
-        hook: HookSupport::None,
-        min_version: None,
+        hook: HookSupport::Guidance(GuidanceAgent::Cursor),
         default_on: false,
-        doc_url: "https://github.com/mistralai/mistral-vibe/blob/main/README.md",
+        doc_url: "https://cursor.com/docs/context/skills",
     },
 ];
 
@@ -434,10 +266,6 @@ impl AgentAdapter {
 /// program, looked for once on one search. Every decision of the pass reads
 /// this instead of searching again.
 pub(crate) struct Detection {
-    /// The search the programs were looked for on; a program found there is
-    /// run with it too, since a CLI installed as a script starts its
-    /// interpreter by name (`hide_agent_hooks::cli_path`).
-    path: OsString,
     rows: Vec<(&'static str, Option<PathBuf>)>,
 }
 
@@ -454,7 +282,7 @@ impl Detection {
                 (adapter.id, program)
             })
             .collect();
-        Self { path, rows }
+        Self { rows }
     }
 
     /// Whether the agent is installed here: one of its programs is found.
@@ -467,11 +295,6 @@ impl Detection {
             .iter()
             .find(|(id, _)| *id == adapter.id)
             .and_then(|(_, program)| program.as_deref())
-    }
-
-    /// `program --version`, run with the search it was found on.
-    pub(crate) fn version(&self, program: &Path) -> Option<String> {
-        program_version(program, &self.path)
     }
 }
 
@@ -629,47 +452,16 @@ fn login_shell_path(target: &KitTarget) -> Option<OsString> {
     path
 }
 
-/// How long an answer that could not be read (a version, the login shell's
-/// `PATH`) is not asked for again. One that was read stays until what it
+/// How long an answer that could not be read (the login shell's `PATH`) is
+/// not asked for again. One that was read stays until what it
 /// came from changes.
 const UNREAD_RETRY: Duration = Duration::from_secs(60);
-
-type VersionKey = (PathBuf, Option<SystemTime>, u64);
-
-/// What was answered for a program's version, and when it was asked.
-type VersionAnswers = std::collections::HashMap<VersionKey, (Option<String>, Instant)>;
-
-/// `binary --version`, run with `path`, asked at most once per version of the
-/// file: Settings re-reads the kit every few seconds, and a subprocess per
-/// read would put a slow or hanging program on the kit worker for as long as
-/// Settings is open. The probe itself is bounded
-/// (`hide_agent_hooks::program_version`).
-fn program_version(binary: &Path, path: &OsStr) -> Option<String> {
-    static ANSWERS: LazyLock<Mutex<VersionAnswers>> = LazyLock::new(Mutex::default);
-    let key = std::fs::metadata(binary)
-        .map(|meta| (binary.to_path_buf(), meta.modified().ok(), meta.len()))
-        .ok();
-    if let Some(key) = &key
-        && let Ok(answers) = ANSWERS.lock()
-        && let Some((version, asked)) = answers.get(key)
-        && (version.is_some() || asked.elapsed() < UNREAD_RETRY)
-    {
-        return version.clone();
-    }
-    let version = hide_agent_hooks::program_version(binary, path);
-    if let Some(key) = key
-        && let Ok(mut answers) = ANSWERS.lock()
-    {
-        answers.insert(key, (version.clone(), Instant::now()));
-    }
-    version
-}
 
 // --- The skill stub ------------------------------------------------------------
 
 /// The text of the stub. It points at the binary and carries no usage, so it
 /// stays right as `hide browser help` changes.
-fn skill_text() -> String {
+pub(crate) fn skill_text() -> String {
     format!(
         "---\nname: {SKILL_NAME}\ndescription: Read and drive a browser display inside Hide. Use when a task involves a web page, a local app in a browser tab, or checking what a page shows.\n---\n\n<!-- {SKILL_MARKER_NAME}@{SKILL_VERSION}: written by Hide; remove it from Settings, Agents -->\n\nRun `hide browser help` and follow what it prints. It explains how to open a page, read it by refs, check a change with `--diff`, and what to do when a command fails.\n"
     )
@@ -711,7 +503,12 @@ pub(crate) enum SkillObserved {
 }
 
 pub(crate) fn observe_skill(dir: SkillDir, home: &Path) -> SkillObserved {
-    let path = dir.skill_file(home);
+    observe_skill_in(&dir.path(home))
+}
+
+/// What the skills folder `root` holds of Hide's stub.
+pub(crate) fn observe_skill_in(root: &Path) -> SkillObserved {
+    let path = skill_file_in(root);
     match std::fs::read_to_string(&path) {
         Ok(text) => match skill_marker_version(&text) {
             Some(SKILL_VERSION) if text == skill_text() => SkillObserved::Current,
@@ -738,17 +535,23 @@ pub(crate) fn install_skill(dir: SkillDir, home: &Path) -> Result<(), String> {
 /// Takes the stub out when it is Hide's, and the folder with it when nothing
 /// else is in it.
 pub(crate) fn remove_skill(dir: SkillDir, home: &Path) -> Result<bool, String> {
-    match observe_skill(dir, home) {
+    remove_skill_in(&dir.path(home))
+}
+
+/// [`remove_skill`] for any skills folder, which the retirement of an agent
+/// Hide no longer knows reaches by its path.
+pub(crate) fn remove_skill_in(root: &Path) -> Result<bool, String> {
+    match observe_skill_in(root) {
         // An edited stub carries the operator's changes, so it stays.
         SkillObserved::Missing | SkillObserved::Foreign | SkillObserved::Edited => Ok(false),
         SkillObserved::Unreadable(reason) => Err(reason),
         SkillObserved::Current | SkillObserved::Stale => {
-            let path = dir.skill_file(home);
+            let path = skill_file_in(root);
             std::fs::remove_file(&path)
                 .map_err(|error| format!("{} could not be removed: {error}", path.display()))?;
             // Only an empty folder goes; anything else in it is the
             // operator's.
-            let _ = std::fs::remove_dir(dir.skill_folder(home));
+            let _ = std::fs::remove_dir(skill_folder_in(root));
             Ok(true)
         }
     }

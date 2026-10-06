@@ -540,61 +540,6 @@ impl Runtime {
         self.queue_kit_scope(device_id, Scope::reinstall(parts))
     }
 
-    /// The operator turned a part on or off from its row (PRD
-    /// overview-request-view D-24, B36). Turning on is that part's
-    /// Reinstall; turning off undoes it, and no later pass puts it back. A
-    /// part already where the switch puts it is the same intent, already met
-    /// (engineering rule 11).
-    pub(super) fn request_kit_component_set(
-        &mut self,
-        device_id: &str,
-        component: ComponentId,
-        enabled: bool,
-    ) -> bool {
-        if !component.can_turn_off() {
-            self.set_error(
-                "kit.not_switchable",
-                format!("{} has no switch", component.label()),
-                false,
-            );
-            return true;
-        }
-        if device_id != LOCAL_DEVICE_ID && !self.device_registration_exists(device_id) {
-            self.set_error(
-                "kit.unknown_machine",
-                format!("Device {device_id} is not registered"),
-                false,
-            );
-            return true;
-        }
-        let state = self.kit_view(device_id);
-        if let Some(reason) = state.unavailable {
-            self.set_error("kit.unavailable", reason, false);
-            return true;
-        }
-        let now = state
-            .components
-            .iter()
-            .find(|part| part.id == component)
-            .map(|part| part.state);
-        let already = match now {
-            Some(hide_kit::ComponentState::Installed) => enabled,
-            Some(hide_kit::ComponentState::Off) => !enabled,
-            // Not applicable here: there is nothing to switch.
-            Some(hide_kit::ComponentState::Absent) => true,
-            _ => false,
-        };
-        if already {
-            return false;
-        }
-        let scope = if enabled {
-            Scope::reinstall([component])
-        } else {
-            Scope::turn_off([component])
-        };
-        self.queue_kit_scope(device_id, scope)
-    }
-
     fn queue_kit_scope(&mut self, device_id: &str, scope: Scope) -> bool {
         if device_id != LOCAL_DEVICE_ID {
             self.queue_device_kit(device_id, KitJob::Apply(scope));
@@ -1030,11 +975,11 @@ mod tests {
             reinstall(&[ComponentId::Cli, ComponentId::CoordinationRetirement])
         );
         assert_eq!(KitJob::Status.merge(KitJob::Status), KitJob::Status);
-        // The operator's later switch wins for the part it names.
+        // The operator's later switch wins for the agent it names.
         assert_eq!(
-            KitJob::Apply(Scope::turn_off([ComponentId::CodexPerPane]))
-                .merge(reinstall(&[ComponentId::CodexPerPane])),
-            reinstall(&[ComponentId::CodexPerPane])
+            KitJob::Apply(Scope::agents([], ["pi"]))
+                .merge(KitJob::Apply(Scope::agents(["pi"], []))),
+            KitJob::Apply(Scope::agents(["pi"], []))
         );
     }
 }

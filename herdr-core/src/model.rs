@@ -639,6 +639,11 @@ pub struct KitSnapshot {
     /// machine, by its label; removing this device then leaves the kit there
     /// for it.
     pub shares_account_with: Option<String>,
+    /// What the machine's Codex answered about its shared daemon, for the
+    /// `--no-daemon` start flag (`codex_launch`): `true` when it has the
+    /// setting, `false` when it is confirmed older and has none, `None`
+    /// when there is no answer (no Codex, or the read failed).
+    pub codex_daemon: Option<bool>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Serialize)]
@@ -648,7 +653,6 @@ pub struct KitComponentSnapshot {
     pub state: hide_kit::ComponentState,
     pub reason: Option<String>,
     pub location: Option<String>,
-    pub codex_daemon: Option<bool>,
 }
 
 /// One agent on one machine: its switch, and what Hide put there for it.
@@ -706,7 +710,6 @@ impl KitSnapshot {
                 state: part.state,
                 reason: part.reason.clone(),
                 location: part.location.clone(),
-                codex_daemon: part.codex_daemon,
             })
             .collect::<Vec<_>>();
         let agents = report
@@ -743,6 +746,7 @@ impl KitSnapshot {
             components,
             agents,
             shares_account_with: None,
+            codex_daemon: report.codex_daemon,
         }
     }
 
@@ -4744,8 +4748,7 @@ mod wire_enum_tests {
                 hide_kit::ComponentId::Cli
                 | hide_kit::ComponentId::ClaudeCodeHook
                 | hide_kit::ComponentId::CodexHook
-                | hide_kit::ComponentId::CoordinationRetirement
-                | hide_kit::ComponentId::CodexPerPane => {}
+                | hide_kit::ComponentId::CoordinationRetirement => {}
             }
         }
         assert_wire(&contract, "kit_component_id", &kit_parts);

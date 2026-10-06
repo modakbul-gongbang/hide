@@ -35,7 +35,11 @@ use crate::root::RootIdentity;
 /// pane closes. A helper without this preflight must never remove instead.
 /// 17: Hello carries native machine identity for lineage, and the kit reports
 /// the one-release coordination retirement instead of installing it.
-pub const PROTOCOL_VERSION: u32 = 17;
+/// 18: the kit has seven agents, retires the other thirteen once, and no
+/// longer carries `codex_per_pane`; `reinstall` has no `turn_off` and a report
+/// names the Codex daemon capability itself (PRD settings-cleanup D-06, D-14).
+/// A helper on 17 would still turn the Codex daemon off and know none of it.
+pub const PROTOCOL_VERSION: u32 = 18;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Request {
@@ -218,14 +222,10 @@ pub enum KitAction {
     /// what is outdated.
     Apply,
     /// The operator's choice on the machine's row: Reinstall of these
-    /// parts, or a part turned on (`components`) or off (`turn_off`), or an
-    /// agent switched on (`agents_on`, which is also Reinstall of an agent
-    /// that is on) or off (`agents_off`). The agent lists are additive: a
-    /// helper that predates them ignores them.
+    /// parts, or an agent switched on (`agents_on`, which is also Reinstall
+    /// of an agent that is on) or off (`agents_off`).
     Reinstall {
         components: Vec<hide_kit::ComponentId>,
-        #[serde(default, skip_serializing_if = "Vec::is_empty")]
-        turn_off: Vec<hide_kit::ComponentId>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]
         agents_on: Vec<String>,
         #[serde(default, skip_serializing_if = "Vec::is_empty")]

@@ -51,6 +51,14 @@ fn main() -> ExitCode {
                 run_guidance_hook(agent, &arguments);
                 return ExitCode::SUCCESS;
             }
+            // An entry an earlier build wrote for an agent Hide no longer
+            // supports runs nothing: the kit's retirement takes it out, and
+            // until then it must not count a pane or print guidance.
+            if argument_value("--runtime", &arguments)
+                .is_some_and(|value| GuidanceAgent::is_retired_id(&value))
+            {
+                return ExitCode::SUCCESS;
+            }
             // Cursor loads Claude Code's hooks from `~/.claude/settings.json`
             // beside its own and runs both, so under Cursor Claude Code's hook
             // stays out and Cursor's own guidance hook is the one that speaks
@@ -98,7 +106,7 @@ fn usage() -> String {
     "usage: hide-agent-hooks hook --runtime <claude-code|codex> \
      --event <SessionStart|UserPromptSubmit|SubagentStart|SubagentStop|Stop> \
      [--memory-injection] [--source <install marker>]\n       \
-     hide-agent-hooks hook --runtime <gemini-cli|qwen-code|factory-droid|copilot-cli|kiro|cursor|augment|junie> \
+     hide-agent-hooks hook --runtime <gemini-cli|cursor> \
      --event SessionStart [--source <install marker>]\n       hide-agent-hooks doctor [--json]"
         .to_owned()
 }

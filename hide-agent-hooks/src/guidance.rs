@@ -1,5 +1,6 @@
 //! The SessionStart guidance hook of the agents beyond Claude Code and Codex
-//! (issue #517).
+//! (issue #517): Gemini CLI and Cursor, the two of Hide's supported agents
+//! that have a documented command hook the guidance fits.
 //!
 //! Claude Code and Codex are instrumented: their hooks count subagents,
 //! read Project Memory and pull letters (`install`, `runtime`). Every other
@@ -17,16 +18,22 @@
 //! and installing twice converges. Each agent's file and entry shape is
 //! pinned to its documentation's own example by a test.
 //!
+//! The other six agents of the retired adapters (Qwen Code, Factory Droid,
+//! Copilot CLI, Kiro, Augment, Junie) are no longer written. Their layouts
+//! stay so the kit's one-time retirement can take Hide's marked entries out of
+//! the files an earlier build wrote them into ([`remove`]); [`install`]
+//! refuses them. The layouts go once that retirement has shipped.
+//!
 //! | Agent | File | Shape |
 //! | --- | --- | --- |
 //! | Gemini CLI | `~/.gemini/settings.json` | `hooks.SessionStart[{matcher, hooks[{name, type, command, timeout ms}]}]` |
-//! | Qwen Code | `~/.qwen/settings.json` | `hooks.SessionStart[{hooks[{name, type, command, timeout s}]}]` |
-//! | Factory Droid | `~/.factory/hooks.json`, else the `hooks` key of `settings.json` | `SessionStart[{hooks[{type, command, timeout s}]}]` |
+//! | Qwen Code (retired) | `~/.qwen/settings.json` | `hooks.SessionStart[{hooks[{name, type, command, timeout s}]}]` |
+//! | Factory Droid (retired) | `~/.factory/hooks.json`, else the `hooks` key of `settings.json` | `SessionStart[{hooks[{type, command, timeout s}]}]` |
 //! | Cursor | `~/.cursor/hooks.json` | `{version 1, hooks.sessionStart[{command, timeout s}]}` |
-//! | Augment | `~/.augment/settings.json` | `hooks.SessionStart[{hooks[{type, command, timeout ms}]}]` |
-//! | Junie (Early Access) | `~/.junie/config.json` | `hooks.SessionStart[{hooks[{type, command, timeout s, async}]}]` |
-//! | Copilot CLI | `~/.copilot/hooks/hide-guidance.json`, Hide's own | `{version 1, hooks.sessionStart[{type, bash, powershell, timeoutSec}]}` |
-//! | Kiro CLI 3.0 | `~/.kiro/hooks/hide-guidance.json`, Hide's own | `{version "v1", hooks[{name, trigger, action{type, command}, timeout s}]}` |
+//! | Augment (retired) | `~/.augment/settings.json` | `hooks.SessionStart[{hooks[{type, command, timeout ms}]}]` |
+//! | Junie (retired) | `~/.junie/config.json` | `hooks.SessionStart[{hooks[{type, command, timeout s, async}]}]` |
+//! | Copilot CLI (retired) | `~/.copilot/hooks/hide-guidance.json`, Hide's own | `{version 1, hooks.sessionStart[{type, bash, powershell, timeoutSec}]}` |
+//! | Kiro CLI 3.0 (retired) | `~/.kiro/hooks/hide-guidance.json`, Hide's own | `{version "v1", hooks[{name, trigger, action{type, command}, timeout s}]}` |
 
 use std::path::{Path, PathBuf};
 
@@ -54,7 +61,8 @@ pub const GUIDANCE_LINE: &str = "Hide is installed on this machine: run `hide br
 /// How long the agent waits for the hook, in seconds.
 const TIMEOUT_SECONDS: u32 = 8;
 
-/// An agent whose command hook Hide writes the guidance into.
+/// An agent whose command hook Hide writes the guidance into, or one it
+/// wrote it into before and only takes the entry out of ([`Self::is_retired`]).
 #[derive(Clone, Copy, Debug, Eq, Hash, Ord, PartialEq, PartialOrd, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum GuidanceAgent {
@@ -95,8 +103,25 @@ impl GuidanceAgent {
         }
     }
 
+    /// The agents Hide still writes a guidance hook for, in Settings order.
+    pub const LIVE: [GuidanceAgent; 2] = [Self::Gemini, Self::Cursor];
+
+    /// The agents whose hook an earlier build wrote and this one only removes.
+    pub fn is_retired(self) -> bool {
+        !Self::LIVE.contains(&self)
+    }
+
+    /// The live agent whose id this is; a retired agent's id answers `None`,
+    /// so a hook entry an earlier build left in its file runs nothing.
     pub fn from_id(id: &str) -> Option<Self> {
-        Self::ALL.into_iter().find(|agent| agent.id() == id)
+        Self::LIVE.into_iter().find(|agent| agent.id() == id)
+    }
+
+    /// Whether `id` names an agent whose hook an earlier build wrote.
+    pub fn is_retired_id(id: &str) -> bool {
+        Self::ALL
+            .into_iter()
+            .any(|agent| agent.is_retired() && agent.id() == id)
     }
 
     /// The folder whose presence means the agent is set up for this account.
@@ -603,6 +628,22 @@ fn blank_document(layout: &Layout) -> Value {
 /// Appends Hide's entry, preserving everything already in the file; a
 /// second install converges on one entry.
 pub fn install(
+    agent: GuidanceAgent,
+    home: &Path,
+    helper: &Path,
+) -> Result<InstallOutcome, InstallFailure> {
+    if agent.is_retired() {
+        return Err(failure_shape(
+            &agent.config_path(home),
+            "Hide no longer writes this agent's hook",
+        ));
+    }
+    install_any(agent, home, helper)
+}
+
+/// [`install`] without the retirement check; the tests use it to lay down
+/// the files an earlier build wrote for a retired agent.
+fn install_any(
     agent: GuidanceAgent,
     home: &Path,
     helper: &Path,

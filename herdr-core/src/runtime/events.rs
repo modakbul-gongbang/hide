@@ -1024,16 +1024,6 @@ pub(super) struct KitAgentSetPayload {
     pub(super) enabled: bool,
 }
 
-/// The operator switched a kit part on or off from its row (PRD
-/// overview-request-view D-24); only a part
-/// [`hide_kit::ComponentId::can_turn_off`] names has a switch.
-#[derive(Debug, Deserialize)]
-pub(super) struct KitComponentSetPayload {
-    pub(super) device_id: String,
-    pub(super) component: hide_kit::ComponentId,
-    pub(super) enabled: bool,
-}
-
 /// A Settings tab that shows the kit opened: this Mac's parts are read again
 /// once, so a part removed by hand shows as removed.
 #[derive(Debug, Deserialize)]
@@ -1271,7 +1261,6 @@ pub(super) enum Event {
     CloneRepository(CloneRepositoryPayload),
     CancelRepositoryClone(CancelRepositoryClonePayload),
     KitReinstall(KitReinstallPayload),
-    KitComponentSet(KitComponentSetPayload),
     KitAgentSet(KitAgentSetPayload),
     KitCheck(KitCheckPayload),
     UiAttached(UiAttachedPayload),
@@ -1479,7 +1468,6 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "clone_repository" => decode!(CloneRepositoryPayload, CloneRepository),
         "cancel_repository_clone" => decode!(CancelRepositoryClonePayload, CancelRepositoryClone),
         "kit_reinstall" => decode!(KitReinstallPayload, KitReinstall),
-        "kit_component_set" => decode!(KitComponentSetPayload, KitComponentSet),
         "kit_agent_set" => decode!(KitAgentSetPayload, KitAgentSet),
         "kit_check" => decode!(KitCheckPayload, KitCheck),
         "ui_attached" => decode!(UiAttachedPayload, UiAttached),
@@ -1736,11 +1724,6 @@ impl Runtime {
                 self.request_terminal_control(&pane_id);
                 true
             }
-            Event::KitComponentSet(payload) => self.request_kit_component_set(
-                &payload.device_id,
-                payload.component,
-                payload.enabled,
-            ),
             Event::KitAgentSet(payload) => {
                 self.request_kit_agent_set(&payload.device_id, &payload.agent, payload.enabled)
             }

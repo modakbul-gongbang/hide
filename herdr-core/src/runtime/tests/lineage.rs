@@ -1724,7 +1724,6 @@ fn a_reinstall_queues_only_the_parts_that_need_it() {
         state,
         reason: None,
         location: None,
-        codex_daemon: None,
     };
     runtime.ingest_kit_report(
         "local",
@@ -1751,6 +1750,7 @@ fn a_reinstall_queues_only_the_parts_that_need_it() {
             held_for_onboarding: false,
             labels_retirement: Default::default(),
             legacy_retirement: Default::default(),
+            codex_daemon: None,
         },
     );
     let local = |runtime: &Runtime| {
@@ -1790,6 +1790,7 @@ fn a_reinstall_queues_only_the_parts_that_need_it() {
             held_for_onboarding: false,
             labels_retirement: Default::default(),
             legacy_retirement: Default::default(),
+            codex_daemon: None,
         },
     );
     assert!(!local(&runtime).busy);
@@ -2383,89 +2384,36 @@ fn a_checkout_stays_in_use_while_its_delegated_child_works_on_a_device_even_afte
     assert_eq!(busy(&runtime), 0, "a finished child does not");
 }
 
-// PRD overview-request-view D-24, B36: the Codex part's switch queues its
-// undo or its reinstall, a part already where the switch puts it is the same
-// intent met, and only a part with a switch takes one. Codex starts follow the
-// machine's kit whichever way the switch stands (D-20).
+// PRD settings-cleanup D-14: Codex starts follow what the machine's own Codex
+// answered about its shared daemon, never a switch of the kit's.
 #[test]
-fn the_codex_part_switch_queues_its_choice_and_starts_follow_the_kit() {
+fn codex_starts_follow_the_capability_the_machines_kit_read() {
+    use crate::codex_launch::CodexDaemon;
     let mut runtime = runtime();
-    let set = |component: &str, enabled: bool| {
-        serde_json::to_vec(&serde_json::json!({
-            "schema_version": 2, "kind": "kit_component_set",
-            "payload": {"device_id": "local", "component": component, "enabled": enabled}
-        }))
-        .unwrap()
-    };
-    let report = |state| hide_kit::KitReport {
-        components: vec![hide_kit::ComponentReport {
-            id: hide_kit::ComponentId::CodexPerPane,
-            state,
-            reason: None,
-            location: None,
-            codex_daemon: None,
-        }],
-        agents: Vec::new(),
-        held_for_onboarding: false,
-        labels_retirement: Default::default(),
-        legacy_retirement: Default::default(),
+    let report = |codex_daemon| hide_kit::KitReport {
+        codex_daemon,
+        ..Default::default()
     };
     assert_eq!(
         runtime.codex_daemon("local"),
-        crate::codex_launch::CodexDaemon::Unknown,
+        CodexDaemon::Unknown,
         "a machine whose kit has not answered cannot start Codex yet"
     );
-    runtime.ingest_kit_report("local", &report(hide_kit::ComponentState::Installed));
-    assert_eq!(
-        runtime.codex_daemon("local"),
-        crate::codex_launch::CodexDaemon::Present
-    );
+    runtime.ingest_kit_report("local", &report(Some(true)));
+    assert_eq!(runtime.codex_daemon("local"), CodexDaemon::Present);
 
-    assert!(
-        !runtime.dispatch_json(&set("codex_per_pane", true)),
-        "already on"
-    );
-    assert!(runtime.dispatch_json(&set("codex_per_pane", false)));
-    assert_eq!(
-        runtime.take_local_kit_job(std::time::Instant::now()),
-        Some(crate::runtime::KitJob::Apply(hide_kit::Scope::turn_off([
-            hide_kit::ComponentId::CodexPerPane
-        ])))
-    );
+    runtime.ingest_kit_report("local", &report(Some(false)));
+    assert_eq!(runtime.codex_daemon("local"), CodexDaemon::Unsupported);
 
-    runtime.ingest_kit_report("local", &report(hide_kit::ComponentState::Off));
-    assert_eq!(
-        runtime.codex_daemon("local"),
-        crate::codex_launch::CodexDaemon::Present,
-        "Hide's own Codex starts still go per pane"
-    );
-    assert!(
-        !runtime.dispatch_json(&set("codex_per_pane", false)),
-        "already off"
-    );
-    assert!(runtime.dispatch_json(&set("codex_per_pane", true)));
-    assert_eq!(
-        runtime.take_local_kit_job(std::time::Instant::now()),
-        Some(crate::runtime::KitJob::Apply(hide_kit::Scope::reinstall([
-            hide_kit::ComponentId::CodexPerPane
-        ])))
-    );
+    runtime.ingest_kit_report("local", &report(None));
+    assert_eq!(runtime.codex_daemon("local"), CodexDaemon::Unknown);
 
-    assert!(runtime.dispatch_json(&set("cli", false)));
+    // The retired switch is not an event any more.
+    let retired = serde_json::to_vec(&serde_json::json!({
+        "schema_version": 2, "kind": "kit_component_set",
+        "payload": {"device_id": "local", "component": "codex_per_pane", "enabled": false}
+    }))
+    .unwrap();
+    runtime.dispatch_json(&retired);
     assert_eq!(runtime.take_local_kit_job(std::time::Instant::now()), None);
-    assert_eq!(
-        runtime
-            .snapshot
-            .status
-            .last_error
-            .as_ref()
-            .map(|error| error.kind.as_str()),
-        Some("kit.not_switchable")
-    );
-
-    runtime.ingest_kit_report("local", &report(hide_kit::ComponentState::Absent));
-    assert_eq!(
-        runtime.codex_daemon("local"),
-        crate::codex_launch::CodexDaemon::Unknown
-    );
 }

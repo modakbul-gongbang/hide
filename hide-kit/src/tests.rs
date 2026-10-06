@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 use super::*;
 
 mod agent_cases;
+mod retired_cases;
 
 type IndexReadHook = Box<dyn FnOnce(&Path)>;
 std::thread_local! {
@@ -984,253 +985,95 @@ impl Fixture {
 }
 
 #[test]
-fn the_first_pass_turns_the_codex_daemon_off_once_and_then_converges() {
+fn no_pass_changes_codexs_shared_daemon_setting() {
     let mut fixture = Fixture::new();
     fake_codex(&mut fixture, "true");
 
-    let report = apply(&fixture.target, &Scope::automatic());
-    assert_eq!(
-        state(&report, ComponentId::CodexPerPane),
-        ComponentState::Installed,
-        "{report:?}"
-    );
-    assert_eq!(fixture.daemon_setting(), "false");
-    let part = report.component(ComponentId::CodexPerPane).unwrap();
-    assert_eq!(part.reason, None);
-    assert_eq!(
-        part.location.as_deref(),
-        Some(fixture.home().join(".codex/config.toml").to_str().unwrap())
-    );
-
-    for _ in 0..2 {
-        let report = apply(&fixture.target, &Scope::automatic());
-        assert_eq!(
-            state(&report, ComponentId::CodexPerPane),
-            ComponentState::Installed
-        );
+    for scope in [
+        Scope::automatic(),
+        Scope::agents(["codex"], []),
+        Scope::reinstall([ComponentId::Cli, ComponentId::CodexHook]),
+        Scope::agents([], ["codex"]),
+    ] {
+        apply(&fixture.target, &scope);
     }
-    assert_eq!(
-        fixture.codex_writes(),
-        ["features disable daemon_auto_start"]
-    );
-}
 
-#[test]
-fn a_fresh_machine_leaves_codexs_config_alone_until_codex_is_chosen() {
-    let mut fixture = Fixture::fresh();
-    fake_codex(&mut fixture, "true");
-
-    let report = apply(&fixture.target, &Scope::automatic());
-
-    assert!(report.held_for_onboarding);
-    assert_eq!(
-        state(&report, ComponentId::CodexPerPane),
-        ComponentState::Off,
-        "{report:?}"
-    );
     assert_eq!(fixture.daemon_setting(), "true");
     assert!(fixture.codex_writes().is_empty());
-    // The Codex launch reads the daemon from this row: it is switched off
-    // here, never installed by Hide, and still says the daemon is there.
-    let part = report.component(ComponentId::CodexPerPane).unwrap();
-    assert_eq!(part.codex_daemon, Some(true), "{part:?}");
-
-    // The operator's choice to have Codex on is what lets the setting be written.
-    let report = apply(&fixture.target, &Scope::agents(["codex"], []));
-    assert_eq!(
-        state(&report, ComponentId::CodexPerPane),
-        ComponentState::Installed,
-        "{report:?}"
-    );
-    assert_eq!(fixture.daemon_setting(), "false");
 }
 
 #[test]
-fn a_codex_already_running_per_pane_is_not_written_to() {
+fn a_setting_an_earlier_build_turned_off_stays_off() {
     let mut fixture = Fixture::new();
     fake_codex(&mut fixture, "false");
 
-    let report = apply(&fixture.target, &Scope::automatic());
+    let report = apply(&fixture.target, &Scope::agents(["codex"], []));
 
-    assert_eq!(
-        state(&report, ComponentId::CodexPerPane),
-        ComponentState::Installed
-    );
+    assert_eq!(fixture.daemon_setting(), "false");
     assert!(fixture.codex_writes().is_empty());
+    assert_eq!(report.codex_daemon, Some(true));
 }
 
 #[test]
-fn turning_the_part_off_gives_codex_its_daemon_back_and_no_pass_reverses_it() {
-    let mut fixture = Fixture::new();
-    fake_codex(&mut fixture, "true");
-    apply(&fixture.target, &Scope::automatic());
-
-    let report = apply(
-        &fixture.target,
-        &Scope::turn_off([ComponentId::CodexPerPane]),
-    );
-    assert_eq!(
-        state(&report, ComponentId::CodexPerPane),
-        ComponentState::Off,
-        "{report:?}"
-    );
-    assert!(!ComponentState::Off.needs_attention());
-    assert_eq!(fixture.daemon_setting(), "true");
-
-    let report = apply(&fixture.target, &Scope::automatic());
-    assert_eq!(
-        state(&report, ComponentId::CodexPerPane),
-        ComponentState::Off
-    );
-    assert_eq!(fixture.daemon_setting(), "true");
-
-    // Turning it on is the operator asking for it back.
-    let report = apply(
-        &fixture.target,
-        &Scope::reinstall([ComponentId::CodexPerPane]),
-    );
-    assert_eq!(
-        state(&report, ComponentId::CodexPerPane),
-        ComponentState::Installed
-    );
-    assert_eq!(
-        fixture.codex_writes(),
-        [
-            "features disable daemon_auto_start",
-            "features enable daemon_auto_start",
-            "features disable daemon_auto_start",
-        ]
-    );
-}
-
-#[test]
-fn a_daemon_setting_turned_back_on_outside_hide_reads_as_off() {
-    let mut fixture = Fixture::new();
-    fake_codex(&mut fixture, "true");
-    apply(&fixture.target, &Scope::automatic());
-    std::fs::write(fixture.home().join(".codex/daemon"), "true\n").unwrap();
-
-    let report = apply(&fixture.target, &Scope::automatic());
-
-    assert_eq!(
-        state(&report, ComponentId::CodexPerPane),
-        ComponentState::Off
-    );
-    assert_eq!(fixture.daemon_setting(), "true");
-    assert_eq!(
-        fixture.codex_writes(),
-        ["features disable daemon_auto_start"]
-    );
-}
-
-#[test]
-fn a_machine_without_a_codex_that_has_the_daemon_is_not_applicable() {
+fn the_report_says_whether_the_codex_has_the_daemon_setting() {
     // No codex at all.
     let fixture = Fixture::new();
-    let report = apply(&fixture.target, &Scope::automatic());
     assert_eq!(
-        state(&report, ComponentId::CodexPerPane),
-        ComponentState::Absent
+        apply(&fixture.target, &Scope::automatic()).codex_daemon,
+        None
     );
 
-    // A Codex never set up here: capability is read, no configuration is made.
+    // A Codex never set up here: the capability is read, nothing is made.
     let mut fixture = Fixture::new();
     fake_codex(&mut fixture, "true");
     std::fs::remove_dir_all(fixture.home().join(".codex")).unwrap();
-    let report = apply(&fixture.target, &Scope::automatic());
     assert_eq!(
-        state(&report, ComponentId::CodexPerPane),
-        ComponentState::Absent
-    );
-    assert!(!fixture.home().join(".codex").exists());
-    assert_eq!(
-        report
-            .component(ComponentId::CodexPerPane)
-            .unwrap()
-            .codex_daemon,
+        apply(&fixture.target, &Scope::automatic()).codex_daemon,
         Some(true)
     );
-    assert!(fixture.codex_writes().is_empty());
+    assert!(!fixture.home().join(".codex").exists());
 
     // An older Codex that has no such setting.
     let mut fixture = Fixture::new();
     fake_codex(&mut fixture, "true");
     std::fs::write(fixture.home().join("codex-old"), "").unwrap();
-    let report = apply(&fixture.target, &Scope::automatic());
     assert_eq!(
-        state(&report, ComponentId::CodexPerPane),
-        ComponentState::Absent,
-        "{report:?}"
+        status(&fixture.target).codex_daemon,
+        Some(false),
+        "a read-only status answers it too"
     );
-    assert!(fixture.codex_writes().is_empty());
-    assert_eq!(
-        report
-            .component(ComponentId::CodexPerPane)
-            .unwrap()
-            .codex_daemon,
-        Some(false)
-    );
-}
 
-#[test]
-fn a_codex_that_fails_marks_only_its_part_and_changes_nothing() {
+    // A Codex that fails to answer.
     let mut fixture = Fixture::new();
     fake_codex(&mut fixture, "true");
     std::fs::write(fixture.home().join("codex-fails"), "").unwrap();
-
-    let report = apply(&fixture.target, &Scope::automatic());
-
-    let part = report.component(ComponentId::CodexPerPane).unwrap();
-    assert_eq!(part.state, ComponentState::Failed);
-    assert!(
-        part.reason
-            .as_deref()
-            .is_some_and(|reason| reason.contains("config.toml is locked")),
-        "{part:?}"
-    );
-    assert_eq!(
-        state(&report, ComponentId::ClaudeCodeHook),
-        ComponentState::Installed
-    );
-    assert_eq!(fixture.daemon_setting(), "true");
+    assert_eq!(status(&fixture.target).codex_daemon, None);
 }
 
 #[test]
-fn a_running_daemon_is_left_alone_and_said_on_the_row_until_it_goes_down() {
-    let mut fixture = Fixture::new();
-    fake_codex(&mut fixture, "true");
-    std::fs::write(fixture.home().join("daemon-running"), "").unwrap();
+fn a_record_from_the_build_that_switched_the_daemon_still_loads_and_drops_the_part() {
+    let fixture = Fixture::new();
+    std::fs::write(
+        fixture.home().join(".hide/kit/installed.json"),
+        r#"{"format":1,"installed":["codex_per_pane"],"agents":{"codex":true}}"#,
+    )
+    .unwrap();
 
     let report = apply(&fixture.target, &Scope::automatic());
-    let part = report.component(ComponentId::CodexPerPane).unwrap();
-    assert_eq!(part.state, ComponentState::Installed);
-    assert_eq!(part.reason.as_deref(), Some("새로 여는 Codex부터 적용"));
-    let log = std::fs::read_to_string(fixture.home().join("codex.log")).unwrap();
-    assert!(!log.contains("daemon stop"), "{log}");
 
-    std::fs::remove_file(fixture.home().join("daemon-running")).unwrap();
-    let part = status(&fixture.target)
-        .component(ComponentId::CodexPerPane)
-        .cloned()
-        .unwrap();
-    assert_eq!(part.state, ComponentState::Installed);
-    assert_eq!(part.reason, None);
+    assert_eq!(state(&report, ComponentId::Cli), ComponentState::Installed);
+    let record = std::fs::read_to_string(fixture.home().join(".hide/kit/installed.json")).unwrap();
+    assert!(!record.contains("codex_per_pane"), "{record}");
+    assert!(record.contains("\"cli\""), "{record}");
 }
 
 #[test]
-fn a_later_choice_for_one_part_wins_when_two_requests_merge() {
-    let merged = Scope::turn_off([ComponentId::CodexPerPane]).merge(Scope::reinstall([
-        ComponentId::CodexPerPane,
-        ComponentId::Cli,
-    ]));
-    assert_eq!(
-        merged,
-        Scope::reinstall([ComponentId::CodexPerPane, ComponentId::Cli])
-    );
-    let merged = Scope::reinstall([ComponentId::CodexPerPane, ComponentId::Cli])
-        .merge(Scope::turn_off([ComponentId::CodexPerPane]));
+fn a_later_agent_choice_wins_when_two_requests_merge() {
+    let merged = Scope::agents(["codex"], []).merge(Scope::agents([], ["codex"]));
+    assert_eq!(merged, Scope::agents([], ["codex"]));
+    let merged = Scope::agents([], ["codex"]).merge(Scope::reinstall([ComponentId::Cli]));
     assert_eq!(merged.restore, BTreeSet::from([ComponentId::Cli]));
-    assert_eq!(merged.turn_off, BTreeSet::from([ComponentId::CodexPerPane]));
+    assert!(merged.agent_off.contains("codex"));
     assert!(Scope::automatic().merge(Scope::automatic()).is_automatic());
 }
 

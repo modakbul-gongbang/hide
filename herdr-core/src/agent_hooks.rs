@@ -172,7 +172,6 @@ mod tests {
                 state,
                 reason: None,
                 location: None,
-                codex_daemon: None,
             }],
             ..Default::default()
         };

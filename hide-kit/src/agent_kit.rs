@@ -24,7 +24,10 @@ use crate::agents::{
     skill_location,
 };
 use crate::record::Record;
-use crate::{ComponentId, ComponentState, KitTarget, Observed, RemoveOutcome, Scope};
+use crate::{
+    ComponentId, ComponentState, KitTarget, Observed, RemoveOutcome, Retirement, Scope,
+    retired_agents,
+};
 
 /// A kit part's id, state, reason and location, as the agent whose hook it
 /// is reports it.
@@ -88,19 +91,8 @@ pub(crate) struct PartGate {
 }
 
 /// The gate of a part an agent switch governs, `None` for any other part.
-/// The hook parts follow their agent's switch in every way; Codex's
-/// per-pane setting follows only whether Codex is on, so a Mac that has not
-/// answered the first-run choice, or has Codex off, is not written to, while
-/// the part's own switch keeps its own choices.
+/// The hook parts follow their agent's switch in every way.
 pub(crate) fn part_gate(record: &Record, scope: &Scope, part: ComponentId) -> Option<PartGate> {
-    if part == ComponentId::CodexPerPane {
-        let codex = crate::agents::adapter("codex")?;
-        return Some(PartGate {
-            enabled: enabled(record, scope, codex),
-            turning_off: false,
-            turning_on: false,
-        });
-    }
     let adapter = adapter_of_part(part)?;
     Some(PartGate {
         enabled: enabled(record, scope, adapter),
@@ -121,12 +113,7 @@ fn helper(target: &KitTarget) -> std::path::PathBuf {
     target.kit_dir.join(hide_agent_hooks::HELPER_BINARY_NAME)
 }
 
-fn observe_guidance(
-    target: &KitTarget,
-    adapter: &AgentAdapter,
-    agent: GuidanceAgent,
-    detection: &Detection,
-) -> Observed {
+fn observe_guidance(target: &KitTarget, adapter: &AgentAdapter, agent: GuidanceAgent) -> Observed {
     use hide_agent_hooks::guidance;
     if let Err(why) = agent.supported_here() {
         return Observed::Unsupported(format!(
@@ -175,34 +162,7 @@ fn observe_guidance(
             helper(target).display()
         ));
     }
-    match version_gate(adapter, detection) {
-        Ok(()) => observed,
-        // Nothing a Reinstall can change: the agent is too old, or its
-        // version cannot be read, so the row says why and is not repairable.
-        Err(reason) => Observed::Unsupported(reason),
-    }
-}
-
-/// An agent with a documented minimum version gets the hook only when its
-/// CLI answers a version at or above it; one with none has no gate.
-fn version_gate(adapter: &AgentAdapter, detection: &Detection) -> Result<(), String> {
-    let Some(minimum) = adapter.min_version else {
-        return Ok(());
-    };
-    let version = detection
-        .executable(adapter)
-        .and_then(|binary| detection.version(binary));
-    match version {
-        Some(version) if hide_agent_hooks::version_at_least(&version, minimum) => Ok(()),
-        Some(version) => Err(format!(
-            "{} {version} is older than {minimum}, which Hide's hook needs; update it",
-            adapter.label
-        )),
-        None => Err(format!(
-            "Hide could not read {}'s version, and its hook needs {minimum} or newer; the skill is in place",
-            adapter.label
-        )),
-    }
+    observed
 }
 
 fn install_guidance(target: &KitTarget, agent: GuidanceAgent) -> Result<(), String> {
@@ -516,7 +476,7 @@ fn guidance_piece(
     let recorded = record.contains_piece(&hook_code(adapter));
     let (state, reason) = match failures.and_then(|failures| failures.hook.get(adapter.id)) {
         Some(reason) => (ComponentState::Failed, Some(reason.clone())),
-        None => match observe_guidance(target, adapter, agent, detection) {
+        None => match observe_guidance(target, adapter, agent) {
             Observed::Current => (ComponentState::Installed, None),
             Observed::Stale(reason) => (ComponentState::Outdated, Some(reason)),
             Observed::Missing if recorded => (
@@ -525,9 +485,9 @@ fn guidance_piece(
             ),
             Observed::Missing => (ComponentState::NotInstalled, None),
             Observed::Blocked(reason) => (ComponentState::Failed, Some(reason)),
-            Observed::Absent(reason)
-            | Observed::Unsupported(reason)
-            | Observed::SupportedAbsent(reason) => (ComponentState::Absent, Some(reason)),
+            Observed::Absent(reason) | Observed::Unsupported(reason) => {
+                (ComponentState::Absent, Some(reason))
+            }
         },
     };
     PieceReport {
@@ -553,12 +513,24 @@ pub(crate) fn apply(
     record: &mut Record,
     record_failure: Option<&String>,
     parts: &[PartView],
-) -> (Vec<AgentReport>, bool) {
+) -> (Vec<AgentReport>, bool, Retirement) {
     let mut changed = false;
     let mut failures = AgentFailures::default();
     let record_readable = record_failure.is_none();
     // Looked for once: every decision below reads this, not the PATH.
     let detection = Detection::probe(target);
+
+    // The agents Hide stopped supporting: what the record says an earlier
+    // build put down for them goes first, so the shared skill folder below is
+    // judged for the agents that are left.
+    let live_reads_shared = ADAPTERS.iter().any(|adapter| {
+        adapter.skill_dir == SkillDir::Shared
+            && adapter.skill_supported()
+            && enabled(record, scope, adapter)
+            && detection.installed(adapter)
+    });
+    let retirement = retired_agents::retire(target, record, record_readable, live_reads_shared);
+    changed |= retirement.changed;
 
     // What the operator chose now is the record's, whatever else this pass
     // can or cannot do for the agent. A switch on for an agent that is not
@@ -599,7 +571,7 @@ pub(crate) fn apply(
         if !detection.installed(adapter) {
             continue;
         }
-        let observed = observe_guidance(target, adapter, agent, &detection);
+        let observed = observe_guidance(target, adapter, agent);
         let recorded = record.contains_piece(&code);
         let restore = scope.agent_on.contains(adapter.id);
         let install_now = match &observed {
@@ -612,7 +584,7 @@ pub(crate) fn apply(
             continue;
         }
         let after = if install_now {
-            observe_guidance(target, adapter, agent, &detection)
+            observe_guidance(target, adapter, agent)
         } else {
             observed
         };
@@ -671,7 +643,7 @@ pub(crate) fn apply(
     }
 
     let dirs = observe_dirs(target, record, scope, &detection);
-    let reports = ADAPTERS
+    let reports: Vec<AgentReport> = ADAPTERS
         .iter()
         .map(|adapter| {
             let on = enabled(record, scope, adapter);
@@ -688,7 +660,7 @@ pub(crate) fn apply(
             )
         })
         .collect();
-    (reports, changed)
+    (reports, changed, retirement.report)
 }
 
 /// Takes every Hide piece off a machine: each guidance hook's marked
@@ -711,6 +683,7 @@ pub(crate) fn remove(target: &KitTarget) -> Vec<(String, RemoveOutcome)> {
         };
         outcomes.push((skill_code(dir), outcome));
     }
+    outcomes.extend(retired_agents::remove(target));
     outcomes
 }
 

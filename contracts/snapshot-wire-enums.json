@@ -5,7 +5,7 @@
   "document_kind": ["text", "markdown", "image", "pdf", "binary"],
   "editor_tab_kind": ["file", "diff", "session", "memory"],
   "kit_agent_availability": ["available", "not_installed", "unsupported_system"],
-  "kit_component_id": ["cli", "claude_code_hook", "codex_hook", "coordination_retirement", "codex_per_pane"],
+  "kit_component_id": ["cli", "claude_code_hook", "codex_hook", "coordination_retirement"],
   "kit_component_state": ["installed", "outdated", "not_installed", "removed", "failed", "absent", "off"],
   "pane_find_route": ["agent", "bar"],
   "pull_request_badge": ["merged", "closed", "review", "open"],

@@ -12,7 +12,7 @@ import { startHerdr, type HerdrFixture } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace } from "../../web/e2e/wire";
 import {
   claudeSettings, codexHooks, deviceHome,
-  proveDeviceHome, readSettings, resetDeviceHome, stageBuild, writeSshConfig, type AgentSettings,
+  codexDaemonWritten, proveDeviceHome, readSettings, resetDeviceHome, stageBuild, writeSshConfig, type AgentSettings,
 } from "./device-home";
 import { endChild, hostLog, isolate, relaunch, screenshot, shellPage, test } from "./fixture";
 
@@ -23,7 +23,7 @@ const DEVICE = "ssh-kit";
 const ALIAS = "isolated-kit";
 const SECOND_DEVICE = "ssh-kit-second";
 const SECOND_ALIAS = "isolated-kit-second";
-const PARTS = ["cli", "claude_code_hook", "codex_hook", "coordination_retirement", "codex_per_pane"];
+const PARTS = ["cli", "claude_code_hook", "codex_hook", "coordination_retirement"];
 const LABELS_ID = "hide.agent-context-labels";
 
 function quote(value: string): string { return `'${value.replaceAll("'", "'\\''")}'`; }
@@ -161,6 +161,8 @@ test("a device gets this Mac's kit, keeps a part the operator removed out until 
       expect(now.hooks.SessionStart).toEqual(expect.arrayContaining(before.hooks.SessionStart!));
       expect({ ...now, hooks: undefined }).toEqual({ ...before, hooks: undefined });
     }
+    // D-14: the kit reads Codex's daemon setting and never turns it off on its own.
+    expect(codexDaemonWritten(home)).toBe(false);
     // Labels for device panes are made on this Mac; the kit links no plugin there (PRD labels-in-hided B2).
     expect(devicePlugins(device)).not.toContain(LABELS_ID);
 

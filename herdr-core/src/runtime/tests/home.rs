@@ -208,13 +208,7 @@ fn a_device_home_start_makes_home_then_starts_the_agent_with_its_folders() {
     shared.lock().unwrap().ingest_kit_report(
         DEVICE,
         &hide_kit::KitReport {
-            components: vec![hide_kit::ComponentReport {
-                id: hide_kit::ComponentId::CodexPerPane,
-                state: hide_kit::ComponentState::Off,
-                reason: None,
-                location: None,
-                codex_daemon: Some(true),
-            }],
+            codex_daemon: Some(true),
             ..Default::default()
         },
     );
