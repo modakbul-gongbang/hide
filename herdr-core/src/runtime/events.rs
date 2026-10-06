@@ -92,6 +92,13 @@ pub(super) struct FocusPaneRequestPayload {
     /// while another device is in front is one action (S6 B12, B21).
     #[serde(default)]
     pub(super) focus_device: bool,
+    /// The page that sent an operator focus and the number it gave this one,
+    /// so the snapshot can say how much of what the page sent it includes
+    /// (`OperatorFocusAck`). Both or neither.
+    #[serde(default)]
+    pub(super) client_id: Option<String>,
+    #[serde(default)]
+    pub(super) sequence: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1655,6 +1662,9 @@ impl Runtime {
                 true
             }
             Event::FocusPane(payload) => {
+                if payload.origin == PaneFocusOrigin::Operator {
+                    self.acknowledge_operator_focus(payload.client_id.as_deref(), payload.sequence);
+                }
                 self.focus_pane(payload.pane_id, payload.origin, payload.request_id);
                 if payload.focus_device
                     && self.snapshot.status.last_error.is_none()

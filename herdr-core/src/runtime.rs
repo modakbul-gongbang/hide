@@ -65,8 +65,8 @@ use crate::live::{
 use crate::model::{
     ArchiveDetailSnapshot, CheckoutSnapshot, CoreOptions, DEFAULT_PANE_TEXT_SCALE,
     DiagnosticSnapshot, Edited, EditorDocumentSnapshot, EditorTabKind, EditorTabSnapshot,
-    ExplorerOperationSnapshot, LastErrorSnapshot, PANE_TEXT_SCALE_STEP, PaneFindOpened,
-    PaneFindRoute, PaneFindSnapshot, PaneFocusRequestSnapshot, PaneForkSnapshot,
+    ExplorerOperationSnapshot, LastErrorSnapshot, OperatorFocusAck, PANE_TEXT_SCALE_STEP,
+    PaneFindOpened, PaneFindRoute, PaneFindSnapshot, PaneFocusRequestSnapshot, PaneForkSnapshot,
     PaneLayoutNodeSnapshot, PaneLayoutSnapshot, PaneSnapshot, PetBadgesSnapshot, PetOriginSnapshot,
     PetSnapshot, RemoteFileEntrySnapshot, RemoteFileListSnapshot, RemoteSessionSnapshot,
     RightPanelSection, SCHEMA_VERSION, SessionRowSnapshot, SidebarAgentSnapshot, Snapshot,
@@ -448,6 +448,10 @@ pub(crate) struct PendingPaneFocusControl {
 
 /// How many diagnostics the snapshot keeps. Newest are kept; the oldest go.
 const DIAGNOSTIC_RETENTION: usize = 256;
+/// Pages whose last operator focus number the snapshot keeps, oldest evicted.
+const OPERATOR_FOCUS_CLIENT_LIMIT: usize = 16;
+/// Longest client id a page may give its operator focus events.
+const OPERATOR_FOCUS_CLIENT_ID_LIMIT: usize = 64;
 
 /// How many tabs keep their panes attached: the one on screen and the four
 /// most recently shown.

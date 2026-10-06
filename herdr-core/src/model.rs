@@ -1722,6 +1722,26 @@ pub enum Surface {
 pub struct FocusedSnapshot {
     pub surface: Surface,
     pub pane_id: Option<String>,
+    /// The last operator `focus_pane` the core applied for each page that
+    /// numbers its focus events, oldest page first; see [`OperatorFocusAck`].
+    #[serde(skip_serializing_if = "Vec::is_empty")]
+    pub operator_focus: Vec<OperatorFocusAck>,
+}
+
+/// The newest operator focus a page numbered that the core has applied.
+///
+/// A page that moves its keyboard focus on the operator's click cannot tell a
+/// snapshot older than that click from a real move of focus by the core. The
+/// page numbers each operator `focus_pane` it sends, and the snapshot that
+/// carries the focused pane also says which of those numbers it already
+/// includes, so the page follows the snapshot's pane only once the number it
+/// last sent has come back. The number is recorded whether the core moved focus,
+/// refused it or found it already there, because the page is waiting on the
+/// answer, not on the move.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct OperatorFocusAck {
+    pub client_id: String,
+    pub sequence: u64,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, PartialEq, Serialize)]
@@ -3870,6 +3890,7 @@ impl Snapshot {
             focused: FocusedSnapshot {
                 surface: Surface::Terminal,
                 pane_id: None,
+                operator_focus: Vec::new(),
             },
             pane_layouts: Vec::new(),
             terminal: TerminalSnapshot {
