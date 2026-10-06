@@ -206,7 +206,9 @@ A worker that is `gone` is detected from its pane, with a three-minute grace aft
 
 A worker reports through `hide factory` and gets its answer in the same call.
 `ask` needs a suggestion, a default action and a deadline of 1 to 720 hours, and the worker continues with the default; `block` has no default, so the Task blocks, releases its slot and sleeps.
-`done` opens a pull request on a GitHub Factory when none exists, goes to `verifying`, and puts the worker to sleep.
+`done` answers at once, goes to `verifying`, and puts the worker to sleep.
+On a GitHub Factory the next tick pushes the worktree's commits to the Task branch (with a lease, so a rebase goes through), then finds the open pull request for that branch or opens one, and only then reads CI on the pushed commit; every report pushes, so a fix after a failed check reaches the same pull request, and a merged pull request from before a revert is never reused.
+A failed push or pull request is tried again a minute later.
 `decide` records a decision.
 A worker whose agent rests for the no-report window (`no_report_minutes`, 2) after a turn that reported nothing stops the Task as "no report"; a worker that goes quiet for the stall window (`stall_minutes`, 30) stops it as "stalled".
 
@@ -309,9 +311,10 @@ A person's `merge` runs merge-tree and the quick check again on the latest main,
 A refused merge is tried once and then waits for a person, never once per tick; only an environment signal, or a merge GitHub answered before naming its commit, is asked again.
 `request-changes --comment` returns the Task to `running`, clears its gates and sends the worker the comment.
 
-**GitHub.** The merge is `gh pr merge` with the Factory's `merge_method` and `--match-head-commit` set to the pull request's head as read just before the merge, and a pull request already merged returns its merge commit.
+**GitHub.** The merge is `gh pr merge` with the Factory's `merge_method` and `--match-head-commit` set to the commit the Task-stage verification passed on, so a push after it makes GitHub refuse the merge; a Factory without verification pins the head a person reviewed.
+A verified Factory with no passed commit refuses to merge, a pull request already merged returns its merge commit, and a merge GitHub answered before naming its commit is read again rather than recorded empty.
 `init` picks the first merge method the repository allows, in the order merge, squash, rebase, and `config` changes it.
-**Local.** The Factory merges into the project's primary checkout with `git merge --no-ff`, only while that checkout is on the default branch with no uncommitted tracked changes.
+**Local.** The Factory merges the verified commit, not the branch's current tip, into the project's primary checkout with `git merge --no-ff`, only while that checkout is on the default branch with no uncommitted tracked changes; a merge that fails is aborted, so the checkout is never left mid-merge.
 Otherwise the Task stays in `merge_waiting` with `dirty_main` until it is clean.
 
 A merge records its commit, and the Task becomes `landed`.

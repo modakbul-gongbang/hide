@@ -1052,6 +1052,31 @@ fn github_factory(h: &mut Bench, mode: MergeMode) -> String {
 }
 
 #[test]
+fn each_github_report_pushes_before_its_checks_are_read_and_answers_at_once() {
+    let mut h = Bench::new(true);
+    let f = github_factory(&mut h, MergeMode::Auto);
+    let t = h.ready("Fix again", &[]);
+    h.world().verify.insert(
+        t.clone(),
+        [VerifyPoll::Failed {
+            check: "test".into(),
+            link: "ci".into(),
+        }]
+        .into(),
+    );
+    let answer = h.done(&f, &t);
+    assert_eq!(answer["state"], "verifying", "{answer}");
+    assert!(h.world().pushes.is_empty(), "the reply does not wait on git");
+    assert!(h.world().verify_runs.is_empty());
+    tick_until(&mut h, &f, &t, TaskState::Running);
+    assert_eq!(h.world().pushes, vec![t.clone()]);
+    h.done(&f, &t);
+    tick_until(&mut h, &f, &t, TaskState::Done);
+    assert_eq!(h.world().pushes, vec![t.clone(), t.clone()]);
+    assert_eq!(h.writes("pr.open").len(), 1, "one pull request");
+}
+
+#[test]
 fn a_manual_task_waits_for_merge_and_every_github_write_happens_once() {
     let mut h = Bench::new(true);
     let f = github_factory(&mut h, MergeMode::Manual);

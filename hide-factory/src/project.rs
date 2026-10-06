@@ -758,6 +758,23 @@ impl MergeTarget for SharedProjects {
             .map(|w| w.branch.clone())
             .unwrap_or_else(|| task.branch_slug());
         let mut this = self.lock();
+        // Every report publishes its commits, so CI reads what the worker
+        // committed since the last one; a rebase needs the lease (B36, B40).
+        let path = worktree(task)?;
+        this.git(
+            "git.push",
+            &path,
+            &[
+                "push",
+                "--quiet",
+                "--force-with-lease",
+                "--set-upstream",
+                "origin",
+                &format!("HEAD:refs/heads/{branch}"),
+            ],
+        )?;
+        // Only an open pull request is this report's: a merged one from before
+        // a revert is history, and a relanding opens a new one (B46).
         let existing = this.gh_json(
             "github.pr_find",
             &[
@@ -768,27 +785,24 @@ impl MergeTarget for SharedProjects {
                 "--head",
                 &branch,
                 "--state",
-                "all",
+                "open",
                 "--json",
                 "number,url,state,headRefName",
             ],
         )?;
         if let Some(pr) = existing.as_array().and_then(|prs| prs.first()) {
             // A harness opened it, or an earlier attempt did (B36, B73).
+            let number = pr["number"]
+                .as_u64()
+                .ok_or_else(|| Failure::task("github.pr_find", "pull request has no number"))?;
             return Ok(Some(PullRequest {
-                number: pr["number"].as_u64().unwrap_or_default(),
+                number,
                 url: pr["url"].as_str().unwrap_or_default().to_owned(),
                 head: branch,
                 by_factory: false,
-                open: pr["state"].as_str() == Some("OPEN"),
+                open: true,
             }));
         }
-        let path = worktree(task)?;
-        this.git(
-            "git.push",
-            &path,
-            &["push", "--quiet", "--set-upstream", "origin", &branch],
-        )?;
         let url = this.gh(
             "github.pr_create",
             &[
@@ -987,12 +1001,19 @@ impl MergeTarget for SharedProjects {
                     .as_ref()
                     .map(|w| w.branch.clone())
                     .unwrap_or_else(|| task.branch_slug());
+                // The commit that passed verification, never a later tip of
+                // the branch (B39); a Factory without verification merges the
+                // branch a person reviewed.
+                let target = match verified_commit(factory, task)? {
+                    Some(commit) => commit,
+                    None => branch.clone(),
+                };
                 let ancestor = this.runner.run(
                     "git",
                     &[
                         "merge-base".into(),
                         "--is-ancestor".into(),
-                        branch.clone(),
+                        target.clone(),
                         "HEAD".into(),
                     ],
                     Some(&project),
@@ -1004,11 +1025,19 @@ impl MergeTarget for SharedProjects {
                         branch,
                         task.card.title
                     );
-                    this.git(
+                    if let Err(failure) = this.git(
                         "git.merge",
                         &project,
-                        &["merge", "--no-ff", "--no-edit", "-m", &message, &branch],
-                    )?;
+                        &["merge", "--no-ff", "--no-edit", "-m", &message, &target],
+                    ) {
+                        // Never leave the operator's checkout mid-merge.
+                        let _ = this.runner.run(
+                            "git",
+                            &["merge".into(), "--abort".into()],
+                            Some(&project),
+                        );
+                        return Err(failure);
+                    }
                 }
                 Ok(this
                     .git("git.merge", &project, &["rev-parse", "HEAD"])?
@@ -1026,14 +1055,16 @@ impl MergeTarget for SharedProjects {
                     return merge_commit("github.merge", &view);
                 }
                 // Pinned to the commit that passed verification: a push after
-                // it makes GitHub refuse the merge (B39).
-                let head = task
-                    .attempts
-                    .iter()
-                    .rev()
-                    .find(|attempt| matches!(attempt.outcome, Some(AttemptOutcome::Passed)))
-                    .and_then(|attempt| attempt.commit.clone())
-                    .unwrap_or_else(|| view["headRefOid"].as_str().unwrap_or_default().to_owned());
+                // it makes GitHub refuse the merge (B39). Without verification
+                // the head a person reviewed is the pin.
+                let head = match verified_commit(factory, task)? {
+                    Some(commit) => commit,
+                    None => view["headRefOid"]
+                        .as_str()
+                        .filter(|oid| !oid.is_empty())
+                        .ok_or_else(|| Failure::task("github.merge", "pull request has no head"))?
+                        .to_owned(),
+                };
                 let number = pr.number.to_string();
                 let flag = match method {
                     MergeMethod::Merge => "--merge",
@@ -1341,7 +1372,23 @@ impl Verifier for SharedProjects {
     }
 }
 
-/// `prefix/**`, `*.ext` or an exact path.
+/// The commit the Task-stage verification passed on; `None` only for a
+/// Factory without verification. A verified Factory with no passed commit is
+/// refused rather than merged at whatever the branch holds now.
+fn verified_commit(factory: &Factory, task: &Task) -> Result<Option<String>, Failure> {
+    if !factory.config.verification.exists() {
+        return Ok(None);
+    }
+    task.attempts
+        .iter()
+        .rev()
+        .find(|attempt| attempt.stage == AttemptStage::Task)
+        .filter(|attempt| attempt.outcome == Some(AttemptOutcome::Passed))
+        .and_then(|attempt| attempt.commit.clone())
+        .map(Some)
+        .ok_or_else(|| Failure::task("merge", "no verified commit to merge"))
+}
+
 /// The merge commit of a merged pull request. GitHub can answer a merge
 /// before it names the commit (a merge queue, a lagging read): that is asked
 /// again rather than recorded as an empty commit.
@@ -1355,6 +1402,7 @@ fn merge_commit(stage: &str, view: &Value) -> Result<String, Failure> {
     }
 }
 
+/// `prefix/**`, `*.ext` or an exact path.
 fn path_matches(pattern: &str, path: &str) -> bool {
     if let Some(prefix) = pattern.strip_suffix("/**") {
         return path.starts_with(&format!("{prefix}/"));

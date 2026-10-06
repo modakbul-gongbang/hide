@@ -37,6 +37,8 @@ pub struct World {
     /// The next merge is refused with this failure.
     pub merge_refusal: Option<Failure>,
     pub merge_attempts: u32,
+    /// Each report a GitHub Task pushed, by Task id.
+    pub pushes: Vec<String>,
     /// Main verification answers by commit, read before `main_checks`.
     pub main_check_script: BTreeMap<String, VecDeque<MainCheck>>,
     /// Main verification by commit; `Green` when absent.
@@ -210,6 +212,10 @@ impl MergeTarget for Shared {
         _body: &str,
     ) -> Result<Option<PullRequest>, Failure> {
         let mut world = self.world();
+        world.pushes.push(task.id.clone());
+        if let Some(pr) = task.pr.clone().filter(|pr| pr.open) {
+            return Ok(Some(pr));
+        }
         world.next_pr += 1;
         let number = world.next_pr;
         world.writes.push(format!("pr.open {}", task.id));

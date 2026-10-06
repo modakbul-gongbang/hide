@@ -26,6 +26,8 @@ struct Hub {
     commit_later: bool,
     /// The most issues one list answers, newest first.
     list_cap: Option<usize>,
+    /// Each `git push` refspec, in order.
+    pushes: Vec<String>,
 }
 
 #[derive(Clone, Default)]
@@ -57,6 +59,10 @@ impl Runner for FakeGh {
         if program == "git" {
             return Ok(match args.first().map(String::as_str) {
                 Some("rev-parse") => ok("headsha\n"),
+                Some("push") => {
+                    hub.pushes.push(args.last().cloned().unwrap_or_default());
+                    ok("")
+                }
                 _ => ok(""),
             });
         }
@@ -103,7 +109,8 @@ impl Runner for FakeGh {
             }
             ["pr", "list", ..] => {
                 let head = flag(args, "--head");
-                let all: Vec<Value> = hub.prs.values().filter(|pr| head.is_none_or(|h| pr["headRefName"] == h)).cloned().collect();
+                let open = flag(args, "--state") == Some("open");
+                let all: Vec<Value> = hub.prs.values().filter(|pr| head.is_none_or(|h| pr["headRefName"] == h)).filter(|pr| !open || pr["state"] == "OPEN").cloned().collect();
                 ok(Value::Array(all).to_string())
             }
             ["pr", "create", ..] => {
@@ -186,6 +193,15 @@ fn task(id: &str, issue: Option<u64>) -> Task {
             .or_insert(default.clone());
     }
     let mut task: Task = serde_json::from_value(value).unwrap();
+    // The Task-stage verification passed on the pushed head.
+    task.attempts.push(Attempt {
+        number: 1,
+        commit: Some("headsha".into()),
+        started_at: 0,
+        stage: AttemptStage::Task,
+        outcome: Some(AttemptOutcome::Passed),
+        log: None,
+    });
     task.worker = Some(WorkerRef {
         factory: String::new(),
         agent: None,
@@ -284,6 +300,52 @@ fn a_merge_without_its_commit_yet_is_asked_again_and_not_merged_twice() {
             .filter(|w| w.starts_with("pr merge"))
             .count();
     assert_eq!(merges, 1, "the merge is made once");
+}
+
+#[test]
+fn every_report_pushes_and_a_merged_pull_request_is_not_reused() {
+    let gh = FakeGh::default();
+    let mut p = projects(&gh);
+    let factory = factory();
+    let mut t = task("T-1", Some(1));
+    let first = p.open_pr(&factory, &t, "body").unwrap().unwrap();
+    // A second report after a failed check pushes the fix to the same pull
+    // request.
+    let second = p.open_pr(&factory, &t, "body").unwrap().unwrap();
+    assert_eq!(second.number, first.number);
+    assert_eq!(
+        gh.0.lock().unwrap().pushes,
+        vec!["HEAD:refs/heads/factory/1-add-it"; 2]
+    );
+    // Merged, reverted and relanding: a new pull request, never the old one.
+    t.pr = Some(first.clone());
+    p.merge(&factory, &t, MergeMethod::Merge).unwrap();
+    let reland = p.open_pr(&factory, &t, "body").unwrap().unwrap();
+    assert_ne!(reland.number, first.number);
+    assert!(reland.by_factory);
+}
+
+#[test]
+fn a_merge_without_a_verified_commit_is_refused() {
+    let gh = FakeGh::default();
+    let mut p = projects(&gh);
+    let factory = factory();
+    let mut t = task("T-1", Some(1));
+    t.pr = p.open_pr(&factory, &t, "body").unwrap();
+    t.attempts.last_mut().unwrap().outcome = Some(AttemptOutcome::Failed {
+        check: "test".into(),
+        link: String::new(),
+    });
+    let failure = p.merge(&factory, &t, MergeMethod::Merge).unwrap_err();
+    assert_eq!(failure.detail, "no verified commit to merge");
+    assert!(
+        !gh.0
+            .lock()
+            .unwrap()
+            .writes
+            .iter()
+            .any(|w| w.starts_with("pr merge"))
+    );
 }
 
 #[test]

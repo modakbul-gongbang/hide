@@ -68,6 +68,10 @@ const START_RETRY_MS: u64 = 30_000;
 const MAIN_CHECK_EVERY_MS: u64 = 30_000;
 /// When a merge that GitHub answered without its commit is asked again.
 pub const MERGE_COMMIT_AGAIN_MS: u64 = 30_000;
+/// When a failed push or pull request of a reported Task is tried again.
+const PUBLISH_RETRY_MS: u64 = 60_000;
+/// A GitHub Task's report whose commits are not pushed yet.
+const PUBLISH_PENDING: &str = "publish_pending";
 const START_NOTICE_MS: u64 = 10 * MINUTE_MS;
 
 struct VerifyState {
@@ -132,6 +136,8 @@ pub struct Engine {
     /// When each Factory's main was last read, to pace a broken or pending
     /// main to [`MAIN_CHECK_EVERY_MS`].
     main_checked_at: BTreeMap<String, UnixMs>,
+    /// When a failed push or pull request is tried again, per Task.
+    publish_retry: BTreeMap<(String, String), UnixMs>,
     processed: BTreeSet<String>,
     processed_order: Vec<String>,
     /// Recent environment and Task failures the cascade rules read.
@@ -193,6 +199,7 @@ impl Engine {
             main_seen: BTreeMap::new(),
             main_pending: BTreeSet::new(),
             main_checked_at: BTreeMap::new(),
+            publish_retry: BTreeMap::new(),
             processed: BTreeSet::new(),
             processed_order: Vec::new(),
             env_failures: Vec::new(),
@@ -2453,23 +2460,76 @@ impl Engine {
         });
         let _ = letter;
         self.put_to_sleep(factory_id, id);
-        // B36: a pull request for a GitHub Factory before CI is read.
-        if factory.source == SourceKind::Github && task.pr.is_none() {
-            let body = pr_body(&task, &factory);
-            match self.ports.merge.open_pr(&factory, &task, &body) {
-                Ok(pr) => {
-                    self.with_task(factory_id, id, |task| {
-                        task.pr = pr;
-                        task.writes.insert("pr".into());
+        self.set_state(factory_id, id, TaskState::Verifying);
+        if factory.source == SourceKind::Github {
+            // B35, B36: the reply comes now; the next tick pushes this report's
+            // commits and opens the pull request, then reads CI.
+            self.with_task(factory_id, id, |task| {
+                task.writes.insert(PUBLISH_PENDING.into());
+            });
+            self.publish_retry
+                .remove(&(factory_id.to_owned(), id.to_owned()));
+            return Ok(
+                json!({"message": "검증 중: 결과는 편지로 갑니다. 지금은 차례를 끝내세요.", "state": "verifying"}),
+            );
+        }
+        self.begin_verification(factory_id, id)
+    }
+
+    /// Pushes a GitHub Task's branch and finds or opens its pull request,
+    /// then starts the checks and verification on the pushed commit (B36).
+    fn publish(&mut self, factory_id: &str, id: &str) {
+        let key = (factory_id.to_owned(), id.to_owned());
+        let now = self.now();
+        if self.publish_retry.get(&key).is_some_and(|at| *at > now) {
+            return;
+        }
+        let (Some(factory), Some(task)) = (
+            self.factories.get(factory_id).cloned(),
+            self.task(factory_id, id).cloned(),
+        ) else {
+            return;
+        };
+        let body = pr_body(&task, &factory);
+        match self.ports.merge.open_pr(&factory, &task, &body) {
+            Ok(pr) => {
+                let opened = pr.as_ref().is_some_and(|pr| pr.by_factory)
+                    && task.pr.as_ref().map(|own| own.number) != pr.as_ref().map(|pr| pr.number);
+                self.with_task(factory_id, id, |task| {
+                    // The Factory's own pull request found again stays its own.
+                    let own = task.pr.as_ref().is_some_and(|own| {
+                        own.by_factory && pr.as_ref().is_some_and(|pr| pr.number == own.number)
                     });
-                    self.record(factory_id, Some(id), "github.pr_opened", json!({}));
-                }
-                Err(failure) => {
-                    self.external_failure(factory_id, Some(id), &failure);
-                }
+                    task.pr = pr.map(|pr| PullRequest {
+                        by_factory: pr.by_factory || own,
+                        ..pr
+                    });
+                    task.writes.insert("pr".into());
+                    task.writes.remove(PUBLISH_PENDING);
+                });
+                self.publish_retry.remove(&key);
+                self.record(
+                    factory_id,
+                    Some(id),
+                    "github.published",
+                    json!({"opened": opened}),
+                );
+                let _ = self.begin_verification(factory_id, id);
+            }
+            Err(failure) => {
+                self.external_failure(factory_id, Some(id), &failure);
+                self.publish_retry.insert(key, now + PUBLISH_RETRY_MS);
             }
         }
-        self.set_state(factory_id, id, TaskState::Verifying);
+    }
+
+    /// Starts the checks and the Task-stage verification of a reported Task.
+    fn begin_verification(&mut self, factory_id: &str, id: &str) -> Reply {
+        let factory = self
+            .factories
+            .get(factory_id)
+            .cloned()
+            .ok_or_else(|| refuse("factory_not_found", "?"))?;
         self.start_checks(factory_id, id);
         if !factory.config.verification.exists() {
             // No verification: straight to merge waiting (B2, B35).
@@ -2769,6 +2829,9 @@ impl Engine {
             return;
         };
         if task.state != TaskState::Verifying {
+            return;
+        }
+        if task.writes.contains(PUBLISH_PENDING) {
             return;
         }
         let key = (factory_id.to_owned(), id.to_owned());
@@ -3946,6 +4009,14 @@ impl Engine {
         for factory in &factories {
             self.drive_revert(factory);
             self.unblock(factory);
+            let publishing: Vec<String> = self
+                .tasks_of(factory)
+                .filter(|t| t.state == TaskState::Verifying && t.writes.contains(PUBLISH_PENDING))
+                .map(|t| t.id.clone())
+                .collect();
+            for id in publishing {
+                self.publish(factory, &id);
+            }
             let verifying: Vec<String> = self
                 .tasks_of(factory)
                 .filter(|t| t.state == TaskState::Verifying)

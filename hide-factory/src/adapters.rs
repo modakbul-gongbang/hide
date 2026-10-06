@@ -252,8 +252,9 @@ pub enum MainCheck {
 /// Branches, pull requests, merges and reverts.
 pub trait MergeTarget {
     fn main_head(&mut self, factory: &Factory) -> Result<String, Failure>;
-    /// Pushes the branch and opens the pull request, or finds the one a
-    /// harness opened (B36).
+    /// Pushes the worktree's commits to the Task branch on every report, then
+    /// finds the open pull request for it (a harness's or an earlier
+    /// report's) or opens one (B36).
     fn open_pr(
         &mut self,
         factory: &Factory,

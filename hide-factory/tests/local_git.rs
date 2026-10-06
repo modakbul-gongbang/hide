@@ -184,7 +184,7 @@ fn a_local_task_is_verified_merged_checked_on_main_and_reverted_alone() {
     assert_eq!(probe.verify_candidates, vec!["make test"]);
 
     let factory = factory(&fx.project, &["test -f b.txt"]);
-    let t = task(&fx, "T-1", "b.txt", "two\n");
+    let mut t = task(&fx, "T-1", "b.txt", "two\n");
     assert_eq!(fx.projects.diff_lines(&factory, &t).unwrap(), 1);
     assert_eq!(
         fx.projects.changed_paths(&factory, &t).unwrap(),
@@ -194,6 +194,14 @@ fn a_local_task_is_verified_merged_checked_on_main_and_reverted_alone() {
 
     let run = fx.projects.start(&factory, &t).unwrap();
     assert_eq!(settle(&mut fx.projects, &factory, &run), VerifyPoll::Passed);
+    t.attempts.push(Attempt {
+        number: 1,
+        commit: run.commit.clone(),
+        started_at: 0,
+        stage: AttemptStage::Task,
+        outcome: Some(AttemptOutcome::Passed),
+        log: None,
+    });
     // main moved meanwhile: the bundle runs on main merged into the Task.
     write(&fx.project, "c.txt", "three\n");
     git(&fx.project, &["add", "."]);
