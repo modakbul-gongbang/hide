@@ -277,7 +277,7 @@ A completed run passes on `success` or `neutral`, decides nothing on `skipped`, 
 A GitHub error that carries an environment signal is the environment's; any other read error stays pending.
 
 **Verify bundle.** Bundles run one at a time on the machine, in a queue of at most 256, each command through the shell with its output in the run's log.
-The cap, `verify_timeout_minutes` (60 by default), applies to each command, and a command past it fails the run.
+The cap, `verify_timeout_minutes` (60 by default), applies to the whole bundle from its first command, and the command running when it passes fails the run.
 A command that exits 137, prints "no space left on device" in its last 64 KiB, or dies with no exit code after printing "killed" is an environment failure; every other non-zero exit is the Task's.
 Each run belongs to the engine, which ends its whole process tree when the Task is cancelled or the core stops.
 
@@ -456,7 +456,7 @@ A Factory's `merge_mode` cannot be `auto` while it has no verification (`auto_ne
 | `new_task_limit` | Count | 3 |
 | `verify_failure_limit` | Count, at least 1 | 3 |
 | `autonomy_diff_limit` | Changed lines an autonomous Task may merge alone | 200 |
-| `verify_timeout_minutes` | Minutes per command, at least 1 | 60 |
+| `verify_timeout_minutes` | Minutes per bundle run, at least 1 | 60 |
 | `disk_floor_gb` | Gigabytes | 20 |
 | `default_runtime` | `claude` or `codex` | Claude Code when `init` finds it on the path, else Codex when it finds that, else `claude` |
 | `harness` | `<name>:<instructions>`; empty clears | none |
