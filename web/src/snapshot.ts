@@ -1202,8 +1202,6 @@ export type BackgroundAi = {
 
 /** Each machine's hook parts are its kit rows (`Device.kit`); this section keeps what only the panes say. */
 export type AgentHooks = {
-  /** Removed from the wire: sessions are counted on `Kit.agents[].sessions` and named on `PaneChildren.connection`. The Agents tab rewrite deletes its last reader. */
-  sessions_predating_install?: { pane_id: string; label: string; message: string }[];
   last_report_failure: string | null;
 };
 
