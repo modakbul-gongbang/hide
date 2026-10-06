@@ -116,6 +116,10 @@ When the behavior depends on the order of two events, the test fixes that order;
   A refusal as `agent_pane_busy` typed nothing, so the fixture goes back to waiting within the same ten-second bound; any other answer is the start's.
   A pane's shell that never gets there fails with the last process info and, on Windows, the children the shell still has, listed by the compiled `hide-children.exe` (a child count of zero is not the condition: a shell can keep a resident child).
   On Windows `globalSetup` ends every `vctip.exe` after the run's last compile and prints the pids it ended (`endVctip`): MSVC's compiler and linker leave that telemetry helper running, still naming as its parent a linker whose pid Windows can give a pane's shell, and the pinned Herdr counts a shell's children by parent pid alone, so it would refuse that pane as busy for as long as the helper ran.
+  A process Windows started at boot can do the same and cannot be ended: `csrss.exe` names as its parent the `smss.exe` that started it and exited, and a pane's shell can be given that pid.
+  So on Windows `startHerdr` lists, for each of its two shells, the processes that started before the shell yet name it as their parent (`hide-children.exe` compares start times; the name does not matter).
+  When there is one, it logs a line, opens the two panes again in a new workspace while the claimed shells still hold their pids, and closes the claimed workspace; a replacement that is claimed too fails setup with each process's pid, start time and name.
+  Herdr's `agent start` takes no start time into account (an upstream candidate), so a product pane given such a pid refuses agents the same way.
 - Use `fixtureHomeEnv` from `web/e2e/platform-fixture.ts` to move `HOME`, provider config homes and, on Windows, `USERPROFILE`, `APPDATA` and `LOCALAPPDATA` together into the private fixture.
   The fixtures run a compiled `claude` shim instead, which proves the pipeline and not an agent or physical IME.
   On Windows the interactive shim writes its readiness line after console setup; provider/auth replies return before that line, and input logs record only received input.
