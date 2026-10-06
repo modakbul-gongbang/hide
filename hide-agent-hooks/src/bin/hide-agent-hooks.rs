@@ -62,9 +62,12 @@ fn main() -> ExitCode {
             // Cursor loads Claude Code's hooks from `~/.claude/settings.json`
             // beside its own and runs both, so under Cursor Claude Code's hook
             // stays out and Cursor's own guidance hook is the one that speaks
-            // (`docs/agent-hooks.md`, Other agents).
+            // (`docs/agent-hooks.md`, Other agents). Grok and OpenCode run it
+            // too and have no hook of Hide's: it still speaks there, but takes
+            // no letters (`run_hook`).
             if argument_value("--runtime", &arguments).as_deref() == Some("claude-code")
-                && hide_agent_hooks::runtime::run_by_cursor(|name| std::env::var_os(name))
+                && hide_agent_hooks::runtime::ForeignOrigin::detect(|name| std::env::var_os(name))
+                    .is_some_and(hide_agent_hooks::runtime::ForeignOrigin::silences_claude_hook)
             {
                 return ExitCode::SUCCESS;
             }
@@ -180,7 +183,11 @@ fn run_hook(arguments: &[String], started: Instant) {
             hide_agent_hooks::runtime::append_session_context(&value, &context).unwrap_or(value)
         });
     }
-    let intake = if event == HookEvent::UserPromptSubmit && runtime.is_some() {
+    // Claude Code's hook inside Grok or OpenCode leaves the letters where
+    // they are: the session that runs it is not the pane's Claude Code.
+    let takes_letters = runtime != Some(AgentRuntime::ClaudeCode)
+        || hide_agent_hooks::runtime::takes_letters(|name| std::env::var_os(name));
+    let intake = if event == HookEvent::UserPromptSubmit && runtime.is_some() && takes_letters {
         match hide_agent_hooks::delivery::pull(delivery_deadline) {
             Ok(intake) => intake,
             Err(failure) => {
