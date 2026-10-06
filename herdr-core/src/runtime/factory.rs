@@ -79,7 +79,19 @@ impl Runtime {
         };
         // The newest record on the pane, ended or not: an agent can end its
         // own record and keep running, so ending it never makes an operator.
-        let mut next = match ledger.agents.iter().rev().find(|agent| agent.pane == pane) {
+        // Nor does registering again without a parent: the same agent's
+        // newest record that names one still decides where it sits.
+        let newest = ledger.agents.iter().rev().find(|agent| agent.pane == pane);
+        let start = newest.and_then(|newest| {
+            ledger
+                .agents
+                .iter()
+                .rev()
+                .filter(|agent| agent.pane == pane && agent.actor.same_identity(&newest.actor))
+                .find(|agent| agent.parent.is_some())
+                .or(Some(newest))
+        });
+        let mut next = match start {
             Some(agent) => {
                 lineage.factory_spawned |= agent.actor.code_owned();
                 agent.parent.clone()
@@ -418,6 +430,42 @@ mod tests {
             vec!["agent-child", "agent-worker", "agent-factory"]
         );
         assert_eq!(live.panes, vec!["factory:f-1"]);
+    }
+
+    #[test]
+    fn registering_again_without_a_parent_keeps_an_agent_below_its_worker() {
+        let mut runtime = crate::runtime::tests::runtime();
+        let mut child = agent("agent-child", "w2:p1", Some("agent-worker"));
+        child.ended = true;
+        // The same agent, on the same pane and session, registered again
+        // with no parent after ending its first record.
+        let again = AgentRecord {
+            id: "agent-child-again".into(),
+            parent: None,
+            ..child.clone()
+        };
+        // A different agent later on a reused pane id is its own.
+        let mut reused = agent("agent-other", "w3:p1", None);
+        let mut gone = agent("agent-gone", "w3:p1", Some("agent-worker"));
+        gone.ended = true;
+        reused.ended = false;
+        runtime.delivery_ledger = Ok(Arc::new(Ledger {
+            agents: vec![
+                agent("agent-factory", "factory:f-1", None),
+                agent("agent-worker", "w1:p1", Some("agent-factory")),
+                child,
+                again,
+                gone,
+                reused,
+            ],
+            ..Ledger::default()
+        }));
+        let walked = runtime.factory_lineage("w2:p1");
+        assert_eq!(walked.agents, vec!["agent-worker", "agent-factory"]);
+        assert!(walked.factory_spawned);
+        let other = runtime.factory_lineage("w3:p1");
+        assert!(other.agents.is_empty(), "{:?}", other.agents);
+        assert!(!other.factory_spawned);
     }
 
     fn row(provider: &str, used: f64, bucket: Option<(f64, u64)>) -> ProviderUsageSnapshot {
