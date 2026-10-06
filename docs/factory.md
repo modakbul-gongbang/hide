@@ -324,7 +324,7 @@ A green result, or no main verification, makes the Task `done` and removes its w
 A red result breaks main and stops auto merge; manual merges still run.
 While main is broken an `auto` Task that passed verification waits in `verifying` without merge-tree or quick-check reads, unless a person's gate sends it to `merge_waiting`; main is read again every 30 seconds.
 If the broken commit is among the Factory's own merges since the last green, the Factory finds the first failing one, asking again for runs that were skipped or cancelled, and reverts that merge alone.
-On GitHub the revert is a pull request from `factory/revert-<task id>`, which the Factory force-pushes, checks and merges with `--merge`; locally it is a revert commit made in `factory-main` and fast-forwarded into the primary checkout.
+On GitHub the revert is a pull request from `factory/revert-<task id>`, which the Factory force-pushes, checks and merges with `--merge`; locally it is a revert commit made in `factory-main` and fast-forwarded into the primary checkout, only while that checkout is on the default branch and clean, as for a Task merge.
 A revert whose verification passes is merged on its own, and the original Task becomes `relanding`: it runs again in the same worktree and session on the latest main, with a new pull request.
 When the failing commit is not the Factory's, nothing is reverted: the Factory drafts a fix Task for a person to confirm and stops auto merge.
 Auto merge resumes when the head of main verifies green again.

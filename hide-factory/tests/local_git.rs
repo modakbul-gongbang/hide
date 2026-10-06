@@ -248,6 +248,12 @@ fn a_local_task_is_verified_merged_checked_on_main_and_reverted_alone() {
     }
     // The bundle needs b.txt, which the revert removes: it fails.
     assert!(matches!(check, MainCheck::Red { .. }), "{check:?}");
+    // The operator is on another branch: the revert does not land there.
+    git(&fx.project, &["checkout", "--quiet", "-b", "elsewhere"]);
+    let refused = fx.projects.merge_revert(&factory, &revert).unwrap_err();
+    assert_eq!(refused.detail, "main_dirty");
+    assert!(fx.project.join("b.txt").exists());
+    git(&fx.project, &["checkout", "--quiet", "main"]);
     let landed = fx.projects.merge_revert(&factory, &revert).unwrap();
     assert_eq!(git(&fx.project, &["rev-parse", "HEAD"]), landed);
     assert!(!fx.project.join("b.txt").exists());
@@ -261,7 +267,7 @@ fn a_local_task_is_verified_merged_checked_on_main_and_reverted_alone() {
 fn a_conflict_and_a_dirty_main_are_found_before_merge() {
     let mut fx = fixture();
     let factory = factory(&fx.project, &[]);
-    let t = task(&fx, "T-2", "a.txt", "branch\n");
+    let mut t = task(&fx, "T-2", "a.txt", "branch\n");
     write(&fx.project, "a.txt", "main\n");
     git(&fx.project, &["commit", "--quiet", "-am", "main edit"]);
     assert_eq!(
@@ -270,6 +276,19 @@ fn a_conflict_and_a_dirty_main_are_found_before_merge() {
             files: vec!["a.txt".into()]
         }
     );
+    // Merged anyway, the conflict fails the merge and leaves no MERGE_HEAD.
+    let worktree = PathBuf::from(&t.worker.as_ref().unwrap().worktree);
+    t.attempts.push(Attempt {
+        number: 1,
+        commit: Some(git(&worktree, &["rev-parse", "HEAD"])),
+        started_at: 0,
+        stage: AttemptStage::Task,
+        outcome: Some(AttemptOutcome::Passed),
+        log: None,
+    });
+    assert!(fx.projects.merge(&factory, &t, MergeMethod::Merge).is_err());
+    assert!(!fx.project.join(".git/MERGE_HEAD").exists());
+    assert!(!fx.projects.main_dirty(&factory).unwrap());
 
     write(&fx.project, "a.txt", "uncommitted\n");
     assert!(fx.projects.main_dirty(&factory).unwrap());

@@ -1066,7 +1066,10 @@ fn each_github_report_pushes_before_its_checks_are_read_and_answers_at_once() {
     );
     let answer = h.done(&f, &t);
     assert_eq!(answer["state"], "verifying", "{answer}");
-    assert!(h.world().pushes.is_empty(), "the reply does not wait on git");
+    assert!(
+        h.world().pushes.is_empty(),
+        "the reply does not wait on git"
+    );
     assert!(h.world().verify_runs.is_empty());
     tick_until(&mut h, &f, &t, TaskState::Running);
     assert_eq!(h.world().pushes, vec![t.clone()]);

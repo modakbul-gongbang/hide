@@ -128,6 +128,26 @@ impl Projects {
         checked(self.runner.as_mut(), stage, "gh", args, None)
     }
 
+    /// The primary checkout is off the default branch or has uncommitted
+    /// tracked changes: nothing merges into it then.
+    fn main_dirty(&mut self, factory: &Factory) -> Result<bool, Failure> {
+        let project = PathBuf::from(&factory.project);
+        let branch = self.git(
+            "git.status",
+            &project,
+            &["rev-parse", "--abbrev-ref", "HEAD"],
+        )?;
+        if branch.trim() != factory.default_branch {
+            return Ok(true);
+        }
+        let status = self.git(
+            "git.status",
+            &project,
+            &["status", "--porcelain", "--untracked-files=no"],
+        )?;
+        Ok(!status.trim().is_empty())
+    }
+
     fn gh_json(&mut self, stage: &str, args: &[&str]) -> Result<Value, Failure> {
         let text = self.gh(stage, args)?;
         serde_json::from_str(&text)
@@ -968,22 +988,7 @@ impl MergeTarget for SharedProjects {
     }
 
     fn main_dirty(&mut self, factory: &Factory) -> Result<bool, Failure> {
-        let mut this = self.lock();
-        let project = PathBuf::from(&factory.project);
-        let branch = this.git(
-            "git.status",
-            &project,
-            &["rev-parse", "--abbrev-ref", "HEAD"],
-        )?;
-        if branch.trim() != factory.default_branch {
-            return Ok(true);
-        }
-        let status = this.git(
-            "git.status",
-            &project,
-            &["status", "--porcelain", "--untracked-files=no"],
-        )?;
-        Ok(!status.trim().is_empty())
+        self.lock().main_dirty(factory)
     }
 
     fn merge(
@@ -1263,6 +1268,13 @@ impl MergeTarget for SharedProjects {
                 merge_commit("github.revert_merge", &view)
             }
             _ => {
+                if commit.is_empty() {
+                    return Err(Failure::task("git.revert_merge", "revert has no commit"));
+                }
+                // Only into the default branch, clean, as a Task merge (D-46).
+                if this.main_dirty(factory)? {
+                    return Err(Failure::task("git.revert_merge", "main_dirty"));
+                }
                 let project = PathBuf::from(&factory.project);
                 this.git(
                     "git.revert_merge",
