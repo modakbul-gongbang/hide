@@ -616,6 +616,7 @@ fn apply(ledger: &mut Ledger, request: &Request, now: u64) -> Result<(Value, boo
                 | Command::WatchStop { .. }
                 | Command::WatchAssign { .. }
                 | Command::Confirm { .. }
+                | Command::Ack { .. }
         ),
     ))
 }
@@ -919,6 +920,8 @@ mod tests {
             state_change_seq: Some(1),
             status_changed_at_unix_ms: 1,
             last_input_at_unix_ms: 0,
+            last_submit_at_unix_ms: 0,
+            entered_working_at_unix_ms: 0,
             session: Some(hide_session::session_activity::SessionActivityRequest {
                 agent: hide_session::Agent::Codex,
                 reference_kind: "id".into(),
@@ -1104,7 +1107,10 @@ mod tests {
         )
         .unwrap();
         for command in [
-            Command::Pull,
+            Command::Pull {
+                bell: true,
+                session: None,
+            },
             Command::Confirm {
                 ids: vec![letter.id.clone()],
             },
