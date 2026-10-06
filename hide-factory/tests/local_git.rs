@@ -325,3 +325,70 @@ fn a_risk_path_and_a_quick_check_gate_the_merge() {
         "no worktree is a failure, not a pass"
     );
 }
+
+/// Real git against a bare remote; `gh` answers that no pull request is open
+/// and opens one when asked.
+struct RealGitFakeGh(SystemRunner);
+
+impl hide_factory::exec::Runner for RealGitFakeGh {
+    fn run(
+        &mut self,
+        program: &str,
+        args: &[String],
+        cwd: Option<&Path>,
+    ) -> Result<hide_factory::exec::Output, Failure> {
+        if program == "git" {
+            return self.0.run(program, args, cwd);
+        }
+        let stdout = match args.get(1).map(String::as_str) {
+            Some("list") => "[]".to_owned(),
+            Some("create") => "https://github.com/o/r/pull/7\n".to_owned(),
+            other => panic!("unexpected gh {other:?}"),
+        };
+        Ok(hide_factory::exec::Output {
+            code: Some(0),
+            stdout,
+            stderr: String::new(),
+        })
+    }
+}
+
+#[test]
+fn a_report_after_the_remote_deleted_the_task_branch_still_pushes() {
+    let fx = fixture();
+    let remote = fx.project.with_file_name("remote.git");
+    git(
+        fx.project.parent().unwrap(),
+        &["init", "--quiet", "--bare", remote.to_str().unwrap()],
+    );
+    git(
+        &fx.project,
+        &["remote", "add", "origin", remote.to_str().unwrap()],
+    );
+    git(&fx.project, &["push", "--quiet", "origin", "main"]);
+    let mut projects = SharedProjects::new(
+        Box::new(RealGitFakeGh(SystemRunner {
+            stop: Arc::new(AtomicBool::new(false)),
+        })),
+        Box::new(Book::default()),
+        fx.project.with_file_name("gh-logs"),
+    );
+    let mut factory = factory(&fx.project, &[]);
+    factory.source = SourceKind::Github;
+    factory.repo = Some("o/r".into());
+    let t = task(&fx, "T-1", "b.txt", "two\n");
+    let branch = t.worker.as_ref().unwrap().branch.clone();
+    let worktree = PathBuf::from(&t.worker.as_ref().unwrap().worktree);
+    let pr = projects.open_pr(&factory, &t, "body").unwrap().unwrap();
+    assert_eq!(pr.number, 7);
+    // The pull request merged and the remote deleted its branch; the Task
+    // was reverted and reports again with a new commit.
+    git(&remote, &["update-ref", "-d", &format!("refs/heads/{branch}")]);
+    write(&worktree, "b.txt", "three\n");
+    git(&worktree, &["commit", "--quiet", "-am", "again"]);
+    projects.open_pr(&factory, &t, "body").unwrap();
+    assert_eq!(
+        git(&remote, &["rev-parse", &format!("refs/heads/{branch}")]),
+        git(&worktree, &["rev-parse", "HEAD"]),
+    );
+}

@@ -789,6 +789,21 @@ impl MergeTarget for SharedProjects {
         // Every report publishes its commits, so CI reads what the worker
         // committed since the last one; a rebase needs the lease (B36, B40).
         let path = worktree(task)?;
+        // A branch the remote deleted (a merged pull request with automatic
+        // branch deletion, before a relanding) leaves a stale tracking ref
+        // the lease would refuse; drop it so the push makes the branch again.
+        let remote = this.git(
+            "git.push",
+            &path,
+            &["ls-remote", "--heads", "origin", &format!("refs/heads/{branch}")],
+        )?;
+        if remote.trim().is_empty() {
+            this.git(
+                "git.push",
+                &path,
+                &["update-ref", "-d", &format!("refs/remotes/origin/{branch}")],
+            )?;
+        }
         this.git(
             "git.push",
             &path,

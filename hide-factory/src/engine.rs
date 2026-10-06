@@ -164,6 +164,9 @@ pub struct Engine {
     main_checked_at: BTreeMap<String, UnixMs>,
     /// When a failed push or pull request is tried again, per Task.
     publish_retry: BTreeMap<(String, String), UnixMs>,
+    /// Refusals in a row of a Task's push or pull request that no
+    /// environment signal explains.
+    publish_refusals: BTreeMap<(String, String), u32>,
     /// When a merge asked to wait is tried again, per Task, and whether the
     /// merge may already have landed with its commit not named yet.
     merge_retry: BTreeMap<(String, String), (UnixMs, bool)>,
@@ -230,6 +233,7 @@ impl Engine {
             main_pending: BTreeSet::new(),
             main_checked_at: BTreeMap::new(),
             publish_retry: BTreeMap::new(),
+            publish_refusals: BTreeMap::new(),
             merge_retry: BTreeMap::new(),
             processed: BTreeSet::new(),
             processed_order: Vec::new(),
@@ -2680,6 +2684,7 @@ impl Engine {
                     task.writes.remove(PUBLISH_PENDING);
                 });
                 self.publish_retry.remove(&key);
+                self.publish_refusals.remove(&key);
                 self.record(
                     factory_id,
                     Some(id),
@@ -2690,7 +2695,31 @@ impl Engine {
             }
             Err(failure) => {
                 self.external_failure(factory_id, Some(id), &failure);
-                self.publish_retry.insert(key, now + PUBLISH_RETRY_MS);
+                let refusals = if failure.signal.is_none() {
+                    let n = self.publish_refusals.entry(key.clone()).or_default();
+                    *n += 1;
+                    *n
+                } else {
+                    0
+                };
+                if refusals >= 2 {
+                    // A protected branch or a hook refuses the same way each
+                    // time: a person fixes the cause and retries (rule 10).
+                    self.publish_refusals.remove(&key);
+                    self.publish_retry.remove(&key);
+                    let detail = judgment::cut(&failure.detail, 300);
+                    self.with_task(factory_id, id, |t| {
+                        t.writes.remove(PUBLISH_PENDING);
+                        t.stop = Some(StopReason::PublishRefused);
+                        t.stop_detail = Some(detail);
+                    });
+                    self.set_state(factory_id, id, TaskState::Stopped);
+                    self.with_task(factory_id, id, |t| {
+                        t.stop = Some(StopReason::PublishRefused);
+                    });
+                } else {
+                    self.publish_retry.insert(key, now + PUBLISH_RETRY_MS);
+                }
             }
         }
     }

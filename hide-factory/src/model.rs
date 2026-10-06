@@ -684,6 +684,7 @@ pub enum StopReason {
     NewTaskCap,
     EnvironmentRepeated,
     WorkerStart,
+    PublishRefused,
 }
 
 impl StopReason {
@@ -695,6 +696,7 @@ impl StopReason {
             Self::NewTaskCap => "새 Task 상한",
             Self::EnvironmentRepeated => "같은 환경 실패 반복",
             Self::WorkerStart => "worker 시작 실패",
+            Self::PublishRefused => "push 거절됨",
         }
     }
 }

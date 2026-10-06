@@ -1268,6 +1268,31 @@ fn each_github_report_pushes_before_its_checks_are_read_and_answers_at_once() {
 }
 
 #[test]
+fn a_push_refused_twice_stops_the_task_for_a_person_with_its_reason() {
+    let mut h = Bench::new(true);
+    let f = github_factory(&mut h, MergeMode::Auto);
+    let t = h.ready("Protected", &[]);
+    h.world().publish_refusal = Some(hide_factory::adapters::Failure::task(
+        "git.push",
+        "protected branch hook declined",
+    ));
+    h.done(&f, &t);
+    h.engine.tick();
+    assert_eq!(h.state(&f, &t), TaskState::Verifying, "asked again once");
+    h.advance(MINUTE_MS + 1);
+    h.engine.tick();
+    let task = h.task(&f, &t);
+    assert_eq!(task.state, TaskState::Stopped);
+    assert_eq!(task.stop, Some(StopReason::PublishRefused));
+    assert!(task.stop_detail.unwrap().contains("hook declined"));
+    for _ in 0..5 {
+        h.advance(MINUTE_MS + 1);
+        h.engine.tick();
+    }
+    assert_eq!(h.world().pushes.len(), 2, "no push while stopped");
+}
+
+#[test]
 fn a_manual_task_waits_for_merge_and_every_github_write_happens_once() {
     let mut h = Bench::new(true);
     let f = github_factory(&mut h, MergeMode::Manual);
