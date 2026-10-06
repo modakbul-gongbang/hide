@@ -334,6 +334,7 @@ fn reopen_runs_once_per_pane_and_a_refusal_leaves_the_pane_as_it_was() {
         Err(ReopenFailure {
             code: PaneReopenFailure::EndRefused,
             detail: "the agent did not hand the terminal back".into(),
+            ended: false,
         }),
     ));
     assert_eq!(
@@ -372,6 +373,70 @@ fn reopen_runs_once_per_pane_and_a_refusal_leaves_the_pane_as_it_was() {
         "connected: nothing to reopen"
     );
     assert_eq!(runtime.pane_reopens.len(), 0, "no entry outlives its need");
+}
+
+/// An agent that was ended and could not be started again has no row for the
+/// pane's chip to hang the failure on, so the failure is published once as
+/// the snapshot's error; a refusal that left the agent in place is not.
+#[test]
+fn a_reopen_that_ended_the_agent_and_could_not_start_it_is_still_published() {
+    let mut runtime = runtime();
+    with_live(&mut runtime);
+    kit_rows(&mut runtime, None);
+    runtime.ingest_hook_diagnosis(diagnosis(installed(), installed()));
+    feed(&mut runtime, &[("w1:p1", "claude", false)]);
+    assert!(reopen(&mut runtime, "w1:p1"));
+
+    // Herdr ended the agent: the pane is still there with no agent row.
+    let mut ended = session(&[("w1:p1", "claude", false)]);
+    ended["agents"] = serde_json::json!([]);
+    runtime.ingest_session(Ok(
+        crate::sidebar::owned_label_fixture(ended).expect("session payload")
+    ));
+    assert_eq!(
+        reopen_of(&runtime, "w1:p1"),
+        None,
+        "a pane without an agent has no chip to carry anything"
+    );
+    assert!(runtime.ingest_pane_reopen(
+        "w1:p1",
+        Err(ReopenFailure {
+            code: PaneReopenFailure::StartRefused,
+            detail: "agent_name_taken: name is used".into(),
+            ended: true,
+        }),
+    ));
+
+    let error = runtime
+        .snapshot
+        .status
+        .last_error
+        .as_ref()
+        .expect("the failure stays published");
+    assert_eq!(error.kind, "pane_reopen.not_restarted");
+    assert!(
+        !error.message.contains("agent_name_taken"),
+        "Herdr's words stay in the log: {}",
+        error.message
+    );
+
+    // Pressing Reopen on a pane that kept its agent and was refused before
+    // anything was ended publishes the pane's chip, not this.
+    let mut runtime = self::runtime();
+    with_live(&mut runtime);
+    kit_rows(&mut runtime, None);
+    runtime.ingest_hook_diagnosis(diagnosis(installed(), installed()));
+    feed(&mut runtime, &[("w1:p1", "claude", false)]);
+    assert!(reopen(&mut runtime, "w1:p1"));
+    assert!(runtime.ingest_pane_reopen(
+        "w1:p1",
+        Err(ReopenFailure {
+            code: PaneReopenFailure::EndRefused,
+            detail: "refused".into(),
+            ended: false,
+        }),
+    ));
+    assert!(runtime.snapshot.status.last_error.is_none());
 }
 
 /// A refusal known under the lock is published at once and starts no worker;

@@ -162,7 +162,28 @@ impl Runtime {
                 self.sync_pane_lineage();
                 true
             }
-            Err(failure) => self.settle_pane_reopen(pane_id, failure.code, &failure.detail),
+            Err(failure) => {
+                self.settle_pane_reopen(pane_id, failure.code, &failure.detail);
+                // The chip is read from the agent's row, and an agent that
+                // was ended and not started again has none: with nothing on
+                // the pane to carry the failure, the operator is told once
+                // that their agent is gone and its conversation was kept.
+                if failure.ended
+                    && !self
+                        .snapshot
+                        .navigator
+                        .agents
+                        .iter()
+                        .any(|agent| agent.pane_id == pane_id)
+                {
+                    self.set_error(
+                        "pane_reopen.not_restarted",
+                        "Reopen ended the agent but could not start it again; its conversation is kept",
+                        false,
+                    );
+                }
+                true
+            }
         }
     }
 

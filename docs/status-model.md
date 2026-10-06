@@ -374,6 +374,8 @@ The pinned Herdr keeps an ended agent's name for a moment, and refuses `agent.st
 Every other start takes that refusal as Herdr's answer, because its name is someone else's.
 The core keeps one entry per pane, so a second press while one runs starts nothing; the pane's `connection.reopen` is `{"state":"pending"}` while it runs and `{"state":"failed","reason":<code>}` after a refusal, and the entry goes with the need for it: when the pane connects, when it leaves, or when it shows no chip.
 A start that lands publishes nothing more by itself: the session's own hook reaching Hide is what turns the chip off.
+A start refused after the end leaves the pane without an agent, so there is no chip to carry the failure: when the pane then has no agent row, the snapshot's `last_error` says once, as `pane_reopen.not_restarted`, that the agent was ended and could not be started again and that its conversation is kept; Herdr's words stay in the diagnostic.
+It is not started a second time, because the wait for the ended agent's name above is the one retry a start has, and a second identical start would learn nothing.
 Herdr's words for a refusal go to the diagnostic log (`pane_reopen.answered`), never to the screen.
 
 The Codex shared server is turned off by one more event, `codex_daemon_disable { device_id }` (`local` for this Mac), and only by it: no install pass ever does.

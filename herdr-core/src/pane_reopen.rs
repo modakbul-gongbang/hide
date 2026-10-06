@@ -36,12 +36,16 @@ pub(crate) struct ReopenRequest {
 pub(crate) struct ReopenFailure {
     pub(crate) code: PaneReopenFailure,
     pub(crate) detail: String,
+    /// The agent was ended before the start was refused, so the pane no
+    /// longer holds the conversation and its chip cannot carry the failure.
+    pub(crate) ended: bool,
 }
 
 fn failure(code: PaneReopenFailure, detail: impl Into<String>) -> ReopenFailure {
     ReopenFailure {
         code,
         detail: detail.into(),
+        ended: false,
     }
 }
 
@@ -102,7 +106,10 @@ pub(crate) fn reopen(
         },
     ) {
         WakeOutcome::Started => Ok(()),
-        WakeOutcome::Failed { detail, .. } => Err(failure(PaneReopenFailure::StartRefused, detail)),
+        WakeOutcome::Failed { detail, .. } => Err(ReopenFailure {
+            ended: true,
+            ..failure(PaneReopenFailure::StartRefused, detail)
+        }),
     }
 }
 
@@ -188,6 +195,7 @@ mod tests {
             });
             let error = reopen(&herdr.connector(), &request(kind, daemon)).expect_err(case);
             assert_eq!(error.code, expected, "{case}");
+            assert!(!error.ended, "{case}");
             assert!(herdr.methods().is_empty(), "{case}");
         }
         let herdr = FakeHerdr::start("pane-reopen-cwd", |method, _| panic!("unexpected {method}"));
@@ -316,6 +324,19 @@ mod tests {
             error.detail.contains("agent_name_taken"),
             "{}",
             error.detail
+        );
+        assert!(
+            error.ended,
+            "the agent was ended before the start was refused"
+        );
+        let methods = herdr.methods();
+        let first_start = methods
+            .iter()
+            .position(|method| method == "agent.start")
+            .expect("a start was sent");
+        assert!(
+            methods[..first_start].iter().all(|m| m != "agent.start") && methods[0] == "agent.get",
+            "the end came first: {methods:?}"
         );
     }
 
