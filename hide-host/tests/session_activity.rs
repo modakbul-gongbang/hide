@@ -32,6 +32,10 @@ fn command(executable: &Path, home: &Path) -> Command {
         .env("HOME", home)
         .env("USERPROFILE", home)
         .env("PATH", "")
+        // The kit's program search asks the account's login shell and says in the
+        // log when none is named; the suite's own environment names none, so the
+        // fixture names the system's, and a quiet helper stays a quiet helper.
+        .env("SHELL", "/bin/sh")
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
