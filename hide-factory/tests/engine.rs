@@ -1303,6 +1303,46 @@ fn an_outside_push_still_running_its_checks_is_read_until_it_finishes() {
 // ------------------------------------------------------------- main breaks
 
 #[test]
+fn a_recovery_cut_by_a_restart_goes_to_a_person() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let a = h.ready("A", &[]);
+    let b = h.ready("B", &[]);
+    {
+        let mut world = h.world();
+        world
+            .main_checks
+            .insert("sha0001-T-1".into(), MainCheck::Pending);
+        world.main_checks.insert(
+            "sha0002-T-2".into(),
+            MainCheck::Red {
+                link: "run/2".into(),
+            },
+        );
+    }
+    h.done(&f, &a);
+    h.done(&f, &b);
+    tick_until(&mut h, &f, &b, TaskState::Landed);
+    h.engine.tick();
+    let factory = h.engine.factories().next().unwrap().clone();
+    assert!(factory.main.broken && factory.main.recovering);
+
+    let mut h = h.restart();
+    let factory = h.engine.factories().next().unwrap().clone();
+    assert!(factory.main.needs_person, "nothing guesses the cut phase");
+    assert!(!factory.main.recovering);
+    let action = h
+        .task(&f, &b)
+        .open_questions()
+        .find(|q| q.kind == QuestionKind::Action)
+        .cloned()
+        .expect("an action for a person");
+    assert!(action.choices.contains(&"retry-revert".to_owned()));
+    h.engine.tick();
+    assert!(h.writes("revert").is_empty());
+}
+
+#[test]
 fn a_broken_main_reverts_only_the_first_failing_merge_and_the_task_lands_again() {
     let mut h = Bench::new(false);
     let f = h.factory(true);

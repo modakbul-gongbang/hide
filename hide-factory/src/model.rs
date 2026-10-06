@@ -76,6 +76,9 @@ pub struct MainHealth {
     pub needs_person: bool,
     /// Merges Factory made since the last green, oldest first.
     pub merges_since_green: Vec<LandedMerge>,
+    /// A recovery (finding or reverting the failing merge) is running.
+    #[serde(default)]
+    pub recovering: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]

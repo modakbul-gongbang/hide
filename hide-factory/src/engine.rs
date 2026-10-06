@@ -271,6 +271,17 @@ impl Engine {
                 engine.request_review(&factory, &id, now);
             }
         }
+        // A main recovery cut by the restart is not guessed again: which
+        // merge it was reverting is gone, so a person picks the next step.
+        let cut: Vec<(String, Vec<LandedMerge>)> = engine
+            .factories
+            .values()
+            .filter(|f| f.main.broken && f.main.recovering && !f.main.needs_person)
+            .map(|f| (f.id.clone(), f.main.merges_since_green.clone()))
+            .collect();
+        for (factory, merges) in cut {
+            engine.revert_needs_person(&factory, "hided가 다시 시작해 복구가 끊겼습니다", &merges);
+        }
         Ok(engine)
     }
 
@@ -2040,7 +2051,7 @@ impl Engine {
                     if let Some(f) = self.factories.get_mut(factory) {
                         f.main.needs_person = false;
                     }
-                    self.reverts.remove(factory);
+                    self.set_recovery(factory, None);
                     self.save_factory(factory);
                 }
                 other if other.starts_with("revert ") => {
@@ -3279,8 +3290,7 @@ impl Engine {
         if !anchor.is_empty() {
             self.notice(factory_id, &anchor, &format!("main 깨짐: Factory 머지 뒤 main 검증이 실패했습니다. 자동 머지를 멈추고 원인 머지를 찾습니다. {link}"));
         }
-        self.reverts
-            .insert(factory_id.to_owned(), RevertPhase::Bisecting { index: 0 });
+        self.set_recovery(factory_id, Some(RevertPhase::Bisecting { index: 0 }));
         self.watch_due(factory_id, true);
         self.drive_revert(factory_id);
     }
@@ -3334,8 +3344,7 @@ impl Engine {
                                     t.writes.insert(key);
                                 });
                             }
-                            self.reverts
-                                .insert(factory_id.to_owned(), RevertPhase::Bisecting { index });
+                            self.set_recovery(factory_id, Some(RevertPhase::Bisecting { index }));
                             return;
                         }
                         Ok(MainCheck::None) | Err(_) => break,
@@ -3353,7 +3362,7 @@ impl Engine {
                     Ok(MainCheck::Green) | Ok(MainCheck::None) => {
                         match self.ports.merge.merge_revert(&factory, &revert) {
                             Ok(sha) => {
-                                self.reverts.remove(factory_id);
+                                self.set_recovery(factory_id, None);
                                 self.record(
                                     factory_id,
                                     Some(&task),
@@ -3425,12 +3434,12 @@ impl Engine {
                 self.with_task(factory_id, task, |t| {
                     t.writes.insert(format!("revert:{sha}"));
                 });
-                self.reverts.insert(
-                    factory_id.to_owned(),
-                    RevertPhase::Reverting {
+                self.set_recovery(
+                    factory_id,
+                    Some(RevertPhase::Reverting {
                         revert,
                         task: task.to_owned(),
-                    },
+                    }),
                 );
                 self.drive_revert(factory_id);
             }
@@ -3442,12 +3451,32 @@ impl Engine {
         }
     }
 
+    /// The recovery phase lives in memory, and `main.recovering` in the store
+    /// says one was running, so a restart can hand it to a person (B72).
+    fn set_recovery(&mut self, factory_id: &str, phase: Option<RevertPhase>) {
+        let running = phase.is_some();
+        match phase {
+            Some(phase) => {
+                self.reverts.insert(factory_id.to_owned(), phase);
+            }
+            None => {
+                self.reverts.remove(factory_id);
+            }
+        }
+        if let Some(f) = self.factories.get_mut(factory_id)
+            && f.main.recovering != running
+        {
+            f.main.recovering = running;
+            self.save_factory(factory_id);
+        }
+    }
+
     fn revert_needs_person(&mut self, factory_id: &str, why: &str, merges: &[LandedMerge]) {
         if let Some(f) = self.factories.get_mut(factory_id) {
             f.main.needs_person = true;
         }
         self.save_factory(factory_id);
-        self.reverts.remove(factory_id);
+        self.set_recovery(factory_id, None);
         let anchor = merges.last().map(|m| m.task.clone());
         let Some(anchor) = anchor else { return };
         let mut choices = vec!["retry-revert".to_owned()];

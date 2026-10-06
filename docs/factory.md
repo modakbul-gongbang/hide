@@ -54,6 +54,7 @@ A store written by a newer build is refused rather than read: the engine does no
 Fields added later load from older rows through serde defaults.
 The engine loads the whole store at start and saves each change before the command that made it answers, so a restart resumes Factories, Tasks, questions, workers and in-flight work.
 A restart starts verification again from the recorded attempt and asks a pending review again.
+A main recovery the restart cut short is not guessed again, since which merge it was finding or reverting lived only in the old process: it goes to a person with the same choices as a recovery that could not decide.
 The engine opens the store when a store file already exists at start, or on the first command, so a machine that never created a Factory opens nothing.
 
 `factory-files/<factory id>/<task id>/` holds each attached PRD as `<sha256>.<extension>`, a read-only copy of at most 4 MiB, and `factory-files/logs/` holds one `<run id>.log` per local verification run.
