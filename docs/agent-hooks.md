@@ -51,7 +51,8 @@ The prefix is a convenience, not the only way in: a bare `hide` command bootstra
 That covers Codex 0.157 with `daemon_auto_start`, where the tool shell and this hook both run inside the shared `codex app-server` daemon under launchd rather than in the pane: the hook may run with the daemon's environment instead of the pane's, so its Workspace guidance can be missing, and the bare commands still reach the checkout the tool shell runs in.
 Every Codex Hide starts passes `--no-daemon`, so a Codex Hide starts runs its hooks in its pane.
 The kit no longer turns the daemon off on its own: it only reads whether the machine's Codex has the setting, for that flag, and a machine where an earlier Hide turned it off keeps it off.
-`src/codex_daemon.rs` stays the one place that changes the setting, through `codex features`, for a turn-off the operator asks for later (`docs/ARCHITECTURE.md`, The install kit).
+`src/codex_daemon.rs` is the one place that changes the setting, through `codex features disable daemon_auto_start`, and only for the operator's own request from a not connected Codex pane's popover (`docs/ARCHITECTURE.md`, The install kit; `docs/status-model.md`, Not connected, and what fixes it).
+The kit reads the setting with the capability (`KitReport.codex_daemon_on`), which is what tells a Codex session on the shared server from one that started before the hook.
 The SessionStart command hook has an eight-second timeout, including two bounded two-second CLI probes; a failed probe leaves the existing purpose and Memory context intact.
 An issued credential remains unclaimed for at most 30 seconds until a CLI receives and acknowledges a Workspace response.
 The CLI writes the claimed marker only after the daemon acknowledges that claim, so a caller killed before acknowledgement leaves an unclaimed reference that expires.
@@ -215,6 +216,19 @@ Every row gets the skill stub where the system column says so.
 | Pi | `~/.agents/skills` (all) | none: TS extensions, no command hooks | `pi` | [skills](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/skills.md) |
 | Cursor | `~/.agents/skills` (macOS, Linux) | done: guidance `sessionStart` in `~/.cursor/hooks.json`, returning `additional_context` ([hooks](https://cursor.com/docs/hooks)); the hooks page does not mention the CLI, and its changelog says the CLI runs session-start hooks (<https://cursor.com/docs/cli/changelog>), so whether the CLI honours `additional_context` is unconfirmed; no Windows shell is named | `cursor` | [skills](https://cursor.com/docs/context/skills) |
 
+Each row also carries what Hide can do for that agent as a list of features (`hide_kit::agents::Feature`, `KitAgentSnapshot.features`), and an agent with any feature missing is Partial, which is what the Agents tab's Partial popover lists:
+
+| Feature | Supported when | Claude Code, Codex | Gemini CLI | Grok, OpenCode, Pi | Cursor |
+| --- | --- | --- | --- | --- | --- |
+| `skill` | always | yes | yes | yes | yes |
+| `guidance` | Hide writes a guidance hook | yes | yes | no | yes |
+| `letters`, `memory`, `subagents` | the five-event hook, so `HookSupport::Part` | yes | no | no | no |
+| `herdr_integration` | the row has a Herdr target | yes | no | yes | yes |
+| `sleep`, `fork`, `start`, `titles` | Hide reads that agent's sessions (`AgentAdapter::session_reader`) | yes | no | no | no |
+
+Claude Code and Codex are the only agents whose sessions Hide reads, so only they get per-agent session counts, and the counts are per machine and only of the panes open now: `connected` and a `not_connected` list (capped at 32, with `not_connected_hidden` for the rest), never an accumulation of warnings.
+`herdr-core/src/runtime/tests/agent_features.rs` ties each flag to the gate in the core that decides it (`runtime_of`, `sleeps_kind`, `ForkableAgent`, `AGENT_KINDS`, `conversation_agent_kind`, the adapter's `herdr`), so a flag cannot say yes where the core says no.
+
 An agent is a row only when its documentation confirms where it reads skills and the name of the program it installs.
 The other thirteen agents earlier builds supported are no longer rows (see Retired agents below).
 Hide does not write an agent's `AGENTS.md` or `CLAUDE.md`, its MCP configuration, its model settings, or its Codex hook trust review, and it runs no installer for an agent.
@@ -246,7 +260,7 @@ This is a transition path: it goes with the release after the one that ships it.
 
 1. `config_unreadable` - the file could not be read or parsed, so nothing was installed into it.
 2. `hooks_not_installed` - the runtime is here and carries no hook of Hide's.
-3. `session_predates_install` - the hook is installed and this pane carries none of Hide's tokens, so the session was already running when it was installed. Restarting the agent instruments it. A pane whose reports Herdr refuses lands here too; `last_report_failure` is what tells the two apart.
+3. `session_predates_install` - the hook is installed and this pane carries none of Hide's tokens, so the session was already running when it was installed. Restarting the agent instruments it (the pane's Reopen does that in place); on a Codex whose machine has the shared server on, the same finding is read as the shared server instead (`PaneConnectionReason`). A pane whose reports Herdr refuses lands here too; `last_report_failure` is what tells the two apart.
 4. `hook_outdated` - the session is reporting through an older hook than this Hide writes.
 5. `unknown` - genuinely unknown, and said to be.
 
