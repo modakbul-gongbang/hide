@@ -43,6 +43,15 @@ export async function startHided(herdr: HerdrFixture, label = "s2", homeOverride
   fs.mkdirSync(path.join(home, "projects", ".hidden"), { recursive: true });
   fs.writeFileSync(path.join(home, "projects", "notes.txt"), "x");
   linkFixtureTranscripts(herdr, home);
+  // Hide AI asks no model until an agent is chosen (PRD settings-cleanup B47), and a fixture
+  // Mac has no signed-in agent for the first-run rule to pick, so the operator here has
+  // already chosen the `claude` fixture shim; a home that brought its own choice keeps it.
+  const stateUnderHome = process.platform === "darwin" ? path.join("Library", "Application Support") : process.platform === "win32" ? path.join("AppData", "Local") : path.join(".local", "state");
+  const aiFile = path.join(home, stateUnderHome, "hide", "ai.json");
+  if (!fs.existsSync(aiFile)) {
+    fs.mkdirSync(path.dirname(aiFile), { recursive: true });
+    fs.writeFileSync(aiFile, JSON.stringify({ provider: "claude" }));
+  }
   return launch(herdr, label, dir, home, "0", extraEnv, bundled ? bundledBinary(dir) : undefined);
 }
 

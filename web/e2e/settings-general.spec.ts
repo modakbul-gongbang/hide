@@ -104,3 +104,41 @@ test("Sleep after, the issue link and the worktree names live in Agents and Hide
     herdr.stop();
   }
 });
+
+test("General reads without sideways scrolling in Korean and English, light and dark, on a narrow window", async ({ page }) => {
+  // B65: the sheet shrinks with its window; every row has to wrap, not clip.
+  await page.setViewportSize({ width: 560, height: 900 });
+  const herdr = await startHerdr();
+  let daemon: Daemon | null = null;
+  try {
+    daemon = await startHided(herdr, "settings-narrow");
+    await page.goto(`${daemon.origin}/#token=${daemon.token}`);
+    await enterWorkspace(page, "fixture");
+    await page.locator("[data-open-settings]").click();
+    const sheet = page.locator('[data-settings="true"]');
+    await expect(sheet).toBeVisible();
+    const panel = sheet.locator('[role="tabpanel"]');
+    const overflow = () => panel.evaluate((node) => node.scrollWidth - node.clientWidth);
+    const details = sheet.locator("[data-settings-details]");
+
+    for (const [language, theme] of [
+      ["en", "light"],
+      ["ko", "light"],
+      ["ko", "dark"],
+    ] as const) {
+      await sheet.locator("[data-interface-language]").click();
+      await page.locator(`[data-language-option="${language}"]`).click();
+      await expect(page.locator("html")).toHaveAttribute("lang", language);
+      await sheet.locator(`[data-theme-option="${theme}"]`).click();
+      await expect(sheet.locator("[data-theme-choice]")).toHaveAttribute("data-theme-choice", theme);
+      await expect.poll(overflow).toBeLessThanOrEqual(0);
+      await screenshot(page, `settings-general-${language}-${theme}-narrow`);
+      if (!(await details.evaluate((node) => (node as HTMLDetailsElement).open))) await details.locator("summary").click();
+      await expect.poll(overflow).toBeLessThanOrEqual(0);
+      await screenshot(page, `settings-general-details-${language}-${theme}-narrow`);
+    }
+  } finally {
+    daemon?.stop();
+    herdr.stop();
+  }
+});
