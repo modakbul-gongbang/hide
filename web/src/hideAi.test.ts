@@ -4,6 +4,7 @@ import {
   addableProviders,
   firstEnabledAgent,
   firstRunAgent,
+  hideAiCanAnswer,
   modelChoices,
   modelsFailed,
   nobodySignedIn,
@@ -153,5 +154,25 @@ describe("when a usage limit ends", () => {
     const later = new Date(2026, 9, 8, 15, 10, 0).getTime();
     expect(resetTime("en", today, now)).toBe(new Intl.DateTimeFormat("en", { hour: "numeric", minute: "2-digit" }).format(today));
     expect(resetTime("en", later, now)).toBe(new Intl.DateTimeFormat("en", { weekday: "short", hour: "numeric", minute: "2-digit" }).format(later));
+  });
+});
+
+describe("whether Hide AI would answer now (B7, B66)", () => {
+  it("answers only when it is on and the agent it runs on, or one listed under it, can be asked", () => {
+    const ready = provider("claude");
+    const needsLogin = provider("codex", { state: "needs_login", selectable: false });
+    expect(hideAiCanAnswer(undefined)).toBe(false);
+    expect(hideAiCanAnswer(ai([ready]))).toBe(true);
+    // Off: nothing is asked, whatever is signed in.
+    expect(hideAiCanAnswer(ai([ready], { enabled: false }))).toBe(false);
+    // Nobody chosen, or the chosen one cannot answer and nothing is listed under it.
+    expect(hideAiCanAnswer(ai([ready], { provider: null, chosen: false }))).toBe(false);
+    expect(hideAiCanAnswer(ai([needsLogin], { provider: "codex" }))).toBe(false);
+    // A listed agent that can answer keeps it answering.
+    expect(hideAiCanAnswer(ai([needsLogin, ready], { provider: "codex", fallback: [{ provider: "claude", model: "" }] }))).toBe(true);
+    expect(hideAiCanAnswer(ai([needsLogin, provider("pi", { state: "unavailable", selectable: false })], { provider: "codex", fallback: [{ provider: "pi", model: "" }] }))).toBe(false);
+    // An older daemon that sends no `enabled` is on.
+    const { enabled: _enabled, ...older } = ai([ready]);
+    expect(hideAiCanAnswer(older)).toBe(true);
   });
 });

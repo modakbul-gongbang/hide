@@ -44,6 +44,17 @@ export function providerById(ai: BackgroundAi | undefined, id: string | null | u
   return ai?.providers.find((provider) => provider.id === id) ?? null;
 }
 
+/**
+ * Whether Hide AI would answer a request now (B7, B66): it is on, and the agent
+ * it runs on or one listed under it can be asked. A screen that would wait for
+ * an answer asks this first, so it never waits on one that cannot come.
+ */
+export function hideAiCanAnswer(ai: BackgroundAi | undefined): boolean {
+  if (!ai || ai.enabled === false) return false;
+  if (providerById(ai, ai.provider)?.selectable) return true;
+  return (ai.fallback ?? []).some((entry) => providerById(ai, entry.provider)?.selectable === true);
+}
+
 /** Runs on: every agent the core would accept, and the chosen one even when it has a problem (B34). */
 export function runsOnChoices(ai: BackgroundAi): AiProvider[] {
   return ai.providers.filter((provider) => provider.selectable || provider.id === ai.provider);
