@@ -585,17 +585,15 @@ impl Runtime {
                 let gone = proven_absence_or_replacement
                     && self.delivery_connected.contains(&watch.target.device_id)
                     && !self.delivery_overflow.contains(&watch.target.device_id);
-                let source = if self.node == watch.target.device_id {
-                    crate::delivery::worker::ActivitySource::Node {
-                        home: self.home_path.clone(),
-                    }
-                } else {
-                    crate::delivery::worker::ActivitySource::Device {
-                        channel: observation
+                let source = crate::delivery::worker::ActivitySource {
+                    link: if self.node == watch.target.device_id {
+                        Some(Arc::clone(&self.own_node))
+                    } else {
+                        observation
                             .is_some()
                             .then(|| self.node_link(&watch.target.device_id).ok())
-                            .flatten(),
-                    }
+                            .flatten()
+                    },
                 };
                 crate::delivery::worker::WatchWork {
                     id: watch.id.clone(),
@@ -712,7 +710,7 @@ pub(crate) mod tests {
                 home_path: Some(root.to_owned()),
                 codex_home: None,
             },
-            std::sync::Arc::new(hide_node::Local::of_process()),
+            std::sync::Arc::new(hide_node::Local::new(Some(root.to_owned()))),
         );
         let payload: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[
             {"id":"sender","pane_id":"sender","agent":"codex","agent_status":"working","state_change_seq":1,"lineage_session":"sender-session"},

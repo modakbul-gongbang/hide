@@ -218,16 +218,12 @@ pub(crate) struct WatchWork {
     pub inactivity_ms: Option<u64>,
 }
 
-/// Where a watched agent's session activity is read: the core's own node
-/// reads the conversation files under its home, a device through its helper.
+/// The node whose files hold a watched session's conversation, through its
+/// link; `None` while no link is available. The core's own node answers in
+/// process, a device's through its helper.
 #[derive(Clone)]
-pub(crate) enum ActivitySource {
-    Node {
-        home: Option<PathBuf>,
-    },
-    Device {
-        channel: Option<Arc<dyn crate::node_access::NodeLink>>,
-    },
+pub(crate) struct ActivitySource {
+    pub(crate) link: Option<Arc<dyn crate::node_access::NodeLink>>,
 }
 
 fn read_activity(work: WatchWork) -> watch::Reading {
@@ -254,27 +250,27 @@ fn read_activity(work: WatchWork) -> watch::Reading {
     reading.status_changed_at_unix_ms = observation.status_changed_at_unix_ms;
     let result = (|| {
         let request = observation.session.ok_or("session_reference_missing")?;
-        match work.source {
-            ActivitySource::Node { home } => {
-                let home = home.ok_or("session_home_unavailable")?;
-                hide_session::session_activity::read(&home, &request)
-                    .map_err(|_| "session_activity_failed")
+        let link = work.source.link.ok_or("helper_unavailable")?;
+        // The failure words a watch warning carries stay those of the machine
+        // that answered: the core's own files, or a device's helper.
+        let own = link.in_process();
+        crate::node_access::call_as::<hide_session::session_activity::SessionActivity>(
+            link.as_ref(),
+            hide_host::protocol::Call::SessionActivity { request },
+            Duration::from_secs(5),
+        )
+        .map_err(|error| match error {
+            crate::node_access::LinkError::Refused(error)
+                if own && error.message == "session_activity_home_unavailable" =>
+            {
+                "session_home_unavailable"
             }
-            ActivitySource::Device { channel } => {
-                let channel = channel.ok_or("helper_unavailable")?;
-                crate::node_access::call_as::<hide_session::session_activity::SessionActivity>(
-                    channel.as_ref(),
-                    hide_host::protocol::Call::SessionActivity { request },
-                    Duration::from_secs(5),
-                )
-                .map_err(|error| match error {
-                    crate::node_access::LinkError::NotConnected(_) => "helper_unavailable",
-                    crate::node_access::LinkError::Busy => "helper_busy",
-                    crate::node_access::LinkError::Refused(_) => "session_activity_refused",
-                    crate::node_access::LinkError::Unknown(_) => "helper_timeout_or_format",
-                })
-            }
-        }
+            crate::node_access::LinkError::Refused(_) if own => "session_activity_failed",
+            crate::node_access::LinkError::NotConnected(_) => "helper_unavailable",
+            crate::node_access::LinkError::Busy => "helper_busy",
+            crate::node_access::LinkError::Refused(_) => "session_activity_refused",
+            crate::node_access::LinkError::Unknown(_) => "helper_timeout_or_format",
+        })
     })();
     match result {
         Ok(activity) => reading.session_modified_at_unix_ms = Some(activity.modified_at_unix_ms),
@@ -296,18 +292,9 @@ fn same_target(left: &WatchWork, right: &WatchWork) -> bool {
         && left_observed.status == right_observed.status
         && left_observed.state_change_seq == right_observed.state_change_seq
         && left_observed.status_changed_at_unix_ms == right_observed.status_changed_at_unix_ms
-        && match (&left.source, &right.source) {
-            (ActivitySource::Node { home: left }, ActivitySource::Node { home: right }) => {
-                left == right
-            }
-            (
-                ActivitySource::Device { channel: left },
-                ActivitySource::Device { channel: right },
-            ) => match (left, right) {
-                (Some(left), Some(right)) => Arc::ptr_eq(left, right),
-                (None, None) => true,
-                _ => false,
-            },
+        && match (&left.source.link, &right.source.link) {
+            (Some(left), Some(right)) => Arc::ptr_eq(left, right),
+            (None, None) => true,
             _ => false,
         }
 }
@@ -989,8 +976,8 @@ mod tests {
                     status: "idle".into(),
                     state_change_seq: Some(1),
                     status_changed_at_unix_ms: 1,
-                    source: ActivitySource::Device {
-                        channel: Some(channel.clone()),
+                    source: ActivitySource {
+                        link: Some(channel.clone()),
                     },
                     inactivity_ms: None,
                 })

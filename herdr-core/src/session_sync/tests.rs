@@ -984,10 +984,10 @@ fn official_remote_session_coordinator_probe() {
         },
         crate::environment::EnvironmentReport {
             statuses: Vec::new(),
-            home_path: Some(PathBuf::from(home)),
+            home_path: Some(PathBuf::from(&home)),
             codex_home: None,
         },
-        std::sync::Arc::new(hide_node::Local::of_process()),
+        std::sync::Arc::new(hide_node::Local::new(Some(PathBuf::from(home)))),
     )));
     // The same path the shell takes: register the device, and the runtime
     // resolves the alias, asks the host for its socket and starts the
