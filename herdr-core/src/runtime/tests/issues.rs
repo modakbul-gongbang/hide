@@ -32,6 +32,7 @@ fn issue_runtime() -> Runtime {
         issues: (1..=4).map(issue).collect(),
         overflow: false,
         dependencies_failure: None,
+        repository_id: None,
     };
     runtime.snapshot.navigator.workspaces = vec![workspace];
     runtime
@@ -296,6 +297,7 @@ fn a_pass_that_cannot_read_dependencies_keeps_the_blockers_read_before() {
                     issues: vec![issue(1), blocked],
                     overflow: false,
                     dependencies_failure: failure.map(str::to_owned),
+                    repository_id: None,
                 },
                 root_path: "/repo".into(),
                 status: GithubStatusSnapshot {

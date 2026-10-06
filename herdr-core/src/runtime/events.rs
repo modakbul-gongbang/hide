@@ -791,6 +791,10 @@ pub(super) struct AgentStartInCheckoutPayload {
     /// receipt and on a refusal so that surface reads its own answer.
     #[serde(default)]
     pub(super) request_id: Option<String>,
+    /// The session to resume rather than start (PRD link-graph B12): the
+    /// provider's own resume arguments, and no prompt.
+    #[serde(default)]
+    pub(super) resume_session_id: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -1263,6 +1267,8 @@ pub(super) enum Event {
     UiStateUpdate(Box<UiStateUpdatePayload>),
     SessionsRefresh(SessionsRefreshPayload),
     SessionSearch(super::session_search::SearchPayload),
+    LinksOpen(super::links::LinksOpenPayload),
+    LinksClose,
     SessionsSetMode(SessionsModePayload),
     SessionsSetFilter(SessionsFilterPayload),
     ArchiveOpen(ArchiveOpenPayload),
@@ -1474,6 +1480,8 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "sessions_set_mode" => decode!(SessionsModePayload, SessionsSetMode),
         "sessions_set_filter" => decode!(SessionsFilterPayload, SessionsSetFilter),
         "session_search" => decode!(super::session_search::SearchPayload, SessionSearch),
+        "links_open" => decode!(super::links::LinksOpenPayload, LinksOpen),
+        "links_close" => Ok(Event::LinksClose),
         "archive_open" => decode!(ArchiveOpenPayload, ArchiveOpen),
         "memory_open_for_turn" => decode!(MemoryOpenForTurnPayload, MemoryOpenForTurn),
         "memory_action" => decode!(MemoryActionPayload, MemoryAction),
@@ -1566,6 +1574,8 @@ impl Runtime {
                 None => self.request_sessions_refresh(),
             },
             Event::SessionSearch(payload) => self.request_session_search(payload),
+            Event::LinksOpen(payload) => self.open_links(payload),
+            Event::LinksClose => self.close_links(),
             Event::SessionsSetMode(payload) => self.set_sessions_mode(&payload.mode),
             Event::SessionsSetFilter(payload) => {
                 self.set_sessions_filter(&payload.provider, payload.query)

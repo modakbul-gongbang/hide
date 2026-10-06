@@ -76,13 +76,16 @@ export type RequestLens = { open: readonly string[]; full: readonly string[]; re
 export const NO_REQUEST_LENS: RequestLens = { open: [], full: [], resting: false };
 
 /**
- * The PRs tab's own state (PRD overview-lenses-prs B5, B19, B21): the rows
- * unfolded, the row the keyboard or a chip asked for, and whether `최근 머지`
- * is open.
+ * The PRs tab's own state (PRD overview-lenses-prs B19, B21, link-graph B2):
+ * the pull request whose panel is open beside the list, the row the keyboard
+ * or a chip asked for, and whether `최근 머지` is open.
  */
-export type PrLens = { open: readonly number[]; focus: number | null; merged: boolean };
+export type PrLens = { panel: number | null; focus: number | null; merged: boolean };
 
-export const NO_PR_LENS: PrLens = { open: [], focus: null, merged: false };
+export const NO_PR_LENS: PrLens = { panel: null, focus: null, merged: false };
+
+/** The session `View conversation` or a parent line opens on the Sessions tab, and the request it scrolls to once (PRD link-graph B11). */
+export type SessionTarget = { id: string; request: string | null };
 
 /**
  * How a Project's Overview is looked at, the screen's own page state (D-04,
@@ -112,6 +115,8 @@ export type OverviewLens = {
   prs: PrLens;
   /** The request view's rows and fold (PRD overview-request-view). */
   requests: RequestLens;
+  /** The session the Sessions tab opens on arrival, or null. */
+  session: SessionTarget | null;
 };
 
 /** `folds` with `fold` opened, or closed again when it was open. */
@@ -125,7 +130,7 @@ export function toggledFold(folds: readonly string[], fold: string): string[] {
  * Tasks shows too (task-agents-views D-10).
  */
 export function entryLens(box: string | null, tasksMode: TasksMode): OverviewLens {
-  return { tab: "agents", tasksMode, box, folds: [], graph: NO_GRAPH_FILTER, focusTask: null, panel: null, filter: NO_FILTER, prs: NO_PR_LENS, requests: NO_REQUEST_LENS };
+  return { tab: "agents", tasksMode, box, folds: [], graph: NO_GRAPH_FILTER, focusTask: null, panel: null, filter: NO_FILTER, prs: NO_PR_LENS, requests: NO_REQUEST_LENS, session: null };
 }
 
 /**

@@ -80,6 +80,7 @@ pub struct Core {
     _kit: Option<crate::kit::KitPump>,
     _session_sync: Option<crate::session_sync::SessionSyncHandle>,
     _session_search: Option<crate::runtime::session_search::SearchWorker>,
+    _links: Option<crate::links::worker::LinkWorker>,
     labels: Option<Arc<crate::labels::LabelServices>>,
     runtime: Arc<Mutex<Runtime>>,
     notifier: ChangeNotifier,
@@ -100,6 +101,7 @@ impl Drop for Core {
             labels.analyzer.shutdown();
         }
         self._session_search.take();
+        self._links.take();
         self._terminal_maintenance.take();
         self._changes.take();
         self._session_sync.take();
@@ -167,6 +169,7 @@ impl Core {
             _kit: None,
             _session_sync: None,
             _session_search: None,
+            _links: None,
             _delivery: None,
             labels: None,
             runtime,
@@ -276,6 +279,22 @@ impl Core {
                 None
             }
         };
+        // After the search worker, whose index holds each project's Copied
+        // history, and before any coordinator, so the first catalog and
+        // GitHub answers reach it.
+        let links = match crate::runtime::links::spawn_worker(
+            &runtime,
+            notifier.clone(),
+            environment_home.clone(),
+        ) {
+            Ok(worker) => Some(worker),
+            Err(message) => {
+                crate::diagnostic!(
+                    serde_json::json!({"component":"links","kind":"worker.start_failed","message":message})
+                );
+                None
+            }
+        };
         let session_sync = if let Some(socket_path) = options.herdr_socket_path.as_deref() {
             live::install(
                 &runtime,
@@ -369,6 +388,7 @@ impl Core {
             _kit: kit,
             _session_sync: session_sync,
             _session_search: session_search,
+            _links: links,
             labels,
             runtime,
             notifier,
@@ -479,6 +499,18 @@ impl Core {
     /// Daemon-only pane query. The daemon validates the process that asked;
     /// the core then resolves current pane membership at the point of use.
     /// Only owned result data leaves the runtime lock.
+    /// The registered Projects and the caller checkout's own, for a
+    /// `hide links` read the daemon then answers off this thread.
+    pub fn links_scope(
+        &self,
+        context: &crate::workspace_control::Context,
+    ) -> Option<crate::links::query::Scope> {
+        if !check_owner_thread(self, "links_scope") {
+            return None;
+        }
+        lock_recover(&self.runtime).links_scope(context)
+    }
+
     pub fn workspace_control_query(
         &self,
         device_id: &str,

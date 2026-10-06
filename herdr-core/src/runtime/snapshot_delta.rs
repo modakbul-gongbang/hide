@@ -29,6 +29,10 @@ pub(super) struct DeltaState {
     project_sessions_revision: u64,
     session_search_revision: u64,
     last_session_search: Option<Arc<crate::model::SessionSearchSnapshot>>,
+    link_summaries_revision: u64,
+    last_link_summaries: Option<Arc<crate::links::LinkSummariesSnapshot>>,
+    link_panel_revision: u64,
+    last_link_panel: Option<Arc<crate::links::LinkPanelSnapshot>>,
     /// Reference-counted so a delta can carry the section out of the lock
     /// without copying it. The runtime never mutates one in place: a changed
     /// section becomes a new `Arc`, which leaves any payload already handed
@@ -121,6 +125,20 @@ impl Runtime {
             self.delta.session_search_revision = self.delta.revision;
             self.delta.last_session_search = Some(Arc::new(search.clone()));
         }
+        if let Some(summaries) = &self.snapshot.link_summaries
+            && self.delta.last_link_summaries.as_deref() != Some(summaries)
+        {
+            self.delta.revision += 1;
+            self.delta.link_summaries_revision = self.delta.revision;
+            self.delta.last_link_summaries = Some(Arc::new(summaries.clone()));
+        }
+        if let Some(panel) = &self.snapshot.link_panel
+            && self.delta.last_link_panel.as_deref() != Some(panel)
+        {
+            self.delta.revision += 1;
+            self.delta.link_panel_revision = self.delta.revision;
+            self.delta.last_link_panel = Some(Arc::new(panel.clone()));
+        }
         // A cursor from the future has no valid meaning in-process; treat it
         // as a fresh reader so the response converges on full state.
         let have_revision = if have_revision > self.delta.revision {
@@ -192,6 +210,18 @@ impl Runtime {
                 .last_session_search
                 .as_ref()
                 .filter(|_| self.delta.session_search_revision > have_revision)
+                .map(Arc::clone),
+            link_summaries: self
+                .delta
+                .last_link_summaries
+                .as_ref()
+                .filter(|_| self.delta.link_summaries_revision > have_revision)
+                .map(Arc::clone),
+            link_panel: self
+                .delta
+                .last_link_panel
+                .as_ref()
+                .filter(|_| self.delta.link_panel_revision > have_revision)
                 .map(Arc::clone),
             find: self.snapshot.find.clone(),
             input_generation: self.snapshot.input_generation,

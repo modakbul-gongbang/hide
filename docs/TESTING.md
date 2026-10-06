@@ -103,6 +103,7 @@ When the behavior depends on the order of two events, the test fixes that order;
 - Register every process a fixture starts with `ownUntilWorkerExit` from `web/e2e/worker-owned.ts`, so synchronous cleanup runs on Node-managed worker exit even when a test's `finally` was skipped.
   A `spawn` with no `error` listener is such a death: when `target/debug/hided` was missing, each test killed its worker and left its private Herdr server running under launchd.
   The exit callback cannot run after SIGKILL, an OOM kill or host loss; these require separate recovery and are not proven by a `process.exit()` regression.
+  A fixture `hided` has that recovery on Unix: `spawnDaemon` in `web/e2e/hided-fixture.ts` hands it an owner channel, so it ends with its worker however the worker ends.
 - `desktop/e2e/fixture.ts` owns each `isolate` home through both automatic test teardown and worker exit, with at most sixteen unclosed homes per worker.
   Each home records at most sixteen live or pending candidate launches; a launch over that cap fails before starting another process.
   Automatic teardown closes candidate apps, then each home's cleanup checks its recorded process handles for confirmed exit before stopping the private hided and deleting the home.
@@ -174,6 +175,8 @@ The Windows fixture boundaries also preserve these requirements:
 - A cleanup failure with no earlier error still fails the test; a fixture that cannot confirm its own cleanup leaves state the next test inherits.
 - Release every process a fixture started on every exit path, including a failed start: register it with `ownUntilWorkerExit` before the first step that can throw.
 - Delete a fixture's root only after every process that used it has confirmed exit; when exit cannot be confirmed, keep the root and name it in the error, as `desktop/e2e/fixture.ts` does.
+  A signal is not a confirmed exit: a stopped process holds a SIGTERM pending, and one fixture `hided` outlived its worker that way for a day.
+  `stopDaemon` ends a fixture `hided` through `hide stop`, which waits for the graceful stop and then ends the daemon's tree, and continues a stopped daemon first.
   `desktop/e2e/fixture.ts`'s `AggregateError` is the reference for reporting several cleanup failures at once.
 
 ## Writing a Playwright e2e test
@@ -282,6 +285,10 @@ The crate's own `AGENTS.md` says where the file goes; this section says how the 
    Use a private folder per test and never a fixed name in `/tmp`.
    A private folder comes from `tempfile` and is removed with its owner, never named from the pid: nextest starts each test in a process of its own, so a pid-named path is one an earlier test process may have left state under, and a herdr-core runtime that loaded such a state file started from someone else's selection instead of the defaults its test assumed.
    In `herdr-core` runtime tests that is `scratch_dir`; the runtime keeps the folders made for it, and a test that drops a runtime and restarts on its files takes them first with `hold_dirs`.
+   A runtime shared with the workers it starts is a `SharedRuntime`: dropping it takes the runtime back on the test's own thread once every worker has let go.
+   A shared runtime is dropped by whichever holder lets go last, and a worker that let go after the test returned lost to the process exit, so the runtime and its folders were never dropped.
+   A folder the runtime's workers write into is the runtime's (`test_dirs`), so it goes after them; a folder a test double writes into from a worker goes once the double's calls have ended (`Machine` in `herdr-core/src/runtime/tests/home.rs`), because a save still running into a removed folder makes it again.
+   Make what a test needs beside its folder inside it: `strip_checkout` and `workspace.rs`'s `temp_dir` put the checkout one level inside the scratch folder, so a second checkout, a linked worktree or a link made next to it is removed with it, where a sibling of the scratch folder sat in the shared temp folder for good.
    Why: a leaked process or file is inherited by the next test and by the next run.
 8. **Retries are a classification.**
    CI runs every Rust lane (Linux, macOS, Windows, the OS contract and nightly) with `scripts/verify-cargo.sh nextest --profile ci` (`retries = 1` in `.config/nextest.toml`), so a test that fails once and then passes is reported as flaky and recorded in an issue with an expiry; two failures fail the lane.

@@ -100,7 +100,7 @@ fn project(path: &Path, checkouts: bool) -> WorkspaceSnapshot {
 
 /// A runtime whose worker threads read `fixture`'s HOME, with `alpha`
 /// (no Workspace) and `zeta` (one Workspace, focused) in its catalog.
-fn shared(fixture: &Fixture) -> Arc<Mutex<Runtime>> {
+fn shared(fixture: &Fixture) -> SharedRuntime {
     let mut runtime = runtime();
     runtime.home_path = Some(fixture.home.clone());
     let alpha = project(&fixture.alpha, false);
@@ -109,11 +109,11 @@ fn shared(fixture: &Fixture) -> Arc<Mutex<Runtime>> {
     runtime.snapshot.navigator.focused_checkout_id =
         zeta.checkouts.first().map(|checkout| checkout.id.clone());
     runtime.snapshot.navigator.workspaces = vec![alpha, zeta];
-    let shared = Arc::new(Mutex::new(runtime));
+    let shared = SharedRuntime::new(runtime);
     shared
         .lock()
         .unwrap()
-        .install_worker_context(Arc::downgrade(&shared), ChangeNotifier::noop());
+        .install_worker_context(shared.weak(), ChangeNotifier::noop());
     shared
 }
 
@@ -762,8 +762,8 @@ fn search_setup_failures_are_observable_and_successful_retry_recovers() {
         detail: None,
     });
     r.project_sessions_work.project_id = Some("p".into());
-    let shared = Arc::new(Mutex::new(r));
-    let worker = SearchWorker::spawn(Arc::downgrade(&shared), ChangeNotifier::noop()).unwrap();
+    let shared = SharedRuntime::new(r);
+    let worker = SearchWorker::spawn(shared.weak(), ChangeNotifier::noop()).unwrap();
     worker.install(&mut shared.lock().unwrap());
     let submit = || {
         shared
@@ -834,8 +834,8 @@ fn search_capacity_reason_survives_publication() {
         detail: None,
     });
     r.project_sessions_work.project_id = Some("p".into());
-    let shared = Arc::new(Mutex::new(r));
-    let worker = SearchWorker::spawn(Arc::downgrade(&shared), ChangeNotifier::noop()).unwrap();
+    let shared = SharedRuntime::new(r);
+    let worker = SearchWorker::spawn(shared.weak(), ChangeNotifier::noop()).unwrap();
     worker.install(&mut shared.lock().unwrap());
     shared
         .lock()

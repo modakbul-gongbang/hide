@@ -25,6 +25,9 @@ import {
 import type { SessionSearchHit, ArchiveEvent, ProjectSessionDetail, SessionRow, Workspace } from "./snapshot";
 import { useShellStore } from "./store";
 import { useInterfaceTranslation } from "./i18n/client";
+import { requestTurn } from "./linkPanel";
+import { SessionPrChips } from "./LinkSessions";
+import type { SessionTarget } from "./ui";
 import { requireInterfaceLanguage } from "./i18n/locale";
 
 // A Project's Sessions tab (PRD S8 B1-B9, D-08): the session history of
@@ -37,14 +40,17 @@ import { requireInterfaceLanguage } from "./i18n/locale";
 
 const NO_CONTENT_HITS: SessionSearchHit[] = [];
 
-export function ProjectSessions({ workspace, actions }: { workspace: Workspace; actions: Actions }) {
+/** Where the open conversation scrolls once: a content hit's offset, or the request a link panel's line showed (PRD link-graph B11). */
+type Jump = { session: string; offset: number | null; request: string | null };
+
+export function ProjectSessions({ workspace, actions, target = null, onTarget }: { workspace: Workspace; actions: Actions; target?: SessionTarget | null; onTarget?: () => void }) {
   const { t } = useInterfaceTranslation();
   const contentSearch = useShellStore((s) => s.sessionSearch);
   const sessions = useShellStore((s) => s.projectSessions);
   const live = useShellStore((s) => s.connection === "live");
   const [provider, setProvider] = useState<ProviderFilter>("all");
   const [query, setQuery] = useState("");
-  const [jump, setJump] = useState<{ session: string; offset: number } | null>(null);
+  const [jump, setJump] = useState<Jump | null>(null);
   // Whether this tab has seen its own Project named since it asked (A7).
   const [acknowledged, setAcknowledged] = useState(false);
   const project = useMemo(() => ({ id: workspace.id, deviceId: workspace.device_id }), [workspace.id, workspace.device_id]);
@@ -83,9 +89,17 @@ export function ProjectSessions({ workspace, actions }: { workspace: Workspace; 
   const detail = detailState(sessions, named);
   const openSession = useCallback((row: SessionRow) => {
     const hit = matches.get(row.id);
-    setJump(hit ? {session:row.id,offset:hit.source_offset} : null);
+    setJump(hit ? { session: row.id, offset: hit.source_offset, request: null } : null);
     actions.openProjectSession(project.id,row.id);
   }, [matches,actions,project]);
+  // A link panel's `View conversation` or parent line names a session: it opens once the history is ours (B11, B19).
+  useEffect(() => {
+    if (!target || !live || named !== "ours") return;
+    setJump({ session: target.id, offset: null, request: target.request });
+    actions.openProjectSession(project.id, target.id);
+    onTarget?.();
+  }, [target, live, named, actions, project, onTarget]);
+  const openPr = useCallback((number: number) => actions.openPullRequestRow(project.id, number), [actions, project]);
   const clearFilters = useCallback(() => { setProvider("all"); setQuery(""); }, []);
   const total = named === "ours" ? (sessions?.rows.length ?? 0) : 0;
 
@@ -126,10 +140,11 @@ export function ProjectSessions({ workspace, actions }: { workspace: Workspace; 
           onRetry={retry}
           onClearFilters={clearFilters}
           onShowHere={retry}
+          onPr={openPr}
         />
       </section>
       <section aria-label={t("sessions.session")} className="flex min-h-0 min-w-[var(--size-workspace-area-min)] flex-1 flex-col" data-session-detail={detail.kind}>
-        <SessionDetail jump={jump} state={detail} rows={named === "ours" ? (sessions?.rows ?? []) : []} choosable={list.kind === "rows"} workspace={workspace} onRetry={retry} />
+        <SessionDetail jump={jump} state={detail} rows={named === "ours" ? (sessions?.rows ?? []) : []} choosable={list.kind === "rows"} workspace={workspace} onRetry={retry} onPr={openPr} />
       </section>
     </section>
   );
@@ -238,6 +253,7 @@ const HistoryList = memo(function HistoryList({
   onClearFilters,
   onShowHere,
   matches,
+  onPr,
 }: {
   state: ListState;
   workspace: Workspace;
@@ -247,6 +263,7 @@ const HistoryList = memo(function HistoryList({
   onClearFilters: () => void;
   onShowHere: () => void;
   matches: Map<string, SessionSearchHit>;
+  onPr: (number: number) => void;
 }) {
   const listRef = useRef<HTMLUListElement>(null);
   if (state.kind !== "rows") {
@@ -271,7 +288,7 @@ const HistoryList = memo(function HistoryList({
   return (
     <ul ref={listRef} className="flex min-h-0 flex-1 flex-col gap-xxs overflow-auto p-xs" role="list" data-sessions-rows={state.rows.length}>
       {state.rows.map((row) => (
-        <SessionRowItem key={`${row.provider}:${row.id}`} row={row} match={matches.get(row.id)} workspace={workspace} selected={row.id === selected} focusable={row.id === focusable} onOpen={onOpen} onRetry={onRetry} onKeyDown={moveFocus} />
+        <SessionRowItem key={`${row.provider}:${row.id}`} row={row} match={matches.get(row.id)} workspace={workspace} selected={row.id === selected} focusable={row.id === focusable} onOpen={onOpen} onRetry={onRetry} onKeyDown={moveFocus} onPr={onPr} />
       ))}
     </ul>
   );
@@ -345,6 +362,7 @@ function SessionRowItem({
   onOpen,
   onRetry,
   onKeyDown,
+  onPr,
 }: {
   row: SessionRow;
   match?: SessionSearchHit;
@@ -354,6 +372,7 @@ function SessionRowItem({
   onOpen: (row: SessionRow) => void;
   onRetry: () => void;
   onKeyDown: (event: KeyboardEvent<HTMLButtonElement>) => void;
+  onPr: (number: number) => void;
 }) {
   const { t, i18n } = useInterfaceTranslation();
   const language = requireInterfaceLanguage(i18n.language);
@@ -385,6 +404,7 @@ function SessionRowItem({
         {match ? <span className="flex flex-col gap-xxs text-caption" data-content-match={match.source_offset}><span className="text-micro text-muted-foreground">{match.role === "user" ? t("sessions.human") : t("sessions.assistant")} · {sessionTime(match.at_unix_ms, language)}</span><span className="line-clamp-3 whitespace-pre-wrap break-words text-subtle-foreground">{match.snippet}</span></span> : null}
       </button>
       </Hint>
+      <SessionPrChips workspaceId={workspace.id} sessionId={row.id} onPr={onPr} className="px-sm pb-xs" />
       {unavailable ? (
         <div className="flex flex-col gap-xs px-sm pb-xs">
           <p className="break-words text-caption text-warning" data-session-reason={row.id}>
@@ -445,14 +465,16 @@ function SessionDetail({
   choosable,
   workspace,
   onRetry,
+  onPr,
 }: {
-  jump: { session: string; offset: number } | null;
+  jump: Jump | null;
   state: DetailState;
   rows: SessionRow[];
   /** Whether the list shows a session to choose; the hint says nothing otherwise. */
   choosable: boolean;
   workspace: Workspace;
   onRetry: () => void;
+  onPr: (number: number) => void;
 }) {
   const { t } = useInterfaceTranslation();
   const body = useRef<HTMLOListElement>(null);
@@ -461,7 +483,16 @@ function SessionDetail({
   const sessionId = state.kind === "none" ? null : state.detail.session_id;
   useLayoutEffect(() => {
     if (!archive || !jump || jump.session !== sessionId || appliedJump.current === jump) return;
-    const target = body.current?.querySelector<HTMLElement>(`[data-source-offset="${jump.offset}"]`);
+    let target: HTMLElement | null | undefined;
+    if (jump.offset !== null) {
+      target = body.current?.querySelector<HTMLElement>(`[data-source-offset="${jump.offset}"]`);
+    } else {
+      // A link panel's request is looked for once; a conversation without it opens at its top (B11).
+      const turns = conversationTurns(archive);
+      const asked = requestTurn(turns, jump.request);
+      appliedJump.current = jump;
+      target = asked ? body.current?.querySelector<HTMLElement>(`[data-turn-index="${turns.indexOf(asked)}"]`) : null;
+    }
     if (!target) return;
     target.scrollIntoView({ block: "center" });
     appliedJump.current = jump;
@@ -473,7 +504,7 @@ function SessionDetail({
   if (state.kind === "loading") {
     return (
       <>
-        {row ? <DetailHeader detail={state.detail} row={row} workspace={workspace} reading /> : null}
+        {row ? <DetailHeader detail={state.detail} row={row} workspace={workspace} onPr={onPr} reading /> : null}
         <p role="status" className="p-lg">
           <Status tone="pending">{t("sessions.reading")}</Status>
         </p>
@@ -483,7 +514,7 @@ function SessionDetail({
   if (state.kind === "failed") {
     return (
       <>
-        {row ? <DetailHeader detail={state.detail} row={row} workspace={workspace} /> : null}
+        {row ? <DetailHeader detail={state.detail} row={row} workspace={workspace} onPr={onPr} /> : null}
         <div role="alert" className="flex flex-col gap-sm p-lg" data-session-failure={state.detail.session_id}>
           <Status tone="warn">{t("sessions.openFailed")}</Status>
           <p className="break-words text-caption text-subtle-foreground">{state.reason}</p>
@@ -499,7 +530,7 @@ function SessionDetail({
   const turns = conversationTurns(state.archive);
   return (
     <>
-      {row ? <DetailHeader detail={state.detail} row={row} workspace={workspace} reading={state.detail.loading} /> : null}
+      {row ? <DetailHeader detail={state.detail} row={row} workspace={workspace} onPr={onPr} reading={state.detail.loading} /> : null}
       {turns.length === 0 ? (
         <p className="p-lg text-caption text-muted-foreground">{t("sessions.noReadableTurns")}</p>
       ) : (
@@ -511,7 +542,7 @@ function SessionDetail({
           data-session-turns={turns.length}
         >
           {turns.map((turn, index) => (
-            <Turn key={index} matched={jump?.session === state.detail.session_id && jump.offset === turn.source_offset} turn={turn} provider={state.archive.provider ?? row?.provider_label ?? t("common.agent")} />
+            <Turn key={index} index={index} matched={jump?.session === state.detail.session_id && jump.offset !== null && jump.offset === turn.source_offset} turn={turn} provider={state.archive.provider ?? row?.provider_label ?? t("common.agent")} />
           ))}
         </ol>
       )}
@@ -520,7 +551,7 @@ function SessionDetail({
 }
 
 /** The open session as its row names it: provider, checkout, time, the file to copy, and its request as the title. */
-function DetailHeader({ detail, row, workspace, reading = false }: { detail: ProjectSessionDetail; row: SessionRow; workspace: Workspace; reading?: boolean }) {
+function DetailHeader({ detail, row, workspace, onPr, reading = false }: { detail: ProjectSessionDetail; row: SessionRow; workspace: Workspace; onPr: (number: number) => void; reading?: boolean }) {
   const { t, i18n } = useInterfaceTranslation();
   const title = sessionTitle(row);
   const checkout = sessionCheckout(row, workspace);
@@ -546,17 +577,18 @@ function DetailHeader({ detail, row, workspace, reading = false }: { detail: Pro
         <CopySource key={detail.session_id} locator={detail.locator || row.locator} id="detail" />
       </div>
       <h2 className={`break-words break-keep text-subhead font-semibold ${title ? "text-foreground" : "italic text-muted-foreground"}`}>{title ?? t("sessions.untitled")}</h2>
+      <SessionPrChips workspaceId={workspace.id} sessionId={detail.session_id} onPr={onPr} />
     </header>
   );
 }
 
-function Turn({ turn, provider, matched }: { turn: ArchiveEvent; provider: string; matched: boolean }) {
+function Turn({ turn, index, provider, matched }: { turn: ArchiveEvent; index: number; provider: string; matched: boolean }) {
   const { t, i18n } = useInterfaceTranslation();
   const person = turn.role === "user";
   const interrupted = turn.kind === "interrupted";
   const time = sessionTime(turn.at_unix_ms, requireInterfaceLanguage(i18n.language));
   return (
-    <li className={`flex flex-col gap-xxs ${person ? "rounded-sm bg-card px-sm py-xs" : "px-sm"}`} data-turn={turn.role} data-source-offset={turn.source_offset} data-search-match={matched || undefined} style={matched ? { outline: "var(--size-hairline) solid var(--ring)", borderRadius: "var(--radius-sm)" } : undefined}>
+    <li className={`flex flex-col gap-xxs ${person ? "rounded-sm bg-card px-sm py-xs" : "px-sm"}`} data-turn={turn.role} data-turn-index={index} data-source-offset={turn.source_offset} data-search-match={matched || undefined} style={matched ? { outline: "var(--size-hairline) solid var(--ring)", borderRadius: "var(--radius-sm)" } : undefined}>
       <span className="flex items-baseline gap-xs text-micro text-muted-foreground">
         <span className="text-subtle-foreground">{person ? t("sessions.request") : provider}</span>
         {time ? <span>{time}</span> : null}

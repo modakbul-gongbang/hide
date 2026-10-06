@@ -391,6 +391,7 @@ impl Runtime {
             self.snapshot.delivery_watches = after;
         }
         self.delivery_ledger = Ok(ledger);
+        self.feed_link_parents();
         changed
     }
 

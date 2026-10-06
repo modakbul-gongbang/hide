@@ -404,9 +404,13 @@ fn read_issues(
     root: &Path,
     links: &[crate::issues::IssueReference],
 ) -> Result<(crate::issues::ProjectIssuesSnapshot, Option<GhFailure>), GhFailure> {
-    let repository_json = gh(Some(root), &["repo", "view", "--json", "nameWithOwner"])?;
+    let repository_json = gh(Some(root), &["repo", "view", "--json", "nameWithOwner,id"])?;
     let repository: serde_json::Value = serde_json::from_str(&repository_json)
         .map_err(|error| GhFailure::network(format!("GitHub repository response: {error}")))?;
+    let repository_id = repository
+        .get("id")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned);
     let repository = repository
         .get("nameWithOwner")
         .and_then(serde_json::Value::as_str)
@@ -491,6 +495,7 @@ fn read_issues(
             issues,
             overflow,
             dependencies_failure,
+            repository_id,
         },
         warning,
     ))
@@ -1838,6 +1843,7 @@ fn run_gh(
         || arguments.starts_with(&["pr", "list"])
         || arguments.starts_with(&["issue", "list"])
         || arguments == ["repo", "view", "--json", "nameWithOwner"]
+        || arguments == ["repo", "view", "--json", "nameWithOwner,id"]
         // The two writes (docs/ARCHITECTURE.md): a new issue with a title and
         // a body, and a pull request's body, nothing else of either.
         || (arguments.len() == 6
