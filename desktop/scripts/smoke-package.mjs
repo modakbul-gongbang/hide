@@ -138,11 +138,32 @@ try {
   // Both runtimes are installed: an agent counts only when its program is
   // found, and the kit searches `~/.local/bin` on every system. The stand-ins
   // answer nothing, and a version Hide cannot read does not hold a hook back.
+  // The Codex one also speaks just enough of `codex app-server` for the kit's
+  // trust step to hear that this Codex has no hook trust: it answers
+  // `initialize` and refuses every other request as an unknown method.
   const programs = path.join(home, ".local", "bin");
   fs.mkdirSync(programs, { recursive: true });
+  const appServer = path.join(scratch, "codex-app-server.mjs");
+  fs.writeFileSync(appServer, [
+    'import readline from "node:readline";',
+    'if (process.argv[2] !== "app-server") process.exit(0);',
+    'for await (const line of readline.createInterface({ input: process.stdin })) {',
+    "  const message = JSON.parse(line);",
+    "  if (message.id === undefined) continue;",
+    '  const reply = message.method === "initialize" ? { result: {} } : { error: { code: -32601, message: "method not found" } };',
+    '  process.stdout.write(JSON.stringify({ id: message.id, ...reply }) + "\\n");',
+    "}",
+    "",
+  ].join("\n"));
   for (const name of ["claude", "codex"]) {
-    if (process.platform === "win32") fs.writeFileSync(path.join(programs, `${name}.cmd`), "@exit /b 0\r\n");
-    else fs.writeFileSync(path.join(programs, name), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+    const node = process.execPath;
+    if (process.platform === "win32") {
+      const body = name === "codex" ? `@"${node}" "${appServer}" %*\r\n` : "@exit /b 0\r\n";
+      fs.writeFileSync(path.join(programs, `${name}.cmd`), body);
+    } else {
+      const body = name === "codex" ? `#!/bin/sh\nexec "${node}" "${appServer}" "$@"\n` : "#!/bin/sh\nexit 0\n";
+      fs.writeFileSync(path.join(programs, name), body, { mode: 0o755 });
+    }
   }
   // Both runtimes are configured, with an unrelated hook we must preserve.
   for (const [folder, file] of [[".claude", "settings.json"], [".codex", "hooks.json"]]) {
