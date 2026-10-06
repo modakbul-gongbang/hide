@@ -288,6 +288,15 @@ impl AiSettings {
         }
     }
 
+    /// Whether a router built for `other` asks the same agents, in the same
+    /// order, for the same models as one built for this value. Whoever holds
+    /// a router across a settings change compares with this, so a removed
+    /// fallback agent stops receiving text and an added one is tried.
+    pub fn routes_like(&self, other: &Self) -> bool {
+        self.router_config().priority == other.router_config().priority
+            && self.models_by_provider() == other.models_by_provider()
+    }
+
     /// The agent a first run should start on: the first of the fixed order
     /// that can answer, `None` when none can (D-18). `availability` is what
     /// the router reported; an agent missing from it cannot answer.

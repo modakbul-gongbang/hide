@@ -1688,6 +1688,7 @@ impl Runtime {
     /// which is what the probe was run with.
     pub(super) fn refresh_background_ai(&mut self) {
         let settings = self.ai_settings.clone().unwrap_or_default();
+        self.stop_memory_analysis_if_ai_moved(&settings);
         let mut providers = if self.background_ai_providers.is_empty() {
             crate::model::BackgroundAiSnapshot::unread().providers
         } else {
@@ -1720,6 +1721,23 @@ impl Runtime {
             .collect();
         snapshot.providers = providers;
         snapshot.refusal = refusal;
+    }
+
+    /// A Memory analysis builds its router once, so it would keep asking an
+    /// agent the operator has since turned off, removed from the fallback
+    /// list or replaced. It is stopped when Hide AI is no longer active or the
+    /// agents and models it may ask changed; the stored Memory is untouched
+    /// and Retry starts a run on the new choice (B33).
+    fn stop_memory_analysis_if_ai_moved(&mut self, settings: &hide_ai::AiSettings) {
+        let (Some(cancel), Some(started)) =
+            (&self.memory_cancel, &self.memory_analysis_settings)
+        else {
+            return;
+        };
+        let active = settings.enabled && settings.chosen;
+        if !active || !started.routes_like(settings) {
+            cancel.cancel();
+        }
     }
 
     /// What the label analyzer last found about Runs on (B41, B42): shown

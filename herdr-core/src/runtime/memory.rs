@@ -685,6 +685,7 @@ impl Runtime {
         let database = self.memory_database_path();
         let home = self.home_path.clone();
         let settings = self.ai_settings.clone().unwrap_or_default();
+        self.memory_analysis_settings = analyzes.then(|| settings.clone());
         thread::Builder::new()
             .name("hide-project-memory-write".to_owned())
             .spawn(move || {
@@ -713,6 +714,7 @@ impl Runtime {
                         }
                         guard.memory_operation_in_flight = false;
                         guard.memory_cancel = None;
+                        guard.memory_analysis_settings = None;
                         guard.memory_operation_checkout_path = None;
                         let pending = guard.memory_pending_action.take();
                         let still_focused = guard

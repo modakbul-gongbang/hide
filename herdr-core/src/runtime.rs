@@ -1320,6 +1320,9 @@ pub struct Runtime {
     memory_operation_checkout_path: Option<String>,
     memory_pending_action: Option<(String, events::MemoryActionPayload)>,
     memory_cancel: Option<hide_ai::CancelToken>,
+    /// The Hide AI settings the running analysis built its router from; it
+    /// is stopped when they stop describing who may be asked.
+    memory_analysis_settings: Option<hide_ai::AiSettings>,
     /// True only after the operator approves hook updates while enabling
     /// Memory. A diagnosis can finish that intent, but cannot create it.
     memory_enable_after_hook_update: bool,
@@ -1892,6 +1895,7 @@ impl Runtime {
             memory_operation_checkout_path: None,
             memory_pending_action: None,
             memory_cancel: None,
+            memory_analysis_settings: None,
             memory_enable_after_hook_update: false,
             memory_poll_in_flight: false,
             memory_next_poll_unix_ms: 0,

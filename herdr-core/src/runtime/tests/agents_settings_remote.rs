@@ -2230,3 +2230,51 @@ fn window_readers_rest_while_no_window_draws_the_snapshot() {
     assert!(!runtime.dispatch_json(&event(true)));
     assert!(runtime.ui_attached());
 }
+
+/// A Memory analysis builds its router once; one already running must not
+/// keep sending session text to an agent the operator has since switched off
+/// or taken out of the list, and an unrelated switch must not end it.
+#[test]
+fn a_running_memory_analysis_stops_when_hide_ai_turns_off_or_its_agents_change() {
+    let mut runtime = runtime();
+    runtime.ingest_ai_settings(hide_ai::AiSettings::default(), None);
+    runtime.ingest_background_ai(ready_read(&["claude", "codex", "grok"]));
+    assert!(runtime.dispatch_json(&ai_event(serde_json::json!({"provider": "claude"}))));
+    assert!(runtime.dispatch_json(&ai_event(serde_json::json!({"fallback_add": "codex"}))));
+
+    let running = |runtime: &mut Runtime| {
+        let cancel = hide_ai::CancelToken::new();
+        runtime.memory_cancel = Some(cancel.clone());
+        runtime.memory_analysis_settings = runtime.ai_settings.clone();
+        cancel
+    };
+    let stopped_by = |payload: serde_json::Value, runtime: &mut Runtime| {
+        let cancel = running(runtime);
+        assert!(runtime.dispatch_json(&ai_event(payload)));
+        cancel.is_cancelled()
+    };
+
+    assert!(
+        !stopped_by(serde_json::json!({"agent_summary": false}), &mut runtime),
+        "a switch that changes nobody who may be asked leaves the run alone"
+    );
+    assert!(
+        stopped_by(serde_json::json!({"fallback_add": "grok"}), &mut runtime),
+        "an added fallback agent is not the list the run was built for"
+    );
+    assert!(
+        stopped_by(serde_json::json!({"fallback_remove": "grok"}), &mut runtime),
+        "a removed fallback agent stops receiving session text"
+    );
+    assert!(
+        stopped_by(
+            serde_json::json!({"provider": "codex", "model": "m-2"}),
+            &mut runtime
+        ),
+        "a different Runs on agent or model ends the run"
+    );
+    assert!(
+        stopped_by(serde_json::json!({"enabled": false}), &mut runtime),
+        "Use Hide AI off stops a model call already under way"
+    );
+}

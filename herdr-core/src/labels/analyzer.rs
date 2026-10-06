@@ -163,10 +163,7 @@ fn run(
         // order (Runs on, then the fallback list), and the model each is
         // asked for. A removed fallback agent must stop receiving
         // conversation text on the next job, and an added one must be tried.
-        let same_router = |built_for: &AiSettings| {
-            built_for.router_config().priority == current.router_config().priority
-                && built_for.models_by_provider() == current.models_by_provider()
-        };
+        let same_router = |built_for: &AiSettings| built_for.routes_like(&current);
         let active = match router.as_ref() {
             Some((built_for, router)) if same_router(built_for) => Arc::clone(router),
             _ => {
