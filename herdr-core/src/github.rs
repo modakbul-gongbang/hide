@@ -2341,7 +2341,7 @@ esac"#,
             .unwrap();
         assert!(
             !hide_platform::process::is_alive(pid),
-            "the gh child has been reaped"
+            "the gh child has ended"
         );
         assert!(!fixture.root.join("survived").exists());
     }

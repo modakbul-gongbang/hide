@@ -855,8 +855,11 @@ pub fn terminate_group(leader: u32) -> io::Result<()> {
     sys::terminate_group(checked_pid(leader)?)
 }
 
-/// Whether a process with this pid exists. A process owned by another account
-/// counts: it exists.
+/// Whether the process with this pid has not yet ended. A process owned by
+/// another account counts while it runs. One that has ended has ended before
+/// anything reaps it: a Unix zombie answers signal 0 until its parent, or init
+/// once it is orphaned, waits for it, and a Windows process stays open while
+/// any handle to it does, and neither counts.
 pub fn is_alive(pid: u32) -> bool {
     pid != 0 && sys::is_alive(pid)
 }
@@ -1401,16 +1404,68 @@ mod sys {
     }
 
     pub(super) fn is_alive(pid: u32) -> bool {
-        let Ok(pid) = libc::pid_t::try_from(pid) else {
+        let Ok(raw) = libc::pid_t::try_from(pid) else {
             return false;
         };
         // SAFETY: signal 0 only checks that the process exists and may be
         // signalled.
-        if unsafe { libc::kill(pid, 0) } == 0 {
-            return true;
+        let exists = unsafe { libc::kill(raw, 0) } == 0
+            // `EPERM` is a process of another account: it exists.
+            || io::Error::last_os_error().raw_os_error() == Some(libc::EPERM);
+        // A zombie still answers signal 0, but it has ended.
+        exists && !is_zombie(pid)
+    }
+
+    /// Whether the system lists `pid` as ended and waiting to be reaped.
+    /// `proc_pidinfo` has no answer for such a process (its task is gone), so
+    /// the state is read from the process table, as `ps` reads it.
+    #[cfg(target_os = "macos")]
+    fn is_zombie(pid: u32) -> bool {
+        // The head of `struct extern_proc` (`sys/proc.h`) through `p_stat`:
+        // libc declares no `kinfo_proc` for Apple targets.
+        #[repr(C)]
+        struct ExternProcHead {
+            p_un: [usize; 2],
+            p_vmspace: usize,
+            p_sigacts: usize,
+            p_flag: libc::c_int,
+            p_stat: libc::c_char,
         }
-        // `EPERM` is a process of another account: it exists.
-        io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+        // `sizeof(struct kinfo_proc)` on 64-bit macOS.
+        const KINFO_PROC: usize = 648;
+        let Ok(pid) = libc::c_int::try_from(pid) else {
+            return false;
+        };
+        let mut name = [libc::CTL_KERN, libc::KERN_PROC, libc::KERN_PROC_PID, pid];
+        let mut buffer = [0u64; KINFO_PROC / 8];
+        let mut size = KINFO_PROC;
+        // SAFETY: the name is four ints, and the buffer is valid and aligned
+        // for `size` bytes and read only after `sysctl` fills all of them.
+        let read = unsafe {
+            libc::sysctl(
+                name.as_mut_ptr(),
+                name.len() as libc::c_uint,
+                buffer.as_mut_ptr().cast(),
+                &mut size,
+                std::ptr::null_mut(),
+                0,
+            )
+        };
+        if read != 0 || size != KINFO_PROC {
+            return false;
+        }
+        // SAFETY: the buffer holds a whole `kinfo_proc`, which starts with the
+        // `extern_proc` this head is a prefix of.
+        let head = unsafe { &*buffer.as_ptr().cast::<ExternProcHead>() };
+        head.p_stat as u32 == libc::SZOMB
+    }
+
+    /// Whether the system lists `pid` as ended and waiting to be reaped
+    /// (`Z`), or in the instant before its entry goes (`X`).
+    #[cfg(target_os = "linux")]
+    fn is_zombie(pid: u32) -> bool {
+        linux::fields(pid)
+            .is_ok_and(|fields| matches!(fields.first().map(String::as_str), Some("Z" | "X")))
     }
 
     #[cfg(target_os = "macos")]
