@@ -41,6 +41,8 @@ pub struct World {
     pub merge_attempts: u32,
     /// Every push is refused with this failure.
     pub publish_refusal: Option<Failure>,
+    /// Every merge fails with this failure.
+    pub merge_failure: Option<Failure>,
     /// Each report a GitHub Task pushed, by Task id.
     pub pushes: Vec<String>,
     /// Main verification answers by commit, read before `main_checks`.
@@ -278,6 +280,9 @@ impl MergeTarget for Shared {
         let mut world = self.world();
         world.merge_attempts += 1;
         if let Some(failure) = world.merge_refusal.take() {
+            return Err(failure);
+        }
+        if let Some(failure) = world.merge_failure.clone() {
             return Err(failure);
         }
         if world.merge_unnamed > 0 {

@@ -72,6 +72,9 @@ pub const REPORT_LIMIT: usize = 500;
 const MAIN_CHECK_EVERY_MS: u64 = 30_000;
 /// When a merge that GitHub answered without its commit is asked again.
 pub const MERGE_COMMIT_AGAIN_MS: u64 = 30_000;
+/// How long a merge GitHub answered without naming its commit is read again
+/// before a person looks.
+pub const MERGE_UNNAMED_LIMIT_MS: u64 = 10 * 60_000;
 /// When a failed push or pull request of a reported Task is tried again.
 const PUBLISH_RETRY_MS: u64 = 60_000;
 /// A GitHub Task's report whose commits are not pushed yet.
@@ -167,9 +170,9 @@ pub struct Engine {
     /// Refusals in a row of a Task's push or pull request that no
     /// environment signal explains.
     publish_refusals: BTreeMap<(String, String), u32>,
-    /// When a merge asked to wait is tried again, per Task, and whether the
-    /// merge may already have landed with its commit not named yet.
-    merge_retry: BTreeMap<(String, String), (UnixMs, bool)>,
+    /// When a merge asked to wait is tried again, per Task, and since when
+    /// the merge may have landed with its commit not named yet.
+    merge_retry: BTreeMap<(String, String), (UnixMs, Option<UnixMs>)>,
     processed: BTreeSet<String>,
     processed_order: Vec<String>,
     /// Recent environment and Task failures the cascade rules read.
@@ -381,6 +384,14 @@ impl Engine {
                     "The caller's spawn lineage could not be read to its root; run this from an operator pane",
                 ))
             }
+            // An agent a Factory started that is no Task's worker now (a
+            // start abandoned on its way) is never an operator.
+            None if caller.factory_spawned && command.permission() != Permission::Read => {
+                Err(Refusal::new(
+                    "factory_agent_unbound",
+                    "This agent was started by a Factory for a Task it no longer holds; run this from an operator pane",
+                ))
+            }
             None => Ok(Role::Operator {
                 pane: caller.pane.unwrap_or("checkout").to_owned(),
             }),
@@ -391,10 +402,12 @@ impl Engine {
     /// a worker's child acts as that worker (D-33).
     pub fn role_for_agents(&self, agents: &[String]) -> Option<(String, String)> {
         let bound = |task: &&Task| {
-            task.worker
-                .as_ref()
-                .and_then(|worker| worker.agent.as_ref())
-                .is_some_and(|agent| agents.contains(agent))
+            !task.purged
+                && task
+                    .worker
+                    .as_ref()
+                    .and_then(|worker| worker.agent.as_ref())
+                    .is_some_and(|agent| agents.contains(agent))
         };
         let finished = |task: &&Task| matches!(task.state, TaskState::Cancelled | TaskState::Done);
         let live = self.all_tasks().filter(|t| !finished(t)).find(&bound);
@@ -567,6 +580,12 @@ impl Engine {
             }
         });
         if let Some(from) = from {
+            if from == TaskState::Verifying {
+                // A merge or push asked again belongs to this verifying stay.
+                let key = (factory.to_owned(), id.to_owned());
+                self.merge_retry.remove(&key);
+                self.publish_refusals.remove(&key);
+            }
             self.record(
                 factory,
                 Some(id),
@@ -668,9 +687,10 @@ impl Engine {
         }
         let verb = command.verb();
         // A worker's reports grow its Task record: past the cap a report is
-        // refused, never stored (rule 15). `done` still finishes the Task.
+        // refused, never stored (rule 15). `done` still finishes the Task, and
+        // `block` still stops it for a person; each needs a running Task.
         if command.permission() == Permission::Report
-            && !matches!(command, Command::Done { .. })
+            && !matches!(command, Command::Done { .. } | Command::Block { .. })
             && let Role::Worker { factory, task } = role
             && let Some(task) = self.task(factory, task)
             && task.questions.len() + task.decisions.len() + task.discoveries.len() >= REPORT_LIMIT
@@ -2729,11 +2749,13 @@ impl Engine {
             }
             Err(failure) => {
                 self.external_failure(factory_id, Some(id), &failure);
+                // An environment signal in between breaks the run of refusals.
                 let refusals = if failure.signal.is_none() {
                     let n = self.publish_refusals.entry(key.clone()).or_default();
                     *n += 1;
                     *n
                 } else {
+                    self.publish_refusals.remove(&key);
                     0
                 };
                 if refusals >= 2 {
@@ -3077,12 +3099,16 @@ impl Engine {
         }
         let key = (factory_id.to_owned(), id.to_owned());
         // A merge asked to wait is not read again before its time (B39).
-        if self
-            .merge_retry
-            .get(&key)
-            .is_some_and(|(at, _)| *at > self.now())
-        {
-            return;
+        if let Some((at, unnamed)) = self.merge_retry.get(&key).copied() {
+            if at > self.now() {
+                return;
+            }
+            // GitHub took the merge and has not named its commit: only that
+            // is read again, never main merged in or the quick check.
+            if unnamed.is_some() {
+                let _ = self.merge_now(factory_id, id);
+                return;
+            }
         }
         if self.verifying.contains_key(&key) {
             return;
@@ -3297,21 +3323,56 @@ impl Engine {
             Err(failure) => {
                 self.external_failure(factory_id, Some(id), &failure);
                 let now = self.now();
+                let key = (factory_id.to_owned(), id.to_owned());
                 // Asked to wait (a merge commit not named yet, or GitHub or
                 // the network down): tried again at its time, not per tick.
-                let wait = failure.again_in_ms.or_else(|| {
-                    failure.signal.map(|_| {
-                        self.github_backoff
-                            .get(factory_id)
-                            .map(|(_, until)| until.saturating_sub(now))
-                            .unwrap_or(PUBLISH_RETRY_MS)
-                    })
-                });
-                if let Some(wait) = wait {
-                    self.merge_retry.insert(
-                        (factory_id.to_owned(), id.to_owned()),
-                        (now + wait.max(1), failure.again_in_ms.is_some()),
+                let backoff = self
+                    .github_backoff
+                    .get(factory_id)
+                    .map(|(_, until)| *until)
+                    .filter(|until| *until > now)
+                    .filter(|_| {
+                        matches!(
+                            failure.signal,
+                            Some(
+                                EnvSignal::GithubRateLimit
+                                    | EnvSignal::GithubServer
+                                    | EnvSignal::Network
+                            )
+                        )
+                    });
+                let retry_at = match (failure.again_in_ms, failure.signal) {
+                    (Some(wait), _) => Some(now + wait.max(1)),
+                    (None, Some(_)) => Some(backoff.unwrap_or(now + PUBLISH_RETRY_MS)),
+                    (None, None) => None,
+                };
+                let since = self.merge_retry.get(&key).and_then(|(_, since)| *since);
+                let unnamed = failure.again_in_ms.is_some().then(|| since.unwrap_or(now));
+                if unnamed.is_some_and(|since| now.saturating_sub(since) >= MERGE_UNNAMED_LIMIT_MS)
+                {
+                    // GitHub never named the commit: a person looks (rule 15).
+                    self.merge_retry.remove(&key);
+                    self.with_task(factory_id, id, |task| {
+                        if !task.gates.contains(&Gate::MergeRefused) {
+                            task.gates.push(Gate::MergeRefused);
+                        }
+                    });
+                    self.record(
+                        factory_id,
+                        Some(id),
+                        "merge.refused",
+                        json!({"stage": failure.stage, "detail": "the merge commit was not named in 10 minutes"}),
                     );
+                    self.set_state(factory_id, id, TaskState::MergeWaiting);
+                    return Err(failure);
+                }
+                match retry_at {
+                    Some(at) => {
+                        self.merge_retry.insert(key, (at, unnamed));
+                    }
+                    None => {
+                        self.merge_retry.remove(&key);
+                    }
                 }
                 if failure.signal.is_none() && failure.again_in_ms.is_none() {
                     self.with_task(factory_id, id, |task| {
@@ -5180,7 +5241,7 @@ impl Engine {
     fn merge_unnamed(&self, factory_id: &str) -> bool {
         self.merge_retry
             .iter()
-            .filter(|((factory, _), (_, unnamed))| factory == factory_id && *unnamed)
+            .filter(|((factory, _), (_, unnamed))| factory == factory_id && unnamed.is_some())
             .any(|((factory, id), _)| {
                 self.task(factory, id)
                     .is_some_and(|t| t.state == TaskState::Verifying)
@@ -6079,6 +6140,8 @@ pub struct Caller<'a> {
     pub ancestor_panes: &'a [String],
     /// The lineage walk reached an agent with no parent.
     pub lineage_complete: bool,
+    /// A Factory's own agent is in the lineage.
+    pub factory_spawned: bool,
 }
 
 pub fn pr_body(task: &Task, factory: &Factory) -> String {

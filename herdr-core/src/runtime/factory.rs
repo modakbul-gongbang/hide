@@ -77,7 +77,13 @@ impl Runtime {
         let Ok(ledger) = self.delivery_state() else {
             return lineage;
         };
-        let mut next = match ledger.agents.iter().rev().find(|agent| agent.pane == pane) {
+        // Herdr reuses pane ids: only an agent still on the pane speaks for it.
+        let mut next = match ledger
+            .agents
+            .iter()
+            .rev()
+            .find(|agent| agent.pane == pane && !agent.ended)
+        {
             Some(agent) => agent.parent.clone(),
             None => None,
         };
@@ -90,7 +96,11 @@ impl Runtime {
                 return lineage;
             };
             lineage.agents.push(id);
-            lineage.panes.push(agent.pane.clone());
+            lineage.factory_spawned |= agent.actor.code_owned();
+            // An ended agent's pane may be someone else's now.
+            if !agent.ended {
+                lineage.panes.push(agent.pane.clone());
+            }
             next = agent.parent.clone();
         }
         lineage.complete = true;
@@ -335,12 +345,15 @@ mod tests {
             pane: pane.into(),
             parent: parent.map(str::to_owned),
             project: None,
-            actor: Actor {
-                pane_id: pane.into(),
-                name: id.into(),
-                kind: "claude".into(),
-                device_id: "local".into(),
-                session: crate::wire::session_digest(id),
+            actor: match pane.strip_prefix("factory:") {
+                Some(factory) => Actor::factory(factory),
+                None => Actor {
+                    pane_id: pane.into(),
+                    name: id.into(),
+                    kind: "claude".into(),
+                    device_id: "local".into(),
+                    session: crate::wire::session_digest(id),
+                },
             },
             ended: false,
         }
@@ -366,7 +379,7 @@ mod tests {
             vec!["agent-child", "agent-worker", "agent-factory"]
         );
         assert_eq!(full.panes, vec!["w2:p1", "w1:p1", "factory:f-1"]);
-        assert!(full.complete);
+        assert!(full.complete && full.factory_spawned);
         let none = runtime.factory_lineage("w0:p1");
         assert!(none.agents.is_empty() && none.complete);
         let looped = runtime.factory_lineage("w9:p1");
@@ -376,6 +389,35 @@ mod tests {
             "a loop ends the walk"
         );
         assert!(!looped.complete, "a loop cannot rule out a worker above");
+        assert!(!looped.factory_spawned);
+    }
+
+    #[test]
+    fn an_ended_agent_speaks_for_no_pane() {
+        let mut runtime = crate::runtime::tests::runtime();
+        let ended = |mut record: AgentRecord| {
+            record.ended = true;
+            record
+        };
+        runtime.delivery_ledger = Ok(Arc::new(Ledger {
+            agents: vec![
+                agent("agent-factory", "factory:f-1", None),
+                ended(agent("agent-worker", "w1:p1", Some("agent-factory"))),
+                ended(agent("agent-child", "w2:p1", Some("agent-worker"))),
+                agent("agent-grandchild", "w3:p1", Some("agent-child")),
+            ],
+            ..Ledger::default()
+        }));
+        // A person's shell on a pane whose id an ended agent had.
+        let reused = runtime.factory_lineage("w2:p1");
+        assert!(reused.agents.is_empty() && reused.complete && !reused.factory_spawned);
+        // Ended ancestors stay in the walk but lend no pane to bind by.
+        let live = runtime.factory_lineage("w3:p1");
+        assert_eq!(
+            live.agents,
+            vec!["agent-child", "agent-worker", "agent-factory"]
+        );
+        assert_eq!(live.panes, vec!["factory:f-1"]);
     }
 
     fn row(provider: &str, used: f64, bucket: Option<(f64, u64)>) -> ProviderUsageSnapshot {

@@ -77,6 +77,8 @@ pub struct Lineage {
     /// unreadable, a missing record, a loop, the step limit) cannot rule out
     /// a worker above the caller.
     pub complete: bool,
+    /// A Factory's own agent is above the caller.
+    pub factory_spawned: bool,
 }
 
 impl Lineage {
@@ -86,6 +88,7 @@ impl Lineage {
             agents: Vec::new(),
             panes: Vec::new(),
             complete: true,
+            factory_spawned: false,
         }
     }
 }
@@ -538,6 +541,7 @@ fn handle(
         ancestor_agents: &caller.ancestors.agents,
         ancestor_panes: &caller.ancestors.panes,
         lineage_complete: caller.ancestors.complete,
+        factory_spawned: caller.ancestors.factory_spawned,
     };
     let role = match engine.caller_role(&facts, &command) {
         Ok(role) => role,

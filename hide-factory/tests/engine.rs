@@ -954,6 +954,7 @@ fn a_caller_binds_through_a_claimed_pane_or_an_ancestor_s_pane_and_a_cut_lineage
         ancestor_agents: &[],
         ancestor_panes: &[],
         lineage_complete: true,
+        factory_spawned: false,
     };
     // A worker stopped mid-turn spawned a helper: its parent is a new,
     // parentless record on the worker's own pane.
@@ -997,6 +998,16 @@ fn a_caller_binds_through_a_claimed_pane_or_an_ancestor_s_pane_and_a_cut_lineage
         h.engine.caller_role(&caller, &merge),
         Ok(Role::Operator { .. })
     ));
+    // An agent a Factory started that holds no Task now only reads.
+    let orphan = Caller {
+        factory_spawned: true,
+        ..caller
+    };
+    assert_eq!(
+        h.engine.caller_role(&orphan, &merge).unwrap_err().reason,
+        "factory_agent_unbound"
+    );
+    assert!(h.engine.caller_role(&orphan, &status).is_ok());
 }
 
 #[test]
@@ -1359,6 +1370,28 @@ fn a_push_refused_twice_stops_the_task_for_a_person_with_its_reason() {
 }
 
 #[test]
+fn a_signal_between_two_push_refusals_breaks_the_run() {
+    let mut h = Bench::new(true);
+    let f = github_factory(&mut h, MergeMode::Auto);
+    let t = h.ready("Flaky remote", &[]);
+    let refused = hide_factory::adapters::Failure::task("git.push", "hook declined");
+    h.world().publish_refusal = Some(refused.clone());
+    h.done(&f, &t);
+    h.engine.tick();
+    h.world().publish_refusal = Some(Failure::environment(
+        "git.push",
+        EnvSignal::Network,
+        "remote end hung up",
+    ));
+    h.advance(MINUTE_MS + 1);
+    h.engine.tick();
+    h.world().publish_refusal = Some(refused);
+    h.advance(MINUTE_MS + 1);
+    h.engine.tick();
+    assert_eq!(h.state(&f, &t), TaskState::Verifying, "not two in a row");
+}
+
+#[test]
 fn a_manual_task_waits_for_merge_and_every_github_write_happens_once() {
     let mut h = Bench::new(true);
     let f = github_factory(&mut h, MergeMode::Manual);
@@ -1540,7 +1573,11 @@ fn a_merge_asked_to_wait_is_read_again_at_its_time_and_main_is_not_misread_meanw
         h.engine.tick();
     }
     assert_eq!(h.world().merge_attempts, 2, "once per 30 seconds over 40");
-    assert!(h.world().premerge_calls <= premerges + 1);
+    assert_eq!(
+        h.world().premerge_calls,
+        premerges,
+        "only the merge commit is read again"
+    );
     // The next outside read finds the new head.
     h.advance(2 * MINUTE_MS);
     h.engine.tick();
@@ -1550,6 +1587,48 @@ fn a_merge_asked_to_wait_is_read_again_at_its_time_and_main_is_not_misread_meanw
         "not read as an outside push"
     );
     assert_eq!(h.state(&f, &t), TaskState::Verifying);
+    // GitHub never names it: after 10 minutes a person looks.
+    for _ in 0..12 {
+        h.advance(MINUTE_MS);
+        h.engine.tick();
+    }
+    assert_eq!(h.state(&f, &t), TaskState::MergeWaiting);
+    assert_eq!(h.task(&f, &t).gates, vec![Gate::MergeRefused]);
+}
+
+#[test]
+fn a_merge_failing_on_a_signal_after_an_old_back_off_is_not_retried_every_tick() {
+    let mut h = Bench::new(true);
+    let f = github_factory(&mut h, MergeMode::Auto);
+    // A network blip left a back-off that has since run out.
+    h.world().observe_failure = Some(Failure::environment(
+        "github.observe",
+        EnvSignal::Network,
+        "connection reset",
+    ));
+    h.advance(3 * MINUTE_MS);
+    h.engine.tick();
+    h.world().observe_failure = None;
+    h.advance(MINUTE_MS);
+    let t = h.ready("Auth lapsed", &[]);
+    h.world().merge_failure = Some(Failure::environment(
+        "github.merge",
+        EnvSignal::GithubAuth,
+        "HTTP 401",
+    ));
+    h.done(&f, &t);
+    for _ in 0..3 {
+        h.engine.tick();
+    }
+    let merges = h.world().merge_attempts;
+    let premerges = h.world().premerge_calls;
+    assert_eq!(merges, 1);
+    for _ in 0..20 {
+        h.advance(2_000);
+        h.engine.tick();
+    }
+    assert!(h.world().merge_attempts <= merges + 1);
+    assert!(h.world().premerge_calls <= premerges + 1);
 }
 
 #[test]

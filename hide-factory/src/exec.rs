@@ -131,6 +131,7 @@ pub fn classify(stage: &str, output: &Output) -> Failure {
     } else if ["http 500", "http 502", "http 503", "http 504"]
         .iter()
         .any(|code| lower.contains(code))
+        || lower.contains("the requested url returned error: 5")
     {
         Some(EnvSignal::GithubServer)
     } else if [
@@ -140,6 +141,11 @@ pub fn classify(stage: &str, output: &Output) -> Failure {
         "connection reset",
         "tls handshake",
         "i/o timeout",
+        "operation timed out",
+        "remote end hung up",
+        "early eof",
+        "unexpected disconnect",
+        "could not read from remote repository",
     ]
     .iter()
     .any(|needle| lower.contains(needle))
@@ -211,6 +217,26 @@ mod tests {
                 Some(EnvSignal::DiskFull),
             ),
             ("", 137, Some(EnvSignal::OutOfMemory)),
+            (
+                "fatal: unable to access 'https://github.com/o/r/': The requested URL returned error: 502",
+                128,
+                Some(EnvSignal::GithubServer),
+            ),
+            (
+                "ssh: connect to host github.com port 22: Operation timed out\nfatal: Could not read from remote repository.",
+                128,
+                Some(EnvSignal::Network),
+            ),
+            (
+                "fatal: the remote end hung up unexpectedly",
+                128,
+                Some(EnvSignal::Network),
+            ),
+            (
+                " ! [remote rejected] HEAD -> factory/1-x (protected branch hook declined)",
+                1,
+                None,
+            ),
             ("error: test failed, to rerun pass --lib", 101, None),
         ];
         for (stderr, code, signal) in cases {

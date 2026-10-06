@@ -146,6 +146,7 @@ A `cancelled` or `done` Task's worker stays a worker while its worktree and pane
 Once a Task's worktree is removed it binds no pane or folder, because Herdr can give a closed pane id to the operator's next pane.
 An agent a worker spawned acts as that worker: the host follows the caller's spawn lineage in the delivery ledger (up to 16 agents up) and binds an ancestor by its agent id or by the pane it was registered on, and a pane a checkout caller names but cannot prove only ever makes it a worker, never an operator.
 A lineage the host cannot read to its root (the ledger unreadable, a missing record, a loop, more than 16 agents) may hide a worker above, so that caller can only read; anything else is refused with `lineage_unknown`.
+An agent that has ended speaks for no pane, since Herdr reuses pane ids, and an agent a Factory started that no Task holds as its worker (a start abandoned on its way) can only read; anything else is refused with `factory_agent_unbound`.
 Every other caller is an operator, recorded by pane id, or `checkout` when the caller has no pane.
 The engine itself acts as a third role for deadlines and timers and is never a command caller.
 A capability file holds only a token, so editing it cannot change a role.
@@ -163,7 +164,7 @@ A capability file holds only a token, so editing it cannot change a role.
 | Configure | `config --set` | refused | yes |
 
 A refusal answers `role_not_allowed` with the role and the verb.
-A Task keeps at most 500 questions, decisions and discoveries together; past that a worker's report is refused with `report_limit`, except `done`, which still finishes the Task without storing its summary.
+A Task keeps at most 500 questions, decisions and discoveries together; past that a worker's report is refused with `report_limit`, except `done`, which still finishes the Task without storing its summary, and `block`, which still stops it for a person.
 A worker's `show` reaches its own Factory only.
 An operator relays a person's words, and every answer and decision records the relaying pane as `relayed_by`.
 Code cannot tell whether an operator pane's agent acted on a person's words, so it records who relayed and does not block.
@@ -216,7 +217,7 @@ A worker reports through `hide factory` and gets its answer in the same call.
 On a GitHub Factory the next tick pushes the worktree's commits to the Task branch (with a lease, so a rebase goes through), then finds the open pull request for that branch or opens one, and only then reads CI on the pushed commit; every report pushes, so a fix after a failed check reaches the same pull request, and a merged pull request from before a revert is never reused.
 A Task branch the remote deleted, as automatic branch deletion does after a merge, is pushed again rather than refused by a stale lease.
 Only a pull request from the repository's own branch is a Task's or a revert's; a fork's pull request on the same branch name is never adopted.
-A push or pull request refused twice in a row with no environment signal (a protected branch, a hook) stops the Task as "push 거절됨" with the reason; a person fixes the cause and retries. One with an environment signal is asked again every minute.
+A push or pull request refused twice in a row with no environment signal in between (a protected branch, a hook; git's transport errors such as a 5xx answer, a timeout or a hung-up remote count as the network's) stops the Task as "push 거절됨" with the reason; a person fixes the cause and retries. One with an environment signal is asked again every minute.
 A failed push or pull request is tried again a minute later.
 `decide` records a decision.
 A worker whose agent rests for the no-report window (`no_report_minutes`, 2) after a turn that reported nothing stops the Task as "no report"; a worker that goes quiet for the stall window (`stall_minutes`, 30) stops it as "stalled".
@@ -319,7 +320,7 @@ A gate sends an `auto` Task to `merge_waiting` and appears in the Task page and 
 
 A review by an agent alone never merges.
 A person's `merge` runs merge-tree and the quick check again on the latest main, then the same merge at once; a conflict sends the worker to rebase and a failed quick check counts as a verification failure.
-A refused merge is tried once and then waits for a person, never once per tick; only an environment signal, or a merge GitHub answered before naming its commit, is asked again, at the GitHub back-off for a signal and every 30 seconds for an unnamed commit, with no merge-tree or quick check in between.
+A refused merge is tried once and then waits for a person, never once per tick; only an environment signal, or a merge GitHub answered before naming its commit, is asked again, at the GitHub back-off for a rate-limit, server or network signal (a minute for any other signal) and every 30 seconds for an unnamed commit, which reads only the merge commit, with no merge-tree or quick check in between; a commit still unnamed after 10 minutes waits for a person as a refused merge.
 While a merge's commit is unnamed, a red run on a main head the Factory has not recorded is read as pending, not as an outside push.
 `request-changes --comment` returns the Task to `running`, clears its gates and sends the worker the comment.
 
@@ -351,7 +352,7 @@ A held issue missing from that list is looked up by number, at most 20 per read 
 
 | What the Factory sees | What it does |
 | --- | --- |
-| A pull request the Factory did not open closes a Task's issue, and it is open | A pull request one of the Factory's own Tasks opened never counts, whatever its worker wrote; the decisions a worker records sit in a code block in its pull request body, so a "Fixes #N" there stays text. A pull request from a fork counts only once it is merged, since anyone can open one. Otherwise the Task becomes `outside`. A running worker is stopped, its worktree stays for the keep period, and a notice offers `revive`. |
+| A pull request the Factory did not open closes a Task's issue, and it is open | A pull request one of the Factory's own Tasks opened never counts, whatever its worker wrote; the decisions a worker records sit in a code block in its pull request body, so a "Fixes #N" there stays text. GitHub can still close another Task's issue from a closing keyword a worker put in a commit message or in a card it proposed, when that merge lands; the other Task is then cancelled and kept for revive. A pull request from a fork counts only once it is merged, since anyone can open one. Otherwise the Task becomes `outside`. A running worker is stopped, its worktree stays for the keep period, and a notice offers `revive`. |
 | That pull request merges | The Task is `done`, and a dependent Task's predecessor counts as merged. A stopped worker's worktree still waits out its keep period. |
 | The issue closes with no pull request, or the `factory` label is removed | The Task is cancelled with a notice, kept for the keep period. |
 | A person edits the issue body | A Task before its start goes back to `drafting` and is reviewed again. A running Task gets a scope-change question. |
