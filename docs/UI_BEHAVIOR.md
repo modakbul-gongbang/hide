@@ -1209,7 +1209,7 @@ Its own wide layout is a list on the left and the highlighted row's detail on th
 ### What a query finds
 
 A query finds an agent, project, checkout, device, issue or pull request by name, and an issue or pull request by `#number` (`#273`, or `273`); an exact number match lists first, as its own row, issue and pull request separately.
-A query that is a pane's Herdr id, whole and in its case (`w9J:p52`, as Copy pane ID or `$HERDR_PANE_ID` gives it), lists the agent in that pane first on every device that has a pane by that id; part of an id matches nothing, and no row prints the id.
+A query holding `:`, as every pane's Herdr id does (`w9J:p52`, as Copy pane ID or `$HERDR_PANE_ID` gives it), lists first the agents whose id holds it in its case, on every device, the whole id before longer ones (`:p5` lists `w9J:p5`, then `w9J:p52`); without a `:` no id matches, and no row prints the id.
 Only digits in the query match a number by substring on other rows.
 The rows are `Issues`, `Pull requests`, `Agents`, `Projects`, `Checkouts` and `Devices` (while another device is registered), then `Commands` holding `에이전트 시작…` and `GitHub`; a group stands where its best result ranked and keeps its results in rank order, so grouping never moves the best match off the first row.
 Search covers every connected device; a result not on the device in front carries that device's chip after its title, and choosing it brings that device forward with it.

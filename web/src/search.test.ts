@@ -164,13 +164,19 @@ describe("an agent by its pane's Herdr id", () => {
     expect(ranked(entries, " w9J:p52 ")[0]).toBe("agent:w9J:p52");
   });
 
-  it("matches the id whole and in its case, so part of an id finds no agent", () => {
+  it("finds every pane whose id holds a query with a colon, the whole id first", () => {
+    const entries = withIds(["w9J:p52", "w9J:p5"], "w9J:p52");
+    expect(ranked(entries, ":p5").slice(0, 3)).toEqual(["agent:w9J:p5", "agent:w9J:p52", "agent:remote:mini:pane:w9J:p52"]);
+    expect(ranked(entries, "w9J:").filter((id) => id.startsWith("agent:"))).toHaveLength(3);
+  });
+
+  it("matches the id in its case, and not at all without a colon", () => {
     const entries = withIds(["w9J:pB", "w9J:pb"], "w60:p12");
     expect(ranked(entries, "w9J:pB")[0]).toBe("agent:w9J:pB");
     expect(ranked(entries, "w9J:pb")[0]).toBe("agent:w9J:pb");
     expect(ranked(entries, "w9j:pb").filter((id) => id.startsWith("agent:"))).toEqual([]);
-    expect(ranked(entries, "w9J:p").filter((id) => id.startsWith("agent:"))).toEqual([]);
     expect(ranked(entries, "p12").filter((id) => id.startsWith("agent:"))).toEqual([]);
+    expect(ranked(entries, "12").filter((id) => id.startsWith("agent:"))).toEqual([]);
   });
 });
 
