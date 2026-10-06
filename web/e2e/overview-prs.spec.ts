@@ -3,15 +3,16 @@ import { openProjectOverview } from "./overview-entry";
 // (PRD overview-lenses-prs): a Git project whose pull requests a fake `gh`
 // answers and records every write of, so nothing reaches GitHub. The tile
 // counts the open ones and the tab groups them by whose move it is (B1, B2);
-// it is a skeleton until GitHub answers (B22); rows keep still under the
-// pointer and hovering publishes nothing (B3-B8, B24); the keyboard unfolds
-// and moves (B5). An issue is linked with one confirmation that writes
+// it is a skeleton until GitHub answers (B22); a row is one line that keeps
+// still under the pointer, and hovering publishes nothing (link-graph B1,
+// B6-B8, B24); a row opens its panel beside the list, the arrows move it and
+// Escape closes it (link-graph B2-B4). An issue is linked with one confirmation that writes
 // `Closes #N` into the body (B9, B10); a new issue made from a pull request
 // keeps the issue when the body write fails and writes only the body again
 // (B12, B13); a pull request whose checks failed is handed to an agent in a
 // worktree of its branch, fetched from origin (B15, B16), with the feedback
 // read failing once (B18); merged ones fold and offer Clean up (B19, B20); and
-// the PR chips and the sidebar's PR card lead to the row (B21). Light and
+// the PR chips and the sidebar's PR card lead to the row with its panel open (B21). Light and
 // Dark captures land in HIDE_E2E_SCREENSHOT_DIR.
 
 import { expect, test, type Page } from "@playwright/test";
@@ -285,14 +286,12 @@ test("a project's PRs tab: grouped pull requests, Link issue, Assign and Clean u
     await expect(page.getByRole("tooltip")).toContainText("My turn 2");
     await expect(page.getByRole("tooltip")).toContainText("Review 2");
 
-    // A row at rest (B3): state glyph, number, title, the empty issue cell,
-    // the agent marks, the branch, CI and the review word; only Changes requested is yellow.
+    // A row at rest (link-graph B1): state glyph, title, the agent marks, CI
+    // and the time on one line; the number, the issue, the branch and the
+    // review word are the panel's.
     const row = (number: number) => overview.locator(`[data-pr="${number}"]`);
     await expect(row(21).locator("[data-pr-state]")).toHaveAttribute("data-pr-state", "open");
-    await expect(row(21).locator('[data-pr-issue="none"]')).toBeVisible();
-    await expect(row(21).locator("[data-pr-branch]")).toHaveText("prd/turn");
-    await expect(row(21).locator("[data-pr-review]")).toHaveText("Review required");
-    await expect(row(23).locator("[data-pr-review]")).toHaveClass(/text-warning/);
+    await expect(row(21).locator("[data-pr-number], [data-pr-issue], [data-pr-branch], [data-pr-review]")).toHaveCount(0);
     await expect(row(23).locator(`[data-pr-agent="${fixingPane}"]`)).toBeVisible();
     await expect(row(24).locator('[data-pr-checks-open="failed"]')).toBeVisible();
 
@@ -300,16 +299,12 @@ test("a project's PRs tab: grouped pull requests, Link issue, Assign and Clean u
     // resting on the parts opens their cards; none of it is sent (B6, B7, B24).
     const before = total(sent);
     const title = row(21).locator("[data-pr-row]");
-    const titleBox = await row(21).locator("[data-pr-branch]").boundingBox();
+    const titleBox = await row(21).locator("[data-pr-title]").boundingBox();
     await title.hover();
     await expect(row(21).locator('[data-pr-actions="default"]')).toBeVisible();
     await expect(row(21).locator("[data-pr-age]")).toBeHidden();
-    expect(await row(21).locator("[data-pr-branch]").boundingBox()).toEqual(titleBox);
-    await expect(row(21).locator("[data-pr-link-icon]")).toBeHidden();
-    await row(21).locator('[data-pr-issue="none"]').hover();
-    await expect(row(21).locator("[data-pr-link-icon]")).toBeVisible();
-    await expect(page.getByRole("tooltip")).toContainText("Link this PR to an issue");
-    await row(21).locator("[data-pr-number]").hover();
+    expect(await row(21).locator("[data-pr-title]").boundingBox()).toEqual(titleBox);
+    await row(21).locator("[data-pr-glyph]").hover();
     await expect(page.locator('[data-checkout-card="pull_request"]')).toContainText("#21");
     await row(24).locator("[data-pr-row]").hover();
     await expect(row(24).locator("[data-pr-delegate-open]")).toBeVisible();
@@ -321,21 +316,20 @@ test("a project's PRs tab: grouped pull requests, Link issue, Assign and Clean u
     await page.mouse.move(2, 998, { steps: 4 });
     await expect(page.locator(`[data-lens-message="${fixingPane}"]`)).toHaveCount(0);
 
-    // The keyboard (B5): → unfolds, ← folds, ↓ moves; an unfolded row shows
-    // the branch's agents and GitHub, Workspace and Link issue.
+    // The keyboard (link-graph B2-B4, B23): Enter opens the panel beside the
+    // list with the row highlighted; ↓ moves the panel with the row; a bot's
+    // pull request has no session and offers Assign; Escape closes the panel.
+    const panel = overview.locator("[data-pr-panel]");
     await row(23).locator("[data-pr-row]").focus();
-    await page.keyboard.press("ArrowRight");
-    await expect(row(23)).toHaveAttribute("data-open", "true");
-    await expect(row(23).locator(`[data-card-agent="${fixingPane}"]`)).toBeVisible();
-    await expect(row(23).locator("[data-pr-unfolded-github], [data-pr-unfolded-workspace]")).toHaveCount(2);
-    await page.keyboard.press("ArrowLeft");
-    await expect(row(23)).not.toHaveAttribute("data-open", "true");
+    await page.keyboard.press("Enter");
+    await expect(row(23)).toHaveAttribute("data-selected", "true");
+    await expect(panel.locator("[data-pr-panel-branch]")).toHaveText("prd/fixing");
+    await expect(panel.locator("[data-pr-panel-review]")).toHaveClass(/text-warning/);
     await page.keyboard.press("ArrowDown");
     await expect(row(24).locator("[data-pr-row]")).toBeFocused();
-    await page.keyboard.press("Enter");
-    await expect(row(24)).toHaveAttribute("data-open", "true");
-    await expect(row(24).locator("[data-pr-unfolded-workspace]")).toHaveCount(0);
-    await page.keyboard.press("Enter");
+    await expect(panel.locator('[data-link-none] [data-pr-panel-delegate="24"]')).toBeVisible({ timeout: 30_000 });
+    await page.keyboard.press("Escape");
+    await expect(panel).toHaveCount(0);
 
     // The CI mark is the checks on GitHub (B8).
     await page.context().route("https://github.com/**", (route) => route.fulfill({ body: "" }));
@@ -344,11 +338,11 @@ test("a project's PRs tab: grouped pull requests, Link issue, Assign and Clean u
     expect((await checks).url()).toBe("https://github.com/acme/repo/pull/24/checks");
     await (await checks).close();
 
-    // Link issue with a GitHub issue (B9, B10): the project's open issues,
-    // searchable; one confirmation, Cancel linking first; confirmed, one event, one
-    // body write, and the issue cell filled.
-    await row(21).locator("[data-pr-row]").hover();
-    await row(21).locator("[data-pr-link-open]").click();
+    // Link issue from the panel's links (B9, B10, link-graph B4): the
+    // project's open issues, searchable; one confirmation, Cancel linking
+    // first; confirmed, one event, one body write, and the issue line filled.
+    await row(21).locator("[data-pr-row]").click();
+    await panel.locator('[data-pr-link-open="21"]').click();
     const picker = page.locator('[data-pr-link-picker="21"]');
     await expect(picker.locator("[data-pr-link-choice]")).toHaveCount(2);
     await page.keyboard.type("이을");
@@ -364,13 +358,14 @@ test("a project's PRs tab: grouped pull requests, Link issue, Assign and Clean u
     expect(sent.get("pr_link_issue")).toBe(1);
     expect(last.get("pr_link_issue")).toMatchObject({ pr_number: 21, issue_key: "github:acme/repo#5" });
     expect(writes(gh.state)).toEqual([["pr", "edit", "21", "--body", "리뷰를 기다리는 본문\n\nCloses #5"]]);
-    await expect(row(21).locator('[data-pr-issue="github:acme/repo#5"]')).toBeVisible({ timeout: 30_000 });
+    // GitHub's closing reference reaches the record and the line says where the link came from.
+    await expect(panel.locator('[data-pr-panel-issue="github:acme/repo#5"]')).toHaveAttribute("data-pr-panel-source", "closes", { timeout: 30_000 });
 
     // Create new issue (B12, B13): the pull request's title and body, one
     // confirmation; the body write fails, the issue stays made and linked,
     // and Write body again writes only the body.
-    await row(22).locator("[data-pr-row]").hover();
-    await row(22).locator("[data-pr-link-open]").click();
+    await row(22).locator("[data-pr-row]").click();
+    await panel.locator('[data-pr-link-open="22"]').click();
     await page.locator('[data-pr-link-picker="22"] [data-pr-link-new]').click();
     const made = page.locator('[data-pr-new-issue="22"]');
     await expect(made.locator("[data-pr-new-issue-title]")).toHaveValue("이슈로 만들 PR");
@@ -386,11 +381,16 @@ test("a project's PRs tab: grouped pull requests, Link issue, Assign and Clean u
     expect(written.filter((args) => args[0] === "issue")).toEqual([["issue", "create", "--title", "이슈로 만들 PR", "--body", "이슈로 옮길 PR 본문"]]);
     expect(written.filter((args) => args[0] === "pr" && args[2] === "22")).toHaveLength(2);
     expect(body(gh.state, 22)).toBe("이슈로 옮길 PR 본문\n\nCloses #9");
-    await expect(row(22).locator('[data-pr-issue="github:acme/repo#9"]')).toBeVisible({ timeout: 30_000 });
+    await expect(panel.locator('[data-pr-panel-issue="github:acme/repo#9"]')).toBeVisible({ timeout: 30_000 });
 
-    // The PR chip on an issue card opens the PRs tab at its row, unfolded;
-    // ⌘-click is GitHub (B21).
-    await tile("issues").locator("[data-lens-tile-button]").click();
+    // The issue line opens the Issues tab's panel for it (link-graph B4).
+    await panel.locator('[data-pr-panel-issue="github:acme/repo#9"] button').click();
+    await expect(overview).toHaveAttribute("data-overview-view", "issues");
+    await expect(overview.locator('[data-issue-panel="github:acme/repo#9"]')).toBeVisible();
+
+    // The PR chip on an issue card opens the PRs tab at its row with its
+    // panel; ⌘-click is GitHub (B21).
+    await page.keyboard.press("Escape");
     const chip = overview.locator('[data-overview-card][data-task-key="github:acme/repo#5"] [data-lens-pr-chip="21"]');
     await expect(chip).toBeVisible({ timeout: 30_000 });
     const github = page.waitForEvent("popup");
@@ -399,7 +399,7 @@ test("a project's PRs tab: grouped pull requests, Link issue, Assign and Clean u
     await (await github).close();
     await chip.click();
     await expect(overview).toHaveAttribute("data-overview-view", "prs");
-    await expect(row(21)).toHaveAttribute("data-open", "true");
+    await expect(panel).toHaveAttribute("data-pr-panel", "21");
     await expect(row(21).locator("[data-pr-row]")).toBeFocused();
 
     // The sidebar's PR card has `View on the PRs tab` (B21).
@@ -410,7 +410,7 @@ test("a project's PRs tab: grouped pull requests, Link issue, Assign and Clean u
     await expect(toTab).toBeVisible();
     await toTab.click();
     await expect(overview).toHaveAttribute("data-overview-view", "prs");
-    await expect(row(22)).toHaveAttribute("data-open", "true");
+    await expect(panel).toHaveAttribute("data-pr-panel", "22");
 
     // Assign whose feedback read fails (B18): the prompt stays empty with why
     // and Read again, which fills it; the start is never held back.
@@ -475,13 +475,13 @@ test("a project's PRs tab: grouped pull requests, Link issue, Assign and Clean u
     expect(fs.existsSync(tree("merged"))).toBe(true);
 
     await row(23).locator("[data-pr-row]").click();
-    await expect(row(23)).toHaveAttribute("data-open", "true");
+    await expect(panel).toHaveAttribute("data-pr-panel", "23");
     await atRest(page);
     await screenshot(page, "prs-tab-light");
     await chooseTheme(page, "dark");
     await atRest(page);
     await screenshot(page, "prs-tab-dark");
-    await row(21).locator("[data-pr-number]").hover();
+    await row(21).locator("[data-pr-glyph]").hover();
     await expect(page.locator('[data-checkout-card="pull_request"]')).toBeVisible();
     await screenshot(page, "prs-pr-card-dark");
   } finally {

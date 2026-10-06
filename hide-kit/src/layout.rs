@@ -85,6 +85,12 @@ pub fn github_snapshot(state_dir: &Path) -> PathBuf {
     state_dir.join("github-snapshot.json")
 }
 
+/// The link record: which sessions made or worked on which pull request,
+/// kept after a pane closes; its owner is the core's link worker.
+pub fn links_store(state_dir: &Path) -> PathBuf {
+    state_dir.join("links.sqlite3")
+}
+
 /// `~/rest` of a helper root spelling under `home`; an absolute spelling as
 /// it is.
 pub fn expand_home(spelling: &str, home: &Path) -> PathBuf {

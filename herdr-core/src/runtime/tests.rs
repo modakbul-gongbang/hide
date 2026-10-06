@@ -38,6 +38,8 @@ mod issues;
 mod labels;
 #[path = "tests/lineage.rs"]
 mod lineage;
+#[path = "tests/links.rs"]
+mod links;
 #[path = "tests/memory.rs"]
 mod memory;
 #[path = "tests/operator_focus.rs"]

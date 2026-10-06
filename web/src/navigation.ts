@@ -501,11 +501,11 @@ export function projectEntryLens(rest: SnapshotRest | null, projectId: string): 
 
 /**
  * A Project's Overview on its PRs tab with pull request `number`, when one
- * is named, unfolded and in view (PRD overview-lenses-prs B21): where a PR chip, the Issues
+ * is named, in view with its panel open (PRD overview-lenses-prs B21,
+ * link-graph B36): where a PR chip, a session's PR chip, the Issues
  * board's `이슈 없는 PR` line and the sidebar's PR card lead. A Project's
  * Overview already on screen keeps the rest of its lens.
  */
 export function pullRequestLens(lens: OverviewLens, number: number | null): OverviewLens {
-  const open = number === null || lens.prs.open.includes(number) ? lens.prs.open : [...lens.prs.open, number];
-  return { ...lens, tab: "prs", focusTask: null, panel: null, prs: { ...lens.prs, open, focus: number } };
+  return { ...lens, tab: "prs", focusTask: null, panel: null, prs: { ...lens.prs, panel: number ?? lens.prs.panel, focus: number } };
 }

@@ -565,6 +565,23 @@ impl Runtime {
             .unwrap_or_else(|| "The device helper is not ready".to_owned()))
     }
 
+    /// The devices whose helper is connected now, each with its channel;
+    /// asking starts no helper (PRD link-graph D-21).
+    pub(crate) fn ready_device_channels(&self) -> Vec<(String, Arc<dyn HostChannel>)> {
+        let mut ready = self
+            .device_hosts
+            .iter()
+            .filter_map(|(device, host)| match &host.phase {
+                HostPhase::Ready { host, .. } if host.closed_reason().is_none() => {
+                    Some((device.clone(), Arc::clone(host)))
+                }
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        ready.sort_by(|left, right| left.0.cmp(&right.0));
+        ready
+    }
+
     /// The host row for one device, read by Settings and by every file or
     /// Git surface that needs to say why it cannot act.
     pub(super) fn host_snapshot(&self, device_id: &str) -> DeviceHostSnapshot {
