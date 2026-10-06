@@ -690,8 +690,39 @@ fn liveness_is_what_the_system_says() {
     let pid = child.id();
     assert!(is_alive(pid));
     child.kill().unwrap();
+    wait_unreaped(&mut child);
+    assert!(
+        !is_alive(pid),
+        "an ended child counted as alive before it was reaped"
+    );
     child.wait().unwrap();
-    assert!(gone_within(pid, Duration::from_secs(5)));
+}
+
+/// Waits for `child` to end without reaping it, so the system still holds its
+/// pid: a Unix zombie that answers signal 0, or a Windows process the
+/// `Child`'s handle keeps open.
+fn wait_unreaped(child: &mut std::process::Child) {
+    #[cfg(unix)]
+    {
+        // SAFETY: an all-zero `siginfo_t` is a valid value.
+        let mut info: libc::siginfo_t = unsafe { std::mem::zeroed() };
+        // SAFETY: `waitid` writes only into `info`, and `WNOWAIT` leaves the
+        // child to be reaped by `Child::wait`.
+        let waited = unsafe {
+            libc::waitid(
+                libc::P_PID,
+                child.id(),
+                &mut info,
+                libc::WEXITED | libc::WNOWAIT,
+            )
+        };
+        assert_eq!(waited, 0, "{}", std::io::Error::last_os_error());
+        // SAFETY: signal 0 only checks that the process exists.
+        let signalled = unsafe { libc::kill(child.id() as libc::pid_t, 0) };
+        assert_eq!(signalled, 0, "the ended child is no longer the system's");
+    }
+    #[cfg(windows)]
+    child.wait().unwrap();
 }
 
 #[test]
