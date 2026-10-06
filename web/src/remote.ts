@@ -97,6 +97,17 @@ export function remoteTargetOfPane(rest: SnapshotRest | null, paneId: string): s
   return null;
 }
 
+/**
+ * The id the pane's own Herdr knows it by (`w9J:p52`): what `herdr pane read`
+ * and `$HERDR_PANE_ID` name on that device. The core scopes a device's pane
+ * as `remote:<target>:pane:<id>`, the same split its label and Codex keys use.
+ */
+export function herdrPaneId(paneId: string): string {
+  if (!paneId.startsWith("remote:")) return paneId;
+  const at = paneId.indexOf(":pane:", "remote:".length);
+  return at === -1 ? paneId : paneId.slice(at + ":pane:".length);
+}
+
 /** The agents the sidebar lists: the selected host's, or this machine's. */
 export function contextAgents(rest: SnapshotRest | null, localAgents: AgentRow[]): AgentRow[] {
   const context = remoteContext(rest);

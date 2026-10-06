@@ -9,7 +9,7 @@ const context = (over: Partial<TerminalMenuContext>): TerminalMenuContext => ({ 
 describe("a right-click in a terminal", () => {
   it("edits the text, then lays out the tab, then offers the header's pane actions", () => {
     const items = terminalMenuItems(pane, "reviewer", context({ selection: true }));
-    expect(items.map((item) => item.id)).toEqual(["copy", "paste", "select_all", "find", "split_right", "split_down", "toggle_zoom", "copy_name", "close_pane"]);
+    expect(items.map((item) => item.id)).toEqual(["copy", "paste", "select_all", "find", "split_right", "split_down", "toggle_zoom", "copy_name", "copy_pane_id", "close_pane"]);
     expect(items.filter((item) => item.separated).map((item) => item.id)).toEqual(["split_right", "copy_name", "close_pane"]);
     expect(items.find((item) => item.id === "split_down")?.shortcut).toBe("⌘⇧D");
   });

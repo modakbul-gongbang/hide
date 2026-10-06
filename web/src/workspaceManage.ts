@@ -227,7 +227,7 @@ export function checkoutMenu(workspace: Workspace, checkout: Checkout, host: Men
 }
 
 export type AgentMenuItem = {
-  id: "show_agent" | "copy_title" | "copy_session_id" | "close_tab";
+  id: "show_agent" | "copy_title" | "copy_session_id" | "copy_pane_id" | "close_tab";
   label: string;
   unavailable: string | null;
   separated?: boolean;
@@ -246,6 +246,7 @@ export function agentMenu(agent: AgentRow, showChord: string, t: TFunction<"tran
     { id: "show_agent", label: t("workspace.menu.showAgent"), unavailable: null, shortcut: showChord },
     { id: "copy_title", label: t("workspace.menu.copyTitle"), unavailable: null, separated: true },
     { id: "copy_session_id", label: t("workspace.menu.copySession"), unavailable: agent.session_id ? null : t("workspace.unavailable.noSession") },
+    { id: "copy_pane_id", label: t("workspace.menu.copyPaneId"), unavailable: null },
     { id: "close_tab", label: t("workspace.menu.closeTab"), unavailable: null, separated: true },
   ];
 }

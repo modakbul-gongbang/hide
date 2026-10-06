@@ -42,7 +42,7 @@ import {
 import { hostBridge, revealHost } from "./host";
 import { commandLabel } from "./shortcutLabels";
 import type { Digit } from "./shortcuts";
-import { contextAgents, contextHome, contextWorkspaces, deviceCatalogLine, remoteContext, remoteView } from "./remote";
+import { contextAgents, contextHome, contextWorkspaces, deviceCatalogLine, herdrPaneId, remoteContext, remoteView } from "./remote";
 import { agentMenu, checkoutMenu, checkoutRemoving, FOLDER_CHECKOUT_ITEMS, folderMenu, primaryCheckout, projectMenu, remotePurposeProblem, type MenuHost, type MenuItem } from "./workspaceManage";
 import { focusedRemoteDevice, type AgentRow, type Checkout, type InactiveProjectGroup, type SnapshotRest, type Workspace } from "./snapshot";
 import { useShellStore } from "./store";
@@ -1486,6 +1486,8 @@ function useAgentRowMenu(actions: Actions): AgentRowMenu {
             return actions.copyText(agent.identity_label, "title");
           case "copy_session_id":
             return agent.session_id ? actions.copyText(agent.session_id, "session id") : undefined;
+          case "copy_pane_id":
+            return actions.copyText(herdrPaneId(agent.pane_id), "pane id");
           case "close_tab":
             return actions.closeTabOfPane(agent.pane_id);
         }
