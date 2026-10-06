@@ -1101,6 +1101,62 @@ fn view_authority_a_pane_focus_s_late_tab_move_is_its_answer_not_an_outside_focu
     assert_eq!(diagnostic_count(&runtime, "tab.focus.followed"), 1);
 }
 
+/// Issue #629. Two tab clicks and an Agent cycle commit meet a slow Herdr:
+/// t2 is on the wire, t1 waits on the lane behind it, and the commit's pane
+/// focus replaces t1's wait with its own. A session from before the clicks,
+/// still on t3, settles that wait, and t1 leaves anyway, because a pane
+/// focus does not take a tab focus off the lane. Herdr's answer to t1 is
+/// Hide's own: following it put the screen back on t1 and the shell
+/// recorded t1's pane as a visit, so the next cycle started from it.
+#[test]
+fn view_authority_a_tab_focus_that_leaves_after_its_wait_was_replaced_is_superseded() {
+    let checkout_path = "/private/tmp/hide-view-authority-left-replaced";
+    let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
+    let tabs = ["w-order:t1", "w-order:t2", "w-order:t3"];
+    let herdr_on = |tab: &str| Ok(tab_order_payload(checkout_path, &tabs, &tabs, tab));
+    runtime.ingest_session(herdr_on("w-order:t3"));
+    let focus = |tab_id: &str| RemoteControlAction::FocusTab {
+        tab_id: tab_id.to_owned(),
+    };
+    let acknowledged = || {
+        Ok(RemoteControlOutcome::Acknowledged {
+            created_tab_id: None,
+            created_pane_id: None,
+        })
+    };
+
+    assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2")));
+    assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t1")));
+    assert!(runtime.dispatch_json(&operator_focus_event("w-order:t3:p")));
+    runtime.ingest_session(herdr_on("w-order:t3"));
+    // The lane sends t2, then t1.
+    runtime.complete_lane_tab(focus("w-order:t2"), acknowledged(), 3);
+    runtime.complete_lane_tab(focus("w-order:t1"), acknowledged(), 3);
+
+    for answer in ["w-order:t2", "w-order:t1"] {
+        runtime.ingest_session(herdr_on(answer));
+        assert_eq!(
+            checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+            Some("w-order:t3"),
+            "Herdr naming {answer} does not move the tab the operator chose last"
+        );
+        assert_eq!(
+            runtime.snapshot().terminal.pane_id.as_deref(),
+            Some("w-order:t3:p")
+        );
+    }
+    assert_eq!(diagnostic_count(&runtime, "tab.focus.followed"), 0);
+    assert!(runtime.superseded_tab_focus.is_empty());
+
+    // Each answer was consumed, so a tab Herdr focuses on its own is followed.
+    runtime.ingest_session(herdr_on("w-order:t2"));
+    assert_eq!(
+        checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+        Some("w-order:t2")
+    );
+    assert_eq!(diagnostic_count(&runtime, "tab.focus.followed"), 1);
+}
+
 /// The tab wait a pane focus arms always ends: Herdr refusing the focus
 /// moves no tab, a focus in the tab Herdr already shows arms nothing, and a
 /// tab move Herdr never reports runs out with a tab focus's deadline. After

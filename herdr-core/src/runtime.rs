@@ -394,8 +394,8 @@ struct PendingViewFocus {
     /// Local pane controls settle by operation identity, never by target alone.
     pane_control_serial: Option<u64>,
     /// Whether the request has left for Herdr. A request still waiting its
-    /// turn on the control lane cannot be answered, so replacing it leaves no
-    /// late answer to explain, and its wait does not run out.
+    /// turn on the control lane cannot be answered yet, so replacing it
+    /// leaves no late answer until it leaves, and its wait does not run out.
     sent: bool,
     requested_at_unix_ms: u64,
 }
