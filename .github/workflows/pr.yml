@@ -147,9 +147,11 @@ jobs:
           # A cache per pull request ref pushed the repository past the 10 GB
           # cache limit and evicted main's; main's is the one every run reads.
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      # The ubuntu image ships rustfmt and Clippy with its Rust toolchain. A
-      # full plan covers the whole workspace; otherwise the plan names the
-      # changed crates and every crate that depends on them.
+      # rustfmt and Clippy come with the version `rust-toolchain.toml` names,
+      # which rustup installs on the job's first `rustc` or `cargo` call; the
+      # image's own toolchain is never used. A full plan covers the whole
+      # workspace; otherwise the plan names the changed crates and every crate
+      # that depends on them.
       - name: Check formatting and lint the planned crates
         run: |
           if [ "$FULL" = true ]; then

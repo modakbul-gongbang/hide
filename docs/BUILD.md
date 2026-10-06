@@ -1,7 +1,7 @@
 # Build output and worktrees
 
-This document owns where build output goes and why: every build inside the worktree that asked for it, the release binaries at their fixed path, and the machine's toolchain reused rather than reinstalled.
-The scripts named here are the executable authority; `scripts/tests/test_toolchain_reuse.py`, `test_ci_gate_portability.py` and `test_verification_builds.py` assert the parts a workflow depends on.
+This document owns where build output goes and why: every build inside the worktree that asked for it, the release binaries at their fixed path, one Rust version named by the repository, and the machine's toolchain reused rather than reinstalled.
+The scripts named here are the executable authority; `scripts/tests/test_toolchain_reuse.py`, `test_rust_toolchain_pin.py`, `test_ci_gate_portability.py` and `test_verification_builds.py` assert the parts a workflow depends on.
 
 ## One rule: build output lives in the worktree
 
@@ -41,6 +41,17 @@ Without it a verification runner pays for a whole toolchain and keeps it.
 rustup reads `RUSTUP_HOME` with a default of `$HOME/.rustup`, and a runner HOME makes that an empty directory; rustup does not fail there, it downloads and installs into it and reports the fact as a warning while exiting 0.
 That exit 0 is why two earlier workarounds never ran: each had diagnosed the missing toolchain correctly, and each guarded its recovery behind a cargo invocation failing.
 The cost was 1.3 GB of `.rustup` plus 128 MB of `.cargo` per run, 9.1 GB across eleven run directories, duplicating a toolchain already on the machine.
+
+## One toolchain version
+
+`rust-toolchain.toml` at the repository root names the exact Rust version, with rustfmt and Clippy, and every build uses it: each CI job on Linux, macOS and Windows, and every workstation checkout.
+rustup reads the file on the first `rustc` or `cargo` call and installs that version if it is missing, so no workflow has a toolchain step and no runner image's own Rust builds anything.
+Before the file existed, CI used whatever stable the runner image carried; on 2026-10-06 the ubuntu image moved to a new stable that deprecated one method and added a Clippy finding, and code already on `main` failed `-D warnings` in every pull request that touched Rust, and in `main` itself, with no change in this repository.
+
+The version is written only in that file; `scripts/tests/test_rust_toolchain_pin.py` fails when a workflow, script or document restates it, or when a script reaches a toolchain by its directory rather than through rustup, which would build with another version.
+A verification run under its own HOME still sources `scripts/toolchain-env.sh`, so rustup looks for the pinned version in the machine's `~/.rustup`: when it is installed there, nothing is downloaded; when it is not, rustup installs it there once, never under the runner HOME.
+
+Moving to a new version is a pull request that changes the file together with whatever the new compiler and Clippy ask of the code, proven by that pull request's CI; a finding is fixed, not silenced with `allow`.
 
 ## Two entrypoints
 
