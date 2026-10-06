@@ -117,6 +117,25 @@ const powershell = (script: string, env: NodeJS.ProcessEnv = {}): string =>
   });
 
 /**
+ * What holds TCP connections on this Windows machine now: the total, the
+ * count in each state, and the ten process names holding the most. Chromium's
+ * `ERR_NO_BUFFER_SPACE` (WSAENOBUFS) on a loopback connect to a test's hided
+ * left nothing saying who held the sockets; `windows-sockets-reporter.ts`
+ * prints this when a test attempt fails.
+ */
+export function windowsTcpSummary(): string[] {
+  return powershell(`
+    $connections = @(Get-NetTCPConnection)
+    $names = @{}
+    foreach ($process in Get-Process) { $names[[int]$process.Id] = $process.ProcessName }
+    "TCP connections: $($connections.Count)"
+    "by state: " + (($connections | Group-Object State | Sort-Object Count -Descending | ForEach-Object { "$($_.Name) $($_.Count)" }) -join ', ')
+    "by process: " + (($connections | ForEach-Object { $name = $names[[int]$_.OwningProcess]; if ($name) { $name } else { "pid $($_.OwningProcess)" } } |
+      Group-Object | Sort-Object Count -Descending | Select-Object -First 10 | ForEach-Object { "$($_.Name) $($_.Count)" }) -join ', ')
+  `).split(/\r?\n/).filter(Boolean);
+}
+
+/**
  * `pid` and its live descendants. Windows keeps a running executable and a
  * process's working folder locked, and a pane's processes can outlive the
  * Herdr server that started them, so a fixture lists its tree before it
