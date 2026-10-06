@@ -1037,6 +1037,11 @@ pub(super) struct KitAgentSetPayload {
 #[derive(Debug, Deserialize)]
 pub(super) struct KitCheckPayload {}
 
+/// Add device opened: the account's Host entries are listed once, with where
+/// each one leads (`status.ssh_hosts`).
+#[derive(Debug, Deserialize)]
+pub(super) struct SshHostsListPayload {}
+
 /// Whether any window draws this daemon's snapshot, sent by hided as its
 /// first window arrives and its last one leaves. Without one, the readers
 /// that only feed what a window draws (ports, worktrees, pull requests,
@@ -1285,6 +1290,7 @@ pub(super) enum Event {
     KitAgentSet(KitAgentSetPayload),
     CodexDaemonDisable(CodexDaemonDisablePayload),
     KitCheck(KitCheckPayload),
+    SshHostsList(SshHostsListPayload),
     UiAttached(UiAttachedPayload),
     AiSettings(AiSettingsPayload),
     TerminalResize(TerminalResizePayload),
@@ -1494,6 +1500,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "kit_agent_set" => decode!(KitAgentSetPayload, KitAgentSet),
         "codex_daemon_disable" => decode!(CodexDaemonDisablePayload, CodexDaemonDisable),
         "kit_check" => decode!(KitCheckPayload, KitCheck),
+        "ssh_hosts_list" => decode!(SshHostsListPayload, SshHostsList),
         "ui_attached" => decode!(UiAttachedPayload, UiAttached),
         "ai_settings" => decode!(AiSettingsPayload, AiSettings),
         "terminal_resize" => decode!(TerminalResizePayload, TerminalResize),
@@ -1761,6 +1768,7 @@ impl Runtime {
                 payload.agents.as_deref(),
             ),
             Event::KitCheck(_) => self.request_kit_check(),
+            Event::SshHostsList(_) => self.request_ssh_hosts(),
             // Nothing drawn changes; the coordinator reads it on its next wake.
             Event::UiAttached(payload) => {
                 self.ui_attached = payload.attached;

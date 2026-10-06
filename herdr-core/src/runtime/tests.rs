@@ -64,6 +64,9 @@ mod session_navigation;
 mod shortcut_import;
 #[path = "tests/snapshot_delta.rs"]
 mod snapshot_delta;
+#[cfg(unix)]
+#[path = "tests/ssh_hosts.rs"]
+mod ssh_hosts_list;
 #[path = "tests/terminal.rs"]
 mod terminal;
 #[path = "tests/tree_close.rs"]

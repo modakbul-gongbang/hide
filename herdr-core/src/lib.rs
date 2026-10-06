@@ -52,6 +52,7 @@ pub mod schema;
 mod session_sync;
 mod sidebar;
 mod split_tree;
+mod ssh_hosts;
 pub mod tasks;
 mod terminal_attachments;
 mod terminal_recovery;

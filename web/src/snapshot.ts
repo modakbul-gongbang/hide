@@ -1158,6 +1158,24 @@ export type AiRefusal = {
   using: string | null;
 };
 
+/** One concrete Host of `~/.ssh/config`: where `ssh -G` says it leads and the device that already uses it. */
+export type SshHost = {
+  alias: string;
+  /** `user@host:port`; null when it could not be resolved (`problem` says why). */
+  address: string | null;
+  /** The name of the registered device using this alias or reaching the same address. */
+  added_as: string | null;
+  problem: "ssh_missing" | "ssh_failed" | "timed_out" | null;
+};
+
+/** `idle` before the first `ssh_hosts_list`, `loading` while one runs (the last answer stays), `ready` once it is in. */
+export type SshHosts = {
+  state: "idle" | "loading" | "ready";
+  hosts: SshHost[];
+  /** The config names more concrete aliases than are listed. */
+  truncated: boolean;
+};
+
 export type BackgroundAi = {
   /** Use Hide AI; off, no model is asked anything. Absent from an older daemon, which is on. */
   enabled?: boolean;
@@ -1380,6 +1398,8 @@ export type SnapshotRest = {
     environment?: EnvironmentStatus[];
     agent_hooks?: AgentHooks;
     background_ai?: BackgroundAi;
+    /** The Host entries Add device lists, read on an `ssh_hosts_list` event (PRD settings-cleanup D-19). */
+    ssh_hosts?: SshHosts;
     diagnostics?: CoreDiagnostic[];
     async_operations?: AsyncOperation[];
     tab_rename?: { request_id: string; tab_id: string; label: string; phase: "pending" | "succeeded" | "failed" } | null;

@@ -3876,6 +3876,8 @@ pub struct StatusSnapshot {
     pub environment: Vec<EnvironmentStatusSnapshot>,
     pub agent_hooks: AgentHooksSnapshot,
     pub background_ai: BackgroundAiSnapshot,
+    /// The Host entries Add device offers (Settings › Devices).
+    pub ssh_hosts: SshHostsSnapshot,
     pub diagnostics: Vec<DiagnosticSnapshot>,
     pub last_error: Option<LastErrorSnapshot>,
     /// Core-owned operations which are waiting for a transport result or an
@@ -3891,6 +3893,43 @@ pub struct StatusSnapshot {
     /// themselves, oldest first and bounded, so a `hide browser open` waiting
     /// on one reads its own (issue 155).
     pub browser_opens: Vec<BrowserOpenReceiptSnapshot>,
+}
+
+/// The concrete Host entries of the account's `~/.ssh/config`, as Add device
+/// lists them (PRD settings-cleanup D-19). Hide keeps only an alias and a name
+/// for a device; this is read on request and never stored.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct SshHostsSnapshot {
+    /// `idle` before the first request, `loading` while one runs, `ready`
+    /// once its answer is in; a later request shows the last answer as
+    /// `loading` until the new one lands.
+    pub state: String,
+    pub hosts: Vec<SshHostSnapshot>,
+    /// The config names more concrete aliases than are listed.
+    pub truncated: bool,
+}
+
+impl Default for SshHostsSnapshot {
+    fn default() -> Self {
+        Self {
+            state: "idle".to_owned(),
+            hosts: Vec::new(),
+            truncated: false,
+        }
+    }
+}
+
+/// One alias of the config.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize)]
+pub struct SshHostSnapshot {
+    pub alias: String,
+    /// `user@host:port` as `ssh -G` resolved it; absent when it could not.
+    pub address: Option<String>,
+    /// The name of the registered device that already uses this alias or
+    /// reaches the same address.
+    pub added_as: Option<String>,
+    /// Why there is no address: `ssh_missing`, `ssh_failed` or `timed_out`.
+    pub problem: Option<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
@@ -4333,6 +4372,7 @@ impl Snapshot {
                 environment: Vec::new(),
                 agent_hooks: AgentHooksSnapshot::default(),
                 background_ai: BackgroundAiSnapshot::unread(),
+                ssh_hosts: SshHostsSnapshot::default(),
                 diagnostics: Vec::new(),
                 last_error: None,
                 async_operations: Vec::new(),
