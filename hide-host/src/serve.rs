@@ -215,6 +215,15 @@ pub struct Env {
     /// Raised when the node's owner goes away: a kit step still running
     /// ends the child it waits on, and no further part starts.
     pub stop: Arc<AtomicBool>,
+    /// The background AI backends this node keeps for its core.
+    pub ai: Arc<crate::ai::Backends>,
+}
+
+/// The AI backends a node answering for this process keeps, shared by every
+/// request it serves.
+fn process_ai() -> Arc<crate::ai::Backends> {
+    static BACKENDS: std::sync::OnceLock<Arc<crate::ai::Backends>> = std::sync::OnceLock::new();
+    Arc::clone(BACKENDS.get_or_init(Arc::default))
 }
 
 /// Where a node's install kit takes its parts from, which decides the
@@ -238,6 +247,18 @@ impl Env {
             home: std::env::var_os("HOME").map(PathBuf::from),
             kit: KitPlace::Installed,
             stop: crate::kit::process_stop(),
+            ai: process_ai(),
+        }
+    }
+
+    /// A node of its own, answering for `home`: it installs no kit and keeps
+    /// its own AI backends, which end when the last copy of it is dropped.
+    pub fn standalone(home: Option<PathBuf>) -> Self {
+        Self {
+            home,
+            kit: KitPlace::Standalone,
+            stop: Arc::default(),
+            ai: Arc::default(),
         }
     }
 
@@ -439,6 +460,19 @@ pub fn handle_with_progress(
         }
         Call::Git { root, command } => {
             to_value(crate::git_command::run(&absolute(&root)?, &command)?)
+        }
+        Call::AiAvailability { backend } => to_value(env.ai.availability(&backend)?),
+        Call::AiModels { backend } => to_value(env.ai.models(&backend)?),
+        Call::AiExecute { backend, request } => to_value(env.ai.execute(
+            &backend,
+            request,
+            &mut || progress(Value::Null),
+        )?),
+        Call::AiMeasurement { backend } => to_value(env.ai.measurement(&backend)?),
+        Call::AiRestart { backend } => to_value(env.ai.restart(&backend)?),
+        Call::AiRelease { instance } => {
+            env.ai.release(instance);
+            to_value(())
         }
         Call::CodexCredentials { codex_home } => {
             to_value(crate::usage::codex_credentials(&absolute(&codex_home)?))

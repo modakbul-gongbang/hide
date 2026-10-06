@@ -9,14 +9,23 @@ use crate::ProviderId;
 /// serializes as a flat JSON object without its absent fields.
 #[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct AiLogEvent {
+    #[serde(deserialize_with = "crate::owned::cow")]
     pub event: Cow<'static, str>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub request_id: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::owned::optional_cow"
+    )]
     pub feature_id: Option<Cow<'static, str>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub provider: Option<ProviderId>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::owned::optional_cow"
+    )]
     pub outcome_class: Option<Cow<'static, str>>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
@@ -26,7 +35,11 @@ pub struct AiLogEvent {
     pub output_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub attempt: Option<u8>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "crate::owned::optional_cow"
+    )]
     pub schema_version: Option<Cow<'static, str>>,
     /// The resident app-server's pid, and the process measurement taken after
     /// the turn. Present on codex requests; `descendants`/`rss_bytes` are

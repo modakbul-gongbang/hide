@@ -46,6 +46,9 @@ That covers every child, the availability and model-list probes and the Weekly U
 A backend's config can carry a `search_path` of its own, which is how a test gives a stand-in script an interpreter only that value reaches without starting the developer's login shell (`hide-ai/tests/search_path.rs`); a CLI named by file with no `search_path` is run with the process's `PATH`, since nothing searched for it.
 The tests that need a missing CLI name an absolute path that does not exist, because a bare name is looked up on the account's search, which asks the login shell.
 A new agent is one registry entry and one backend; the router, the settings and the core iterate `PROVIDERS` and name no provider.
+The backends run on the core's own node, never inside the core: the core's routers hold a `NodeBackend` per provider (`herdr-core/src/ai.rs`), which carries each probe, model list, request and measurement to the node as a call and reads the answer back.
+The node keeps one real backend per core instance in a registry capped at 64 (a few routers, each with one backend per registered provider) (`hide-host/src/ai.rs`), refuses the next, and drops an instance when the core's `NodeBackend` is dropped, so a router rebuilt for a changed model choice ends the old child.
+A request reports progress once a second while it runs, and a cancel in the core stops the node's request through that report.
 
 - `codex`: `codex app-server --listen stdio://`, the official JSON-RPC surface of the Codex CLI, driven with an ephemeral read-only thread, the feature's system prompt as the base instructions, every optional feature disabled, and the feature's output schema attached to the turn.
   The default model is `gpt-5.6-luna`.
@@ -348,6 +351,7 @@ A line carries the request id, feature id, provider, outcome class, attempt, dur
 Every `ai.request.finished` of a provider that declares itself measurable (`AiBackend::measurable()`, today only codex, whose app-server is resident) also carries the app-server pid and the process measurement (`app_server_pid`, `descendants`, `rss_bytes`), or `measurement=unavailable` where the platform cannot measure it.
 It never carries the prompt, the input, the generated text, a token, a file path from a transcript, or a provider thread id.
 Hide's core writes the events of its own routers and backends (the label analyzer, the Factory's judgments, the Settings probe and Project Memory) to its diagnostic log, `Logs/core.jsonl` beside `state.json`, as records with `component` `ai` and the event name as `kind`.
+A backend's events are produced on the node; the node holds at most 256 of them per backend and returns them with the next answer to that backend, where the core writes them, and a held overflow arrives as one `ai.log.dropped` event with its count.
 
 ## Known gaps
 

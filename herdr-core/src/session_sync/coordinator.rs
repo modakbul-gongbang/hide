@@ -132,7 +132,14 @@ fn run_coordinator(
     // The provider probe starts a `codex app-server` child and runs
     // `claude auth status`, so it is a reader like the three above and it
     // reads nothing at all while the Background AI group is off screen.
-    let mut ai_reader = context.is_local().then(crate::ai::AiReader::new);
+    let mut ai_reader = context
+        .is_local()
+        .then(|| {
+            context
+                .node()
+                .map(|node| crate::ai::AiReader::new(Arc::clone(node)))
+        })
+        .flatten();
     if let Some(home) = hook_home.as_deref() {
         publish_ai_settings(&context, home);
     }

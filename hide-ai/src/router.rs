@@ -509,7 +509,7 @@ impl AiRouter {
         let mut state = self.lock();
         if state.in_flight_count >= self.config.max_in_flight {
             return Err(AiError::OverBudget {
-                cap: "in_flight",
+                cap: "in_flight".into(),
                 measured: state.in_flight_count as u64 + 1,
             });
         }
@@ -524,7 +524,7 @@ impl AiRouter {
         }
         if state.recent_starts.len() >= self.config.max_per_minute {
             return Err(AiError::OverBudget {
-                cap: "per_minute",
+                cap: "per_minute".into(),
                 measured: state.recent_starts.len() as u64 + 1,
             });
         }
@@ -1078,7 +1078,10 @@ impl AiRouter {
                 "app_server_restart_cap".to_owned(),
             ))
         } else {
-            Some(AiError::OverBudget { cap, measured })
+            Some(AiError::OverBudget {
+                cap: cap.into(),
+                measured,
+            })
         }
     }
 

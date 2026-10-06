@@ -97,8 +97,9 @@ impl fmt::Display for RequestId {
 
 /// What a feature submits. Everything a provider needs to answer, and nothing
 /// about how any provider works.
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, PartialEq, Deserialize, Serialize)]
 pub struct AiRequest {
+    #[serde(deserialize_with = "owned::cow")]
     pub feature_id: Cow<'static, str>,
     pub request_id: RequestId,
     /// Identifies what the request is about (a pane, a checkout); together
@@ -111,6 +112,7 @@ pub struct AiRequest {
     pub output_schema: Value,
     pub deadline: Duration,
     /// Version of the feature's prompt and schema pair, for the log only.
+    #[serde(deserialize_with = "owned::cow")]
     pub schema_version: Cow<'static, str>,
 }
 
@@ -192,7 +194,8 @@ pub enum AiError {
     /// fault. `cap` names which limit; `measured` is the value that crossed
     /// it.
     OverBudget {
-        cap: &'static str,
+        #[serde(deserialize_with = "owned::cow")]
+        cap: Cow<'static, str>,
         measured: u64,
     },
     /// No connected provider; carries each provider's availability.
@@ -320,4 +323,22 @@ pub trait AiBackend: Send + Sync {
     /// one. The router calls this when the process cap is crossed. A backend
     /// with no resident process does nothing.
     fn restart(&self) {}
+}
+
+/// A name that is a literal where it is made and owned where it was read
+/// off the wire: serde would otherwise only read one that lives forever.
+pub(crate) mod owned {
+    use std::borrow::Cow;
+
+    use serde::{Deserialize, Deserializer};
+
+    pub fn cow<'de, D: Deserializer<'de>>(reader: D) -> Result<Cow<'static, str>, D::Error> {
+        String::deserialize(reader).map(Cow::Owned)
+    }
+
+    pub fn optional_cow<'de, D: Deserializer<'de>>(
+        reader: D,
+    ) -> Result<Option<Cow<'static, str>>, D::Error> {
+        Option::<String>::deserialize(reader).map(|name| name.map(Cow::Owned))
+    }
 }

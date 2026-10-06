@@ -6,7 +6,6 @@
 
 use std::fs::File;
 use std::path::PathBuf;
-use std::sync::Arc;
 use std::sync::atomic::Ordering;
 use std::time::Duration;
 
@@ -30,11 +29,7 @@ impl Local {
     /// the parts are.
     pub fn new(home: Option<PathBuf>) -> Self {
         Self {
-            env: Env {
-                home,
-                kit: KitPlace::Standalone,
-                stop: Arc::default(),
-            },
+            env: Env::standalone(home),
         }
     }
 

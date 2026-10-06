@@ -278,6 +278,37 @@ pub enum Call {
         root: String,
         command: crate::git::GitCommand,
     },
+    /// Whether a background AI backend can answer now
+    /// (`ai::Logged<ai::Availability>`).
+    AiAvailability {
+        backend: crate::ai::BackendSpec,
+    },
+    /// The models a backend's provider offers the logged-in account
+    /// (`ai::Logged<ai::ModelCatalog>`).
+    AiModels {
+        backend: crate::ai::BackendSpec,
+    },
+    /// One request to a backend (`ai::Logged<Result<ai::AiResponse,
+    /// ai::AiError>>`), reporting at least once a second; a report answered
+    /// with false cancels it.
+    AiExecute {
+        backend: crate::ai::BackendSpec,
+        request: crate::ai::AiRequest,
+    },
+    /// The backend's process measurement from its last request
+    /// (`ai::ProcessMeasurement`).
+    AiMeasurement {
+        backend: crate::ai::BackendSpec,
+    },
+    /// Ends the backend's resident process so its next request starts a
+    /// fresh one.
+    AiRestart {
+        backend: crate::ai::BackendSpec,
+    },
+    /// Drops the backend the core no longer has, ending its process.
+    AiRelease {
+        instance: u64,
+    },
     /// The Codex login in `<codex_home>/auth.json`
     /// (`usage::CredentialsAnswer`).
     CodexCredentials {

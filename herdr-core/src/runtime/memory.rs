@@ -691,6 +691,7 @@ impl Runtime {
         let settings = self.ai_settings.clone().unwrap_or_default();
         self.memory_analysis_settings = analyzes.then(|| settings.clone());
         let node = self.node.clone();
+        let ai_node = self.own_node();
         thread::Builder::new()
             .name("hide-project-memory-write".to_owned())
             .spawn(move || {
@@ -699,10 +700,10 @@ impl Runtime {
                     result = match home {
                         Some(home) => Ok(analyze_project(
                             &node,
+                            &crate::ai::memory_router(&ai_node, &settings),
                             &database,
                             &home,
                             &checkout_path,
-                            &settings,
                             &cancel,
                             |snapshot| {
                                 report_analysis(&context, generation, &checkout_path, snapshot);
@@ -1381,19 +1382,19 @@ fn report_analysis(
 
 fn analyze_project(
     node: &NodeId,
+    router: &hide_ai::AiRouter,
     database: &Path,
     home: &Path,
     checkout_path: &str,
-    settings: &hide_ai::AiSettings,
     cancel: &CancelToken,
     progress: impl FnMut(MemoryAnalysisSnapshot),
 ) -> MemoryMutationOutcome {
     let result = analyze_project_inner(
         node,
+        router,
         database,
         home,
         checkout_path,
-        settings,
         cancel,
         progress,
     );
@@ -1414,10 +1415,10 @@ fn analyze_project(
 
 fn analyze_project_inner(
     node: &NodeId,
+    router: &hide_ai::AiRouter,
     database: &Path,
     home: &Path,
     checkout_path: &str,
-    settings: &hide_ai::AiSettings,
     cancel: &CancelToken,
     mut progress: impl FnMut(MemoryAnalysisSnapshot),
 ) -> Result<MemoryMutationOutcome, AnalysisFailure> {
@@ -1432,7 +1433,6 @@ fn analyze_project_inner(
     store
         .ensure_project(&identity.id, &identity.root, node.as_str())
         .map_err(|error| AnalysisFailure::Local(error.to_string()))?;
-    let router = crate::ai::memory_router(settings);
     let analyzer = HideNativeAnalyzer;
     let mut analyzed = 0;
     let mut failed = 0;
@@ -1487,7 +1487,7 @@ fn analyze_project_inner(
 
         match analyze_session(
             &mut store,
-            &router,
+            router,
             &analyzer,
             &identity.id,
             &session,

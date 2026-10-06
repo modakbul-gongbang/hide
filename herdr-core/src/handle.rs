@@ -274,6 +274,7 @@ impl Core {
             environment_home.clone(),
             Arc::downgrade(&runtime),
             &options.node_id,
+            Arc::clone(&own_node),
         ) {
             Ok(services) => {
                 let services = Arc::new(services);

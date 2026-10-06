@@ -4,7 +4,6 @@
 //! the operator's own login.
 
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 use hide_ai::{CancelToken, ClaudeCliBackend, ClaudeConfig};
 use hide_node_link::usage::{
@@ -17,9 +16,6 @@ use serde_json::Value;
 const CODEX_TAIL_BYTES: u64 = 2 * 1024 * 1024;
 /// The name the CLI is looked up by on `PATH`.
 const CLAUDE_BINARY: &str = "claude";
-/// How often a running `/usage` read tells its caller it still runs, which
-/// is when the caller can answer with a cancel.
-const HEARTBEAT: Duration = Duration::from_secs(1);
 
 /// The token and account in `<codex_home>/auth.json`.
 pub fn codex_credentials(codex_home: &Path) -> CredentialsAnswer {
@@ -86,7 +82,7 @@ fn parse_latest_codex_weekly_usage(contents: &str) -> Option<CodexWeeklyUsage> {
 }
 
 /// Runs `claude -p /usage` in `cwd` and answers what it printed. The run
-/// reports through `report` at least every [`HEARTBEAT`]; a report answered
+/// reports through `report` at least once a second; a report answered
 /// with false cancels it, which kills the child.
 pub fn claude_usage_text(cwd: &Path, report: &mut dyn FnMut() -> bool) -> UsageText {
     let backend = ClaudeCliBackend::new(ClaudeConfig {
@@ -95,33 +91,14 @@ pub fn claude_usage_text(cwd: &Path, report: &mut dyn FnMut() -> bool) -> UsageT
         ..ClaudeConfig::default()
     });
     let cancel = CancelToken::new();
-    let (sender, answer) = std::sync::mpsc::channel();
-    let run = {
-        let cancel = cancel.clone();
-        std::thread::Builder::new()
-            .name("hide-node-claude-usage".into())
-            .spawn(move || {
-                let _ = sender.send(backend.usage_text(&cancel));
-            })
-    };
-    if let Err(error) = run {
-        return UsageText::Failed {
-            error: hide_ai::UsageError::Failed(format!("usage_thread_{}", error.kind())),
-        };
-    }
-    let result = loop {
-        match answer.recv_timeout(HEARTBEAT) {
-            Ok(result) => break result,
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
-                if !report() {
-                    cancel.cancel();
-                }
-            }
-            Err(std::sync::mpsc::RecvTimeoutError::Disconnected) => {
-                break Err(hide_ai::UsageError::Failed("usage_thread_lost".to_owned()));
-            }
-        }
-    };
+    let running = cancel.clone();
+    let result = crate::reporting::run_reporting(
+        "hide-node-claude-usage",
+        move || backend.usage_text(&running),
+        &|| cancel.cancel(),
+        report,
+    )
+    .unwrap_or_else(|reason| Err(hide_ai::UsageError::Failed(reason)));
     match result {
         Ok(text) => UsageText::Text { text },
         Err(error) => UsageText::Failed { error },

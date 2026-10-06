@@ -65,13 +65,16 @@ impl LabelServices {
         home: Option<PathBuf>,
         runtime: Weak<Mutex<Runtime>>,
         node: &crate::node::NodeId,
+        own_node: Arc<dyn NodeLink>,
     ) -> Result<Self, String> {
         let store = Arc::new(LabelStore::open(state_dir, home.as_deref(), node.as_str()));
         let settings_home = home.clone();
         let standing = Arc::new(crate::ai::AiStanding::default());
+        // The labels run on the core's own machine's provider logins.
         let analyzer = LabelAnalyzer::spawn(
             Box::new(move || analysis_settings(&runtime, settings_home.as_deref())),
             Arc::clone(&standing),
+            own_node,
         )?;
         Ok(Self {
             store,
