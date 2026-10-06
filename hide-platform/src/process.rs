@@ -56,6 +56,58 @@ pub const MAX_CAPTURE_BYTES: usize = 1024 * 1024;
 /// that control this account's launch environment.
 pub const OWNER_LAUNCH_KEYS: &[&str] = &["HIDE_PROCESS_OWNER_FD", "HIDE_PROCESS_OWNER_JOB"];
 
+/// The variables a child that has to find the account's own login receives
+/// from this process, and nothing else: what locates the account (its home
+/// and name), the programs it runs (`PATH`, and on Windows `PATHEXT`), and
+/// the scratch and state folders the system gives every process.
+///
+/// Windows needs more than Unix because its programs read them where Unix
+/// programs read `HOME`: Node takes the home folder from `USERPROFILE`, its
+/// network and crypto start-up fail without `SystemRoot`, and credentials and
+/// caches sit under `APPDATA` and `LOCALAPPDATA`. The rest are the standard
+/// system folders and shell a normal login has (`ComSpec`, `windir`,
+/// `SystemDrive`, `ProgramFiles`, `ProgramFiles(x86)`, `ProgramData`,
+/// `HOMEDRIVE`, `HOMEPATH`), and `CLAUDE_CODE_GIT_BASH_PATH`: the Claude CLI
+/// needs Git Bash on native Windows and finds it through that variable or
+/// `ProgramFiles`. None is a hook switch or a secret. Anything a caller wants kept
+/// out of the child (a hook switch, a nested-session marker) is left out by
+/// not being listed.
+pub const LOGIN_CHILD_VARIABLES: &[&str] = if cfg!(windows) {
+    &[
+        "PATH",
+        "PATHEXT",
+        "SystemRoot",
+        "USERPROFILE",
+        "USERNAME",
+        "TEMP",
+        "TMP",
+        "APPDATA",
+        "LOCALAPPDATA",
+        "ComSpec",
+        "windir",
+        "SystemDrive",
+        "ProgramFiles",
+        "ProgramFiles(x86)",
+        "ProgramData",
+        "HOMEDRIVE",
+        "HOMEPATH",
+        "CLAUDE_CODE_GIT_BASH_PATH",
+    ]
+} else {
+    &["HOME", "PATH", "USER", "LOGNAME", "TMPDIR"]
+};
+
+/// Gives `command` exactly [`LOGIN_CHILD_VARIABLES`], each copied from this
+/// process when it is set, and removes every other inherited variable. A
+/// variable the caller sets on `command` afterwards is added to those.
+pub fn restrict_to_login_environment(command: &mut Command) {
+    let kept: Vec<_> = LOGIN_CHILD_VARIABLES
+        .iter()
+        .filter_map(|key| std::env::var_os(key).map(|value| (*key, value)))
+        .collect();
+    command.env_clear().envs(kept);
+}
+
 /// A cooperative Unix child's independent watch of its owning process.
 /// Hold it until all work and output are finished. It uses its own channel,
 /// not stdin; after startup the descriptor is close-on-exec. Only one watch

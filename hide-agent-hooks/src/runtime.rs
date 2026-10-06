@@ -62,6 +62,15 @@ pub fn hook_stdout_with_context(
     serde_json::to_string(&output).ok()
 }
 
+/// Whether this hook process was started by Cursor. Cursor documents
+/// `CURSOR_VERSION` as set for every hook it runs; its page on Claude Code
+/// hooks it loads does not say whether those get it too (the same runner and
+/// the `CLAUDE_PROJECT_DIR` alias it documents suggest they do), so this
+/// rests on that documented variable and nothing more.
+pub fn run_by_cursor<V>(variable: impl Fn(&str) -> Option<V>) -> bool {
+    variable("CURSOR_VERSION").is_some()
+}
+
 /// `json` with every character outside ASCII written as a `\u` escape,
 /// which every JSON reader decodes to the same value.
 ///
@@ -126,12 +135,7 @@ pub fn hook_source_id() -> String {
 /// Returns `None` for anything that is not Hide's marker, which is how a
 /// third party's entry is left alone.
 pub fn parse_source_version(value: &str) -> Option<u32> {
-    let rest = value.strip_prefix(HOOK_SOURCE_NAME)?;
-    let digits = rest.strip_prefix('@')?;
-    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
-        return None;
-    }
-    digits.parse().ok()
+    parse_marker(HOOK_SOURCE_NAME, value)
 }
 
 /// Finds Hide's marker anywhere in a hook entry's command line.
@@ -140,20 +144,34 @@ pub fn parse_source_version(value: &str) -> Option<u32> {
 /// from it rather than from a key of Hide's own invention that a runtime's
 /// settings validator might reject.
 pub fn marker_version_in(command: &str) -> Option<u32> {
+    marker_version_of(HOOK_SOURCE_NAME, command)
+}
+
+/// [`marker_version_in`] for any marker name: the guidance hooks of the
+/// agents beyond Claude Code and Codex carry their own (`crate::guidance`).
+pub fn marker_version_of(name: &str, command: &str) -> Option<u32> {
     let mut cursor = command;
-    while let Some(index) = cursor.find(HOOK_SOURCE_NAME) {
+    while let Some(index) = cursor.find(name) {
         let candidate = &cursor[index..];
         let end = candidate
             .find(|character: char| {
                 !character.is_ascii_alphanumeric() && character != '-' && character != '@'
             })
             .unwrap_or(candidate.len());
-        if let Some(version) = parse_source_version(&candidate[..end]) {
+        if let Some(version) = parse_marker(name, &candidate[..end]) {
             return Some(version);
         }
-        cursor = &cursor[index + HOOK_SOURCE_NAME.len()..];
+        cursor = &cursor[index + name.len()..];
     }
     None
+}
+
+fn parse_marker(name: &str, value: &str) -> Option<u32> {
+    let digits = value.strip_prefix(name)?.strip_prefix('@')?;
+    if digits.is_empty() || !digits.bytes().all(|byte| byte.is_ascii_digit()) {
+        return None;
+    }
+    digits.parse().ok()
 }
 
 /// An agent runtime whose global hook configuration Hide can instrument.

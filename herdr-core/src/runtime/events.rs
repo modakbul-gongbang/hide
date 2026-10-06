@@ -1002,6 +1002,19 @@ pub(super) struct KitReinstallPayload {
     pub(super) device_id: String,
     #[serde(default)]
     pub(super) components: Option<Vec<hide_kit::ComponentId>>,
+    /// Agents to repair, by adapter id; with `components`, only what is
+    /// named is repaired.
+    #[serde(default)]
+    pub(super) agents: Option<Vec<String>>,
+}
+
+/// The operator switched an agent on or off from its row (issue #517); every
+/// adapter id has a switch, whether or not the agent is set up there.
+#[derive(Debug, Deserialize)]
+pub(super) struct KitAgentSetPayload {
+    pub(super) device_id: String,
+    pub(super) agent: String,
+    pub(super) enabled: bool,
 }
 
 /// The operator switched a kit part on or off from its row (PRD
@@ -1247,6 +1260,7 @@ pub(super) enum Event {
     CancelRepositoryClone(CancelRepositoryClonePayload),
     KitReinstall(KitReinstallPayload),
     KitComponentSet(KitComponentSetPayload),
+    KitAgentSet(KitAgentSetPayload),
     KitCheck(KitCheckPayload),
     UiAttached(UiAttachedPayload),
     AiSettings(AiSettingsPayload),
@@ -1453,6 +1467,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "cancel_repository_clone" => decode!(CancelRepositoryClonePayload, CancelRepositoryClone),
         "kit_reinstall" => decode!(KitReinstallPayload, KitReinstall),
         "kit_component_set" => decode!(KitComponentSetPayload, KitComponentSet),
+        "kit_agent_set" => decode!(KitAgentSetPayload, KitAgentSet),
         "kit_check" => decode!(KitCheckPayload, KitCheck),
         "ui_attached" => decode!(UiAttachedPayload, UiAttached),
         "ai_settings" => decode!(AiSettingsPayload, AiSettings),
@@ -1709,9 +1724,14 @@ impl Runtime {
                 payload.component,
                 payload.enabled,
             ),
-            Event::KitReinstall(payload) => {
-                self.request_kit_reinstall(&payload.device_id, payload.components.as_deref())
+            Event::KitAgentSet(payload) => {
+                self.request_kit_agent_set(&payload.device_id, &payload.agent, payload.enabled)
             }
+            Event::KitReinstall(payload) => self.request_kit_reinstall(
+                &payload.device_id,
+                payload.components.as_deref(),
+                payload.agents.as_deref(),
+            ),
             Event::KitCheck(_) => self.request_kit_check(),
             // Nothing drawn changes; the coordinator reads it on its next wake.
             Event::UiAttached(payload) => {

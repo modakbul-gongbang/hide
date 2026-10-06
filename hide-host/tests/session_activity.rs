@@ -188,7 +188,7 @@ fn serve_preserves_kit_protocol_alongside_activity() {
     }, "cli_dir":"relative-refused", "herdr_socket":null});
     let parsed: Call = serde_json::from_value(reinstall.clone()).unwrap();
     assert!(
-        matches!(parsed, Call::Kit {action: KitAction::Reinstall {ref components, ref turn_off}, ..}
+        matches!(parsed, Call::Kit {action: KitAction::Reinstall {ref components, ref turn_off, ..}, ..}
         if components == &[hide_kit::ComponentId::CodexPerPane] && turn_off == components)
     );
     let mut reinstall_request = reinstall;

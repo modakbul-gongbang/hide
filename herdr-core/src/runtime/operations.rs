@@ -43,6 +43,32 @@ pub(super) struct PendingClose {
     pub(super) selection_restore: Option<CloseSelectionRestore>,
 }
 
+impl PendingClose {
+    /// Still on its way to a confirmed close: not refused, failed or unknown.
+    pub(super) fn settling(&self) -> bool {
+        matches!(
+            self.phase.as_str(),
+            "preparing" | "transmitting" | "awaiting_topology" | "completed"
+        )
+    }
+
+    /// The tab this close takes out of the Agent areas while it runs: the
+    /// whole tab, from approval until a refusal, failure or unknown result
+    /// puts it back. A close that must first open a replacement shell leaves
+    /// its tab in place, because the area would otherwise stand empty until
+    /// that shell exists.
+    pub(super) fn leaving_tab(&self) -> Option<&str> {
+        let whole_tab = match &self.request.target {
+            live::CloseCaptureTarget::Tab { .. } => true,
+            live::CloseCaptureTarget::Pane { pane_id } => {
+                matches!(self.scope_pane_ids.as_slice(), [only] if only == pane_id)
+            }
+        };
+        (whole_tab && self.settling() && !self.request.context.replacement_shell)
+            .then_some(self.scope_id.as_str())
+    }
+}
+
 #[derive(Clone, Debug)]
 pub(super) struct PendingPaneOperation {
     pub(super) id: String,

@@ -20,6 +20,7 @@ use std::time::{Duration, Instant};
 
 use hide_agent_hooks::counters;
 use hide_agent_hooks::diagnosis::Diagnosis;
+use hide_agent_hooks::guidance::{self, GuidanceAgent};
 use hide_agent_hooks::report;
 use hide_agent_hooks::runtime::{AgentRuntime, HookEvent, hook_stdout};
 use hide_platform::process::{OwnedChild, OwnerWatch};
@@ -41,6 +42,24 @@ fn main() -> ExitCode {
     let arguments: Vec<String> = std::env::args().skip(1).collect();
     match arguments.first().map(String::as_str) {
         Some("hook") => {
+            // An agent beyond Claude Code and Codex has no counters, Memory
+            // or letters: its hook prints the session guidance and nothing
+            // else (`hide_agent_hooks::guidance`).
+            if let Some(agent) = argument_value("--runtime", &arguments)
+                .and_then(|value| GuidanceAgent::from_id(&value))
+            {
+                run_guidance_hook(agent, &arguments);
+                return ExitCode::SUCCESS;
+            }
+            // Cursor loads Claude Code's hooks from `~/.claude/settings.json`
+            // beside its own and runs both, so under Cursor Claude Code's hook
+            // stays out and Cursor's own guidance hook is the one that speaks
+            // (`docs/agent-hooks.md`, Other agents).
+            if argument_value("--runtime", &arguments).as_deref() == Some("claude-code")
+                && hide_agent_hooks::runtime::run_by_cursor(|name| std::env::var_os(name))
+            {
+                return ExitCode::SUCCESS;
+            }
             if argument_value("--event", &arguments).as_deref()
                 == Some(HookEvent::UserPromptSubmit.name())
             {
@@ -78,8 +97,29 @@ fn main() -> ExitCode {
 fn usage() -> String {
     "usage: hide-agent-hooks hook --runtime <claude-code|codex> \
      --event <SessionStart|UserPromptSubmit|SubagentStart|SubagentStop|Stop> \
-     [--memory-injection] [--source <install marker>]\n       hide-agent-hooks doctor [--json]"
+     [--memory-injection] [--source <install marker>]\n       \
+     hide-agent-hooks hook --runtime <gemini-cli|qwen-code|factory-droid|copilot-cli|kiro|cursor|augment|junie> \
+     --event SessionStart [--source <install marker>]\n       hide-agent-hooks doctor [--json]"
         .to_owned()
+}
+
+/// The guidance hook of an agent that has no other Hide hook: one line of
+/// stdout in the field that agent reads, and nothing else. It never fails
+/// loudly, for the reason every hook does not.
+fn run_guidance_hook(agent: GuidanceAgent, arguments: &[String]) {
+    if argument_value("--event", arguments).as_deref() != Some("SessionStart") {
+        return;
+    }
+    let context = guidance::session_context(workspace_context::live_context().as_deref());
+    let output = guidance::stdout(agent, &context);
+    // PowerShell re-encodes what a Windows hook prints; ASCII survives it.
+    let output = if cfg!(windows) && output.starts_with('{') {
+        hide_agent_hooks::runtime::ascii_json(&output)
+    } else {
+        output
+    };
+    let mut stdout = std::io::stdout().lock();
+    let _ = writeln!(stdout, "{output}").and_then(|_| stdout.flush());
 }
 
 fn run_prompt_hook(arguments: &[String], deadline: Instant) {

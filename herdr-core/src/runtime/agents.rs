@@ -1531,7 +1531,26 @@ impl Runtime {
         self.snapshot.status.background_ai.providers = providers;
     }
 
-    pub(crate) fn ingest_hook_diagnosis(&mut self, diagnosis: hide_agent_hooks::Diagnosis) -> bool {
+    pub(crate) fn ingest_hook_diagnosis(
+        &mut self,
+        mut diagnosis: hide_agent_hooks::Diagnosis,
+    ) -> bool {
+        // The files cannot say an agent was switched off; this Mac's kit
+        // can, so a hook absent on purpose reads Off and not "not installed".
+        for runtime in &mut diagnosis.runtimes {
+            let agent = match runtime.runtime {
+                hide_agent_hooks::AgentRuntime::ClaudeCode => "claude-code",
+                hide_agent_hooks::AgentRuntime::Codex => "codex",
+            };
+            let off = self
+                .kit_state(crate::workspace::LOCAL_DEVICE_ID)
+                .agents
+                .iter()
+                .any(|row| row.id == agent && !row.enabled);
+            if off && matches!(runtime.status, hide_agent_hooks::HookStatus::NotInstalled) {
+                runtime.status = hide_agent_hooks::HookStatus::Off;
+            }
+        }
         if self.hook_diagnosis.as_ref() == Some(&diagnosis) {
             return false;
         }

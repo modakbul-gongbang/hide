@@ -61,10 +61,13 @@ import {
   kitRemovalLine,
   herdrLine,
   hostLine,
-  kitHookMachines,
+  kitAgentGets,
+  kitAgentLine,
+  kitAgentMachines,
+  kitAgentNeedsReinstall,
+  kitAgentSwitch,
   kitPartLine,
   kitPartSwitch,
-  kitPartNeedsReinstall,
   offeredModels,
   providerLine,
   environmentTone,
@@ -481,7 +484,7 @@ function AgentsTab({ actions }: { actions: Actions }) {
   }, [actions, live]);
 
   const selected = ai?.providers.find((provider) => provider.id === ai.provider) ?? null;
-  const machines = kitHookMachines(devices ?? []);
+  const machines = kitAgentMachines(devices ?? []);
 
   return (
     <>
@@ -570,44 +573,60 @@ function AgentsTab({ actions }: { actions: Actions }) {
         note={t("settings.agentHooksDescription")}
         data-agent-hooks="true"
       >
-        {machines.map(({ device, parts, unavailable }) => (
+        {machines.map(({ device, setUp, others, unavailable }) => (
           <div key={device.id} data-hook-machine={device.id}>
             <Row
               label={<span className="font-semibold">{device.id === "local" ? t("common.thisMac") : device.label}</span>}
-              detail={unavailable ? <Note data-hook-unavailable={device.id}>{unavailable}</Note> : parts.length === 0 ? <Note>{t("settings.notChecked")}</Note> : null}
+              detail={unavailable ? <Note data-hook-unavailable={device.id}>{unavailable}</Note> : device.kit?.components.length === 0 ? <Note>{t("settings.notChecked")}</Note> : null}
             />
-            {parts.map((part) => {
-              const line = kitPartLine(part, t);
+            {setUp.map((agent) => {
+              const line = kitAgentLine(agent, t);
+              const switched = kitAgentSwitch(agent);
               return (
                 <Row
-                  key={part.id}
+                  key={agent.id}
                   label={
                     <span className="flex min-w-0 flex-col pl-md">
-                      <span>{part.label}</span>
-                      {part.location ? <span className="break-all font-mono text-caption text-muted-foreground">{part.location}</span> : null}
+                      <span>{agent.label}</span>
+                      <span className="text-caption text-muted-foreground">{kitAgentGets(agent, t)}</span>
                     </span>
                   }
-                  detail={part.reason && part.state !== "installed" ? <Note tone={line.tone === "error" ? "error" : "muted"}>{part.reason}</Note> : null}
+                  detail={line.reason ? <Note tone={line.tone === "error" ? "error" : "muted"}>{line.reason}</Note> : null}
                 >
-                  <Status tone={line.tone} data-hook-state={`${device.id}:${part.id}:${part.state}`}>
+                  <Status tone={line.tone} data-agent-state={`${device.id}:${agent.id}:${agent.enabled ? "on" : "off"}:${line.tone}`}>
                     {line.text}
                   </Status>
-                  {kitPartNeedsReinstall(part) ? (
+                  {kitAgentNeedsReinstall(agent) ? (
                     <Button
                       variant="secondary"
                       disabled={device.kit?.busy === true}
                       onClick={() => {
                         setPressedAt(Date.now());
-                        actions.reinstallKit(device.id, [part.id]);
+                        actions.reinstallKit(device.id, [], [agent.id]);
                       }}
-                      data-hook-reinstall={`${device.id}:${part.id}`}
+                      data-hook-reinstall={`${device.id}:${agent.id}`}
                     >
                       {device.kit?.busy ? t("settings.reinstalling") : t("settings.reinstall")}
                     </Button>
                   ) : null}
+                  {switched ? (
+                    <Switch
+                      checked={switched.on}
+                      disabled={device.kit?.busy === true}
+                      onCheckedChange={(checked) => {
+                        setPressedAt(Date.now());
+                        actions.setKitAgent(device.id, agent.id, checked);
+                      }}
+                      aria-label={t(switched.on ? "devices.kitSwitchOff" : "devices.kitSwitchOn", { part: agent.label })}
+                      data-agent-switch={`${device.id}:${agent.id}:${switched.on ? "on" : "off"}`}
+                    />
+                  ) : null}
                 </Row>
               );
             })}
+            {others.length > 0 ? (
+              <Row label={<Note data-agents-not-set-up={device.id}>{t("settings.agentsNotSetUp", { agents: others.join(", ") })}</Note>} />
+            ) : null}
           </div>
         ))}
         {kitError ? <Row label={<Note tone="error" data-hook-error="true">{kitError}</Note>} /> : null}
@@ -1100,6 +1119,34 @@ function MachineKit({ device, actions }: { device: Device; actions: Actions }) {
           </div>
         );
       })}
+      {kit.agents
+        .filter((agent) => kitAgentSwitch(agent) !== null)
+        .map((agent) => {
+          const line = kitAgentLine(agent, t);
+          const switched = kitAgentSwitch(agent);
+          const mark = !agent.enabled ? "○" : line.tone === "ok" ? "✓" : line.tone === "error" ? "✕" : "!";
+          const markTone = line.tone === "ok" ? "text-success" : line.tone === "muted" ? "text-muted-foreground" : line.tone === "error" ? "text-destructive" : "text-warning";
+          return (
+            <div key={agent.id} className="col-span-4 grid grid-cols-subgrid text-caption" data-kit-agent={`${device.id}:${agent.id}:${agent.enabled ? "on" : "off"}`}>
+              <span className={markTone} aria-hidden="true">
+                {mark}
+              </span>
+              <span className="whitespace-nowrap text-foreground">{agent.label}</span>
+              <span className="min-w-0 break-words text-subtle-foreground">{`${line.text}${line.reason ? `: ${line.reason}` : ""}`}</span>
+              {switched ? (
+                <Switch
+                  checked={switched.on}
+                  disabled={kit.busy}
+                  onCheckedChange={(checked) => actions.setKitAgent(device.id, agent.id, checked)}
+                  aria-label={t(switched.on ? "devices.kitSwitchOff" : "devices.kitSwitchOn", { part: agent.label })}
+                  data-kit-agent-switch={`${device.id}:${agent.id}:${switched.on ? "on" : "off"}`}
+                />
+              ) : (
+                <span aria-hidden="true" />
+              )}
+            </div>
+          );
+        })}
     </div>
   );
 }
