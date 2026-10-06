@@ -11,6 +11,7 @@
 use std::collections::HashSet;
 use std::path::{Component, Path, PathBuf};
 
+pub use hide_node_link::disk::FolderRefusal;
 use hide_node_link::disk::{DiskLayers, Layer, LayerFolder};
 
 use crate::index::IgnoreRules;
@@ -215,25 +216,6 @@ fn has_cache_tag(folder: &Path) -> bool {
         .and_then(|mut file| file.read_exact(&mut head))
         .is_ok()
         && head == CACHEDIR_SIGNATURE
-}
-
-/// Why a folder is no longer safe to move, decided right before the move.
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum FolderRefusal {
-    NotFound,
-    Symlink,
-    /// No longer ignored, or no rule or tag vouches for it as this layer.
-    Changed,
-}
-
-impl FolderRefusal {
-    pub fn code(self) -> &'static str {
-        match self {
-            FolderRefusal::NotFound => "not_found",
-            FolderRefusal::Symlink => "symlink",
-            FolderRefusal::Changed => "changed",
-        }
-    }
 }
 
 /// Reads the folder's classification again from the files: it is inside the

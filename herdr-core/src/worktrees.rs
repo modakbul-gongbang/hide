@@ -616,7 +616,6 @@ fn git_call_count(root: &Path, command: &str) -> usize {
         .count()
 }
 
-pub(crate) use hide_host::worktrees::git;
 #[cfg(test)]
 use hide_host::worktrees::output_within;
 

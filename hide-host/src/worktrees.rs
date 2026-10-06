@@ -816,6 +816,23 @@ pub struct WalkBudget {
 }
 
 impl WalkBudget {
+    /// A budget of what a caller has left: `entries` more entries, for at
+    /// most `time`.
+    pub fn allowing(entries: usize, time: Duration) -> Self {
+        Self {
+            entries,
+            until: std::time::Instant::now() + time,
+        }
+    }
+
+    /// The entries and time still left.
+    pub fn left(&self) -> (usize, Duration) {
+        (
+            self.entries,
+            self.until.saturating_duration_since(std::time::Instant::now()),
+        )
+    }
+
     /// The budget of one worktree removal's look through its ignored folders.
     fn worktree() -> Self {
         Self {
@@ -823,21 +840,7 @@ impl WalkBudget {
             until: std::time::Instant::now() + IGNORED_WALK_TIME,
         }
     }
-
-    /// One budget for everything a cleanup run looks through, so a run over
-    /// many big folders is bounded as a whole and not folder by folder.
-    pub fn for_run() -> Self {
-        Self {
-            entries: RUN_WALK_ENTRIES,
-            until: std::time::Instant::now() + RUN_WALK_TIME,
-        }
-    }
 }
-
-/// The bound on one cleanup run's look for repositories inside the folders it
-/// empties. Crossing it leaves the remaining folders unverified, so kept.
-const RUN_WALK_ENTRIES: usize = 20_000_000;
-const RUN_WALK_TIME: Duration = Duration::from_secs(300);
 
 /// Whether `folder` or any folder below it holds a `.git`. Links are not
 /// followed: removal deletes the link, not what it points to.
@@ -1066,19 +1069,7 @@ pub fn directory(path: &Path) -> Option<String> {
 
 // --- removal ---------------------------------------------------------------
 
-/// One linked worktree as Git registers it, read with NUL porcelain so no
-/// folder name is interpreted.
-#[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct Registered {
-    pub path: String,
-    pub branch: Option<String>,
-    pub head: Option<String>,
-    pub locked: bool,
-    pub lock_reason: Option<String>,
-    pub bare: bool,
-    /// Prunable or bare: Git lists it but cannot use it.
-    pub unavailable: bool,
-}
+pub use hide_node_link::worktrees::Registered;
 
 /// Every worktree Git registers for `root`, the main worktree first.
 pub fn registered(root: &Path) -> Result<Vec<Registered>, String> {

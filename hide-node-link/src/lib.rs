@@ -10,6 +10,7 @@
 //! their types only.
 
 pub mod bytes;
+pub mod cleanup;
 pub mod disk;
 pub mod document;
 pub mod error;

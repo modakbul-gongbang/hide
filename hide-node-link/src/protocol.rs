@@ -218,6 +218,53 @@ pub enum Call {
     /// Whether the node's account has Hide's agent hooks in place, read from
     /// that account's own configuration (`hide_agent_hooks::Diagnosis`).
     HookDiagnosis,
+    /// Every worktree Git registers for the repository at `root`, the main
+    /// one first (`worktrees::Registered`).
+    WorktreesRegistered {
+        root: String,
+    },
+    /// The first ignored folder of the worktree that holds a repository of
+    /// its own, relative to it, or `null`.
+    IgnoredRepository {
+        worktree: String,
+    },
+    /// Each path with its links and aliases resolved (`cleanup::PathState`).
+    RealPaths {
+        paths: Vec<String>,
+    },
+    /// The repository that holds `path`, read from its `.git` files
+    /// (`cleanup::RepositoryDirs`), or `null`.
+    Repository {
+        path: String,
+    },
+    /// Judges each chosen folder of the checkout at `root` again from its
+    /// files, looking for a nested repository within `walk`
+    /// (`cleanup::FolderJudgments`).
+    JudgeFolders {
+        root: String,
+        folders: Vec<crate::cleanup::FolderToJudge>,
+        walk: crate::cleanup::WalkAllowance,
+    },
+    /// Moves `folder` into the trash under `common` with one rename;
+    /// answers the trash entry.
+    SetAsideFolder {
+        common: String,
+        folder: String,
+    },
+    /// Removes the clean worktree at `checkout` without force
+    /// (`cleanup::CleanRemoval`).
+    WorktreeRemoveClean {
+        root: String,
+        checkout: String,
+        common: String,
+    },
+    /// Deletes what waits in the trash under `common`, waiting up to
+    /// `wait_ms` for `ours`; answers how many of them remain.
+    DrainTrash {
+        common: String,
+        ours: Vec<String>,
+        wait_ms: u64,
+    },
     /// One fixed git command in the repository at `root`; answers its
     /// output, trimmed.
     Git {

@@ -3,6 +3,20 @@
 
 use serde::{Deserialize, Serialize};
 
+/// One linked worktree as Git registers it, read with NUL porcelain so no
+/// folder name is interpreted.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
+pub struct Registered {
+    pub path: String,
+    pub branch: Option<String>,
+    pub head: Option<String>,
+    pub locked: bool,
+    pub lock_reason: Option<String>,
+    pub bare: bool,
+    /// Prunable or bare: Git lists it but cannot use it.
+    pub unavailable: bool,
+}
+
 /// One operator-confirmed worktree deletion, recorded before the host's
 /// preflight and reused after Herdr confirms every pane is gone.
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]

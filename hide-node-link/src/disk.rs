@@ -31,6 +31,26 @@ impl Layer {
     }
 }
 
+/// Why a folder is no longer safe to move, decided right before the move.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum FolderRefusal {
+    NotFound,
+    Symlink,
+    /// No longer ignored, or no rule or tag vouches for it as this layer.
+    Changed,
+}
+
+impl FolderRefusal {
+    pub fn code(self) -> &'static str {
+        match self {
+            FolderRefusal::NotFound => "not_found",
+            FolderRefusal::Symlink => "symlink",
+            FolderRefusal::Changed => "changed",
+        }
+    }
+}
+
 /// One cell of the table: what a checkout holds in one layer.
 #[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 pub struct LayerCell {

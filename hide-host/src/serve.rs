@@ -376,6 +376,58 @@ pub fn handle_with_progress(
             &retirement_projects,
             env,
         ),
+        Call::WorktreesRegistered { root } => to_value(
+            worktrees::registered(&absolute(&root)?)
+                .map_err(|reason| HostError::new(ErrorCode::Io, reason))?,
+        ),
+        Call::IgnoredRepository { worktree } => to_value(
+            worktrees::ignored_repository(&absolute(&worktree)?)
+                .map_err(|reason| HostError::new(ErrorCode::Io, reason))?,
+        ),
+        Call::RealPaths { paths } => {
+            let paths = paths
+                .iter()
+                .map(|path| absolute(path))
+                .collect::<HostResult<Vec<_>>>()?;
+            to_value(crate::cleanup::real_paths(&paths))
+        }
+        Call::Repository { path } => to_value(crate::cleanup::repository(&absolute(&path)?)),
+        Call::JudgeFolders {
+            root,
+            folders,
+            walk,
+        } => to_value(crate::cleanup::judge_folders(
+            &absolute(&root)?,
+            &folders,
+            walk,
+        )),
+        Call::SetAsideFolder { common, folder } => to_value(
+            worktrees::set_aside_folder(&absolute(&common)?, &absolute(&folder)?)
+                .map_err(|error| {
+                    HostError::new(
+                        ErrorCode::Io,
+                        format!("The folder could not be moved aside: {error}"),
+                    )
+                })?,
+        ),
+        Call::WorktreeRemoveClean {
+            root,
+            checkout,
+            common,
+        } => to_value(crate::cleanup::clean_removal(
+            &absolute(&root)?,
+            &absolute(&checkout)?,
+            &absolute(&common)?,
+        )),
+        Call::DrainTrash {
+            common,
+            ours,
+            wait_ms,
+        } => to_value(crate::cleanup::drain_trash(
+            &absolute(&common)?,
+            &ours,
+            std::time::Duration::from_millis(wait_ms),
+        )),
         Call::Git { root, command } => {
             to_value(crate::git_command::run(&absolute(&root)?, &command)?)
         }

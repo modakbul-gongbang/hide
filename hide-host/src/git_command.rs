@@ -10,20 +10,25 @@ use hide_node_link::git::GitCommand;
 
 use crate::error::{ErrorCode, HostError, HostResult};
 
-/// Runs `command` in `root` and answers its output, trimmed. A branch check
-/// and a fetch are bounded like every other read (`worktrees::git`); the rest
-/// run as the operator's git would.
+/// Runs `command` in `root` and answers its output, trimmed. A read, a
+/// branch check and a fetch are bounded (`worktrees::git`); a checkout and a
+/// branch setting run as the operator's git would.
 pub fn run(root: &Path, command: &GitCommand) -> HostResult<String> {
     let args = command.args();
     let args: Vec<&str> = args.iter().map(String::as_str).collect();
     let failed = |message: String| HostError::new(ErrorCode::Io, message);
     match command {
-        GitCommand::HasLocalBranch { .. } | GitCommand::FetchBranch { .. } => {
-            crate::worktrees::git(root, &args).map_err(failed)
-        }
         GitCommand::Status
         | GitCommand::CommonDir
-        | GitCommand::CurrentBranch
+        | GitCommand::RefCommit { .. }
+        | GitCommand::CountCommits { .. }
+        | GitCommand::HasLocalBranch { .. }
+        | GitCommand::FetchBranch { .. } => crate::worktrees::git(root, &args)
+            .map(|output| output.trim().to_owned())
+            .map_err(failed),
+        // A path may begin or end with a space, so the list is not trimmed.
+        GitCommand::ListFiles => crate::worktrees::git(root, &args).map_err(failed),
+        GitCommand::CurrentBranch
         | GitCommand::Checkout { .. }
         | GitCommand::SetBranchConfig { .. }
         | GitCommand::UnsetBranchConfig { .. } => {

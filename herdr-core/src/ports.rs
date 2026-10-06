@@ -309,7 +309,8 @@ mod tests {
             // Review and the fresh destructive-action recheck both consume
             // the real reader, not a handcrafted listening-port snapshot.
             for _ in 0..2 {
-                let sample = read_now(&hide_node::Local::of_process());
+                let node = hide_node::Local::of_process();
+                let sample = read_now(&node);
                 assert_eq!(sample.unavailable_reason, None);
                 let found = sample
                     .entries
@@ -317,7 +318,7 @@ mod tests {
                     .find(|entry| entry.port == endpoint.port())
                     .unwrap();
                 assert_eq!(Path::new(&found.cwd), canonical_cwd);
-                let in_use = read_in_use(&facts, Ok(sample.entries), |_| {
+                let in_use = read_in_use(&node, &facts, Ok(sample.entries), |_| {
                     panic!("a checkout with no terminal panes has no process query")
                 })
                 .unwrap();

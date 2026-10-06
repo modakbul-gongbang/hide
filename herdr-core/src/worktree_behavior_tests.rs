@@ -1,4 +1,5 @@
 use super::*;
+use hide_host::worktrees::git;
 
 #[test]
 fn locked_worktrees_name_the_reason_and_unlock_action_even_when_the_folder_is_missing() {
