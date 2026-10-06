@@ -767,7 +767,7 @@ mod tests {
         codex_command(Path::new(HELPER), event)
     }
 
-    const FILE: &str = "/home/.codex/hooks.json";
+    const FILE: &str = "/acct/.codex/hooks.json";
 
     /// `key` is the entry's name within the file, as Codex's own key ends.
     fn listed(event: &str, command: &str, trust: &str, key: &str) -> Listed {
@@ -911,7 +911,7 @@ mod tests {
     #[test]
     fn the_same_command_from_another_file_is_not_a_target() {
         let mut hook = own("untrusted", "elsewhere");
-        hook.source_path = "/home/project/.codex/hooks.json".to_owned();
+        hook.source_path = "/acct/project/.codex/hooks.json".to_owned();
         assert!(select(&[hook]).is_empty());
     }
 
