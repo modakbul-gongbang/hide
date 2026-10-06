@@ -756,6 +756,10 @@ The field draws on an elevated surface so it reads as an input among labels; not
 
 The filesystem change is the core's: one event carries the request, the core refuses paths outside the focused checkout and any overwrite, runs the exclusive call off the runtime mutex, and settles one operation slot.
 The tree reads a finished slot to re-read only the folders it touched, keeping every loaded folder and its expansion, and a failed slot to place the reason under the row the change started from.
+Changes run one at a time in the order they were asked: a change asked while another runs, such as a trash pressed right after a drop, waits and starts when the one before it settles.
+At most four wait, and a fifth is refused into the diagnostic log; a failed or refused change drops the ones waiting behind it into the log too, so nothing runs past a failure the operator has not seen.
+The slot shows only the running change, and the next one starts in the same step that settles the one before it, so the tree can see a change working and then the next working without the first ever finished.
+The tree then skips that change's own re-read, and its folders are refreshed the way a change made outside hide is, by the folder watch and device stamping; the selection still lands on the last change's item, because the core sets it on every success.
 A folder being re-read, after a settled change, a change the watcher saw, or the refresh button, keeps its rows drawn until the new listing lands; it never empties for the round trip.
 A device folder whose re-read is refused keeps those rows under its could-not-be-listed reason until Retry, or until the helper is ready again; a local subfolder whose re-read is refused keeps them until the next change reads it again.
 The selection moves to the new or moved item because the core sets it explicitly; expanded folders and open file tabs inside a renamed folder follow it.

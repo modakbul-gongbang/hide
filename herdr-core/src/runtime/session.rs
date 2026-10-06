@@ -3865,6 +3865,91 @@ impl Runtime {
         self.push_diagnostic(diagnostic_kind, message);
         true
     }
+    /// Starts an Explorer change, or keeps it behind the one still running.
+    /// The page sends a drop and the key that follows it without waiting for
+    /// the drop to land, and a change refused because another one ran was
+    /// lost with nothing logged and nothing on screen (#630); now they run one
+    /// at a time in the order they were asked. At most
+    /// `EXPLORER_QUEUE_LIMIT` wait, and the newest past that is refused and
+    /// logged. The queue is core state only: the snapshot shows the running
+    /// change, never the waiting ones.
+    pub(super) fn request_explorer_change(&mut self, request: ExplorerRequest) -> bool {
+        let running = self
+            .snapshot
+            .explorer_operation
+            .as_ref()
+            .is_some_and(|operation| operation.phase == "working");
+        if !running {
+            return self.start_explorer_operation(&request);
+        }
+        if self.explorer_queue.len() >= EXPLORER_QUEUE_LIMIT {
+            self.push_diagnostic(
+                "explorer.busy",
+                format!(
+                    "{}: {EXPLORER_QUEUE_LIMIT} file operations are already waiting; this one was not run",
+                    request.change.started_from()
+                ),
+            );
+            return true;
+        }
+        crate::diagnostic!(serde_json::json!({
+            "component": "explorer", "kind": "explorer.change_waiting",
+            "operation": request.change.kind().as_str(),
+            "waiting": self.explorer_queue.len() + 1,
+        }));
+        let owner = self.front_checkout_owned();
+        self.explorer_queue
+            .push_back(WaitingExplorerChange { owner, request });
+        false
+    }
+    /// Starts the next waiting change once the running one has settled, planned
+    /// against the checkout as it is now. A change that failed or was refused
+    /// stops the queue: the changes behind it may rely on it, and the operator
+    /// has not seen the failure they would run past. Changes asked in a
+    /// checkout that is no longer in front are dropped as well, since the tree
+    /// they came from is not the one on screen.
+    fn continue_explorer_queue(&mut self) {
+        let failed = self
+            .snapshot
+            .explorer_operation
+            .as_ref()
+            .is_some_and(|operation| operation.phase == "failed");
+        if failed {
+            self.drop_explorer_queue("the change before them did not happen");
+            return;
+        }
+        let Some(next) = self.explorer_queue.pop_front() else {
+            return;
+        };
+        if next.owner != self.front_checkout_owned() {
+            self.explorer_queue.push_front(next);
+            self.drop_explorer_queue("the checkout they were asked in is no longer in front");
+            return;
+        }
+        self.start_explorer_operation(&next.request);
+        let running = self
+            .snapshot
+            .explorer_operation
+            .as_ref()
+            .is_some_and(|operation| operation.phase == "working");
+        if !running {
+            // Refused at its turn, or settled in place without a worker; a
+            // settle already continued the queue, so what is left here
+            // follows a refusal.
+            self.drop_explorer_queue("the change before them was refused");
+        }
+    }
+    fn drop_explorer_queue(&mut self, reason: &str) {
+        if self.explorer_queue.is_empty() {
+            return;
+        }
+        let count = self.explorer_queue.len();
+        self.explorer_queue.clear();
+        self.push_diagnostic(
+            "explorer.queue_dropped",
+            format!("{count} waiting file operation(s) were not run: {reason}"),
+        );
+    }
     /// Decides an explorer change under the lock and runs it off the lock.
     ///
     /// The decision reads nothing from disk: `plan` refuses a path outside
@@ -3879,26 +3964,13 @@ impl Runtime {
     /// `device` is the device the tree that asked was showing. A change for
     /// another device than the checkout in front is refused: the tree it came
     /// from is no longer the one on screen (PRD S5.5 B34).
-    pub(super) fn start_explorer_operation(
-        &mut self,
-        plan: impl FnOnce(&str) -> Result<files::ExplorerOperation, String>,
-        root: &str,
-        started_from: &str,
-        device: Option<&str>,
-    ) -> bool {
-        if self
-            .snapshot
-            .explorer_operation
-            .as_ref()
-            .is_some_and(|operation| operation.phase == "working")
-        {
-            self.set_error(
-                "explorer.busy",
-                "Another file operation is still running",
-                true,
-            );
-            return true;
-        }
+    ///
+    /// The slot holds one change at a time; `request_explorer_change` keeps
+    /// the ones asked meanwhile, and this starts one only on an empty slot.
+    fn start_explorer_operation(&mut self, request: &ExplorerRequest) -> bool {
+        let root = request.root.as_str();
+        let started_from = request.change.started_from();
+        let device = request.device.as_deref();
         self.next_explorer_operation_id = self.next_explorer_operation_id.wrapping_add(1).max(1);
         let id = self.next_explorer_operation_id;
         let device = device.unwrap_or(workspace::LOCAL_DEVICE_ID);
@@ -3917,10 +3989,12 @@ impl Runtime {
             Some(target) if target.device_id != device => Err(format!(
                 "{root} is not on the device in front; nothing was changed"
             )),
-            Some(target) if target.root == root => plan(root).and_then(|operation| {
-                self.document_source(&target.workspace_id, &target.checkout_id)
-                    .map(|source| (operation, target, source))
-            }),
+            Some(target) if target.root == root => {
+                request.change.plan(root).and_then(|operation| {
+                    self.document_source(&target.workspace_id, &target.checkout_id)
+                        .map(|source| (operation, target, source))
+                })
+            }
             Some(target) => Err(format!(
                 "{root} is not the focused checkout {}",
                 target.root
@@ -4151,6 +4225,7 @@ impl Runtime {
                 );
             }
         }
+        self.continue_explorer_queue();
         true
     }
     /// Keeps the first prompt and the CLI arguments for the agent a task
