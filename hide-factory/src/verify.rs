@@ -346,8 +346,16 @@ fn trim(log: &Path) {
     if meta.len() <= LOG_LIMIT {
         return;
     }
-    if let Ok(bytes) = std::fs::read(log) {
-        let tail = &bytes[bytes.len() - LOG_LIMIT as usize..];
+    // Only the tail is read: a log cut at the output cap can be hundreds of
+    // megabytes (rule 15).
+    let tail = std::fs::File::open(log).and_then(|mut file| {
+        use std::io::{Read, Seek, SeekFrom};
+        file.seek(SeekFrom::Start(meta.len() - LOG_LIMIT))?;
+        let mut tail = Vec::with_capacity(LOG_LIMIT as usize);
+        file.take(LOG_LIMIT).read_to_end(&mut tail)?;
+        Ok(tail)
+    });
+    if let Ok(tail) = tail {
         let _ = std::fs::write(log, tail);
     }
 }
@@ -535,6 +543,19 @@ mod tests {
             ));
         }
         assert!(!dir.path().join("ran.txt").exists());
+    }
+
+    #[test]
+    fn a_long_log_keeps_its_last_bytes() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("run.log");
+        let mut text = vec![b'a'; LOG_LIMIT as usize + 10];
+        text.extend_from_slice(b"the end");
+        std::fs::write(&log, &text).unwrap();
+        trim(&log);
+        let kept = std::fs::read(&log).unwrap();
+        assert_eq!(kept.len() as u64, LOG_LIMIT);
+        assert!(kept.ends_with(b"the end"));
     }
 
     #[test]
