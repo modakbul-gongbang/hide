@@ -203,15 +203,13 @@ pub(crate) fn run(
             parent,
             project,
         } => {
-            if ![&machine, &host_scope, &session, &instance, &name, &pane]
+            if ![&host_scope, &session, &instance, &name, &pane]
                 .into_iter()
                 .all(|s| super::key(s))
             {
                 return Err("invalid_registration".into());
             }
-            if machine != actor.device_id {
-                return Err("machine_identity_conflict".into());
-            }
+            let machine = registration_machine(machine, &actor.device_id)?;
             let (connector, actual_scope, native_machine, _) = context(&client, &machine)?;
             if machine == "local" && host_scope != actual_scope {
                 return Err("host_scope_conflict".into());
@@ -267,6 +265,16 @@ pub(crate) fn run(
             Ok(value)
         }
         command @ Command::Spawn { .. } => spawn(&client, &authority, &actor, command),
+    }
+}
+/// A registration is always on the caller's own machine, which its pane
+/// capability already names; a machine the caller restates must agree with it.
+fn registration_machine(requested: Option<String>, caller: &str) -> Result<String, String> {
+    match requested {
+        None => Ok(caller.to_owned()),
+        Some(machine) if !super::key(&machine) => Err("invalid_registration".into()),
+        Some(machine) if machine != caller => Err("machine_identity_conflict".into()),
+        Some(machine) => Ok(machine),
     }
 }
 fn publish_tokens(client: &Client, connector: &dyn ApiConnector, id: &str) -> Result<(), String> {
@@ -650,6 +658,24 @@ mod tests {
     use super::*;
     use crate::fake_herdr::FakeHerdr;
     use std::sync::atomic::{AtomicUsize, Ordering};
+
+    #[test]
+    fn a_registration_lands_on_the_callers_own_machine() {
+        assert_eq!(registration_machine(None, "local").as_deref(), Ok("local"));
+        assert_eq!(registration_machine(None, "mini").as_deref(), Ok("mini"));
+        assert_eq!(
+            registration_machine(Some("mini".into()), "mini").as_deref(),
+            Ok("mini")
+        );
+        assert_eq!(
+            registration_machine(Some("local".into()), "mini"),
+            Err("machine_identity_conflict".into())
+        );
+        assert_eq!(
+            registration_machine(Some(String::new()), "local"),
+            Err("invalid_registration".into())
+        );
+    }
 
     #[test]
     fn an_accepted_start_waits_for_native_identity_without_starting_again() {

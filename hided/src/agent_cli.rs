@@ -3,7 +3,7 @@
 use crate::env::{self, Env};
 use herdr_core::{coordination::Command, delivery::Command as Delivery};
 use std::collections::BTreeMap;
-pub const USAGE: &str = "hide agent register [--check] --machine <device> --host-scope <scope> --session <session> --instance <terminal> --name <name> --pane <pane> [--parent <id>] [--project <path>]\nhide agent list\nhide agent show <id>\nhide agent end <id> [--actor <id>]\nhide agent spawn --parent <here|id> --name <name> --intent <key> --kind <kind> --repo <path> --branch <branch> [--path <path>] [--no-watch] [-- <native args>]";
+pub const USAGE: &str = "hide agent register [--check] [--machine <device>] --host-scope <scope> --session <session> --instance <terminal> --name <name> --pane <pane> [--parent <id>] [--project <path>]\nhide agent list\nhide agent show <id>\nhide agent end <id> [--actor <id>]\nhide agent spawn --parent <here|id> --name <name> --intent <key> --kind <kind> --repo <path> --branch <branch> [--path <path>] [--no-watch] [-- <native args>]";
 pub fn parse<'a>(mut args: impl Iterator<Item = &'a String>) -> Result<Delivery, String> {
     let verb = args.next().ok_or(USAGE)?.as_str();
     let mut flags = BTreeMap::new();
@@ -65,7 +65,6 @@ pub fn parse<'a>(mut args: impl Iterator<Item = &'a String>) -> Result<Delivery,
     };
     let command = match verb {
         "register" => {
-            let machine = take("--machine")?;
             let host_scope = take("--host-scope")?;
             let session = take("--session")?;
             let instance = take("--instance")?;
@@ -73,7 +72,7 @@ pub fn parse<'a>(mut args: impl Iterator<Item = &'a String>) -> Result<Delivery,
             let pane = take("--pane")?;
             Command::Register {
                 check,
-                machine,
+                machine: flags.remove("--machine"),
                 host_scope,
                 session,
                 instance,
@@ -196,12 +195,10 @@ mod tests {
     }
     #[test]
     fn register_surface_matches_external_caller() {
-        assert!(
-            line(&[
-                "register",
-                "--check",
-                "--machine",
-                "local",
+        let register = |machine: &[&str]| {
+            let mut args = vec!["register", "--check"];
+            args.extend_from_slice(machine);
+            args.extend_from_slice(&[
                 "--host-scope",
                 "fixture",
                 "--session",
@@ -212,10 +209,17 @@ mod tests {
                 "worker",
                 "--pane",
                 "w1:p1",
-                "--json"
-            ])
-            .is_ok()
-        );
+                "--json",
+            ]);
+            match line(&args) {
+                Ok(Delivery::Agents {
+                    command: Command::Register { machine, .. },
+                }) => machine,
+                other => panic!("register: {other:?}"),
+            }
+        };
+        assert_eq!(register(&[]), None);
+        assert_eq!(register(&["--machine", "mini"]).as_deref(), Some("mini"));
         assert!(line(&["list", "unexpected"]).is_err());
         assert!(line(&["end", "agent-1", "--actor", "agent-2"]).is_ok());
     }
