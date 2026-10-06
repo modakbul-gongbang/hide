@@ -795,7 +795,7 @@ pub struct Task {
     /// as a refused worker start; shown beside the stop reason.
     #[serde(default)]
     pub stop_detail: Option<String>,
-    /// Fresh worker starts refused so far; names the next start's intent.
+    /// Worker starts refused or abandoned so far; names the next start's intent.
     #[serde(default)]
     pub spawn_refusals: u32,
     pub breaking: bool,

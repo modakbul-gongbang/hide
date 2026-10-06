@@ -1040,7 +1040,11 @@ fn a_proposal_the_review_finds_outside_its_scope_waits_for_a_person() {
     assert_eq!(task.state, TaskState::Drafting, "it does not start alone");
     assert_eq!(task.autonomy, None);
     let question = open_question(&h, &f, &child);
-    assert!(question.text.contains("Lint and format"), "{}", question.text);
+    assert!(
+        question.text.contains("Lint and format"),
+        "{}",
+        question.text
+    );
     // A person's approval lets it run as an ordinary Task.
     h.op(Command::Answer {
         task: child.clone(),
@@ -2131,6 +2135,58 @@ fn a_start_carried_out_off_the_engine_is_asked_for_again_on_the_next_tick() {
     h.world().spawn_failure = None;
     h.engine.tick();
     assert_eq!(h.state(&f, &a), TaskState::Running, "no 30-second wait");
+}
+
+#[test]
+fn a_start_cancelled_on_its_way_is_abandoned_and_a_revive_is_a_new_attempt() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    h.world().spawn_failure = Some(Failure::start_pending("worker.spawn"));
+    let t = h.ready("On its way", &[]);
+    assert_eq!(h.state(&f, &t), TaskState::Waiting);
+    h.op(Command::Cancel { task: t.clone() });
+    h.engine.tick();
+    assert_eq!(h.world().abandoned, vec![t.clone()]);
+    h.world().spawn_failure = None;
+    h.op(Command::Revive { task: t.clone() });
+    tick_until(&mut h, &f, &t, TaskState::Running);
+    let attempts: Vec<u32> = h.world().spawn_asks.iter().map(|r| r.attempt).collect();
+    assert_eq!(attempts.first(), Some(&0));
+    assert_eq!(attempts.last(), Some(&1), "never the abandoned intent");
+}
+
+#[test]
+fn a_resumed_worker_still_starting_holds_its_slot_without_a_failure_per_tick() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    set_workers(&mut h, &f, 1);
+    let t = h.ready("Resumed", &[]);
+    h.world()
+        .worker_status
+        .insert(t.clone(), WorkerStatus::Gone);
+    h.advance(5 * MINUTE_MS);
+    h.engine.tick();
+    assert_eq!(h.state(&f, &t), TaskState::Stopped);
+    h.world().spawn_failure = Some(Failure::start_pending("worker.spawn"));
+    h.op(Command::Retry { task: t.clone() });
+    let other = h.ready("Other", &[]);
+    for _ in 0..5 {
+        h.engine.tick();
+    }
+    assert_eq!(h.state(&f, &other), TaskState::Waiting, "the slot is held");
+    let failures = h
+        .engine
+        .events(&f, Some(&t), 200)
+        .iter()
+        .filter(|e| e.kind == "external.failed")
+        .count();
+    assert_eq!(failures, 0, "a pending start is not a failure");
+    assert!(
+        h.world()
+            .spawn_asks
+            .iter()
+            .any(|r| r.task == t && r.resume.is_some())
+    );
 }
 
 #[test]

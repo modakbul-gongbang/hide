@@ -61,6 +61,10 @@ pub struct World {
     /// Usage-limit resets the machine reports by runtime.
     pub usage_limits: BTreeMap<Runtime, UnixMs>,
     pub spawn_failure: Option<Failure>,
+    /// Every spawn the engine asked for, answered or not.
+    pub spawn_asks: Vec<WorkerSpawn>,
+    /// Starts the engine gave up on, by Task id.
+    pub abandoned: Vec<String>,
     /// Judgments submitted and not yet answered.
     pub submitted: Vec<Judgment>,
     pub judged: Vec<Judgment>,
@@ -328,6 +332,7 @@ impl MergeTarget for Shared {
 impl WorkerRuntime for Shared {
     fn spawn(&mut self, request: &WorkerSpawn) -> Result<WorkerRef, Failure> {
         let mut world = self.world();
+        world.spawn_asks.push(request.clone());
         if let Some(failure) = world.spawn_failure.clone() {
             return Err(failure);
         }
@@ -373,6 +378,9 @@ impl WorkerRuntime for Shared {
             .get(&task_of(worker))
             .copied()
             .unwrap_or(WorkerStatus::Working)
+    }
+    fn abandon_start(&mut self, _factory: &str, task: &str) {
+        self.world().abandoned.push(task.to_owned());
     }
     fn stop(&mut self, worker: &WorkerRef) -> Result<(), Failure> {
         self.world().stops.push(task_of(worker));

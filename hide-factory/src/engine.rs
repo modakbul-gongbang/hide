@@ -4395,6 +4395,9 @@ impl Engine {
                 .is_none_or(|t| t.state != TaskState::Waiting)
             {
                 self.ports.workers.abandon_start(&factory, &id);
+                // A later start is a new attempt, never the abandoned one
+                // replayed by its intent.
+                self.with_task(&factory, &id, |t| t.spawn_refusals += 1);
                 self.starting.remove(&(factory, id));
             }
         }
@@ -4567,8 +4570,10 @@ impl Engine {
             } else {
                 self.ports.workers.wake(&worker, &body).map(|()| None)
             };
+            let key = (factory_id.to_owned(), id.to_owned());
             match restarted {
                 Ok(new_worker) => {
+                    self.starting.remove(&key);
                     self.with_task(factory_id, id, |t| {
                         if let Some(w) = new_worker {
                             t.worker = Some(w);
@@ -4582,7 +4587,13 @@ impl Engine {
                     self.set_state(factory_id, id, TaskState::Running);
                     true
                 }
+                // A restart still on its way holds the slot like a new one.
+                Err(failure) if failure.starting => {
+                    self.worker_starting(factory_id, id, &failure);
+                    true
+                }
                 Err(failure) => {
+                    self.starting.remove(&key);
                     self.external_failure(factory_id, Some(id), &failure);
                     false
                 }

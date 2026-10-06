@@ -178,8 +178,15 @@ struct WorkerState {
 struct Starts {
     queue: Option<SyncSender<WorkerSpawn>>,
     in_flight: BTreeSet<String>,
-    done: BTreeMap<String, Result<WorkerRef, Failure>>,
+    done: BTreeMap<String, Finished>,
     abandoned: BTreeSet<String>,
+}
+
+/// A start the engine has not asked for yet.
+struct Finished {
+    /// A new worker, whose worktree the start made.
+    fresh: bool,
+    result: Result<WorkerRef, Failure>,
 }
 
 /// Starts waiting for the starter thread; one past it is asked again later.
@@ -190,34 +197,81 @@ fn start_key(factory: &str, task: &str) -> String {
 }
 
 /// Runs queued worker starts one at a time until the host drops the queue.
+/// Once the host stops, a start still queued is dropped rather than run.
+/// A start the engine gave up on while it ran is released: its worker
+/// stopped and, for a new worker, the worktree it made removed.
 fn run_starts(
     jobs: Receiver<WorkerSpawn>,
-    runtime: Weak<Mutex<Runtime>>,
     state: Arc<Mutex<WorkerState>>,
+    stop: Arc<AtomicBool>,
+    start: impl Fn(&WorkerSpawn) -> Result<WorkerRef, Failure>,
+    release: impl Fn(&WorkerSpawn, &WorkerRef),
 ) {
     for job in jobs {
         let key = start_key(&job.factory, &job.task);
-        let result = start_worker(&runtime, &job);
+        if stop.load(Ordering::Acquire) {
+            if let Ok(mut state) = state.lock() {
+                state.starts.in_flight.remove(&key);
+            }
+            continue;
+        }
+        let result = start(&job);
         let abandoned = {
             let Ok(mut state) = state.lock() else { return };
             state.starts.in_flight.remove(&key);
             if state.starts.abandoned.remove(&key) {
                 true
             } else {
-                state.starts.done.insert(key, result.clone());
+                state.starts.done.insert(
+                    key,
+                    Finished {
+                        fresh: job.resume.is_none(),
+                        result: result.clone(),
+                    },
+                );
                 false
             }
         };
         if abandoned && let Ok(worker) = result {
-            let mut port = CoreWorkers {
-                runtime: runtime.clone(),
-                state: Arc::clone(&state),
-            };
-            if let Err(failure) = port.stop(&worker) {
-                crate::diagnostic!(
-                    json!({"component":"factory","kind":"worker.abandon_failed","task":job.task,"stage":failure.stage})
-                );
-            }
+            release(&job, &worker);
+        }
+    }
+}
+
+/// A finished start, `start_pending` while one is queued or running, or
+/// `None` when this Task has no start yet.
+fn poll_start(state: &Mutex<WorkerState>, key: &str) -> Option<Result<WorkerRef, Failure>> {
+    let Ok(mut state) = state.lock() else {
+        return Some(Err(Failure::task("worker.spawn", "state_unavailable")));
+    };
+    if let Some(finished) = state.starts.done.remove(key) {
+        return Some(finished.result);
+    }
+    state
+        .starts
+        .in_flight
+        .contains(key)
+        .then(|| Err(Failure::start_pending("worker.spawn")))
+}
+
+/// Hands a start to the starter thread; a full queue is asked again on a
+/// later tick, never waited on.
+fn queue_start(state: &Mutex<WorkerState>, request: &WorkerSpawn) -> Failure {
+    let key = start_key(&request.factory, &request.task);
+    let Ok(mut state) = state.lock() else {
+        return Failure::task("worker.spawn", "state_unavailable");
+    };
+    let Some(queue) = state.starts.queue.clone() else {
+        return Failure::starting("worker.spawn", "starter_stopped");
+    };
+    match queue.try_send(request.clone()) {
+        Ok(()) => {
+            state.starts.in_flight.insert(key);
+            Failure::start_pending("worker.spawn")
+        }
+        Err(mpsc::TrySendError::Full(_)) => Failure::start_pending("worker.spawn"),
+        Err(mpsc::TrySendError::Disconnected(_)) => {
+            Failure::starting("worker.spawn", "starter_stopped")
         }
     }
 }
@@ -249,10 +303,26 @@ fn run(
     let starter = {
         let runtime = runtime.clone();
         let state = Arc::clone(&workers);
+        let stop = Arc::clone(&stop);
         thread::Builder::new()
             .name("factory-starts".into())
-            .spawn(move || run_starts(start_jobs, runtime, state))
+            .spawn(move || {
+                let start = |job: &WorkerSpawn| start_worker(&runtime, job);
+                let release = |job: &WorkerSpawn, worker: &WorkerRef| {
+                    let mut port = CoreWorkers {
+                        runtime: runtime.clone(),
+                        state: Arc::clone(&state),
+                    };
+                    port.release_start(&job.task, job.resume.is_none(), worker);
+                };
+                run_starts(start_jobs, Arc::clone(&state), stop, start, release);
+            })
     };
+    if let Err(error) = &starter {
+        crate::diagnostic!(
+            json!({"component":"factory","kind":"starts.spawn_failed","error":error.to_string()})
+        );
+    }
     let runner_stop = Arc::clone(&stop);
     let mut engine: Option<Engine> = None;
     let mut judge: Option<JudgeThread> = None;
@@ -370,7 +440,8 @@ fn run(
     }
     drop(engine);
     drop(judge);
-    // Closing the queue ends the starter after the start it is running.
+    // The stop flag is set: closing the queue ends the starter after the
+    // start it is running, and the starts still queued are dropped.
     if let Ok(mut state) = workers.lock() {
         state.starts.queue = None;
     }
@@ -644,6 +715,19 @@ struct CoreWorkers {
 }
 
 impl CoreWorkers {
+    /// A start no Task claims: its worker stops and, when the start made a
+    /// new worktree, that worktree and its branch go too.
+    fn release_start(&mut self, task: &str, fresh: bool, worker: &WorkerRef) {
+        let mut result = self.stop(worker);
+        if fresh && result.is_ok() {
+            result = self.remove_worktree(worker, true);
+        }
+        if let Err(failure) = result {
+            crate::diagnostic!(
+                json!({"component":"factory","kind":"worker.abandon_failed","task":task,"stage":failure.stage})
+            );
+        }
+    }
     /// Hands each woken worker its letters once its agent is back.
     fn deliver_woken(&mut self) {
         let panes: Vec<String> = self
@@ -749,17 +833,8 @@ impl WorkerRuntime for CoreWorkers {
     /// and answers that it is pending.
     fn spawn(&mut self, request: &WorkerSpawn) -> Result<WorkerRef, Failure> {
         let key = start_key(&request.factory, &request.task);
-        {
-            let mut state = self
-                .state
-                .lock()
-                .map_err(|_| Failure::task("worker.spawn", "state_unavailable"))?;
-            if let Some(result) = state.starts.done.remove(&key) {
-                return result;
-            }
-            if state.starts.in_flight.contains(&key) {
-                return Err(Failure::start_pending("worker.spawn"));
-            }
+        if let Some(answer) = poll_start(&self.state, &key) {
+            return answer;
         }
         let runtime = self.runtime()?;
         if request.runtime == hide_factory::model::Runtime::Codex
@@ -768,25 +843,7 @@ impl WorkerRuntime for CoreWorkers {
             return Err(Failure::starting("worker.spawn", "kit_not_read"));
         }
         drop(runtime);
-        let mut state = self
-            .state
-            .lock()
-            .map_err(|_| Failure::task("worker.spawn", "state_unavailable"))?;
-        let queue = state
-            .starts
-            .queue
-            .clone()
-            .ok_or_else(|| Failure::task("worker.spawn", "starter_stopped"))?;
-        match queue.try_send(request.clone()) {
-            Ok(()) => {
-                state.starts.in_flight.insert(key);
-            }
-            Err(mpsc::TrySendError::Full(_)) => {}
-            Err(mpsc::TrySendError::Disconnected(_)) => {
-                return Err(Failure::task("worker.spawn", "starter_stopped"));
-            }
-        }
-        Err(Failure::start_pending("worker.spawn"))
+        Err(queue_start(&self.state, request))
     }
 
     fn abandon_start(&mut self, factory: &str, task: &str) {
@@ -800,12 +857,12 @@ impl WorkerRuntime for CoreWorkers {
             }
             Err(_) => None,
         };
-        if let Some(Ok(worker)) = finished
-            && let Err(failure) = self.stop(&worker)
+        if let Some(Finished {
+            fresh,
+            result: Ok(worker),
+        }) = finished
         {
-            crate::diagnostic!(
-                json!({"component":"factory","kind":"worker.abandon_failed","task":task,"stage":failure.stage})
-            );
+            self.release_start(task, fresh, &worker);
         }
     }
 
@@ -1049,8 +1106,13 @@ fn start_worker(
                     },
                 );
             }
+            // Stable per previous worker and attempt, so a start that is
+            // asked again continues the same spawn (rule 11).
             (
-                format!("factory-{}-{}-{}", request.factory, request.task, now_ms()),
+                format!(
+                    "factory-{}-{}-r{}-a{}",
+                    request.factory, request.task, previous.started_at, request.attempt
+                ),
                 Some(previous.worktree.clone()),
             )
         }
@@ -1101,6 +1163,11 @@ fn spawn_failure(reason: &str) -> Failure {
         // The pane was made and the agent typed in; its session is not
         // visible yet. The same intent continues the spawn later.
         "native_identity_unavailable" => Failure::starting("worker.spawn", reason),
+        // Another spawn on this machine holds the spawn lock: ask again soon.
+        "spawn_busy" => Failure {
+            again_in_ms: Some(2_000),
+            ..Failure::starting("worker.spawn", reason)
+        },
         "delivery_unavailable" | "ledger_unavailable" => {
             Failure::environment("worker.spawn", EnvSignal::HerdrSocket, reason)
         }
@@ -1429,6 +1496,152 @@ fn judge_loop(shared: Arc<JudgeShared>, runtime: Weak<Mutex<Runtime>>, home: Opt
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::cell::RefCell;
+
+    fn request(task: &str, resume: Option<WorkerRef>) -> WorkerSpawn {
+        WorkerSpawn {
+            factory: "f-1".into(),
+            task: task.into(),
+            name: format!("w-{task}"),
+            runtime: hide_factory::model::Runtime::Claude,
+            project: "/work/p".into(),
+            branch: format!("factory/{task}"),
+            prompt: "p".into(),
+            args: Vec::new(),
+            resume,
+            attempt: 0,
+        }
+    }
+
+    fn worker(job: &WorkerSpawn) -> WorkerRef {
+        WorkerRef {
+            factory: job.factory.clone(),
+            agent: Some(format!("agent-{}", job.task)),
+            name: job.name.clone(),
+            pane: Some(format!("pane-{}", job.task)),
+            runtime: job.runtime,
+            worktree: format!("/work/p.worktrees/{}", job.task),
+            branch: job.branch.clone(),
+            started_at: 1,
+            asleep: false,
+        }
+    }
+
+    /// A starter state with a queue of `capacity`, and the queue's far end.
+    fn starter(capacity: usize) -> (Arc<Mutex<WorkerState>>, Receiver<WorkerSpawn>) {
+        let state = Arc::new(Mutex::new(WorkerState::default()));
+        let (queue, jobs) = mpsc::sync_channel(capacity);
+        state.lock().unwrap().starts.queue = Some(queue);
+        (state, jobs)
+    }
+
+    fn close(state: &Mutex<WorkerState>) {
+        state.lock().unwrap().starts.queue = None;
+    }
+
+    #[test]
+    fn a_start_is_pending_until_the_starter_finishes_and_is_answered_once() {
+        let (state, jobs) = starter(4);
+        let job = request("T-1", None);
+        let key = start_key("f-1", "T-1");
+        assert_eq!(poll_start(&state, &key).map(|r| r.is_ok()), None);
+        let pending = queue_start(&state, &job);
+        assert_eq!((pending.starting, pending.again_in_ms), (true, Some(0)));
+        assert!(matches!(poll_start(&state, &key), Some(Err(f)) if f.starting));
+        close(&state);
+        run_starts(
+            jobs,
+            Arc::clone(&state),
+            Arc::new(AtomicBool::new(false)),
+            |job| Ok(worker(job)),
+            |_, _| panic!("nothing was abandoned"),
+        );
+        let answer = poll_start(&state, &key).unwrap().unwrap();
+        assert_eq!(answer.agent.as_deref(), Some("agent-T-1"));
+        assert!(poll_start(&state, &key).is_none(), "answered once");
+    }
+
+    #[test]
+    fn a_full_queue_is_asked_again_later_and_never_waited_on() {
+        let (state, _jobs) = starter(1);
+        queue_start(&state, &request("T-1", None));
+        let full = queue_start(&state, &request("T-2", None));
+        assert!(full.starting);
+        assert!(
+            poll_start(&state, &start_key("f-1", "T-2")).is_none(),
+            "not queued, so the next tick queues it"
+        );
+        close(&state);
+        let stopped = queue_start(&state, &request("T-3", None));
+        assert_eq!(stopped.detail, "starter_stopped");
+        assert!(
+            stopped.starting,
+            "a stopping host is not the Task's failure"
+        );
+    }
+
+    #[test]
+    fn an_abandoned_start_releases_its_worker_and_a_new_worktree() {
+        let (state, jobs) = starter(4);
+        let resumed = request("T-2", Some(worker(&request("T-2", None))));
+        queue_start(&state, &request("T-1", None));
+        queue_start(&state, &resumed);
+        {
+            let mut state = state.lock().unwrap();
+            state.starts.abandoned.insert(start_key("f-1", "T-1"));
+            state.starts.abandoned.insert(start_key("f-1", "T-2"));
+        }
+        close(&state);
+        let released = RefCell::new(Vec::new());
+        run_starts(
+            jobs,
+            Arc::clone(&state),
+            Arc::new(AtomicBool::new(false)),
+            |job| Ok(worker(job)),
+            |job, worker| {
+                released
+                    .borrow_mut()
+                    .push((worker.agent.clone().unwrap(), job.resume.is_none()))
+            },
+        );
+        assert_eq!(
+            released.into_inner(),
+            vec![("agent-T-1".into(), true), ("agent-T-2".into(), false)],
+            "a resumed worker keeps the Task's worktree"
+        );
+        let state = state.lock().unwrap();
+        assert!(state.starts.done.is_empty() && state.starts.in_flight.is_empty());
+        assert!(state.starts.abandoned.is_empty());
+    }
+
+    #[test]
+    fn a_stopped_host_drops_the_starts_still_queued() {
+        let (state, jobs) = starter(4);
+        queue_start(&state, &request("T-1", None));
+        queue_start(&state, &request("T-2", None));
+        close(&state);
+        let started = RefCell::new(0);
+        run_starts(
+            jobs,
+            Arc::clone(&state),
+            Arc::new(AtomicBool::new(true)),
+            |job| {
+                *started.borrow_mut() += 1;
+                Ok(worker(job))
+            },
+            |_, _| {},
+        );
+        assert_eq!(started.into_inner(), 0);
+        assert!(state.lock().unwrap().starts.in_flight.is_empty());
+    }
+
+    #[test]
+    fn a_busy_spawn_lock_is_asked_again_soon() {
+        let busy = spawn_failure("spawn_busy");
+        assert!(busy.starting && busy.signal.is_none());
+        assert_eq!(busy.again_in_ms, Some(2_000));
+        assert!(!spawn_failure("worktree_create_failed").starting);
+    }
 
     fn git(cwd: &Path, args: &[&str]) {
         let status = std::process::Command::new("git")
