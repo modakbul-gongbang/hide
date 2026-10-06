@@ -36,8 +36,9 @@
 # Everything else runs on Linux: the Rust suite, the unit suites, the invariant
 # checks, the whole web end-to-end, dealt out to four shards by `web-e2e.yml`,
 # and the remote mailbox lane over private SSH (`remote-mailbox`).
-# `nightly.yml` runs the web end-to-end on macOS, so the move of the web
-# end-to-end costs no macOS coverage, only its delay. On Windows, `windows check`
+# `nightly.yml` runs the web end-to-end's `@platform` tests on macOS, and the
+# rest of the web end-to-end is the same code on every system, so the move of
+# the web end-to-end costs no macOS coverage, only its delay. On Windows, `windows check`
 # compiles the workspace and runs the daemon's and the app's suites there,
 # beside the OS contract's Windows leg (issue #293), and `windows e2e` runs the
 # browser `@platform` tests.

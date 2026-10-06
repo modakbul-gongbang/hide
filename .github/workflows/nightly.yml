@@ -1,4 +1,5 @@
-# Full web and desktop suites and package checks on all three OSes nightly,
+# The `@platform` web tests on macOS and Windows, the desktop suite whole on
+# macOS and its `@platform` tests on Linux and Windows, and package checks nightly,
 # and `verify` (pr.yml) with every lane on main. A push to main runs every lane
 # too, but a lane it fails opens no issue; here it opens the nightly issue, and
 # a lane that breaks with no merge (a runner image, a toolchain, a service a
@@ -43,21 +44,14 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
-  web-e2e-linux:
-    name: web e2e (Linux full)
-    if: ${{ inputs.lane != 'macos' && inputs.lane != 'windows' }}
-    uses: ./.github/workflows/web-e2e.yml
-    permissions:
-      contents: read
-      issues: write
-    with:
-      lane: nightly-linux
-      runner: ubuntu-latest
-      herdr-platform: linux-x86_64
-      shards: 6
-
+  # macOS and Windows run the web tests tagged `@platform`, as the pull
+  # request's platform lanes do: what differs by system is checked there, and
+  # the rest of the suite is the same code on every system, which the pull
+  # request and the `verify` job below already run whole on
+  # Linux, so Linux has no web job here. What this run adds is the desktop app
+  # on Linux and Windows, the packages, and a runner image that changed.
   web-e2e-macos:
-    name: web e2e (macOS full)
+    name: web e2e (macOS @platform)
     if: ${{ inputs.lane != 'linux' && inputs.lane != 'windows' }}
     uses: ./.github/workflows/web-e2e.yml
     permissions:
@@ -67,10 +61,11 @@ jobs:
       lane: nightly-macos
       runner: macos-15
       herdr-platform: macos-aarch64
-      shards: 4
+      shards: 1
+      grep: "@platform"
 
   web-e2e-windows:
-    name: web e2e (Windows full)
+    name: web e2e (Windows @platform)
     if: ${{ inputs.lane != 'linux' && inputs.lane != 'macos' }}
     uses: ./.github/workflows/web-e2e.yml
     permissions:
@@ -80,7 +75,8 @@ jobs:
       lane: nightly-windows
       runner: windows-latest
       herdr-platform: windows-x86_64
-      shards: 4
+      shards: 1
+      grep: "@platform"
 
   # The remote mailbox lane on macOS, the system of the usual remote device;
   # a pull request runs it on Linux. The OS contract's three legs run in
@@ -96,8 +92,14 @@ jobs:
       runner: macos-15
       herdr-platform: macos-aarch64
 
+  # The whole desktop suite runs on macOS, the system the desktop app is written
+  # against. Linux and Windows run only the tests tagged `@platform`: what the
+  # desktop host does differently on that system (its processes and local
+  # stream, whether closing the last window ends the app, the CLI's name and
+  # places, the path it hands the wire, the file manager's reveal, its
+  # accelerators). A test that checks no such difference stays on macOS.
   desktop-e2e:
-    name: desktop e2e (${{ matrix.system }} full)
+    name: desktop e2e (${{ matrix.system }} ${{ matrix.system == 'macos' && 'full' || '@platform' }})
     runs-on: ${{ fromJSON('{"linux":"ubuntu-latest","macos":"macos-15","windows":"windows-latest"}')[matrix.system] }}
     timeout-minutes: 45
     permissions:
@@ -162,17 +164,21 @@ jobs:
           echo "bin=$bin" >> "$GITHUB_OUTPUT"
       - name: Compare the binary schema and version with the pin
         run: python3 scripts/check-herdr-schema.py --herdr-bin "${{ steps.herdr.outputs.bin }}"
-      - name: Whole desktop suite
+      - name: Desktop suite (the whole suite on macOS, the @platform tests elsewhere)
         timeout-minutes: 20
         env:
           HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
           HIDE_E2E_SCREENSHOT_DIR: ${{ runner.temp }}/hide-e2e
         run: |
           mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
+          selection=()
+          if [ "$RUNNER_OS" != macOS ]; then
+            selection=(--grep @platform)
+          fi
           if [ "$RUNNER_OS" = Linux ]; then
-            xvfb-run -a bash scripts/verify-web.sh desktop e2e
+            xvfb-run -a bash scripts/verify-web.sh desktop e2e "${selection[@]}"
           else
-            bash scripts/verify-web.sh desktop e2e
+            bash scripts/verify-web.sh desktop e2e "${selection[@]}"
           fi
       - name: Report flaky tests
         id: flaky
@@ -215,7 +221,7 @@ jobs:
 
   report:
     name: report a failure
-    needs: [web-e2e-linux, web-e2e-macos, web-e2e-windows, remote-mailbox-macos, desktop-e2e, verify, package]
+    needs: [web-e2e-macos, web-e2e-windows, remote-mailbox-macos, desktop-e2e, verify, package]
     if: ${{ always() && github.ref == 'refs/heads/main' }}
     runs-on: ubuntu-latest
     timeout-minutes: 5
