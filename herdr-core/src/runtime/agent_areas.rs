@@ -5,6 +5,7 @@ use super::*;
 use crate::agent_layout::{Layout, Tab};
 use crate::split_tree::{AreaItem, Edge, LayoutError};
 use serde::Deserialize;
+use std::borrow::Cow;
 
 #[derive(Debug, Deserialize)]
 pub(super) struct AgentLayoutPayload {
@@ -479,7 +480,7 @@ impl Runtime {
             .filter(|key| key.0 == workspace::LOCAL_DEVICE_ID)
             && let Some(layout) = self.agent_layout_of(&key)
         {
-            let shown = layout.shown();
+            let shown = self.shown_agent_layout(&key, layout).shown();
             if !shown.is_empty() {
                 return shown;
             }
@@ -487,10 +488,49 @@ impl Runtime {
         self.focused_visible_tab_id().into_iter().collect()
     }
 
+    /// What a Workspace's Agent areas show: the stored layout less every tab
+    /// a local close is taking away (`PendingClose::leaving_tab`), so its chip
+    /// leaves when the close is approved and each area shows what it will show
+    /// once Herdr confirms. The stored layout keeps the tab, so a close that
+    /// does not happen puts it back where it stood. Nothing is cloned while
+    /// no close is running.
+    pub(super) fn shown_agent_layout<'a>(
+        &self,
+        key: &WorkspaceKey,
+        layout: &'a Layout,
+    ) -> Cow<'a, Layout> {
+        if key.0 != workspace::LOCAL_DEVICE_ID {
+            return Cow::Borrowed(layout);
+        }
+        let leaving = self
+            .close_operations
+            .values()
+            .filter(|operation| operation.request.context.checkout_path == key.1)
+            .filter_map(|operation| operation.leaving_tab())
+            .filter(|id| {
+                layout.tree.display(id).is_some() || layout.canvases.values().any(|tab| tab == id)
+            })
+            .collect::<Vec<_>>();
+        if leaving.is_empty() {
+            return Cow::Borrowed(layout);
+        }
+        let mut shown = layout.clone();
+        for id in leaving {
+            shown.tree.remove(id);
+            shown.canvases.retain(|_, tab| tab != id);
+        }
+        shown
+            .canvases
+            .retain(|area, _| shown.tree.area(area).is_some());
+        Cow::Owned(shown)
+    }
+
     pub(super) fn agent_layout_snapshot(
         &self,
+        key: &WorkspaceKey,
         layout: &Layout,
     ) -> crate::model::AgentLayoutSnapshot {
+        let layout = self.shown_agent_layout(key, layout);
         crate::model::AgentLayoutSnapshot {
             waiting: layout.waiting,
             root: layout.tree.root.clone(),

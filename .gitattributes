@@ -1,2 +1,3 @@
 hide-memory/vendor/mem0/** -whitespace
 design/hide-screens.pen -diff linguist-generated=true
+*.cmd text eol=crlf

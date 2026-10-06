@@ -122,6 +122,9 @@ Agent and View areas share the drag, divider and narrow-window controls describe
 A drag keeps its original tab in place and changes no terminal size until a valid drop.
 Dropping on a tab bar reorders or moves the tab; dropping on a content edge highlights the new half with Split left/right/up/down and creates another area on release.
 Moving the last tab out collapses its area, as does closing it or its disappearance from Herdr.
+Closing a tab, or its only pane, takes the tab out of its area the moment the close is approved, without waiting for Herdr: the area shows the tab it showed before it, or collapses when the tab was its last, and when the closed tab held the keyboard the keyboard goes to what is now shown in its place (the area's next tab, or the neighbouring area's), never to the next tab in Herdr's order.
+A close Herdr refuses, or one that fails before it is sent, puts the tab back where it stood, and the keyboard with it when nothing has moved since; a close whose result is unknown shows the tab again until the status check settles it.
+A pane closing inside a tab that keeps other panes stays drawn as closing until Herdr confirms it, because Herdr decides how its neighbours fill the space.
 A sole empty area shows No agent tab is open and New tab.
 Agent tabs cannot enter the View column, and a sole tab cannot split its own area.
 Invalid size, area or depth limits show the forbidden cursor without an overlay; Escape, outside release and a vanished target leave the layout unchanged.
@@ -143,6 +146,7 @@ An older build may discard Agent layout state; returning starts with all current
 SSH device Workspaces use the same component with one area, retain device Herdr reorder, and disable splitting with a local-Workspaces-only reason.
 
 Closing a primary Herdr workspace's last tab or last pane while a linked worktree remains first creates a shell at the checkout root in the same area and position.
+That tab stays in its area, marked closing, until Herdr confirms the close, so the area is never empty while the shell is made.
 The existing close guards run first, and linked workspaces remain untouched.
 If shell creation fails, nothing closes; if closing is refused, the shell remains.
 Retry close reuses that intent's shell, while Dismiss ends the failed intent; detailed Herdr failures are diagnostic-only.
@@ -1109,6 +1113,7 @@ Until the core's order moves after a report, the page puts the pane it reported 
 The shown tab of the recorded keyboard area is the current visit, including native browser pages; intermediate commit frames are not visits.
 
 Reopen Closed Tab is disabled when the session-local recent-close stack is empty or a restore is already running, and restoration works regardless of which surface currently owns focus.
+Pressed while this machine's newest close is still being confirmed, it is accepted and waits: the closed item reopens as soon as Herdr confirms the close, and nothing reopens if that close is refused or fails, or if another close starts first.
 Restoration is one action with no confirmation: an in-flight pane shows inline progress, and a restore without a target pane shows a compact inline warning.
 Missing cwd, an unavailable prior conversation, a missing file, and a retryable failure all use the same inline notice vocabulary, without a banner, card, or modal.
 A definitive close refusal removes its reserved reopen entry, while an unconfirmed result keeps the entry and explains inline that Hide could not determine whether the item closed.

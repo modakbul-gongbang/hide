@@ -12,6 +12,12 @@ const RETIRED_ID_WINDOW: usize = 64;
 /// yet (`early_focuses`); one more is a divergence that rebuilds the replica.
 const EARLY_FOCUS_LIMIT: usize = 16;
 
+/// How many panes a replica holds waiting for their cwd to be confirmed
+/// (`unconfirmed_cwds`). The coordinator confirms each pane right after the
+/// event that announced it, so the set holds one pane at a time; a pane past
+/// the cap keeps the cwd its event carried and is logged.
+const UNCONFIRMED_CWD_LIMIT: usize = 64;
+
 static NEXT_REPLICA_GENERATION: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
 
 #[derive(Clone)]
@@ -47,6 +53,14 @@ pub(crate) struct SessionReplica {
     /// before its `tab_created`. Each is applied once its target arrives;
     /// only the latest per workspace and kind is kept.
     early_focuses: Vec<ReplicaEvent>,
+    /// Panes announced by `pane_created` whose cwd Herdr has not confirmed.
+    /// Herdr 0.9.1 can announce a new pane with a cwd that is not the one it
+    /// was created in (`/tmp` for a tab created in the project folder, seen
+    /// on CI), while a read of the same pane afterwards answers the right
+    /// one. Herdr sends no later event for that pane, and `agent.list` lists
+    /// agent terminals only, so one `pane.get` read is what confirms it
+    /// (`confirm_pane_cwd`).
+    unconfirmed_cwds: BTreeSet<String>,
     /// How many events this replica has applied since its snapshot. Herdr's
     /// stream carries no sequence, so this is the only position a diagnostic
     /// can name.
@@ -109,6 +123,7 @@ impl SessionReplica {
             pending_active_tab_focuses: BTreeSet::new(),
             retired_ids: VecDeque::new(),
             early_focuses: Vec::new(),
+            unconfirmed_cwds: BTreeSet::new(),
             applied_events: 0,
         };
         replica.validate()?;
@@ -664,6 +679,39 @@ impl SessionReplica {
         true
     }
 
+    /// Panes whose cwd came from their creation event and has not been
+    /// read back from Herdr yet.
+    pub(crate) fn panes_awaiting_cwd(&self) -> Vec<String> {
+        self.unconfirmed_cwds.iter().cloned().collect()
+    }
+
+    /// Applies a `pane.get` answer to a pane waiting for its cwd, and reports
+    /// whether the cwd changed. The read is the confirmation whatever it
+    /// says, so the pane stops waiting either way; an answer with no cwd (the
+    /// pane closed before the read, or Herdr knows none) keeps what the event
+    /// said.
+    pub(crate) fn confirm_pane_cwd(&mut self, pane_id: &str, cwd: Option<String>) -> bool {
+        if !self.unconfirmed_cwds.remove(pane_id) {
+            return false;
+        }
+        let Some(cwd) = cwd else {
+            return false;
+        };
+        let Some(pane) = self
+            .state
+            .panes
+            .iter_mut()
+            .find(|pane| pane.pane_id == pane_id)
+        else {
+            return false;
+        };
+        if pane.cwd.as_deref() == Some(cwd.as_str()) {
+            return false;
+        }
+        pane.cwd = Some(cwd);
+        true
+    }
+
     pub(crate) fn ready_to_publish(&self) -> bool {
         self.pending_layouts.is_empty()
             && self.pending_workspace_closures.is_empty()
@@ -695,10 +743,10 @@ impl SessionReplica {
             })
             .filter_map(|agent| agent.cwd.clone())
             .collect();
-        // agent.list includes plain terminal panes and reads their live cwd.
-        // A pane_created event can retain the child's inherited directory
-        // from before its shell starts. Refresh that fact on the same pane,
-        // without allowing the list to create or move topology.
+        // agent.list reads an agent terminal's live cwd. Refresh that fact on
+        // the same pane, without allowing the list to create or move
+        // topology; a plain terminal is not listed, and its creation cwd is
+        // confirmed by `confirm_pane_cwd` instead.
         let by_pane: HashMap<_, _> = agents
             .iter()
             .map(|agent| (agent.pane_id.as_str(), agent))
@@ -1161,6 +1209,17 @@ impl SessionReplica {
                     return Err(malformed_event(event, "created pane already exists"));
                 }
                 self.pending_layouts.insert(input_pane.tab_id.clone());
+                if self.unconfirmed_cwds.len() < UNCONFIRMED_CWD_LIMIT {
+                    self.unconfirmed_cwds.insert(input_pane.pane_id.clone());
+                } else {
+                    crate::diagnostic!(json!({
+                        "component": "session_sync",
+                        "kind": "pane_cwd.unconfirmed_over_cap",
+                        "pane_id": input_pane.pane_id,
+                        "limit": UNCONFIRMED_CWD_LIMIT,
+                        "applied_events": self.applied_events,
+                    }));
+                }
                 self.state.panes.push(input_pane);
             }
             ReplicaEvent::PaneClosed {
@@ -1557,6 +1616,8 @@ impl SessionReplica {
         self.state
             .panes
             .retain(|pane| pane.workspace_id != workspace_id);
+        self.unconfirmed_cwds
+            .retain(|pane_id| self.state.panes.iter().any(|pane| &pane.pane_id == pane_id));
         self.state
             .layouts
             .retain(|layout| layout.workspace_id != workspace_id);
@@ -1598,6 +1659,9 @@ impl SessionReplica {
         });
         self.state.tabs.retain(|tab| tab.tab_id != tab_id);
         self.state.panes.retain(|pane| pane.tab_id != tab_id);
+        for pane_id in &pane_ids {
+            self.unconfirmed_cwds.remove(pane_id);
+        }
         self.state.layouts.retain(|layout| layout.tab_id != tab_id);
         self.state.agents.retain(|agent| agent.tab_id != tab_id);
         self.pending_layouts.remove(tab_id);
@@ -1610,6 +1674,7 @@ impl SessionReplica {
             !matches!(focus, ReplicaEvent::PaneFocused { pane_id: held, .. } if held == pane_id)
         });
         self.state.panes.retain(|pane| pane.pane_id != pane_id);
+        self.unconfirmed_cwds.remove(pane_id);
         self.state.agents.retain(|agent| agent.pane_id != pane_id);
         self.clear_missing_focus();
     }
