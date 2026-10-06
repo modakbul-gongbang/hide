@@ -88,7 +88,7 @@ pub(super) fn installed() -> HookStatus {
 
 /// This Mac's kit as the first check reported it: every adapter's row, on.
 pub(super) fn kit_rows(runtime: &mut Runtime, codex_daemon_on: Option<bool>) {
-    let mut kit = runtime.kit_state(crate::workspace::LOCAL_DEVICE_ID);
+    let mut kit = runtime.kit_state(crate::node::TEST_NODE);
     kit.codex_daemon = Some(true);
     kit.codex_daemon_on = codex_daemon_on;
     kit.agents = hide_kit::agents::ADAPTERS
@@ -115,7 +115,7 @@ pub(super) fn kit_rows(runtime: &mut Runtime, codex_daemon_on: Option<bool>) {
             }
         })
         .collect();
-    runtime.set_kit_state(crate::workspace::LOCAL_DEVICE_ID, kit);
+    runtime.set_kit_state(crate::node::TEST_NODE, kit);
 }
 
 pub(super) fn sessions_of(runtime: &Runtime, agent: &str) -> Option<u32> {
@@ -435,9 +435,9 @@ fn reopen_refuses_what_it_cannot_do_with_a_code_and_never_for_a_missing_hook() {
 
     // A Codex whose capability was never read does not know whether to leave
     // the shared server, so it starts nothing.
-    let mut kit = runtime.kit_state(crate::workspace::LOCAL_DEVICE_ID);
+    let mut kit = runtime.kit_state(crate::node::TEST_NODE);
     kit.codex_daemon = None;
-    runtime.set_kit_state(crate::workspace::LOCAL_DEVICE_ID, kit);
+    runtime.set_kit_state(crate::node::TEST_NODE, kit);
     feed(&mut runtime, &[("w1:p2", "codex", false)]);
     assert!(reopen(&mut runtime, "w1:p2"));
     assert_eq!(
@@ -535,11 +535,11 @@ fn the_shared_server_off_request_is_one_queued_pass_and_its_answer_is_a_code() {
     assert!(!disable(&mut runtime, "local"), "the same intent runs once");
 
     // A read that lands first says nothing about the request.
-    runtime.ingest_kit_report(crate::workspace::LOCAL_DEVICE_ID, &report_with(true, None));
+    runtime.ingest_kit_report(crate::node::TEST_NODE, &report_with(true, None));
     assert_eq!(off_of(&runtime), Some(Off::Pending));
 
     runtime.ingest_kit_report(
-        crate::workspace::LOCAL_DEVICE_ID,
+        crate::node::TEST_NODE,
         &report_with(
             true,
             Some(hide_kit::CodexDaemonOff::Failed {
@@ -565,7 +565,7 @@ fn the_shared_server_off_request_is_one_queued_pass_and_its_answer_is_a_code() {
     assert!(disable(&mut runtime, "local"));
     assert_eq!(off_of(&runtime), Some(Off::Pending));
     runtime.ingest_kit_report(
-        crate::workspace::LOCAL_DEVICE_ID,
+        crate::node::TEST_NODE,
         &report_with(
             false,
             Some(hide_kit::CodexDaemonOff::Done { no_daemon: None }),

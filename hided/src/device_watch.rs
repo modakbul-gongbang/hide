@@ -76,11 +76,13 @@ impl DeviceWatch {
 
 /// What a snapshot asks the device watch to stamp, or `None` when no device
 /// Explorer is showing on a ready helper.
-pub fn target_from_value(value: &Value) -> Option<DeviceTarget> {
+/// `node` is the core's own machine, whose Explorer this machine's watch
+/// covers.
+pub fn target_from_value(value: &Value, node: &str) -> Option<DeviceTarget> {
     let device = value
         .pointer("/rest/navigator/focused_device_id")
         .and_then(Value::as_str)
-        .filter(|device| *device != herdr_core::workspace::LOCAL_DEVICE_ID)?;
+        .filter(|device| *device != node)?;
     let ui = value.pointer("/rest/ui_state")?;
     if ui.get("right_panel_visible").and_then(Value::as_bool) != Some(true)
         || ui.get("right_panel_section").and_then(Value::as_str) != Some("explorer")
@@ -286,7 +288,7 @@ mod tests {
     #[test]
     fn a_device_explorer_is_watched_only_while_it_shows_on_a_ready_helper() {
         assert_eq!(
-            target_from_value(&snapshot("explorer", "ready")),
+            target_from_value(&snapshot("explorer", "ready"), "local"),
             Some(DeviceTarget {
                 device_id: "mac".to_owned(),
                 root: "/r".to_owned(),
@@ -297,11 +299,11 @@ mod tests {
                 ],
             })
         );
-        assert_eq!(target_from_value(&snapshot("changes", "ready")), None);
-        assert_eq!(target_from_value(&snapshot("explorer", "connecting")), None);
+        assert_eq!(target_from_value(&snapshot("changes", "ready"), "local"), None);
+        assert_eq!(target_from_value(&snapshot("explorer", "connecting"), "local"), None);
         let mut local = snapshot("explorer", "ready");
         local["rest"]["navigator"]["focused_device_id"] = "local".into();
-        assert_eq!(target_from_value(&local), None);
+        assert_eq!(target_from_value(&local, "local"), None);
     }
 
     #[test]

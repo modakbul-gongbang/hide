@@ -110,6 +110,7 @@ fn tree_catalog() -> session_sync::PrecomputedCatalog {
     session_sync::PrecomputedCatalog {
         registrations: Vec::new(),
         workspaces: workspace::build_catalog(
+            &crate::node::test_node(),
             &[],
             &spaces,
             &crate::model::WorktreeCatalogSnapshot::default(),
@@ -442,7 +443,7 @@ fn an_admitted_tree_keeps_room_for_its_later_closes() {
 #[test]
 fn a_device_descendant_closes_through_the_device_and_fails_when_it_disconnects() {
     let mut runtime = tree_runtime(&[]);
-    runtime.local_machine_id = Some("machine-local".to_owned());
+    runtime.node = crate::node::NodeId::parse("machine-local").unwrap();
     let remote_pane = "remote:mini:pane:r1";
     let mut child = runtime.snapshot.navigator.agents[1].clone();
     child.pane_id = remote_pane.to_owned();

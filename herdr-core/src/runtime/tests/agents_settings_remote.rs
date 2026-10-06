@@ -210,7 +210,7 @@ fn remote_session_sync_reconciles_target_scoped_structured_terminals() {
     let focus_local = serde_json::to_vec(&serde_json::json!({
         "schema_version": SCHEMA_VERSION,
         "kind": "focus_device",
-        "payload": {"device_id": "local"}
+        "payload": {"device_id": crate::node::TEST_NODE}
     }))
     .expect("focus local event");
     assert!(runtime.dispatch_json(&focus_local));
@@ -1284,7 +1284,7 @@ fn read_record_is_released_and_not_raised_by_a_checkout_switch() {
             id: "workspace:a".to_owned(),
             label: "a".to_owned(),
             path: root_a.clone(),
-            device_id: "local".to_owned(),
+            device_id: crate::node::TEST_NODE.to_owned(),
             pinned: false,
             home: false,
         },
@@ -1293,7 +1293,7 @@ fn read_record_is_released_and_not_raised_by_a_checkout_switch() {
             id: "workspace:b".to_owned(),
             label: "b".to_owned(),
             path: root_b.clone(),
-            device_id: "local".to_owned(),
+            device_id: crate::node::TEST_NODE.to_owned(),
             pinned: false,
             home: false,
         },
@@ -1428,7 +1428,7 @@ fn a_remote_pane_left_in_the_selection_does_not_block_local_projection() {
         id: workspace_id.clone(),
         label: "Remote selection leak".to_owned(),
         path: checkout_path.to_owned(),
-        device_id: "local".to_owned(),
+        device_id: crate::node::TEST_NODE.to_owned(),
         pinned: false,
         home: false,
     };
@@ -1962,7 +1962,7 @@ fn read_record_reaches_the_pane_tree_and_not_only_the_agent_rows() {
         id: "workspace:read-record".to_owned(),
         label: "read-record".to_owned(),
         path: checkout_path.to_owned(),
-        device_id: "local".to_owned(),
+        device_id: crate::node::TEST_NODE.to_owned(),
         pinned: false,
         home: false,
     }];

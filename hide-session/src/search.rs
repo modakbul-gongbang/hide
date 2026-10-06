@@ -66,6 +66,25 @@ impl SearchIndex {
             reads: UpdateReads::default(),
         })
     }
+    /// Moves every row of each `(old, new)` Project to its new id, in one
+    /// transaction (PRD core-host-node D-23). A row whose new key is already
+    /// taken keeps its old id. Returns how many rows moved.
+    pub fn rekey_projects(&mut self, pairs: &[(String, String)]) -> Result<usize, String> {
+        let tx = self.db.transaction().map_err(|e| e.to_string())?;
+        let mut moved = 0;
+        for (old, new) in pairs {
+            for table in ["policy", "control_outcomes", "files", "messages"] {
+                moved += tx
+                    .execute(
+                        &format!("UPDATE OR IGNORE {table} SET project=?1 WHERE project=?2"),
+                        params![new, old],
+                    )
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+        tx.commit().map_err(|e| e.to_string())?;
+        Ok(moved)
+    }
     pub fn last_update_reads(&self) -> UpdateReads {
         self.reads
     }

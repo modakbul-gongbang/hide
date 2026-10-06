@@ -17,7 +17,6 @@ use super::Runtime;
 use super::hosts::HostPhase;
 use crate::host_access::HostChannel;
 use crate::model::{CodexDaemonOffSnapshot, KitSnapshot};
-use crate::workspace::LOCAL_DEVICE_ID;
 
 /// How often this Mac's kit is read again while Settings is on screen, so a
 /// part the operator removed by hand shows up without a relaunch.
@@ -162,13 +161,15 @@ impl Runtime {
 
     /// This Mac cannot run the kit at all, and its row says why (B11).
     pub(crate) fn set_local_kit_unavailable(&mut self, reason: &str) {
-        self.set_kit_state(LOCAL_DEVICE_ID, KitSnapshot::unavailable(reason));
+        let node = self.node.clone();
+        self.set_kit_state(node.as_str(), KitSnapshot::unavailable(reason));
     }
 
     /// The worker exists: the launch pass is its first job (B1, B10).
     pub(crate) fn queue_local_kit_launch(&mut self) {
         self.local_kit_pending = Some(Scope::automatic());
-        self.set_kit_busy(LOCAL_DEVICE_ID);
+        let node = self.node.clone();
+        self.set_kit_busy(node.as_str());
     }
 
     /// The next job for this Mac's kit worker: a queued install first, else
@@ -195,11 +196,12 @@ impl Runtime {
         let mut changed = false;
         if self
             .kit_states
-            .get(LOCAL_DEVICE_ID)
+            .get(self.node.as_str())
             .is_none_or(|state| state.unavailable.is_none())
         {
             self.local_kit_check_requested = true;
-            changed |= self.set_kit_checking(LOCAL_DEVICE_ID);
+            let node = self.node.clone();
+            changed |= self.set_kit_checking(node.as_str());
         }
         let ready = self
             .device_hosts
@@ -315,7 +317,7 @@ impl Runtime {
         if report.agents.is_empty() {
             return false;
         }
-        if device_id != LOCAL_DEVICE_ID {
+        if device_id != self.node.as_str() {
             if !report.held_for_onboarding {
                 self.device_first_run_choice.remove(device_id);
                 return false;
@@ -434,8 +436,9 @@ impl Runtime {
         self.snapshot.ui_state.agent_onboarding = Some(AgentOnboarding::Done);
         self.snapshot.ui_state.agent_onboarding_agents = agents.clone();
         self.persist_ui_state();
+        let node = self.node.clone();
         self.queue_kit_scope(
-            LOCAL_DEVICE_ID,
+            node.as_str(),
             Scope::first_run(agents.iter().map(String::as_str)),
         );
         self.send_first_run_choice_to_waiting_devices();
@@ -443,7 +446,7 @@ impl Runtime {
     }
 
     fn kit_install_queued(&self, device_id: &str) -> bool {
-        if device_id == LOCAL_DEVICE_ID {
+        if device_id == self.node.as_str() {
             self.local_kit_pending.is_some()
         } else {
             matches!(
@@ -462,7 +465,7 @@ impl Runtime {
         only: Option<&[ComponentId]>,
         only_agents: Option<&[String]>,
     ) -> bool {
-        if device_id != LOCAL_DEVICE_ID && !self.device_registration_exists(device_id) {
+        if device_id != self.node.as_str() && !self.device_registration_exists(device_id) {
             self.set_error(
                 "kit.unknown_machine",
                 format!("Device {device_id} is not registered"),
@@ -523,7 +526,7 @@ impl Runtime {
             );
             return true;
         }
-        if device_id != LOCAL_DEVICE_ID && !self.device_registration_exists(device_id) {
+        if device_id != self.node.as_str() && !self.device_registration_exists(device_id) {
             self.set_error(
                 "kit.unknown_machine",
                 format!("Device {device_id} is not registered"),
@@ -570,7 +573,7 @@ impl Runtime {
     /// What the work still queued for a machine says about one agent's
     /// switch: `Some(true)` on, `Some(false)` off, `None` when it says nothing.
     fn queued_agent_choice(&self, device_id: &str, agent: &str) -> Option<bool> {
-        let scope = if device_id == LOCAL_DEVICE_ID {
+        let scope = if device_id == self.node.as_str() {
             self.local_kit_pending.as_ref()
         } else {
             match self.device_kit_pending.get(device_id) {
@@ -596,7 +599,7 @@ impl Runtime {
     /// rule 11). The answer comes back in the report of the pass that carried
     /// it, as `codex_daemon_off`.
     pub(super) fn request_codex_daemon_disable(&mut self, device_id: &str) -> bool {
-        if device_id != LOCAL_DEVICE_ID && !self.device_registration_exists(device_id) {
+        if device_id != self.node.as_str() && !self.device_registration_exists(device_id) {
             self.set_error(
                 "kit.unknown_machine",
                 format!("Device {device_id} is not registered"),
@@ -670,13 +673,14 @@ impl Runtime {
     }
 
     fn queue_kit_scope(&mut self, device_id: &str, scope: Scope) -> bool {
-        if device_id != LOCAL_DEVICE_ID {
+        if device_id != self.node.as_str() {
             self.queue_device_kit(device_id, KitJob::Apply(scope));
             return true;
         }
         let merged = merge_scopes(self.local_kit_pending.take(), scope);
         self.local_kit_pending = Some(merged);
-        self.set_kit_busy(LOCAL_DEVICE_ID);
+        let node = self.node.clone();
+        self.set_kit_busy(node.as_str());
         true
     }
 
@@ -1030,7 +1034,7 @@ impl Runtime {
     /// Memory's "update hooks".
     pub(super) fn local_hook_parts_to_repair(&self) -> Vec<ComponentId> {
         self.kit_states
-            .get(LOCAL_DEVICE_ID)
+            .get(self.node.as_str())
             .map(|state| {
                 state
                     .components
@@ -1064,7 +1068,7 @@ impl Runtime {
             .iter()
             .find(|status| status.target_id == device_id)
             .and_then(|status| status.session.as_ref());
-        let (workspaces, agents) = if device_id == LOCAL_DEVICE_ID {
+        let (workspaces, agents) = if device_id == self.node.as_str() {
             (
                 &self.snapshot.navigator.workspaces,
                 &self.snapshot.navigator.agents,
@@ -1087,7 +1091,7 @@ impl Runtime {
             .flat_map(|tab| tab.panes.iter());
         for pane in panes {
             let local_pane = !crate::agent_hooks::is_remote_pane(&pane.id);
-            if (device_id == LOCAL_DEVICE_ID) != local_pane {
+            if (device_id == self.node.as_str()) != local_pane {
                 continue;
             }
             let Some(agent) = agents
@@ -1159,7 +1163,7 @@ impl Runtime {
     }
 
     fn kit_view_without_sessions(&self, device_id: &str) -> KitSnapshot {
-        if device_id == LOCAL_DEVICE_ID {
+        if device_id == self.node.as_str() {
             return self.kit_state(device_id);
         }
         let mut view = match self.device_kit_declined(device_id) {
@@ -1225,7 +1229,7 @@ impl Runtime {
         let device = pane_id
             .strip_prefix("remote:")
             .and_then(|rest| rest.split_once(":pane:"))
-            .map_or(LOCAL_DEVICE_ID, |(device, _)| device);
+            .map_or(self.node.as_str(), |(device, _)| device);
         self.codex_daemon(device)
     }
 
@@ -1251,7 +1255,7 @@ impl Runtime {
         self.kit_states.insert(device_id.to_owned(), snapshot);
         self.refresh_device_snapshots();
         // A device's agent panes are judged against its kit.
-        if device_id != LOCAL_DEVICE_ID {
+        if device_id != self.node.as_str() {
             self.refresh_device_catalog(device_id);
         } else if shared_before != shared_now {
             // A Codex pane's reason for not being connected follows the

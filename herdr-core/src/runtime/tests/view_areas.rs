@@ -410,7 +410,7 @@ fn a_split_or_an_open_past_the_caps_is_refused_and_changes_nothing() {
         .as_mut()
         .unwrap()
         .views
-        .entry("local", &root)
+        .entry(crate::node::TEST_NODE, &root)
         .layout = full;
     let before = tree(&mut runtime);
     assert_eq!(before.display_count, MAX_VIEW_DISPLAYS);
@@ -461,7 +461,7 @@ fn fill(runtime: &mut Runtime, directory: &Path, count: usize) {
         .as_mut()
         .unwrap()
         .views
-        .entry("local", &directory.to_string_lossy())
+        .entry(crate::node::TEST_NODE, &directory.to_string_lossy())
         .layout = layout;
 }
 
@@ -562,7 +562,7 @@ fn a_reopen_that_lands_after_the_views_filled_is_refused_and_stays_reopenable() 
             .as_mut()
             .unwrap()
             .views
-            .entry("local", &directory.to_string_lossy())
+            .entry(crate::node::TEST_NODE, &directory.to_string_lossy())
             .layout;
         let last = layout.new_display(
             &directory.join("last.md").to_string_lossy(),
@@ -978,14 +978,14 @@ fn pane_close_preserves_a_dirty_last_view_after_closing_its_twin() {
     let first = display(&mut runtime, 0, "notes.md");
     let second = display(&mut runtime, 1, "notes.md");
     let expected = runtime
-        .workspace_control_query("local", pane_id, crate::workspace_control::Query::Info)
+        .workspace_control_query(crate::node::TEST_NODE, pane_id, crate::workspace_control::Query::Info)
         .unwrap()
         .context;
     let first_id = format!("{}-first", unix_milliseconds());
     assert!(
         runtime
             .workspace_control_action(
-                "local",
+                crate::node::TEST_NODE,
                 pane_id,
                 &expected,
                 &first_id,
@@ -1002,7 +1002,7 @@ fn pane_close_preserves_a_dirty_last_view_after_closing_its_twin() {
     assert_eq!(
         runtime
             .workspace_control_action(
-                "local",
+                crate::node::TEST_NODE,
                 pane_id,
                 &expected,
                 &second_id,
@@ -1486,7 +1486,7 @@ fn open_to_the_side_of_a_restored_file_that_came_back_opens_it_beside() {
     let gone = directory.join("gone.md");
     let mut views = crate::workspace_views::WorkspaceViews::default();
     let layout = &mut views
-        .entry(workspace::LOCAL_DEVICE_ID, &directory.to_string_lossy())
+        .entry(crate::node::TEST_NODE, &directory.to_string_lossy())
         .layout;
     let restored = layout.new_display(
         &gone.to_string_lossy(),
@@ -1529,7 +1529,7 @@ fn restored_diff(name: &str, committed: Option<bool>) -> (Runtime, PathBuf) {
     let (_views, state) = views_path(name);
     let mut views = crate::workspace_views::WorkspaceViews::default();
     let layout = &mut views
-        .entry(workspace::LOCAL_DEVICE_ID, &directory.to_string_lossy())
+        .entry(crate::node::TEST_NODE, &directory.to_string_lossy())
         .layout;
     let mut diff = layout.new_display(
         &directory.join("x.md").to_string_lossy(),
@@ -1578,7 +1578,7 @@ fn retry_on_a_diff_view_without_its_tab_opens_the_diff_again() {
     let store = runtime.workspace_views.as_mut().unwrap();
     for display in store
         .views
-        .entry(workspace::LOCAL_DEVICE_ID, &directory.to_string_lossy())
+        .entry(crate::node::TEST_NODE, &directory.to_string_lossy())
         .layout
         .displays_mut()
     {
@@ -1619,7 +1619,7 @@ fn a_schema_1_views_file_migrates_into_one_area() {
     std::fs::write(directory.join("b.md"), "b\n").expect("fixture");
     let file = |name: &str, preview: bool| serde_json::json!({"path": directory.join(name), "kind": "file", "preview": preview});
     let v1 = serde_json::json!({"schema_version": 1, "workspaces": [{
-        "device_id": "local", "path": directory, "mode": "together",
+        "device_id": crate::node::TEST_NODE, "path": directory, "mode": "together",
         "tabs": [file("b.md", false), file("notes.md", true)],
         "active": file("b.md", false),
     }]});
@@ -2124,7 +2124,7 @@ fn a_page_opens_in_the_workspace_of_the_pane_that_asked_and_once_per_address() {
         ),
         (
             true,
-            Some("local"),
+            Some(crate::node::TEST_NODE),
             Some(checkout.as_str()),
             Some(page.id.as_str())
         )
@@ -2169,11 +2169,11 @@ fn a_page_opens_in_the_workspace_of_the_pane_that_asked_and_once_per_address() {
         ),
         (
             "r4",
-            serde_json::json!({"url": "https://b.test/", "workspace": {"device_id": "local", "path": "/not/a/checkout"}}),
+            serde_json::json!({"url": "https://b.test/", "workspace": {"device_id": crate::node::TEST_NODE, "path": "/not/a/checkout"}}),
         ),
         (
             "r5",
-            serde_json::json!({"url": "file:///etc/hosts", "workspace": {"device_id": "local", "path": checkout}}),
+            serde_json::json!({"url": "file:///etc/hosts", "workspace": {"device_id": crate::node::TEST_NODE, "path": checkout}}),
         ),
     ] {
         payload["request_id"] = serde_json::json!(request);
@@ -2226,7 +2226,7 @@ fn a_page_records_where_it_went_and_the_toolbar_loads_what_was_typed() {
     );
     browser_open(&mut runtime, serde_json::json!({"url": "https://a.test/"}));
     let [page] = browser_displays(&mut runtime).try_into().expect("one page");
-    let workspace = serde_json::json!({"device_id": "local", "path": directory.to_string_lossy()});
+    let workspace = serde_json::json!({"device_id": crate::node::TEST_NODE, "path": directory.to_string_lossy()});
 
     assert!(runtime.dispatch_json(&explorer_event(
         "browser_state",
@@ -2304,7 +2304,7 @@ fn a_page_survives_a_restart_and_closes_like_any_view() {
     );
     let [page] = browser_displays(&mut runtime).try_into().expect("one page");
     assert_eq!(page.label, "report.html");
-    let workspace = serde_json::json!({"device_id": "local", "path": directory.to_string_lossy()});
+    let workspace = serde_json::json!({"device_id": crate::node::TEST_NODE, "path": directory.to_string_lossy()});
     runtime.dispatch_json(&explorer_event(
         "browser_state",
         serde_json::json!({"workspace": workspace, "display_id": page.id, "url": report, "title": "Report"}),

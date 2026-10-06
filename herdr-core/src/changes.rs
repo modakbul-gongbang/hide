@@ -402,7 +402,7 @@ mod tests {
     ) -> ChangesRequest {
         ChangesRequest {
             root: DocumentRoot {
-                device_id: crate::workspace::LOCAL_DEVICE_ID.to_owned(),
+                device_id: crate::node::TEST_NODE.to_owned(),
                 path: checkout.to_string_lossy().into_owned(),
                 identity: None,
             },

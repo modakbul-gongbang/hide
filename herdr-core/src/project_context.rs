@@ -379,7 +379,7 @@ mod tests {
         let mut navigator = Snapshot::initial(&CoreOptions {
             schema_version: SCHEMA_VERSION,
             home: None,
-            machine_id: None,
+            node_id: crate::node::test_node(),
             herdr_socket_path: None,
             herdr_bin_path: None,
             app_state_path: "/tmp/hide-project-context-test-state.json".to_owned(),

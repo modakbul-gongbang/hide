@@ -457,6 +457,91 @@ impl MemoryStore {
         self.mode
     }
 
+    /// Moves every Project stored under device `from` to device `to`: its id
+    /// is the one `hide_project::project_id` gives `to` and the same root, and
+    /// every row naming the old id names the new one. One transaction, so the
+    /// file is either converted or untouched (PRD core-host-node D-23). Returns
+    /// the old and new id of each Project it moved.
+    ///
+    /// A receipt tag is an HMAC over the Project id, so a receipt printed
+    /// into a conversation before the move no longer verifies; the receipt key
+    /// itself moves with its Project.
+    pub fn convert_device(&self, from: &str, to: &str) -> Result<Vec<(String, String)>, MemoryError> {
+        if self.mode != StoreMode::Writer {
+            return Err(MemoryError::ReadOnly);
+        }
+        let transaction = self.connection.unchecked_transaction()?;
+        transaction.execute_batch("PRAGMA defer_foreign_keys=ON;")?;
+        let projects = {
+            let mut statement =
+                transaction.prepare("SELECT id, root FROM projects WHERE device_id=?1")?;
+            statement
+                .query_map([from], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        if projects.is_empty() {
+            return Ok(Vec::new());
+        }
+        // Every table that keys rows by Project, read from the schema so a
+        // table added later cannot keep an old id.
+        let tables = {
+            let mut statement = transaction.prepare(
+                "SELECT m.name FROM sqlite_master m WHERE m.type='table' AND m.name!='projects'
+                 AND EXISTS(SELECT 1 FROM pragma_table_info(m.name) c WHERE c.name='project_id')",
+            )?;
+            statement
+                .query_map([], |row| row.get::<_, String>(0))?
+                .collect::<Result<Vec<_>, _>>()?
+        };
+        let mut moved = Vec::with_capacity(projects.len());
+        for (old, root) in projects {
+            let new = hide_project::project_id(to, Path::new(&root));
+            let taken: bool = transaction.query_row(
+                "SELECT EXISTS(SELECT 1 FROM projects WHERE id=?1)",
+                [&new],
+                |row| row.get(0),
+            )?;
+            if taken {
+                return Err(MemoryError::Integrity(format!(
+                    "node_conversion_conflict:{new}"
+                )));
+            }
+            for table in &tables {
+                transaction.execute(
+                    &format!("UPDATE \"{table}\" SET project_id=?1 WHERE project_id=?2"),
+                    params![new, old],
+                )?;
+            }
+            transaction.execute(
+                "UPDATE projects SET id=?1, device_id=?2 WHERE id=?3",
+                params![new, to, old],
+            )?;
+            moved.push((old, new));
+        }
+        transaction.commit()?;
+        check_projection_integrity(&self.connection)?;
+        Ok(moved)
+    }
+
+    /// Whether any Project is stored under device `device`.
+    pub fn has_device(&self, device: &str) -> Result<bool, MemoryError> {
+        Ok(self.connection.query_row(
+            "SELECT EXISTS(SELECT 1 FROM projects WHERE device_id=?1)",
+            [device],
+            |row| row.get(0),
+        )?)
+    }
+
+    /// A consistent copy of the whole database at `destination`, which must
+    /// not exist yet.
+    pub fn copy_to(&self, destination: &Path) -> Result<(), MemoryError> {
+        let destination = destination
+            .to_str()
+            .ok_or_else(|| MemoryError::InvalidState("copy_path_not_utf8".to_owned()))?;
+        self.connection.execute("VACUUM INTO ?1", [destination])?;
+        Ok(())
+    }
+
     pub fn check_integrity(&self) -> Result<(), MemoryError> {
         let integrity: String = self
             .connection

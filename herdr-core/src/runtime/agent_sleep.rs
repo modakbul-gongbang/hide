@@ -130,7 +130,7 @@ impl Runtime {
             return false;
         };
         if left_tab_id == Some(entered_tab_id.as_str())
-            || !self.device_in_front(workspace::LOCAL_DEVICE_ID)
+            || !self.device_in_front(self.node.as_str())
         {
             return false;
         }
@@ -530,7 +530,7 @@ impl Runtime {
     /// The panes of the tab on this machine's screen; empty while another
     /// device is in front, because none of this machine's tabs is then.
     fn agent_sleep_on_screen(&self) -> HashSet<String> {
-        if !self.device_in_front(workspace::LOCAL_DEVICE_ID) {
+        if !self.device_in_front(self.node.as_str()) {
             return HashSet::new();
         }
         self.shown_agent_tabs()

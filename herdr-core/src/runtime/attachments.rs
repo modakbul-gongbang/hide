@@ -686,7 +686,7 @@ mod tests {
             CoreOptions {
                 schema_version: SCHEMA_VERSION,
                 home: None,
-                machine_id: None,
+                node_id: crate::node::test_node(),
                 herdr_socket_path: None,
                 herdr_bin_path: None,
                 app_state_path: folder
@@ -845,7 +845,7 @@ mod tests {
             serde_json::json!({"agents":[{"id":"a","pane_id":"pane-one","agent":"claude","agent_status":"idle","state_change_seq":1,"lineage_session":"s"}]}),
         )
         .unwrap();
-        runtime.observe_delivery("local", &payload, None);
+        runtime.observe_delivery(crate::node::TEST_NODE, &payload, None);
         let clocks = |runtime: &mut Runtime| {
             let observation = runtime.delivery_observations.get_mut("pane-one").unwrap();
             let read = (

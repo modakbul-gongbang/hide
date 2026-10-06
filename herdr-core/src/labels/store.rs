@@ -25,8 +25,9 @@ use super::facts::SessionFacts;
 
 pub(crate) const LABELS_FILE: &str = "labels.json";
 const SCHEMA_VERSION: u32 = 1;
-/// The store key of this machine's Herdr server.
-pub(crate) const LOCAL_TARGET: &str = "local";
+/// The store key of the test core's own Herdr server: its node id.
+#[cfg(test)]
+pub(crate) const LOCAL_TARGET: &str = "test-node";
 
 #[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
 pub(crate) struct PaneRecord {
@@ -171,6 +172,9 @@ struct LabelsFile {
 /// server it follows. Each worker owns its target's entry.
 pub(crate) struct LabelStore {
     path: Option<PathBuf>,
+    /// The store key of the core's own Herdr server: its node id. Only this
+    /// target reaches disk.
+    node: String,
     file: Mutex<LabelsFile>,
     /// Held from encoding to rename, so two workers saving at once cannot
     /// share the temporary file and the last write carries the newest data.
@@ -180,9 +184,9 @@ pub(crate) struct LabelStore {
 impl LabelStore {
     /// Loads the store beside `state_dir`, or imports the retired plugin's
     /// state from `home` once when there is no store yet (D-11).
-    pub(crate) fn open(state_dir: Option<&Path>, home: Option<&Path>) -> Self {
+    pub(crate) fn open(state_dir: Option<&Path>, home: Option<&Path>, node: &str) -> Self {
         let Some(path) = state_dir.map(|dir| dir.join(LABELS_FILE)) else {
-            return Self::in_memory();
+            return Self::in_memory(node);
         };
         let file = match std::fs::read(&path) {
             Ok(bytes) => match serde_json::from_slice::<LabelsFile>(&bytes) {
@@ -214,7 +218,7 @@ impl LabelStore {
                             "kind": "store.imported",
                             "panes": imported.len(),
                         }));
-                        file.targets.insert(LOCAL_TARGET.to_owned(), imported);
+                        file.targets.insert(node.to_owned(), imported);
                     }
                 }
                 file
@@ -231,12 +235,13 @@ impl LabelStore {
         let mut targets = file.targets;
         // Older versions wrote device facts here. Do not restore them,
         // and the save below removes those records from the existing file.
-        targets.retain(|target, _| target == LOCAL_TARGET);
+        targets.retain(|target, _| target == node);
         for record in targets.values_mut().flat_map(BTreeMap::values_mut) {
             record.upgrade_v3();
         }
         let store = Self {
             path: Some(path),
+            node: node.to_owned(),
             writing: Mutex::new(()),
             file: Mutex::new(LabelsFile {
                 version: SCHEMA_VERSION,
@@ -249,15 +254,21 @@ impl LabelStore {
         store
     }
 
-    pub(crate) fn in_memory() -> Self {
+    pub(crate) fn in_memory(node: &str) -> Self {
         Self {
             path: None,
+            node: node.to_owned(),
             writing: Mutex::new(()),
             file: Mutex::new(LabelsFile {
                 version: SCHEMA_VERSION,
                 targets: BTreeMap::new(),
             }),
         }
+    }
+
+    /// The store key of the core's own Herdr server.
+    pub(crate) fn node(&self) -> &str {
+        &self.node
     }
 
     /// A worker's starting records.
@@ -275,7 +286,7 @@ impl LabelStore {
             }
             file.targets.insert(key.to_owned(), records.clone());
         }
-        if key == LOCAL_TARGET {
+        if key == self.node {
             self.save();
         }
     }
@@ -306,7 +317,7 @@ impl LabelStore {
                 targets: file
                     .targets
                     .iter()
-                    .filter(|(target, _)| target.as_str() == LOCAL_TARGET)
+                    .filter(|(target, _)| **target == self.node)
                     .map(|(target, records)| (target.as_str(), records))
                     .collect(),
             })
@@ -358,11 +369,11 @@ mod tests {
     #[test]
     fn a_saved_target_survives_a_reopen() {
         let root = tempfile::tempdir().unwrap();
-        let store = LabelStore::open(Some(root.path()), None);
+        let store = LabelStore::open(Some(root.path()), None, LOCAL_TARGET);
         let mut records = BTreeMap::new();
         records.insert("w1:p1".to_owned(), record("v1:owner"));
         store.save_target(LOCAL_TARGET, &records);
-        let reopened = LabelStore::open(Some(root.path()), None);
+        let reopened = LabelStore::open(Some(root.path()), None, LOCAL_TARGET);
         assert_eq!(reopened.target(LOCAL_TARGET), records);
         assert!(hide_platform::fs::private::is_private(&root.path().join(LABELS_FILE)).unwrap());
     }
@@ -370,7 +381,7 @@ mod tests {
     #[test]
     fn device_conversation_stays_in_memory_even_after_a_local_save() {
         let root = tempfile::tempdir().unwrap();
-        let store = LabelStore::open(Some(root.path()), None);
+        let store = LabelStore::open(Some(root.path()), None, LOCAL_TARGET);
         let mut device = record("remote-owner");
         device.facts = serde_json::from_value(json!({
             "operator_request": {"text":"private remote operator", "at_unix_ms":1, "requester":{"kind":"operator"}},
@@ -387,7 +398,7 @@ mod tests {
             !disk.contains("private remote"),
             "device conversation reached disk"
         );
-        let reopened = LabelStore::open(Some(root.path()), None);
+        let reopened = LabelStore::open(Some(root.path()), None, LOCAL_TARGET);
         assert_eq!(reopened.target(LOCAL_TARGET), local);
         assert!(reopened.target("device:mini").is_empty());
         assert_eq!(store.target("device:mini"), remote);
@@ -398,10 +409,10 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         let path = root.path().join(LABELS_FILE);
         std::fs::write(&path, serde_json::to_vec(&json!({"version":1,"targets":{
-            "local":{"w1:p1":record("local-owner")},
+            LOCAL_TARGET:{"w1:p1":record("local-owner")},
             "device:mini":{"w2:p1":{"facts":{"reply":{"text":"legacy private remote","at_unix_ms":1}}}}
         }})).unwrap()).unwrap();
-        let opened = LabelStore::open(Some(root.path()), None);
+        let opened = LabelStore::open(Some(root.path()), None, LOCAL_TARGET);
         assert_eq!(opened.target(LOCAL_TARGET)["w1:p1"], record("local-owner"));
         assert!(opened.target("device:mini").is_empty());
         assert!(
@@ -416,12 +427,12 @@ mod tests {
         let root = tempfile::tempdir().unwrap();
         std::fs::write(
             root.path().join(LABELS_FILE),
-            r#"{"version":1,"targets":{"local":{
+            r#"{"version":1,"targets":{"test-node":{
                 "w1:p1":{"owner":"v1:a","task":"요청 보기 만들기","progress":"테스트 중","question":true,"expected_reply":"A/B 선택"},
                 "w1:p2":{"owner":"v1:b","task":"라벨 저장소 확인","progress":"끝남"}}}}"#,
         )
         .unwrap();
-        let records = LabelStore::open(Some(root.path()), None).target(LOCAL_TARGET);
+        let records = LabelStore::open(Some(root.path()), None, LOCAL_TARGET).target(LOCAL_TARGET);
         let asking = &records["w1:p1"];
         assert_eq!(asking.goal.as_deref(), Some("요청 보기 만들기"));
         assert_eq!(asking.end, Some(LabelEnd::Question));
@@ -437,7 +448,7 @@ mod tests {
     fn a_corrupt_file_starts_empty() {
         let root = tempfile::tempdir().unwrap();
         std::fs::write(root.path().join(LABELS_FILE), b"{not json").unwrap();
-        let store = LabelStore::open(Some(root.path()), None);
+        let store = LabelStore::open(Some(root.path()), None, LOCAL_TARGET);
         assert!(store.target(LOCAL_TARGET).is_empty());
     }
 

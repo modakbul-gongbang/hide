@@ -598,7 +598,7 @@ fn runtime_before_the_catalog(path: &std::path::Path) -> Runtime {
         id: "workspace:restart".to_owned(),
         label: "restart".to_owned(),
         path: path.to_string_lossy().into_owned(),
-        device_id: "local".to_owned(),
+        device_id: crate::node::TEST_NODE.to_owned(),
         pinned: false,
         home: false,
     }];

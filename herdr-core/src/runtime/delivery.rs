@@ -79,7 +79,7 @@ impl Runtime {
             {
                 continue;
             }
-            let pane_id = if device == "local" {
+            let pane_id = if self.node == device {
                 pane.to_owned()
             } else {
                 format!("remote:{device}:pane:{pane}")
@@ -229,7 +229,7 @@ impl Runtime {
             return Err("caller_context_changed".into());
         }
         let qualify = |pane: &str| {
-            if device == "local" || pane.starts_with(&format!("remote:{device}:pane:")) {
+            if self.node == device || pane.starts_with(&format!("remote:{device}:pane:")) {
                 pane.to_owned()
             } else {
                 format!("remote:{device}:pane:{pane}")
@@ -484,7 +484,7 @@ impl Runtime {
         &self,
         device: &str,
     ) -> Option<Arc<dyn hide_herdr_client::ApiConnector>> {
-        if device == "local" {
+        if self.node == device {
             self.live.as_ref().map(|live| live.api_connector.clone())
         } else {
             self.remote_herdr_api(device)
@@ -581,10 +581,17 @@ impl Runtime {
                 let gone = proven_absence_or_replacement
                     && self.delivery_connected.contains(&watch.target.device_id)
                     && !self.delivery_overflow.contains(&watch.target.device_id);
-                let channel = if watch.target.device_id != "local" && observation.is_some() {
-                    self.device_channel(&watch.target.device_id).ok()
+                let source = if self.node == watch.target.device_id {
+                    crate::delivery::worker::ActivitySource::Node {
+                        home: self.home_path.clone(),
+                    }
                 } else {
-                    None
+                    crate::delivery::worker::ActivitySource::Device {
+                        channel: observation
+                            .is_some()
+                            .then(|| self.device_channel(&watch.target.device_id).ok())
+                            .flatten(),
+                    }
                 };
                 crate::delivery::worker::WatchWork {
                     id: watch.id.clone(),
@@ -593,8 +600,7 @@ impl Runtime {
                     status: watch.last_status.clone(),
                     state_change_seq: watch.last_state_change_seq,
                     status_changed_at_unix_ms: watch.status_changed_at_unix_ms,
-                    home: self.home_path.clone(),
-                    channel,
+                    source,
                     inactivity_ms: watch
                         .parent
                         .pane_id
@@ -639,10 +645,12 @@ impl Runtime {
             String,
             String,
             crate::codex_launch::CodexDaemon,
+            bool,
         ),
         String,
     > {
-        let (connector, scope, machine) = if device == "local" {
+        let on_node = self.node == device;
+        let (connector, scope, machine) = if on_node {
             let live = self.live.as_ref().ok_or("herdr_unavailable")?;
             (
                 live.api_connector.clone(),
@@ -650,9 +658,7 @@ impl Runtime {
                     .to_str()
                     .ok_or("host_scope_unavailable")?
                     .to_owned(),
-                self.local_machine_id
-                    .clone()
-                    .ok_or("machine_identity_unavailable")?,
+                self.node.to_string(),
             )
         } else {
             (
@@ -664,7 +670,7 @@ impl Runtime {
                     .ok_or("machine_identity_unavailable")?,
             )
         };
-        Ok((connector, scope, machine, self.codex_daemon(device)))
+        Ok((connector, scope, machine, self.codex_daemon(device), on_node))
     }
 }
 
@@ -686,7 +692,7 @@ pub(crate) mod tests {
         let state = root.join("state");
         hide_platform::fs::private::create_dir_all(&state).unwrap();
         let options: CoreOptions = serde_json::from_value(json!({
-            "schema_version":SCHEMA_VERSION,"home":root,"herdr_socket_path":null,
+            "schema_version":SCHEMA_VERSION,"node_id":"test-node","home":root,"herdr_socket_path":null,
             "app_state_path":state.join("app.json"),
             "workspace_views_path":root.join("views.json"),
         }))
@@ -703,7 +709,7 @@ pub(crate) mod tests {
             {"id":"sender","pane_id":"sender","agent":"codex","agent_status":"working","state_change_seq":1,"lineage_session":"sender-session"},
             {"id":"recipient","pane_id":"recipient","agent":"codex","agent_status":"working","state_change_seq":1,"lineage_session":"recipient-session"},
         ]})).unwrap();
-        runtime.observe_delivery("local", &payload, None);
+        runtime.observe_delivery(crate::node::TEST_NODE, &payload, None);
         runtime.snapshot.status.herdr.state = "connected".into();
         let panes = ["sender", "recipient"]
             .into_iter()
@@ -735,7 +741,7 @@ pub(crate) mod tests {
             path: "/checkouts/fixture".into(),
             remote_target_id: None,
             expanded: true,
-            device_id: "local".into(),
+            device_id: crate::node::TEST_NODE.into(),
             repo_name: "fixture".into(),
             is_git: false,
             default_branch: None,
@@ -774,7 +780,7 @@ pub(crate) mod tests {
             pane_id: "sender".into(),
             name: "sender".into(),
             kind: "codex".into(),
-            device_id: "local".into(),
+            device_id: crate::node::TEST_NODE.into(),
             session: Some("sender-session".into()),
         };
         let target = runtime
@@ -782,7 +788,7 @@ pub(crate) mod tests {
                 pane_id: "recipient".into(),
                 name: "recipient".into(),
                 kind: "codex".into(),
-                device_id: "local".into(),
+                device_id: crate::node::TEST_NODE.into(),
                 session: Some("recipient-session".into()),
             })
             .unwrap();
@@ -798,7 +804,7 @@ pub(crate) mod tests {
         Authority {
             caller: actor.pane_id.clone(),
             context: Context {
-                device_id: "local".into(),
+                device_id: crate::node::TEST_NODE.into(),
                 workspace_id: "workspace".into(),
                 checkout_id: "checkout".into(),
                 checkout_path: "/checkouts/fixture".into(),
@@ -819,7 +825,7 @@ pub(crate) mod tests {
             {"id":"sender","pane_id":"sender","agent":"codex","agent_status":"working","state_change_seq":1,"lineage_session":"sender-session"},
             {"id":"recipient","pane_id":"recipient","agent":"codex","agent_status":status,"state_change_seq":sequence,"lineage_session":"recipient-session"},
         ]})).unwrap();
-        runtime.observe_delivery("local", &payload, None);
+        runtime.observe_delivery(crate::node::TEST_NODE, &payload, None);
     }
 
     /// The three facts the bell reads, per pane, optionally set to zero so a
@@ -946,13 +952,13 @@ pub(crate) mod tests {
         let replaced: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[
             {"id":"recipient","pane_id":"recipient","agent":"codex","agent_status":"idle","state_change_seq":2,"lineage_session":"replacement-session"},
         ]})).unwrap();
-        guard.observe_delivery("local", &replaced, None);
+        guard.observe_delivery(crate::node::TEST_NODE, &replaced, None);
         assert_eq!(
             guard.delivery_bell_verdict(&target.actor, now).err(),
             Some(Hold::Session)
         );
         let empty: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[]})).unwrap();
-        guard.observe_delivery("local", &empty, None);
+        guard.observe_delivery(crate::node::TEST_NODE, &empty, None);
         assert_eq!(
             guard.delivery_bell_verdict(&target.actor, now).err(),
             Some(Hold::Absent)
@@ -1060,11 +1066,11 @@ pub(crate) mod tests {
             {"id":"sender","pane_id":"sender","agent":"codex","agent_status":"working","state_change_seq":1,"lineage_session":"sender-session"},
             {"id":"recipient","pane_id":"recipient","agent":"codex","agent_status":"idle","state_change_seq":2,"lineage_session":own},
         ]})).unwrap();
-        guard.observe_delivery("local", &payload, None);
+        guard.observe_delivery(crate::node::TEST_NODE, &payload, None);
         let context = authority(&target.actor).context;
         clocks(&mut guard, "recipient", true);
         guard
-            .prepare_delivery("local", "recipient", &context, None, Command::Inbox)
+            .prepare_delivery(crate::node::TEST_NODE, "recipient", &context, None, Command::Inbox)
             .unwrap();
         assert_eq!(written(&mut guard), (false, false, false));
         for (bell, session, submitted) in [
@@ -1077,7 +1083,7 @@ pub(crate) mod tests {
         ] {
             guard
                 .prepare_delivery(
-                    "local",
+                    crate::node::TEST_NODE,
                     "recipient",
                     &context,
                     None,
@@ -1100,7 +1106,7 @@ pub(crate) mod tests {
         // An id past the key bound is refused before it is hashed under the lock.
         assert_eq!(
             guard
-                .prepare_delivery("local", "recipient", &context, None, pull("x".repeat(257)))
+                .prepare_delivery(crate::node::TEST_NODE, "recipient", &context, None, pull("x".repeat(257)))
                 .err()
                 .as_deref(),
             Some("session_invalid")
@@ -1114,7 +1120,7 @@ pub(crate) mod tests {
             .status = "working".into();
         guard
             .prepare_delivery(
-                "local",
+                crate::node::TEST_NODE,
                 "recipient",
                 &context,
                 None,

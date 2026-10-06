@@ -16,7 +16,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
 
-use super::store::LOCAL_TARGET;
 
 /// Submits kept per pane, newest last.
 pub(crate) const SUBMITS_PER_PANE: usize = 32;
@@ -41,17 +40,25 @@ struct Record {
     next_seq: u64,
 }
 
-#[derive(Default)]
 pub(crate) struct OperatorInput {
+    /// The label target of the core's own Herdr server: its node id.
+    node: String,
     record: Mutex<Record>,
 }
 
 impl OperatorInput {
+    pub(crate) fn new(node: &str) -> Self {
+        Self {
+            node: node.to_owned(),
+            record: Mutex::default(),
+        }
+    }
+
     /// Records a submit to `pane_id` as the runtime names it: a device's pane
     /// is `remote:<device>:pane:<id>`, which a label worker knows as `<id>`
     /// under the target `device:<device>`.
     pub(crate) fn record(&self, pane_id: &str, at_unix_ms: u64, while_working: bool) {
-        let key = label_key(pane_id);
+        let key = label_key(&self.node, pane_id);
         let Ok(mut record) = self.record.lock() else {
             return;
         };
@@ -89,13 +96,13 @@ impl OperatorInput {
     }
 }
 
-fn label_key(pane_id: &str) -> (String, String) {
+fn label_key(node: &str, pane_id: &str) -> (String, String) {
     match pane_id
         .strip_prefix("remote:")
         .and_then(|rest| rest.split_once(":pane:"))
     {
         Some((device, pane)) => (format!("device:{device}"), pane.to_owned()),
-        None => (LOCAL_TARGET.to_owned(), pane_id.to_owned()),
+        None => (node.to_owned(), pane_id.to_owned()),
     }
 }
 
@@ -150,6 +157,7 @@ pub(crate) fn submits(bytes: &[u8]) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::labels::store::LOCAL_TARGET;
 
     #[test]
     fn only_a_typed_return_is_a_submit() {
@@ -168,7 +176,7 @@ mod tests {
 
     #[test]
     fn a_device_pane_is_kept_under_its_worker_and_every_bound_holds() {
-        let input = OperatorInput::default();
+        let input = OperatorInput::new(LOCAL_TARGET);
         input.record("remote:mini:pane:w1-2", 10, false);
         input.record("p1", 20, true);
         assert_eq!(input.submits("device:mini", "w1-2")[0].at_unix_ms, 10);

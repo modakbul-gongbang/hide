@@ -258,7 +258,7 @@ fn a_device_home_start_makes_home_then_starts_the_agent_with_its_folders() {
             .snapshot
             .ui_state
             .workspace_registrations
-            .push(registration("/elsewhere/tool", workspace::LOCAL_DEVICE_ID));
+            .push(registration("/elsewhere/tool", crate::node::TEST_NODE));
     }
     let home = machine.user_home.join("hide");
     assert!(!home.exists(), "a device that never used Home has none");
@@ -405,7 +405,7 @@ fn home_links_follow_registrations_once_home_exists() {
         .workspace_registrations
         .push(registration(
             &machine.projects[0],
-            workspace::LOCAL_DEVICE_ID,
+            crate::node::TEST_NODE,
         ));
 
     dispatch(
@@ -438,7 +438,7 @@ fn home_links_follow_registrations_once_home_exists() {
             .workspace_registrations
             .push(registration(
                 &machine.projects[1],
-                workspace::LOCAL_DEVICE_ID,
+                crate::node::TEST_NODE,
             ));
         runtime.persist_ui_state();
     }
@@ -481,16 +481,16 @@ fn the_first_registration_after_launch_is_linked_into_an_existing_home() {
         let registrations = &mut runtime.snapshot.ui_state.workspace_registrations;
         registrations.push(registration(
             &machine.projects[0],
-            workspace::LOCAL_DEVICE_ID,
+            crate::node::TEST_NODE,
         ));
         registrations.push(WorkspaceRegistration {
             pinned: true,
             home: true,
-            ..registration(&earlier.home, workspace::LOCAL_DEVICE_ID)
+            ..registration(&earlier.home, crate::node::TEST_NODE)
         });
         registrations.push(registration(
             &machine.projects[1],
-            workspace::LOCAL_DEVICE_ID,
+            crate::node::TEST_NODE,
         ));
         runtime.persist_ui_state();
     }

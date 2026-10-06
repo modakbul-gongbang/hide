@@ -522,7 +522,7 @@ impl Runtime {
                         return true;
                     }
                     (None, None) => RemoteControlAction::OpenOwner {
-                        owner: super::projects::owner_open(project, checkout, &target_id),
+                        owner: super::projects::owner_open(project, checkout, &target_id, &self.node),
                         cwd: checkout.path.clone(),
                         label: checkout.next_tab_label.clone(),
                         area_id: None,
@@ -592,7 +592,7 @@ impl Runtime {
                     self.refuse_unconfirmed_owner(&target_id, checkout);
                     return true;
                 }
-                match super::projects::tab_host(project, checkout, &target_id) {
+                match super::projects::tab_host(project, checkout, &target_id, &self.node) {
                     TabHost::Workspace(owner) => RemoteControlAction::CreateTab {
                         workspace_id: owner,
                         cwd,
@@ -1802,7 +1802,7 @@ impl Runtime {
                 hide_agent_hooks::AgentRuntime::Codex => "codex",
             };
             let off = self
-                .kit_state(crate::workspace::LOCAL_DEVICE_ID)
+                .kit_state(self.node.as_str())
                 .agents
                 .iter()
                 .any(|row| row.id == agent && !row.enabled);
@@ -2298,7 +2298,7 @@ impl Runtime {
                     Some(target) => crate::session_sync::remote_pane_id(target, parent),
                     None => parent.to_owned(),
                 }),
-                Some(machine) if self.local_machine_id.as_deref() == Some(machine) => {
+                Some(machine) if self.node == machine => {
                     Some(parent.to_owned())
                 }
                 Some(machine) => machine_targets

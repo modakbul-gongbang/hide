@@ -69,7 +69,7 @@ impl Runtime {
     ) -> bool {
         let device_id = device_id
             .filter(|device| !device.is_empty())
-            .unwrap_or(workspace::LOCAL_DEVICE_ID);
+            .unwrap_or(self.node.as_str());
         let named = self
             .snapshot
             .project_sessions
@@ -137,7 +137,7 @@ impl Runtime {
         device_id: &str,
         workspace_id: &str,
     ) -> Result<String, String> {
-        if device_id != workspace::LOCAL_DEVICE_ID {
+        if device_id != self.node.as_str() {
             return Err(self.device_sessions_reason(device_id));
         }
         let workspace = self
@@ -147,7 +147,7 @@ impl Runtime {
             .iter()
             .find(|workspace| workspace.id == workspace_id)
             .ok_or_else(|| "This Project is no longer registered.".to_owned())?;
-        if workspace.remote_target_id.is_some() || workspace.device_id != workspace::LOCAL_DEVICE_ID
+        if workspace.remote_target_id.is_some() || workspace.device_id != self.node.as_str()
         {
             return Err(self.device_sessions_reason(&workspace.device_id));
         }
@@ -165,7 +165,7 @@ impl Runtime {
         };
         let device = label(device_id).unwrap_or_else(|| device_id.to_owned());
         let here =
-            label(workspace::LOCAL_DEVICE_ID).unwrap_or_else(|| workspace::local_device().label);
+            label(self.node.as_str()).unwrap_or_else(|| workspace::local_device(&self.node).label);
         format!(
             "Sessions on {device} are not available here. Hide reads Codex and Claude Code sessions only on {here}."
         )
@@ -190,10 +190,11 @@ impl Runtime {
         let started = match (self.worker_context.clone(), self.home_path.clone()) {
             (Some(context), Some(home)) => {
                 let database = self.memory_database_path();
+                let node = self.node.clone();
                 thread::Builder::new()
                     .name("hide-project-sessions-read".to_owned())
                     .spawn(move || {
-                        let result = load_sessions(&home, &database, &path)
+                        let result = load_sessions(&node, &home, &database, &path)
                             .map(|load| settle_history(load, &previous));
                         let Some(runtime) = context.runtime.upgrade() else {
                             return;

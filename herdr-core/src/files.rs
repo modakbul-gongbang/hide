@@ -681,7 +681,7 @@ pub(crate) mod tests {
     /// parent folder as the checkout root.
     pub(crate) fn open_local(path: &Path) -> (EditorDocumentSnapshot, DocumentPlace) {
         let root = DocumentRoot {
-            device_id: crate::workspace::LOCAL_DEVICE_ID.to_owned(),
+            device_id: crate::node::TEST_NODE.to_owned(),
             path: path.parent().unwrap().to_string_lossy().into_owned(),
             identity: None,
         };
@@ -782,7 +782,7 @@ pub(crate) mod tests {
         symlink(&root, sandbox.path().join("alias")).unwrap();
         let spelled = sandbox.path().join("alias/src/a.txt");
         let root_path = DocumentRoot {
-            device_id: crate::workspace::LOCAL_DEVICE_ID.to_owned(),
+            device_id: crate::node::TEST_NODE.to_owned(),
             path: root.to_string_lossy().into_owned(),
             identity: None,
         };

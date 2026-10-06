@@ -139,6 +139,7 @@ pub struct WorkspaceCreationOutcome {
 
 pub fn spawn_workspace_creation(
     context: LiveContext,
+    node: crate::node::NodeId,
     path: String,
     label: String,
     initialize_git: bool,
@@ -173,7 +174,7 @@ pub fn spawn_workspace_creation(
                 Ok(())
             };
             let result = made
-                .and_then(|()| workspace::registration(&path, &label, workspace::LOCAL_DEVICE_ID))
+                .and_then(|()| workspace::registration(&path, &label, node.as_str()))
                 .and_then(|registration| {
                     let root = Path::new(&registration.path);
                     if !root.exists() {
@@ -201,7 +202,7 @@ pub fn spawn_workspace_creation(
                         })?;
                     let before_spaces = Runtime::session_spaces(&before);
                     let before_catalog =
-                        workspace::build_catalog(&registrations, &before_spaces, &worktrees);
+                        workspace::build_catalog(&node, &registrations, &before_spaces, &worktrees);
                     let needs_herdr_workspace = before_catalog
                         .iter()
                         .any(|workspace| workspace.id == registration.id);
@@ -212,7 +213,7 @@ pub fn spawn_workspace_creation(
                         .then(|| {
                             ensure_owner(
                                 context.api_connector.as_ref(),
-                                &registered_owner(&registration.path, &registration.label),
+                                &registered_owner(&node, &registration.path, &registration.label),
                                 Default::default(),
                             )
                             .map_err(|error| error.message().to_owned())
@@ -231,7 +232,8 @@ pub fn spawn_workspace_creation(
                         before
                     };
                     let spaces = Runtime::session_spaces(&session);
-                    let workspaces = workspace::build_catalog(&registrations, &spaces, &worktrees);
+                    let workspaces =
+                        workspace::build_catalog(&node, &registrations, &spaces, &worktrees);
                     Ok(WorkspaceCreationOutcome {
                         registration,
                         base_registrations,
@@ -263,16 +265,16 @@ pub fn spawn_workspace_creation(
 /// The owner a newly registered project's checkout gets: a Git checkout is
 /// opened from its repository's main worktree, a plain folder is created
 /// and marked at the registered path, the same path the catalog keys it by.
-fn registered_owner(path: &str, label: &str) -> OwnerOpen {
+fn registered_owner(node: &crate::node::NodeId, path: &str, label: &str) -> OwnerOpen {
     match hide_project::facts(Path::new(path)) {
         Ok(facts) if facts.kind == hide_project::ProjectKind::Git => OwnerOpen::for_checkout(
-            crate::workspace::LOCAL_DEVICE_ID,
+            node.as_str(),
             &hide_platform::path::to_wire_lossy(&facts.checkout_root),
             &hide_platform::path::to_wire_lossy(&facts.root),
             true,
             label,
         ),
-        _ => OwnerOpen::for_checkout(crate::workspace::LOCAL_DEVICE_ID, path, path, false, label),
+        _ => OwnerOpen::for_checkout(node.as_str(), path, path, false, label).on_node(),
     }
 }
 
@@ -748,7 +750,9 @@ fn ensure_owner(
             }
             Ok((opened.workspace_id, Some((opened.tab_id, opened.pane_id))))
         }
-        OwnerOpen::Folder { path, label, mark } => {
+        OwnerOpen::Folder {
+            path, label, mark, ..
+        } => {
             let _serialized = FOLDER_OWNER_OPEN
                 .lock()
                 .unwrap_or_else(std::sync::PoisonError::into_inner);
@@ -765,7 +769,7 @@ fn ensure_owner(
             })?;
             if let Some((workspace_id, _)) = listed
                 .into_iter()
-                .find(|(_, value)| value.as_deref() == Some(mark.as_str()))
+                .find(|(_, value)| value.as_deref().is_some_and(|value| owner.marks(value)))
             {
                 return Ok((workspace_id, None));
             }
@@ -4174,7 +4178,7 @@ mod tests {
         let result = run_file_reopen(
             &crate::host_access::InProcessHost,
             &crate::files::DocumentRoot {
-                device_id: "local".to_owned(),
+                device_id: crate::node::TEST_NODE.to_owned(),
                 path: root.to_string_lossy().into_owned(),
                 identity: None,
             },
@@ -4392,7 +4396,8 @@ mod tests {
             &OwnerOpen::Folder {
                 path: "/tmp".into(),
                 label: "Fixture".into(),
-                mark: crate::checkout_owner::owner_mark("local", "/tmp"),
+                mark: crate::checkout_owner::owner_mark(crate::node::TEST_NODE, "/tmp"),
+                legacy_mark: None,
             },
             false,
             &layout_root,
@@ -4775,17 +4780,18 @@ mod tests {
         let repo = repo.to_string_lossy().into_owned();
 
         assert_eq!(
-            registered_owner(&folder, "Notes"),
+            registered_owner(&crate::node::test_node(), &folder, "Notes"),
             OwnerOpen::for_checkout(
-                crate::workspace::LOCAL_DEVICE_ID,
+                crate::node::TEST_NODE,
                 &folder,
                 &folder,
                 false,
                 "Notes"
             )
+            .on_node()
         );
         assert_eq!(
-            registered_owner(&repo, "Repo"),
+            registered_owner(&crate::node::test_node(), &repo, "Repo"),
             OwnerOpen::Worktree {
                 path: repo.clone(),
                 repository_root: repo.clone(),
@@ -4932,7 +4938,7 @@ mod tests {
 
     #[test]
     fn a_plain_folder_reuses_its_marked_owner_and_marks_a_new_one_only_when_none_is_live() {
-        let mark = crate::checkout_owner::owner_mark("local", "/notes");
+        let mark = crate::checkout_owner::owner_mark(crate::node::TEST_NODE, "/notes");
         let listed_mark = mark.clone();
         let marked = Arc::new(Mutex::new(false));
         let marked_in_server = marked.clone();
@@ -4974,6 +4980,7 @@ mod tests {
             path: "/notes".to_owned(),
             label: "notes".to_owned(),
             mark,
+            legacy_mark: None,
         };
 
         let first = open_owner_tab(

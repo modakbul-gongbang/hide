@@ -74,7 +74,7 @@ impl Runtime {
             .navigator
             .workspaces
             .iter()
-            .filter(|workspace| workspace.device_id == workspace::LOCAL_DEVICE_ID)
+            .filter(|workspace| workspace.device_id == self.node.as_str())
             .flat_map(|workspace| {
                 workspace.checkouts.iter().map(|checkout| {
                     (
@@ -106,7 +106,7 @@ impl Runtime {
         // without waiting for the next local session snapshot.
         let mut replacements = Vec::new();
         for workspace in &self.snapshot.navigator.workspaces {
-            if workspace.device_id != workspace::LOCAL_DEVICE_ID {
+            if workspace.device_id != self.node.as_str() {
                 continue;
             }
             for checkout in &workspace.checkouts {
@@ -204,7 +204,7 @@ impl Runtime {
     /// Count external effects that can still add a tab, together with placed
     /// items. The existing worker/close/reopen owners release these claims.
     pub(super) fn admit_agent_tab(&mut self, path: &str) -> bool {
-        let key = (workspace::LOCAL_DEVICE_ID.to_owned(), path.to_owned());
+        let key = (self.node.as_str().to_owned(), path.to_owned());
         let Some(store) = self.workspace_views.as_mut() else {
             return true;
         };
@@ -229,7 +229,7 @@ impl Runtime {
     }
 
     pub(super) fn pending_agent_admissions(&self, path: &str) -> usize {
-        let key = (workspace::LOCAL_DEVICE_ID.to_owned(), path.to_owned());
+        let key = (self.node.as_str().to_owned(), path.to_owned());
         self.workspace_views
             .as_ref()
             .and_then(|store| store.agent_admissions.get(&key))
@@ -242,13 +242,13 @@ impl Runtime {
             .and_then(|store| {
                 store
                     .agent_admissions
-                    .get(&(workspace::LOCAL_DEVICE_ID.to_owned(), path.to_owned()))
+                    .get(&(self.node.as_str().to_owned(), path.to_owned()))
             })
             .is_some_and(|claims| claims.contains(claim))
     }
 
     pub(super) fn reserve_agent_effect(&mut self, path: &str, claim: &str) -> bool {
-        let key = (workspace::LOCAL_DEVICE_ID.to_owned(), path.to_owned());
+        let key = (self.node.as_str().to_owned(), path.to_owned());
         if self
             .workspace_views
             .as_ref()
@@ -271,7 +271,7 @@ impl Runtime {
     }
 
     pub(super) fn agent_can_show_created(&self, path: &str, id: &str) -> bool {
-        self.agent_layout_of(&(workspace::LOCAL_DEVICE_ID.to_owned(), path.to_owned()))
+        self.agent_layout_of(&(self.node.as_str().to_owned(), path.to_owned()))
             .is_none_or(|layout| {
                 layout.tree.display(id).is_some() || layout.tree.display_count() < Tab::LIMITS.items
             })
@@ -282,7 +282,7 @@ impl Runtime {
             .navigator
             .workspaces
             .iter()
-            .filter(|w| w.device_id == workspace::LOCAL_DEVICE_ID)
+            .filter(|w| w.device_id == self.node.as_str())
             .flat_map(|w| &w.checkouts)
             .any(|checkout| {
                 checkout
@@ -291,7 +291,7 @@ impl Runtime {
                     .any(|tab| tab.id.as_deref() == Some(tab_id) && !tab.delegated)
                     && self
                         .agent_layout_of(&(
-                            workspace::LOCAL_DEVICE_ID.to_owned(),
+                            self.node.as_str().to_owned(),
                             checkout.path.clone(),
                         ))
                         .is_some_and(|layout| layout.tree.display(tab_id).is_none())
@@ -303,7 +303,7 @@ impl Runtime {
     }
 
     pub(super) fn finish_agent_effect(&mut self, path: &str, claim: &str) {
-        let key = (workspace::LOCAL_DEVICE_ID.to_owned(), path.to_owned());
+        let key = (self.node.as_str().to_owned(), path.to_owned());
         if let Some(store) = self.workspace_views.as_mut()
             && let Some(pending) = store.agent_admissions.get_mut(&key)
         {
@@ -319,7 +319,7 @@ impl Runtime {
         if !self.area_workspace_is_current(&key, "agent") {
             return true;
         }
-        if key.0 != workspace::LOCAL_DEVICE_ID || self.workspace_views.is_none() {
+        if key.0 != self.node.as_str() || self.workspace_views.is_none() {
             self.set_error(
                 "agent_layout.unsupported",
                 "Agent groups are available in local Workspaces",
@@ -426,7 +426,7 @@ impl Runtime {
     pub(super) fn sync_agent_selection(&mut self) {
         let Some(key) = self
             .front_workspace_key()
-            .filter(|key| key.0 == workspace::LOCAL_DEVICE_ID)
+            .filter(|key| key.0 == self.node.as_str())
         else {
             return;
         };
@@ -476,7 +476,7 @@ impl Runtime {
     pub(super) fn shown_agent_tabs(&self) -> Vec<String> {
         if let Some(key) = self
             .front_workspace_key()
-            .filter(|key| key.0 == workspace::LOCAL_DEVICE_ID)
+            .filter(|key| key.0 == self.node.as_str())
             && let Some(layout) = self.agent_layout_of(&key)
         {
             let shown = self.shown_agent_layout(&key, layout).shown();
@@ -498,7 +498,7 @@ impl Runtime {
         key: &WorkspaceKey,
         layout: &'a Layout,
     ) -> Cow<'a, Layout> {
-        if key.0 != workspace::LOCAL_DEVICE_ID {
+        if key.0 != self.node.as_str() {
             return Cow::Borrowed(layout);
         }
         let leaving = self

@@ -48,7 +48,7 @@ impl Runtime {
         self.ingest_session(Ok(payload));
         if !self
             .agent_layout_of(&(
-                workspace::LOCAL_DEVICE_ID.to_owned(),
+                self.node.as_str().to_owned(),
                 context.checkout_path.clone(),
             ))
             .is_some_and(|layout| layout.tree.display(tab_id).is_some())
@@ -88,7 +88,7 @@ impl Runtime {
             return Ok(());
         };
         let key = (
-            workspace::LOCAL_DEVICE_ID.to_owned(),
+            self.node.as_str().to_owned(),
             context.checkout_path.clone(),
         );
         let area = context.agent_area.clone().or_else(|| {

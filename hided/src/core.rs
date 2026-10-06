@@ -96,12 +96,19 @@ enum Command {
 }
 
 pub struct CoreHandle {
+    /// The machine the core runs on, named in every key for this machine.
+    node: herdr_core::node::NodeId,
     commands: Sender<Command>,
     pub notify: broadcast::Sender<()>,
     thread: Mutex<Option<JoinHandle<()>>>,
 }
 
 impl CoreHandle {
+    /// The machine the core runs on.
+    pub fn node(&self) -> &herdr_core::node::NodeId {
+        &self.node
+    }
+
     pub fn prepare_delivery_human(
         &self,
     ) -> Result<herdr_core::delivery::worker::PreparedHuman, String> {
@@ -175,6 +182,7 @@ impl CoreHandle {
     }
 
     pub fn spawn(options: CoreOptions) -> Result<Self, String> {
+        let node = options.node_id.clone();
         let (command_tx, command_rx) = mpsc::channel::<Command>();
         let (ready_tx, ready_rx) = mpsc::channel::<Result<(), String>>();
         let (notify_tx, _) = broadcast::channel(32);
@@ -187,6 +195,7 @@ impl CoreHandle {
             .recv()
             .map_err(|_| "core owner thread exited before ready".to_owned())??;
         Ok(Self {
+            node,
             commands: command_tx,
             notify: notify_tx,
             thread: Mutex::new(Some(thread)),

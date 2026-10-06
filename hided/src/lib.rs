@@ -56,13 +56,6 @@ fn host_name() -> Option<String> {
     hide_platform::host::name().ok()
 }
 
-/// Reads the operating system identity before the core is placed behind its
-/// runtime mutex. Failure is explicit in the diagnostic and leaves
-/// cross-device lineage unresolved rather than guessing from a host name.
-fn machine_id() -> Option<String> {
-    hide_platform::host::machine_id().ok()
-}
-
 fn find_ui_dir() -> Option<std::path::PathBuf> {
     if let Ok(dir) = std::env::var("HIDED_UI_DIR") {
         let path = std::path::PathBuf::from(dir);
@@ -198,6 +191,31 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
         return Err(error);
     }
     let lock = acquire_lock(&env.state_dir).map_err(|error| error.to_string())?;
+    // This machine's name in every key that names it. A machine Hide cannot
+    // name refuses to start rather than guess one (PRD core-host-node D-28).
+    let node = herdr_core::node::NodeId::of_this_machine()?;
+    // Stored state from before node ids is converted once, before the core
+    // reads it; a store that cannot be converted stops the start and names
+    // the file (PRD core-host-node B2).
+    let converted = herdr_core::node_migration::convert(
+        &env.state_dir,
+        &env.home,
+        &node,
+    )
+    .map_err(|refusal| refusal.to_string())?;
+    if !converted.files.is_empty() {
+        eprintln!(
+            "{}",
+            serde_json::json!({
+                "component": "hided",
+                "kind": "node_migration.converted",
+                "node": node.as_str(),
+                "files": converted.files,
+                "projects": converted.projects,
+                "search_rows": converted.search_rows,
+            })
+        );
+    }
     let host_id = state_file::host_id(&env.state_dir)
         .map_err(|error| format!("the daemon host id could not be read or written: {error}"))?;
     let token = new_token();
@@ -246,7 +264,7 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
             .home
             .is_absolute()
             .then(|| env.home.display().to_string()),
-        machine_id: machine_id(),
+        node_id: node.clone(),
         herdr_socket_path: env.herdr_socket_path.clone(),
         herdr_bin_path: env
             .herdr_bin_path
@@ -291,7 +309,7 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
             .and_then(hide_kit::bundled_kit_dir)
             .map(|dir| dir.display().to_string()),
     };
-    let boundary = Arc::new(boundary::Boundary::new(&env.home)?);
+    let boundary = Arc::new(boundary::Boundary::for_node(&env.home, node)?);
     let core = Arc::new(CoreHandle::spawn(options)?);
     // After the core installed the diagnostic log beside its state.
     #[cfg(unix)]
@@ -593,7 +611,7 @@ fn apply_snapshot(
 ) {
     let roots = roots_from_value(value);
     boundary.set_roots(roots.clone());
-    boundary.set_device_roots(device_roots_from_value(value));
+    boundary.set_device_roots(device_roots_from_value(value, boundary.node().as_str()));
     if let Err(error) = core.set_file_roots(boundary.opened_roots()) {
         eprintln!(
             "{}",
@@ -602,13 +620,13 @@ fn apply_snapshot(
             })
         );
     }
-    let device_roots = device_roots_from_value(value);
+    let device_roots = device_roots_from_value(value, boundary.node().as_str());
     index.set_roots(
         &roots
             .iter()
             .map(|root| {
                 (
-                    herdr_core::workspace::LOCAL_DEVICE_ID.to_owned(),
+                    boundary.node().to_string(),
                     root.path.display().to_string(),
                 )
             })
@@ -626,7 +644,10 @@ fn apply_snapshot(
         .filter(|path| boundary.resolve_target(path).is_ok())
         .collect();
     watch.reconcile(boundary, root, expanded);
-    watch.reconcile_device(device_watch::target_from_value(value));
+    watch.reconcile_device(device_watch::target_from_value(
+        value,
+        boundary.node().as_str(),
+    ));
 }
 
 /// The folders whose changes the Explorer wants announced: the focused
@@ -714,7 +735,7 @@ fn roots_from_value(value: &Value) -> Vec<Root> {
 /// path there, which only that device's helper reads. A device's projects
 /// are the registered ones in the navigator and its Herdr session's, the
 /// same two places the core's `catalog_checkout` looks.
-fn device_roots_from_value(value: &Value) -> Vec<boundary::DeviceRoot> {
+fn device_roots_from_value(value: &Value, node: &str) -> Vec<boundary::DeviceRoot> {
     let registered = value
         .pointer("/rest/navigator/workspaces")
         .and_then(Value::as_array)
@@ -736,7 +757,7 @@ fn device_roots_from_value(value: &Value) -> Vec<boundary::DeviceRoot> {
         let Some(device_id) = workspace
             .get("device_id")
             .and_then(Value::as_str)
-            .filter(|device| *device != herdr_core::workspace::LOCAL_DEVICE_ID)
+            .filter(|device| *device != node)
         else {
             continue;
         };

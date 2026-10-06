@@ -340,7 +340,7 @@ fn maximum_korean_relation_context_and_event_group_fit_one_request() {
     let root = folder.path().to_path_buf();
     let mut store = hide_memory::MemoryStore::open(&root.join("memory.sqlite3")).unwrap();
     let project_id = "project:request-budget";
-    store.ensure_project(project_id, &root, "local").unwrap();
+    store.ensure_project(project_id, &root, crate::node::TEST_NODE).unwrap();
     store
         .apply_candidates(
             &hide_memory::AnalysisBatch {
@@ -416,7 +416,7 @@ fn hook_repair_resumes_only_the_enable_intent_the_operator_approved() {
     };
     runtime.ingest_hook_diagnosis(diagnosis(hide_agent_hooks::HookStatus::NotInstalled));
     runtime.ingest_kit_report(
-        "local",
+        crate::node::TEST_NODE,
         &hide_kit::KitReport {
             components: vec![hide_kit::ComponentReport {
                 id: hide_kit::ComponentId::CodexHook,

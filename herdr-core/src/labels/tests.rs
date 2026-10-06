@@ -176,14 +176,14 @@ impl Harness {
             locks: tempfile::tempdir().unwrap(),
             backend,
             analyzer: Arc::new(analyzer),
-            input: Arc::default(),
+            input: Arc::new(super::input::OperatorInput::new(LOCAL_TARGET)),
         }
     }
 
     fn store(&self) -> Arc<LabelStore> {
         Arc::new(LabelStore::open(
             Some(self.state.path()),
-            Some(self.home.path()),
+            Some(self.home.path()), LOCAL_TARGET,
         ))
     }
 
@@ -891,7 +891,7 @@ fn concurrent_workers_keep_local_records_on_disk_and_device_records_in_memory() 
     for thread in threads {
         thread.join().unwrap();
     }
-    let reopened = LabelStore::open(Some(harness.state.path()), None);
+    let reopened = LabelStore::open(Some(harness.state.path()), None, LOCAL_TARGET);
     assert_eq!(reopened.target(super::store::LOCAL_TARGET).len(), 1);
     assert_eq!(
         reopened.target(super::store::LOCAL_TARGET),
@@ -923,7 +923,7 @@ fn a_core_given_its_own_home_imports_labels_from_that_home_only() {
     let options = |home: String| crate::CoreOptions {
         schema_version: crate::SCHEMA_VERSION,
         home: Some(home),
-        machine_id: None,
+        node_id: crate::node::test_node(),
         herdr_socket_path: None,
         herdr_bin_path: None,
         app_state_path: state.path().join("core-state.json").display().to_string(),
@@ -942,7 +942,7 @@ fn a_core_given_its_own_home_imports_labels_from_that_home_only() {
     let core =
         crate::Core::create(options(home.path().display().to_string())).expect("a core starts");
     drop(core);
-    let imported = LabelStore::open(Some(state.path()), None).target(LOCAL_TARGET);
+    let imported = LabelStore::open(Some(state.path()), None, LOCAL_TARGET).target(LOCAL_TARGET);
     assert_eq!(
         imported.keys().cloned().collect::<Vec<_>>(),
         ["w9:p1"],

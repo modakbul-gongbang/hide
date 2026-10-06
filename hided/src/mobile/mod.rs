@@ -182,6 +182,11 @@ fn record_transport_failure(failure: &CommandFailure, step: &str) {
 }
 
 impl Mobile {
+    /// The core's own machine, whose agents the navigator lists.
+    pub fn node(&self) -> &herdr_core::node::NodeId {
+        self.config.core.node()
+    }
+
     pub fn start(config: Config) -> Arc<Self> {
         let mut settings: MobileSettings = store::read(&store::settings_path(&config.state_dir));
         let vapid = match settings
@@ -877,7 +882,7 @@ impl Mobile {
                 return;
             }
             let shown = self
-                .herdr_api(projection::LOCAL_DEVICE)
+                .herdr_api(self.node().as_str())
                 .ok()
                 .and_then(|connector| notice.notify_herdr(connector.as_ref()).ok())
                 .unwrap_or(false);
@@ -1447,7 +1452,7 @@ impl Mobile {
         &self,
         device_id: &str,
     ) -> Result<Arc<dyn hide_herdr_client::ApiConnector>, pane::PaneError> {
-        if device_id == projection::LOCAL_DEVICE {
+        if self.node() == device_id {
             return self
                 .config
                 .herdr_socket
@@ -1537,7 +1542,7 @@ impl Mobile {
                         }
                         let full = matches!(kind, crate::server::FrameKind::Snapshot);
                         if projection::merge_rest(&mut rest, &value, full) {
-                            let catalog = start::Catalog::of(&rest);
+                            let catalog = start::Catalog::of(&rest, self.node().as_str());
                             self.catalog.send_if_modified(|current| {
                                 if **current == catalog {
                                     false
@@ -1548,13 +1553,13 @@ impl Mobile {
                             });
                             self.answers.send_if_modified(|current| {
                                 let mut kept = current.as_ref().clone();
-                                let changed = start::record(&mut kept, start::answers_of(&rest));
+                                let changed = start::record(&mut kept, start::answers_of(&rest, self.node().as_str()));
                                 if changed {
                                     *current = Arc::new(kept);
                                 }
                                 changed
                             });
-                            let next = projection::project(&rest);
+                            let next = projection::project(&rest, self.node().as_str());
                             let changed = self.projection.send_if_modified(|current| {
                                 if **current == next {
                                     false

@@ -64,8 +64,9 @@ impl LabelServices {
         state_dir: Option<&Path>,
         home: Option<PathBuf>,
         runtime: Weak<Mutex<Runtime>>,
+        node: &crate::node::NodeId,
     ) -> Result<Self, String> {
-        let store = Arc::new(LabelStore::open(state_dir, home.as_deref()));
+        let store = Arc::new(LabelStore::open(state_dir, home.as_deref(), node.as_str()));
         let settings_home = home.clone();
         let standing = Arc::new(crate::ai::AiStanding::default());
         let analyzer = LabelAnalyzer::spawn(
@@ -76,7 +77,7 @@ impl LabelServices {
             store,
             analyzer: Arc::new(analyzer),
             standing,
-            input: Arc::default(),
+            input: Arc::new(input::OperatorInput::new(node.as_str())),
             local_wake: Mutex::new(None),
             home,
             state_dir: state_dir.map(Path::to_path_buf),
@@ -98,7 +99,7 @@ impl LabelServices {
             .unwrap_or_else(|error| error.into_inner()) = Some(Arc::clone(&wake));
         LabelWorker::spawn(
             WorkerConfig {
-                target: store::LOCAL_TARGET.to_owned(),
+                target: self.store.node().to_owned(),
                 lock_path: Some(generator::local_lock_path(socket_path)),
                 input: Arc::clone(&self.input),
             },

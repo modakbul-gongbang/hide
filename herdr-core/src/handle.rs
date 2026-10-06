@@ -258,6 +258,7 @@ impl Core {
                 .filter(|directory| !directory.as_os_str().is_empty()),
             environment_home.clone(),
             Arc::downgrade(&runtime),
+            &options.node_id,
         ) {
             Ok(services) => {
                 let services = Arc::new(services);
@@ -390,8 +391,12 @@ impl Core {
         ) {
             Ok(target) => {
                 lock_recover(&runtime).queue_local_kit_launch();
-                match crate::kit::KitPump::spawn(Arc::downgrade(&runtime), notifier.clone(), target)
-                {
+                match crate::kit::KitPump::spawn(
+                    Arc::downgrade(&runtime),
+                    notifier.clone(),
+                    target,
+                    options.node_id.clone(),
+                ) {
                     Ok(pump) => Some(pump),
                     Err(error) => {
                         lock_recover(&runtime).set_local_kit_unavailable(&format!(
