@@ -22,9 +22,10 @@ const OVERLAY: Duration = Duration::from_secs(1);
 /// Nested cross-origin frames a snapshot follows; the gateway admits 64
 /// sessions per client.
 const MAX_FRAMES: usize = 24;
-/// How many rounds in one command may go unanswered by the same frame before
-/// it is noted and left alone for the rest of the command: the one that found
-/// it silent, and one more in case it was only slow. Every read of a page
+/// How many rounds in one command may go unanswered by the same frame, in
+/// whatever it was asked (its `Page.enable`, a read, its look for its own
+/// frames), before it is noted and left alone for the rest of the command: the
+/// one that found it silent, and one more in case it was only slow. Every read of a page
 /// asks the frames again, so without this a frame that never answers costs a
 /// whole step on each read of a command.
 pub const MISS_LIMIT: u8 = 2;
@@ -93,9 +94,6 @@ pub struct Page {
     known: Vec<Known>,
     /// Sessions whose own frames have been looked for.
     scanned: Vec<String>,
-    /// The sessions whose look for their own frames went unanswered, once for
-    /// each round it did.
-    scan_misses: Vec<String>,
     /// Sessions of tagged frames that went unanswered in the last multi-frame
     /// read, for the notes and the timeout detail of a command.
     unread: Vec<String>,
@@ -242,7 +240,6 @@ impl Page {
             deadline: None,
             known: Vec::new(),
             scanned: Vec::new(),
-            scan_misses: Vec::new(),
             unread: Vec::new(),
         }
     }
@@ -266,7 +263,6 @@ impl Page {
             deadline: None,
             known: Vec::new(),
             scanned: Vec::new(),
-            scan_misses: Vec::new(),
             unread: Vec::new(),
         };
         let targets = page
@@ -549,7 +545,7 @@ impl Page {
                     .filter(|frame| {
                         frame.document.is_some()
                             && !self.scanned.contains(&frame.session)
-                            && self.scan_misses(&frame.session) < MISS_LIMIT
+                            && frame.misses < MISS_LIMIT
                     })
                     .map(|frame| frame.session.clone()),
             );
@@ -573,7 +569,7 @@ impl Page {
             let unscanned = self.known.iter().any(|frame| {
                 frame.document.is_some()
                     && !self.scanned.contains(&frame.session)
-                    && self.scan_misses(&frame.session) < MISS_LIMIT
+                    && frame.misses < MISS_LIMIT
             });
             if !unscanned {
                 break;
@@ -603,12 +599,6 @@ impl Page {
                 )
             })
             .collect())
-    }
-
-    /// How many rounds the look for a session's own frames went unanswered.
-    fn scan_misses(&self, session: &str) -> u8 {
-        let misses = self.scan_misses.iter().filter(|s| *s == session).count();
-        u8::try_from(misses).unwrap_or(u8::MAX)
     }
 
     /// Looks for the frames attached under each of the sessions, all
@@ -674,7 +664,7 @@ impl Page {
 
     fn scan_missed(&mut self, parent: &str, failure: Failure) -> Result<(), Failure> {
         if failure.silent && parent != self.top {
-            self.scan_misses.push(parent.to_owned());
+            self.missed(parent);
             Ok(())
         } else {
             Err(failure)

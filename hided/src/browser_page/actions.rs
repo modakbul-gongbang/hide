@@ -853,10 +853,18 @@ async fn changed(
     Ok(text)
 }
 
-/// One poll of a wait: whether the condition holds now, and how many sessions
-/// were asked.
-async fn poll(page: &mut Page, wait: &Wait, deadline: Instant) -> Result<(bool, usize), Failure> {
+/// One poll of a wait: whether the condition holds now, how many sessions were
+/// asked, and whether the top document went unanswered because the wait ran out
+/// of time, which leaves the condition unknown, not false.
+struct Poll {
+    found: bool,
+    polled: usize,
+    page_silent: bool,
+}
+
+async fn poll(page: &mut Page, wait: &Wait, deadline: Instant) -> Result<Poll, Failure> {
     let mut polled = 1;
+    let mut page_silent = false;
     let found = match wait {
         Wait::Text(text) => {
             // The top document and every frame are asked together; one
@@ -888,6 +896,7 @@ async fn poll(page: &mut Page, wait: &Wait, deadline: Instant) -> Result<(bool, 
                         if failure.silent
                             && (*session != page.top || Instant::now() >= deadline) =>
                     {
+                        page_silent |= *session == page.top;
                         unread.push(session.clone());
                     }
                     Err(failure) => return Err(failure),
@@ -951,7 +960,11 @@ async fn poll(page: &mut Page, wait: &Wait, deadline: Instant) -> Result<(bool, 
             visible.is_some_and(|visible| visible != *gone)
         }
     };
-    Ok((found, polled))
+    Ok(Poll {
+        found,
+        polled,
+        page_silent,
+    })
 }
 
 async fn wait_for(page: &mut Page, wait: Wait, timeout: Duration) -> Result<Output, Failure> {
@@ -961,11 +974,19 @@ async fn wait_for(page: &mut Page, wait: Wait, timeout: Duration) -> Result<Outp
     // poll ends at the deadline, not a step after it.
     page.end_at(deadline);
     loop {
-        let (found, polled) = match poll(page, &wait, deadline).await {
+        let Poll {
+            found,
+            polled,
+            page_silent,
+        } = match poll(page, &wait, deadline).await {
             Ok(outcome) => outcome,
             // The poll ran out the wait's own time before something answered:
             // that is the wait timing out, not the page failing.
-            Err(failure) if failure.silent && Instant::now() >= deadline => (false, 1),
+            Err(failure) if failure.silent && Instant::now() >= deadline => Poll {
+                found: false,
+                polled: 1,
+                page_silent: true,
+            },
             Err(failure) => return Err(failure),
         };
         let waited = started.elapsed().as_millis() as u64;
@@ -990,37 +1011,46 @@ async fn wait_for(page: &mut Page, wait: Wait, timeout: Duration) -> Result<Outp
         // The gateway admits 600 commands a minute; one poll costs one per
         // frame read.
         let interval = WAIT_POLL * polled as u32;
-        let now = Instant::now();
-        if now >= deadline {
-            let what = match &wait {
-                Wait::Text(text) => format!("text {} not found", json!(text)),
-                Wait::Selector {
-                    selector,
-                    gone: false,
-                } => format!("{selector} not visible"),
-                Wait::Selector {
-                    selector,
-                    gone: true,
-                } => format!("{selector} still visible"),
-            };
-            let mut detail = format!("{what} after {} ms", timeout.as_millis());
-            let mut silent: Vec<String> = page
-                .unreadable()
-                .into_iter()
-                .map(|(_, origin)| origin)
-                .collect();
-            silent.sort();
-            silent.dedup();
-            if !silent.is_empty() {
-                detail.push_str(&format!(
-                    "; a frame that did not answer was not read ({})",
-                    silent.join(", ")
-                ));
-            }
-            return Err(Failure::new("timeout", Some(detail)));
+        let left = deadline.saturating_duration_since(Instant::now());
+        // A poll that would start at the deadline has no time to read
+        // anything, so the wait ends there instead.
+        if !left.is_zero() {
+            sleep(interval.min(left)).await;
         }
-        // The last poll lands on the deadline rather than giving up early.
-        sleep(interval.min(deadline - now)).await;
+        if Instant::now() < deadline {
+            continue;
+        }
+        let what = match &wait {
+            Wait::Text(text) => format!("text {} not found", json!(text)),
+            Wait::Selector {
+                selector,
+                gone: false,
+            } => format!("{selector} not visible"),
+            Wait::Selector {
+                selector,
+                gone: true,
+            } => format!("{selector} still visible"),
+        };
+        let mut detail = format!("{what} after {} ms", timeout.as_millis());
+        let mut silent: Vec<String> = page
+            .unreadable()
+            .into_iter()
+            .map(|(_, origin)| origin)
+            .collect();
+        silent.sort();
+        silent.dedup();
+        if !silent.is_empty() {
+            detail.push_str(&format!(
+                "; a frame that did not answer was not read ({})",
+                silent.join(", ")
+            ));
+        }
+        // Not read is not absent: the last poll was cut short at the deadline
+        // before the page answered, so the condition may hold.
+        if page_silent {
+            detail.push_str("; the last poll ended before the page answered, so it may hold");
+        }
+        return Err(Failure::new("timeout", Some(detail)));
     }
 }
 
@@ -1862,7 +1892,7 @@ mod tests {
             let mut page = page_within(page_with_frames(hung, None), Duration::from_secs(60)).await;
             let outcome = tokio::time::timeout(
                 Duration::from_secs(20),
-                wait_for(&mut page, wait, Duration::from_millis(50)),
+                wait_for(&mut page, wait, Duration::from_secs(1)),
             )
             .await
             .expect("the wait ended by its own deadline");
@@ -1870,6 +1900,48 @@ mod tests {
             assert_eq!(failure.reason, "timeout");
             assert!(failure.detail.unwrap().contains("http://hung1.test"));
         }
+    }
+
+    #[tokio::test]
+    async fn a_wait_cut_short_before_the_page_answered_does_not_say_the_text_is_absent() {
+        let mut page = page_within(|_: &Value| Vec::new(), Duration::from_secs(60)).await;
+        let failure = tokio::time::timeout(
+            Duration::from_secs(20),
+            wait_for(
+                &mut page,
+                Wait::Text("never shown".into()),
+                Duration::from_millis(200),
+            ),
+        )
+        .await
+        .expect("the wait ended by its own deadline")
+        .err()
+        .unwrap();
+        assert_eq!(failure.reason, "timeout");
+        assert!(
+            failure
+                .detail
+                .unwrap()
+                .contains("ended before the page answered"),
+        );
+    }
+
+    #[tokio::test]
+    async fn a_frame_that_does_not_answer_the_look_for_its_own_frames_is_asked_within_the_budget() {
+        let frames = Frames {
+            healthy: 1,
+            scan_silent: true,
+            ..Frames::default()
+        };
+        let (script, seen) = recording(page_with_frames(frames, None));
+        let mut page = page(script).await;
+        for _ in 0..4 {
+            page.frames().await.unwrap();
+        }
+        assert_eq!(
+            seen.lock().unwrap().sent("Target.setAutoAttach", "ok1"),
+            super::super::page::MISS_LIMIT as usize
+        );
     }
 
     #[tokio::test]

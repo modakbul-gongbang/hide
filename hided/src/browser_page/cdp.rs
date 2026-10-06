@@ -136,6 +136,10 @@ impl Cdp {
         timeout: Duration,
         stop_on_dialog: bool,
     ) -> Result<Option<Value>, CdpError> {
+        // Nothing is sent that no answer could be waited for.
+        if timeout.is_zero() {
+            return Err(CdpError::Timeout);
+        }
         let deadline = Instant::now() + timeout;
         if !self.reserve(1, deadline).await? {
             return Err(CdpError::Timeout);
@@ -180,9 +184,9 @@ impl Cdp {
         timeout: Duration,
     ) -> Result<Vec<Result<Value, CdpError>>, CdpError> {
         let deadline = Instant::now() + timeout;
-        // Without room before the deadline nothing is sent, and every call is
-        // as unanswered as one the page held.
-        if !self.reserve(calls.len(), deadline).await? {
+        // Without time or room before the deadline nothing is sent, and every
+        // call is as unanswered as one the page held.
+        if timeout.is_zero() || !self.reserve(calls.len(), deadline).await? {
             return Ok(calls.iter().map(|_| Err(CdpError::Timeout)).collect());
         }
         let mut ids = Vec::with_capacity(calls.len());
