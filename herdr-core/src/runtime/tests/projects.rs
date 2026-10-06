@@ -1564,8 +1564,8 @@ fn removing_an_unregistered_row_closes_its_panes_and_registers_nothing() {
 #[test]
 fn removing_registration_converges_without_git_or_repeat_publication() {
     let mut runtime = runtime();
-    let path = std::env::temp_dir().join(format!("hide-registration-empty-{}", std::process::id()));
-    std::fs::create_dir_all(&path).unwrap();
+    let folder = scratch_dir("hide-registration-empty-");
+    let path = folder.path().to_path_buf();
     let registration =
         workspace::registration(path.to_str().unwrap(), "Empty project", "local").unwrap();
     runtime.snapshot.ui_state.workspace_registrations = vec![registration.clone()];
@@ -2769,18 +2769,9 @@ fn an_explicit_checkout_waits_without_rendering_stale_projection_when_catalog_is
 
 #[test]
 fn checkout_path_matching_uses_component_boundaries() {
-    let id = NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed);
-    let checkout_path = std::env::temp_dir().join(format!(
-        "hide-checkout-boundary-{}-{id}",
-        std::process::id()
-    ));
-    let sibling_path = checkout_path.with_file_name(format!(
-        "{}-sibling",
-        checkout_path
-            .file_name()
-            .expect("checkout directory name")
-            .to_string_lossy()
-    ));
+    let folder = scratch_dir("hide-checkout-boundary-");
+    let checkout_path = folder.path().join("checkout");
+    let sibling_path = folder.path().join("checkout-sibling");
     std::fs::create_dir_all(checkout_path.join("src")).expect("checkout fixture");
     std::fs::create_dir_all(sibling_path.join("src")).expect("sibling fixture");
     let checkout = checkout_path.to_string_lossy();

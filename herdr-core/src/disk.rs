@@ -453,7 +453,7 @@ mod tests {
 
     #[test]
     fn project_disk_partitions_nested_worktrees_and_shared_git_once() {
-        let root = fixture("partition");
+        let (_folder, root) = fixture("partition");
         std::fs::create_dir_all(root.join("linked")).unwrap();
         std::fs::create_dir_all(root.join(".git")).unwrap();
         std::fs::write(root.join("main-data"), vec![1; 8192]).unwrap();
@@ -473,7 +473,6 @@ mod tests {
             ..Default::default()
         });
         let total: u64 = measurements.iter().map(|d| d.total_bytes.unwrap()).sum();
-        std::fs::remove_dir_all(root).unwrap();
         assert_eq!(
             total, expected,
             "Every allocated block belongs to one project component"
@@ -483,8 +482,8 @@ mod tests {
     #[test]
     fn hardlinks_count_once_and_symlinks_do_not_escape_or_cycle() {
         use hide_platform::fs::link::create_link;
-        let root = fixture("links");
-        let outside = fixture("outside");
+        let (_folder, root) = fixture("links");
+        let (_outside, outside) = fixture("outside");
         std::fs::create_dir_all(root.join("linked")).unwrap();
         std::fs::write(root.join("linked/data"), vec![2; 16384]).unwrap();
         std::fs::hard_link(root.join("linked/data"), root.join("alias")).unwrap();
@@ -519,13 +518,11 @@ mod tests {
         assert_eq!(alias[0].total_bytes, None);
         assert!(alias[0].unavailable_reason.is_some());
         assert!(outside.join("secret").exists());
-        std::fs::remove_dir_all(root).unwrap();
-        std::fs::remove_dir_all(outside).unwrap();
     }
 
     #[test]
     fn partial_measurement_retains_target_failure_without_a_complete_total() {
-        let root = fixture("partial");
+        let (_folder, root) = fixture("partial");
         std::fs::write(root.join("data"), vec![1; 8192]).unwrap();
         let rows = read(&DiskRequest {
             paths: vec![root.clone(), root.join("missing")],
@@ -539,20 +536,16 @@ mod tests {
             rows.iter().map(|row| row.total_bytes).sum::<Option<u64>>(),
             None
         );
-        std::fs::remove_dir_all(root).unwrap();
     }
 
-    fn fixture(name: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "hide-disk-{name}-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        std::fs::create_dir_all(&root).unwrap();
-        std::fs::canonicalize(root).unwrap()
+    /// A new folder and its real path; the test keeps the folder.
+    fn fixture(name: &str) -> (tempfile::TempDir, PathBuf) {
+        let folder = tempfile::Builder::new()
+            .prefix(&format!("hide-disk-{name}-"))
+            .tempdir()
+            .unwrap();
+        let root = std::fs::canonicalize(folder.path()).unwrap();
+        (folder, root)
     }
 
     fn write(path: &Path, bytes: usize) {
@@ -591,7 +584,7 @@ mod tests {
 
     #[test]
     fn a_checkout_is_sorted_into_source_two_layers_and_the_rest() {
-        let root = fixture("layers");
+        let (_folder, root) = fixture("layers");
         layered_checkout(&root);
         let rows = read(&DiskRequest {
             paths: vec![root.clone()],
@@ -654,12 +647,11 @@ mod tests {
                 root.join("web/node_modules")
             ]
         );
-        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn a_folder_holding_another_repository_is_not_a_layer() {
-        let root = fixture("repository");
+        let (_folder, root) = fixture("repository");
         write(&root.join("pyproject.toml"), 100);
         std::fs::write(root.join(".gitignore"), ".venv\n").unwrap();
         write(&root.join(".venv/lib/x.py"), 10_000);
@@ -672,12 +664,11 @@ mod tests {
         assert_eq!(layers.dependencies.folders, 0);
         assert_eq!(layers.other.folders, 1);
         assert!(rows[0].folders.is_empty(), "nothing to remove is kept");
-        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn the_shared_git_directory_has_a_size_and_no_layers() {
-        let root = fixture("shared-git");
+        let (_folder, root) = fixture("shared-git");
         write(&root.join("wt/Cargo.toml"), 100);
         write(&root.join("common/objects/pack"), 20_000);
         let rows = read(&DiskRequest {
@@ -688,12 +679,11 @@ mod tests {
         assert!(rows[0].layers.is_some());
         assert!(rows[1].layers.is_none());
         assert!(rows[1].total_bytes.is_some());
-        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn each_root_is_reported_as_it_finishes_and_a_failed_one_only_loses_itself() {
-        let root = fixture("progress");
+        let (_folder, root) = fixture("progress");
         write(&root.join("a/file"), 4096);
         let mut order = Vec::new();
         let rows = read_with(
@@ -706,12 +696,11 @@ mod tests {
         assert_eq!(order.len(), 2);
         assert_eq!(order.iter().filter(|(_, measured)| *measured).count(), 1);
         assert!(rows[0].layers.is_some() && rows[1].layers.is_none());
-        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn a_request_that_runs_past_its_own_limit_leaves_the_checkouts_it_did_not_reach_unavailable() {
-        let root = fixture("request-limit");
+        let (_folder, root) = fixture("request-limit");
         for name in ["a", "b", "c"] {
             for n in 0..5 {
                 write(&root.join(name).join(format!("file{n}")), 100);
@@ -730,18 +719,16 @@ mod tests {
         assert!(measured < 3, "the request stopped: {measured} measured");
         let cut = rows.iter().find(|row| row.total_bytes.is_none()).unwrap();
         assert!(cut.layers.is_none() && cut.unavailable_reason.is_some());
-        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn a_measurement_carries_the_free_space_of_its_volume() {
-        let root = fixture("free");
+        let (_folder, root) = fixture("free");
         let rows = read(&DiskRequest {
             paths: vec![root.clone()],
             ..Default::default()
         });
         assert!(rows[0].volume_free_bytes.is_some_and(|free| free > 0));
-        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

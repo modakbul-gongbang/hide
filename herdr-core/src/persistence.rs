@@ -452,11 +452,9 @@ mod tests {
     // dropped and every parent starts folded.
     #[test]
     fn a_stored_collapsed_set_is_ignored_and_every_parent_starts_folded() {
-        let root =
-            std::env::temp_dir().join(format!("herdr-core-collapsed-{}", std::process::id()));
+        let folder = tempfile::tempdir().unwrap();
+        let root = folder.path().to_path_buf();
         let path = root.join("state.json");
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(&root).unwrap();
         save(
             &path,
             &UiStateSnapshot::default(),
@@ -475,7 +473,6 @@ mod tests {
             serde_json::from_slice(&fs::read(&path).unwrap()).unwrap();
         assert!(rewritten.get("collapsed_agent_pane_ids").is_none());
         assert_eq!(rewritten["expanded_agent_pane_ids"], serde_json::json!([]));
-        let _ = fs::remove_dir_all(&root);
     }
 
     // PRD home-device-rail D-18: the Settings default agent is gone. A store
@@ -483,10 +480,9 @@ mod tests {
     // and the next save drops the field.
     #[test]
     fn a_stored_default_agent_seeds_the_remembered_choice_and_is_dropped() {
-        let root = std::env::temp_dir().join(format!("herdr-core-seed-{}", std::process::id()));
+        let folder = tempfile::tempdir().unwrap();
+        let root = folder.path().to_path_buf();
         let path = root.join("state.json");
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(&root).unwrap();
         save(
             &path,
             &UiStateSnapshot::default(),
@@ -515,14 +511,13 @@ mod tests {
         again["issue_settings"]["default_agent"] = serde_json::json!("claude");
         fs::write(&path, serde_json::to_vec(&again).unwrap()).unwrap();
         assert_eq!(load(&path).0.agent_start.kind.as_deref(), Some("codex"));
-        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
     fn read_records_survive_a_restart() {
-        let root = std::env::temp_dir().join(format!("herdr-core-read-{}", std::process::id()));
+        let folder = tempfile::tempdir().unwrap();
+        let root = folder.path().to_path_buf();
         let path = root.join("state.json");
-        let _ = fs::remove_dir_all(&root);
         let mut state = UiStateSnapshot::default();
         state.pane_read_records.insert(
             "w1:p1".to_owned(),
@@ -555,7 +550,6 @@ mod tests {
         assert_eq!(disposition, LoadDisposition::Loaded);
         assert_eq!(reloaded.pane_read_records, state.pane_read_records);
         assert_eq!(reloaded.request_verbs, state.request_verbs);
-        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -591,10 +585,9 @@ mod tests {
         assert_eq!(disposition, LoadDisposition::Loaded);
         assert!(older_state.sessions_mode_by_project.is_empty());
 
-        let root =
-            std::env::temp_dir().join(format!("herdr-core-sessions-mode-{}", std::process::id()));
+        let folder = tempfile::tempdir().unwrap();
+        let root = folder.path().to_path_buf();
         let path = root.join("state.json");
-        let _ = fs::remove_dir_all(&root);
         let mut state = older_state;
         state
             .sessions_mode_by_project
@@ -607,7 +600,6 @@ mod tests {
             reloaded.sessions_mode_by_project.get("project-1"),
             Some(&SessionsMode::Memory)
         );
-        let _ = fs::remove_dir_all(root);
     }
 
     /// AC4, SC3. A damaged store loads empty and says so through the
@@ -645,7 +637,8 @@ mod tests {
 
     #[test]
     fn panel_visibility_survives_save_and_relaunch_load() {
-        let root = std::env::temp_dir().join(format!("herdr-core-panels-{}", std::process::id()));
+        let folder = tempfile::tempdir().unwrap();
+        let root = folder.path().to_path_buf();
         let path = root.join("state.json");
         let state = UiStateSnapshot {
             left_sidebar_visible: false,
@@ -667,7 +660,8 @@ mod tests {
 
     #[test]
     fn pet_position_visibility_and_shortcut_survive_a_relaunch() {
-        let root = std::env::temp_dir().join(format!("herdr-core-pet-{}", std::process::id()));
+        let folder = tempfile::tempdir().unwrap();
+        let root = folder.path().to_path_buf();
         let path = root.join("state.json");
         let mut state = UiStateSnapshot {
             pet_visible: false,
@@ -701,11 +695,8 @@ mod tests {
 
     #[test]
     fn native_app_shortcuts_read_only_the_bindings_field() {
-        let root = std::env::temp_dir().join(format!(
-            "herdr-core-native-app-shortcuts-{}",
-            std::process::id()
-        ));
-        fs::create_dir_all(&root).unwrap();
+        let folder = tempfile::tempdir().unwrap();
+        let root = folder.path().to_path_buf();
         let path = root.join("state.json");
         assert_eq!(
             read_native_app_shortcuts(&path),
@@ -737,8 +728,8 @@ mod tests {
 
     #[test]
     fn shortcut_bindings_survive_save_and_relaunch_load() {
-        let root =
-            std::env::temp_dir().join(format!("herdr-core-shortcuts-{}", std::process::id()));
+        let folder = tempfile::tempdir().unwrap();
+        let root = folder.path().to_path_buf();
         let path = root.join("state.json");
         let mut state = UiStateSnapshot::default();
         state
@@ -774,10 +765,8 @@ mod tests {
 
     #[test]
     fn workspace_collapse_survives_relaunch_without_changing_file_tree_expansion() {
-        let root = std::env::temp_dir().join(format!(
-            "herdr-core-workspace-collapse-{}",
-            std::process::id()
-        ));
+        let folder = tempfile::tempdir().unwrap();
+        let root = folder.path().to_path_buf();
         let path = root.join("state.json");
         let mut state = UiStateSnapshot {
             expanded_paths: vec!["/repo/src".to_owned()],
@@ -813,8 +802,8 @@ mod tests {
     /// levels, survives a relaunch, and an older store defaults both closed.
     #[test]
     fn inactive_fold_expansion_survives_relaunch_and_defaults_closed() {
-        let root =
-            std::env::temp_dir().join(format!("herdr-core-inactive-folds-{}", std::process::id()));
+        let folder = tempfile::tempdir().unwrap();
+        let root = folder.path().to_path_buf();
         let path = root.join("state.json");
         let state = UiStateSnapshot {
             expanded_inactive_checkout_project_paths: vec!["/repo/alpha".to_owned()],
@@ -851,10 +840,8 @@ mod tests {
     /// warning.
     #[test]
     fn registration_pin_survives_relaunch_and_an_older_store_loads_unpinned() {
-        let root = std::env::temp_dir().join(format!(
-            "herdr-core-registration-pin-{}",
-            std::process::id()
-        ));
+        let folder = tempfile::tempdir().unwrap();
+        let root = folder.path().to_path_buf();
         let path = root.join("state.json");
         let state = UiStateSnapshot {
             workspace_registrations: vec![WorkspaceRegistration {

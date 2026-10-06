@@ -257,11 +257,8 @@ fn recent_navigation_restores_file_and_diff_across_projects_atomically() {
 
 #[test]
 fn tab_strip_lists_herdr_tabs_and_then_the_file_that_was_opened() {
-    let directory = std::env::temp_dir().join(format!(
-        "hide-strip-open-{}-{}",
-        std::process::id(),
-        NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed)
-    ));
+    let directory_folder = scratch_dir("hide-strip-open-");
+    let directory = directory_folder.path().to_path_buf();
     std::fs::create_dir_all(&directory).expect("checkout directory");
     // The temp root is a symlink on macOS; the catalog keys checkouts by
     // the real path, so the fixture has to use it too. The fixture is also
@@ -308,11 +305,8 @@ fn tab_strip_lists_herdr_tabs_and_then_the_file_that_was_opened() {
 
 #[test]
 fn tab_strip_appends_a_reopened_file_nowhere_and_a_new_herdr_tab_at_the_end() {
-    let directory = std::env::temp_dir().join(format!(
-        "hide-strip-append-{}-{}",
-        std::process::id(),
-        NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed)
-    ));
+    let directory_folder = scratch_dir("hide-strip-append-");
+    let directory = directory_folder.path().to_path_buf();
     std::fs::create_dir_all(&directory).expect("checkout directory");
     // The temp root is a symlink on macOS; the catalog keys checkouts by
     // the real path, so the fixture has to use it too. The fixture is also
@@ -366,11 +360,8 @@ fn tab_strip_appends_a_reopened_file_nowhere_and_a_new_herdr_tab_at_the_end() {
 
 #[test]
 fn tab_strip_keeps_a_file_in_its_slot_while_herdr_reorders_around_it() {
-    let directory = std::env::temp_dir().join(format!(
-        "hide-strip-slot-{}-{}",
-        std::process::id(),
-        NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed)
-    ));
+    let directory_folder = scratch_dir("hide-strip-slot-");
+    let directory = directory_folder.path().to_path_buf();
     std::fs::create_dir_all(&directory).expect("checkout directory");
     // The temp root is a symlink on macOS; the catalog keys checkouts by
     // the real path, so the fixture has to use it too. The fixture is also
@@ -1389,11 +1380,8 @@ fn explorer_trash_refuses_a_selection_inside_the_item_and_a_missing_item() {
 #[test]
 fn explorer_refuses_paths_outside_the_focused_checkout_without_touching_disk() {
     let (mut runtime, root) = explorer_runtime();
-    let outside = std::env::temp_dir().join(format!(
-        "hide-explorer-outside-{}-{}",
-        std::process::id(),
-        NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed)
-    ));
+    let outside_folder = scratch_dir("hide-explorer-outside-");
+    let outside = outside_folder.path().to_path_buf();
     std::fs::create_dir_all(&outside).expect("outside dir");
 
     assert!(runtime.dispatch_json(&explorer_event(
@@ -1448,11 +1436,8 @@ fn explorer_refuses_paths_outside_the_focused_checkout_without_touching_disk() {
 /// tab. New Folder opens nothing, and Rename opens no new tab.
 #[test]
 fn explorer_file_create_opens_the_created_file_as_a_tab_and_others_do_not() {
-    let root = std::env::temp_dir().join(format!(
-        "hide-explorer-open-{}-{}",
-        std::process::id(),
-        NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed)
-    ));
+    let root_folder = scratch_dir("hide-explorer-open-");
+    let root = root_folder.path().to_path_buf();
     std::fs::create_dir_all(root.join("src")).expect("fixture tree");
     let root = root.canonicalize().expect("a real root");
     assert!(
@@ -1850,11 +1835,11 @@ fn every_consuming_reopen_result_removes_only_its_request_key() {
         "/repo/pane-placeholder.rs",
     );
 
-    let root = Path::new("/tmp").join(format!(
-        "herdr-core-reopen-file-result-{}",
-        std::process::id()
-    ));
-    std::fs::create_dir_all(&root).unwrap();
+    let folder = tempfile::Builder::new()
+        .prefix("herdr-core-reopen-file-result-")
+        .tempdir_in("/tmp")
+        .unwrap();
+    let root = folder.path().to_path_buf();
     let path = root.join("first.rs");
     std::fs::write(&path, "fn main() {}\n").unwrap();
     let opened = crate::files::tests::open_local(&path);
@@ -1862,7 +1847,6 @@ fn every_consuming_reopen_result_removes_only_its_request_key() {
         live::FileReopenResultOrHerdr::File(live::FileReopenResult::Opened(Box::new(opened))),
         path.to_str().unwrap(),
     );
-    std::fs::remove_dir_all(&root).unwrap();
 }
 
 #[test]

@@ -675,6 +675,7 @@ mod tests {
     const OTHER_ID: &str = "01234567-0123-0123-0123-0123456789ac";
 
     fn runtime() -> Runtime {
+        let folder = tempfile::tempdir().unwrap();
         let mut runtime = Runtime::new(
             CoreOptions {
                 schema_version: SCHEMA_VERSION,
@@ -682,12 +683,9 @@ mod tests {
                 machine_id: None,
                 herdr_socket_path: None,
                 herdr_bin_path: None,
-                app_state_path: std::env::temp_dir()
-                    .join(format!(
-                        "hide-attachment-state-{}-{}.json",
-                        std::process::id(),
-                        unix_milliseconds()
-                    ))
+                app_state_path: folder
+                    .path()
+                    .join("state.json")
                     .to_string_lossy()
                     .into_owned(),
                 host_helper_dir: None,
@@ -704,6 +702,7 @@ mod tests {
                 codex_home: None,
             },
         );
+        runtime.test_dirs.push(folder);
         runtime.ensure_terminal_pane("pane-one");
         runtime
     }

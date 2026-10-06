@@ -4162,8 +4162,8 @@ mod tests {
     #[test]
     fn file_reopen_distinguishes_metadata_failure_from_a_missing_file() {
         use std::os::unix::fs::PermissionsExt;
-        let root =
-            std::env::temp_dir().join(format!("hide-file-metadata-denied-{}", std::process::id()));
+        let folder = tempfile::tempdir().expect("fixture folder");
+        let root = folder.path().to_path_buf();
         let denied = root.join("denied");
         let file = denied.join("document.txt");
         std::fs::create_dir_all(&denied).expect("create denied fixture");
@@ -4181,9 +4181,10 @@ mod tests {
             file.to_str().unwrap(),
         );
 
+        // Traversal comes back before the folder is dropped, or it could not
+        // be removed.
         std::fs::set_permissions(&denied, std::fs::Permissions::from_mode(0o700))
             .expect("restore traversal");
-        std::fs::remove_dir_all(&root).expect("remove fixture");
         match result {
             FileReopenResultOrHerdr::File(FileReopenResult::Failed(message)) => {
                 assert!(message.contains("could not be opened"), "{message}");

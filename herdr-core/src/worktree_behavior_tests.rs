@@ -159,9 +159,8 @@ fn base_branch_unknown_allows_creation() {
 
 #[test]
 fn worktree_creation_blocked_without_branches() {
-    let root = std::env::temp_dir().join(format!("hide-unborn-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&root);
-    std::fs::create_dir_all(&root).unwrap();
+    let folder = tempfile::tempdir().unwrap();
+    let root = folder.path().to_path_buf();
     git(&root, &["init", "-b", "main"]).unwrap();
     let project = read_project(
         &root,
@@ -175,7 +174,6 @@ fn worktree_creation_blocked_without_branches() {
             .iter()
             .any(|row| row.branch.is_some() && row.head_sha.is_some())
     );
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

@@ -552,14 +552,12 @@ mod tests {
     use super::*;
     use crate::view_layout::{Edge, Node, SplitAxis};
 
-    fn scratch(name: &str) -> PathBuf {
-        let root = std::env::temp_dir().join(format!(
-            "herdr-core-workspace-views-{name}-{}",
-            std::process::id()
-        ));
-        let _ = fs::remove_dir_all(&root);
-        fs::create_dir_all(&root).unwrap();
-        root
+    /// A new folder, removed when the test drops it.
+    fn scratch(name: &str) -> tempfile::TempDir {
+        tempfile::Builder::new()
+            .prefix(&format!("herdr-core-workspace-views-{name}-"))
+            .tempdir()
+            .unwrap()
     }
 
     fn unbound(mut views: WorkspaceViews) -> WorkspaceViews {
@@ -576,7 +574,8 @@ mod tests {
     /// never written.
     #[test]
     fn a_saved_nested_layout_loads_back_as_it_was() {
-        let root = scratch("roundtrip");
+        let folder = scratch("roundtrip");
+        let root = folder.path().to_path_buf();
         let path = root.join("workspace-views.json");
         let mut views = WorkspaceViews::default();
         let entry = views.entry("local", "/repo");
@@ -636,7 +635,6 @@ mod tests {
             .map(|display| (display.path.as_str(), display.preview))
             .collect();
         assert_eq!(kept, vec![("/repo/a.md", false), ("/repo/d.md", true)]);
-        let _ = fs::remove_dir_all(&root);
     }
 
     /// S7 D-10, B17: an S6 file becomes one area holding its tabs in saved
@@ -644,7 +642,8 @@ mod tests {
     /// schema 2.
     #[test]
     fn a_schema_1_file_migrates_into_one_area() {
-        let root = scratch("migrate");
+        let folder = scratch("migrate");
+        let root = folder.path().to_path_buf();
         let path = root.join("workspace-views.json");
         fs::write(
             &path,
@@ -714,7 +713,6 @@ mod tests {
             }
         );
         assert_eq!(again, loaded);
-        let _ = fs::remove_dir_all(&root);
     }
 
     /// S6 B20, S7 B17: a file this build cannot read, of an unknown version
@@ -722,7 +720,8 @@ mod tests {
     /// and the defaults load.
     #[test]
     fn an_unreadable_future_or_unmigratable_file_is_preserved_and_defaults_load() {
-        let root = scratch("unreadable");
+        let folder = scratch("unreadable");
+        let root = folder.path().to_path_buf();
         let path = root.join("workspace-views.json");
         for (index, body) in [
             b"{not json".as_slice(),
@@ -748,7 +747,6 @@ mod tests {
             );
             assert_eq!(fs::read(&preserved).unwrap(), body);
         }
-        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]
@@ -789,7 +787,8 @@ mod tests {
     /// its views showed, and the next save writes only the columns' keys.
     #[test]
     fn a_workspace_stored_with_a_layout_restarts_with_file_views_where_views_showed() {
-        let root = scratch("legacy-layouts");
+        let folder = scratch("legacy-layouts");
+        let root = folder.path().to_path_buf();
         let path = root.join("workspace-views.json");
         fs::write(
             &path,
@@ -831,7 +830,6 @@ mod tests {
         assert!(!written.contains("agent_share"));
         assert!(!written.contains("views_over"));
         assert_eq!(load(&path, 2).0, loaded);
-        let _ = fs::remove_dir_all(&root);
     }
 
     /// PRD three-column-panel D-09, B30: a side panel stored open or
@@ -841,7 +839,8 @@ mod tests {
     /// writes none of the panel's keys.
     #[test]
     fn a_stored_side_panel_restarts_as_the_file_views_column() {
-        let root = scratch("legacy-panel");
+        let folder = scratch("legacy-panel");
+        let root = folder.path().to_path_buf();
         let path = root.join("workspace-views.json");
         let bookmarks = serde_json::json!({"w:t1": {"a1": "d1"}});
         fs::write(
@@ -904,14 +903,14 @@ mod tests {
         let (again, outcome) = load(&path, 2);
         assert_eq!(again, loaded);
         assert!(matches!(outcome, LoadOutcome::Loaded { upgraded: 0, .. }));
-        let _ = fs::remove_dir_all(&root);
     }
 
     /// B31: a panel value no build wrote makes the file unreadable, which
     /// keeps it aside and loads the defaults.
     #[test]
     fn an_unknown_panel_value_takes_the_unreadable_path() {
-        let root = scratch("legacy-panel-unknown");
+        let folder = scratch("legacy-panel-unknown");
+        let root = folder.path().to_path_buf();
         let path = root.join("workspace-views.json");
         let body = serde_json::json!({
             "schema_version": 2,
@@ -929,7 +928,6 @@ mod tests {
             panic!("expected the unreadable path, got {outcome:?}");
         };
         assert_eq!(fs::read_to_string(preserved).unwrap(), body);
-        let _ = fs::remove_dir_all(&root);
     }
 
     /// Issue 170, revised: an entry stored with two tool flags restarts on
@@ -937,7 +935,8 @@ mod tests {
     /// showed, and the next save writes only the tool and its column.
     #[test]
     fn a_workspace_stored_with_two_tool_flags_restarts_on_one_tool() {
-        let root = scratch("legacy-tools");
+        let folder = scratch("legacy-tools");
+        let root = folder.path().to_path_buf();
         let path = root.join("workspace-views.json");
         let entry = |path: &str, explorer: bool, changes: bool| {
             serde_json::json!({
@@ -983,7 +982,6 @@ mod tests {
         assert!(!written.contains("\"explorer\":"));
         assert!(!written.contains("\"changes\":"));
         assert_eq!(load(&path, 2).0, loaded);
-        let _ = fs::remove_dir_all(&root);
     }
 
     /// PRD tab-view-bookmark B18, B19, D-13: the bookmarks come back after a
@@ -992,7 +990,8 @@ mod tests {
     /// load.
     #[test]
     fn bookmarks_survive_a_save_and_a_file_without_them_loads_untouched() {
-        let root = scratch("bookmarks");
+        let folder = scratch("bookmarks");
+        let root = folder.path().to_path_buf();
         let path = root.join("workspace-views.json");
         let mut views = WorkspaceViews::default();
         let entry = views.entry("local", "/repo");
@@ -1047,7 +1046,6 @@ mod tests {
                 upgraded: 0,
             }
         );
-        let _ = fs::remove_dir_all(&root);
     }
 
     #[test]

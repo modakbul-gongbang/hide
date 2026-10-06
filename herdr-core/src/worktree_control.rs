@@ -2861,10 +2861,11 @@ mod tests {
 
     #[test]
     fn created_path_alias_is_not_a_mismatch() {
-        let root =
-            Path::new("/tmp").join(format!("hide-created-path-alias-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).unwrap();
+        let folder = tempfile::Builder::new()
+            .prefix("hide-created-path-alias-")
+            .tempdir_in("/tmp")
+            .unwrap();
+        let root = folder.path().to_path_buf();
         let response_path = root.to_string_lossy().into_owned();
         let listed_path = std::fs::canonicalize(&root)
             .unwrap()
@@ -2893,7 +2894,6 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["worktree.create", "worktree.list"]
         );
-        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -2907,10 +2907,8 @@ mod tests {
 
     #[test]
     fn migrate_branch_moves_branch_to_worktree() {
-        let root =
-            std::env::temp_dir().join(format!("hide-migrate-success-{}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).unwrap();
+        let folder = tempfile::tempdir().unwrap();
+        let root = folder.path().to_path_buf();
         let path = root.to_string_lossy().into_owned();
         let server = server(vec![
             worktree_created(&path, "feature"),
@@ -2932,7 +2930,6 @@ mod tests {
             create["params"]["focus"], false,
             "migration must not move Herdr focus"
         );
-        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -3016,12 +3013,8 @@ mod tests {
 
     #[test]
     fn migrate_branch_refuses_before_overwriting_an_ignored_file() {
-        let root = std::env::temp_dir().join(format!(
-            "hide-migrate-ignored-collision-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&root);
-        std::fs::create_dir_all(&root).unwrap();
+        let folder = tempfile::tempdir().unwrap();
+        let root = folder.path().to_path_buf();
         let run = |args: &[&str]| {
             let output = Command::new("git")
                 .arg("-C")
@@ -3071,7 +3064,6 @@ mod tests {
             .unwrap();
         assert_eq!(branch, "feature");
         assert!(server.requests.lock().unwrap().is_empty());
-        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

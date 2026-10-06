@@ -28,18 +28,13 @@ fn runtime_at(state: &std::path::Path, native: &std::path::Path) -> Runtime {
     )
 }
 
-/// A private directory holding the core's store and the native app's.
-fn paths(name: &str) -> (std::path::PathBuf, std::path::PathBuf) {
-    let dir = std::env::temp_dir().join(format!(
-        "herdr-core-shortcut-import-{name}-{}",
-        std::process::id()
-    ));
-    let _ = std::fs::remove_dir_all(&dir);
-    std::fs::create_dir_all(&dir).expect("state dir");
-    (
-        dir.join("core-state.json"),
-        dir.join("native-app-state.json"),
-    )
+/// A new private folder holding the core's store and the native app's; the
+/// test keeps the folder.
+fn paths(name: &str) -> (tempfile::TempDir, std::path::PathBuf, std::path::PathBuf) {
+    let dir = scratch_dir(&format!("herdr-core-shortcut-import-{name}-"));
+    let state = dir.path().join("core-state.json");
+    let native = dir.path().join("native-app-state.json");
+    (dir, state, native)
 }
 
 /// The native app's store: its own fields around the one the core reads.
@@ -84,7 +79,7 @@ fn map(pairs: &[(&str, &str)]) -> BTreeMap<String, String> {
 
 #[test]
 fn the_macos_apps_pane_chords_come_across_once_and_a_reset_stays_a_reset() {
-    let (state, native) = paths("once");
+    let (_dir, state, native) = paths("once");
     write_native_app(
         &native,
         serde_json::json!({"toggle_zoom": "command+shift+return", "split_down": "command+shift+d"}),
@@ -114,7 +109,7 @@ fn the_macos_apps_pane_chords_come_across_once_and_a_reset_stays_a_reset() {
 
 #[test]
 fn a_set_edited_here_is_never_replaced_by_the_import() {
-    let (state, native) = paths("edited");
+    let (_dir, state, native) = paths("edited");
     write_native_app(&native, serde_json::json!({}));
     let mut runtime = runtime_at(&state, &native);
     set_bindings(
@@ -136,7 +131,7 @@ fn a_set_edited_here_is_never_replaced_by_the_import() {
 
 #[test]
 fn no_macos_store_imports_nothing_and_a_later_launch_still_can() {
-    let (state, native) = paths("missing");
+    let (_dir, state, native) = paths("missing");
     let runtime = runtime_at(&state, &native);
     assert!(bindings(&runtime).is_empty());
     assert!(!runtime.snapshot().ui_state.shortcut_bindings_imported);
@@ -155,7 +150,7 @@ fn no_macos_store_imports_nothing_and_a_later_launch_still_can() {
 
 #[test]
 fn an_unreadable_macos_store_is_recorded_and_imports_nothing() {
-    let (state, native) = paths("unreadable");
+    let (_dir, state, native) = paths("unreadable");
     std::fs::write(&native, b"{not json").expect("native app store");
     let runtime = runtime_at(&state, &native);
     assert!(bindings(&runtime).is_empty());
@@ -171,7 +166,7 @@ fn an_unreadable_macos_store_is_recorded_and_imports_nothing() {
 
 #[test]
 fn a_ui_state_update_keeps_the_import_marker_and_refuses_an_oversized_set() {
-    let (state, native) = paths("update");
+    let (_dir, state, native) = paths("update");
     write_native_app(
         &native,
         serde_json::json!({"toggle_zoom": "command+shift+return"}),

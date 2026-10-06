@@ -187,15 +187,8 @@ mod tests {
     }
     #[test]
     fn selected_files_are_read_and_special_files_refused() {
-        let root = std::env::temp_dir().join(format!(
-            "hide-attachment-test-{}-{}",
-            std::process::id(),
-            std::time::SystemTime::now()
-                .duration_since(std::time::UNIX_EPOCH)
-                .unwrap()
-                .as_nanos()
-        ));
-        fs::create_dir(&root).unwrap();
+        let folder = tempfile::tempdir().unwrap();
+        let root = folder.path().to_path_buf();
         let file = root.join("한글.png");
         fs::write(&file, b"explicit bytes").unwrap();
         let link = root.join("link.png");
@@ -223,6 +216,5 @@ mod tests {
         );
         cancelled.store(true, Ordering::Release);
         assert!(read_sources(&[file.to_string_lossy().into_owned()], &cancelled).is_err());
-        fs::remove_dir_all(root).unwrap();
     }
 }
