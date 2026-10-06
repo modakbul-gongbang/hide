@@ -1580,9 +1580,8 @@ impl Runtime {
             Event::AttachmentReady(payload) => self.attachment_ready(payload),
             Event::AttachmentAction(payload) => self.attachment_action(payload),
             Event::Key(payload) => {
-                if let Some(observation) = self.delivery_observations.get_mut(&payload.pane_id) {
-                    observation.last_input_at_unix_ms = super::unix_milliseconds();
-                }
+                let submits = crate::labels::input::key_submits(&payload.bytes_base64);
+                self.note_delivery_key(&payload.pane_id, submits);
                 if let Some(changed) = self.drop_input_to_sleeping_pane(&payload.pane_id) {
                     return changed;
                 }
@@ -1595,7 +1594,7 @@ impl Runtime {
                 self.snapshot.terminal.pane_id = Some(payload.pane_id.clone());
                 self.ensure_terminal_pane(&payload.pane_id);
                 self.sync_focused_terminal_projection();
-                if crate::labels::input::key_submits(&payload.bytes_base64) {
+                if submits {
                     self.record_operator_submit(&payload.pane_id);
                 }
                 if self.live.is_some()
@@ -1625,6 +1624,7 @@ impl Runtime {
             Event::AgentSleep(payload) => self.request_agent_sleep(&payload.pane_id),
             // The phone's reply reached the pane; nothing on screen moves.
             Event::PaneInputSubmitted(payload) => {
+                self.note_delivery_key(&payload.pane_id, true);
                 self.record_operator_submit(&payload.pane_id);
                 false
             }

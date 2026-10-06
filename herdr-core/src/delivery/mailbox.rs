@@ -32,7 +32,13 @@ pub enum Command {
         id: String,
     },
     Inbox,
-    Pull,
+    /// A prompt hook asks what to hand the agent. `bell` is true only when
+    /// the submitted prompt was Hide's own bell: that turn receives the letter
+    /// bodies, while any other prompt receives at most a count.
+    Pull {
+        #[serde(default)]
+        bell: bool,
+    },
     Confirm {
         ids: Vec<String>,
     },
@@ -199,9 +205,15 @@ pub fn apply(
                 .iter_mut()
                 .find(|letter| letter.id == *id)
                 .ok_or("letter_unavailable")?;
+            let mut ended = None;
             if matches!(command, Command::Ack { .. }) {
                 if matches!(letter.state, State::Pending | State::Delivered) {
                     letter.state = State::Acknowledged;
+                }
+                // An agent with no prompt hook has no other way to take a
+                // letter in, so its acknowledgement is the receipt.
+                if !prompt_hook(&letter.recipient.kind) {
+                    ended = record_intake(letter, now);
                 }
             } else {
                 letter.state = State::Cancelled;
@@ -210,19 +222,33 @@ pub fn apply(
             if !letter.open() {
                 letter.finished_at_unix_ms.get_or_insert(now);
             }
+            let letter = letter.clone();
+            end_report_watches(ledger, ended);
             Ok(json!(letter))
         }
         Command::Show { id } => Ok(json!(authorized(ledger, actor, id)?)),
-        Command::Inbox => Ok(json!(
-            ledger
-                .letters
-                .iter()
-                .filter(|letter| letter.recipient.same_identity(actor)
-                    && matches!(letter.state, State::Pending | State::Undelivered)
-                    || letter.sender.same_identity(actor) && letter.state == State::Undelivered)
-                .collect::<Vec<_>>()
-        )),
-        Command::Pull => Ok(json!(pull(ledger, actor)?)),
+        Command::Inbox => {
+            // An agent with no prompt hook acknowledges what it read.
+            let acknowledges = !prompt_hook(&actor.kind);
+            Ok(json!(
+                ledger
+                    .letters
+                    .iter()
+                    .filter(|letter| letter.recipient.same_identity(actor)
+                        && matches!(letter.state, State::Pending | State::Undelivered)
+                        || letter.sender.same_identity(actor) && letter.state == State::Undelivered)
+                    .map(|letter| {
+                        let mut view = json!(letter);
+                        if acknowledges && letter.recipient.same_identity(actor) {
+                            view["ack_command"] = json!(format!("hide request ack {}", letter.id));
+                        }
+                        view
+                    })
+                    .collect::<Vec<_>>()
+            ))
+        }
+        Command::Pull { bell: true } => Ok(json!(pull(ledger, actor)?)),
+        Command::Pull { bell: false } => Ok(json!(operator_prompt_intake(ledger, actor)?)),
         Command::Confirm { ids } => {
             if ids.len() > HOOK_LETTERS {
                 return Err("capacity".into());
@@ -240,28 +266,12 @@ pub fn apply(
                     .iter_mut()
                     .find(|letter| letter.id == *id)
                     .ok_or("letter_unavailable")?;
-                if !letter.intake_confirmed() {
-                    if letter.kind == "report" {
-                        reports.push((letter.sender.clone(), letter.recipient.clone()));
-                    }
-                    letter.hook_confirmed = Some(true);
-                    if matches!(
-                        letter.state,
-                        State::Pending | State::Undelivered | State::Expired
-                    ) {
-                        letter.state = State::Delivered;
-                    }
-                    if !letter.waiting_answer {
-                        letter.finished_at_unix_ms = Some(now);
-                    }
-                }
+                reports.extend(record_intake(letter, now));
             }
             // Delivery and ending the matching watch are one durable transaction.
-            ledger.watches.retain(|watch| {
-                !reports.iter().any(|(sender, recipient)| {
-                    sender.same_identity(&watch.target) && recipient.same_identity(&watch.parent)
-                })
-            });
+            for report in reports {
+                end_report_watches(ledger, Some(report));
+            }
             Ok(json!({"confirmed":ids}))
         }
         Command::Agents { .. }
@@ -269,6 +279,33 @@ pub fn apply(
         | Command::WatchStop { .. }
         | Command::WatchAssign { .. }
         | Command::WatchList => Err("watch_command_required".into()),
+    }
+}
+
+/// Records that the recipient took the letter in. A report returns the pair
+/// whose watch the intake ends.
+fn record_intake(letter: &mut Letter, now: u64) -> Option<(Actor, Actor)> {
+    if letter.intake_confirmed() {
+        return None;
+    }
+    letter.hook_confirmed = Some(true);
+    if matches!(
+        letter.state,
+        State::Pending | State::Undelivered | State::Expired
+    ) {
+        letter.state = State::Delivered;
+    }
+    if !letter.waiting_answer {
+        letter.finished_at_unix_ms = Some(now);
+    }
+    (letter.kind == "report").then(|| (letter.sender.clone(), letter.recipient.clone()))
+}
+
+fn end_report_watches(ledger: &mut Ledger, report: Option<(Actor, Actor)>) {
+    if let Some((sender, recipient)) = report {
+        ledger.watches.retain(|watch| {
+            !(sender.same_identity(&watch.target) && recipient.same_identity(&watch.parent))
+        });
     }
 }
 
@@ -283,26 +320,79 @@ fn authorized<'a>(ledger: &'a Ledger, actor: &Actor, id: &str) -> Result<&'a Let
         .ok_or_else(|| "letter_unavailable".into())
 }
 
-#[derive(Debug, Serialize, Deserialize)]
+#[derive(Debug, Default, Serialize, Deserialize)]
 pub struct Intake {
     pub context: String,
     pub ids: Vec<String>,
     pub remaining: usize,
 }
 
+/// Whether the kind's installed prompt hook can hand letters to the agent.
+/// Any other agent reads them with `hide inbox` and acknowledges them, and a
+/// Claude Code hook that runs inside one (Grok, OpenCode) must not count as
+/// that agent having read anything.
+pub(crate) fn prompt_hook(kind: &str) -> bool {
+    crate::agent_hooks::runtime_of(kind).is_some()
+}
+
+/// Whether a bell is still coming for the letter. A letter whose three bells
+/// are spent, or whose recipient is never belled, is handed over by the next
+/// prompt instead, or it could only expire undelivered.
+fn bell_pending(letter: &Letter) -> bool {
+    letter.state == State::Pending
+        && letter.attempts() < 3
+        && super::doorbell::bell_target(&letter.recipient.kind)
+}
+
+/// The letter bodies for the turn Hide's bell opened.
 pub fn pull(ledger: &Ledger, actor: &Actor) -> Result<Intake, String> {
+    intake(ledger, actor, |_| true)
+}
+
+/// What the hook hands the agent when the operator's own prompt was
+/// submitted: letters that no bell will bring wait with their bodies as ever,
+/// the rest are only counted, so the operator's turn is not mixed with them.
+fn operator_prompt_intake(ledger: &Ledger, actor: &Actor) -> Result<Intake, String> {
+    let mut intake = intake(ledger, actor, |letter| !bell_pending(letter))?;
+    let waiting = ledger
+        .letters
+        .iter()
+        .filter(|letter| {
+            letter.recipient.same_identity(actor)
+                && letter.awaiting_intake()
+                && bell_pending(letter)
+        })
+        .count();
+    if waiting > 0 && prompt_hook(&actor.kind) {
+        intake.context.push_str(&format!(
+            "\nHide 편지 {waiting}통 대기 중, 이 턴이 끝난 뒤 전달\n"
+        ));
+    }
+    Ok(intake)
+}
+
+fn intake(
+    ledger: &Ledger,
+    actor: &Actor,
+    wanted: impl Fn(&Letter) -> bool,
+) -> Result<Intake, String> {
     actor.require_native_identity()?;
+    if !prompt_hook(&actor.kind) {
+        return Ok(Intake::default());
+    }
     let mut pending: Vec<_> = ledger
         .letters
         .iter()
-        .filter(|letter| letter.recipient.same_identity(actor) && letter.awaiting_intake())
+        .filter(|letter| {
+            letter.recipient.same_identity(actor) && letter.awaiting_intake() && wanted(letter)
+        })
         .collect();
     pending.sort_by_key(|letter| letter.created_at_unix_ms);
     let mut context = String::new();
     let mut ids = Vec::new();
     // Reserve the tail before rendering bodies, including IDs and sender
     // metadata. Truncation always ends at a UTF-8 boundary.
-    const TAIL_BUDGET: usize = 128;
+    const TAIL_BUDGET: usize = 256;
     for letter in pending.iter().take(HOOK_LETTERS) {
         let header = format!(
             "\nHide letter {} from {} ({}) [{}]\n",
@@ -446,7 +536,7 @@ mod tests {
         let before = ledger.clone();
         for command in [
             Command::Inbox,
-            Command::Pull,
+            Command::Pull { bell: true },
             Command::Show {
                 id: letter.id.clone(),
             },
@@ -647,6 +737,147 @@ mod tests {
                 .waiting_answer
         );
         assert_eq!(ledger.letters.len(), 3);
+    }
+
+    fn pending_for(ledger: &mut Ledger, recipient: &Actor, count: usize) -> Vec<String> {
+        (0..count)
+            .map(|index| {
+                send(
+                    ledger,
+                    &actor(&format!("sender-{index}")),
+                    recipient,
+                    &format!("intent-{index}"),
+                    &format!("body-{index}"),
+                    "request",
+                    None,
+                    index as u64 + 1,
+                )
+                .unwrap()
+                .id
+            })
+            .collect()
+    }
+
+    fn pull_for(ledger: &mut Ledger, recipient: &Actor, bell: bool) -> Intake {
+        let answer = apply(ledger, recipient, None, &Command::Pull { bell }, 100).unwrap();
+        serde_json::from_value(answer).unwrap()
+    }
+
+    #[test]
+    fn an_operator_prompt_gets_a_count_while_a_bell_is_coming_and_the_bell_gets_the_bodies() {
+        let mut ledger = Ledger::default();
+        let recipient = actor("recipient");
+        let ids = pending_for(&mut ledger, &recipient, 2);
+        let operator = pull_for(&mut ledger, &recipient, false);
+        assert!(operator.ids.is_empty(), "nothing to confirm");
+        assert_eq!(
+            operator.context.trim(),
+            "Hide 편지 2통 대기 중, 이 턴이 끝난 뒤 전달"
+        );
+        assert!(!operator.context.contains("body-"));
+        let bell = pull_for(&mut ledger, &recipient, true);
+        assert_eq!(bell.ids, ids);
+        assert!(bell.context.contains("body-0") && bell.context.contains("body-1"));
+        assert!(!bell.context.contains("대기 중"));
+        // Neither pull confirms anything.
+        assert_eq!(
+            ledger
+                .letters
+                .iter()
+                .filter(|l| l.intake_confirmed())
+                .count(),
+            0
+        );
+    }
+
+    #[test]
+    fn a_letter_no_bell_will_bring_is_handed_to_the_operators_prompt() {
+        let mut ledger = Ledger::default();
+        let recipient = actor("recipient");
+        let ids = pending_for(&mut ledger, &recipient, 2);
+        ledger.letters[0].bell_attempts = Some(3);
+        let operator = pull_for(&mut ledger, &recipient, false);
+        assert_eq!(operator.ids, vec![ids[0].clone()]);
+        assert!(operator.context.contains("body-0"));
+        assert!(!operator.context.contains("body-1"));
+        assert!(operator.context.contains("Hide 편지 1통 대기 중"));
+        // A letter the recipient already acknowledged is no bell's either.
+        ledger.letters[1].state = State::Acknowledged;
+        ledger.letters[1].hook_confirmed = Some(false);
+        let operator = pull_for(&mut ledger, &recipient, false);
+        assert_eq!(operator.ids, ids);
+        assert!(!operator.context.contains("대기 중"));
+    }
+
+    #[test]
+    fn a_prompt_hook_that_runs_inside_an_agent_without_one_hands_over_nothing() {
+        for kind in ["grok", "opencode", "gemini", "cursor"] {
+            let mut ledger = Ledger::default();
+            let mut recipient = actor("recipient");
+            recipient.kind = kind.into();
+            pending_for(&mut ledger, &recipient, 1);
+            for bell in [false, true] {
+                let intake = pull_for(&mut ledger, &recipient, bell);
+                assert!(intake.ids.is_empty() && intake.context.is_empty(), "{kind}");
+            }
+        }
+    }
+
+    #[test]
+    fn acknowledging_is_the_receipt_only_for_an_agent_without_a_prompt_hook() {
+        for (kind, receipt) in [
+            ("grok", true),
+            ("gemini", true),
+            ("codex", false),
+            ("claude", false),
+        ] {
+            let mut ledger = Ledger::default();
+            let child = actor("child");
+            let mut parent = actor("parent");
+            parent.kind = kind.into();
+            super::super::watch::start(&mut ledger, &parent, &child, 1).unwrap();
+            let report = send(
+                &mut ledger,
+                &child,
+                &parent,
+                "report",
+                "done",
+                "report",
+                None,
+                2,
+            )
+            .unwrap();
+            apply(
+                &mut ledger,
+                &parent,
+                None,
+                &Command::Ack { id: report.id },
+                3,
+            )
+            .unwrap();
+            let letter = &ledger.letters[0];
+            assert_eq!(letter.intake_confirmed(), receipt, "{kind}");
+            assert_eq!(letter.awaiting_intake(), !receipt, "{kind}");
+            assert_eq!(ledger.watches.is_empty(), receipt, "{kind}");
+        }
+    }
+
+    #[test]
+    fn the_inbox_shows_an_agent_without_a_prompt_hook_the_command_that_acknowledges() {
+        let mut ledger = Ledger::default();
+        let mut recipient = actor("recipient");
+        recipient.kind = "grok".into();
+        let ids = pending_for(&mut ledger, &recipient, 1);
+        let inbox = apply(&mut ledger, &recipient, None, &Command::Inbox, 5).unwrap();
+        assert_eq!(
+            inbox[0]["ack_command"],
+            format!("hide request ack {}", ids[0])
+        );
+        // A hooked agent's prompt hook acknowledges for it; the sender sees none.
+        let hooked = actor("hooked");
+        pending_for(&mut ledger, &hooked, 1);
+        let inbox = apply(&mut ledger, &hooked, None, &Command::Inbox, 5).unwrap();
+        assert!(inbox[0].get("ack_command").is_none());
     }
 
     #[test]

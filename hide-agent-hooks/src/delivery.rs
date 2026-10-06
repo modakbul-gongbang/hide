@@ -16,6 +16,29 @@ const OUTPUT_LIMIT: usize = 64 * 1024;
 const CONTEXT_LIMIT: usize = 8 * 1024;
 const CONFIRM_RESERVE: Duration = Duration::from_millis(400);
 
+/// The line the doorbell types into an idle agent pane. The prompt hook
+/// recognizes the turn the bell opened by exactly this text, so the doorbell
+/// and the hook share the one constant.
+pub const BELL_PROMPT: &str = "Hide has pending mail. Read hide inbox for the full letter if the prompt hook did not include it.";
+
+#[derive(Deserialize)]
+struct PromptInput {
+    prompt: Option<String>,
+}
+
+/// Whether a runtime's `UserPromptSubmit` payload carries Hide's own bell as
+/// the submitted prompt. A truncated or unreadable payload is not the bell:
+/// an operator prompt that is mistaken for one would hand its turn the letter
+/// bodies, while a bell mistaken for an operator prompt only waits for the
+/// next bell.
+pub fn prompt_is_bell(payload: &[u8], truncated: bool) -> bool {
+    !truncated
+        && serde_json::from_slice::<PromptInput>(payload)
+            .ok()
+            .and_then(|input| input.prompt)
+            .is_some_and(|prompt| prompt.trim() == BELL_PROMPT)
+}
+
 #[derive(Deserialize)]
 pub struct Intake {
     pub context: String,
@@ -37,9 +60,16 @@ impl From<&'static str> for Failure {
     }
 }
 
-pub fn pull(deadline: Instant) -> Result<Option<Intake>, Failure> {
+/// What the agent receives for the submitted prompt: the letter bodies when
+/// `bell` says the prompt was Hide's bell, otherwise at most a count.
+pub fn pull(deadline: Instant, bell: bool) -> Result<Option<Intake>, Failure> {
     let pull_deadline = deadline.checked_sub(CONFIRM_RESERVE).ok_or("deadline")?;
-    let answer = run_cli(&["inbox", "--hook"], pull_deadline)?;
+    let arguments: &[&str] = if bell {
+        &["inbox", "--hook", "--bell"]
+    } else {
+        &["inbox", "--hook"]
+    };
+    let answer = run_cli(arguments, pull_deadline)?;
     let intake: Intake = serde_json::from_value(answer).map_err(|_| "format")?;
     if intake.context.len() > CONTEXT_LIMIT
         || intake.ids.len() > 5
@@ -50,7 +80,8 @@ pub fn pull(deadline: Instant) -> Result<Option<Intake>, Failure> {
     {
         return Err("format".into());
     }
-    if intake.ids.is_empty() {
+    // A count-only answer carries a context line and nothing to confirm.
+    if intake.ids.is_empty() && intake.context.is_empty() {
         Ok(None)
     } else {
         Ok(Some(intake))
@@ -212,6 +243,24 @@ fn diagnostic_path(home: &Path) -> PathBuf {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_a_complete_payload_whose_prompt_is_the_bell_is_the_bell() {
+        let payload = |prompt: &str| {
+            serde_json::to_vec(&serde_json::json!({"session_id":"s","prompt":prompt})).unwrap()
+        };
+        assert!(prompt_is_bell(&payload(BELL_PROMPT), false));
+        assert!(prompt_is_bell(&payload(&format!("{BELL_PROMPT}\n")), false));
+        assert!(!prompt_is_bell(&payload(BELL_PROMPT), true));
+        assert!(!prompt_is_bell(&payload("please run the tests"), false));
+        assert!(!prompt_is_bell(
+            &payload(&format!("{BELL_PROMPT} and more")),
+            false
+        ));
+        assert!(!prompt_is_bell(b"{\"session_id\":\"s\"}", false));
+        assert!(!prompt_is_bell(b"not json", false));
+        assert!(!prompt_is_bell(b"", false));
+    }
 
     #[test]
     fn diagnostic_claim_precedes_output_and_repeated_cause_is_suppressed() {

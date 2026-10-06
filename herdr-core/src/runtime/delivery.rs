@@ -21,7 +21,15 @@ pub(crate) struct Observation {
     pub status: String,
     pub state_change_seq: Option<u64>,
     pub status_changed_at_unix_ms: u64,
+    /// The last key hide routed to this pane, of any kind.
     pub last_input_at_unix_ms: u64,
+    /// The last moment the pane's input was submitted: a submitting key hide
+    /// routed, a phone reply, or a prompt hook that ran. Keys after it and
+    /// after `entered_working_at_unix_ms` are an unsent draft.
+    pub last_submit_at_unix_ms: u64,
+    /// The snapshot that first showed the pane `working` in its current run.
+    /// A key hide sent before it was consumed by that work (a menu answer).
+    pub entered_working_at_unix_ms: u64,
     pub session: Option<hide_session::session_activity::SessionActivityRequest>,
     pub host_scope: Option<String>,
 }
@@ -116,7 +124,19 @@ impl Runtime {
                 status: status.to_owned(),
                 state_change_seq: agent.state_change_seq,
                 status_changed_at_unix_ms: changed_at,
+                // A pane hide has not seen before has no key it knows of, so
+                // every clock starts at this observation: a 30 second grace,
+                // and no draft assumed.
                 last_input_at_unix_ms: previous.map(|old| old.last_input_at_unix_ms).unwrap_or(now),
+                last_submit_at_unix_ms: previous
+                    .map(|old| old.last_submit_at_unix_ms)
+                    .unwrap_or(now),
+                entered_working_at_unix_ms: match previous {
+                    Some(old) if status != "working" || old.status == "working" => {
+                        old.entered_working_at_unix_ms
+                    }
+                    _ => now,
+                },
                 session,
                 host_scope: host_scope
                     .filter(|scope| scope.len() <= 4096)
@@ -135,8 +155,31 @@ impl Runtime {
         self.delivery_connected.insert(device.to_owned());
     }
 
+    /// A key hide routed to a pane. It restarts the quiet period; a submitting
+    /// key also ends the draft it completed. Like the label input record, an
+    /// Enter while Herdr reports the pane blocked answers a menu, not the
+    /// conversation, so it submits nothing.
+    pub(crate) fn note_delivery_key(&mut self, pane_id: &str, submits: bool) {
+        let Some(observation) = self.delivery_observations.get_mut(pane_id) else {
+            return;
+        };
+        let now = unix_milliseconds();
+        observation.last_input_at_unix_ms = now;
+        if submits && observation.status != "blocked" {
+            observation.last_submit_at_unix_ms = now;
+        }
+    }
+
+    /// A prompt hook ran in the pane, so whatever was in its composer was
+    /// submitted, whoever typed it and wherever it was typed.
+    fn note_prompt_submitted(&mut self, pane_id: &str) {
+        if let Some(observation) = self.delivery_observations.get_mut(pane_id) {
+            observation.last_submit_at_unix_ms = unix_milliseconds();
+        }
+    }
+
     pub(crate) fn prepare_delivery(
-        &self,
+        &mut self,
         device: &str,
         caller: &str,
         expected: &Context,
@@ -180,6 +223,9 @@ impl Runtime {
             .actor
             .clone();
         actor.require_native_identity()?;
+        if matches!(command, Command::Pull { .. }) {
+            self.note_prompt_submitted(&actor.pane_id);
+        }
         let resolves_to_caller = |key: &str| {
             key == actor.pane_id
                 || key == actor.name
@@ -335,11 +381,33 @@ impl Runtime {
         }
     }
 
+    #[cfg(test)]
     pub(crate) fn delivery_observation(&self, actor: &Actor) -> Option<Observation> {
         self.delivery_observations
             .get(&actor.pane_id)
             .filter(|observation| observation.actor.same_identity(actor))
             .cloned()
+    }
+
+    /// Whether a bell may be typed into the recipient's pane now, and the
+    /// observation the verdict was read from. The refusal says which fact
+    /// held the letter, for the diagnostic log.
+    pub(crate) fn delivery_bell_verdict(
+        &self,
+        recipient: &Actor,
+        now: u64,
+    ) -> Result<Observation, crate::delivery::doorbell::Hold> {
+        use crate::delivery::doorbell::Hold;
+        let current = self
+            .delivery_observations
+            .get(&recipient.pane_id)
+            .filter(|observation| observation.actor.device_id == recipient.device_id)
+            .ok_or(Hold::Absent)?;
+        if !current.actor.same_identity(recipient) {
+            return Err(Hold::Session);
+        }
+        crate::delivery::doorbell::judge(current, now)?;
+        Ok(current.clone())
     }
 
     /// The final memory guard immediately before the off-lock pane write.
@@ -356,7 +424,7 @@ impl Runtime {
             && current.status == observed.status
             && current.state_change_seq == observed.state_change_seq
             && current.last_input_at_unix_ms == observed.last_input_at_unix_ms
-            && crate::delivery::doorbell::eligible(current, unix_milliseconds())
+            && crate::delivery::doorbell::judge(current, unix_milliseconds()).is_ok()
             && self.delivery_ledger.as_ref().is_ok_and(|ledger| {
                 ledger.letters.iter().any(|letter| {
                     letter.id == id
@@ -621,6 +689,171 @@ pub(crate) mod tests {
                 checkout_path: "/checkouts/fixture".into(),
             },
         }
+    }
+
+    fn key_event(pane: &str, bytes: &[u8]) -> Vec<u8> {
+        serde_json::to_vec(&json!({
+            "schema_version": SCHEMA_VERSION, "kind": "key",
+            "payload": {"pane_id": pane, "bytes_base64": crate::live::encode_base64(bytes)},
+        }))
+        .unwrap()
+    }
+
+    fn observe_recipient_status(runtime: &mut Runtime, status: &str, sequence: u64) {
+        let payload: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[
+            {"id":"sender","pane_id":"sender","agent":"codex","agent_status":"working","state_change_seq":1,"lineage_session":"sender-session"},
+            {"id":"recipient","pane_id":"recipient","agent":"codex","agent_status":status,"state_change_seq":sequence,"lineage_session":"recipient-session"},
+        ]})).unwrap();
+        runtime.observe_delivery("local", &payload, None);
+    }
+
+    /// The three facts the bell reads, per pane, optionally set to zero so a
+    /// test sees which of them an event wrote.
+    fn clocks(runtime: &mut Runtime, pane: &str, reset: bool) -> (u64, u64, u64) {
+        let observation = runtime.delivery_observations.get_mut(pane).unwrap();
+        let read = (
+            observation.last_input_at_unix_ms,
+            observation.last_submit_at_unix_ms,
+            observation.entered_working_at_unix_ms,
+        );
+        if reset {
+            observation.last_input_at_unix_ms = 0;
+            observation.last_submit_at_unix_ms = 0;
+            observation.entered_working_at_unix_ms = 0;
+        }
+        read
+    }
+
+    /// Which clocks an event wrote since the last call, as (key, submit, work).
+    fn written(runtime: &mut Runtime) -> (bool, bool, bool) {
+        let (input, submit, working) = clocks(runtime, "recipient", true);
+        (input > 0, submit > 0, working > 0)
+    }
+
+    #[test]
+    fn a_hide_key_is_a_draft_until_a_submit_and_a_menu_answer_submits_nothing() {
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, _, _, _) = fixture(root.path());
+        let mut guard = runtime.lock().unwrap();
+        observe_recipient_status(&mut guard, "idle", 2);
+        clocks(&mut guard, "recipient", true);
+        clocks(&mut guard, "sender", true);
+
+        guard.dispatch_json(&key_event("recipient", b"draft"));
+        assert_eq!(written(&mut guard), (true, false, false));
+        // Esc and a newline inside the composer submit nothing either.
+        guard.dispatch_json(&key_event("recipient", b"\x1b"));
+        assert_eq!(written(&mut guard), (true, false, false));
+        guard.dispatch_json(&key_event("recipient", b"\x1b\r"));
+        assert_eq!(written(&mut guard), (true, false, false));
+        guard.dispatch_json(&key_event("recipient", b"\r"));
+        assert_eq!(written(&mut guard), (true, true, false));
+        assert_eq!(
+            clocks(&mut guard, "sender", false),
+            (0, 0, 0),
+            "another pane's clocks do not move"
+        );
+
+        // An Enter while Herdr reports the pane blocked answers a menu.
+        observe_recipient_status(&mut guard, "blocked", 3);
+        clocks(&mut guard, "recipient", true);
+        guard.dispatch_json(&key_event("recipient", b"\r"));
+        assert_eq!(written(&mut guard), (true, false, false));
+
+        // The phone's reply is a hide key and a submit.
+        observe_recipient_status(&mut guard, "idle", 4);
+        clocks(&mut guard, "recipient", true);
+        guard.dispatch_json(
+            &serde_json::to_vec(&json!({
+                "schema_version": SCHEMA_VERSION, "kind": "pane_input_submitted",
+                "payload": {"pane_id": "recipient"},
+            }))
+            .unwrap(),
+        );
+        assert_eq!(written(&mut guard), (true, true, false));
+    }
+
+    #[test]
+    fn entering_work_is_stamped_once_and_staying_in_it_or_leaving_it_is_not() {
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, _, _, _) = fixture(root.path());
+        let mut guard = runtime.lock().unwrap();
+        observe_recipient_status(&mut guard, "idle", 2);
+        clocks(&mut guard, "recipient", true);
+        observe_recipient_status(&mut guard, "working", 3);
+        assert_eq!(written(&mut guard), (false, false, true));
+        observe_recipient_status(&mut guard, "working", 4);
+        assert_eq!(written(&mut guard), (false, false, false));
+        observe_recipient_status(&mut guard, "blocked", 5);
+        assert_eq!(written(&mut guard), (false, false, false));
+        // Answering the menu puts the agent back to work: a new entry.
+        observe_recipient_status(&mut guard, "working", 6);
+        assert_eq!(written(&mut guard), (false, false, true));
+        observe_recipient_status(&mut guard, "idle", 7);
+        assert_eq!(written(&mut guard), (false, false, false));
+    }
+
+    #[test]
+    fn the_bell_verdict_names_a_replaced_session_and_an_absent_pane() {
+        use crate::delivery::doorbell::Hold;
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, _, target, _) = fixture(root.path());
+        let mut guard = runtime.lock().unwrap();
+        observe_recipient_status(&mut guard, "idle", 2);
+        let long_ago = unix_milliseconds().saturating_sub(10 * 60_000);
+        for observation in guard.delivery_observations.values_mut() {
+            observation.last_input_at_unix_ms = long_ago;
+            observation.last_submit_at_unix_ms = long_ago;
+            observation.status_changed_at_unix_ms = long_ago;
+        }
+        let now = unix_milliseconds();
+        assert!(guard.delivery_bell_verdict(&target.actor, now).is_ok());
+        assert_eq!(
+            guard.delivery_bell_verdict(&target.actor, long_ago).err(),
+            Some(Hold::Quiet)
+        );
+        let replaced: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[
+            {"id":"recipient","pane_id":"recipient","agent":"codex","agent_status":"idle","state_change_seq":2,"lineage_session":"replacement-session"},
+        ]})).unwrap();
+        guard.observe_delivery("local", &replaced, None);
+        assert_eq!(
+            guard.delivery_bell_verdict(&target.actor, now).err(),
+            Some(Hold::Session)
+        );
+        let empty: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[]})).unwrap();
+        guard.observe_delivery("local", &empty, None);
+        assert_eq!(
+            guard.delivery_bell_verdict(&target.actor, now).err(),
+            Some(Hold::Absent)
+        );
+    }
+
+    #[test]
+    fn a_prompt_hook_pull_is_a_submission_whoever_typed_the_prompt() {
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, _, target, path) = fixture(root.path());
+        let (worker, client) = Worker::spawn(
+            Arc::downgrade(&runtime),
+            ChangeNotifier::noop(),
+            path.clone(),
+        )
+        .unwrap();
+        let mut guard = runtime.lock().unwrap();
+        guard.install_delivery_client(client);
+        let context = authority(&target.actor).context;
+        clocks(&mut guard, "recipient", true);
+        guard
+            .prepare_delivery("local", "recipient", &context, None, Command::Inbox)
+            .unwrap();
+        assert_eq!(written(&mut guard), (false, false, false));
+        for bell in [false, true] {
+            guard
+                .prepare_delivery("local", "recipient", &context, None, Command::Pull { bell })
+                .unwrap();
+            assert_eq!(written(&mut guard), (false, true, false), "bell {bell}");
+        }
+        drop(guard);
+        drop(worker);
     }
 
     #[test]

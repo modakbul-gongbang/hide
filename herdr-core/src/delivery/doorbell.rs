@@ -1,7 +1,8 @@
-//! A deliberately conservative TUI adapter. Herdr has no atomic composer
-//! guard: uncertainty holds a letter, and no code here clears or restores input.
-//! ANSI styling is retained because a dim placeholder and a typed draft can
-//! contain identical text. This boundary must be reverified against real TUIs.
+//! The doorbell types one short line into an idle agent pane so a pending
+//! letter wakes it. Herdr has no atomic composer guard, so the rule is
+//! conservative: a letter waits unless every fact hide owns says the pane is
+//! at rest. Nothing here reads the terminal, and nothing clears or restores
+//! input; a TUI that redraws its footer or statusline cannot change a verdict.
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -20,10 +21,91 @@ use super::ledger::State;
 use super::worker::{Client, Effect, now};
 
 const QUIET_MS: u64 = 30_000;
-const SCREEN_LIMIT: usize = 64 * 1024;
 const WORK_PER_PASS: usize = 8;
 const RPC_TIMEOUT: Duration = Duration::from_millis(500);
-const BELL: &str = "Hide has pending mail. Read hide inbox for the full letter if the prompt hook did not include it.";
+
+/// Why a pending letter was not belled. Each is an expected wait, so it goes
+/// to the diagnostic log and never to the screen.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum Hold {
+    /// The agent kind is not one whose menus were seen to read `blocked`.
+    Kind,
+    /// No positive native session, or the pane now hosts another one.
+    Session,
+    /// The pane or its device is not observed.
+    Absent,
+    Working,
+    /// Herdr reports a permission or selection menu.
+    Blocked,
+    /// Herdr reports a status that is not rest (or none at all).
+    Status,
+    /// A key hide routed after the last submission and the last start of
+    /// work: an unsent draft, a prompt Esc brought back, a recalled input.
+    Draft,
+    /// Less than the quiet period since the last key or the last change of
+    /// status.
+    Quiet,
+    /// The pane changed between the verdict and the input.
+    Changed,
+}
+
+impl Hold {
+    fn code(self) -> &'static str {
+        match self {
+            Self::Kind => "kind_not_belled",
+            Self::Session => "session_changed",
+            Self::Absent => "pane_unavailable",
+            Self::Working => "working",
+            Self::Blocked => "blocked",
+            Self::Status => "status_not_at_rest",
+            Self::Draft => "draft",
+            Self::Quiet => "quiet_period",
+            Self::Changed => "changed_before_input",
+        }
+    }
+}
+
+/// The agent kinds a bell may be typed into: those whose permission and
+/// selection menus Herdr was observed to report as `blocked` in an isolated
+/// run (`docs/delivery.md`, Verification). Herdr's own state is the only menu
+/// guard, so a kind that was not observed is not in this list.
+pub(crate) fn bell_target(kind: &str) -> bool {
+    super::mailbox::prompt_hook(kind)
+}
+
+/// Whether the pane is at rest and a bell can be typed into it. All of these
+/// must hold: Herdr reports `idle` or `done` and has for the quiet period,
+/// hide has routed no key for the quiet period, no key hide routed is newer
+/// than the last submission and the last start of work (a key before either
+/// was consumed by it, a menu answer for one), and the pane still hosts the
+/// session the letter was written for.
+pub(crate) fn judge(observation: &Observation, now: u64) -> Result<(), Hold> {
+    if !bell_target(&observation.actor.kind) {
+        return Err(Hold::Kind);
+    }
+    if observation.actor.require_native_identity().is_err() {
+        return Err(Hold::Session);
+    }
+    match observation.status.as_str() {
+        "idle" | "done" if observation.state_change_seq.is_some() => {}
+        "working" => return Err(Hold::Working),
+        "blocked" => return Err(Hold::Blocked),
+        _ => return Err(Hold::Status),
+    }
+    if observation.last_input_at_unix_ms
+        > observation
+            .last_submit_at_unix_ms
+            .max(observation.entered_working_at_unix_ms)
+    {
+        return Err(Hold::Draft);
+    }
+    if now.saturating_sub(observation.last_input_at_unix_ms) < QUIET_MS
+        || now.saturating_sub(observation.status_changed_at_unix_ms) < QUIET_MS
+    {
+        return Err(Hold::Quiet);
+    }
+    Ok(())
+}
 
 #[derive(Clone, PartialEq, Eq)]
 struct Episode {
@@ -44,23 +126,13 @@ impl From<&Observation> for Episode {
     }
 }
 
-pub(crate) fn eligible(observation: &Observation, now: u64) -> bool {
-    observation.actor.require_native_identity().is_ok()
-        && matches!(observation.status.as_str(), "idle" | "done")
-        && observation.state_change_seq.is_some()
-        && now.saturating_sub(observation.last_input_at_unix_ms) >= QUIET_MS
-        && matches!(
-            observation.actor.kind.as_str(),
-            "codex" | "claude" | "claude-code" | "claude_code"
-        )
-}
-
 #[allow(clippy::disallowed_methods)] // a production wait, not test code
 pub(crate) fn run(runtime: Weak<Mutex<Runtime>>, client: Client, stop: Arc<AtomicBool>) {
-    // Both maps are bounded by the <=1024 pending letters in this pass.
-    // A refusal is retried only after state/input changes, never by screen diff.
+    // The maps are bounded by the <=1024 pending letters in this pass.
+    // A refusal is retried only after state/input changes.
     let mut tried = HashMap::<String, Episode>::new();
     let mut rung = HashMap::<String, Episode>::new();
+    let mut held = HashMap::<String, Hold>::new();
     while !stop.load(Ordering::Acquire) {
         let Some(owner) = runtime.upgrade() else {
             break;
@@ -84,24 +156,35 @@ pub(crate) fn run(runtime: Weak<Mutex<Runtime>>, client: Client, stop: Arc<Atomi
                 .collect();
             let ids: HashSet<_> = pending.iter().map(|letter| letter.id.as_str()).collect();
             tried.retain(|id, _| ids.contains(id.as_str()));
+            held.retain(|id, _| ids.contains(id.as_str()));
             rung.retain(|pane, _| targets.contains(pane));
             let mut count = 0;
             for letter in pending {
                 if stop.load(Ordering::Acquire) || count >= WORK_PER_PASS {
                     break;
                 }
-                let observed = owner
+                let verdict = owner
                     .lock()
-                    .ok()
-                    .and_then(|guard| guard.delivery_observation(&letter.recipient));
-                let Some(observed) = observed.filter(|value| eligible(value, now())) else {
-                    continue;
+                    .map(|guard| guard.delivery_bell_verdict(&letter.recipient, now()))
+                    .unwrap_or(Err(Hold::Absent));
+                let observed = match verdict {
+                    Ok(observed) => observed,
+                    Err(reason) => {
+                        hold(&mut held, &letter.id, &letter.recipient.pane_id, reason);
+                        continue;
+                    }
                 };
                 let Some(connector) = owner
                     .lock()
                     .ok()
                     .and_then(|guard| guard.delivery_connector(&letter.recipient.device_id))
                 else {
+                    hold(
+                        &mut held,
+                        &letter.id,
+                        &letter.recipient.pane_id,
+                        Hold::Absent,
+                    );
                     continue;
                 };
                 let episode = Episode::from(&observed);
@@ -121,10 +204,18 @@ pub(crate) fn run(runtime: Weak<Mutex<Runtime>>, client: Client, stop: Arc<Atomi
                     &stop,
                 ) {
                     Ok(true) => {
+                        held.remove(&letter.id);
                         rung.insert(letter.recipient.pane_id.clone(), episode);
                         record(&client, &letter.id, &observed, true);
                     }
-                    Ok(false) => {}
+                    Ok(false) => {
+                        hold(
+                            &mut held,
+                            &letter.id,
+                            &letter.recipient.pane_id,
+                            Hold::Changed,
+                        );
+                    }
                     Err(code) => {
                         crate::diagnostic!(json!({"component":"delivery","kind":"doorbell.failed",
                             "letter_id":letter.id,"pane_id":letter.recipient.pane_id,"code":code}));
@@ -134,6 +225,15 @@ pub(crate) fn run(runtime: Weak<Mutex<Runtime>>, client: Client, stop: Arc<Atomi
             }
         }
         thread::sleep(Duration::from_millis(250));
+    }
+}
+
+/// Logs a letter's reason for waiting once per change of reason, with its id
+/// and pane and never its body.
+fn hold(held: &mut HashMap<String, Hold>, id: &str, pane_id: &str, reason: Hold) {
+    if held.insert(id.to_owned(), reason) != Some(reason) {
+        crate::diagnostic!(json!({"component":"delivery","kind":"doorbell.held",
+            "letter_id":id,"pane_id":pane_id,"reason":reason.code()}));
     }
 }
 
@@ -177,26 +277,6 @@ fn native_matches(
         && Some(agent.state_change_seq) == observed.state_change_seq)
 }
 
-fn ready_composer(
-    connector: &dyn ApiConnector,
-    observed: &Observation,
-) -> Result<bool, &'static str> {
-    if !native_matches(connector, observed)? {
-        return Ok(false);
-    }
-    let parameters =
-        wire::delivery_screen_params(&observed.raw_pane_id).map_err(|_| "herdr_parameters")?;
-    let screen =
-        wire::pane_text(rpc(connector, "pane.read", parameters)?).map_err(|_| "herdr_format")?;
-    if screen.truncated || !empty_composer(&observed.actor.kind, &screen.text) {
-        return Ok(false);
-    }
-    if !native_matches(connector, observed)? {
-        return Ok(false);
-    }
-    Ok(true)
-}
-
 /// All delivery pane writes go through this function. The last memory check
 /// cannot eliminate an external socket/TUI input race (the approved D-18 limit).
 fn deliver(
@@ -207,7 +287,7 @@ fn deliver(
     observed: &Observation,
     stop: &AtomicBool,
 ) -> Result<bool, &'static str> {
-    if stop.load(Ordering::Acquire) || !ready_composer(connector, observed)? {
+    if stop.load(Ordering::Acquire) || !native_matches(connector, observed)? {
         return Ok(false);
     }
     let reservation = client
@@ -223,9 +303,9 @@ fn deliver(
         .as_u64()
         .filter(|value| (1..=3).contains(value))
         .ok_or("doorbell_reservation_format")? as u8;
-    // The durable save may wait. Reinspect the native owner and actual composer
-    // afterwards instead of treating the pre-save screen as current evidence.
-    if stop.load(Ordering::Acquire) || !ready_composer(connector, observed)? {
+    // The durable save may wait. Reinspect the native owner afterwards
+    // instead of treating the pre-save answer as current evidence.
+    if stop.load(Ordering::Acquire) || !native_matches(connector, observed)? {
         return Ok(false);
     }
     if stop.load(Ordering::Acquire)
@@ -236,219 +316,132 @@ fn deliver(
     {
         return Ok(false);
     }
-    let parameters =
-        wire::delivery_input_params(&observed.raw_pane_id, BELL).map_err(|_| "herdr_parameters")?;
+    let parameters = wire::delivery_input_params(
+        &observed.raw_pane_id,
+        hide_agent_hooks::delivery::BELL_PROMPT,
+    )
+    .map_err(|_| "herdr_parameters")?;
     rpc(connector, "pane.send_input", parameters)?;
     // Arrival is not intake. Only a flushed prompt-hook confirmation clears it.
     Ok(true)
 }
 
-#[derive(Clone, Copy)]
-struct Cell {
-    value: char,
-    placeholder: bool,
-}
-
-fn styled_lines(screen: &str) -> Option<Vec<Vec<Cell>>> {
-    if screen.len() > SCREEN_LIMIT {
-        return None;
-    }
-    let mut lines = vec![Vec::new()];
-    let mut chars = screen.chars().peekable();
-    let mut dim = false;
-    let mut gray = false;
-    let mut reverse = false;
-    while let Some(value) = chars.next() {
-        match value {
-            '\n' => lines.push(Vec::new()),
-            '\r' => {}
-            '\x1b' => {
-                if chars.next() != Some('[') {
-                    return None;
-                }
-                let mut codes = String::new();
-                loop {
-                    match chars.next()? {
-                        'm' => break,
-                        value if value.is_ascii_digit() || value == ';' => {
-                            if codes.len() >= 64 {
-                                return None;
-                            }
-                            codes.push(value);
-                        }
-                        _ => return None,
-                    }
-                }
-                let values: Vec<u16> = if codes.is_empty() {
-                    vec![0]
-                } else {
-                    codes
-                        .split(';')
-                        .map(str::parse)
-                        .collect::<Result<_, _>>()
-                        .ok()?
-                };
-                let mut values = values.into_iter();
-                while let Some(code) = values.next() {
-                    match code {
-                        0 => {
-                            dim = false;
-                            gray = false;
-                            reverse = false;
-                        }
-                        2 => dim = true,
-                        7 => reverse = true,
-                        22 => dim = false,
-                        27 => reverse = false,
-                        90 => gray = true,
-                        30..=37 | 39 | 91..=97 => gray = false,
-                        38 | 48 => {
-                            let mode = values.next()?;
-                            let is_gray = match mode {
-                                5 => matches!(values.next()?, 240..=249),
-                                2 => {
-                                    let (r, g, b) =
-                                        (values.next()?, values.next()?, values.next()?);
-                                    r == g && g == b && (80..=180).contains(&r)
-                                }
-                                _ => return None,
-                            };
-                            if code == 38 {
-                                gray = is_gray;
-                            }
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            value if value.is_control() => return None,
-            value => lines.last_mut()?.push(Cell {
-                value,
-                placeholder: (dim || gray) && !reverse,
-            }),
-        }
-    }
-    Some(lines)
-}
-
-/// A positive prompt row plus the runtime's footer is required. A multiline
-/// draft, slash picker, unstyled placeholder or unknown footer refuses input.
-fn empty_composer(kind: &str, screen: &str) -> bool {
-    let Some(lines) = styled_lines(screen) else {
-        return false;
-    };
-    let glyph = if kind == "codex" { '›' } else { '❯' };
-    let Some(index) = lines.iter().rposition(|line| {
-        line.iter()
-            .find(|cell| !cell.value.is_whitespace())
-            .is_some_and(|cell| cell.value == glyph)
-    }) else {
-        return false;
-    };
-    let prompt = &lines[index];
-    let Some(glyph_index) = prompt.iter().position(|cell| cell.value == glyph) else {
-        return false;
-    };
-    let content: Vec<_> = prompt[glyph_index + 1..]
-        .iter()
-        .filter(|cell| !cell.value.is_whitespace())
-        .collect();
-    if content.is_empty() || content.iter().any(|cell| !cell.placeholder) {
-        return false;
-    }
-    // Footer structure is bounded, rather than a list of model-name strings.
-    // The positively styled placeholder above is required even when a draft
-    // could imitate the context/shortcut text on subsequent rows.
-    let mut context = false;
-    let mut footer = false;
-    for line in &lines[index + 1..] {
-        let text: String = line.iter().map(|cell| cell.value).collect();
-        let text = text.trim();
-        if text.is_empty() || text.chars().all(|value| matches!(value, '─' | '━' | ' ')) {
-            continue;
-        }
-        if footer {
-            return false;
-        }
-        let known = if kind == "codex" {
-            text.starts_with('?') && text.contains("for shortcuts")
-        } else {
-            text.contains("shift+tab") && (text.contains("permissions") || text.contains("mode"))
-                || text == "? for shortcuts"
-        };
-        if known {
-            footer = true;
-        } else if kind == "codex"
-            && !context
-            && text
-                .split_once('·')
-                .is_some_and(|(left, right)| !left.trim().is_empty() && !right.trim().is_empty())
-        {
-            context = true;
-        } else {
-            return false;
-        }
-    }
-    footer
-}
-
 #[cfg(test)]
 mod tests {
-    use super::empty_composer;
+    use super::*;
+    use crate::delivery::Actor;
 
-    #[test]
-    fn composer_refuses_draft_menu_and_unknown_layout() {
-        // D-20: identical placeholder text must remain a draft without dim.
-        assert!(empty_composer(
-            "claude",
-            "❯ \x1b[2mTry a task\x1b[0m\n? for shortcuts"
-        ));
-        assert!(!empty_composer("claude", "❯ Try a task\n? for shortcuts"));
-        assert!(!empty_composer("codex", "› \n? for shortcuts"));
-        assert!(empty_composer(
-            "codex",
-            "› \x1b[2mAsk for a task\x1b[0m\n? for shortcuts"
-        ));
-        assert!(!empty_composer(
-            "codex",
-            "› meaningful draft\n? for shortcuts"
-        ));
-        assert!(!empty_composer(
-            "codex",
-            "› \nsecond draft line\n? for shortcuts"
-        ));
-        assert!(!empty_composer(
-            "codex",
-            "› /model\nSelect a model\n? for shortcuts"
-        ));
-        assert!(!empty_composer("codex", "› \nEnter to select"));
-        assert!(!empty_composer("codex", "› "));
+    const NOW: u64 = 1_000_000;
+
+    /// A pane at rest: idle for a minute, last keys and submit a minute ago.
+    fn at_rest(kind: &str) -> Observation {
+        Observation {
+            actor: Actor {
+                pane_id: "pane".into(),
+                name: "agent".into(),
+                kind: kind.into(),
+                device_id: "local".into(),
+                session: Some("session".into()),
+            },
+            raw_pane_id: "pane".into(),
+            status: "idle".into(),
+            state_change_seq: Some(7),
+            status_changed_at_unix_ms: NOW - 60_000,
+            last_input_at_unix_ms: NOW - 60_000,
+            last_submit_at_unix_ms: NOW - 60_000,
+            entered_working_at_unix_ms: NOW - 120_000,
+            session: None,
+            host_scope: None,
+        }
     }
 
     #[test]
-    fn styled_placeholder_and_bounded_footer_distinguish_actual_composer_states() {
-        let footer =
-            "\n  Example runtime high · /workspace\n  ? for shortcuts   1 warning · f2 to view";
-        assert!(empty_composer(
-            "codex",
-            &format!("\x1b[0m\x1b[1m› \x1b[0m\x1b[2mAsk for a task\x1b[0m{footer}")
-        ));
-        for prompt in [
-            "› Ask for a task",
-            "› \nExample runtime high · /workspace",
-            "› \x1b[2;7mAsk for a task\x1b[0m",
-            "› \x1b[2mAsk for a task\x1b[0m\nsecond draft line",
-            "› \x1b[2mAsk for a task\x1b[0m\nextra context · /workspace",
-        ] {
-            assert!(!empty_composer("codex", &format!("{prompt}{footer}")));
+    fn a_pane_at_rest_is_belled_for_claude_and_codex_with_idle_or_done() {
+        for kind in ["claude", "codex"] {
+            for status in ["idle", "done"] {
+                let mut pane = at_rest(kind);
+                pane.status = status.into();
+                assert_eq!(judge(&pane, NOW), Ok(()), "{kind} {status}");
+            }
         }
-        assert!(!empty_composer(
-            "codex",
-            "› \x1b[2mAsk for a task\x1b[0m\ncontext · /workspace"
-        ));
-        assert!(!empty_composer(
-            "codex",
-            "› \x1b[2mAsk for a task\x1b[0m\n? for shortcuts\nunknown dialog"
-        ));
+    }
+
+    #[test]
+    fn each_missing_condition_alone_holds_the_letter_for_its_own_reason() {
+        type Change = fn(&mut Observation);
+        let cases: [(&str, Change, Hold); 9] = [
+            (
+                "kind",
+                |pane| pane.actor.kind = "opencode".into(),
+                Hold::Kind,
+            ),
+            ("session", |pane| pane.actor.session = None, Hold::Session),
+            (
+                "working",
+                |pane| pane.status = "working".into(),
+                Hold::Working,
+            ),
+            ("menu", |pane| pane.status = "blocked".into(), Hold::Blocked),
+            (
+                "unknown status",
+                |pane| pane.status = "unknown".into(),
+                Hold::Status,
+            ),
+            (
+                "no sequence",
+                |pane| pane.state_change_seq = None,
+                Hold::Status,
+            ),
+            (
+                "draft after the last submit",
+                |pane| pane.last_input_at_unix_ms = NOW - 40_000,
+                Hold::Draft,
+            ),
+            (
+                "key within the quiet period",
+                |pane| {
+                    pane.last_input_at_unix_ms = NOW - 5_000;
+                    pane.last_submit_at_unix_ms = NOW - 5_000;
+                },
+                Hold::Quiet,
+            ),
+            (
+                "status changed within the quiet period",
+                |pane| pane.status_changed_at_unix_ms = NOW - 5_000,
+                Hold::Quiet,
+            ),
+        ];
+        for (name, change, expected) in cases {
+            let mut pane = at_rest("claude");
+            change(&mut pane);
+            assert_eq!(judge(&pane, NOW), Err(expected), "{name}");
+        }
+    }
+
+    #[test]
+    fn a_key_before_the_pane_started_working_was_consumed_but_one_after_is_a_draft() {
+        // A menu answer at NOW-90s, then the agent worked from NOW-80s.
+        let mut pane = at_rest("codex");
+        pane.last_input_at_unix_ms = NOW - 90_000;
+        pane.last_submit_at_unix_ms = NOW - 200_000;
+        pane.entered_working_at_unix_ms = NOW - 80_000;
+        assert_eq!(judge(&pane, NOW), Ok(()));
+        // The same key typed after work began is still a draft, minutes later.
+        pane.last_input_at_unix_ms = NOW - 70_000;
+        assert_eq!(judge(&pane, NOW), Err(Hold::Draft));
+        assert_eq!(judge(&pane, NOW + 600_000), Err(Hold::Draft));
+        // Submitting it ends the draft.
+        pane.last_submit_at_unix_ms = NOW - 69_000;
+        assert_eq!(judge(&pane, NOW), Ok(()));
+    }
+
+    #[test]
+    fn the_bell_kinds_are_exactly_the_kinds_with_an_installed_prompt_hook() {
+        for kind in ["claude", "claude-code", "claude_code", "codex"] {
+            assert!(bell_target(kind), "{kind}");
+        }
+        for kind in ["opencode", "pi", "grok", "cursor", "gemini", "amp", ""] {
+            assert!(!bell_target(kind), "{kind}");
+        }
     }
 }
