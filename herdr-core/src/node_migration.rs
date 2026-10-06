@@ -257,16 +257,21 @@ pub struct Outcome {
 /// Memory databases: the one beside the state the core writes, and the one
 /// under `home` the agent hooks read.
 pub fn convert(state_dir: &Path, home: &Path, node: &NodeId) -> Result<Outcome, Refusal> {
+    // Each with the name its original is kept under.
     let memory_paths = [
-        state_dir.join(PROJECT_MEMORY),
-        hide_agent_hooks::memory::database_path(home),
+        (state_dir.join(PROJECT_MEMORY), PROJECT_MEMORY),
+        (
+            hide_agent_hooks::memory::database_path(home),
+            "hooks-project-memory.sqlite3",
+        ),
     ];
     let marker_path = state_dir.join(MARKER_FILE);
     let refuse = |file: &Path, reason: String| Refusal {
         file: file.to_path_buf(),
         reason,
     };
-    match read_marker(&marker_path).map_err(|reason| refuse(&marker_path, reason))? {
+    let marker = read_marker(&marker_path).map_err(|reason| refuse(&marker_path, reason))?;
+    match &marker {
         Some(owner) if owner != node.as_str() => {
             return Err(refuse(
                 &marker_path,
@@ -282,14 +287,15 @@ pub fn convert(state_dir: &Path, home: &Path, node: &NodeId) -> Result<Outcome, 
     }
 
     let mut outcome = Outcome::default();
-    let backup = Backup::new(state_dir);
+    let backup = Backup::new(state_dir, marker.is_none());
     let mut project_pairs: Vec<(String, String)> = Vec::new();
 
-    for path in &memory_paths {
+    for (path, kept_as) in &memory_paths {
         if !path.is_file() {
             continue;
         }
-        let moved = convert_memory(path, node, &backup).map_err(|reason| refuse(path, reason))?;
+        let moved =
+            convert_memory(path, kept_as, node, &backup).map_err(|reason| refuse(path, reason))?;
         if moved > 0 {
             outcome.files.push(path.display().to_string());
             outcome.projects += moved;
@@ -338,7 +344,9 @@ pub fn convert(state_dir: &Path, home: &Path, node: &NodeId) -> Result<Outcome, 
             continue;
         }
         if convert(&mut value, node.as_str(), &project_ids) {
-            backup.copy(&path).map_err(|reason| refuse(&path, reason))?;
+            backup
+                .copy(&path, file)
+                .map_err(|reason| refuse(&path, reason))?;
             let bytes =
                 serde_json::to_vec(&value).map_err(|error| refuse(&path, error.to_string()))?;
             write(&path, &bytes).map_err(|reason| refuse(&path, reason))?;
@@ -571,7 +579,12 @@ fn convert_delivery_ledger(value: &mut Value, node: &str, _: &BTreeMap<String, S
 /// A store that does not open is left to Project Memory, which already
 /// reports a damaged store as unavailable; only a readable store that fails
 /// to convert stops the start.
-fn convert_memory(path: &Path, node: &NodeId, backup: &Backup) -> Result<usize, String> {
+fn convert_memory(
+    path: &Path,
+    kept_as: &str,
+    node: &NodeId,
+    backup: &Backup,
+) -> Result<usize, String> {
     let Ok(store) = hide_memory::MemoryStore::open(path) else {
         return Ok(0);
     };
@@ -581,7 +594,7 @@ fn convert_memory(path: &Path, node: &NodeId, backup: &Backup) -> Result<usize, 
     if !pending {
         return Ok(0);
     }
-    backup.copy_with(path, |destination| {
+    backup.copy_with(kept_as, |destination| {
         store
             .copy_to(destination)
             .map_err(|error| error.to_string())
@@ -615,57 +628,69 @@ fn convert_links(path: &Path, node: &NodeId, backup: &Backup) -> Result<bool, St
     if !store.has_device(LEGACY)? {
         return Ok(false);
     }
-    backup.copy_with(path, |destination| store.copy_to(destination))?;
+    backup.copy_with(LINKS, |destination| store.copy_to(destination))?;
     store.convert_device(LEGACY, node.as_str())?;
     Ok(true)
 }
 
 /// `node-migration-backup/<started-at>/`, made on the first file it copies.
+/// A start that resumes a conversion an earlier start left unfinished (no
+/// `node.json` yet) keeps its originals in that start's folder, and a store
+/// already copied there is not copied again, so a start retried after a
+/// failure adds no copies (engineering principle 15).
 struct Backup {
     directory: PathBuf,
 }
 
 impl Backup {
-    fn new(state_dir: &Path) -> Self {
-        let started = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|elapsed| elapsed.as_millis())
-            .unwrap_or_default();
+    fn new(state_dir: &Path, unfinished: bool) -> Self {
+        let root = state_dir.join(BACKUP_DIR);
+        let earlier = unfinished
+            .then(|| std::fs::read_dir(&root).ok())
+            .flatten()
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| entry.ok()?.file_name().to_str()?.parse::<u128>().ok())
+            .max();
+        let started = earlier.unwrap_or_else(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map(|elapsed| elapsed.as_millis())
+                .unwrap_or_default()
+        });
         Self {
-            directory: state_dir.join(BACKUP_DIR).join(started.to_string()),
+            directory: root.join(started.to_string()),
         }
     }
 
-    fn copy(&self, path: &Path) -> Result<(), String> {
-        self.copy_with(path, |destination| {
+    fn copy(&self, path: &Path, kept_as: &str) -> Result<(), String> {
+        self.copy_with(kept_as, |destination| {
             std::fs::copy(path, destination)
                 .map(|_| ())
                 .map_err(|error| error.to_string())
         })
     }
 
+    /// Keeps the original as `kept_as`, written under a temporary name and
+    /// renamed, so a copy cut short is never taken for a kept original.
     fn copy_with(
         &self,
-        path: &Path,
+        kept_as: &str,
         copy: impl FnOnce(&Path) -> Result<(), String>,
     ) -> Result<(), String> {
+        let destination = self.directory.join(kept_as);
+        if destination.exists() {
+            return Ok(());
+        }
         hide_platform::fs::private::create_dir_all(&self.directory)
             .map_err(|error| format!("the backup folder could not be made: {error}"))?;
-        // Two stores can share a file name (Project Memory beside the state
-        // and at the hooks' path), so each copy is numbered.
-        let name = path
-            .file_name()
-            .map(|name| name.to_string_lossy().into_owned())
-            .unwrap_or_default();
-        let mut destination = self.directory.join(&name);
-        let mut index = 1;
-        while destination.exists() {
-            index += 1;
-            destination = self.directory.join(format!("{index}-{name}"));
-        }
-        copy(&destination).map_err(|error| format!("the backup copy failed: {error}"))?;
-        hide_platform::fs::private::restrict_to_owner(&destination)
-            .map_err(|error| format!("the backup copy could not be made private: {error}"))
+        let partial = self.directory.join(format!(".{kept_as}.partial"));
+        let _ = std::fs::remove_file(&partial);
+        copy(&partial).map_err(|error| format!("the backup copy failed: {error}"))?;
+        hide_platform::fs::private::restrict_to_owner(&partial)
+            .map_err(|error| format!("the backup copy could not be made private: {error}"))?;
+        std::fs::rename(&partial, &destination)
+            .map_err(|error| format!("the backup copy could not be kept: {error}"))
     }
 }
 
@@ -1153,6 +1178,19 @@ mod tests {
     }
 
     #[test]
+    fn a_converted_folder_starts_while_another_writer_holds_the_search_index() {
+        let legacy = legacy();
+        convert(&legacy.state, &legacy.home, &node()).unwrap();
+        let writer = rusqlite::Connection::open(legacy.state.join(SESSION_SEARCH)).unwrap();
+        writer.execute_batch("BEGIN IMMEDIATE").unwrap();
+        assert_eq!(
+            convert(&legacy.state, &legacy.home, &node()).unwrap(),
+            Outcome::default()
+        );
+        writer.execute_batch("ROLLBACK").unwrap();
+    }
+
+    #[test]
     fn a_link_row_the_move_would_land_on_stops_the_start_and_rolls_the_record_back() {
         let legacy = legacy();
         let links = rusqlite::Connection::open(legacy.state.join(LINKS)).unwrap();
@@ -1176,6 +1214,34 @@ mod tests {
             .unwrap();
         assert_eq!(legacy_rows, 1, "the transaction rolled back");
         assert!(!legacy.state.join(MARKER_FILE).exists());
+        drop(links);
+
+        // Retried, it fails the same way and adds no copies.
+        convert(&legacy.state, &legacy.home, &node()).unwrap_err();
+        let backups: Vec<PathBuf> = std::fs::read_dir(legacy.state.join(BACKUP_DIR))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .collect();
+        assert_eq!(backups.len(), 1, "{backups:?}");
+        let mut kept: Vec<String> = std::fs::read_dir(&backups[0])
+            .unwrap()
+            .map(|entry| entry.unwrap().file_name().to_string_lossy().into_owned())
+            .collect();
+        kept.sort();
+        assert!(kept.contains(&LINKS.to_owned()), "{kept:?}");
+        assert!(
+            kept.iter().all(|name| !name.ends_with(".partial")),
+            "{kept:?}"
+        );
+        let copy = rusqlite::Connection::open(backups[0].join(LINKS)).unwrap();
+        let original_rows: i64 = copy
+            .query_row(
+                "SELECT COUNT(*) FROM projects WHERE device='local'",
+                [],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(original_rows, 1, "the kept copy is the original");
     }
 
     #[test]

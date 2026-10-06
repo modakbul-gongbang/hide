@@ -981,8 +981,9 @@ fn connect(env: &Env) -> Result<DaemonState, ConnectError> {
             ConnectError::StartFailed(detail)
         })?;
     }
+    let spawned_at = unix_ms();
     let mut daemon = spawn_daemon(env, false).map_err(ConnectError::StartFailed)?;
-    let started = wait_healthy(env, &mut daemon);
+    let started = wait_healthy(env, &mut daemon, spawned_at);
     // The daemon outlives this command; nothing waits for it.
     std::mem::forget(daemon);
     started
@@ -1259,7 +1260,11 @@ const HEALTH_PAUSE: Duration = Duration::from_millis(100);
 /// the wait at once, with the reason it logged when it refused its state
 /// folder (PRD core-host-node B2), since its stderr goes nowhere.
 #[allow(clippy::disallowed_methods)] // a production wait, not test code
-fn wait_healthy(env: &Env, daemon: &mut std::process::Child) -> Result<DaemonState, ConnectError> {
+fn wait_healthy(
+    env: &Env,
+    daemon: &mut std::process::Child,
+    spawned_at: u64,
+) -> Result<DaemonState, ConnectError> {
     let pid = daemon.id();
     let waited = wait_started(
         HEALTHY_WITHIN,
@@ -1274,10 +1279,7 @@ fn wait_healthy(env: &Env, daemon: &mut std::process::Child) -> Result<DaemonSta
         Err(Waited::Exited(status)) => {
             let refusal = herdr_core::diagnostics::newest_record(
                 &env.state_dir.join("core-state.json"),
-                |record| {
-                    record["kind"] == "node_migration.refused"
-                        && record["pid"].as_u64() == Some(u64::from(pid))
-                },
+                |record| refused_by(record, pid, spawned_at),
             );
             Err(match refusal {
                 Some(record) => ConnectError::StateRefused {
@@ -1290,6 +1292,24 @@ fn wait_healthy(env: &Env, daemon: &mut std::process::Child) -> Result<DaemonSta
             })
         }
     }
+}
+
+/// The refusal this start's daemon logged: its pid, written no earlier
+/// than it was spawned, so a record an earlier daemon with a reused pid
+/// left in the same Logs file is not read as this one's.
+fn refused_by(record: &serde_json::Value, pid: u32, spawned_at: u64) -> bool {
+    record["kind"] == "node_migration.refused"
+        && record["pid"].as_u64() == Some(u64::from(pid))
+        && record["at_unix_ms"]
+            .as_u64()
+            .is_some_and(|at| at >= spawned_at)
+}
+
+fn unix_ms() -> u64 {
+    std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or_default()
 }
 
 enum Waited {
@@ -1414,6 +1434,20 @@ fn open_browser(state: &DaemonState) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_refusal_is_read_only_from_the_daemon_this_start_spawned() {
+        let record = |pid: u32, at: u64| serde_json::json!({"kind": "node_migration.refused", "pid": pid, "at_unix_ms": at, "file": "/s/node.json"});
+        assert!(refused_by(&record(42, 1_000), 42, 1_000));
+        // Another daemon's, or one an earlier daemon with the same pid left.
+        assert!(!refused_by(&record(43, 1_000), 42, 1_000));
+        assert!(!refused_by(&record(42, 999), 42, 1_000));
+        assert!(!refused_by(
+            &serde_json::json!({"kind": "node_migration.refused", "pid": 42}),
+            42,
+            0
+        ));
+    }
 
     fn recorded(pid: u32, pid_started: Option<u64>) -> DaemonState {
         DaemonState {

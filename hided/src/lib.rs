@@ -203,6 +203,10 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
                 "component": "hided",
                 "kind": "node_migration.refused",
                 "pid": std::process::id(),
+                "at_unix_ms": std::time::SystemTime::now()
+                    .duration_since(std::time::UNIX_EPOCH)
+                    .map(|elapsed| elapsed.as_millis() as u64)
+                    .unwrap_or_default(),
                 "node": node.as_str(),
                 "file": refusal.file.display().to_string(),
                 "reason": &refusal.reason,

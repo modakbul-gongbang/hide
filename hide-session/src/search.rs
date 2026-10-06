@@ -68,10 +68,29 @@ impl SearchIndex {
     }
     /// Moves every row of each `(old, new)` Project to its new id, in one
     /// transaction (PRD core-host-node D-23). A row whose new key is already
-    /// taken is a stale copy of one the index made since, and is dropped; the
-    /// index is rebuilt from the session files. Returns the rows moved and
-    /// the rows dropped.
+    /// taken was written under the new id since, so the newer row stays and
+    /// the old one is dropped: a stale index row (rebuilt from the session
+    /// files) or an older Copied history setting. A dropped message leaves
+    /// the full-text index with it. Returns the rows moved and dropped.
+    /// An index with nothing under an old id is only read, so a converted
+    /// install never takes the write lock again.
     pub fn rekey_projects(&mut self, pairs: &[(String, String)]) -> Result<(usize, usize), String> {
+        let mut pending = false;
+        for (old, _) in pairs {
+            for table in ["policy", "control_outcomes", "files", "messages"] {
+                pending |= self
+                    .db
+                    .query_row(
+                        &format!("SELECT EXISTS(SELECT 1 FROM {table} WHERE project=?1)"),
+                        [old],
+                        |row| row.get::<_, bool>(0),
+                    )
+                    .map_err(|e| e.to_string())?;
+            }
+        }
+        if !pending {
+            return Ok((0, 0));
+        }
         let tx = self.db.transaction().map_err(|e| e.to_string())?;
         let (mut moved, mut dropped) = (0, 0);
         for (old, new) in pairs {
@@ -82,8 +101,19 @@ impl SearchIndex {
                         params![new, old],
                     )
                     .map_err(|e| e.to_string())?;
+            }
+            for table in ["policy", "control_outcomes", "files", "messages"] {
                 dropped += tx
-                    .execute(&format!("DELETE FROM {table} WHERE project=?1"), [old])
+                    .query_row(
+                        &format!("SELECT COUNT(*) FROM {table} WHERE project=?1"),
+                        [old],
+                        |row| row.get::<_, i64>(0),
+                    )
+                    .map_err(|e| e.to_string())? as usize;
+            }
+            erase(&tx, old, None, None)?;
+            for table in ["policy", "control_outcomes", "files"] {
+                tx.execute(&format!("DELETE FROM {table} WHERE project=?1"), [old])
                     .map_err(|e| e.to_string())?;
             }
         }
