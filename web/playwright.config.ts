@@ -25,8 +25,11 @@ export default defineConfig({
   retries: process.env.CI ? 1 : 0,
   // The list reporter names every test with its duration, so a CI log says
   // where the minutes went; the dot reporter CI would default to does not. CI
-  // also writes the JSON report the flaky-test step reads.
-  reporter: process.env.CI ? [["list"], ["json", { outputFile: "e2e-report.json" }]] : "list",
+  // also writes the JSON report the flaky-test step reads, and on Windows logs
+  // what holds TCP connections when a test attempt fails.
+  reporter: process.env.CI
+    ? [["list"], ["json", { outputFile: "e2e-report.json" }], ...(process.platform === "win32" ? [["./e2e/windows-sockets-reporter.ts"] as [string]] : [])]
+    : "list",
   use: {
     baseURL: process.env.HIDE_E2E_ORIGIN ?? "http://127.0.0.1:4173",
     headless: true,
