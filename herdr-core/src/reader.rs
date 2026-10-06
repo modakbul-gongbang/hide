@@ -75,6 +75,12 @@ where
         reader
     }
 
+    /// Changes how long a settled answer stays fresh, for a reader whose
+    /// cadence depends on what it is read for.
+    pub fn set_interval(&mut self, interval: Duration) {
+        self.interval = Some(interval);
+    }
+
     /// Returns an answer on the wake a worker's result arrives. `None` covers
     /// every other case: a worker is still running, or the last answer is
     /// still inside its window. A read for a request that has since moved is

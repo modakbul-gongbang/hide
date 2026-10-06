@@ -49,7 +49,10 @@ The path is a credential reference and should be handled as private session cont
 The credential's bearer bytes and file contents never enter hook stdout, arguments, or the agent context, and each command rechecks the caller's checkout membership and renderer availability.
 The prefix is a convenience, not the only way in: a bare `hide` command bootstraps its own one-shot credential, and a caller the daemon cannot place in a pane is bound to the registered checkout holding its working directory (`docs/ARCHITECTURE.md`, hided and the WebSocket boundary).
 That covers Codex 0.157 with `daemon_auto_start`, where the tool shell and this hook both run inside the shared `codex app-server` daemon under launchd rather than in the pane: the hook may run with the daemon's environment instead of the pane's, so its Workspace guidance can be missing, and the bare commands still reach the checkout the tool shell runs in.
-The kit's `Codex를 pane마다 실행` part turns that daemon off on each machine, and every Codex Hide starts passes `--no-daemon`, so a Codex runs its hooks in its pane; `src/codex_daemon.rs` is the only code that changes the setting, through `codex features` (`docs/ARCHITECTURE.md`, The install kit).
+Every Codex Hide starts passes `--no-daemon`, so a Codex Hide starts runs its hooks in its pane.
+The kit no longer turns the daemon off on its own: it only reads whether the machine's Codex has the setting, for that flag, and a machine where an earlier Hide turned it off keeps it off.
+`src/codex_daemon.rs` is the one place that changes the setting, through `codex features disable daemon_auto_start`, and only for the operator's own request from a not connected Codex pane's popover (`docs/ARCHITECTURE.md`, The install kit; `docs/status-model.md`, Not connected, and what fixes it).
+The kit reads the setting with the capability (`KitReport.codex_daemon_on`), which is what tells a Codex session on the shared server from one that started before the hook.
 The SessionStart command hook has an eight-second timeout, including two bounded two-second CLI probes; a failed probe leaves the existing purpose and Memory context intact.
 An issued credential remains unclaimed for at most 30 seconds until a CLI receives and acknowledges a Workspace response.
 The CLI writes the claimed marker only after the daemon acknowledges that claim, so a caller killed before acknowledgement leaves an unclaimed reference that expires.
@@ -120,32 +123,32 @@ A hook that fails must never be what breaks the operator's agent.
 Exiting zero is not the same as saying nothing.
 The outcome of every report is recorded in `~/.hide/agent-hooks/last-report-failure.json`: a failure writes the pane, the event, the socket and Herdr's answer, and the next success removes the file, so it describes the hook's current state rather than its history.
 `Diagnosis` reads it back as `last_report_failure`, `doctor` prints it as a `Last report failed:` line, and the Settings group shows it as an error note above the restart advice, because with a refused report on record a restart is not the fix.
-The Settings screen learns of it because the coordinator re-reads the diagnosis once a second while the Settings agents tab is on screen (`settings_observed`, the same flag the Background AI group sets), and reads nothing while it is not.
+The Settings screen learns of it because the coordinator re-reads the diagnosis once a second while the Settings agents tab is on screen (`settings_observed`, the same flag the Hide AI tab sets), and reads nothing while it is not.
 
 ## Other agents: skill and guidance hook
 
 On a machine where the kit has never run (no `~/.hide/kit/installed.json`), the default-on agents (Claude Code and Codex) are recorded off in the same pass and the record is marked `awaiting_choice`, so nothing is written to any agent until the operator answers the first-run agent choice.
-The hold also covers Codex's per-pane daemon setting (`CodexPerPane`), which follows the Codex switch: a Mac that has not answered, or has Codex off, is not written to, and its row reads Off.
 The hold records both default-on agents off explicitly, whether or not they are installed (operator decision D7): an agent installed later appears in Settings, Agents off and is never turned on by a pass, and the operator switches it on there.
 An explicit agent choice in the same pass wins over the hold, and any explicit choice (a scope that names an agent, which the first-run answer always does, naming the unchosen default agents off) clears the mark; an existing install, a record without the field, is never held.
 The mark lives in the same record as the choices, so it outlasts a quit between the hold and the answer, and `held_for_onboarding` in the report reads it on every pass.
 The core follows it (`ui_state.agent_onboarding`), applies the answer to this Mac and to every device whose own record waits, and sends the saved choice once per run to a device that reports waiting later; one that still waits afterwards is logged, not asked again on every report.
 
 Claude Code and Codex are the agents the kit has always had a hook for.
-Every other agent Hide knows is one row of `hide-kit/src/agents.rs` (`ADAPTERS`), and one switch per agent per machine turns its pieces on and off, in Settings, Agents and in each device's row.
-A row carries the agent's program names (`executables`), the folder it reads skills from and the systems the documentation confirms that folder on, whether Hide writes a hook for it, the oldest version whose documentation has that hook, and the official page the row's answers come from (`doc_url`).
+Hide supports seven agents: Claude Code, Codex, Gemini CLI, Grok, OpenCode, Pi and Cursor, in that order.
+Every agent is one row of `hide-kit/src/agents.rs` (`ADAPTERS`), and one switch per agent per machine turns its pieces on and off, in Settings, Agents and in each device's row.
+A row carries the agent's program names (`executables`), the folder it reads skills from and the systems the documentation confirms that folder on, whether Hide writes a hook for it, Herdr's integration name for it (none for Gemini CLI), and the official page the row's answers come from (`doc_url`).
 A test fails a row with no `https` `doc_url`, and a row with no program, so a claim in the table below always has a page behind it and every agent can be found.
 
-Two pieces are written per agent, and nothing else:
+Two pieces are written per agent into the agent's own files, and nothing else; a third, Herdr's integration, is put in through Herdr's own CLI (below):
 
 - The skill stub `hide-browser/SKILL.md` in the folder the agent reads.
   It is a few lines that point at `hide browser help`, so it stays right as the CLI's guide changes.
-  Its folder is `~/.agents/skills` for the agents that read it, `~/.claude/skills` for Claude Code (which documents that it does not read the shared folder), and the agent's own folder for Kiro, Qwen Code and Cline.
+  Its folder is `~/.agents/skills` for the agents that read it, `~/.claude/skills` for Claude Code (which documents that it does not read the shared folder), and no agent has a folder of its own.
   A shared folder is written while any agent that reads it is on and installed, and it is removed only when none is.
   A file is Hide's only when its marker line, `<!-- hide-skill@<version>: ... -->`, is the first line after the front matter; a file that merely mentions `hide-skill@` is never replaced or removed, and the agent's row says a skill that Hide did not write is already there.
   A stub with Hide's marker over text that is not Hide's was edited by the operator: no pass rewrites it and a switch-off leaves it, the row reads Outdated with that reason, and only Reinstall puts Hide's text back.
   A stub of an older marker version is Hide's own and is replaced by the next pass.
-  An agent's own folder (`~/.claude`, `~/.kiro`, `~/.qwen`, `~/.cline`) is never created for the stub: the hook code reads that folder as the agent's settings being there, so a pass that made it would write a hook on the next pass that it did not write on this one, and a second apply would not be a no-op; the row says the agent has not created its folder yet, and the stub goes in on the pass after it has.
+  An agent's own folder (`~/.claude`) is never created for the stub: the hook code reads that folder as the agent's settings being there, so a pass that made it would write a hook on the next pass that it did not write on this one, and a second apply would not be a no-op; the row says the agent has not created its folder yet, and the stub goes in on the pass after it has.
 - The guidance hook, for the agents below marked as done.
   It is one `SessionStart` entry, in the agent's own format, whose command is `hide-agent-hooks hook --runtime <agent id> --event SessionStart`.
   `hide-agent-hooks` writes it (`src/guidance.rs`) and nothing else does, under the marker `hide-guidance@1` that proves an entry is Hide's and separates a current one from an older one.
@@ -153,31 +156,26 @@ Two pieces are written per agent, and nothing else:
   It prints no Memory capsule, because the Memory receipt is read from Claude and Codex transcripts, and it keeps no counters and writes no file.
   A second delivery of the same session therefore changes nothing: the output is a pure function of the daemon's answer, and a test runs the hook twice and compares.
 
-Gemini CLI, Qwen Code, Factory Droid, Copilot CLI, Kiro, Cursor, Augment and Junie each keep their entry the way their documentation shapes it.
-Gemini and Qwen take an entry in `~/.gemini/settings.json` and `~/.qwen/settings.json`.
-Factory Droid takes `~/.factory/hooks.json`, or the `hooks` key of `~/.factory/settings.json` when that file already has hooks, because creating `hooks.json` beside them would shadow them.
-A removal that leaves `hooks.json` with nothing in it deletes the file, since an empty one would still shadow hooks the operator later keeps in `settings.json`; a `hooks.json` the operator created empty and Hide then wrote into goes the same way.
+Gemini CLI and Cursor each keep their entry the way their documentation shapes it.
+Gemini takes an entry in `~/.gemini/settings.json`.
 A removal takes Hide's hook out of whatever group holds it and drops the group only when no hook is left, so another tool's hook that shares a group with Hide's (`{"matcher": "*", "hooks": [Hide's, theirs]}`) stays.
 Cursor takes `~/.cursor/hooks.json` (`{"version": 1, "hooks": {"sessionStart": [{"command", "timeout"}]}}`, seconds), a file it shares with the operator's own hooks ([hooks](https://cursor.com/docs/hooks)).
 Cursor's documentation requires `version` (a positive integer, `1`), so Hide creates the file with it and adds `"version": 1` to an existing file only when it has none, which keeps the operator's own hooks beside Hide's valid; a `version` the operator wrote is left as it is.
 The documentation calls `command` a "script path or command" and does not say whether a shell parses it, so Hide writes the one form that means the same either way: the helper's absolute path and its arguments, with no `if`, `exec` or quoting (a path with a character a shell would read keeps the guarded, quoted form).
 A removed helper then fails the hook instead of being skipped, which costs nothing for a fire-and-forget `sessionStart`, and the Settings row reads the gone helper as Failed.
 Hide creates the file when it is missing and deletes it again only when nothing but Hide's scaffolding is left.
-Augment takes `hooks.SessionStart` in `~/.augment/settings.json` ([hooks](https://docs.augmentcode.com/cli/hooks)): a group `{"hooks": [{"type": "command", "command", "timeout"}]}` in milliseconds, with no `matcher` (the documentation says it is not used for session events) and no `name`, unlike the Gemini and Qwen entries, and it reads either the `hookSpecificOutput.additionalContext` JSON or plain stdout.
 A settings file Hide created and nothing else is in goes with Hide's hook, as for every agent that shares a settings file; one that holds another key keeps it.
-Junie takes `hooks.SessionStart` in `~/.junie/config.json` and its entry is `async` with `timeout` in seconds (its documentation: seconds, default 10 for `SessionStart`, and `SessionStart` hooks "already run in the background", so Junie never waits for them): its documentation says a synchronous `SessionStart` hook's `additionalContext` is ignored and an asynchronous one is prepended to the next prompt, so that is the nearest delivery it has.
-Junie's hooks are an Early Access feature with no minimum version stated, so there is no version gate.
 Cursor also loads Claude Code's hooks from `~/.claude/settings.json` (and the project's `.claude/settings*.json`) when "Include Third-Party Plugins, Skills, and Other Configs" is on, which is its default, and merges them with its own at the lowest priority without removing a duplicate ([third-party hooks](https://cursor.com/docs/reference/third-party-hooks)).
 So on a machine where Claude Code is on in Hide a Cursor session would also run Hide's instrumented Claude Code hook (the pane counters and reports as `claude-code`, Memory), which is not what a Cursor session is.
 Hide keeps the Cursor guidance hook and makes the Claude Code hook stay out: `hide-agent-hooks hook --runtime claude-code` prints nothing and counts nothing when `CURSOR_VERSION` is in its environment, the variable Cursor documents as set for every hook it runs.
 Cursor's page on third-party hooks does not say whether those get the variable, so this rests on the documented one; a session where it is missing would run both hooks, which print different fields and count only for `claude-code`.
-Copilot CLI and Kiro read a folder of hook files, so Hide owns one whole file, `~/.copilot/hooks/hide-guidance.json` and `~/.kiro/hooks/hide-guidance.json`, and deletes it when only Hide's scaffolding is left.
-Another tool's entries are counted before and after and survive, and a file that does not parse is left untouched and reported.
-Kiro's hook needs CLI 3.0, so a Kiro whose version cannot be read, or is older, gets the skill and not the hook, and its row says why.
-Where no minimum is documented there is no version gate.
-Non-Copilot guidance hooks are not written on Windows, because their commands are shell commands and their documentation names no Windows form.
+Grok and OpenCode can run the hooks in `~/.claude/settings.json` too, and Hide writes no hook for either, so Claude Code's hook still speaks there: its pane counters, its Memory and its guidance are what they are anywhere else.
+What it does not do inside them is take or confirm letters: a letter is addressed to the pane's own session and is confirmed once that session has seen it, so a hook that runs inside another agent's session would take the letter and confirm it to nobody who reads it (PRD settings-cleanup D-25).
+`hide_agent_hooks::runtime::ForeignOrigin` finds such a session by what its agent sets for the processes it starts: `CURSOR_VERSION` for Cursor, `OPENCODE` or `OPENCODE_PID` for OpenCode, and `GROK_HOOK_EVENT` or `GROK_SESSION_ID` for Grok.
+`hide-agent-hooks/tests/letter_origin.rs` runs the built helper beside a stand-in `hide` that answers `inbox` with one letter and records its calls, once outside and once inside each of them.
+The guidance hook is not written on Windows, because its command is a shell command and Gemini CLI's documentation names no Windows form.
 
-The record `~/.hide/kit/installed.json` keeps the operator's choice per agent (`agents`) and the pieces Hide installed (`hook:<agent>`, `skill:<folder>`), and an older build ignores both.
+The record `~/.hide/kit/installed.json` keeps the operator's choice per agent (`agents`) and the pieces Hide installed (`hook:<agent>`, `skill:<folder>`, `herdr:<agent>`), and an older build ignores them.
 With no choice on record Claude Code and Codex are on, as they have been since their hooks became part of the kit, and every other agent is off.
 A piece that was installed and is gone stays gone until Reinstall, and an agent switched off keeps nothing of Hide's and gets nothing back from a later pass.
 Whether the agent is installed only decides whether a switch can work: an agent that is not installed on a machine has no switch there, and switching it on is not recorded.
@@ -186,24 +184,27 @@ A guidance hook also needs the agent's own settings folder, which Hide does not 
 ### Installed means the program is found
 
 An agent is installed on a machine when one of its programs is found there, the way the operator's terminal would find it; a folder the agent creates does not count, because an editor makes `~/.cursor` without the `cursor-agent` CLI and a CLI that was removed leaves its folder behind (`~/.pi/agent` without `pi`).
-The program names are the ones each vendor's install documentation and install script give the command: `claude`, `codex`, `opencode`, `gemini`, `cursor-agent`, `copilot`, `amp`, `droid`, `kiro-cli`, `qwen`, `goose`, `cline`, `kilo`, `crush`, `junie`, `auggie`, `pi`, `grok`, `kimi` and `vibe`.
+The program names are the ones each vendor's install documentation and install script give the command: `claude`, `codex`, `gemini`, `grok`, `opencode`, `pi` and `cursor-agent`.
 Cursor's installer now calls its command `agent` and keeps `cursor-agent` as a second name; Hide looks for `cursor-agent` only, because Grok's installer also puts an `agent` on the `PATH`.
-Some of these names belong to other programs too (`goose`, `amp` and `kilo` are also a database migration tool and two text editors); such a program reads as the agent, as it does in other tools that list agents by `PATH`, and the only cost is a switch for an agent that is not there.
+The program names live in the kit's adapter table alone; Hide AI keeps no list of them, and an agent it cannot use yet is listed as not installed from what the kit found (`AiRequest.cli_found`).
 
-The search is, in order, the folders the account's login shell puts on its `PATH`, the daemon's own `PATH`, and the usual install folders: `~/.local/bin`, pnpm's global folder (`~/Library/pnpm` on macOS and `~/.local/share/pnpm` on Linux, and the `bin` folder inside it from pnpm 11), `~/.npm-global/bin`, `/opt/homebrew/bin` and `/usr/local/bin` (`cli_path_with` in `hide-agent-hooks/src/diagnosis.rs`).
-The login shell is asked because many installers put their own folder on the `PATH` by editing a startup file rather than using one of those folders: Grok's `~/.grok/bin`, Kilo Code's `~/.kilo/bin`, OpenCode's `~/.opencode/bin`, Kimi Code's `~/.kimi-code/bin` and Pi's `~/.pi/agent/bin` are written into `~/.zshrc`, `~/.bashrc` or `config.fish`, and a Node CLI installed under nvm lives in nvm's folder.
+The search is, in order, the folders the account's login shell puts on its `PATH`, the daemon's own `PATH`, and the usual install folders: `~/.local/bin`, pnpm's global folder (`~/Library/pnpm` on macOS and `~/.local/share/pnpm` on Linux, and the `bin` folder inside it from pnpm 11), `~/.npm-global/bin`, `/opt/homebrew/bin` and `/usr/local/bin` (`hide_platform::programs`, the one search; Hide AI's backends find their CLIs with it too, so the kit's "installed" and Hide AI's "can be asked" cannot disagree about a program only the shell's `PATH` or an install folder reaches).
+The login shell is asked because many installers put their own folder on the `PATH` by editing a startup file rather than using one of those folders: Grok's `~/.grok/bin`, OpenCode's `~/.opencode/bin` and Pi's `~/.pi/agent/bin` are written into `~/.zshrc`, `~/.bashrc` or `config.fish`, and a Node CLI installed under nvm lives in nvm's folder.
 No daemon sees those folders on its own: an app opened from the Dock gets the system folders and the usual install folders from the desktop host, and a device helper started over an SSH exec channel gets the system folders alone (a non-interactive zsh reads only `~/.zshenv`).
 `hide_platform::host::login_shell_path` runs `$SHELL -ilc` with the account's login variables and the home being searched, and reads the `PATH` it prints between two marks, past anything the startup files print; it gives the shell ten seconds, the same as the desktop host's own ask, and ends it and everything it started after that or when Hide quits.
-Only the kit asks, on the kit worker on this Mac and in the helper on a device; the hook diagnosis, Memory's version probe and Codex's per-pane part keep the search without the shell, so nothing that reads `cli_path` outside the kit starts a shell.
+The kit asks, on the kit worker on this Mac and in the helper on a device, and Hide AI's backends ask through the same cached answer on their own worker threads (the Settings reader, the label analyzer and Memory's analysis, never under the runtime lock); the hook diagnosis, Memory's version probe and the read of Codex's daemon setting keep the search without the shell, so nothing else that reads `cli_path` starts a shell.
 The answer is kept until one of the shell's startup files changes (zsh's, bash's and sh's in the home and in `~/.config/zsh`, fish's, and the system's in `/etc`), which is how an installer adds a folder, so Settings re-reading the kit every few seconds starts no shell; a file those files read in turn is not watched, and is read again when `hided` or a device's helper next starts.
-A shell that does not answer is logged as `kit.login_shell_unread` with its error kind, asked again after a minute, and the search goes on without its folders meanwhile; Windows has no login shell, and its search is the account's own `Path` plus the usual folders.
+A shell that does not answer is logged as `platform.login_shell_unread` with its error kind, asked again after a minute, and the search goes on without its folders meanwhile; Windows has no login shell, and its search is the account's own `Path` plus the usual folders.
 A program found by the search is also run with it, because a CLI installed as a script starts its interpreter by name (pnpm's `codex` runs `node`).
+The kit's version probe does, and so does every child Hide AI starts: a model-list or sign-in probe as much as a request, and the Codex app-server, each given the `PATH` its program was found on (`hide-ai/src/program.rs`, one `Program` type that every backend resolves through and `runner::run` and the Codex session apply).
+A CLI named by file, which only a test does, keeps the process's own `PATH` unless the backend's `search_path` is set.
 
 ### When the program is gone
 
 An agent that is on and whose program is no longer found (uninstalled, or moved where the search does not reach) keeps everything: the operator's choice stays on record, the stub and the hook Hide wrote stay where they are, and no pass installs, replaces or removes anything for it.
 Taking them out on a guess would remove what the operator may want back, and an unused stub or a guarded hook does nothing; this is the kit's rule that only the operator takes a piece away (D-20, D-26).
-Its row stays in Settings with its switch, reads `Not on this machine` with the reason that its program is not found, and offers no Reinstall, since Reinstall cannot bring a CLI back; switching it off takes out Hide's pieces as for any agent, and once the program is found again the agent is whole with nothing asked.
+Its row stays under Installed in Settings with its switch only when the record holds the operator's own choice for it (`AgentReport.chosen`, `KitAgentSnapshot.chosen`); Claude Code and Codex are on by default with no recorded choice, so one of them with no program is listed under Not installed with no switch, and never reads Ready.
+A kept row reads `Not on this machine` with the reason that its program is not found, and offers no Reinstall, since Reinstall cannot bring a CLI back; switching it off takes out Hide's pieces as for any agent, and once the program is found again the agent is whole with nothing asked.
 Claude Code's and Codex's hook parts follow the kit-part rule instead: they are written while the agent is on and its folder (`~/.claude`, `~/.codex`) is there, found or not, because a CLI the search misses still runs the hook.
 
 ### Support table
@@ -211,32 +212,90 @@ Claude Code's and Codex's hook parts follow the kit-part rule instead: they are 
 Hook "done" means Hide writes the guidance hook; "none" rows have no command hook that Hide can write to put text into a session's context, and the row says why and where the documentation says so.
 Every row gets the skill stub where the system column says so.
 
-| Agent | Skill folder (systems) | Hook | Why, and the page that says so |
-| --- | --- | --- | --- |
-| Claude Code | `~/.claude/skills` (all) | done: five-event hook, a kit part | [skills](https://code.claude.com/docs/en/skills) |
-| Codex | `~/.agents/skills` (macOS, Linux) | done: five-event hook, a kit part | [skills](https://learn.chatgpt.com/docs/build-skills) |
-| Gemini CLI | `~/.agents/skills` (macOS, Linux) | done: guidance `SessionStart` | [skills](https://geminicli.com/docs/cli/skills/), hooks at geminicli.com/docs/hooks |
-| Qwen Code | `~/.qwen/skills` (macOS, Linux) | done: guidance `SessionStart` | [skills](https://qwenlm.github.io/qwen-code-docs/en/users/features/skills/) |
-| Factory Droid | `~/.agents/skills` (macOS, Linux) | done: guidance `SessionStart` | [skills](https://docs.factory.com/cli/configuration/skills), hooks at docs.factory.com/cli/configuration/hooks-guide |
-| Copilot CLI | `~/.agents/skills` (all) | done: guidance `sessionStart` | [skills](https://docs.github.com/en/copilot/how-tos/copilot-cli/customize-copilot/add-skills) |
-| Kiro | `~/.kiro/skills` (macOS, Linux) | done: guidance `SessionStart`, CLI 3.0 and newer | [skills](https://kiro.dev/docs/skills/), hooks at kiro.dev/docs/hooks/types |
-| OpenCode | `~/.agents/skills` (macOS, Linux) | none: its documentation gives no command hook, only JS plugins (<https://opencode.ai/docs/plugins/>), and the one plugin hook that adds context is `experimental.session.compacting`, which fires at compaction and is marked experimental (<https://opencode.ai/docs/config/>); `instructions` takes a file, glob or URL (<https://opencode.ai/docs/rules/>) and cannot run a command, so it could only carry static text and would mean editing the operator's `opencode.json`. A machine whose OpenCode already runs `~/.claude/settings.json` hooks through a bridge plugin gets Claude Code's hook output without Hide writing anything; had Hide written one too, the guidance would be delivered twice, which is harmless because the output is a pure function of the daemon's answer, and none is written | [skills](https://opencode.ai/docs/skills/) |
-| Cursor | `~/.agents/skills` (macOS, Linux) | done: guidance `sessionStart` in `~/.cursor/hooks.json`, returning `additional_context` ([hooks](https://cursor.com/docs/hooks)); the hooks page does not mention the CLI, and its changelog says the CLI runs session-start hooks (<https://cursor.com/docs/cli/changelog>), so whether the CLI honours `additional_context` is unconfirmed; no Windows shell is named | [skills](https://cursor.com/docs/context/skills) |
-| Augment | `~/.agents/skills` (macOS, Linux) | done: guidance `SessionStart` in `~/.augment/settings.json` ([hooks](https://docs.augmentcode.com/cli/hooks)); no Windows shell is named for a command string | [skills](https://docs.augmentcode.com/cli/skills) |
-| Junie | `~/.agents/skills` (all) | done: guidance `SessionStart`, asynchronous, in `~/.junie/config.json` ([hooks](https://junie.jetbrains.com/docs/junie-cli-hooks.html)); Early Access, and a synchronous `SessionStart` ignores context, so it arrives with the next prompt | [skills](https://junie.jetbrains.com/docs/agent-skills.html) |
-| Cline | `~/.cline/skills` (all) | none: hooks are executables named after the event (`TaskStart`) with `contextModification` output, documented only in the repository's README (`.clinerules/hooks/README.md`, <https://github.com/cline/cline>) while <https://docs.cline.bot/customization/hooks> points to SDK plugins. One file holds one event per folder, so Hide writing `TaskStart` would take the operator's own `TaskStart` hook's place or be replaced by it, and nothing can merge them; the VS Code extension reads `~/Documents/Cline/Hooks` and the CLI `~/.cline/hooks`, the README says Windows is unsupported while the code looks for `.ps1`, and `contextModification` from `TaskStart` was dropped until release 4.1.20 | [skills](https://docs.cline.bot/customization/skills) |
-| Amp | `~/.agents/skills` (macOS, Linux) | none: a plugin API, not command hooks; only `agent.start` can inject | [skills](https://ampcode.com/docs/customize/skills) |
-| Goose | `~/.agents/skills` (macOS, Linux) | none: plugin hooks exist, but the documentation gives `SessionStart` no way to add context | [skills](https://goose-docs.ai/docs/guides/context-engineering/using-skills/) |
-| Kilo Code | `~/.agents/skills` (all) | none: hooks are TS plugins only | [skills](https://github.com/Kilo-Org/kilocode/blob/main/packages/kilo-docs/pages/customize/skills.md) |
-| Crush | `~/.agents/skills` (all) | none: the only hook event is `PreToolUse` | [README](https://github.com/charmbracelet/crush/blob/main/README.md) |
-| Pi | `~/.agents/skills` (all) | none: TS extensions, no command hooks | [skills](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/skills.md) |
-| Grok | `~/.agents/skills` (macOS, Linux) | none: `SessionStart` cannot add context, only tool-call events can | [skills](https://docs.x.ai/build/features/skills-plugins-marketplaces) |
-| Kimi Code | `~/.agents/skills` (macOS, Linux) | none: `SessionStart` is fire-and-forget; injection is documented for `UserPromptSubmit` only | [skills](https://github.com/MoonshotAI/kimi-code/blob/main/docs/en/customization/skills.md) |
-| Mistral Vibe | `~/.agents/skills` (macOS, Linux) | none: no `SessionStart` event | [README](https://github.com/mistralai/mistral-vibe/blob/main/README.md) |
+| Agent | Skill folder (systems) | Hook | Herdr integration | Why, and the page that says so |
+| --- | --- | --- | --- | --- |
+| Claude Code | `~/.claude/skills` (all) | done: five-event hook, a kit part | `claude` | [skills](https://code.claude.com/docs/en/skills) |
+| Codex | `~/.agents/skills` (macOS, Linux) | done: five-event hook, a kit part | `codex` | [skills](https://learn.chatgpt.com/docs/build-skills) |
+| Gemini CLI | `~/.agents/skills` (macOS, Linux) | done: guidance `SessionStart` | none: the pinned Herdr lists no Gemini CLI target, so its state is read from its screen | [skills](https://geminicli.com/docs/cli/skills/), hooks at geminicli.com/docs/hooks |
+| Grok | `~/.agents/skills` (macOS, Linux) | none: `SessionStart` cannot add context, only tool-call events can | `grok` | [skills](https://docs.x.ai/build/features/skills-plugins-marketplaces) |
+| OpenCode | `~/.agents/skills` (macOS, Linux) | none: its documentation gives no command hook, only JS plugins (<https://opencode.ai/docs/plugins/>), and the one plugin hook that adds context is `experimental.session.compacting`, which fires at compaction and is marked experimental (<https://opencode.ai/docs/config/>); `instructions` takes a file, glob or URL (<https://opencode.ai/docs/rules/>) and cannot run a command, so it could only carry static text and would mean editing the operator's `opencode.json`. A machine whose OpenCode already runs `~/.claude/settings.json` hooks through a bridge plugin gets Claude Code's hook output without Hide writing anything | `opencode` | [skills](https://opencode.ai/docs/skills/) |
+| Pi | `~/.agents/skills` (all) | none: TS extensions, no command hooks | `pi` | [skills](https://github.com/earendil-works/pi/blob/main/packages/coding-agent/docs/skills.md) |
+| Cursor | `~/.agents/skills` (macOS, Linux) | done: guidance `sessionStart` in `~/.cursor/hooks.json`, returning `additional_context` ([hooks](https://cursor.com/docs/hooks)); the hooks page does not mention the CLI, and its changelog says the CLI runs session-start hooks (<https://cursor.com/docs/cli/changelog>), so whether the CLI honours `additional_context` is unconfirmed; no Windows shell is named | `cursor` | [skills](https://cursor.com/docs/context/skills) |
+
+Each row also carries what Hide can do for that agent as a list of features (`hide_kit::agents::Feature`, `KitAgentSnapshot.features`), and an agent with any feature missing is Partial, which is what the Agents tab's Partial popover lists:
+
+| Feature | Supported when | Claude Code, Codex | Gemini CLI | Grok, OpenCode, Pi | Cursor |
+| --- | --- | --- | --- | --- | --- |
+| `skill` | always | yes | yes | yes | yes |
+| `guidance` | Hide writes a guidance hook | yes | yes | no | yes |
+| `letters`, `memory`, `subagents` | the five-event hook, so `HookSupport::Part` | yes | no | no | no |
+| `herdr_integration` | the row has a Herdr target | yes | no | yes | yes |
+| `sleep`, `fork`, `start`, `titles` | Hide reads that agent's sessions (`AgentAdapter::session_reader`) | yes | no | no | no |
+
+Claude Code and Codex are the only agents whose sessions Hide reads, so only they get per-agent session counts, and the counts are per machine and only of the panes open now: `connected` and a `not_connected` list (capped at 32, with `not_connected_hidden` for the rest), never an accumulation of warnings.
+`herdr-core/src/runtime/tests/agent_features.rs` ties each flag to the gate in the core that decides it (`runtime_of`, `sleeps_kind`, `ForkableAgent`, `AGENT_KINDS`, `conversation_agent_kind`, the adapter's `herdr`), so a flag cannot say yes where the core says no.
 
 An agent is a row only when its documentation confirms where it reads skills and the name of the program it installs.
-Roo Code is not a row because it was shut down in May 2026, and Aider is not a row because it reads no skills.
-Hide does not write an agent's `AGENTS.md` or `CLAUDE.md`, its MCP configuration, its model settings, or its Codex hook trust review, and it runs no installer for an agent.
+The other thirteen agents earlier builds supported are no longer rows (see Retired agents below).
+Hide does not write an agent's `AGENTS.md` or `CLAUDE.md`, its MCP configuration or its model settings, and it runs no installer for an agent.
+The one thing it records in an agent's own state is Codex's trust for Hide's own hooks, below.
+
+### Herdr's integration for an agent
+
+Herdr learns an agent's session id, and for some agents its lifecycle, from a hook script or plugin that `herdr integration install <target>` puts into the agent's own configuration.
+Lineage, the mailbox identity, labels and sleep all read that session id, so the kit installs the integration with the agent's other pieces, as a third piece of the agent's row, `herdr:<agent>` in the record.
+It runs through the machine's own Herdr CLI (`KitTarget::herdr_bin`): the Herdr bundled in the app on this Mac, and the device's own Herdr on a device.
+Every call is one owned child with a deadline and a cleared environment but `HOME` and `PATH`, on the kit worker and never under the runtime lock.
+The integration is put in only when the agent is on, installed and has made its own folder, since Herdr refuses an agent whose configuration folder is missing.
+Hide takes out only what it put in: an integration that was already in place when Hide first looked is the operator's and stays, whether the agent is switched on or off or the machine leaves Hide, and an older one of the operator's is not replaced.
+One of Hide's own that is older is replaced, and one the operator removed by hand stays removed until Reinstall, as for every other piece.
+Gemini CLI has no target in the pinned Herdr, so its row carries no integration piece and that is not a failure; a failed install shows on that agent's row alone and the other agents are untouched.
+
+### Retired agents
+
+Earlier builds supported thirteen more agents: GitHub Copilot CLI, Amp, Factory Droid, Kiro, Qwen Code, Goose, Cline, Kilo Code, Crush, Junie, Augment, Kimi Code and Mistral Vibe.
+The kit takes out what it put on a machine for them, once, by ownership: only a piece the record names is looked at, and then only what carries Hide's own marker, the skill stub's marker line and the hook entry's `hide-guidance` source.
+A file the operator wrote or edited stays, and a file that does not parse is left as it is and reported on the machine's retirement line; its record entry stays too, so the next pass tries again.
+Each piece leaves the record once it is out and an agent with nothing left in the record is not looked at again, so a second pass asks and rescans nothing.
+The shared skill stub stays while a supported agent that reads it is on and installed, or was switched on by the operator and has lost its program.
+Its record entry is what is retried, so a stub that could not be removed (a folder the account cannot write to) is removed by a later pass even after the retired agents that owned it have left the record.
+`hide-agent-hooks` keeps the layouts of the six retired guidance hooks only so this removal can find them, and a hook entry that an earlier build left behind prints nothing and writes nothing when it runs.
+This is a transition path: it goes with the release after the one that ships it.
+
+### Codex trusts Hide's own hooks
+
+Codex keeps a content hash for every entry of `~/.codex/hooks.json` in `~/.codex/config.toml` (`hooks.state`) and starts no entry whose hash it does not hold.
+A new or changed entry opens a "Hooks need review" screen at the next start, and until the operator approves it Hide hears nothing from that Codex: no session, no letters, no subagents, and no mark on the pane saying so.
+That happened on a machine's first install, whenever Hide's hook changed, and whenever another tool put a hook in front of Hide's and moved its position, which is part of the key.
+
+Installing Hide is the operator's agreement to Hide's hooks, so Hide records Codex's trust for them itself (PRD codex-hook-trust D-01).
+It does it through Codex's own interface and never by hand: `hide_agent_hooks::codex_trust` starts `codex app-server` over stdio for one short check, reads the entries with `hooks/list` (each entry's key, its hash and its status) and stores `trusted_hash` for the ones that need it with one `config/batchWrite` to `hooks.state`, then reads the list again and counts a write Codex did not keep as a failure.
+A listing that shows Codex could not use the file Hide wrote is a failure too, not "nothing to record": codex-cli 0.160.0 reports a `hooks.json` it cannot parse as a `failed to parse hooks config <path>` warning with an empty list, and a broken `config.toml` as an error naming the Codex home; a warning about another tool's hook is not Hide's to fail on.
+Hide computes no hash and writes no `config.toml`, so a change in how Codex hashes is followed, and every other setting in that file stays as Codex wrote it.
+
+The kit runs the check in every pass that finds the Codex hook part in place, whether the pass wrote it or found it current: at launch, when a device connects, and on Reinstall.
+A pass that finds every entry trusted writes nothing, so a repeat leaves `config.toml` as it was.
+An entry another tool's hook displaced is trusted at its new position by the next pass; a Codex started before that pass can still show the screen for Hide's entry.
+A Codex without hook trust (its app-server does not know `hooks/list`, which codex-cli 0.160.0 shows as a `-32600` "unknown variant" error rather than JSON-RPC's `-32601`; both are read as unknown), a Codex that ends before it answers the handshake (no `app-server` command, or a program that is not a Codex) and a machine with no Codex are left alone and show nothing new; a Codex that answers the handshake and then ends, hangs or refuses is a failure.
+Starting the app-server also makes Codex do its own bookkeeping in `~/.codex` (its databases, `installation_id`, `skills/`), which is Codex's and not Hide's.
+
+What is trusted is exactly the entry Hide wrote, and nothing else (`select_targets`):
+
+- Codex lists it from this account's `~/.codex/hooks.json` as a user hook that is not managed, so a project's hook, a plugin's and a managed one with the same command are not it;
+- its event is one Hide registers, its `command` is byte for byte the command Hide writes for that event with this kit's helper, and its matcher is the one Hide writes for it (none today; the writer and this check read it from one function);
+- Codex does not trust it yet (`untrusted`, or `modified` after a change).
+
+Another tool's hook, an entry that carries Hide's marker over a different command, and any entry that is not like this are neither read nor changed: Codex still shows the review screen for them, and lists only them.
+The usual such hook is Herdr's own integration entry (`herdr integration install codex`, which the kit runs in the same pass), so on a Mac or device where that entry is new Codex's first start still shows "Hooks need review" with one hook, Herdr's, while Hide's hooks are already trusted and run; approving that screen once covers Herdr's hook only.
+Hide writes `trusted_hash` and never `enabled`, so a hook the operator switched off in Codex's hook list stays off, and switching Hide's hook off there is how the operator opts out of one; switching Codex off in Settings, Agents takes Hide's entries out and Hide asks Codex for nothing.
+Removing Hide's hooks leaves its trust records in `config.toml`; each one matches only the same command and starts nothing by itself.
+Codex's `--dangerously-bypass-hook-trust` and `bypass_hook_trust` skip the review for every hook and are not used.
+
+The app-server is one child per check, started through the one spawn helper, bounded by a 15 second overall and 5 second per-request deadline, by caps on what it may print, and by the kit's stop flag, and ended with its whole process tree on success, failure and timeout alike (a process that left that tree and holds its output open is not waited for: the reader thread ends when it lets go); it runs on the kit worker or the device helper, never under the runtime lock.
+When Codex is there and the trust cannot be recorded, the Codex hook part reads Failed with one line, "Codex has not trusted Hide's hook: …; it will ask you to review it", the cause class goes to the diagnostic log with the pass's record (`kit apply.completed` names each part's reason), Codex's own words go to the kit's standard error as `codex_trust_failed` (seen where the kit runs in a terminal, and in a device helper's log, but not from the packaged app's detached daemon), the other parts are installed as usual, and the next pass tries again.
+`status` runs every few seconds while Settings is open and starts no process, so it repeats what the last pass in this process found; a failure the operator fixed by approving the hook in Codex clears at the next pass or Reinstall, which Failed offers.
+`hide-agent-hooks/tests/codex_trust.rs` runs the module against a stand-in app-server (`tests/fixtures/fake-codex.py`), and `hide-kit`'s `codex_trust_cases` runs the passes.
+Codex's app-server interface is marked experimental; a method or field that changes ends as the Failed line above, and Codex shows its screen, never a wrong trust.
 
 ## Judging what is installed
 
@@ -244,7 +303,7 @@ Hide does not write an agent's `AGENTS.md` or `CLAUDE.md`, its MCP configuration
 
 1. `config_unreadable` - the file could not be read or parsed, so nothing was installed into it.
 2. `hooks_not_installed` - the runtime is here and carries no hook of Hide's.
-3. `session_predates_install` - the hook is installed and this pane carries none of Hide's tokens, so the session was already running when it was installed. Restarting the agent instruments it. A pane whose reports Herdr refuses lands here too; `last_report_failure` is what tells the two apart.
+3. `session_predates_install` - the hook is installed and this pane carries none of Hide's tokens, so the session was already running when it was installed. Restarting the agent instruments it (the pane's Reopen does that in place); on a Codex whose machine has the shared server on, the same finding is read as the shared server instead (`PaneConnectionReason`). A pane whose reports Herdr refuses lands here too; `last_report_failure` is what tells the two apart.
 4. `hook_outdated` - the session is reporting through an older hook than this Hide writes.
 5. `unknown` - genuinely unknown, and said to be.
 

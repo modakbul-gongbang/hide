@@ -14,6 +14,7 @@ import {
   isChromeReserved,
   isNumberedCommand,
   keySystemOf,
+  modifierLabel,
   macChord,
   modChord,
   parseStoredChord,
@@ -124,6 +125,16 @@ describe("shortcut registry", () => {
       expect(familyModifiers("agents", REGISTRY, "electron")).toEqual({ meta: false, alt: true, shift: false, ctrl: false });
       expect(familyModifiers("tabs", REGISTRY, "browser")).toBeNull();
       expect(familyModifiers("agents", REGISTRY, "browser")).toBeNull();
+    });
+
+    it("writes the held modifiers as each system presses them", () => {
+      const tabs = familyModifiers("tabs", REGISTRY, "electron")!;
+      const agents = familyModifiers("agents", REGISTRY, "electron")!;
+      expect(modifierLabel(tabs, "mac")).toBe("⌘");
+      expect(modifierLabel(agents, "mac")).toBe("⌥");
+      const pcRegistry = systemRegistry("pc");
+      expect(modifierLabel(familyModifiers("tabs", pcRegistry, "electron")!, "pc")).toBe("Ctrl+Shift");
+      expect(modifierLabel(familyModifiers("agents", pcRegistry, "electron")!, "pc")).toBe("Alt");
     });
 
     it("refuses a pane chord bound onto a numbered one by that command's name", () => {

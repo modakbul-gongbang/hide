@@ -7,8 +7,11 @@
 //! paths wait than it holds, or the system's own queue overflowed, or the
 //! system stopped watching, the waiting paths give way to one
 //! [`Change::Overflow`], which says anything under a watched folder may have
-//! changed. A burst therefore costs a bounded number of changes and is never
-//! silence. A watcher made with [`Watcher::keeping`] drops the paths its
+//! changed. What waits is therefore bounded however long a burst lasts, and a
+//! lost change is never silence. Once the reader takes the overflow, what
+//! changes after it queues again, so a burst the system is still delivering
+//! while the reader reads can cost more than one queue's worth of changes.
+//! A watcher made with [`Watcher::keeping`] drops the paths its
 //! filter does not keep where the system reports them, so a burst nobody
 //! asked about neither fills the queue nor overflows it.
 //!
@@ -570,5 +573,71 @@ mod sys {
             offset += entry.NextEntryOffset as usize;
         }
         names
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use std::sync::Arc;
+
+    use super::{CAPACITY, Change, Changes, Queue};
+
+    fn queue() -> (Arc<Queue>, Changes) {
+        let queue = Arc::new(Queue::default());
+        (Arc::clone(&queue), Changes { queue })
+    }
+
+    fn path(index: usize) -> PathBuf {
+        PathBuf::from(format!("/watched/f{index}"))
+    }
+
+    fn waiting(changes: &Changes) -> Vec<Change> {
+        std::iter::from_fn(|| changes.try_recv()).collect()
+    }
+
+    #[test]
+    fn as_many_paths_as_the_queue_holds_wait_in_order() {
+        let (queue, changes) = queue();
+        for index in 0..CAPACITY {
+            queue.changed(path(index));
+        }
+        let waiting = waiting(&changes);
+        assert_eq!(waiting.len(), CAPACITY);
+        for (index, change) in waiting.iter().enumerate() {
+            assert!(
+                matches!(change, Change::Path { path: changed, .. } if *changed == path(index)),
+                "change {index} is {change:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn a_burst_past_capacity_waits_as_one_overflow_however_long_it_lasts() {
+        let (queue, changes) = queue();
+        for index in 0..3 * CAPACITY {
+            queue.changed(path(index));
+        }
+        let waiting = waiting(&changes);
+        assert!(
+            matches!(waiting.as_slice(), [Change::Overflow { .. }]),
+            "{} changes waited for one burst",
+            waiting.len()
+        );
+    }
+
+    #[test]
+    fn a_change_after_the_overflow_was_read_is_reported_again() {
+        let (queue, changes) = queue();
+        for index in 0..=CAPACITY {
+            queue.changed(path(index));
+        }
+        assert!(matches!(changes.try_recv(), Some(Change::Overflow { .. })));
+        queue.changed(path(0));
+        let waiting = waiting(&changes);
+        assert!(
+            matches!(waiting.as_slice(), [Change::Path { path: changed, .. }] if *changed == path(0)),
+            "{waiting:?}"
+        );
     }
 }

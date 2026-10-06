@@ -910,6 +910,16 @@ export function createActions(send: DispatchFn) {
       dispatch({ schema_version: 2, kind: "agent_wake", payload: { pane_id: paneId, fresh } });
     },
 
+    /** Reopen a pane Hide cannot hear, in place and on the same conversation (the Not connected popover, B29). */
+    reopenPane(paneId: string) {
+      dispatch({ schema_version: 2, kind: "pane_reopen", payload: { pane_id: paneId } });
+    },
+
+    /** Turn off Codex's shared server on one machine (`local` for this Mac), the popover's secondary link (B30). */
+    turnOffCodexSharedServer(deviceId: string) {
+      dispatch({ schema_version: 2, kind: "codex_daemon_disable", payload: { device_id: deviceId } });
+    },
+
     setFontSize(size: number) {
       updateUiState({ font_size: size });
     },
@@ -929,12 +939,17 @@ export function createActions(send: DispatchFn) {
     setMobileEnabled(enabled: boolean) {
       dispatch({ schema_version: 2, kind: "mobile_enable", payload: { enabled } });
     },
-    /** Settings > Mobile open or closed: hided rechecks the checklist while it is open and issues a new code on open. */
+    /** Settings > Mobile open or closed: hided rechecks the checklist while it is open; a code is made only by Show QR. */
     observeMobile(observing: boolean) {
       dispatch({ schema_version: 2, kind: "mobile_observe", payload: { observing } });
     },
-    newMobileCode() {
-      dispatch({ schema_version: 2, kind: "mobile_new_code", payload: {} });
+    /** Show QR: hided makes one pairing code and shows it in the `mobile` frame (PRD settings-cleanup B58). */
+    showMobileCode() {
+      dispatch({ schema_version: 2, kind: "mobile_show_code", payload: {} });
+    },
+    /** Hide QR: the code leaves the frame. */
+    hideMobileCode() {
+      dispatch({ schema_version: 2, kind: "mobile_hide_code", payload: {} });
     },
     revokePhone(phoneId: string) {
       dispatch({ schema_version: 2, kind: "mobile_revoke", payload: { phone_id: phoneId } });
@@ -970,6 +985,17 @@ export function createActions(send: DispatchFn) {
     setAgentSummary(on: boolean) {
       dispatch({ schema_version: 2, kind: "ai_settings", payload: { agent_summary: on } });
     },
+    /** Use Hide AI (PRD settings-cleanup D-14): off, no model is asked anything and the other Hide AI values stay stored. */
+    setHideAiEnabled(on: boolean) {
+      dispatch({ schema_version: 2, kind: "ai_settings", payload: { enabled: on } });
+    },
+    /** Adds an agent at the end of "If <Runs on> can't answer" (D-16). */
+    addAiFallback(provider: string) {
+      dispatch({ schema_version: 2, kind: "ai_settings", payload: { fallback_add: provider } });
+    },
+    removeAiFallback(provider: string) {
+      dispatch({ schema_version: 2, kind: "ai_settings", payload: { fallback_remove: provider } });
+    },
 
     /** Reinstall on a machine's row repairs every part that needs it; a hook row names its one part. */
     reinstallKit(deviceId: string, components?: KitComponentId[], agents?: string[]) {
@@ -990,14 +1016,14 @@ export function createActions(send: DispatchFn) {
       dispatch({ schema_version: 2, kind: "kit_agent_set", payload: { device_id: deviceId, agent, enabled } });
     },
 
-    /** A switchable kit part's switch on its machine's row (PRD overview-request-view D-24). */
-    setKitComponent(deviceId: string, component: KitComponentId, enabled: boolean) {
-      dispatch({ schema_version: 2, kind: "kit_component_set", payload: { device_id: deviceId, component, enabled } });
-    },
-
     /** A tab showing the kit opened: this Mac's parts are read once. */
     checkKit() {
       dispatch({ schema_version: 2, kind: "kit_check", payload: {} });
+    },
+
+    /** Add device opened: hided reads the account's ssh config Hosts once and publishes `status.ssh_hosts`. */
+    listSshHosts() {
+      dispatch({ schema_version: 2, kind: "ssh_hosts_list", payload: {} });
     },
 
     registerDevice(id: string, label: string, alias: string, options: { hostConsent: boolean; herdrSocketPath: string | null }) {
@@ -1060,9 +1086,9 @@ export function createActions(send: DispatchFn) {
       dispatch({ schema_version: 2, kind: "focus_device", payload: { device_id: deviceId } });
     },
 
-    /** Every entry point of Add device (the rail's `+`, the hidden rail's menu, Add project's Host list) opens the one form (D-11). */
+    /** Every entry point of Add device (the rail's `+`, the hidden rail's menu, Add project's Host list) opens the one dialog (D-11). */
     openAddDevice() {
-      ui().openSettings("devices");
+      ui().openAddDevice();
     },
 
     /**
@@ -1131,6 +1157,11 @@ export function createActions(send: DispatchFn) {
       dispatch({ schema_version: 2, kind: "github_request", payload: { workspace_id: workspaceId, refresh: false } });
     },
 
+    /** Reads each of these local Git projects' GitHub answer again (General's GitHub row, Check again). */
+    refreshGithub(workspaceIds: readonly string[]) {
+      for (const workspaceId of workspaceIds) dispatch({ schema_version: 2, kind: "github_request", payload: { workspace_id: workspaceId, refresh: true } });
+    },
+
     /** Re-read a local Git project's checkout facts and pull requests when its Overview opens. */
     refreshProjectOverview(workspaceId: string) {
       dispatch({ schema_version: 2, kind: "overview_refresh", payload: { workspace_id: workspaceId } });
@@ -1192,7 +1223,7 @@ export function createActions(send: DispatchFn) {
       return catalogObserver.acquire();
     },
 
-    /** A new issue in the project's source (Settings › Issues); the core answers in `issue_work.create`. */
+    /** A new issue in the project's source (the project row's Issue source menu); the core answers in `issue_work.create`. */
     createIssue(workspaceId: string, title: string, body: string) {
       dispatch({ schema_version: 2, kind: "issue_create", payload: { workspace_id: workspaceId, title, body } });
     },

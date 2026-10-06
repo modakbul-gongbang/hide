@@ -26,6 +26,7 @@ mod kit;
 pub(crate) mod links;
 mod memory;
 mod operations;
+mod pane_reopen;
 mod project_sessions;
 mod projects;
 mod pull_requests;
@@ -36,6 +37,8 @@ mod request_view;
 mod session;
 pub(crate) mod session_search;
 mod snapshot_delta;
+mod ssh_hosts;
+mod tab_focus;
 mod terminal;
 mod tree_close;
 mod view_areas;
@@ -454,23 +457,21 @@ const CLOSE_STAGE_TIMEOUT_MS: u64 = 5_000;
 /// waiting stops.
 const VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS: u64 = 3_000;
 
-/// How many replaced, unanswered tab notifications Hide remembers at once.
-/// Each lives at most `VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS`; a burst of tab
-/// switches faster than that evicts the oldest and reports it.
-const SUPERSEDED_TAB_FOCUS_LIMIT: usize = 16;
+/// How many sent, unanswered tab moves Hide remembers at once. Each lives at
+/// most `VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS`; a burst of tab switches faster
+/// than that evicts the oldest and reports it.
+const TAB_FOCUS_REQUEST_LIMIT: usize = 16;
 
-/// A view-state change Hide has already made and told Herdr about.
+/// A pane focus Hide has already made and told Herdr about.
 ///
-/// Hide owns the visible tab and the focused pane, so the value in the
-/// snapshot is not a prediction to be undone. This records only that a
-/// notification is in flight, which is what tells a Herdr event naming an
-/// older value apart from an operator focusing something outside Hide.
+/// Hide owns the focused pane, so the value in the snapshot is not a
+/// prediction to be undone. This records only that a notification is in
+/// flight, which is what tells a Herdr layout naming an older pane apart
+/// from an operator focusing something outside Hide. The tab moves a pane
+/// focus makes are kept with the tab focuses (`tab_focus.rs`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PendingViewFocus {
-    /// The checkout the tab belongs to. Empty for a pane focus, which is
-    /// identified by its pane id alone.
-    scope_id: String,
-    /// The tab or pane id Hide asked Herdr to focus.
+    /// The pane id Hide asked Herdr to focus.
     target_id: String,
     /// Present only for an explicit relationship Open/Return request. The
     /// core owns the outcome; the shell supplies this opaque correlation id
@@ -479,16 +480,15 @@ struct PendingViewFocus {
     /// Local pane controls settle by operation identity, never by target alone.
     pane_control_serial: Option<u64>,
     /// Whether the request has left for Herdr. A request still waiting its
-    /// turn on the control lane cannot be answered yet, so replacing it
-    /// leaves no late answer until it leaves, and its wait does not run out.
+    /// turn on the control lane cannot be answered yet, and its wait does
+    /// not run out.
     sent: bool,
     requested_at_unix_ms: u64,
 }
 
 impl PendingViewFocus {
-    fn new(scope_id: impl Into<String>, target_id: impl Into<String>) -> Self {
+    fn new(target_id: impl Into<String>) -> Self {
         Self {
-            scope_id: scope_id.into(),
             target_id: target_id.into(),
             request_id: None,
             pane_control_serial: None,
@@ -497,16 +497,8 @@ impl PendingViewFocus {
         }
     }
 
-    /// A request whose control has already been sent: a tab Hide created is
-    /// focused by Herdr as part of the creation itself.
-    fn already_sent(mut self) -> Self {
-        self.sent = true;
-        self
-    }
-
     fn pane_request(target_id: impl Into<String>, request_id: String) -> Self {
         Self {
-            scope_id: String::new(),
             target_id: target_id.into(),
             request_id: Some(request_id),
             pane_control_serial: None,
@@ -679,8 +671,6 @@ enum ViewFocusSlot {
 }
 
 impl ViewFocusSlot {
-    const ALL: [Self; 2] = [Self::Tab, Self::Pane];
-
     fn what(self) -> &'static str {
         match self {
             Self::Tab => "tab",
@@ -1326,6 +1316,9 @@ pub struct Runtime {
     memory_operation_checkout_path: Option<String>,
     memory_pending_action: Option<(String, events::MemoryActionPayload)>,
     memory_cancel: Option<hide_ai::CancelToken>,
+    /// The Hide AI settings the running analysis built its router from; it
+    /// is stopped when they stop describing who may be asked.
+    memory_analysis_settings: Option<hide_ai::AiSettings>,
     /// True only after the operator approves hook updates while enabling
     /// Memory. A diagnosis can finish that intent, but cannot create it.
     memory_enable_after_hook_update: bool,
@@ -1361,16 +1354,14 @@ pub struct Runtime {
     /// session on every update, so the choice has to live outside it or every
     /// tick would hand the decision back to Herdr.
     visible_tab_ids: BTreeMap<String, String>,
-    /// The tab focus Hide has told Herdr about and is still waiting to see
-    /// confirmed. Latest request wins; a second switch replaces the first
-    /// rather than queueing behind it.
-    pending_tab_focus: Option<PendingViewFocus>,
-    /// Tab notifications a later switch replaced before Herdr answered them,
-    /// oldest first. Herdr still applies each one, and the pinned stream has
-    /// no cursor to say which request an event answers, so a session naming
-    /// one of these tabs is Hide's own late answer, not an operator focusing
-    /// that tab outside Hide.
-    superseded_tab_focus: Vec<PendingViewFocus>,
+    /// The tab moves that have left for Herdr and not been answered, in the
+    /// order they left: tab focuses, the tab moves of pane focuses, and tabs
+    /// created with focus. Which Herdr move is Hide's own answer, and when a
+    /// move Herdr makes is followed, are read from it (`tab_focus.rs`).
+    tab_focus_requests: Vec<tab_focus::TabFocusRequest>,
+    /// The tabs active in their Herdr workspaces at the last session, so the
+    /// next one says which tabs Herdr has moved to since.
+    herdr_active_tabs_seen: BTreeSet<String>,
     /// The tab Herdr had focused at the last session update. A follow needs
     /// Herdr's focus to have moved; a focused tab that merely differs from
     /// Hide's, as it does after a notification Herdr never answered, is not
@@ -1507,6 +1498,10 @@ pub struct Runtime {
     agent_sleep_backoff: HashMap<String, agent_sleep::Backoff>,
     /// Panes whose typed input was dropped while asleep, logged once each (B12).
     agent_sleep_dropped_input: HashSet<String>,
+    /// Panes with a Reopen running or just refused, until the pane connects,
+    /// leaves, or stops showing a connection chip (B29). One entry per pane,
+    /// so a second press while one runs starts nothing.
+    pane_reopens: HashMap<String, crate::model::PaneReopenSnapshot>,
     fork_sequence: u64,
     /// The machine's TCP listeners, refreshed on their own window by the
     /// session-sync coordinator. Held here rather than in the snapshot because
@@ -1594,6 +1589,11 @@ pub struct Runtime {
     next_repository_clone_id: u64,
     /// The clone `snapshot.repository_clone` reports, while its worker runs.
     repository_clone_job: Option<clone::CloneJob>,
+    next_ssh_hosts_id: u64,
+    /// The listing `status.ssh_hosts` reports as loading, while its worker runs.
+    ssh_hosts_job: Option<ssh_hosts::SshHostsJob>,
+    /// The `ssh` that resolves a Host entry with `-G`; tests name a stand-in.
+    ssh_program: PathBuf,
     /// The checkout a purpose receipt belongs to. A remote checkout lives in
     /// `status.remote[].session`, not the local navigator, so the operation
     /// carries this target separately from its shell-facing receipt.
@@ -1891,6 +1891,7 @@ impl Runtime {
             memory_operation_checkout_path: None,
             memory_pending_action: None,
             memory_cancel: None,
+            memory_analysis_settings: None,
             memory_enable_after_hook_update: false,
             memory_poll_in_flight: false,
             memory_next_poll_unix_ms: 0,
@@ -1905,8 +1906,8 @@ impl Runtime {
             operator_focused_pane_id: None,
             pending_read_record_reconciliation: HashSet::new(),
             visible_tab_ids: BTreeMap::new(),
-            pending_tab_focus: None,
-            superseded_tab_focus: Vec::new(),
+            tab_focus_requests: Vec::new(),
+            herdr_active_tabs_seen: BTreeSet::new(),
             herdr_focused_tab_seen: None,
             herdr_tab_focus_seen: None,
             pending_pane_focus: None,
@@ -1955,6 +1956,7 @@ impl Runtime {
             agent_sleep_next_decision_unix_ms: 0,
             agent_sleep_backoff: HashMap::new(),
             agent_sleep_dropped_input: HashSet::new(),
+            pane_reopens: HashMap::new(),
             fork_sequence: 0,
             listening_ports: crate::model::ListeningPortsSnapshot::default(),
             worktree_catalog: crate::model::WorktreeCatalogSnapshot::default(),
@@ -1984,6 +1986,9 @@ impl Runtime {
             next_task_operation_id: 0,
             next_repository_clone_id: 0,
             repository_clone_job: None,
+            next_ssh_hosts_id: 0,
+            ssh_hosts_job: None,
+            ssh_program: PathBuf::from("ssh"),
             purpose_operation_target: None,
             created_purpose_writes_in_flight: HashMap::new(),
             unconfirmed_created_purposes: HashMap::new(),

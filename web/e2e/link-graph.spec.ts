@@ -106,7 +106,7 @@ function writeSessions(projects: string, cwd: string): Record<string, string> {
 
 async function chooseTheme(page: Page, theme: "light" | "dark"): Promise<void> {
   await page.keyboard.press(chord("settings"));
-  await page.locator('[data-settings-tab="appearance"]').click();
+  await page.locator('[data-settings-tab="general"]').click();
   await page.locator(`[data-theme-option="${theme}"]`).click();
   await expect(page.locator("html")).toHaveClass(new RegExp(`\\b${theme}\\b`));
   await page.keyboard.press("Escape");

@@ -115,26 +115,29 @@ fn reading_a_file_is_not_a_change() {
     assert!(reads.is_empty(), "reading reported {reads:?}");
 }
 
+/// Ten thousand new files written with nobody reading pass the queue's
+/// capacity, so the burst ends in an overflow rather than silence. The
+/// queue's own tests pin that what waits is bounded; how many changes a
+/// burst costs over time is not, because once the reader takes the overflow,
+/// what the system is still delivering queues again (issue 651).
 #[test]
-fn a_burst_is_bounded_and_ends_in_an_overflow_rather_than_silence() {
+fn a_burst_ends_in_an_overflow_rather_than_silence() {
     let (dir, _watcher, changes) = watched();
     drain(&changes);
     for index in 0..10_000 {
         fs::write(dir.path().join(format!("f{index}")), b"x").unwrap();
     }
-    let burst = drain(&changes);
-    assert!(
-        burst.len() <= CAPACITY + 1,
-        "{} changes for one burst",
-        burst.len()
-    );
-    assert!(
-        burst
-            .iter()
-            .any(|change| matches!(change, Change::Overflow { .. })),
-        "10,000 new files and no overflow among {} changes",
-        burst.len()
-    );
+    let mut seen = 0usize;
+    // A change takes at most ARRIVES to arrive, so the burst has ended once
+    // nothing has for that long.
+    loop {
+        match changes.recv_timeout(ARRIVES) {
+            Some(Change::Overflow { .. }) => break,
+            Some(Change::Path { .. }) => seen += 1,
+            None => panic!("10,000 new files and no overflow among {seen} changes"),
+        }
+    }
+    drain(&changes);
     // The watch survives the overflow: the next change is reported again.
     let after = dir.path().join("after");
     fs::write(&after, b"y").unwrap();

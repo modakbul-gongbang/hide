@@ -4,6 +4,10 @@ use std::time::Duration;
 use crate::fake_herdr::FakeHerdr;
 
 mod agent_areas;
+#[path = "tests/agent_connection.rs"]
+mod agent_connection;
+#[path = "tests/agent_features.rs"]
+mod agent_features;
 #[path = "tests/agent_sleep.rs"]
 mod agent_sleep;
 #[path = "tests/agents_settings_remote.rs"]
@@ -62,6 +66,9 @@ mod session_navigation;
 mod shortcut_import;
 #[path = "tests/snapshot_delta.rs"]
 mod snapshot_delta;
+#[cfg(unix)]
+#[path = "tests/ssh_hosts.rs"]
+mod ssh_hosts_list;
 #[path = "tests/terminal.rs"]
 mod terminal;
 #[path = "tests/tree_close.rs"]
@@ -924,6 +931,23 @@ fn correlated_pane_focus_event(pane_id: &str, request_id: &str) -> Vec<u8> {
         }
     }))
     .expect("correlated pane focus event")
+}
+
+/// The tabs of the moves sent to Herdr and not yet answered, oldest first.
+fn sent_tab_moves(runtime: &Runtime) -> Vec<String> {
+    runtime
+        .tab_focus_requests
+        .iter()
+        .map(|request| request.tab_id.clone())
+        .collect()
+}
+
+fn newest_sent_at(runtime: &Runtime) -> u64 {
+    runtime
+        .tab_focus_requests
+        .last()
+        .expect("a tab move is in flight")
+        .requested_at_unix_ms
 }
 
 fn diagnostic_count(runtime: &Runtime, kind: &str) -> usize {

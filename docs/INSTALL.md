@@ -203,12 +203,15 @@ If you want to start agents from hide, install and sign in to the relevant CLI b
 ### What the first launch installs
 
 Every launch of the installed app installs Hide's kit on this Mac without asking, and puts back only what a newer app needs.
-The one exception is a Mac the kit has never run on: it holds Claude Code's and Codex's hook entries and skills, and Codex's per-pane daemon setting, until the operator answers the first-run agent choice (UI_BEHAVIOR.md, Settings > Agents); both agents are recorded off in the hold, installed or not, so an agent installed later also starts off, and the rest below is installed as usual:
+The one exception is a Mac the kit has never run on: it holds Claude Code's and Codex's hook entries and skills until the operator answers the first-run agent choice (UI_BEHAVIOR.md, Settings > Agents); both agents are recorded off in the hold, installed or not, so an agent installed later also starts off, and the rest below is installed as usual:
 
 - `~/.local/bin/hide`, a link to the app's `hide` command, unless a `hide` that is not Hide's is already there;
 - Hide's entries in `~/.claude/settings.json` and `~/.codex/hooks.json`, for each of Claude Code and Codex whose folder (`~/.claude`, `~/.codex`) is on this Mac, next to whatever other tools put there;
+- Codex's trust for those Codex entries: Codex asks for a review of every new or changed hook, so Hide takes installing it as your agreement to its own hooks and has Codex record them as trusted (through `codex app-server`, never by editing `~/.codex/config.toml`), only for an entry whose command is exactly the one Hide wrote; another tool's hook still opens Codex's review screen (Herdr's own integration entry, which the kit installs in the same pass, is one, so a first Codex start can list that one hook while Hide's are already trusted), and switching Hide's hook off in Codex's hook list keeps it off ([agent-hooks.md](agent-hooks.md#codex-trusts-hides-own-hooks));
 - A one-release retirement stage removes the former coordination installation after its read-only preflight succeeds; see Coordination retirement below;
-- `Codex를 pane마다 실행`: when this Mac's Codex has the shared app-server daemon turned on, `codex features disable daemon_auto_start`, so each Codex runs in its own pane and Hide can read it. A daemon already running keeps running, and the setting reaches each Codex started after it. Settings > Devices turns it back on (`codex features enable daemon_auto_start`), and Hide then leaves it on.
+- for each of the seven supported agents that is on and installed (Claude Code, Codex, Gemini CLI, Grok, OpenCode, Pi and Cursor), Herdr's own integration, installed with the bundled Herdr (`herdr integration install <agent>`) so Herdr learns the agent's session; one the operator installed before is left as it is, and Hide removes only what it installed;
+- a one-time removal of what an earlier Hide put down for thirteen agents it no longer supports (GitHub Copilot CLI, Amp, Factory Droid, Kiro, Qwen Code, Goose, Cline, Kilo Code, Crush, Junie, Augment, Kimi Code and Mistral Vibe): only its marked skill and hook entries come out, and a file you wrote stays;
+- the Codex daemon setting is no longer touched: a Mac where an earlier Hide ran `codex features disable daemon_auto_start` keeps it off, and Hide only reads it so every Codex it starts gets `--no-daemon`.
 
 ### Coordination retirement
 
@@ -308,7 +311,7 @@ Each packaged launch replaces an outdated part of the kit on this machine, and e
 Quit hide and move `/Applications/hide.app` to the Trash.
 This removes the application but keeps `~/.hide` and `~/Library/Application Support/hide-desktop`.
 Delete both directories only when you deliberately want to reset hide's saved state.
-Hide's hook entries stay in `~/.claude/settings.json` and `~/.codex/hooks.json` and do nothing once the app is gone; delete the entries whose command carries `hide-subagents@` to take them out.
+Hide's hook entries stay in `~/.claude/settings.json` and `~/.codex/hooks.json` and do nothing once the app is gone; delete the entries whose command carries `hide-subagents@` to take them out; Codex's trust records for them stay in `~/.codex/config.toml` and match only that same command.
 `~/.local/bin/hide` stays as well until you remove it.
 On Windows or Linux, delete the unpacked package folder after quitting and running its `resources/hide[.exe] stop`.
 The hook entries and home state likewise remain; remove `~/.local/bin/hide` on Linux, or `%USERPROFILE%\.local\bin\hide.cmd` and the `.hide-kit` junction beside it on Windows.

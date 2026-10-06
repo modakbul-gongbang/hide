@@ -62,13 +62,58 @@ pub fn hook_stdout_with_context(
     serde_json::to_string(&output).ok()
 }
 
-/// Whether this hook process was started by Cursor. Cursor documents
-/// `CURSOR_VERSION` as set for every hook it runs; its page on Claude Code
-/// hooks it loads does not say whether those get it too (the same runner and
-/// the `CLAUDE_PROJECT_DIR` alias it documents suggest they do), so this
-/// rests on that documented variable and nothing more.
-pub fn run_by_cursor<V>(variable: impl Fn(&str) -> Option<V>) -> bool {
-    variable("CURSOR_VERSION").is_some()
+/// Another agent that runs Claude Code's hooks from `~/.claude/settings.json`
+/// beside its own, so Hide's `claude-code` hook starts inside a session that
+/// is not a Claude Code session.
+///
+/// Each is found by a variable its own documentation or source says it sets
+/// for the processes it starts; nothing else decides it, since a wrong guess
+/// either silences a real Claude Code or lets a stranger take its letters:
+///
+/// - Cursor sets `CURSOR_VERSION` for every hook it runs; its page on the
+///   Claude Code hooks it loads does not say whether those get it too (the
+///   same runner and the `CLAUDE_PROJECT_DIR` alias it documents suggest they
+///   do).
+/// - OpenCode sets `OPENCODE` and `OPENCODE_PID` in every process it starts,
+///   which is how a bridge plugin runs the hooks (opencode `src/flag`).
+/// - Grok sets `GROK_HOOK_EVENT` and `GROK_SESSION_ID` for every hook it runs
+///   (docs.x.ai, Hooks).
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ForeignOrigin {
+    Cursor,
+    OpenCode,
+    Grok,
+}
+
+impl ForeignOrigin {
+    pub fn detect<V>(variable: impl Fn(&str) -> Option<V>) -> Option<Self> {
+        let set = |names: &[&str]| names.iter().any(|name| variable(name).is_some());
+        if set(&["CURSOR_VERSION"]) {
+            Some(Self::Cursor)
+        } else if set(&["OPENCODE", "OPENCODE_PID"]) {
+            Some(Self::OpenCode)
+        } else if set(&["GROK_HOOK_EVENT", "GROK_SESSION_ID"]) {
+            Some(Self::Grok)
+        } else {
+            None
+        }
+    }
+
+    /// Whether Hide's own hook for that agent speaks in its place, so Claude
+    /// Code's says nothing at all: Cursor has a guidance hook of its own.
+    /// Grok and OpenCode have none, so Claude Code's hook still counts,
+    /// reads Memory and prints its guidance there.
+    pub fn silences_claude_hook(self) -> bool {
+        self == Self::Cursor
+    }
+}
+
+/// Whether Claude Code's hook may take and confirm letters here (D-25). A
+/// letter is addressed to a pane's own session and is confirmed once that
+/// session has seen it, so a hook that runs inside another agent's session
+/// would take the letter and confirm it to nobody who reads it.
+pub fn takes_letters<V>(variable: impl Fn(&str) -> Option<V>) -> bool {
+    ForeignOrigin::detect(variable).is_none()
 }
 
 /// `json` with every character outside ASCII written as a `\u` escape,
@@ -371,6 +416,37 @@ mod tests {
             ] {
                 assert_eq!(hook_stdout(runtime, event), None);
             }
+        }
+    }
+
+    #[test]
+    fn a_foreign_session_is_found_by_the_variable_its_agent_documents() {
+        let with = |name: &'static str| move |asked: &str| (asked == name).then_some("1");
+        assert_eq!(
+            ForeignOrigin::detect(with("CURSOR_VERSION")),
+            Some(ForeignOrigin::Cursor)
+        );
+        for name in ["OPENCODE", "OPENCODE_PID"] {
+            assert_eq!(
+                ForeignOrigin::detect(with(name)),
+                Some(ForeignOrigin::OpenCode)
+            );
+        }
+        for name in ["GROK_HOOK_EVENT", "GROK_SESSION_ID"] {
+            assert_eq!(ForeignOrigin::detect(with(name)), Some(ForeignOrigin::Grok));
+        }
+        assert_eq!(ForeignOrigin::detect(with("CLAUDE_PROJECT_DIR")), None);
+        assert_eq!(ForeignOrigin::detect(|_: &str| None::<&str>), None);
+    }
+
+    #[test]
+    fn only_cursor_silences_claude_codes_hook_and_every_foreign_session_takes_no_letters() {
+        assert!(ForeignOrigin::Cursor.silences_claude_hook());
+        assert!(!ForeignOrigin::OpenCode.silences_claude_hook());
+        assert!(!ForeignOrigin::Grok.silences_claude_hook());
+        assert!(takes_letters(|_: &str| None::<&str>));
+        for name in ["CURSOR_VERSION", "OPENCODE", "GROK_HOOK_EVENT"] {
+            assert!(!takes_letters(|asked: &str| (asked == name).then_some("1")));
         }
     }
 }

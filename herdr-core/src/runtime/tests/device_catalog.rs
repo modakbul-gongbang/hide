@@ -1386,12 +1386,14 @@ fn regrouping_a_device_session_keeps_its_agents_lineage() {
                 state: hide_kit::ComponentState::Installed,
                 reason: None,
                 location: None,
-                codex_daemon: None,
             }],
             agents: Vec::new(),
             held_for_onboarding: false,
             labels_retirement: Default::default(),
             legacy_retirement: Default::default(),
+            codex_daemon: None,
+            codex_daemon_on: None,
+            codex_daemon_off: None,
         },
     );
     assert_eq!(descendants(&runtime), vec![child]);
@@ -1495,12 +1497,14 @@ fn a_device_agent_pane_is_judged_against_its_own_kit() {
                 state: hide_kit::ComponentState::Installed,
                 reason: None,
                 location: None,
-                codex_daemon: None,
             }],
             agents: Vec::new(),
             held_for_onboarding: false,
             labels_retirement: Default::default(),
             legacy_retirement: Default::default(),
+            codex_daemon: None,
+            codex_daemon_on: None,
+            codex_daemon_off: None,
         },
     );
     let after = children(&runtime);

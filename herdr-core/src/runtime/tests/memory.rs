@@ -423,12 +423,14 @@ fn hook_repair_resumes_only_the_enable_intent_the_operator_approved() {
                 state: hide_kit::ComponentState::NotInstalled,
                 reason: None,
                 location: None,
-                codex_daemon: None,
             }],
             agents: Vec::new(),
             held_for_onboarding: false,
             labels_retirement: Default::default(),
             legacy_retirement: Default::default(),
+            codex_daemon: None,
+            codex_daemon_on: None,
+            codex_daemon_off: None,
         },
     );
 

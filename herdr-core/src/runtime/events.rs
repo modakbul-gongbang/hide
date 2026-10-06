@@ -1019,6 +1019,14 @@ pub(super) struct KitReinstallPayload {
     pub(super) agents: Option<Vec<String>>,
 }
 
+/// The operator asked, from a not connected Codex pane's popover, for Codex's
+/// shared server to be turned off on one machine (PRD settings-cleanup B27).
+/// `device_id` is `local` for this Mac.
+#[derive(Debug, Deserialize)]
+pub(super) struct CodexDaemonDisablePayload {
+    pub(super) device_id: String,
+}
+
 /// The operator switched an agent on or off from its row (issue #517); every
 /// adapter id has a switch, whether or not the agent is set up there.
 #[derive(Debug, Deserialize)]
@@ -1028,20 +1036,15 @@ pub(super) struct KitAgentSetPayload {
     pub(super) enabled: bool,
 }
 
-/// The operator switched a kit part on or off from its row (PRD
-/// overview-request-view D-24); only a part
-/// [`hide_kit::ComponentId::can_turn_off`] names has a switch.
-#[derive(Debug, Deserialize)]
-pub(super) struct KitComponentSetPayload {
-    pub(super) device_id: String,
-    pub(super) component: hide_kit::ComponentId,
-    pub(super) enabled: bool,
-}
-
 /// A Settings tab that shows the kit opened: this Mac's parts are read again
 /// once, so a part removed by hand shows as removed.
 #[derive(Debug, Deserialize)]
 pub(super) struct KitCheckPayload {}
+
+/// Add device opened: the account's Host entries are listed once, with where
+/// each one leads (`status.ssh_hosts`).
+#[derive(Debug, Deserialize)]
+pub(super) struct SshHostsListPayload {}
 
 /// Whether any window draws this daemon's snapshot, sent by hided as its
 /// first window arrives and its last one leaves. Without one, the readers
@@ -1053,13 +1056,15 @@ pub(super) struct UiAttachedPayload {
     pub(super) attached: bool,
 }
 
-/// One Background AI settings event, carrying whatever it is about.
+/// One Hide AI settings event, carrying whatever it is about.
 ///
-/// It folds three things a single screen does into one event, the way
-/// `ui_state_update` already folds that screen's other state: the group
-/// appearing or going away, a chosen agent, and a chosen model. Nothing here
-/// is filled in on the core's side, so an event that names a model without
-/// its provider is refused rather than guessed at.
+/// It folds what a single screen does into one event, the way
+/// `ui_state_update` already folds that screen's other state: the tab
+/// appearing or going away, Use Hide AI, a chosen agent, a chosen model (for
+/// Runs on or for an agent in the fallback list), and the fallback list's
+/// additions and removals. Nothing here is filled in on the core's side, so
+/// an event that names a model without its provider is refused rather than
+/// guessed at.
 #[derive(Deserialize)]
 pub(super) struct AiSettingsPayload {
     /// True while the Background AI group is on screen. The provider probe
@@ -1080,6 +1085,16 @@ pub(super) struct AiSettingsPayload {
     /// The agent-summary switch (PRD overview-request-view D-11).
     #[serde(default)]
     pub(super) agent_summary: Option<bool>,
+    /// Use Hide AI (D-14): off, no model is asked anything.
+    #[serde(default)]
+    pub(super) enabled: Option<bool>,
+    /// An agent to add under "If <Runs on> can't answer" (D-16), at the end
+    /// of the list.
+    #[serde(default)]
+    pub(super) fallback_add: Option<String>,
+    /// An agent to take out of that list.
+    #[serde(default)]
+    pub(super) fallback_remove: Option<String>,
 }
 
 /// One pane search. An empty `term` clears the search rather than needing its
@@ -1246,6 +1261,7 @@ pub(super) enum Event {
     PaneInputSent(PaneTargetPayload),
     PaneVisit(PaneTargetPayload),
     AgentWake(AgentWakePayload),
+    PaneReopen(PaneTargetPayload),
     AgentTreeToggle(PaneTargetPayload),
     RemoteControl(RemoteControlPayload),
     RemoteFileList(RemoteFileListPayload),
@@ -1278,9 +1294,10 @@ pub(super) enum Event {
     CloneRepository(CloneRepositoryPayload),
     CancelRepositoryClone(CancelRepositoryClonePayload),
     KitReinstall(KitReinstallPayload),
-    KitComponentSet(KitComponentSetPayload),
     KitAgentSet(KitAgentSetPayload),
+    CodexDaemonDisable(CodexDaemonDisablePayload),
     KitCheck(KitCheckPayload),
+    SshHostsList(SshHostsListPayload),
     UiAttached(UiAttachedPayload),
     AiSettings(AiSettingsPayload),
     TerminalResize(TerminalResizePayload),
@@ -1453,6 +1470,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "pane_input_sent" => decode!(PaneTargetPayload, PaneInputSent),
         "pane_visit" => decode!(PaneTargetPayload, PaneVisit),
         "agent_wake" => decode!(AgentWakePayload, AgentWake),
+        "pane_reopen" => decode!(PaneTargetPayload, PaneReopen),
         "agent_tree_toggle" => decode!(PaneTargetPayload, AgentTreeToggle),
         "remote_control" => decode!(RemoteControlPayload, RemoteControl),
         "remote_file_list" => decode!(RemoteFileListPayload, RemoteFileList),
@@ -1489,9 +1507,10 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "clone_repository" => decode!(CloneRepositoryPayload, CloneRepository),
         "cancel_repository_clone" => decode!(CancelRepositoryClonePayload, CancelRepositoryClone),
         "kit_reinstall" => decode!(KitReinstallPayload, KitReinstall),
-        "kit_component_set" => decode!(KitComponentSetPayload, KitComponentSet),
         "kit_agent_set" => decode!(KitAgentSetPayload, KitAgentSet),
+        "codex_daemon_disable" => decode!(CodexDaemonDisablePayload, CodexDaemonDisable),
         "kit_check" => decode!(KitCheckPayload, KitCheck),
+        "ssh_hosts_list" => decode!(SshHostsListPayload, SshHostsList),
         "ui_attached" => decode!(UiAttachedPayload, UiAttached),
         "ai_settings" => decode!(AiSettingsPayload, AiSettings),
         "terminal_resize" => decode!(TerminalResizePayload, TerminalResize),
@@ -1648,6 +1667,7 @@ impl Runtime {
             }
             Event::PaneVisit(payload) => self.record_pane_visit(payload.pane_id),
             Event::AgentWake(payload) => self.request_agent_wake(payload),
+            Event::PaneReopen(payload) => self.request_pane_reopen(&payload.pane_id),
             Event::RefreshStatus => self.request_status_refresh(),
             Event::PetSetVisible(payload) => self.set_pet_visible(payload.visible),
             Event::PetToggleVisible => {
@@ -1754,13 +1774,11 @@ impl Runtime {
                 self.request_terminal_control(&pane_id);
                 true
             }
-            Event::KitComponentSet(payload) => self.request_kit_component_set(
-                &payload.device_id,
-                payload.component,
-                payload.enabled,
-            ),
             Event::KitAgentSet(payload) => {
                 self.request_kit_agent_set(&payload.device_id, &payload.agent, payload.enabled)
+            }
+            Event::CodexDaemonDisable(payload) => {
+                self.request_codex_daemon_disable(&payload.device_id)
             }
             Event::KitReinstall(payload) => self.request_kit_reinstall(
                 &payload.device_id,
@@ -1768,6 +1786,7 @@ impl Runtime {
                 payload.agents.as_deref(),
             ),
             Event::KitCheck(_) => self.request_kit_check(),
+            Event::SshHostsList(_) => self.request_ssh_hosts(),
             // Nothing drawn changes; the coordinator reads it on its next wake.
             Event::UiAttached(payload) => {
                 self.ui_attached = payload.attached;
@@ -2158,24 +2177,13 @@ impl Runtime {
                     );
                     return true;
                 }
-                // Latest request wins. A second switch while the first is
-                // unconfirmed replaces it, so Herdr's answer to the first
-                // cannot pull the canvas back off the tab the operator is
-                // now on. The wait is armed before the control is submitted,
-                // because an idle lane sends it at once and marks it sent.
-                let tab_id = payload.tab_id.clone();
-                self.await_tab_focus(PendingViewFocus::new(payload.checkout_id, payload.tab_id));
-                if let Err(message) =
-                    self.submit_local_control(RemoteControlAction::FocusTab { tab_id })
-                {
-                    // Nothing left for Herdr, so there is no answer to wait for.
-                    if self
-                        .pending_tab_focus
-                        .as_ref()
-                        .is_some_and(|pending| !pending.sent)
-                    {
-                        self.pending_tab_focus = None;
-                    }
+                // A tab focus still waiting on the lane is replaced there by
+                // this one; one already sent is answered anyway, and its
+                // answer is told from Herdr's own moves by the order the
+                // requests left in (`tab_focus.rs`).
+                if let Err(message) = self.submit_local_control(RemoteControlAction::FocusTab {
+                    tab_id: payload.tab_id,
+                }) {
                     self.set_error("tab.focus_worker_failed", message, true);
                 }
                 true

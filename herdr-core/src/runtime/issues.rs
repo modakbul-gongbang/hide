@@ -1124,7 +1124,9 @@ impl Runtime {
     /// `worktree_name_suggest`: the background AI names the worktree. Off
     /// when Settings › Issues says so; the dialog's own name stands then.
     pub(super) fn suggest_worktree_name(&mut self, payload: WorktreeNameSuggestPayload) -> bool {
-        if !self.snapshot.ui_state.issue_settings.ai_worktree_name {
+        // With Hide AI off, or no agent chosen, the dialog's own name stands
+        // (B33, B47).
+        if !self.snapshot.ui_state.issue_settings.ai_worktree_name || !self.ai_active() {
             return false;
         }
         let settings = self.ai_settings.clone().unwrap_or_default();

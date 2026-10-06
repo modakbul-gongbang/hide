@@ -254,7 +254,19 @@ fn hook_group(helper: &Path, runtime: AgentRuntime, event: HookEvent) -> Value {
     } else {
         posix_hook(helper, runtime, event)
     };
-    serde_json::json!({ "hooks": [hook] })
+    let mut group = serde_json::json!({ "hooks": [hook] });
+    if let Some(matcher) = hook_matcher(runtime, event) {
+        group["matcher"] = Value::from(matcher);
+    }
+    group
+}
+
+/// The matcher Hide writes on the group of `event`'s entry, `None` for an
+/// entry that fires on every occurrence. Both the writer above and the Codex
+/// trust step read it here, so an event that gains a matcher (a PreToolUse
+/// guard) is written and recognised as Hide's by the same line.
+pub(crate) fn hook_matcher(_runtime: AgentRuntime, _event: HookEvent) -> Option<&'static str> {
+    None
 }
 
 /// The arguments the helper runs with, after its path.
@@ -270,16 +282,19 @@ fn helper_arguments(runtime: AgentRuntime, event: HookEvent) -> String {
 /// macOS and Linux: both runtimes hand the command to a POSIX shell (Claude
 /// Code `sh -c`, Codex the session's shell, zsh or bash, with `-c`).
 fn posix_hook(helper: &Path, runtime: AgentRuntime, event: HookEvent) -> Value {
-    let quoted = Quoting::Posix.quote(&helper.display().to_string());
-    let command = format!(
-        "if [ -x {quoted} ]; then exec {quoted} {}; fi",
-        helper_arguments(runtime, event)
-    );
     serde_json::json!({
         "type": "command",
-        "command": command,
+        "command": posix_command(helper, runtime, event),
         "timeout": 8,
     })
+}
+
+fn posix_command(helper: &Path, runtime: AgentRuntime, event: HookEvent) -> String {
+    let quoted = Quoting::Posix.quote(&helper.display().to_string());
+    format!(
+        "if [ -x {quoted} ]; then exec {quoted} {}; fi",
+        helper_arguments(runtime, event)
+    )
 }
 
 /// Windows: one PowerShell guard for both runtimes. Codex runs a command in
@@ -289,11 +304,7 @@ fn posix_hook(helper: &Path, runtime: AgentRuntime, event: HookEvent) -> Value {
 /// entry names PowerShell itself in exec form (`args`), which no shell
 /// re-parses and which runs the same on every machine.
 fn windows_hook(helper: &Path, runtime: AgentRuntime, event: HookEvent) -> Value {
-    let quoted = Quoting::PowerShell.quote(&helper.display().to_string());
-    let guard = format!(
-        "if (Test-Path -LiteralPath {quoted} -PathType Leaf) {{ & {quoted} {} }}",
-        helper_arguments(runtime, event)
-    );
+    let guard = windows_guard(helper, runtime, event);
     match runtime {
         AgentRuntime::ClaudeCode => serde_json::json!({
             "type": "command",
@@ -306,6 +317,26 @@ fn windows_hook(helper: &Path, runtime: AgentRuntime, event: HookEvent) -> Value
             "command": guard,
             "timeout": 8,
         }),
+    }
+}
+
+fn windows_guard(helper: &Path, runtime: AgentRuntime, event: HookEvent) -> String {
+    let quoted = Quoting::PowerShell.quote(&helper.display().to_string());
+    format!(
+        "if (Test-Path -LiteralPath {quoted} -PathType Leaf) {{ & {quoted} {} }}",
+        helper_arguments(runtime, event)
+    )
+}
+
+/// The `command` of the Codex entry [`install`] writes for `event` on this
+/// system. Codex takes the command string itself on every system, so this is
+/// the whole of what Codex hashes and shows for the entry; the trust step
+/// compares against it instead of rebuilding it (`crate::codex_trust`).
+pub(crate) fn codex_command(helper: &Path, event: HookEvent) -> String {
+    if cfg!(windows) {
+        windows_guard(helper, AgentRuntime::Codex, event)
+    } else {
+        posix_command(helper, AgentRuntime::Codex, event)
     }
 }
 
@@ -805,6 +836,33 @@ mod tests {
                 owned_versions(groups).len(),
                 1,
                 "{} has one Hide entry",
+                event.name()
+            );
+        }
+    }
+
+    #[test]
+    fn the_codex_command_the_trust_step_expects_is_what_install_writes() {
+        // Codex hashes the command string it finds in the file, so the trust
+        // step recognises Hide's entry by `codex_command` alone: on every
+        // system it must be exactly what `install` wrote for each event, with
+        // the matcher `hook_matcher` names.
+        let fixture = Fixture::new("codex-command");
+        let path = helper(&fixture);
+        install(AgentRuntime::Codex, fixture.home(), &path).unwrap();
+        let written = fixture.read(AgentRuntime::Codex);
+        for event in HookEvent::ALL {
+            let group = &written["hooks"][event.name()][0];
+            assert_eq!(
+                group["hooks"][0]["command"],
+                codex_command(&path, event),
+                "{}",
+                event.name()
+            );
+            assert_eq!(
+                group.get("matcher").and_then(Value::as_str),
+                hook_matcher(AgentRuntime::Codex, event),
+                "{}",
                 event.name()
             );
         }

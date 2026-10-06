@@ -87,6 +87,28 @@ if ARGS[:2] == ["auth", "status"]:
         emit({"authMethod": "none"})
     emit({"loggedIn": MODE != "no_account", "authMethod": "claude.ai"})
 
+# The model list: the stream-json control protocol with one `initialize`
+# request on stdin and no model turn. The answer carries the account too, which
+# the backend must never return; FAKE_MODE init_broken answers an error.
+if "--input-format" in ARGS:
+    request = sys.stdin.read()
+    if path := os.environ.get("FAKE_STDIN_FILE"):
+        with open(path, "w", encoding="utf-8") as handle:
+            handle.write(request)
+    if MODE == "init_broken":
+        emit({"type": "control_response", "response": {
+            "subtype": "error", "request_id": "hide-models", "error": "x"}})
+    emit({"type": "control_response", "response": {
+        "subtype": "success", "request_id": "hide-models",
+        "response": {
+            "models": [
+                {"value": "default", "resolvedModel": "claude-opus-5-5"},
+                {"value": "opus", "resolvedModel": "claude-opus-5-5"},
+                {"value": "sonnet", "resolvedModel": "claude-sonnet-5-5"},
+            ],
+            "account": {"email": "someone@example.invalid", "organization": "Example"},
+        }}})
+
 # Print mode. The prompt body arrives on stdin, never in argv.
 prompt = sys.stdin.read()
 if path := os.environ.get("FAKE_STDIN_FILE"):

@@ -12,14 +12,14 @@ import path from "node:path";
 import { startHerdr } from "../../web/e2e/herdr-fixture";
 import { enterWorkspace } from "../../web/e2e/wire";
 import {
-  claudeSettings, codexHooks, readSettings, seedAgentFiles,
+  claudeSettings, codexDaemonWritten, codexHooks, readSettings, seedAgentFiles,
 } from "./device-home";
 import { hostLog, isolate, relaunch, screenshot, shellPage, test } from "./fixture";
 
 test.describe.configure({ timeout: 300_000 });
 test.skip(!process.env.HIDE_E2E_APP, "a packaged hide.app is required");
 
-const PARTS = ["cli", "claude_code_hook", "codex_hook", "coordination_retirement", "codex_per_pane"];
+const PARTS = ["cli", "claude_code_hook", "codex_hook", "coordination_retirement"];
 const LABELS_ID = "hide.agent-context-labels";
 
 type Applied = { kind?: string; device_id?: string; components?: { id: string; state: string; reason: string | null }[] };
@@ -57,6 +57,8 @@ test("the app's daemon installs this Mac's kit into its HOME at launch and chang
     await expect.poll(() => applied(daemonLog).length, { timeout: 120_000 }).toBeGreaterThan(0);
     expect(applied(daemonLog)[0]!.components).toEqual(PARTS.map((id) => expect.objectContaining({ id, state: "installed" })));
     expect(fs.readlinkSync(path.join(home, ".local", "bin", "hide"))).toBe(path.join(resources, "hide"));
+    // PRD settings-cleanup D-14: the kit reads Codex's daemon setting and never turns it off on its own.
+    expect(codexDaemonWritten(home)).toBe(false);
     for (const [file, before] of [[claudeSettings(home), original.claude], [codexHooks(home), original.codex]] as const) {
       const now = readSettings(file);
       expect(JSON.stringify(now.hooks)).toContain(path.join(resources, "hide-agent-hooks"));
@@ -74,9 +76,14 @@ test("the app's daemon installs this Mac's kit into its HOME at launch and chang
     await page.locator("[data-open-settings]").click();
     await expect(page.locator('[data-settings="true"]')).toBeVisible();
     await page.locator('[data-settings-tab="devices"]').click();
+    // PRD settings-cleanup B54: the healthy kit is on request in Connection details, never on the row.
+    await page.locator('[data-device-menu="local"]').click();
+    await page.locator('[data-device-details="local"]').click();
     for (const id of PARTS) await expect(page.locator(`[data-kit-part="local:${id}:installed"]`)).toBeVisible();
-    await expect(page.locator('[data-kit-reinstall="local"]')).toHaveCount(0);
     await screenshot(page, "this-mac-kit-installed");
+    await page.keyboard.press("Escape");
+    await expect(page.locator('[data-device-details-dialog="local"]')).toHaveCount(0);
+    await expect(page.locator('[data-kit-reinstall="local"]')).toHaveCount(0);
     await page.locator('[data-settings-tab="agents"]').click();
     await expect(page.locator('[data-settings-tab="agents"]')).toHaveAttribute("data-state", "active");
     await screenshot(page, "this-mac-hooks");
