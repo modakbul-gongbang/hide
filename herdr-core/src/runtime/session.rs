@@ -1532,6 +1532,13 @@ impl Runtime {
             self.push_diagnostic("agent_layout.reconcile_refused", error);
         }
         if let Some(pane_id) = follow_pane {
+            // TEMP probe (do not merge): issue 677.
+            crate::diagnostic!(serde_json::json!({
+                "component": "probe",
+                "kind": "probe.follow_pane",
+                "selected_before": self.snapshot.terminal.pane_id,
+                "pane_id": pane_id,
+            }));
             self.select_terminal_pane(Some(pane_id));
             // Herdr moved the keyboard, not the operator. The read record
             // follows only a focus the operator made in Hide.

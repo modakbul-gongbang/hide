@@ -3450,6 +3450,14 @@ impl Runtime {
             }
             Event::UiStateUpdate(payload) => {
                 let payload = *payload;
+                // TEMP probe (do not merge): issue 677.
+                crate::diagnostic!(serde_json::json!({
+                    "component": "probe",
+                    "kind": "probe.ui_state_update",
+                    "selected_before": self.snapshot.terminal.pane_id,
+                    "selected_saved": payload.selected_pane_id,
+                    "usage_window_visible": payload.usage_window_visible,
+                }));
                 if let Some(visible) = payload.usage_window_visible {
                     self.usage_window_visible = visible;
                 }

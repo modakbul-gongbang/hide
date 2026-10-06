@@ -2618,6 +2618,15 @@ impl Runtime {
                     ) => self.agent_can_show_created(&context.checkout_path, id),
                     _ => true,
                 };
+                // TEMP probe (do not merge): issue 677.
+                crate::diagnostic!(serde_json::json!({
+                    "component": "probe",
+                    "kind": "probe.reopen_result",
+                    "tab_id": outcome.tab_id,
+                    "focused_pane_id": outcome.focused_pane_id,
+                    "can_show": can_show,
+                    "selected_before": self.snapshot.terminal.pane_id,
+                }));
                 if can_show && let Some(pane_id) = outcome.focused_pane_id {
                     self.snapshot.terminal.pane_id = Some(pane_id.clone());
                     self.snapshot.focused.surface = Surface::Terminal;
