@@ -791,7 +791,8 @@ test("area cycle native: page input previews one exact area, releases once and c
   const page = await app.firstWindow();
   const sent = countSent(page);
   // TEMP_CLAMP reproduces the old opening: wider than the work area, so macOS can clamp it later.
-  if (process.env.TEMP_CLAMP) await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.setSize(1280, 800));
+  // TEMP_CLAMP lays the shell out 1280 CSS pixels wide, as the unclamped 1280x800 window did.
+  if (process.env.TEMP_CLAMP) await app.evaluate(({ BrowserWindow, screen }) => { const work = screen.getPrimaryDisplay().workArea; const w = BrowserWindow.getAllWindows()[0]!; w.setBounds({ x: work.x, y: work.y, width: 1024, height: Math.min(800, work.height) }); w.webContents.setZoomFactor(1024 / 1280); });
   else await fitWindow(app, WINDOW);
   await enterWorkspace(page, "fixture");
   const outside = `${origin}/a.html`;
@@ -877,7 +878,7 @@ test("area cycle native: page input previews one exact area, releases once and c
   nativeKeys(pid, ["2"]);
   // The caret sits wherever the script's focus put it, so only the landing is checked.
   expect(await inPage(current, "document.querySelector('input').value")).toContain("2");
-  console.log(JSON.stringify({ ts: new Date().toISOString(), event: "temp.capture_start" }));
+  console.log(JSON.stringify({ ts: new Date().toISOString(), event: "temp.capture_start", active: await page.evaluate(() => document.activeElement?.getAttribute("aria-label") ?? document.activeElement?.tagName ?? null) }));
   await capture("area-native-readable");
   console.log(JSON.stringify({ ts: new Date().toISOString(), event: "temp.capture_end" }));
 
@@ -887,11 +888,13 @@ test("area cycle native: page input previews one exact area, releases once and c
   await expect(page.locator("[data-cycle=area]")).toBeVisible();
   console.log(JSON.stringify({ ts: new Date().toISOString(), event: "temp.cycle_visible", bounds: await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.getContentBounds()) }));
   // TEMP_CLAMP: what macOS does to that window when the blur orders it out and back, made certain.
-  if (process.env.TEMP_CLAMP) await app.evaluate(({ BrowserWindow, screen }) => BrowserWindow.getAllWindows()[0]!.setBounds(screen.getPrimaryDisplay().workArea));
+  console.log(JSON.stringify({ ts: new Date().toISOString(), event: "temp.active_in_hold", active: await page.evaluate(() => document.activeElement?.getAttribute("aria-label") ?? document.activeElement?.tagName ?? null) }));
+  // TEMP_CLAMP: the body narrows to 1024 CSS pixels in the hold, as macOS's clamp at the blur made it.
+  if (process.env.TEMP_CLAMP) await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.setZoomFactor(1));
   await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.blur());
   await expect(page.locator("[data-cycle]")).toHaveCount(0);
   // The window coming back gives the keyboard to the page that started the hold.
-  console.log(JSON.stringify({ ts: new Date().toISOString(), event: "temp.cycle_gone" }));
+  console.log(JSON.stringify({ ts: new Date().toISOString(), event: "temp.cycle_gone", active: await page.evaluate(() => document.activeElement?.getAttribute("aria-label") ?? document.activeElement?.tagName ?? null) }));
   await app.evaluate(({ app: electron, BrowserWindow }) => { electron.focus({ steal: true }); BrowserWindow.getAllWindows()[0]!.focus(); });
   await expect.poll(async () => (await zoomOf(current)).focused).toBe(true);
   console.log(JSON.stringify({ ts: new Date().toISOString(), event: "temp.returned", active: await page.evaluate(() => { const element = document.activeElement; return element && `${element.tagName} ${[...element.attributes].filter((a) => a.name.startsWith("data-") || a.name === "aria-label").map((a) => `${a.name}=${a.value.slice(0, 30)}`).slice(0, 6).join(" ")}`; }), shellHasFocus: await page.evaluate(() => document.hasFocus()) }));
