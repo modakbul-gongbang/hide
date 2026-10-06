@@ -108,6 +108,13 @@ fn worktree(task: &Task) -> Result<PathBuf, Failure> {
         .ok_or_else(|| Failure::task("worktree", "the Task has no worktree"))
 }
 
+/// The first pull request in a `gh pr list` answer whose head branch lives
+/// in the repository itself, never a fork's branch of the same name.
+fn same_repo(prs: &[Value]) -> Option<&Value> {
+    prs.iter()
+        .find(|pr| pr["isCrossRepository"].as_bool() == Some(false))
+}
+
 fn repo(factory: &Factory) -> Result<String, Failure> {
     factory
         .repo
@@ -880,10 +887,12 @@ impl MergeTarget for SharedProjects {
                 "--state",
                 "open",
                 "--json",
-                "number,url,state,headRefName",
+                "number,url,state,headRefName,isCrossRepository",
             ],
         )?;
-        if let Some(pr) = existing.as_array().and_then(|prs| prs.first()) {
+        // `--head` matches a branch name in any fork; only this repository's
+        // own branch is the Task's.
+        if let Some(pr) = existing.as_array().and_then(|prs| same_repo(prs)) {
             // A harness opened it, or an earlier attempt did (B36, B73).
             let number = pr["number"]
                 .as_u64()
@@ -1252,12 +1261,12 @@ impl MergeTarget for SharedProjects {
             "github.pr_find",
             &[
                 "pr", "list", "--repo", &repo, "--head", &branch, "--state", "open", "--json",
-                "number",
+                "number,isCrossRepository",
             ],
         )?;
         let number = match existing
             .as_array()
-            .and_then(|prs| prs.first())
+            .and_then(|prs| same_repo(prs))
             .and_then(|pr| pr["number"].as_u64())
         {
             Some(number) => number,

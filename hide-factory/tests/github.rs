@@ -126,7 +126,7 @@ impl Runner for FakeGh {
                 hub.next += 1;
                 let number = hub.next;
                 let head = flag(args, "--head").unwrap().to_owned();
-                hub.prs.insert(number, json!({"number": number, "url": format!("https://github.com/o/r/pull/{number}"), "state": "OPEN", "headRefName": head, "headRefOid": "headsha", "mergeCommit": null, "closingIssuesReferences": []}));
+                hub.prs.insert(number, json!({"number": number, "url": format!("https://github.com/o/r/pull/{number}"), "state": "OPEN", "headRefName": head, "isCrossRepository": false, "headRefOid": "headsha", "mergeCommit": null, "closingIssuesReferences": []}));
                 hub.writes.push(format!("pr create {number}"));
                 ok(format!("https://github.com/o/r/pull/{number}\n"))
             }
@@ -639,6 +639,30 @@ fn a_worker_s_closing_keyword_in_a_decision_stays_text() {
     let close = body[fixes..].find("````").map(|i| i + fixes).unwrap();
     assert!(fence < fixes && fixes < close, "{body}");
     assert!(body.trim_end().ends_with("Closes #1"));
+}
+
+#[test]
+fn a_fork_pull_request_on_the_task_or_revert_branch_name_is_never_adopted() {
+    let gh = FakeGh::default();
+    let mut p = projects(&gh);
+    let factory = factory();
+    let t = task("T-1", Some(1));
+    {
+        let mut hub = gh.0.lock().unwrap();
+        for (number, head) in [(40, t.branch_slug()), (41, "factory/revert-t-1".into())] {
+            hub.prs.insert(
+                number,
+                json!({"number": number, "url": format!("https://github.com/x/r/pull/{number}"),
+                    "state": "OPEN", "headRefName": head, "isCrossRepository": true,
+                    "headRefOid": "strangersha", "closingIssuesReferences": []}),
+            );
+        }
+    }
+    let pr = p.open_pr(&factory, &t, "body").unwrap().unwrap();
+    assert!(pr.by_factory, "the Factory opened its own");
+    assert_ne!(pr.number, 40);
+    let revert = p.revert(&factory, &t, "bad1").unwrap();
+    assert_ne!(revert.pr, Some(41));
 }
 
 #[test]

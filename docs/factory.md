@@ -214,6 +214,7 @@ A worker reports through `hide factory` and gets its answer in the same call.
 `done` answers at once, goes to `verifying`, and puts the worker to sleep.
 On a GitHub Factory the next tick pushes the worktree's commits to the Task branch (with a lease, so a rebase goes through), then finds the open pull request for that branch or opens one, and only then reads CI on the pushed commit; every report pushes, so a fix after a failed check reaches the same pull request, and a merged pull request from before a revert is never reused.
 A Task branch the remote deleted, as automatic branch deletion does after a merge, is pushed again rather than refused by a stale lease.
+Only a pull request from the repository's own branch is a Task's or a revert's; a fork's pull request on the same branch name is never adopted.
 A push or pull request refused twice in a row with no environment signal (a protected branch, a hook) stops the Task as "push 거절됨" with the reason; a person fixes the cause and retries. One with an environment signal is asked again every minute.
 A failed push or pull request is tried again a minute later.
 `decide` records a decision.
