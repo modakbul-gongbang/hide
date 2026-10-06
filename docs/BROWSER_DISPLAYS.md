@@ -278,7 +278,8 @@ After a window blur cancels a hold, the shell owes the initiating page the keybo
 The host's cancel names the cause with `windowLost`; a shell blur that is only focus moving to a page in the same window, a page that failed, and a page that closed owe nothing.
 A hold the shell ends while the window is not key is reported as lost by the host, so the order of the shell's blur and the host's blur event does not decide whether the debt exists.
 The request is the sync loop's own, apart from the ordinary focus request: it is delivered after the sync that shows the page, kept while the overlay or a still covers the page, and dropped when the page leaves the front Workspace.
-A key or click in the shell, another page taking the keyboard, a new hold, or the page's own focus after the request ends the debt, including a request not yet delivered; no other focus request is withdrawn.
+A key or click in the shell, a new hold, or a page's focus once the request is asked ends the debt, including a request not yet delivered; no other focus request is withdrawn.
+A page's focus while the window is still away is the window's own restore of its last responder, not a choice, and leaves the debt standing.
 After the core confirms a selected display, the existing keyboard-follow request focuses its document or diff, or schedules one trusted native-page focus command after visible-slot sync.
 The host focuses only a visible page in its already-focused candidate window; it never brings a window forward for this command.
 Cycle menu items are immediate command clicks without accelerators, so one physical key cannot also dispatch a menu selection.

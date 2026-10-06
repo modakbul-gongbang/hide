@@ -250,20 +250,32 @@ describe("native cycle responder return", () => {
     other();
   });
 
-  it("a page's failure, or another page taking the keyboard, leaves nothing owed", () => {
+  const pageFocus = (id: string, workspace = WORKSPACE) => { for (const listener of browserListeners) listener({ kind: "focus", workspace, id }); };
+
+  it("a page's failure leaves nothing owed", () => {
     input();
     away(false);
     back();
     expect(pageCommands).toEqual([]);
+  });
+
+  it("another page's focus while the window is away is its restore and owes nothing less", () => {
     input();
     away();
-    for (const listener of browserListeners) listener({ kind: "focus", workspace: WORKSPACE, id: "d2" });
+    pageFocus("d2");
+    pageFocus("d1", "local\u0000/other");
     back();
-    expect(pageCommands).toEqual([]);
+    expect(pageCommands).toEqual([[WORKSPACE, "d1", "focus"]]);
+  });
+
+  it("another page taking the keyboard after the window returned withdraws the waiting request", () => {
     input();
     away();
-    for (const listener of browserListeners) listener({ kind: "focus", workspace: "local\u0000/other", id: "d1" });
-    back();
+    unregister?.();
+    window.dispatchEvent(new Event("focus"));
+    pageFocus("d2");
+    unregister = registerBrowserSlot("d1", slot);
+    flushFrames();
     expect(pageCommands).toEqual([]);
   });
 

@@ -252,6 +252,7 @@ export class BrowserViews {
     // The cancel says the window was lost; the shell asks for the page's
     // keyboard back when the window returns (`web/src/keyboard.ts`).
     window.on("blur", () => this.cancelCycle(true));
+    window.webContents.on("focus", () => this.log.event("browser.shell_focus", { window_focused: window.isFocused(), held: this.cycleInput !== null }));
     window.on("closed", () => {
       this.cancelCycle();
       for (const page of [...this.pages.values()]) this.destroy(page, "window_closed");
@@ -500,6 +501,7 @@ export class BrowserViews {
       this.update(page, { loading: false, failure: this.words()("native.browser.stopped") });
     });
     contents.on("focus", () => {
+      this.log.event("browser.page_focus", { page_visible: page.visible, window_focused: this.window?.isFocused() ?? false });
       if (page.visible) this.emit({ kind: "focus", workspace: page.workspace, id: page.id });
     });
     this.guard(page, contents);

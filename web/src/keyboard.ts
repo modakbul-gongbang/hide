@@ -508,9 +508,10 @@ export function installKeyboard(actions: Actions): () => void {
       return;
     }
     if (input.kind === "focus") {
-      const same = owed?.workspace === input.workspace && owed.id === input.id;
-      // Another page took the keyboard, or this one has it from the request: nothing is owed.
-      if (owed && (!same || owed.asked)) forgetOwed();
+      // While the window is away a page's focus is the window's own restore, not a choice the
+      // operator made. Once the request is asked, another page's focus, or this page's after
+      // the request, settles the debt.
+      if (owed?.asked) forgetOwed();
       return;
     }
     if (input.kind !== "cycle-input") return;
