@@ -1,58 +1,80 @@
-// The Project Overview's header at the widths a window can take (issue 618):
-// the project name has to stay on the path back, and when the line runs out of
-// room the actions give way first, keeping their names. Light and Dark captures
-// at 720, 900 and 1600 land in HIDE_E2E_SCREENSHOT_DIR.
-import { expect, test, type Page } from "@playwright/test";
+// The Project Overview's title row at the widths a window can take (issue 618):
+// a long project name keeps a readable share of the row at every width, and
+// New agent and New issue give way to their icons only when the whole name no
+// longer fits beside their words. Light and Dark captures at 720, 900 and 1600
+// land in HIDE_E2E_SCREENSHOT_DIR.
+import { expect, test, type Locator, type Page } from "@playwright/test";
+import fs from "node:fs";
+import path from "node:path";
 import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { enterWorkspace, screenshot } from "./wire";
-import { chord } from "./chords";
+import { chooseTheme, enterWorkspace, screenshot } from "./wire";
 import { openCurrentProjectOverview } from "./overview-entry";
-import { animationsFinished } from "./wait";
 
-async function chooseTheme(page: Page, theme: "light" | "dark"): Promise<void> {
-  await page.keyboard.press(chord("settings"));
-  await page.locator('[data-settings-tab="appearance"]').click();
-  await page.locator(`[data-theme-option="${theme}"]`).click();
-  await expect(page.locator("html")).toHaveClass(new RegExp(`\\b${theme}\\b`));
-  await page.keyboard.press("Escape");
-  await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
-  await animationsFinished(page);
+const LABEL = "a-project-whose-name-is-long-enough-to-fill-the-header-row";
+/** The least the name may keep: what a tab title keeps (`--size-tab-title-min`). */
+const NAME_MIN = 104;
+
+async function width(node: Locator): Promise<number> {
+  return (await node.boundingBox())?.width ?? 0;
 }
 
-test("the Project Overview header keeps the project name at every width", async ({ page }) => {
+/** The state under test: whether New issue is its icon (square) or carries its word and keycap. */
+async function actionsAreIcons(page: Page, issue: Locator): Promise<boolean> {
+  const box = await issue.boundingBox();
+  return box !== null && box.width === box.height;
+}
+
+test("the Project Overview title row keeps a long project name readable at every width", async ({ page }) => {
   test.setTimeout(120_000);
   const herdr = await startHerdr();
   let daemon: Daemon | null = null;
   try {
+    const project = path.join(herdr.root, LABEL);
+    fs.mkdirSync(project);
+    herdr.run(["workspace", "create", "--cwd", project, "--label", LABEL, "--no-focus"]);
     daemon = await startHided(herdr, "overview-header");
     await page.goto(`${daemon.origin}/?probe=1#token=${daemon.token}`);
-    await enterWorkspace(page, "fixture");
-    await openCurrentProjectOverview(page, "fixture");
+    await page.setViewportSize({ width: 1600, height: 800 });
+    await enterWorkspace(page, LABEL);
+    await openCurrentProjectOverview(page, LABEL);
     const header = page.locator("[data-overview-screen] > header");
-    const name = header.getByRole("heading", { level: 1, name: "fixture" });
-    const actions = [header.getByRole("button", { name: "New agent" }), header.getByRole("button", { name: "New issue" })];
+    const name = header.getByRole("heading", { level: 1, name: LABEL });
+    const issue = header.getByRole("button", { name: "New issue" });
+    const agent = header.getByRole("button", { name: "New agent" });
     for (const theme of ["dark", "light"] as const) {
       await chooseTheme(page, theme);
-      for (const width of [1600, 900, 720]) {
-        await page.setViewportSize({ width, height: 800 });
-        // The name keeps a width of its own, and nothing in the header runs past it.
-        await expect.poll(async () => (await name.boundingBox())?.width ?? 0, { message: `the name at ${width}px` }).toBeGreaterThan(0);
-        for (const action of actions) await expect(action).toBeVisible();
-        // Under 512 px of header the actions are square icons without the keycap; above it they carry their word and `C`.
-        const issue = await actions[1].boundingBox();
-        expect(issue!.width === issue!.height, `New issue is an icon at ${width}px`).toBe(width === 720);
-        await expect(header.locator("[data-overview-new-issue] kbd")).toBeVisible({ visible: width !== 720 });
-        expect(await header.evaluate((node) => node.scrollWidth <= node.clientWidth), `header overflow at ${width}px`).toBe(true);
-        await screenshot(page, `overview-header-${width}-${theme}`);
+      for (const viewport of [1600, 900, 720]) {
+        await page.setViewportSize({ width: viewport, height: 800 });
+        // At 1600 the whole name and both words fit; at 900 and 720 the name needs the room, so the actions are icons.
+        await expect.poll(() => actionsAreIcons(page, issue), { message: `New issue as an icon at ${viewport}px` }).toBe(viewport !== 1600);
+        await expect(issue.locator("kbd")).toBeVisible({ visible: viewport === 1600 });
+        await expect(agent).toBeVisible();
+        expect(await width(name), `the name's width at ${viewport}px`).toBeGreaterThanOrEqual(NAME_MIN);
+        expect(await name.evaluate((node) => node.scrollWidth > node.clientWidth), `the name is cut with an ellipsis only at ${viewport}px`).toBe(viewport !== 1600);
+        expect(await header.evaluate((node) => node.scrollWidth <= node.clientWidth), `nothing in the row runs past the header at ${viewport}px`).toBe(true);
+        await screenshot(page, `overview-header-${viewport}-${theme}`);
       }
     }
-    // The name is an actual readable label, not a sliver: it shows the whole of a short name.
-    await page.setViewportSize({ width: 720, height: 800 });
-    expect(await name.evaluate((node) => node.scrollWidth <= node.clientWidth)).toBe(true);
-    // The icon keeps its name and shortcut in a hint.
-    await actions[1].hover();
+    // The case issue 618 reported: 720 px, where the header is too narrow for either action's word.
+    expect(await width(header), "the header at 720px").toBeLessThan(NAME_MIN * 4);
+    // An icon keeps its name and shortcut in a hint, at 1600 nothing opens.
+    await issue.hover();
     await expect(page.getByRole("tooltip")).toContainText("New issue");
+    await expect(page.getByRole("tooltip")).toContainText("C");
+    // A disabled control takes no pointer, so the hint hangs on the span around it (New agent is disabled for a folder with no checkout).
+    await page.mouse.move(0, 0);
+    await expect(page.getByRole("tooltip")).toHaveCount(0);
+    await agent.evaluate((node: HTMLButtonElement) => {
+      node.disabled = true;
+    });
+    await agent.locator("xpath=..").hover();
+    await expect(page.getByRole("tooltip")).toContainText("New agent");
+    await page.setViewportSize({ width: 1600, height: 800 });
+    await expect.poll(() => actionsAreIcons(page, issue)).toBe(false);
+    await page.mouse.move(0, 0);
+    await issue.hover();
+    await expect(page.getByRole("tooltip")).toHaveCount(0);
   } finally {
     daemon?.stop();
     herdr.stop();

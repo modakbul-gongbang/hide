@@ -145,17 +145,20 @@ function Hint({
   shortcut,
   side,
   reveals = false,
+  active = true,
   children,
 }: {
   label: string;
   shortcut?: ReactNode;
   side?: "top" | "right" | "bottom" | "left";
   reveals?: boolean;
+  /** False while the control says all of this itself (a visible word), so no hint opens. */
+  active?: boolean;
   children: ReactNode;
 }) {
   const { open, onOpenChange, triggerProps } = useHintOpen();
   return (
-    <Tooltip open={open} onOpenChange={onOpenChange}>
+    <Tooltip open={active && open} onOpenChange={(next) => active && onOpenChange(next)}>
       <TooltipTrigger asChild aria-label={reveals ? undefined : label} {...triggerProps}>
         {children}
       </TooltipTrigger>

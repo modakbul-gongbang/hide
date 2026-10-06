@@ -1,11 +1,9 @@
-import { ArrowDownIcon, FolderGit2Icon, GitMergeIcon, HardDriveIcon, PlusIcon, RefreshCwIcon, SquareTerminalIcon } from "lucide-react";
+import { ArrowDownIcon, FolderGit2Icon, GitMergeIcon, HardDriveIcon, RefreshCwIcon } from "lucide-react";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import type { Actions } from "./actions";
 import { useInterfaceTranslation } from "./i18n/client";
 import { requireInterfaceLanguage } from "./i18n/locale";
-import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
-import { Kbd } from "./components/ui/kbd";
 import { Hint } from "./components/ui/tooltip";
 import { cn } from "./lib/utils";
 import { DiskFact, LowFreeFact, openDiskCleanup } from "./DiskEntrance";
@@ -14,6 +12,7 @@ import { overviewProject } from "./navigation";
 import { useNewIssueShortcut } from "./IssueDialogs";
 import { AgentGraph, GraphFilterControls } from "./GraphView";
 import { foldId } from "./agentGraph";
+import { OverviewTitleRow } from "./OverviewTitleRow";
 import { LensTabs, lensHandlers } from "./OverviewLenses";
 import { agentsTile, issuesTile, lastIssueRead, prsTile, scopeAgents, sessionsTile } from "./overviewLens";
 import { RequestView } from "./RequestView";
@@ -140,38 +139,15 @@ export function ProjectOverview({ projectId, lens, actions }: { projectId: strin
       data-overview-state={state}
       data-overview-view={view}
     >
-      <header className="@container flex shrink-0 flex-col gap-xs border-b border-border px-lg py-sm">
-        <div className="flex min-w-0 items-center gap-lg">
-          <nav aria-label={t("overview.location")} className="flex min-w-0 items-center gap-xs">
-            <button type="button" className="shrink-0 rounded-xs px-xs text-caption text-subtle-foreground hover:bg-accent hover:text-foreground focus-visible:bg-accent" data-go-main="true" onClick={() => setProject(null)}>
-              {t("overview.allProjects")}
-            </button>
-            <span aria-hidden="true" className="text-caption text-muted-foreground">/</span>
-            <Hint label={project.path} reveals>
-              <h1 className="min-w-0 truncate text-headline font-semibold text-foreground" aria-current="page">
-                {project.label}
-              </h1>
-            </Hint>
-            {device && device.kind === "remote" ? <Badge variant="secondary">{device.label}</Badge> : null}
-          </nav>
-          <span className="flex-1" />
-          {/* Below the header's own width of `@lg` the actions keep their icon and drop their word and keycap, so the path back keeps its room (issue 618); their name and shortcut stay in the hint. */}
-          <Hint label={t("requests.newAgent")}>
-            <Button variant="ghost" className="@max-lg:size-(--size-control) @max-lg:px-0" onClick={newAgent} disabled={!project.is_git && project.checkouts.length === 0} data-overview-new-agent="true">
-              <SquareTerminalIcon aria-hidden="true" />
-              <span className="@max-lg:sr-only">{t("requests.newAgent")}</span>
-            </Button>
-          </Hint>
-          {canIssue ? (
-            <Hint label={t("issue.newTitle")} shortcut={<Kbd>C</Kbd>}>
-              <Button className="@max-lg:size-(--size-control) @max-lg:px-0" onClick={newIssue} data-overview-new-issue="true">
-                <PlusIcon aria-hidden="true" />
-                <span className="@max-lg:sr-only">{t("issue.newTitle")}</span>
-                <Kbd className="@max-lg:hidden">C</Kbd>
-              </Button>
-            </Hint>
-          ) : null}
-        </div>
+      <header className="flex shrink-0 flex-col gap-xs border-b border-border px-lg py-sm">
+        <OverviewTitleRow
+          name={project.label}
+          path={project.path}
+          remoteDevice={device && device.kind === "remote" ? device.label : null}
+          onAllProjects={() => setProject(null)}
+          newAgent={{ run: newAgent, disabled: !project.is_git && project.checkouts.length === 0 }}
+          newIssue={canIssue ? newIssue : null}
+        />
         <Stats workspace={project} stats={stats} refreshing={!!rest?.git_worktrees_loading || project.checkouts.some((checkout) => checkout.github?.loading)} onMerged={showCleanup} />
       </header>
       <OpeningStatus actions={actions} />
