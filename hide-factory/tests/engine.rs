@@ -81,6 +81,8 @@ fn init_previews_without_writing_and_creates_once_confirmed() {
     });
     assert_eq!(created["created"], true, "{created}");
     assert_eq!(h.writes("label.create"), vec!["label.create factory"]);
+    let factory = h.engine.factories().next().unwrap().clone();
+    assert_eq!(factory.config.default_runtime, Runtime::Claude);
 
     // The same project again shows the existing Factory (B5).
     let again = h.op(Command::Init {
@@ -91,6 +93,27 @@ fn init_previews_without_writing_and_creates_once_confirmed() {
     });
     assert_eq!(again["existing"], true, "{again}");
     assert_eq!(h.writes("label.create").len(), 1);
+}
+
+#[test]
+fn a_machine_with_only_codex_defaults_new_workers_to_codex() {
+    let mut h = Bench::new(false);
+    h.world().runtimes = vec![Runtime::Codex];
+    let preview = h.op(Command::Init {
+        project: PROJECT.into(),
+        verification: None,
+        merge_mode: Some(MergeMode::Manual),
+        confirm: false,
+    });
+    assert_eq!(preview["default_runtime"], "codex", "{preview}");
+    h.op(Command::Init {
+        project: PROJECT.into(),
+        verification: None,
+        merge_mode: Some(MergeMode::Manual),
+        confirm: true,
+    });
+    let factory = h.engine.factories().next().unwrap().clone();
+    assert_eq!(factory.config.default_runtime, Runtime::Codex);
 }
 
 #[test]

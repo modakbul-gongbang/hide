@@ -442,7 +442,7 @@ A Factory's `merge_mode` cannot be `auto` while it has no verification (`auto_ne
 | `autonomy_diff_limit` | Changed lines an autonomous Task may merge alone | 200 |
 | `verify_timeout_minutes` | Minutes per command, at least 1 | 60 |
 | `disk_floor_gb` | Gigabytes | 20 |
-| `default_runtime` | `claude` or `codex` | `claude` |
+| `default_runtime` | `claude` or `codex` | Claude Code when `init` finds it on the path, else Codex when it finds that, else `claude` |
 | `harness` | `<name>:<instructions>`; empty clears | none |
 | `autonomy` | `<scope>=on` or `off` | all off |
 | `recovery` | `<action>=on` or `off` | all off |

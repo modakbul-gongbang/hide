@@ -1011,6 +1011,7 @@ impl Engine {
                 "candidates": candidates,
                 "merge_mode": "auto",
                 "auto_unavailable": auto_unavailable,
+                "default_runtime": probe.runtimes.first().copied().unwrap_or(Runtime::Claude),
                 "writes": writes,
             }));
         }
@@ -1029,6 +1030,10 @@ impl Engine {
         };
         if let Some(method) = probe.merge_methods.first() {
             config.merge_method = *method;
+        }
+        // Installed Claude Code first, else Codex (D-45).
+        if let Some(runtime) = probe.runtimes.first() {
+            config.default_runtime = *runtime;
         }
         let factory = Factory {
             id: id.clone(),

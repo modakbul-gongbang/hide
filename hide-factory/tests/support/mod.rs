@@ -48,6 +48,8 @@ pub struct World {
     pub stops: Vec<String>,
     pub removed: Vec<String>,
     pub branches_deleted: Vec<String>,
+    /// Runtimes the probe finds installed; none when empty.
+    pub runtimes: Vec<Runtime>,
     pub spawn_failure: Option<Failure>,
     /// Judgments submitted and not yet answered.
     pub submitted: Vec<Judgment>,
@@ -97,6 +99,7 @@ impl TaskSource for Shared {
             verify_candidates: vec!["cargo test".into()],
             merge_methods: vec![MergeMethod::Squash],
             default_branch: "main".into(),
+            runtimes: self.world().runtimes.clone(),
         })
     }
     fn planned_writes(&self, probe: &ProjectProbe) -> Vec<String> {

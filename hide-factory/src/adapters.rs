@@ -107,6 +107,8 @@ pub struct ProjectProbe {
     pub verify_candidates: Vec<String>,
     pub merge_methods: Vec<MergeMethod>,
     pub default_branch: String,
+    /// Agent runtimes on this machine's path, Claude Code first (D-45).
+    pub runtimes: Vec<Runtime>,
 }
 
 /// What changed outside the Factory since the last read (D-27).

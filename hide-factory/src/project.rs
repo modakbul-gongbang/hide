@@ -82,6 +82,17 @@ impl SharedProjects {
     }
 }
 
+/// The runtimes a worker can start with here, in the order D-45 prefers.
+fn installed_runtimes() -> Vec<Runtime> {
+    let Ok(path) = hide_platform::host::login_path() else {
+        return Vec::new();
+    };
+    [Runtime::Claude, Runtime::Codex]
+        .into_iter()
+        .filter(|runtime| hide_platform::host::find_program(&path, runtime.as_str()).is_some())
+        .collect()
+}
+
 fn worktree(task: &Task) -> Result<PathBuf, Failure> {
     task.worker
         .as_ref()
@@ -344,6 +355,7 @@ impl TaskSource for SharedProjects {
         let mut probe = ProjectProbe {
             default_branch: branch,
             verify_candidates: verify_candidates(&path),
+            runtimes: installed_runtimes(),
             ..ProjectProbe::default()
         };
         if remote.contains("github.com") {
