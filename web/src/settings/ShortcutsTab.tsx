@@ -1,8 +1,10 @@
+import { RotateCcwIcon, XIcon } from "lucide-react";
 import { useEffect, useState, type KeyboardEvent } from "react";
 import type { Actions } from "../actions";
 import { Button } from "../components/ui/button";
 import { Kbd } from "../components/ui/kbd";
-import { Group, Note, Row, Status } from "../components/settings-rows";
+import { Hint } from "../components/ui/tooltip";
+import { Disclosure, Group, Note, Row, Status } from "../components/settings-rows";
 import { commandTitle } from "../commandTitle";
 import { hostKind, keySystem, type HostKind } from "../host";
 import { useInterfaceTranslation } from "../i18n/client";
@@ -14,7 +16,10 @@ import {
   chordFromEvent,
   defaultChord,
   displayChord,
+  familyModifiers,
   hostChord,
+  modifierLabel,
+  numberedCommand,
   resolvedRegistry,
   serializeStoredChord,
   sheetRows,
@@ -77,42 +82,46 @@ export function ShortcutsTab({ actions }: { actions: Actions }) {
         }}
       />
     ));
+  // The eight area commands have no chord until the operator sets one, so
+  // they fold into one line that says how many still have none (design 8, 9).
+  const areaUnset = AREA_COMMANDS.filter((id) => {
+    const command = registry.find((row) => row.id === id);
+    return !command || hostChord(command, host) === null;
+  }).length;
   return (
     <>
-      <Group
-        title={t("settings.shortcuts.paneAndNavigation")}
-        note={t(host === "electron" ? (system === "mac" ? "settings.shortcuts.desktopMac" : "settings.shortcuts.desktopPc") : system === "mac" ? "settings.shortcuts.browserMac" : "settings.shortcuts.browserPc")}
-      >
+      <Group title={t("settings.shortcuts.paneAndNavigation")}>
         {rowsFor(EDITABLE_PANE_COMMANDS.filter((id) => !(AREA_COMMANDS as readonly CommandId[]).includes(id)))}
-        <Row label={<span className="text-subtle-foreground">{t("settings.shortcuts.toggleConversation")}</span>}>
-          <Status tone="muted">{t("settings.shortcuts.conversationUnavailable")}</Status>
-        </Row>
+        <Disclosure
+          title={t("settings.shortcuts.areaTitle")}
+          summary={areaUnset > 0 ? t("settings.shortcuts.areaUnset", { count: areaUnset }) : t("settings.shortcuts.areaAllSet")}
+          data-settings-fold="area-commands"
+        >
+          {rowsFor(AREA_COMMANDS)}
+        </Disclosure>
       </Group>
-      <Group
-        title={t("settings.shortcuts.areaTitle")}
-        note={t("settings.shortcuts.areaDescription")}
-        data-settings-group="area-commands"
-      >
-        {rowsFor(AREA_COMMANDS)}
-      </Group>
-      <Group
-        title={t("settings.shortcuts.numberedTitle")}
-        note={
-          host === "electron"
-            ? t("settings.shortcuts.numberedDesktop", { modifiers: t(system === "mac" ? "settings.shortcuts.numberedModifiersMac" : "settings.shortcuts.numberedModifiersPc") })
-            : t(system === "mac" ? "settings.shortcuts.numberedBrowserMac" : "settings.shortcuts.numberedBrowserPc")
-        }
-        data-settings-group="numbered-chords"
-      >
+      <Group title={t("settings.shortcuts.fixedTitle")} data-settings-group="numbered-chords">
         {sheetRows("Tabs", registry, host, system)
           .concat(sheetRows("Navigate", registry, host, system))
           .filter((row) => row.id.startsWith("select_"))
-          .map((row) => (
-            <Row key={row.id} label={sheetRowTitle(row, t)}>
-              <Kbd data-shortcut-effective={row.id}>{row.chord ?? "-"}</Kbd>
-              {row.chord === null ? <Status tone="muted">{t("settings.shortcuts.notOnHost")}</Status> : null}
-            </Row>
-          ))}
+          .map((row) => {
+            // A browser host has no numbered chords, so there is nothing to hold.
+            const modifiers = row.chord === null ? null : familyModifiers(numberedCommand(row.id)!.family, registry, host);
+            return (
+              <Row
+                key={row.id}
+                label={
+                  <span className="flex min-w-0 flex-col">
+                    <span>{sheetRowTitle(row, t)}</span>
+                    {modifiers ? <span className="text-caption text-muted-foreground">{t("settings.shortcuts.holdToSee", { modifier: modifierLabel(modifiers, system) })}</span> : null}
+                  </span>
+                }
+              >
+                <Kbd data-shortcut-effective={row.id}>{row.chord ?? "-"}</Kbd>
+                {row.chord === null ? <Status tone="muted">{t("settings.shortcuts.notOnHost")}</Status> : null}
+              </Row>
+            );
+          })}
       </Group>
       {diagnostic ? <Note tone="warn" data-shortcut-diagnostic="true">{diagnostic}</Note> : null}
       {saving ? <Note tone="pending">{t("workspace.saving")}</Note> : null}
@@ -126,6 +135,15 @@ export function ShortcutsTab({ actions }: { actions: Actions }) {
   );
 }
 
+// The restore and clear controls show on hover or keyboard focus of their row,
+// and always where there is no hover (B61); they stay in the layout either
+// way, so the chip does not move when they appear.
+const ROW_CONTROL = "opacity-0 group-hover/shortcut:opacity-100 group-focus-within/shortcut:opacity-100 [@media(hover:none)]:opacity-100";
+
+/**
+ * One editable command: its chord is the control. Pressing it (or Enter on it)
+ * waits for the next chord, which applies at once; Escape cancels (B61).
+ */
 function ShortcutRow({
   id,
   host,
@@ -148,7 +166,6 @@ function ShortcutRow({
   const { t } = useInterfaceTranslation();
   const command = registry.find((row) => row.id === id);
   const [recording, setRecording] = useState(false);
-  const [draft, setDraft] = useState<Chord | null>(null);
   const [problem, setProblem] = useState<BindingProblem | "altgr" | null>(null);
   const setRecordingFlag = useUiStore((s) => s.setRecordingShortcut);
   useEffect(() => {
@@ -159,6 +176,7 @@ function ShortcutRow({
   if (!command) return null;
   const title = commandTitle(id, t);
   const effective = hostChord(command, host);
+  const chordText = effective ? displayChord(effective, system) : null;
   const record = (event: KeyboardEvent<HTMLButtonElement>) => {
     // IME composition and lone modifiers are not chords; the recorder waits.
     if (event.nativeEvent.isComposing || event.keyCode === 229) return;
@@ -178,60 +196,52 @@ function ShortcutRow({
       system === "pc" && event.nativeEvent.getModifierState?.("AltGraph") ? "altgr" : bindingProblem(id, chord, registry, host, system);
     setRecording(false);
     setProblem(reason);
-    setDraft(reason ? null : chord);
+    if (!reason) onApply(chord);
   };
   return (
     <Row
+      className="group/shortcut"
       label={title}
       detail={
         problem ? (
           <Note tone="error" data-shortcut-problem={id}>
-            {problem === "altgr" ? t("settings.shortcuts.altGr") : bindingProblemText(problem, t)} {effective ? t("settings.shortcuts.previousChord", { chord: displayChord(effective, system) }) : ""}
+            {problem === "altgr" ? t("settings.shortcuts.altGr") : bindingProblemText(problem, t)} {chordText ? t("settings.shortcuts.previousChord", { chord: chordText }) : ""}
           </Note>
         ) : null
       }
     >
-      <Kbd data-shortcut-effective={id}>{effective ? displayChord(effective, system) : "-"}</Kbd>
-      {draft ? (
-        <>
-          <span className="text-body text-subtle-foreground">→</span>
-          <Kbd className="text-foreground" data-shortcut-draft={id}>
-            {displayChord(draft, system)}
-          </Kbd>
-          <Button
-            onClick={() => {
-              onApply(draft);
-              setDraft(null);
-            }}
-            data-shortcut-apply={id}
-          >
-            {t("common.apply")}
+      <Button
+        variant={recording ? "default" : "secondary"}
+        size="sm"
+        aria-label={recording ? t("settings.shortcuts.recordAria", { command: title }) : chordText ? t("settings.shortcuts.changeAria", { command: title, chord: chordText }) : t("settings.shortcuts.setAria", { command: title })}
+        onKeyDown={recording ? record : undefined}
+        onBlur={() => setRecording(false)}
+        onClick={() => {
+          setProblem(null);
+          setRecording(true);
+        }}
+        data-shortcut-record={id}
+      >
+        {recording ? t("settings.shortcuts.pressChord") : <span data-shortcut-effective={id}>{chordText ?? "-"}</span>}
+      </Button>
+      {overridden ? (
+        <Hint label={t("settings.shortcuts.reset")}>
+          <Button variant="ghost" size="icon-sm" className={ROW_CONTROL} aria-label={t("settings.shortcuts.resetAria", { command: title })} onClick={onReset} data-shortcut-reset={id}>
+            <RotateCcwIcon />
           </Button>
-          <Button variant="ghost" onClick={() => setDraft(null)}>
-            {t("common.cancel")}
-          </Button>
-        </>
+        </Hint>
       ) : (
-        <Button
-          variant={recording ? "default" : "secondary"}
-          aria-label={recording ? t("settings.shortcuts.recordAria", { command: title }) : t("settings.shortcuts.changeAria", { command: title })}
-          onKeyDown={recording ? record : undefined}
-          onBlur={() => setRecording(false)}
-          onClick={() => {
-            setProblem(null);
-            setRecording(true);
-          }}
-          data-shortcut-record={id}
-        >
-          {recording ? t("settings.shortcuts.pressChord") : t("settings.shortcuts.change")}
-        </Button>
+        <span aria-hidden="true" className="size-(--size-control-sm)" />
       )}
-      {effective && !draft && !recording ? <Button variant="ghost" onClick={onClear} data-shortcut-clear={id}>{t("settings.shortcuts.clear")}</Button> : null}
-      {overridden && !draft ? (
-        <Button variant="ghost" onClick={onReset} data-shortcut-reset={id}>
-          {t("common.default")}
-        </Button>
-      ) : null}
+      {effective ? (
+        <Hint label={t("settings.shortcuts.clear")}>
+          <Button variant="ghost" size="icon-sm" className={ROW_CONTROL} aria-label={t("settings.shortcuts.clearAria", { command: title })} onClick={onClear} data-shortcut-clear={id}>
+            <XIcon />
+          </Button>
+        </Hint>
+      ) : (
+        <span aria-hidden="true" className="size-(--size-control-sm)" />
+      )}
     </Row>
   );
 }

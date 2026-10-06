@@ -3,7 +3,9 @@
 // a state or note line. They mirror the native HideSettingsGroup/Row so a web
 // sheet reads like the one it replaces; the controls inside are System parts.
 
+import { ChevronRightIcon } from "lucide-react";
 import type { ReactNode } from "react";
+import { cn } from "../lib/utils";
 
 /** A titled card whose rows are separated by hairlines, like `HideSettingsGroup`. */
 export function Group({ title, note, children, ...data }: { title: string; note?: ReactNode; children: ReactNode } & Record<`data-${string}`, string>) {
@@ -17,15 +19,34 @@ export function Group({ title, note, children, ...data }: { title: string; note?
 }
 
 /** One row: its label on the left, whatever the row is about on the right; wraps on a narrow sheet. */
-export function Row({ label, children, detail }: { label: ReactNode; children?: ReactNode; detail?: ReactNode }) {
+export function Row({ label, children, detail, className }: { label: ReactNode; children?: ReactNode; detail?: ReactNode; className?: string }) {
   return (
-    <div className="px-md py-sm">
+    <div className={cn("px-md py-sm", className)}>
       <div className="flex flex-wrap items-center gap-x-md gap-y-xs">
         <div className="min-w-[min(100%,var(--size-settings-control-w))] flex-1 text-subhead text-foreground">{label}</div>
         {children ? <div className="flex min-w-0 max-w-full flex-wrap items-center justify-end gap-sm">{children}</div> : null}
       </div>
       {detail ? <div className="mt-xs">{detail}</div> : null}
     </div>
+  );
+}
+
+/**
+ * A folded list inside a group: one summary row that names what is inside and
+ * says how much of it matters, with the rows below when opened (design 8, 9).
+ * A native `details`, so the keyboard, the expanded state and the screen
+ * reader announcement come with it; the rows stay hidden until it is opened.
+ */
+export function Disclosure({ title, summary, children, ...data }: { title: ReactNode; summary?: ReactNode; children: ReactNode } & Record<`data-${string}`, string>) {
+  return (
+    <details className="group/fold" {...data}>
+      <summary className="flex cursor-pointer list-none items-center gap-x-sm px-md py-sm text-subhead text-foreground outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-ring [&::-webkit-details-marker]:hidden">
+        <ChevronRightIcon aria-hidden="true" className="size-(--size-icon) shrink-0 text-muted-foreground transition-transform group-open/fold:rotate-90" />
+        <span className="min-w-0 flex-1">{title}</span>
+        {summary ? <span className="min-w-0 text-body text-muted-foreground">{summary}</span> : null}
+      </summary>
+      <div className="divide-y divide-border border-t border-border">{children}</div>
+    </details>
   );
 }
 

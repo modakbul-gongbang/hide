@@ -1425,6 +1425,14 @@ Settings, Shortcuts refuses a binding on the terminal's copy or paste chord.
 The hold hint follows the same table: holding Ctrl+Shift alone in the desktop app on Windows and Linux floats the tab numbers, and holding Alt alone the Agents-list numbers.
 A command marked none has no chord until the operator binds one in Settings, Shortcuts, where it can be bound; the browser tab's moved chords are the ones Chrome keeps for itself on that system.
 
+Settings, Shortcuts (PRD settings-cleanup B60-B63, B66) lists the editable pane and navigation commands, each as its name and a chip holding its chord.
+Pressing the chip, or Enter on it, waits for the next chord, which applies at once; there is no second Apply step, Escape cancels the recording without closing the sheet, and a refused chord leaves the old one with the reason beside the row.
+The chip's accessible name carries the command and its current chord.
+The restore-default and clear controls of a row show while the pointer is on the row or the keyboard is inside it (and always where there is no hover), and keep their place so the chip does not move.
+The eight area commands have no chord until the operator sets one, so they fold into one line that says how many are still unset and opens to a row each.
+The numbered chords are fixed and read as one row per family under Fixed, whose subtitle names the modifier to hold to see the numbers ("Hold ⌘ to see the numbers", the system's own modifier names elsewhere); a browser tab has no numbered chords, so those rows say so and carry no subtitle.
+The sheet carries no row or explanation for a command the removed native app alone ran (`toggle_conversation` stays in a stored set and is never run here).
+
 | Command | Desktop app, macOS | Desktop app, Windows and Linux | Browser tab, macOS | Browser tab, Windows and Linux |
 | --- | --- | --- | --- | --- |
 | New tab | `⌘T` | `Ctrl+Shift+T` | `⌥T` | `Alt+T` |
@@ -1433,10 +1441,10 @@ A command marked none has no chord until the operator binds one in Settings, Sho
 | Select tab 1-9 | `⌘1 … ⌘9` | `Ctrl+Shift+1 … Ctrl+Shift+9` | none | none |
 | Add project | `⇧⌘N` | `Alt+Shift+N` | none | none |
 | Start agent | `⌘N` | `Ctrl+Shift+N` | none | none |
-| Next recent Agent pane or View tab | `⌃⇥` | `Ctrl+Tab` | `` ⌥` `` | `` Alt+` `` |
-| Previous recent Agent pane or View tab | `⌃⇧⇥` | `Ctrl+Shift+Tab` | `` ⌥⇧` `` | `` Alt+Shift+` `` |
-| Next global recent panel | none | none | none | none |
-| Previous global recent panel | none | none | none | none |
+| Next recent tab | `⌃⇥` | `Ctrl+Tab` | `` ⌥` `` | `` Alt+` `` |
+| Previous recent tab | `⌃⇧⇥` | `Ctrl+Shift+Tab` | `` ⌥⇧` `` | `` Alt+Shift+` `` |
+| Next panel (all projects) | none | none | none | none |
+| Previous panel (all projects) | none | none | none | none |
 | Next recent project (exception) | `⌥⇥` | `` Ctrl+Shift+` `` | `⌥⇥` | `` Ctrl+Shift+` `` |
 | Previous recent project (exception) | `⌥⇧⇥` | `` Ctrl+Alt+Shift+` `` | `⌥⇧⇥` | `` Ctrl+Alt+Shift+` `` |
 | Select agent 1-9 | `⌥1 … ⌥9` | `Alt+1 … Alt+9` | none | none |

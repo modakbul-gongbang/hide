@@ -41,7 +41,14 @@ function SettingsSheet({ actions }: { actions: Actions }) {
   });
   return (
     <Dialog open onOpenChange={(next) => { if (!next) close(); }}>
-      <DialogContent data-settings="true" className="w-(--size-settings-sheet-w) h-(--size-settings-sheet-h-max)">
+      {/* A Shortcuts chip that is recording owns Escape: it cancels the recording, not the sheet (B61). */}
+      <DialogContent
+        data-settings="true"
+        className="w-(--size-settings-sheet-w) h-(--size-settings-sheet-h-max)"
+        onEscapeKeyDown={(event) => {
+          if (useUiStore.getState().recordingShortcut) event.preventDefault();
+        }}
+      >
         <header className="flex items-start gap-md border-b border-border px-xl py-lg">
           <div className="min-w-0 flex-1">
             <DialogTitle className="text-headline">{t("common.settings")}</DialogTitle>
