@@ -970,12 +970,14 @@ fn stop(state_dir: &Path) -> Result<(), String> {
 /// Whether `state`'s pid is still the daemon that recorded it. A pid another
 /// process has reused (another account's, or a later daemon's) is not: it
 /// reads as gone and is never signalled. A state with no recorded start comes
-/// from an earlier build and is judged by liveness alone.
+/// from an earlier build and is judged by liveness alone. A daemon that has
+/// ended but that its starter has not reaped yet is gone too, although Linux
+/// still lists its start time.
 fn still_the_daemon(state: &DaemonState) -> bool {
-    match state.pid_started {
-        Some(recorded) => process::start_time(state.pid).is_ok_and(|now| now == recorded),
-        None => process::is_alive(state.pid),
-    }
+    process::is_alive(state.pid)
+        && state
+            .pid_started
+            .is_none_or(|recorded| process::start_time(state.pid).is_ok_and(|now| now == recorded))
 }
 
 /// Ends the daemon `state` names: SIGTERM and five seconds for its graceful
@@ -1288,6 +1290,24 @@ mod tests {
             error,
             "hided did not become healthy within 10s; last waited on /health on port 7001: timed out"
         );
+    }
+
+    // The web e2e fixture runs `hide stop` on the daemon it started, and
+    // cannot reap it while that runs.
+    #[cfg(unix)]
+    #[test]
+    fn an_ended_daemon_its_starter_has_not_reaped_reads_as_stopped() {
+        let mut ended = Command::new("sleep").arg("30").spawn().unwrap();
+        let state = recorded(ended.id(), Some(process::start_time(ended.id()).unwrap()));
+        let dir = tempfile::tempdir().unwrap();
+        state_file::write_state(dir.path(), &state).unwrap();
+        ended.kill().unwrap();
+        stop_daemon(dir.path(), &state).unwrap();
+        assert!(
+            state_file::read_state(dir.path()).unwrap().is_none(),
+            "the stopped daemon's state is cleared"
+        );
+        ended.wait().unwrap();
     }
 
     #[test]

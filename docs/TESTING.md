@@ -103,6 +103,7 @@ When the behavior depends on the order of two events, the test fixes that order;
 - Register every process a fixture starts with `ownUntilWorkerExit` from `web/e2e/worker-owned.ts`, so synchronous cleanup runs on Node-managed worker exit even when a test's `finally` was skipped.
   A `spawn` with no `error` listener is such a death: when `target/debug/hided` was missing, each test killed its worker and left its private Herdr server running under launchd.
   The exit callback cannot run after SIGKILL, an OOM kill or host loss; these require separate recovery and are not proven by a `process.exit()` regression.
+  A fixture `hided` has that recovery on Unix: `spawnDaemon` in `web/e2e/hided-fixture.ts` hands it an owner channel, so it ends with its worker however the worker ends.
 - `desktop/e2e/fixture.ts` owns each `isolate` home through both automatic test teardown and worker exit, with at most sixteen unclosed homes per worker.
   Each home records at most sixteen live or pending candidate launches; a launch over that cap fails before starting another process.
   Automatic teardown closes candidate apps, then each home's cleanup checks its recorded process handles for confirmed exit before stopping the private hided and deleting the home.
@@ -174,6 +175,8 @@ The Windows fixture boundaries also preserve these requirements:
 - A cleanup failure with no earlier error still fails the test; a fixture that cannot confirm its own cleanup leaves state the next test inherits.
 - Release every process a fixture started on every exit path, including a failed start: register it with `ownUntilWorkerExit` before the first step that can throw.
 - Delete a fixture's root only after every process that used it has confirmed exit; when exit cannot be confirmed, keep the root and name it in the error, as `desktop/e2e/fixture.ts` does.
+  A signal is not a confirmed exit: a stopped process holds a SIGTERM pending, and one fixture `hided` outlived its worker that way for a day.
+  `stopDaemon` ends a fixture `hided` through `hide stop`, which waits for the graceful stop and then ends the daemon's tree, and continues a stopped daemon first.
   `desktop/e2e/fixture.ts`'s `AggregateError` is the reference for reporting several cleanup failures at once.
 
 ## Writing a Playwright e2e test
