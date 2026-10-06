@@ -1425,6 +1425,33 @@ fn a_usage_limit_moves_new_starts_to_the_other_runtime() {
     assert_eq!(runtimes[&u], Runtime::Codex);
 }
 
+#[test]
+fn a_worker_its_usage_limit_stopped_waits_and_the_next_start_uses_the_other_runtime() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let t = h.ready("Limited", &[]);
+    let now = h.world().now;
+    h.world()
+        .worker_status
+        .insert(t.clone(), WorkerStatus::Resting { since: now });
+    h.world()
+        .usage_limits
+        .insert(Runtime::Claude, now + HOUR_MS);
+    h.advance(3 * MINUTE_MS);
+    h.engine.tick();
+    let task = h.task(&f, &t);
+    assert_ne!(task.state, TaskState::Stopped, "not a no-report stop");
+    assert_eq!(task.failures, 0);
+    let u = h.ready("Next", &[]);
+    let spawned = h
+        .world()
+        .spawned
+        .iter()
+        .find(|s| s.task == u)
+        .map(|s| s.runtime);
+    assert_eq!(spawned, Some(Runtime::Codex));
+}
+
 // ------------------------------------------------------------ control
 
 #[test]

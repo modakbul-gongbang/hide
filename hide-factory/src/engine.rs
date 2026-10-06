@@ -4056,6 +4056,18 @@ impl Engine {
                     // A turn that ended with no Factory report since it began (B24).
                     let reported = last_report.is_some_and(|at| at >= rest.min(since).max(since));
                     if !reported && now.saturating_sub(rest) >= no_report && rest >= since {
+                        // A worker its usage limit stopped waits for a slot
+                        // and is not the Task's fault (B58).
+                        if let Some(until) = self.ports.workers.usage_limited(worker.runtime) {
+                            let mut failure = Failure::environment(
+                                "worker",
+                                EnvSignal::UsageLimit,
+                                "usage limit",
+                            );
+                            failure.reset_at = Some(until);
+                            self.external_failure(&factory, Some(&id), &failure);
+                            continue;
+                        }
                         self.with_task(&factory, &id, |task| {
                             task.stop = Some(StopReason::NoReport)
                         });
@@ -4179,6 +4191,17 @@ impl Engine {
         }
     }
 
+    /// A runtime whose usage the machine reports used up is not started
+    /// until its reset (B58).
+    fn read_usage_limits(&mut self) {
+        for runtime in [Runtime::Claude, Runtime::Codex] {
+            if let Some(until) = self.ports.workers.usage_limited(runtime) {
+                let entry = self.runtime_blocked.entry(runtime).or_insert(until);
+                *entry = (*entry).max(until);
+            }
+        }
+    }
+
     fn start(&mut self, factory_id: &str, id: &str) -> bool {
         let Some(factory) = self.factories.get(factory_id).cloned() else {
             return false;
@@ -4187,6 +4210,7 @@ impl Engine {
             return false;
         };
         let now = self.now();
+        self.read_usage_limits();
         let mut runtime = task.runtime(&factory);
         if let Some(until) = self.runtime_blocked.get(&runtime).copied() {
             if until > now {

@@ -932,8 +932,9 @@ impl WorkerRuntime for CoreWorkers {
         Ok(())
     }
 
-    fn usage_limited(&mut self, _runtime: AgentRuntime) -> Option<UnixMs> {
-        None
+    fn usage_limited(&mut self, runtime: AgentRuntime) -> Option<UnixMs> {
+        let core = self.runtime().ok()?;
+        guard(&core).factory_usage_limit(runtime.as_str(), now_ms())
     }
 }
 

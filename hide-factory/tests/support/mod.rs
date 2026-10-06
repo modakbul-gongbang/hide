@@ -50,6 +50,8 @@ pub struct World {
     pub branches_deleted: Vec<String>,
     /// Runtimes the probe finds installed; none when empty.
     pub runtimes: Vec<Runtime>,
+    /// Usage-limit resets the machine reports by runtime.
+    pub usage_limits: BTreeMap<Runtime, UnixMs>,
     pub spawn_failure: Option<Failure>,
     /// Judgments submitted and not yet answered.
     pub submitted: Vec<Judgment>,
@@ -356,8 +358,8 @@ impl WorkerRuntime for Shared {
         }
         Ok(())
     }
-    fn usage_limited(&mut self, _runtime: Runtime) -> Option<UnixMs> {
-        None
+    fn usage_limited(&mut self, runtime: Runtime) -> Option<UnixMs> {
+        self.world().usage_limits.get(&runtime).copied()
     }
 }
 
