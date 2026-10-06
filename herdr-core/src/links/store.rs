@@ -136,6 +136,9 @@ fn sidecars(path: &Path) -> [PathBuf; 2] {
     })
 }
 
+/// Which of the asked paths the store's own node still holds.
+pub type FilesPresent<'a> = dyn FnMut(&[String]) -> Result<BTreeSet<String>, String> + 'a;
+
 impl LinkStore {
     /// Opens the writer's connection, making the file private when it is
     /// new. A file that fails its integrity check is set aside once and made
@@ -796,7 +799,7 @@ impl LinkStore {
         &mut self,
         days: &dyn Fn(&str) -> Option<u16>,
         local_device: &str,
-        file_exists: &dyn Fn(&str) -> bool,
+        files_present: &mut FilesPresent<'_>,
         now: u64,
     ) -> Result<usize, String> {
         let projects = self.projects()?;
@@ -829,23 +832,40 @@ impl LinkStore {
                 }
             }
         }
+        let policy = |session: &SessionRow| {
+            owner
+                .get(&session.key)
+                .and_then(|index| days(&projects[*index].key))
+                .unwrap_or(90)
+        };
+        // An OpenCode session lives in OpenCode's database, not a file: its
+        // read marks it gone when the database drops it. This machine's other
+        // files are asked about once, together.
+        fn checked<'a>(session: &'a SessionRow, local_device: &str) -> Option<&'a str> {
+            session.path.as_deref().filter(|path| {
+                session.key.device == local_device
+                    && !path.starts_with(hide_session::links::OPENCODE_PREFIX)
+            })
+        }
+        let asked = sessions
+            .iter()
+            .filter(|session| policy(session) == 0)
+            .filter_map(|session| checked(session, local_device).map(str::to_owned))
+            .collect::<Vec<_>>();
+        let present = if asked.is_empty() {
+            BTreeSet::new()
+        } else {
+            files_present(&asked)?
+        };
         let mut gone = Vec::new();
         for session in &sessions {
-            let project = owner.get(&session.key).map(|index| &projects[*index]);
-            let policy = project.and_then(|project| days(&project.key)).unwrap_or(90);
+            let policy = policy(session);
             let ended = session.ended_at.unwrap_or(0);
             let keep = if policy == 0 {
-                // An OpenCode session lives in OpenCode's database, not a
-                // file: its read marks it gone when the database drops it.
-                match session.path.as_deref() {
-                    Some(path)
-                        if session.key.device == local_device
-                            && !path.starts_with(hide_session::links::OPENCODE_PREFIX) =>
-                    {
-                        file_exists(path)
-                    }
-                    Some(_) => !session.file_gone,
-                    None => true,
+                match (checked(session, local_device), session.path.as_deref()) {
+                    (Some(path), _) => present.contains(path),
+                    (None, Some(_)) => !session.file_gone,
+                    (None, None) => true,
                 }
             } else {
                 let cutoff = now.saturating_sub(u64::from(policy) * DAY_MS);

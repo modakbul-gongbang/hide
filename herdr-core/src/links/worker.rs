@@ -4,15 +4,17 @@
 //!
 //! Its mailbox holds the newest copy of each core fact (projects, panes,
 //! parents) and the newest panel read; older ones are replaced, never queued
-//! (D-40). Between them it reads changed session files from this machine,
-//! one file and one read budget at a time, yielding after 20 ms so a
-//! backfill never competes with input.
+//! (D-40). Between them it reads changed session files from the core's own
+//! node, one file and one read budget at a time, yielding after 20 ms so a
+//! backfill never competes with input, and from every other connected node
+//! a batch a minute.
 
 use super::store::{IssueLinks, LinkStore, Opened, PrLinks};
 use super::{BACKFILL_MS, PaneFact, ParentFact, ProjectFacts, ProjectLinkSummary, now_ms};
 use crate::node_access::{LinkError, NodeLink, call_as};
 use hide_node_link::protocol::Call;
 use hide_session::links::{self, Candidate, ReadRequest};
+use std::collections::BTreeSet;
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, Condvar, Mutex};
@@ -137,8 +139,7 @@ pub struct Paths {
     pub store: PathBuf,
     /// The search index, whose `policy` holds each project's Copied history.
     pub search: PathBuf,
-    /// The home whose session folders are this machine's.
-    pub home: Option<PathBuf>,
+    /// The core's own node, whose session files are read here.
     pub local_device: String,
 }
 
@@ -157,12 +158,13 @@ impl Drop for LinkWorker {
 }
 
 impl LinkWorker {
-    pub fn spawn(paths: Paths, sink: impl Sink) -> Result<Self, String> {
+    /// `own` answers for `paths.local_device`, the node the core runs on.
+    pub fn spawn(paths: Paths, own: Arc<dyn NodeLink>, sink: impl Sink) -> Result<Self, String> {
         let client = LinkClient(Arc::new((Mutex::new(Mailbox::default()), Condvar::new())));
         let mailbox = client.clone();
         let join = thread::Builder::new()
             .name("hide-links".into())
-            .spawn(move || run(&mailbox, &paths, &sink))
+            .spawn(move || run(&mailbox, &paths, own.as_ref(), &sink))
             .map_err(|error| error.to_string())?;
         Ok(Self {
             client,
@@ -291,7 +293,7 @@ fn open_store(path: &Path) -> Result<LinkStore, String> {
     Ok(store)
 }
 
-fn run(client: &LinkClient, paths: &Paths, sink: &impl Sink) {
+fn run(client: &LinkClient, paths: &Paths, own: &dyn NodeLink, sink: &impl Sink) {
     // A store that cannot open (busy, a newer schema, a full disk) is tried
     // again every listing period; until then a panel says why.
     let mut store = open_store(&paths.store);
@@ -419,22 +421,20 @@ fn run(client: &LinkClient, paths: &Paths, sink: &impl Sink) {
         if state.panel.is_some() && state.panel_answer.is_none() {
             answer_panel(store, paths, &mut state, sink);
         }
-        if let Some(home) = paths.home.as_deref() {
-            if state.queue.is_empty() {
-                let next_page = state.listing.as_ref().and_then(|listing| listing.next);
-                if next_page.is_some()
-                    || (state.listing.is_none()
-                        && state
-                            .listed
-                            .is_none_or(|at| at.elapsed() >= list_every(&state)))
-                {
-                    list(store, home, paths, &mut state);
-                }
+        if state.queue.is_empty() {
+            let next_page = state.listing.as_ref().and_then(|listing| listing.next);
+            if next_page.is_some()
+                || (state.listing.is_none()
+                    && state
+                        .listed
+                        .is_none_or(|at| at.elapsed() >= list_every(&state)))
+            {
+                list(store, own, paths, &mut state);
             }
-            read_turn(store, home, paths, &mut state);
-            if state.queue.is_empty() {
-                finish_listing(store, &mut state);
-            }
+        }
+        read_turn(store, own, paths, &mut state);
+        if state.queue.is_empty() {
+            finish_listing(store, &mut state);
         }
         device_turn(store, sink, &mut state);
         // The spinner is the first fill's, never a later listing's (B24).
@@ -448,7 +448,7 @@ fn run(client: &LinkClient, paths: &Paths, sink: &impl Sink) {
             sink.filling(filling);
         }
         if state.pruned.is_none_or(|at| at.elapsed() >= PRUNE_EVERY) {
-            prune(store, paths);
+            prune(store, own, paths);
             state.pruned = Some(Instant::now());
             state.dirty_at.get_or_insert_with(Instant::now);
         }
@@ -521,7 +521,7 @@ fn log_write(code: &str, what: &str) {
 
 /// Lists one page of the session files changed since the last listing (the
 /// last 90 days the first time, D-17) and queues the ones whose stamp moved.
-fn list(store: &LinkStore, home: &Path, paths: &Paths, state: &mut State) {
+fn list(store: &LinkStore, own: &dyn NodeLink, paths: &Paths, state: &mut State) {
     state.listed = Some(Instant::now());
     if state.listing.is_none() {
         let since = match (store.meta(BACKFILL_DONE), store.meta(LISTED_AT)) {
@@ -541,7 +541,16 @@ fn list(store: &LinkStore, home: &Path, paths: &Paths, state: &mut State) {
         return;
     };
     let until = listing.next;
-    let page = match links::candidates(home, listing.since, until) {
+    let page = match call_as::<Vec<Candidate>>(
+        own,
+        Call::LinkFiles {
+            since_unix_ms: listing.since,
+            until_unix_ms: until,
+        },
+        DEVICE_TIMEOUT,
+    )
+    .map_err(|error| link_code(&error, "node"))
+    {
         Ok(page) => page,
         Err(code) => {
             crate::diagnostic!(serde_json::json!({
@@ -588,7 +597,7 @@ fn finish_listing(store: &LinkStore, state: &mut State) {
 
 /// Reads queued files for one turn: one read budget per file per step, a
 /// file with more waiting goes back to the front.
-fn read_turn(store: &mut LinkStore, home: &Path, paths: &Paths, state: &mut State) {
+fn read_turn(store: &mut LinkStore, own: &dyn NodeLink, paths: &Paths, state: &mut State) {
     if state.queue.is_empty() {
         return;
     }
@@ -607,15 +616,40 @@ fn read_turn(store: &mut LinkStore, home: &Path, paths: &Paths, state: &mut Stat
                 continue;
             }
         };
-        let answer = links::read(
-            home,
-            &[ReadRequest {
-                agent: candidate.agent,
-                path: candidate.path.clone(),
-                checkpoint,
-            }],
+        let read = call_as::<Vec<links::ReadAnswer>>(
+            own,
+            Call::LinkRead {
+                requests: vec![ReadRequest {
+                    agent: candidate.agent,
+                    path: candidate.path.clone(),
+                    checkpoint,
+                }],
+            },
+            DEVICE_TIMEOUT,
         )
-        .remove(0);
+        .map_err(|error| link_code(&error, "node"))
+        .and_then(|answers| {
+            answers
+                .into_iter()
+                .find(|answer| answer.path == candidate.path)
+                .ok_or_else(|| "node_answer_missing".to_owned())
+        });
+        let answer = match read {
+            Ok(answer) => answer,
+            Err(code) => {
+                // The node itself failed, not the file: the listing is read
+                // again from its start on its next turn.
+                crate::diagnostic!(serde_json::json!({
+                    "component": "links", "kind": "node.read_failed", "code": code,
+                }));
+                state.queue.clear();
+                if let Some(listing) = state.listing.as_mut() {
+                    listing.failed = true;
+                    listing.next = None;
+                }
+                return;
+            }
+        };
         if let Some(code) = answer.error.as_deref() {
             crate::diagnostic!(serde_json::json!({
                 "component": "links", "kind": "session.read_failed",
@@ -766,7 +800,7 @@ fn read_device(
                 entry.queue.push_front(candidate);
             }
             entry.failed();
-            log_device(device, "read", &device_code(&error));
+            log_device(device, "read", &link_code(&error, "device_helper"));
             return;
         }
     };
@@ -825,7 +859,7 @@ fn list_device(
         },
         DEVICE_TIMEOUT,
     )
-    .map_err(|error| device_code(&error))
+    .map_err(|error| link_code(&error, "device_helper"))
     .and_then(|page| Ok((store.stamps(device)?, page)));
     let (stamps, page) = listed.inspect_err(|_| {
         listing.failed = true;
@@ -853,14 +887,15 @@ fn finish_device(store: &LinkStore, device: &str, entry: &mut DeviceQueue) {
     }
 }
 
-fn device_code(error: &LinkError) -> String {
+/// A failed link call as a diagnostic code, prefixed by who was asked.
+fn link_code(error: &LinkError, who: &str) -> String {
     match error {
-        LinkError::NotConnected(_) => "device_helper_not_connected".to_owned(),
-        LinkError::Busy => "device_helper_busy".to_owned(),
-        LinkError::Unknown(_) => "device_helper_unknown".to_owned(),
+        LinkError::NotConnected(_) => format!("{who}_not_connected"),
+        LinkError::Busy => format!("{who}_busy"),
+        LinkError::Unknown(_) => format!("{who}_unknown"),
         // A helper older than protocol 18 does not know the call.
         LinkError::Refused(error) if error.code == hide_node_link::ErrorCode::InvalidRequest => {
-            "device_helper_unsupported".to_owned()
+            format!("{who}_unsupported")
         }
         LinkError::Refused(error) => error.message.clone(),
     }
@@ -873,7 +908,7 @@ fn log_device(device: &str, what: &str, code: &str) {
     }));
 }
 
-fn prune(store: &mut LinkStore, paths: &Paths) {
+fn prune(store: &mut LinkStore, own: &dyn NodeLink, paths: &Paths) {
     let policies = match store.policies(&paths.search) {
         Ok(policies) => policies,
         Err(code) => {
@@ -885,14 +920,36 @@ fn prune(store: &mut LinkStore, paths: &Paths) {
         }
     };
     let days = |project: &str| policies.get(project).copied();
-    let exists = |path: &str| Path::new(path).is_file();
-    match store.prune(&days, &paths.local_device, &exists, now_ms()) {
+    let mut present = |asked: &[String]| files_present(own, asked);
+    match store.prune(&days, &paths.local_device, &mut present, now_ms()) {
         Ok(0) => {}
         Ok(removed) => crate::diagnostic!(serde_json::json!({
             "component": "links", "kind": "retention.pruned", "sessions": removed,
         })),
         Err(code) => log_write(&code, "retention"),
     }
+}
+
+/// Which of `asked` the own node still holds; one it cannot read is kept.
+fn files_present(own: &dyn NodeLink, asked: &[String]) -> Result<BTreeSet<String>, String> {
+    use hide_node_link::cleanup::PathState;
+    let states = call_as::<Vec<PathState>>(
+        own,
+        Call::RealPaths {
+            paths: asked.to_vec(),
+        },
+        DEVICE_TIMEOUT,
+    )
+    .map_err(|error| link_code(&error, "node"))?;
+    if states.len() != asked.len() {
+        return Err("node_answer_mismatched".to_owned());
+    }
+    Ok(asked
+        .iter()
+        .zip(states)
+        .filter(|(_, state)| !matches!(state, PathState::Missing))
+        .map(|(path, _)| path.clone())
+        .collect())
 }
 
 fn publish_summaries(store: &LinkStore, state: &mut State, sink: &impl Sink) {
@@ -1076,6 +1133,7 @@ mod tests {
         let state = tempfile::tempdir().unwrap();
         let device_home = tempfile::tempdir().unwrap();
         device_session(device_home.path());
+        let own_home = tempfile::tempdir().unwrap();
         let device = Arc::new(Device {
             home: device_home.path().to_path_buf(),
             connected: AtomicBool::new(true),
@@ -1085,9 +1143,12 @@ mod tests {
             Paths {
                 store: state.path().join("links.sqlite3"),
                 search: state.path().join("session-search.sqlite3"),
-                home: None,
                 local_device: "local".into(),
             },
+            Arc::new(Device {
+                home: own_home.path().to_path_buf(),
+                connected: AtomicBool::new(true),
+            }),
             TestSink {
                 seen: Arc::clone(&seen),
                 device: Arc::clone(&device),

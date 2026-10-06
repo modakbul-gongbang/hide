@@ -306,11 +306,7 @@ impl Core {
         // After the search worker, whose index holds each project's Copied
         // history, and before any coordinator, so the first catalog and
         // GitHub answers reach it.
-        let links = match crate::runtime::links::spawn_worker(
-            &runtime,
-            notifier.clone(),
-            environment_home.clone(),
-        ) {
+        let links = match crate::runtime::links::spawn_worker(&runtime, notifier.clone()) {
             Ok(worker) => Some(worker),
             Err(message) => {
                 crate::diagnostic!(

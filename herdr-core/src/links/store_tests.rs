@@ -797,10 +797,17 @@ fn retention_case(days: Option<u16>, ended_days_ago: u64, still_open: bool) -> b
         None,
     );
     ingest(&mut store, home.path(), &path);
-    store
-        .prune(&|_| days, DEVICE, &|path| Path::new(path).is_file(), now)
-        .unwrap();
+    store.prune(&|_| days, DEVICE, &mut present, now).unwrap();
     rows(&store, "sessions") == 1
+}
+
+/// The files of `paths` that are there, as the node answers.
+fn present(paths: &[String]) -> Result<BTreeSet<String>, String> {
+    Ok(paths
+        .iter()
+        .filter(|path| Path::new(path).is_file())
+        .cloned()
+        .collect())
 }
 
 #[test]
@@ -840,7 +847,12 @@ fn copied_history_off_removes_a_session_whose_file_is_gone() {
     ingest(&mut store, home.path(), &path);
     assert_eq!(
         store
-            .prune(&|_| Some(90), DEVICE, &|_| false, T0 + MIN)
+            .prune(
+                &|_| Some(90),
+                DEVICE,
+                &mut |_| panic!("only Off asks about files"),
+                T0 + MIN
+            )
             .unwrap(),
         0
     );
@@ -850,12 +862,7 @@ fn copied_history_off_removes_a_session_whose_file_is_gone() {
 
     assert_eq!(
         store
-            .prune(
-                &|_| Some(0),
-                DEVICE,
-                &|path| Path::new(path).is_file(),
-                T0 + MIN
-            )
+            .prune(&|_| Some(0), DEVICE, &mut present, T0 + MIN)
             .unwrap(),
         1
     );
