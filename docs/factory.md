@@ -138,7 +138,8 @@ Adding a dependency to a running Task whose predecessor is unmerged puts the Tas
 ## Roles
 
 Each command runs with a role the engine decides from its own store, never from the caller's claim or a file.
-A caller is a worker when its pane is the pane of a live Task's worker, or when its working folder is inside a live Task's worktree; a `cancelled` or `done` Task has no worker.
+A caller is a worker when its pane is the pane of a Task's worker, or when its working folder is inside a Task's worktree.
+A `cancelled` or `done` Task's worker stays a worker, so its pane never gains an operator's commands, and the Task's state refuses its reports; a live Task wins when a pane or folder was reused.
 Every other caller is an operator, recorded by pane id, or `checkout` when the caller has no pane.
 The engine itself acts as a third role for deadlines and timers and is never a command caller.
 A capability file holds only a token, so editing it cannot change a role.
@@ -196,6 +197,7 @@ A start that fails with an environment signal leaves the Task `waiting` and is h
 
 A Task's worker is put to sleep when the Task blocks, pauses, goes to `verifying`, or waits for a slot, and woken when it runs again.
 Sleep goes through agent sleep and is deferred until the agent's turn ends; a worker that never slept is sent the message instead.
+Stopping a worker, when its Task is cancelled or an outside pull request takes it over, ends its ledger record at once and puts its agent to sleep the same way, so the pane and session stay for `revive`.
 A wake restarts the agent in the same pane and session.
 Letters for a woken worker are held, at most 16, until its agent is back, and are dropped to the diagnostic log after 10 minutes.
 A retried Task, or a worker whose pane is gone, spawns again in the same worktree and session with a fresh intent.

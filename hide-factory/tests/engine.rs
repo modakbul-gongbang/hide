@@ -801,6 +801,24 @@ fn a_plain_letter_from_a_harness_becomes_a_blocking_question_once() {
 }
 
 #[test]
+fn a_cancelled_task_s_worker_stays_a_worker_and_is_stopped() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let t = h.ready("Mine", &[]);
+    let worker = h.task(&f, &t).worker.unwrap();
+    let pane = worker.pane.clone().unwrap();
+    let answer = h.op(Command::Cancel { task: t.clone() });
+    assert_eq!(answer["ok"], true, "{answer}");
+    assert_eq!(h.task(&f, &t).state, TaskState::Cancelled);
+    assert!(h.world().stops.contains(&t), "the worker is stopped");
+    // Its pane and its folder still name the Task, never an operator.
+    let bound = Some((f.clone(), t.clone()));
+    assert_eq!(h.engine.role_for(Some(&pane), None), bound);
+    let inside = format!("{}/src", worker.worktree);
+    assert_eq!(h.engine.role_for(None, Some(&inside)), bound);
+}
+
+#[test]
 fn a_worker_cannot_act_as_a_person() {
     let mut h = Bench::new(false);
     let f = h.factory(true);

@@ -921,14 +921,17 @@ impl WorkerRuntime for CoreWorkers {
     }
 
     fn stop(&mut self, worker: &WorkerRef) -> Result<(), Failure> {
-        let Some(agent) = &worker.agent else {
-            return Ok(());
-        };
+        // The agent ends through agent sleep once its turn ends, so its pane
+        // and session stay for a revive (B50, B55); the ledger record ends now.
         if let Some(pane) = &worker.pane
             && let Ok(mut state) = self.state.lock()
         {
-            state.pending_sleep.remove(pane);
+            state.pending_sleep.insert(pane.clone());
         }
+        let agent = worker
+            .agent
+            .as_ref()
+            .ok_or_else(|| Failure::task("worker.stop", "worker has no agent"))?;
         let runtime = self.runtime()?;
         let (client, authority, actor) = guard(&runtime)
             .factory_delivery(&worker.factory)

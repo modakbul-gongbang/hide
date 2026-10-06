@@ -288,41 +288,24 @@ impl Engine {
     }
 
     /// The role of a caller (D-33): a pane the Factory spawned, or a cwd
-    /// inside a Factory worktree, is a worker of that Task.
+    /// inside a Factory worktree, is a worker of that Task. A finished or
+    /// cancelled Task's worker stays a worker, so its pane never gains the
+    /// operator's commands; a live Task wins when a pane or folder was reused.
     pub fn role_for(&self, pane: Option<&str>, cwd: Option<&str>) -> Option<(String, String)> {
-        for task in self.all_tasks() {
-            let Some(worker) = &task.worker else { continue };
-            if matches!(task.state, TaskState::Cancelled | TaskState::Done) {
-                continue;
-            }
+        let bound = |task: &&Task| {
+            let Some(worker) = &task.worker else {
+                return false;
+            };
             if pane.is_some() && worker.pane.as_deref() == pane {
-                return Some((task.factory.clone(), task.id.clone()));
+                return true;
             }
-            if let Some(cwd) = cwd {
-                let root = Path::new(&worker.worktree);
-                if Path::new(cwd).starts_with(root) {
-                    return Some((task.factory.clone(), task.id.clone()));
-                }
-            }
-        }
-        None
-    }
-
-    /// Worker panes and worktrees, for the daemon's role registry.
-    pub fn worker_bindings(&self) -> Vec<(String, String, Option<String>, String)> {
-        self.all_tasks()
-            .filter(|task| !matches!(task.state, TaskState::Cancelled | TaskState::Done))
-            .filter_map(|task| {
-                task.worker.as_ref().map(|worker| {
-                    (
-                        task.factory.clone(),
-                        task.id.clone(),
-                        worker.pane.clone(),
-                        worker.worktree.clone(),
-                    )
-                })
-            })
-            .collect()
+            !worker.worktree.is_empty()
+                && cwd.is_some_and(|cwd| Path::new(cwd).starts_with(&worker.worktree))
+        };
+        let finished = |task: &&Task| matches!(task.state, TaskState::Cancelled | TaskState::Done);
+        let live = self.all_tasks().filter(|t| !finished(t)).find(&bound);
+        live.or_else(|| self.all_tasks().filter(&finished).find(&bound))
+            .map(|task| (task.factory.clone(), task.id.clone()))
     }
 
     pub fn factory_for_project(&self, project: &str) -> Option<&Factory> {
@@ -3022,11 +3005,18 @@ impl Engine {
 
     /// A finished Task's worker ends and its worktree goes; the branch stays
     /// with the merge. A failure is logged and the disk recovery retries it.
+    /// Stops a worker; a refusal is recorded against its Task.
+    fn stop_worker(&mut self, factory_id: &str, id: &str, worker: &WorkerRef) {
+        if let Err(failure) = self.ports.workers.stop(worker) {
+            self.external_failure(factory_id, Some(id), &failure);
+        }
+    }
+
     fn release_worker(&mut self, factory_id: &str, id: &str) {
         let Some(worker) = self.task(factory_id, id).and_then(|t| t.worker.clone()) else {
             return;
         };
-        let _ = self.ports.workers.stop(&worker);
+        self.stop_worker(factory_id, id, &worker);
         match self.ports.workers.remove_worktree(&worker, false) {
             Ok(()) => {
                 self.with_task(factory_id, id, |t| t.purged = true);
@@ -3384,7 +3374,7 @@ impl Engine {
         let now = self.now();
         self.cancel_verification(factory_id, id);
         if let Some(worker) = &task.worker {
-            let _ = self.ports.workers.stop(worker);
+            self.stop_worker(factory_id, id, worker);
         }
         if let (Some(factory), Some(pr)) = (self.factories.get(factory_id).cloned(), &task.pr)
             && pr.by_factory
@@ -4486,7 +4476,7 @@ impl Engine {
                         // Stop the worker; the worktree stays 7 days (B50).
                         self.cancel_verification(factory_id, &task.id);
                         if let Some(worker) = &task.worker {
-                            let _ = self.ports.workers.stop(worker);
+                            self.stop_worker(factory_id, &task.id, worker);
                         }
                         self.with_task(factory_id, &task.id, |t| {
                             t.cancelled_at = Some(t.updated_at);
