@@ -8,6 +8,7 @@ const agent = (id: string, patch: Partial<KitAgent> = {}): KitAgent => ({
   label: id,
   availability: "available",
   enabled: true,
+  chosen: false,
   skill: piece("installed"),
   hook: null,
   doc_url: "https://example.test",

@@ -530,6 +530,10 @@ fn an_agent_whose_program_is_gone_keeps_what_hide_put_down_until_it_is_switched_
     let gemini = agent(&report, "gemini-cli");
     assert_eq!(gemini.availability, Availability::NotInstalled);
     assert!(gemini.enabled, "the switch stays so it can be turned off");
+    assert!(
+        gemini.chosen,
+        "the record holds the operator's choice, which is what keeps the row's switch"
+    );
     assert!(!gemini.needs_attention(), "nothing for Reinstall to do");
     for piece in [&gemini.skill, gemini.hook.as_ref().unwrap()] {
         assert_eq!(piece.state, ComponentState::Absent, "{gemini:?}");
@@ -553,6 +557,35 @@ fn an_agent_whose_program_is_gone_keeps_what_hide_put_down_until_it_is_switched_
             .map(|text| text.contains("hide-guidance"))
             .unwrap_or(false)
     );
+}
+
+#[test]
+fn an_agent_on_only_by_default_with_no_program_reports_no_operator_choice() {
+    let fixture = Fixture::new();
+    // A machine that already has a record, so the first-run hold does not
+    // switch the default-on agents off.
+    apply(&fixture.target, &Scope::agents([], ["gemini-cli"]));
+
+    let report = status(&fixture.target);
+
+    let codex = agent(&report, "codex");
+    assert_eq!(codex.availability, Availability::NotInstalled);
+    assert!(codex.enabled, "Codex is on by default");
+    assert!(!codex.chosen, "{codex:?}");
+    // Switched off by the operator, the choice is on record whatever it is.
+    assert!(agent(&report, "gemini-cli").chosen);
+}
+
+#[test]
+fn a_report_from_a_build_that_predates_chosen_reads_as_no_choice() {
+    let fixture = Fixture::new();
+    let report = status(&fixture.target);
+    let mut wire = serde_json::to_value(agent(&report, "codex")).unwrap();
+    wire.as_object_mut().unwrap().remove("chosen");
+
+    let parsed: AgentReport = serde_json::from_value(wire).unwrap();
+
+    assert!(!parsed.chosen);
 }
 
 /// A stand-in login shell that puts `~/.grok/bin` on its `PATH`, as Grok's

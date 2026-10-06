@@ -696,6 +696,11 @@ pub struct KitAgentSnapshot {
     pub label: String,
     pub availability: hide_kit::Availability,
     pub enabled: bool,
+    /// The machine's record holds the operator's own choice for this agent.
+    /// An agent that is on only by default has none, so a shell keeps an
+    /// agent under Installed once its program is gone only when this is true
+    /// (PRD settings-cleanup B9, D-07).
+    pub chosen: bool,
     pub skill: KitPieceSnapshot,
     /// `None` for an agent that gets the skill only.
     pub hook: Option<KitPieceSnapshot>,
@@ -805,6 +810,7 @@ impl KitSnapshot {
                 label: agent.label.clone(),
                 availability: agent.availability,
                 enabled: agent.enabled,
+                chosen: agent.chosen,
                 skill: (&agent.skill).into(),
                 hook: agent.hook.as_ref().map(Into::into),
                 herdr: agent.herdr.as_ref().map(Into::into),

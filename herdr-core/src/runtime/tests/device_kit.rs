@@ -314,6 +314,7 @@ fn agent_report(
         label: id.to_owned(),
         availability,
         enabled,
+        chosen: false,
         skill: piece(skill),
         hook: None,
         herdr: None,

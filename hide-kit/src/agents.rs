@@ -614,6 +614,14 @@ pub struct AgentReport {
     /// Whether the agent is on: switched on by the operator, or on by
     /// default and not switched off.
     pub enabled: bool,
+    /// The machine's record holds the operator's own choice for this agent,
+    /// on or off. An agent that is on only by default has none, so a shell
+    /// can tell one the operator switched on, whose program then went away
+    /// and which keeps its switch, from a default that never had a program.
+    /// Absent in a report from a build that predates it, which reads as no
+    /// choice.
+    #[serde(default)]
+    pub chosen: bool,
     pub skill: PieceReport,
     /// `None` for an agent with no hook (skill only).
     pub hook: Option<PieceReport>,

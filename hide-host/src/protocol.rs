@@ -43,7 +43,9 @@ use crate::root::RootIdentity;
 /// 19: a `reinstall` can carry `codex_daemon_off`, the operator's own request
 /// to turn Codex's shared server off on that device, and the report that
 /// answers it carries `codex_daemon_off` (PRD settings-cleanup B27). A helper
-/// on 18 would run the pass and silently ignore the request.
+/// on 18 would run the pass and silently ignore the request. An agent row
+/// of the report carries `chosen`, the operator's own choice on record (PRD
+/// settings-cleanup B9, D-07); a report without it reads as no choice.
 pub const PROTOCOL_VERSION: u32 = 19;
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]

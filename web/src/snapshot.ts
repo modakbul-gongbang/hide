@@ -979,11 +979,12 @@ export type KitAgent = {
   availability: KitAgentAvailability;
   enabled: boolean;
   /**
-   * The machine's record holds the operator's own choice for this agent. An
-   * agent that is on only by default (Claude Code, Codex) has none, so it is
-   * not kept under Installed once its program is gone (B9).
+   * The machine's record holds the operator's own choice for this agent
+   * (`KitAgentSnapshot.chosen`). An agent that is on only by default (Claude
+   * Code, Codex) has none, so it is not kept under Installed once its
+   * program is gone (B9).
    */
-  chosen?: boolean;
+  chosen: boolean;
   skill: KitPiece;
   hook: KitPiece | null;
   /** Herdr's own integration for the agent; null for an agent the pinned Herdr has none for (Gemini CLI). */

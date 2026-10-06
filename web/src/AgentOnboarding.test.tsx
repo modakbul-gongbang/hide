@@ -19,6 +19,7 @@ const agent = (id: string, label: string, availability: KitAgent["availability"]
   label,
   availability,
   enabled: false,
+  chosen: false,
   skill: { state: "off", reason: null, location: null },
   hook: null,
   doc_url: "https://example.test",

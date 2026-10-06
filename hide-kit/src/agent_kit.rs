@@ -412,6 +412,7 @@ fn report_agent(
         label: adapter.label.to_owned(),
         availability,
         enabled: on,
+        chosen: record.agent_choice(adapter.id).is_some(),
         skill,
         hook,
         herdr,

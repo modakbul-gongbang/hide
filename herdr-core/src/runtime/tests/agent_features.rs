@@ -65,6 +65,7 @@ fn the_snapshot_row_carries_the_chip_and_the_table_in_order() {
         label: id.to_owned(),
         availability: hide_kit::Availability::Available,
         enabled: false,
+        chosen: false,
         skill: piece.clone(),
         hook: None,
         herdr: None,
@@ -102,4 +103,45 @@ fn the_snapshot_row_carries_the_chip_and_the_table_in_order() {
             .collect::<Vec<_>>(),
         Feature::ALL
     );
+}
+
+/// A device's helper sends its report as JSON and the shell reads the
+/// snapshot as JSON, so this goes through both: an agent the operator
+/// switched on whose program is gone arrives `enabled` and `chosen`, which is
+/// what keeps its row and switch under Installed (PRD settings-cleanup B9,
+/// D-07), and one from a helper that predates the field arrives not chosen.
+#[test]
+fn a_recorded_on_agent_without_its_program_is_published_enabled_and_chosen() {
+    let row = |id: &str, chosen: Option<bool>| {
+        let mut wire = serde_json::json!({
+            "id": id,
+            "label": id,
+            "availability": "not_installed",
+            "enabled": true,
+            "skill": {"state": "absent", "reason": "not found", "location": null},
+            "hook": null,
+            "doc_url": "https://example.test/doc",
+        });
+        if let Some(chosen) = chosen {
+            wire["chosen"] = chosen.into();
+        }
+        serde_json::from_value::<hide_kit::AgentReport>(wire).unwrap()
+    };
+    let report = hide_kit::KitReport {
+        agents: vec![
+            row("codex", Some(true)),
+            row("claude-code", Some(false)),
+            row("gemini-cli", None),
+        ],
+        ..Default::default()
+    };
+
+    let published = serde_json::to_value(crate::model::KitSnapshot::from_report(&report)).unwrap();
+
+    let agents = published["agents"].as_array().unwrap();
+    assert_eq!(agents[0]["enabled"], true);
+    assert_eq!(agents[0]["chosen"], true);
+    assert_eq!(agents[0]["availability"], "not_installed");
+    assert_eq!(agents[1]["chosen"], false);
+    assert_eq!(agents[2]["chosen"], false);
 }

@@ -26,6 +26,7 @@ export function AgentOnboardingScene({ theme }: { theme: "light" | "dark" }) {
       label,
       availability,
       enabled: false,
+      chosen: false,
       skill: { state: "off", reason: null, location: null },
       hook: null,
       doc_url: "https://example.test",

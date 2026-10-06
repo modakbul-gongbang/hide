@@ -24,6 +24,7 @@ const agent = (id: string, over: Partial<KitAgent> = {}): KitAgent => ({
   label: LABELS[id]!,
   availability: "available",
   enabled: true,
+  chosen: false,
   skill: piece("installed"),
   hook: piece("installed"),
   herdr: piece("installed"),
@@ -263,6 +264,35 @@ it("lists an agent that is on only by default, with no program, as not installed
   expect(again.q('[data-agent-row="local:claude-code:on"]')).not.toBeNull();
   expect(again.q('[data-agent-status="local:claude-code:ready"]')).toBeNull();
   await again.unmount();
+});
+
+it("keeps a recorded-on agent with no program under Installed with its switch, from the row exactly as the core serializes it (B9, D-07)", async () => {
+  // `KitAgentSnapshot` as serde_json writes it, so a field the core does not send cannot be papered over by a fixture.
+  const wire = (id: string, label: string, chosen: boolean): KitAgent =>
+    JSON.parse(
+      JSON.stringify({
+        id,
+        label,
+        availability: "not_installed",
+        enabled: true,
+        chosen,
+        skill: { state: "absent", reason: "`" + id + "` is not found", location: null },
+        hook: { state: "absent", reason: "`" + id + "` is not found", location: null },
+        herdr: { state: "absent", reason: null, location: null },
+        partial: false,
+        features: FEATURES.map((feature) => ({ id: feature, supported: true })),
+        sessions: { connected: 0, not_connected: [], not_connected_hidden: 0 },
+        doc_url: `https://docs.example.test/${id}`,
+      }),
+    );
+  const set = [wire("claude-code", "Claude Code", false), wire("codex", "Codex", true), ...SEVEN.slice(2)];
+  const { all, q, unmount } = await mount(state([device("local", { kit: kit(set) })]));
+  const rows = all("[data-agent-row]").map((row) => row.getAttribute("data-agent-row"));
+  expect(rows).toContain("local:codex:on");
+  expect(q('[data-agent-row="local:codex:on"] [role="switch"]')).not.toBeNull();
+  expect(rows).toContain("claude-code:not-installed");
+  expect(q('[data-agent-row="local:claude-code:on"]')).toBeNull();
+  await unmount();
 });
 
 it("opens the Partial popover from the chip, lists every feature with a mark and a word, and says how Gemini CLI's status is judged (B15, B18)", async () => {

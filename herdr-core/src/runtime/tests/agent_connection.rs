@@ -104,6 +104,7 @@ fn kit_rows(runtime: &mut Runtime, codex_daemon_on: Option<bool>) {
                 label: adapter.label.to_owned(),
                 availability: hide_kit::Availability::Available,
                 enabled: true,
+                chosen: false,
                 skill: piece,
                 hook: None,
                 herdr: None,

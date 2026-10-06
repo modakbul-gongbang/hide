@@ -508,6 +508,7 @@ fn switch_on(runtime: &mut Runtime, ids: &[&str]) {
                 label: adapter.label.to_owned(),
                 availability: hide_kit::Availability::Available,
                 enabled: ids.contains(&adapter.id),
+                chosen: false,
                 skill: piece.clone(),
                 hook: None,
                 herdr: None,
