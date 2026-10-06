@@ -43,6 +43,20 @@ impl Kit {
         std::fs::write(&hide, FAKE_HIDE).unwrap();
         use std::os::unix::fs::PermissionsExt;
         std::fs::set_permissions(&hide, std::fs::Permissions::from_mode(0o755)).unwrap();
+        // The first launch of a freshly copied executable can wait seconds on
+        // the system's code check under load, and the hook's own budget is
+        // measured from its start; pay that wait here, before the run that
+        // asserts what the hook asked.
+        let status = Command::new(bin.join("hide-agent-hooks"))
+            .arg("hook")
+            .status()
+            .unwrap();
+        assert!(status.success());
+        let status = Command::new(&hide)
+            .env("FAKE_HIDE_LOG", "/dev/null")
+            .status()
+            .unwrap();
+        assert!(status.success());
         Self { root }
     }
 
