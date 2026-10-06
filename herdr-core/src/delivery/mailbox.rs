@@ -336,8 +336,9 @@ pub(crate) fn prompt_hook(kind: &str) -> bool {
 }
 
 /// Whether a bell is still coming for the letter. A letter whose three bells
-/// are spent, or whose recipient is never belled, is handed over by the next
-/// prompt instead, or it could only expire undelivered.
+/// are spent, or whose recipient is never belled, stays pending for
+/// `hide inbox` and expires undelivered; the operator's own prompt promises
+/// it nothing.
 fn bell_pending(letter: &Letter) -> bool {
     letter.state == State::Pending
         && letter.attempts() < 3
@@ -346,36 +347,27 @@ fn bell_pending(letter: &Letter) -> bool {
 
 /// The letter bodies for the turn Hide's bell opened.
 pub fn pull(ledger: &Ledger, actor: &Actor) -> Result<Intake, String> {
-    intake(ledger, actor, |_| true)
+    intake(ledger, actor)
 }
 
 /// What the hook hands the agent when the operator's own prompt was
-/// submitted: letters that no bell will bring wait with their bodies as ever,
-/// the rest are only counted, so the operator's turn is not mixed with them.
+/// submitted: never a letter body, only a line counting the letters a bell
+/// will still bring, so the operator's turn is not mixed with them.
 fn operator_prompt_intake(ledger: &Ledger, actor: &Actor) -> Result<Intake, String> {
-    let mut intake = intake(ledger, actor, |letter| !bell_pending(letter))?;
+    actor.require_native_identity()?;
     let waiting = ledger
         .letters
         .iter()
-        .filter(|letter| {
-            letter.recipient.same_identity(actor)
-                && letter.awaiting_intake()
-                && bell_pending(letter)
-        })
+        .filter(|letter| letter.recipient.same_identity(actor) && bell_pending(letter))
         .count();
+    let mut intake = Intake::default();
     if waiting > 0 && prompt_hook(&actor.kind) {
-        intake.context.push_str(&format!(
-            "\nHide 편지 {waiting}통 대기 중, 이 턴이 끝난 뒤 전달\n"
-        ));
+        intake.context = format!("Hide 편지 {waiting}통 대기 중, 이 턴이 끝난 뒤 전달\n");
     }
     Ok(intake)
 }
 
-fn intake(
-    ledger: &Ledger,
-    actor: &Actor,
-    wanted: impl Fn(&Letter) -> bool,
-) -> Result<Intake, String> {
+fn intake(ledger: &Ledger, actor: &Actor) -> Result<Intake, String> {
     actor.require_native_identity()?;
     if !prompt_hook(&actor.kind) {
         return Ok(Intake::default());
@@ -383,16 +375,14 @@ fn intake(
     let mut pending: Vec<_> = ledger
         .letters
         .iter()
-        .filter(|letter| {
-            letter.recipient.same_identity(actor) && letter.awaiting_intake() && wanted(letter)
-        })
+        .filter(|letter| letter.recipient.same_identity(actor) && letter.awaiting_intake())
         .collect();
     pending.sort_by_key(|letter| letter.created_at_unix_ms);
     let mut context = String::new();
     let mut ids = Vec::new();
     // Reserve the tail before rendering bodies, including IDs and sender
     // metadata. Truncation always ends at a UTF-8 boundary.
-    const TAIL_BUDGET: usize = 256;
+    const TAIL_BUDGET: usize = 128;
     for letter in pending.iter().take(HOOK_LETTERS) {
         let header = format!(
             "\nHide letter {} from {} ({}) [{}]\n",
@@ -791,22 +781,24 @@ mod tests {
     }
 
     #[test]
-    fn a_letter_no_bell_will_bring_is_handed_to_the_operators_prompt() {
+    fn the_operators_prompt_never_carries_a_body_and_counts_only_letters_a_bell_will_bring() {
         let mut ledger = Ledger::default();
         let recipient = actor("recipient");
-        let ids = pending_for(&mut ledger, &recipient, 2);
+        pending_for(&mut ledger, &recipient, 3);
+        // Three bells spent: the letter waits for `hide inbox` and expires.
         ledger.letters[0].bell_attempts = Some(3);
-        let operator = pull_for(&mut ledger, &recipient, false);
-        assert_eq!(operator.ids, vec![ids[0].clone()]);
-        assert!(operator.context.contains("body-0"));
-        assert!(!operator.context.contains("body-1"));
-        assert!(operator.context.contains("Hide 편지 1통 대기 중"));
-        // A letter the recipient already acknowledged is no bell's either.
+        // Acknowledged before intake: no bell either.
         ledger.letters[1].state = State::Acknowledged;
         ledger.letters[1].hook_confirmed = Some(false);
         let operator = pull_for(&mut ledger, &recipient, false);
-        assert_eq!(operator.ids, ids);
-        assert!(!operator.context.contains("대기 중"));
+        assert!(operator.ids.is_empty());
+        assert_eq!(
+            operator.context.trim(),
+            "Hide 편지 1통 대기 중, 이 턴이 끝난 뒤 전달"
+        );
+        ledger.letters[2].bell_attempts = Some(3);
+        let operator = pull_for(&mut ledger, &recipient, false);
+        assert!(operator.ids.is_empty() && operator.context.is_empty());
     }
 
     #[test]
