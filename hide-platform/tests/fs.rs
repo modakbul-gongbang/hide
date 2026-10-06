@@ -1572,3 +1572,33 @@ fn open_file_permissions_are_judged_on_the_descriptor() {
     assert!(private::handle_others_can_modify(&file).unwrap());
     assert!(private::handle_owned_by_current_user(&file).unwrap());
 }
+
+/// A folder that is open, or has a file open inside it, is listed with the
+/// process that holds it, which is what the record of a refused rename needs
+/// to tell this process from another one. Only Windows has the question.
+#[cfg(windows)]
+#[test]
+fn the_process_holding_a_folder_or_a_file_in_it_is_listed_with_its_id() {
+    use hide_platform::fs::holders::holders_of;
+    let sandbox = tempfile::tempdir().unwrap();
+    let folder = sandbox.path().join("held");
+    fs::create_dir(&folder).unwrap();
+    fs::write(folder.join("inside.txt"), "inside").unwrap();
+    let mine = std::process::id();
+    let listed = |folder: &Path| {
+        holders_of(folder, 64)
+            .unwrap()
+            .iter()
+            .any(|holder| holder.pid == mine)
+    };
+
+    assert!(!listed(&folder), "nothing is open yet");
+    let file = File::open(folder.join("inside.txt")).unwrap();
+    assert!(listed(&folder), "a file open inside the folder is a holder");
+    drop(file);
+    assert!(!listed(&folder), "a closed file holds nothing");
+    let handle = hide_platform::fs::open_dir(&folder).unwrap();
+    assert!(listed(&folder), "the folder itself open is a holder");
+    drop(handle);
+    assert!(!listed(&folder));
+}

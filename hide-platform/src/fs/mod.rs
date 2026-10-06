@@ -9,6 +9,7 @@
 //! `cap-std`.
 
 pub mod atomic;
+pub mod holders;
 pub mod identity;
 pub mod link;
 pub mod lock;
