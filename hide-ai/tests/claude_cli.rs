@@ -566,3 +566,69 @@ fn a_model_list_the_cli_cannot_give_is_reported_not_replaced_by_a_guess() {
         other => panic!("{other:?}"),
     });
 }
+
+/// Drives the real, logged-in `claude`: its model list through the
+/// `initialize` request, then one tiny request through the router. It writes
+/// the model values and the outcome class to `HIDE_AI_LIVE_EVIDENCE` and
+/// nothing else, so no account or organisation field can reach the record.
+///
+/// ```sh
+/// HIDE_AI_LIVE_EVIDENCE=<folder> cargo test -p hide-ai --test claude_cli -- --ignored real_claude
+/// ```
+#[test]
+#[ignore = "needs a logged-in claude on PATH"]
+fn real_claude_lists_its_models_and_answers_one_request() {
+    let evidence = PathBuf::from(
+        std::env::var("HIDE_AI_LIVE_EVIDENCE").expect("HIDE_AI_LIVE_EVIDENCE names the folder"),
+    );
+    std::fs::create_dir_all(&evidence).unwrap();
+    let backend = std::sync::Arc::new(ClaudeCliBackend::new(ClaudeConfig {
+        model: "haiku".to_owned(),
+        ..ClaudeConfig::default()
+    }));
+
+    let catalog = backend.models();
+    let models = match &catalog {
+        hide_ai::ModelCatalog::Offered(models) => models.clone(),
+        other => panic!("the live model list was not offered: {other:?}"),
+    };
+    assert!(!models.is_empty() && !models.iter().any(|model| model == "default"));
+
+    let router = AiRouter::new(
+        vec![backend.clone()],
+        RouterConfig {
+            priority: vec![ProviderId::CLAUDE],
+            ..RouterConfig::default()
+        },
+        std::sync::Arc::new(NoopLogSink),
+    );
+    let mut ask = request(Duration::from_secs(60));
+    ask.input = "user: please rename the build script".to_owned();
+    let outcome = router.execute(&ask, &CancelToken::new());
+    let class = match &outcome {
+        Ok(_) => "ok",
+        Err(error) => error.class(),
+    };
+    let statuses: Vec<Value> = router
+        .statuses()
+        .iter()
+        .map(|status| {
+            json!({
+                "provider": status.provider.as_str(),
+                "selectable": status.selectable,
+            })
+        })
+        .collect();
+    std::fs::write(
+        evidence.join("claude-live.json"),
+        serde_json::to_string_pretty(&json!({
+            "models": models,
+            "request_outcome": class,
+            "answered_by": router.last_answered().map(|provider| provider.as_str()),
+            "statuses": statuses,
+        }))
+        .unwrap(),
+    )
+    .unwrap();
+    assert_eq!(class, "ok", "{outcome:?}");
+}
