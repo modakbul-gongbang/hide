@@ -309,9 +309,12 @@ fn what_codex_does_not_do_is_a_failure_with_its_cause() {
         assert_eq!(failed(fixture.trust()), TrustFailureKind::Refused, "{mode}");
     }
 
-    // Codex could not read the file Hide wrote: not "nothing to record".
-    fixture.mode("errors");
-    assert_eq!(failed(fixture.trust()), TrustFailureKind::Refused);
+    // Codex could not use what Hide wrote: not "nothing to record". The two
+    // shapes codex-cli 0.160.0 reports it in.
+    for mode in ["errors", "unparsable"] {
+        fixture.mode(mode);
+        assert_eq!(failed(fixture.trust()), TrustFailureKind::Refused, "{mode}");
+    }
 
     let missing = trust_own_hooks(
         &fixture.home.path().join("no-such-codex"),
@@ -428,4 +431,12 @@ fn a_process_outside_the_childs_tree_holding_its_output_does_not_hold_the_check(
     // What the test started goes.
     hide_platform::process::kill_tree(escaped).unwrap();
     assert_eq!(outcome, TrustOutcome::Trusted { recorded: five() });
+}
+
+#[test]
+fn a_warning_about_another_tools_hook_does_not_fail_the_check() {
+    let fixture = Fixture::new();
+    fixture.install();
+    fixture.mode("warning");
+    assert_eq!(fixture.trust(), TrustOutcome::Trusted { recorded: five() });
 }

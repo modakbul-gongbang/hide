@@ -427,19 +427,19 @@ impl<'a> Session<'a> {
             }) if method_unknown(method, code, &message) => return Ok(Listing::Unsupported),
             Err(failed) => return Err(failed.into_failure()),
         };
-        let (listed, errors) = hooks_of(&answer).map_err(|detail| {
+        let answer = hooks_of(&answer).map_err(|detail| {
             TrustFailure::new(
                 TrustFailureKind::Refused,
                 format!("hooks/list answered something Hide cannot read: {detail}"),
             )
         })?;
-        // Codex could not read the file Hide wrote: its entries are not in the
-        // list, so "nothing to record" would be a wrong answer.
-        let wanted = canonical_or_given(hooks_json);
-        if let Some(error) = errors
-            .iter()
-            .find(|error| canonical_or_given(Path::new(&error.path)) == wanted)
-        {
+        // Codex could not use what Hide wrote: its entries are missing from
+        // the list, so "nothing to record" would be a wrong answer. Observed
+        // from codex-cli 0.160.0: a hooks.json it cannot parse is a warning
+        // (`failed to parse hooks config <path>: ...`) with an empty list,
+        // and only a broken `config.toml` fills `errors`. Other warnings
+        // ("skipping prompt hook in <path>") are about other tools' entries.
+        if let Some(error) = answer.errors.first() {
             return Err(TrustFailure::new(
                 TrustFailureKind::Refused,
                 format!(
@@ -448,6 +448,20 @@ impl<'a> Session<'a> {
                 ),
             ));
         }
+        let spellings = [
+            hooks_json.display().to_string(),
+            canonical_or_given(hooks_json).display().to_string(),
+        ];
+        if let Some(warning) = answer.warnings.iter().find(|warning| {
+            warning.contains("failed to parse hooks config")
+                && spellings.iter().any(|path| warning.contains(path.as_str()))
+        }) {
+            return Err(TrustFailure::new(
+                TrustFailureKind::Refused,
+                format!("codex could not parse Hide's hook file: {warning}"),
+            ));
+        }
+        let listed = answer.hooks;
         Ok(Listing::Targets(select_targets(
             expected, &listed, hooks_json,
         )))
@@ -570,6 +584,7 @@ impl<'a> Session<'a> {
                 Ok(Line::Eof) | Err(RecvTimeoutError::Disconnected) => break,
                 Ok(_) | Err(RecvTimeoutError::Timeout) => {}
             }
+
             if self.stop.load(Ordering::Relaxed) {
                 break;
             }
@@ -664,16 +679,25 @@ struct ListError {
     message: String,
 }
 
-/// The hooks and the errors of a `hooks/list` answer, across every cwd it
-/// lists.
-fn hooks_of(answer: &Value) -> Result<(Vec<Listed>, Vec<ListError>), String> {
+/// What `hooks/list` answered, across every cwd it lists.
+struct Answer {
+    hooks: Vec<Listed>,
+    errors: Vec<ListError>,
+    warnings: Vec<String>,
+}
+
+fn hooks_of(answer: &Value) -> Result<Answer, String> {
     let entries = answer
         .get("data")
         .and_then(Value::as_array)
         .ok_or_else(|| "there is no data list".to_owned())?;
     let mut hooks = Vec::new();
     let mut errors = Vec::new();
+    let mut warnings = Vec::new();
     for entry in entries {
+        if let Some(reported) = entry.get("warnings").and_then(Value::as_array) {
+            warnings.extend(reported.iter().filter_map(Value::as_str).map(str::to_owned));
+        }
         if let Some(reported) = entry.get("errors").and_then(Value::as_array) {
             for error in reported {
                 errors.push(
@@ -693,7 +717,11 @@ fn hooks_of(answer: &Value) -> Result<(Vec<Listed>, Vec<ListError>), String> {
             );
         }
     }
-    Ok((hooks, errors))
+    Ok(Answer {
+        hooks,
+        errors,
+        warnings,
+    })
 }
 
 /// Feeds the child's lines to the session, stopping at the end of output or
@@ -929,7 +957,7 @@ mod tests {
             "enabled": true, "timeoutSec": 8, "displayOrder": 0,
         });
         let answer = json!({"data": [{"cwd": "/a", "hooks": [hook.clone()]}, {"cwd": "/b", "hooks": [hook]}]});
-        assert_eq!(hooks_of(&answer).unwrap().0.len(), 2);
+        assert_eq!(hooks_of(&answer).unwrap().hooks.len(), 2);
         assert!(hooks_of(&json!({})).is_err());
         assert!(hooks_of(&json!({"data": [{"cwd": "/a"}]})).is_err());
     }

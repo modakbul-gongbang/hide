@@ -16,7 +16,11 @@ and `fake-pid` (its own pid). `$CODEX_HOME/fake-mode` selects the behaviour:
                 of Hide's next request) before it answers hooks/list
   flood         makes more requests of the client than any answer needs
   big_line      prints one line longer than any caller reads
-  errors        lists no hooks and reports hooks.json as unusable
+  errors        lists no hooks and reports config.toml as unusable, the way
+                codex-cli 0.160.0 does (the error names the Codex home)
+  unparsable    lists no hooks and warns "failed to parse hooks config <path>",
+                the way codex-cli 0.160.0 reports a hooks.json it cannot read
+  warning       answers normally with a warning about another tool's hook
   escape        answers normally and leaves a process outside its tree
                 holding its output open
   exit          ends right after initialize
@@ -30,6 +34,7 @@ import json
 import os
 import subprocess
 import sys
+import time
 
 HOME = os.environ["CODEX_HOME"]
 
@@ -151,18 +156,21 @@ for raw in sys.stdin:
             with open(path("fake-child-pid"), "w") as f:
                 f.write(str(child.pid))
             while True:
-                sys.stdin.readline()
+                time.sleep(0.2)
         elif MODE == "flood":
             for n in range(50):
                 send({"jsonrpc": "2.0", "id": 1000 + n, "method": "item/tool/requestUserInput", "params": {}})
             while True:
-                sys.stdin.readline()
+                time.sleep(0.2)
         elif MODE == "big_line":
             sys.stdout.write("y" * (2 * 1024 * 1024) + "\n")
             sys.stdout.flush()
         elif MODE == "errors":
             reply(rid, {"data": [{"cwd": os.getcwd(), "hooks": [], "warnings": [],
-                                  "errors": [{"path": path("hooks.json"), "message": "invalid JSON"}]}]})
+                                  "errors": [{"path": HOME, "message": path("config.toml") + ":1:10: unclosed array"}]}]})
+        elif MODE == "unparsable":
+            reply(rid, {"data": [{"cwd": os.getcwd(), "hooks": [], "errors": [],
+                                  "warnings": ["failed to parse hooks config %s: key must be a string at line 1 column 3" % path("hooks.json")]}]})
         elif MODE == "chatty":
             for _ in range(80):
                 sys.stdout.write("x" * 65536 + "\n")
@@ -177,16 +185,16 @@ for raw in sys.stdin:
                     if os.fork() == 0:
                         with open(path("fake-escaped-pid"), "w") as f:
                             f.write(str(os.getpid()))
-                        import time
                         time.sleep(60)
                     os._exit(0)
                 os.wait()
                 while not os.path.exists(path("fake-escaped-pid")):
-                    pass
+                    time.sleep(0.01)
             hooks = listed()
             if MODE == "project":
                 hooks += [dict(h, source="project", key=h["key"] + ":p") for h in hooks]
-            reply(rid, {"data": [{"cwd": os.getcwd(), "hooks": hooks, "warnings": [], "errors": []}]})
+            warnings = ["skipping prompt hook in /somewhere/else/hooks.json"] if MODE == "warning" else []
+            reply(rid, {"data": [{"cwd": os.getcwd(), "hooks": hooks, "warnings": warnings, "errors": []}]})
     elif method == "config/batchWrite":
         if MODE == "refuse_write":
             error(rid, -32600, "config is read-only")
