@@ -161,6 +161,30 @@ pub(crate) fn fetch_workspace_active_tab(
     .map_err(session_error_from_api)?;
     wire::workspace_active_tab(result).map_err(SessionFetchError::Malformed)
 }
+
+/// Reads the cwd Herdr holds for a pane now, the confirmation a pane
+/// announced by `pane_created` waits for (`SessionReplica::confirm_pane_cwd`).
+/// A pane closed before the read answers no cwd; its `pane_closed` event
+/// follows on the stream.
+pub(crate) fn fetch_pane_cwd(
+    context: &SessionSyncContext,
+    pane_id: &str,
+) -> Result<Option<String>, SessionFetchError> {
+    require_local_socket(context)?;
+    let result = match hide_herdr_client::request_with_connector(
+        context.api_connector.as_ref(),
+        "pane.get",
+        wire::pane_target_params(pane_id).map_err(SessionFetchError::Malformed)?,
+        SYNC_REQUEST_TIMEOUT,
+    ) {
+        Ok(result) => result,
+        Err(error) if error.code() == Some("pane_not_found") => return Ok(None),
+        Err(error) => return Err(session_error_from_api(error)),
+    };
+    let (cwd, _) = wire::pane_session(result).map_err(SessionFetchError::Malformed)?;
+    Ok(cwd)
+}
+
 fn session_error_from_api(error: ApiError) -> SessionFetchError {
     match error {
         ApiError::Transport(message) | ApiError::Remote { message, .. } => {

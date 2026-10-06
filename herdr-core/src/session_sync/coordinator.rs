@@ -557,8 +557,16 @@ fn run_coordinator(
                         let current = replica
                             .as_mut()
                             .expect("active subscription always has a replica");
-                        match current.apply(event, mode) {
-                            Ok(outcome) => {
+                        let applied = current
+                            .apply(event, mode)
+                            .map_err(|error| ("event.rejected", error))
+                            .and_then(|outcome| {
+                                let confirmed = confirm_pane_cwds(&context, current)
+                                    .map_err(|error| ("pane_cwd_read.failed", error))?;
+                                Ok((outcome, confirmed))
+                            });
+                        match applied {
+                            Ok((outcome, confirmed)) => {
                                 if outcome.refresh_agents {
                                     next_agent_refresh = Instant::now();
                                 }
@@ -567,7 +575,7 @@ fn run_coordinator(
                                     stop_subscription(&mut subscription);
                                     return;
                                 }
-                                if outcome.publish
+                                if (outcome.publish || confirmed)
                                     && !publish_replica(
                                         &context,
                                         current,
@@ -615,8 +623,8 @@ fn run_coordinator(
                                     }
                                 }
                             }
-                            Err(error) => {
-                                log_sync_failure(&context, "event.rejected", Some(current), &error);
+                            Err((kind, error)) => {
+                                log_sync_failure(&context, kind, Some(current), &error);
                                 stop_subscription(&mut subscription);
                                 if !publish_failure(&context, error) {
                                     return;
@@ -773,6 +781,33 @@ fn sweep_subagent_counters(home: &std::path::Path, replica: &SessionReplica) {
             "message": error.to_string(),
         })),
     }
+}
+
+/// Reads the cwd of every pane an event announced and Herdr has not
+/// confirmed, once each, and returns whether the published projection
+/// changed. It runs right after the event that announced the pane, before
+/// that pane can publish: its tab waits for the layout event that follows.
+fn confirm_pane_cwds(
+    context: &SessionSyncContext,
+    replica: &mut SessionReplica,
+) -> Result<bool, SessionFetchError> {
+    let mut corrected = false;
+    for pane_id in replica.panes_awaiting_cwd() {
+        let cwd = fetch_pane_cwd(context, &pane_id)?;
+        if replica.confirm_pane_cwd(&pane_id, cwd) {
+            crate::diagnostic!(json!({
+                "component": "session_sync",
+                "kind": "pane_cwd.corrected",
+                "target": context.log_target(),
+                "pane_id": pane_id,
+            }));
+            corrected = true;
+        }
+    }
+    if !corrected {
+        return Ok(false);
+    }
+    replica.refresh_published_state()
 }
 
 /// Reads the replacement active tab for every workspace still waiting for
@@ -1968,5 +2003,193 @@ mod focus_readback_order_tests {
             thread::yield_now();
         }
         assert_eq!(view(&runtime).1.as_deref(), Some("w1:p1"));
+    }
+}
+
+#[cfg(test)]
+mod pane_cwd_confirmation_tests {
+    use super::*;
+    use crate::fake_herdr::FakeHerdr;
+
+    const PROJECT: &str = "/tmp/fixture";
+
+    fn snapshot() -> Value {
+        json!({
+            "version": "0.9.1",
+            "protocol": hide_herdr_client::HERDR_PROTOCOL_REVISION,
+            "focused_pane_id": "w1:p1",
+            "workspaces": [{
+                "workspace_id": "w1", "label": "fixture", "agent_status": "idle",
+                "focused": true, "number": 1, "pane_count": 1, "tab_count": 1,
+                "active_tab_id": "w1:t1"
+            }],
+            "tabs": [{
+                "workspace_id": "w1", "tab_id": "w1:t1", "agent_status": "idle",
+                "focused": false, "number": 1, "pane_count": 1, "label": "1"
+            }],
+            "panes": [pane("w1:t1", "w1:p1", PROJECT)],
+            "layouts": [layout("w1:t1", "w1:p1")],
+            "agents": []
+        })
+    }
+
+    fn pane(tab_id: &str, pane_id: &str, cwd: &str) -> Value {
+        json!({
+            "workspace_id": "w1", "tab_id": tab_id, "pane_id": pane_id,
+            "terminal_id": "fixture-terminal", "focused": false, "revision": 0,
+            "agent_status": "idle", "cwd": cwd
+        })
+    }
+
+    fn layout(tab_id: &str, pane_id: &str) -> Value {
+        json!({
+            "workspace_id": "w1", "tab_id": tab_id, "zoomed": false,
+            "area": {"x": 0, "y": 0, "width": 120, "height": 60},
+            "focused_pane_id": pane_id,
+            "panes": [{"pane_id": pane_id, "focused": true,
+                "rect": {"x": 0, "y": 0, "width": 120, "height": 60}}],
+            "splits": []
+        })
+    }
+
+    fn event(kind: &str, data: Value) -> ReplicaEvent {
+        let line = json!({"event": kind, "data": data}).to_string();
+        match parse_subscription_line(&line).expect("event parses") {
+            SubscriptionLine::Event(event) => event,
+            SubscriptionLine::Error { .. } => unreachable!(),
+        }
+    }
+
+    fn context_for(herdr: &FakeHerdr) -> SessionSyncContext {
+        SessionSyncContext::local(&LiveContext {
+            socket_path: herdr.socket_path().to_path_buf(),
+            herdr_bin: None,
+            runtime: Weak::new(),
+            notifier: ChangeNotifier::noop(),
+            api_connector: Arc::new(herdr.connector()),
+        })
+    }
+
+    /// A Herdr whose `pane.get` answers `cwd` for the pane it is asked about.
+    fn herdr_reading(cwd: &'static str) -> FakeHerdr {
+        FakeHerdr::start(
+            "pane-cwd-confirmation",
+            move |method, params| match method {
+                "pane.get" => {
+                    let pane_id = params["pane_id"].as_str().expect("pane.get names a pane");
+                    json!({"type": "pane_info", "pane": {
+                        "pane_id": pane_id, "terminal_id": "fixture-terminal",
+                        "workspace_id": "w1", "tab_id": "w1:t2", "focused": false,
+                        "agent_status": "idle", "revision": 1, "cwd": cwd
+                    }})
+                }
+                other => panic!("unexpected {other}"),
+            },
+        )
+    }
+
+    /// Applies one event the way the coordinator's event path does.
+    fn apply(context: &SessionSyncContext, replica: &mut SessionReplica, next: ReplicaEvent) {
+        replica
+            .apply(next, ApplyMode::Strict)
+            .expect("event applies");
+        confirm_pane_cwds(context, replica).expect("cwd read succeeds");
+    }
+
+    fn create_tab(context: &SessionSyncContext, replica: &mut SessionReplica, born_in: &str) {
+        let tab = json!({
+            "workspace_id": "w1", "tab_id": "w1:t2", "agent_status": "idle",
+            "focused": false, "number": 2, "pane_count": 1, "label": "2"
+        });
+        apply(
+            context,
+            replica,
+            event("tab_created", json!({"type": "tab_created", "tab": tab})),
+        );
+        apply(
+            context,
+            replica,
+            event(
+                "pane_created",
+                json!({"type": "pane_created", "pane": pane("w1:t2", "w1:p2", born_in)}),
+            ),
+        );
+        apply(
+            context,
+            replica,
+            event(
+                "layout_updated",
+                json!({"type": "layout_updated", "layout": layout("w1:t2", "w1:p2")}),
+            ),
+        );
+    }
+
+    fn projected_cwd(replica: &SessionReplica, pane_id: &str) -> Option<String> {
+        replica
+            .project()
+            .panes
+            .into_iter()
+            .find(|pane| pane.pane_id == pane_id)
+            .expect("the created pane is published")
+            .cwd
+    }
+
+    #[test]
+    fn a_pane_announced_with_another_cwd_publishes_the_cwd_herdr_reads_back() {
+        let herdr = herdr_reading(PROJECT);
+        let context = context_for(&herdr);
+        let mut replica = SessionReplica::from_snapshot(&snapshot()).expect("snapshot");
+
+        // Herdr 0.9.1 announced a tab created in the project with `/tmp`.
+        create_tab(&context, &mut replica, "/tmp");
+
+        assert_eq!(projected_cwd(&replica, "w1:p2").as_deref(), Some(PROJECT));
+        assert_eq!(
+            herdr.calls(),
+            [("pane.get".to_owned(), json!({"pane_id": "w1:p2"}))],
+            "one read confirms the pane, and later events read nothing"
+        );
+    }
+
+    #[test]
+    fn a_pane_closed_before_its_read_keeps_the_cwd_its_event_carried() {
+        let herdr = FakeHerdr::start_with_errors("pane-cwd-gone", |method, _| match method {
+            "pane.get" => Err(("pane_not_found".to_owned(), "no such pane".to_owned())),
+            other => panic!("unexpected {other}"),
+        });
+        let context = context_for(&herdr);
+        let mut replica = SessionReplica::from_snapshot(&snapshot()).expect("snapshot");
+
+        create_tab(&context, &mut replica, PROJECT);
+
+        assert_eq!(projected_cwd(&replica, "w1:p2").as_deref(), Some(PROJECT));
+        assert_eq!(herdr.methods(), ["pane.get"]);
+    }
+
+    #[test]
+    fn panes_past_the_cap_keep_their_event_cwd_and_stay_in_the_replica() {
+        let mut replica = SessionReplica::from_snapshot(&snapshot()).expect("snapshot");
+        // Nothing confirms them: the replica alone holds the waits.
+        for index in 0..65 {
+            let pane_id = format!("w1:x{index}");
+            replica
+                .apply(
+                    event(
+                        "pane_created",
+                        json!({"type": "pane_created", "pane": pane("w1:t1", &pane_id, "/tmp")}),
+                    ),
+                    ApplyMode::Strict,
+                )
+                .expect("pane applies");
+        }
+        assert_eq!(replica.panes_awaiting_cwd().len(), 64);
+        assert!(
+            replica
+                .state
+                .panes
+                .iter()
+                .any(|pane| pane.pane_id == "w1:x64"),
+            "the pane past the cap is kept, only its read is not"
+        );
     }
 }
