@@ -1395,7 +1395,7 @@ impl Runtime {
             // already selected does both, which is the same thing.
             match payload.model {
                 Some(model) => settings.set_model(provider, model),
-                None => settings.provider = provider,
+                None => settings.set_provider(provider),
             }
             if self.ai_settings.as_ref() != Some(&settings) {
                 self.ai_settings = Some(settings.clone());
@@ -1437,10 +1437,7 @@ impl Runtime {
         let settings = self.ai_settings.clone().unwrap_or_default();
         crate::ai::AiRequest {
             observing: self.ai_observing || self.ai_start_observing,
-            models: hide_ai::PROVIDERS
-                .iter()
-                .map(|provider| (*provider, settings.model(*provider).to_owned()))
-                .collect(),
+            models: settings.models_by_provider(),
         }
     }
 

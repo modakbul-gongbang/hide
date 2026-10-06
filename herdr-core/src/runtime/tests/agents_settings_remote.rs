@@ -472,7 +472,7 @@ fn the_snapshot_carries_the_choice_the_providers_and_their_models() {
     let mut runtime = runtime();
     let section = &runtime.snapshot.status.background_ai;
     assert_eq!(
-        section.provider, "codex",
+        section.provider, "claude",
         "the default choice is on the snapshot before anything is read"
     );
     assert!(!section.chosen, "nobody has chosen yet");
@@ -482,8 +482,16 @@ fn the_snapshot_carries_the_choice_the_providers_and_their_models() {
             .iter()
             .map(|provider| provider.id.as_str())
             .collect::<Vec<_>>(),
-        vec!["codex", "claude"],
-        "every provider is a row, in the offered order"
+        vec![
+            "claude",
+            "codex",
+            "gemini-cli",
+            "grok",
+            "opencode",
+            "pi",
+            "cursor"
+        ],
+        "every registered provider is a row, in the registry order"
     );
     assert!(
         section
@@ -535,7 +543,7 @@ fn the_snapshot_carries_the_choice_the_providers_and_their_models() {
     // The whole section survives the wire the shell actually reads.
     let encoded =
         serde_json::to_value(&runtime.snapshot.status.background_ai).expect("it serializes");
-    assert_eq!(encoded["provider"], "codex");
+    assert_eq!(encoded["provider"], "claude");
     assert_eq!(encoded["providers"][1]["state"], "needs_login");
     assert_eq!(encoded["providers"][0]["models"][1], "gpt-5.6");
 }
@@ -575,7 +583,7 @@ fn a_chosen_agent_and_model_move_the_snapshot_and_queue_one_write() {
         serde_json::json!({"provider": "claude", "model": "sonnet"})
     )));
     assert_eq!(
-        runtime.ai_request().models[&hide_ai::ProviderId::Claude],
+        runtime.ai_request().models[&hide_ai::ProviderId::CLAUDE],
         "sonnet",
         "the probe asks about the model the operator chose"
     );
@@ -583,12 +591,12 @@ fn a_chosen_agent_and_model_move_the_snapshot_and_queue_one_write() {
     let saved = runtime
         .take_ai_settings_save()
         .expect("the choice is queued for the coordinator to write");
-    assert_eq!(saved.provider, hide_ai::ProviderId::Claude);
-    assert_eq!(saved.model(hide_ai::ProviderId::Claude), "sonnet");
+    assert_eq!(saved.provider, hide_ai::ProviderId::CLAUDE);
+    assert_eq!(saved.model(hide_ai::ProviderId::CLAUDE), "sonnet");
     assert_eq!(
         saved.router_config().priority,
-        vec![hide_ai::ProviderId::Claude, hide_ai::ProviderId::Codex],
-        "the chosen provider leads and failover still has somewhere to go"
+        vec![hide_ai::ProviderId::CLAUDE],
+        "only the chosen provider is asked until the operator adds a fallback"
     );
     assert!(
         runtime.take_ai_settings_save().is_none(),
@@ -622,7 +630,7 @@ fn the_agent_summary_switch_moves_the_snapshot_and_queues_one_write() {
         .take_ai_settings_save()
         .expect("the switch is queued for the coordinator to write");
     assert!(!saved.agent_summary);
-    assert_eq!(saved.provider, hide_ai::ProviderId::Claude);
+    assert_eq!(saved.provider, hide_ai::ProviderId::CLAUDE);
 
     runtime.dispatch_json(&event(serde_json::json!({"agent_summary": false})));
     assert!(
@@ -665,7 +673,7 @@ fn an_unreadable_choice_and_a_failed_write_are_stated_rather_than_dropped() {
         Some("The saved choice could not be read; the defaults are in use".to_owned()),
     ));
     assert_eq!(
-        runtime.snapshot.status.background_ai.provider, "codex",
+        runtime.snapshot.status.background_ai.provider, "claude",
         "the defaults are used"
     );
     assert!(
@@ -715,7 +723,7 @@ fn an_unknown_provider_or_a_model_with_no_provider_is_refused() {
             .kind,
         "ai_settings.unknown_provider"
     );
-    assert_eq!(runtime.snapshot.status.background_ai.provider, "codex");
+    assert_eq!(runtime.snapshot.status.background_ai.provider, "claude");
     assert!(runtime.take_ai_settings_save().is_none());
 
     assert!(runtime.dispatch_json(&event(serde_json::json!({"model": "sonnet"}))));

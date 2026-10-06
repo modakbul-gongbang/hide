@@ -80,7 +80,7 @@ impl Scripted {
 
 impl AiBackend for Scripted {
     fn id(&self) -> ProviderId {
-        ProviderId::Claude
+        ProviderId::CLAUDE
     }
     fn availability(&self) -> Availability {
         Availability::Ready
@@ -157,7 +157,7 @@ impl Harness {
                 Arc::new(AiRouter::new(
                     vec![Arc::clone(&router_backend)],
                     RouterConfig {
-                        priority: vec![ProviderId::Claude],
+                        priority: vec![ProviderId::CLAUDE],
                         max_transient_attempts: 1,
                         ..RouterConfig::default()
                     },
@@ -818,14 +818,14 @@ fn a_helper_that_cannot_read_conversations_leaves_the_provider_name() {
 fn an_analysis_before_the_runtime_read_the_settings_uses_the_saved_choice() {
     let home = tempfile::tempdir().unwrap();
     let chosen = AiSettings {
-        provider: ProviderId::Claude,
+        provider: ProviderId::CLAUDE,
         ..AiSettings::default()
     };
     hide_ai::settings::save(home.path(), &chosen).unwrap();
     let no_runtime = std::sync::Weak::new();
     assert_eq!(
         super::analysis_settings(&no_runtime, Some(home.path())).provider,
-        ProviderId::Claude
+        ProviderId::CLAUDE
     );
 }
 

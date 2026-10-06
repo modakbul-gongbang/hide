@@ -127,25 +127,16 @@ fn diagnostic_record(event: &AiLogEvent) -> serde_json::Value {
 }
 
 fn backends(models: &BTreeMap<ProviderId, String>) -> Vec<Arc<dyn AiBackend>> {
-    let model_for = |provider: ProviderId| {
-        models
-            .get(&provider)
-            .cloned()
-            .unwrap_or_else(|| hide_ai::settings::default_model(provider).to_owned())
-    };
-    vec![
-        Arc::new(hide_ai::CodexAppServerBackend::new(
-            hide_ai::CodexConfig {
-                model: model_for(ProviderId::Codex),
-                ..hide_ai::CodexConfig::default()
-            },
-            Arc::new(DiagnosticLogSink),
-        )),
-        Arc::new(hide_ai::ClaudeCliBackend::new(hide_ai::ClaudeConfig {
-            model: model_for(ProviderId::Claude),
-            ..hide_ai::ClaudeConfig::default()
-        })),
-    ]
+    hide_ai::PROVIDERS
+        .iter()
+        .map(|provider| {
+            let model = models
+                .get(provider)
+                .cloned()
+                .unwrap_or_else(|| hide_ai::settings::default_model(*provider).to_owned());
+            hide_ai::build_backend(*provider, &model, Arc::new(DiagnosticLogSink))
+        })
+        .collect()
 }
 
 /// Builds the same provider boundary for Project Memory that the Settings
@@ -154,7 +145,7 @@ fn backends(models: &BTreeMap<ProviderId, String>) -> Vec<Arc<dyn AiBackend>> {
 pub(crate) fn memory_router(settings: &AiSettings) -> AiRouter {
     let config = memory_router_config(settings);
     AiRouter::new(
-        backends(&settings.models),
+        backends(&settings.models_by_provider()),
         config,
         Arc::new(DiagnosticLogSink),
     )
@@ -165,7 +156,7 @@ pub(crate) fn memory_router(settings: &AiSettings) -> AiRouter {
 /// cooldown and budget rules.
 pub(crate) fn labels_router(settings: &AiSettings) -> AiRouter {
     AiRouter::new(
-        backends(&settings.models),
+        backends(&settings.models_by_provider()),
         settings.router_config(),
         Arc::new(DiagnosticLogSink),
     )
@@ -332,7 +323,7 @@ mod tests {
     use super::*;
 
     fn models() -> BTreeMap<ProviderId, String> {
-        AiSettings::default().models
+        AiSettings::default().models_by_provider()
     }
 
     #[test]
@@ -350,7 +341,7 @@ mod tests {
     #[test]
     fn an_ai_event_reaches_the_diagnostic_log_as_a_kind_record_without_absent_fields() {
         let mut event = AiLogEvent::new("ai.codex_home.swept");
-        event.provider = Some(ProviderId::Codex);
+        event.provider = Some(ProviderId::CODEX);
         event.detail = Some("removed=2;bytes=10".to_owned());
         assert_eq!(
             diagnostic_record(&event),
@@ -366,17 +357,17 @@ mod tests {
     #[test]
     fn project_memory_uses_the_existing_selected_provider_and_fallback_policy() {
         let settings = AiSettings {
-            provider: ProviderId::Claude,
+            provider: ProviderId::CLAUDE,
             ..AiSettings::default()
         };
         let router = memory_router(&settings);
         assert_eq!(
             router.provider_state().unwrap().selected,
-            ProviderId::Claude
+            ProviderId::CLAUDE
         );
         assert_eq!(
             memory_router_config(&settings).priority,
-            vec![ProviderId::Claude, ProviderId::Codex]
+            vec![ProviderId::CLAUDE]
         );
     }
 
@@ -410,7 +401,7 @@ mod tests {
 
     #[test]
     fn a_provider_that_was_not_asked_is_unread_rather_than_unavailable() {
-        let row = project(ProviderId::Codex, None, None, &models());
+        let row = project(ProviderId::CODEX, None, None, &models());
         assert_eq!(row.state, "unread");
         assert!(row.models.is_empty());
         assert!(row.models_unavailable_reason.is_some());
@@ -419,13 +410,13 @@ mod tests {
     #[test]
     fn each_availability_state_carries_its_own_words_and_the_reason_it_has() {
         let models = models();
-        let ready = project(ProviderId::Codex, Some(&Availability::Ready), None, &models);
+        let ready = project(ProviderId::CODEX, Some(&Availability::Ready), None, &models);
         assert_eq!(ready.state, "ready");
         assert_eq!(ready.headline, "Signed in");
         assert_eq!(ready.message, None);
 
         let needs_login = project(
-            ProviderId::Claude,
+            ProviderId::CLAUDE,
             Some(&Availability::NeedsLogin),
             None,
             &models,
@@ -434,7 +425,7 @@ mod tests {
         assert_eq!(needs_login.headline, "Sign in required");
 
         let unavailable = project(
-            ProviderId::Codex,
+            ProviderId::CODEX,
             Some(&Availability::Unavailable {
                 reason: "model_not_offered:some-model".to_owned(),
             }),
@@ -452,7 +443,7 @@ mod tests {
     #[test]
     fn an_unknown_model_list_is_reported_as_unknown_rather_than_as_no_models() {
         let row = project(
-            ProviderId::Codex,
+            ProviderId::CODEX,
             Some(&Availability::Ready),
             Some(&ModelCatalog::Unknown {
                 reason: "codex_not_installed".to_owned(),
@@ -466,7 +457,7 @@ mod tests {
         );
 
         let offered = project(
-            ProviderId::Claude,
+            ProviderId::CLAUDE,
             Some(&Availability::Ready),
             Some(&ModelCatalog::Offered(vec!["haiku".to_owned()])),
             &models(),
@@ -478,14 +469,14 @@ mod tests {
     #[test]
     fn a_row_reports_the_model_the_provider_is_configured_with() {
         let mut models = models();
-        models.insert(ProviderId::Claude, "sonnet".to_owned());
+        models.insert(ProviderId::CLAUDE, "sonnet".to_owned());
         assert_eq!(
-            project(ProviderId::Claude, None, None, &models).model,
+            project(ProviderId::CLAUDE, None, None, &models).model,
             "sonnet"
         );
         assert_eq!(
-            project(ProviderId::Claude, None, None, &BTreeMap::new()).model,
-            hide_ai::settings::default_model(ProviderId::Claude),
+            project(ProviderId::CLAUDE, None, None, &BTreeMap::new()).model,
+            hide_ai::settings::default_model(ProviderId::CLAUDE),
             "a provider with no configured model reports the backend's own default"
         );
     }
