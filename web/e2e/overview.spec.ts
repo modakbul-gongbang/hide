@@ -28,7 +28,7 @@ import { agentsIn, continueFixtureTranscript, declareParent, labelAgent, session
 import { startHided, type Daemon } from "./hided-fixture";
 import { fixtureProgram } from "./platform-fixture";
 import { chooseTheme, countSent, screenshot } from "./wire";
-import { chord, field } from "./chords";
+import { field } from "./chords";
 import { quietFor, unchangedForFrames } from "./wait";
 
 test.describe.configure({ timeout: 240_000 });
