@@ -2158,24 +2158,13 @@ impl Runtime {
                     );
                     return true;
                 }
-                // Latest request wins. A second switch while the first is
-                // unconfirmed replaces it, so Herdr's answer to the first
-                // cannot pull the canvas back off the tab the operator is
-                // now on. The wait is armed before the control is submitted,
-                // because an idle lane sends it at once and marks it sent.
-                let tab_id = payload.tab_id.clone();
-                self.await_tab_focus(PendingViewFocus::new(payload.checkout_id, payload.tab_id));
-                if let Err(message) =
-                    self.submit_local_control(RemoteControlAction::FocusTab { tab_id })
-                {
-                    // Nothing left for Herdr, so there is no answer to wait for.
-                    if self
-                        .pending_tab_focus
-                        .as_ref()
-                        .is_some_and(|pending| !pending.sent)
-                    {
-                        self.pending_tab_focus = None;
-                    }
+                // A tab focus still waiting on the lane is replaced there by
+                // this one; one already sent is answered anyway, and its
+                // answer is told from Herdr's own moves by the order the
+                // requests left in (`tab_focus.rs`).
+                if let Err(message) = self.submit_local_control(RemoteControlAction::FocusTab {
+                    tab_id: payload.tab_id,
+                }) {
                     self.set_error("tab.focus_worker_failed", message, true);
                 }
                 true

@@ -926,6 +926,23 @@ fn correlated_pane_focus_event(pane_id: &str, request_id: &str) -> Vec<u8> {
     .expect("correlated pane focus event")
 }
 
+/// The tabs of the moves sent to Herdr and not yet answered, oldest first.
+fn sent_tab_moves(runtime: &Runtime) -> Vec<String> {
+    runtime
+        .tab_focus_requests
+        .iter()
+        .map(|request| request.tab_id.clone())
+        .collect()
+}
+
+fn newest_sent_at(runtime: &Runtime) -> u64 {
+    runtime
+        .tab_focus_requests
+        .last()
+        .expect("a tab move is in flight")
+        .requested_at_unix_ms
+}
+
 fn diagnostic_count(runtime: &Runtime, kind: &str) -> usize {
     runtime
         .snapshot()

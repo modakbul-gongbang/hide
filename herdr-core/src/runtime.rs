@@ -35,6 +35,7 @@ mod request_view;
 mod session;
 pub(crate) mod session_search;
 mod snapshot_delta;
+mod tab_focus;
 mod terminal;
 mod tree_close;
 mod view_areas;
@@ -453,23 +454,21 @@ const CLOSE_STAGE_TIMEOUT_MS: u64 = 5_000;
 /// waiting stops.
 const VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS: u64 = 3_000;
 
-/// How many replaced, unanswered tab notifications Hide remembers at once.
-/// Each lives at most `VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS`; a burst of tab
-/// switches faster than that evicts the oldest and reports it.
-const SUPERSEDED_TAB_FOCUS_LIMIT: usize = 16;
+/// How many sent, unanswered tab moves Hide remembers at once. Each lives at
+/// most `VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS`; a burst of tab switches faster
+/// than that evicts the oldest and reports it.
+const TAB_FOCUS_REQUEST_LIMIT: usize = 16;
 
-/// A view-state change Hide has already made and told Herdr about.
+/// A pane focus Hide has already made and told Herdr about.
 ///
-/// Hide owns the visible tab and the focused pane, so the value in the
-/// snapshot is not a prediction to be undone. This records only that a
-/// notification is in flight, which is what tells a Herdr event naming an
-/// older value apart from an operator focusing something outside Hide.
+/// Hide owns the focused pane, so the value in the snapshot is not a
+/// prediction to be undone. This records only that a notification is in
+/// flight, which is what tells a Herdr layout naming an older pane apart
+/// from an operator focusing something outside Hide. The tab moves a pane
+/// focus makes are kept with the tab focuses (`tab_focus.rs`).
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct PendingViewFocus {
-    /// The checkout the tab belongs to. Empty for a pane focus, which is
-    /// identified by its pane id alone.
-    scope_id: String,
-    /// The tab or pane id Hide asked Herdr to focus.
+    /// The pane id Hide asked Herdr to focus.
     target_id: String,
     /// Present only for an explicit relationship Open/Return request. The
     /// core owns the outcome; the shell supplies this opaque correlation id
@@ -478,16 +477,15 @@ struct PendingViewFocus {
     /// Local pane controls settle by operation identity, never by target alone.
     pane_control_serial: Option<u64>,
     /// Whether the request has left for Herdr. A request still waiting its
-    /// turn on the control lane cannot be answered yet, so replacing it
-    /// leaves no late answer until it leaves, and its wait does not run out.
+    /// turn on the control lane cannot be answered yet, and its wait does
+    /// not run out.
     sent: bool,
     requested_at_unix_ms: u64,
 }
 
 impl PendingViewFocus {
-    fn new(scope_id: impl Into<String>, target_id: impl Into<String>) -> Self {
+    fn new(target_id: impl Into<String>) -> Self {
         Self {
-            scope_id: scope_id.into(),
             target_id: target_id.into(),
             request_id: None,
             pane_control_serial: None,
@@ -496,16 +494,8 @@ impl PendingViewFocus {
         }
     }
 
-    /// A request whose control has already been sent: a tab Hide created is
-    /// focused by Herdr as part of the creation itself.
-    fn already_sent(mut self) -> Self {
-        self.sent = true;
-        self
-    }
-
     fn pane_request(target_id: impl Into<String>, request_id: String) -> Self {
         Self {
-            scope_id: String::new(),
             target_id: target_id.into(),
             request_id: Some(request_id),
             pane_control_serial: None,
@@ -678,8 +668,6 @@ enum ViewFocusSlot {
 }
 
 impl ViewFocusSlot {
-    const ALL: [Self; 2] = [Self::Tab, Self::Pane];
-
     fn what(self) -> &'static str {
         match self {
             Self::Tab => "tab",
@@ -1356,16 +1344,14 @@ pub struct Runtime {
     /// session on every update, so the choice has to live outside it or every
     /// tick would hand the decision back to Herdr.
     visible_tab_ids: BTreeMap<String, String>,
-    /// The tab focus Hide has told Herdr about and is still waiting to see
-    /// confirmed. Latest request wins; a second switch replaces the first
-    /// rather than queueing behind it.
-    pending_tab_focus: Option<PendingViewFocus>,
-    /// Tab notifications a later switch replaced before Herdr answered them,
-    /// oldest first. Herdr still applies each one, and the pinned stream has
-    /// no cursor to say which request an event answers, so a session naming
-    /// one of these tabs is Hide's own late answer, not an operator focusing
-    /// that tab outside Hide.
-    superseded_tab_focus: Vec<PendingViewFocus>,
+    /// The tab moves that have left for Herdr and not been answered, in the
+    /// order they left: tab focuses, the tab moves of pane focuses, and tabs
+    /// created with focus. Which Herdr move is Hide's own answer, and when a
+    /// move Herdr makes is followed, are read from it (`tab_focus.rs`).
+    tab_focus_requests: Vec<tab_focus::TabFocusRequest>,
+    /// The tabs active in their Herdr workspaces at the last session, so the
+    /// next one says which tabs Herdr has moved to since.
+    herdr_active_tabs_seen: BTreeSet<String>,
     /// The tab Herdr had focused at the last session update. A follow needs
     /// Herdr's focus to have moved; a focused tab that merely differs from
     /// Hide's, as it does after a notification Herdr never answered, is not
@@ -1899,8 +1885,8 @@ impl Runtime {
             operator_focused_pane_id: None,
             pending_read_record_reconciliation: HashSet::new(),
             visible_tab_ids: BTreeMap::new(),
-            pending_tab_focus: None,
-            superseded_tab_focus: Vec::new(),
+            tab_focus_requests: Vec::new(),
+            herdr_active_tabs_seen: BTreeSet::new(),
             herdr_focused_tab_seen: None,
             herdr_tab_focus_seen: None,
             pending_pane_focus: None,
