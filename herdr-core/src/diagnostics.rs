@@ -194,8 +194,8 @@ mod tests {
 
     #[test]
     fn diagnostics_rotate_without_splitting_json_records() {
-        let directory =
-            std::env::temp_dir().join(format!("hide-diagnostics-{}", std::process::id()));
+        let folder = tempfile::tempdir().unwrap();
+        let directory = folder.path().to_path_buf();
         let mut log = RotatingLog::open(directory.clone(), 256).unwrap();
         for n in 0..100 {
             log.append(&serde_json::json!({"kind":"test", "n":n}).to_string())
@@ -213,6 +213,5 @@ mod tests {
                 .unwrap()
                 .contains("99")
         );
-        fs::remove_dir_all(directory).unwrap();
     }
 }

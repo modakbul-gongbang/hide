@@ -336,15 +336,8 @@ fn one_event_over_the_analysis_cap_fails_without_advancing() {
 
 #[test]
 fn maximum_korean_relation_context_and_event_group_fit_one_request() {
-    let root = std::env::temp_dir().join(format!(
-        "hide-memory-request-budget-{}-{}",
-        std::process::id(),
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
-            .as_nanos()
-    ));
-    std::fs::create_dir_all(&root).unwrap();
+    let folder = tempfile::tempdir().unwrap();
+    let root = folder.path().to_path_buf();
     let mut store = hide_memory::MemoryStore::open(&root.join("memory.sqlite3")).unwrap();
     let project_id = "project:request-budget";
     store.ensure_project(project_id, &root, "local").unwrap();
@@ -403,7 +396,6 @@ fn maximum_korean_relation_context_and_event_group_fit_one_request() {
     assert!(input["new_events"].is_array());
     assert!(input["active_memories"].is_array());
     drop(store);
-    std::fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

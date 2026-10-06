@@ -277,6 +277,8 @@ The crate's own `AGENTS.md` says where the file goes; this section says how the 
 7. **Own and remove what the test starts.**
    Put a child process, a thread, a socket or a temp folder behind a value that cleans up on `Drop`, as `FakeHerdr` does: it wakes its accept loop, joins the thread, and re-raises a panic from the responder on the test thread.
    Use a private folder per test and never a fixed name in `/tmp`.
+   A private folder comes from `tempfile` and is removed with its owner, never named from the pid: nextest starts each test in a process of its own, so a pid-named path is one an earlier test process may have left state under, and a herdr-core runtime that loaded such a state file started from someone else's selection instead of the defaults its test assumed.
+   In `herdr-core` runtime tests that is `scratch_dir`; the runtime keeps the folders made for it, and a test that drops a runtime and restarts on its files takes them first with `hold_dirs`.
    Why: a leaked process or file is inherited by the next test and by the next run.
 8. **Retries are a classification.**
    CI runs every Rust lane (Linux, macOS, Windows, the OS contract and nightly) with `scripts/verify-cargo.sh nextest --profile ci` (`retries = 1` in `.config/nextest.toml`), so a test that fails once and then passes is reported as flaky and recorded in an issue with an expiry; two failures fail the lane.

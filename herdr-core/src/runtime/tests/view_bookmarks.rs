@@ -1,4 +1,4 @@
-use super::workspace_view::{layout as view_event, views_path, with_views};
+use super::workspace_view::{layout as view_event, with_new_views};
 use super::*;
 use crate::view_layout::Layout as ViewLayout;
 use crate::workspace_control::{Action, Query, checkout_caller_id};
@@ -14,13 +14,8 @@ const TABS: [&str; 3] = ["w-order:t1", "w-order:t2", "w-order:t3"];
 /// A checkout of a real directory with a live Herdr context, so a tab choice
 /// leaves for Herdr and waits for its answer as it does in the daemon.
 fn live_checkout(name: &str) -> (Runtime, String, PathBuf) {
-    let directory = std::env::temp_dir().join(format!(
-        "hide-bookmark-{name}-{}-{}",
-        std::process::id(),
-        NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed)
-    ));
-    std::fs::create_dir_all(&directory).expect("checkout directory");
-    let directory = directory.canonicalize().expect("a real checkout path");
+    let folder = scratch_dir(&format!("hide-bookmark-{name}-"));
+    let directory = folder.path().canonicalize().expect("a real checkout path");
     assert!(
         std::process::Command::new("git")
             .args(["init", "-q", "-b", "main"])
@@ -29,13 +24,14 @@ fn live_checkout(name: &str) -> (Runtime, String, PathBuf) {
             .expect("git init runs")
             .success()
     );
-    let (runtime, checkout_id) = live_tab_order_runtime(&directory.to_string_lossy());
+    let (mut runtime, checkout_id) = live_tab_order_runtime(&directory.to_string_lossy());
+    runtime.test_dirs.push(folder);
     (runtime, checkout_id, directory)
 }
 
 fn setup(name: &str) -> (Runtime, String, PathBuf) {
     let (runtime, checkout_id, directory) = live_checkout(name);
-    let mut runtime = with_views(runtime, &views_path(name));
+    let mut runtime = with_new_views(runtime, name);
     runtime.snapshot.status.herdr.state = "connected".to_owned();
     for file in ["a.md", "b.md", "c.md", "d.md"] {
         std::fs::write(directory.join(file), format!("{file}\n")).expect("fixture");

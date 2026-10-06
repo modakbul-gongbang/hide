@@ -1028,15 +1028,9 @@ fn read_record_follows_a_tab_switch_the_operator_made() {
 #[test]
 fn read_record_is_released_and_not_raised_by_a_checkout_switch() {
     let mut runtime = live_runtime();
-    let root_a = std::env::temp_dir()
-        .join(format!(
-            "hide-checkout-switch-a-{}-{}",
-            std::process::id(),
-            NEXT_RUNTIME_STATE_ID.fetch_add(1, Ordering::Relaxed)
-        ))
-        .to_string_lossy()
-        .into_owned();
-    let root_b = format!("{root_a}-b");
+    let roots = scratch_dir("hide-checkout-switch-");
+    let root_a = roots.path().join("a").to_string_lossy().into_owned();
+    let root_b = roots.path().join("b").to_string_lossy().into_owned();
     std::fs::create_dir_all(&root_a).expect("checkout a");
     std::fs::create_dir_all(&root_b).expect("checkout b");
     // Each root is its own repository. The catalog keys a checkout by the
