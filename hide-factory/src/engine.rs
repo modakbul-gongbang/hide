@@ -4,6 +4,7 @@
 //! `tick` for time and the outside world. Each change is saved before the
 //! answer leaves (B72).
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
@@ -82,6 +83,25 @@ struct VerifyState {
     stage: AttemptStage,
 }
 
+/// Failed store writes: a running count, and the ones the host has not
+/// logged yet (at most [`STORE_FAILURE_LIMIT`]).
+#[derive(Default)]
+struct StoreFailures {
+    total: u64,
+    unlogged: Vec<StoreFailure>,
+}
+
+/// One failed store write, for the diagnostic log.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct StoreFailure {
+    pub factory: String,
+    pub task: Option<String>,
+    pub stage: String,
+    pub error: String,
+}
+
+const STORE_FAILURE_LIMIT: usize = 64;
+
 #[derive(Clone)]
 enum RevertPhase {
     /// A skipped or cancelled run was asked again; waits for its result.
@@ -133,6 +153,9 @@ pub struct Engine {
     reverts: BTreeMap<String, RevertPhase>,
     /// Main heads already checked per Factory.
     main_seen: BTreeMap<String, String>,
+    /// Store writes that failed: the host logs the new ones and `status`
+    /// shows the count, since an event about a failed write may fail too.
+    store_failures: RefCell<StoreFailures>,
     /// Factories whose main head has a check still running: read again at
     /// the paced interval until it finishes (B47).
     main_pending: BTreeSet<String>,
@@ -200,6 +223,7 @@ impl Engine {
             checks_running: BTreeMap::new(),
             reverts: BTreeMap::new(),
             main_seen: BTreeMap::new(),
+            store_failures: RefCell::new(StoreFailures::default()),
             main_pending: BTreeSet::new(),
             main_checked_at: BTreeMap::new(),
             publish_retry: BTreeMap::new(),
@@ -358,8 +382,29 @@ impl Engine {
             kind: kind.to_owned(),
             detail,
         };
-        // A failed diagnostic write never changes a decision.
-        let _ = self.store.append_event(&event);
+        // A failed event write never changes a decision; it is counted and
+        // reaches the diagnostic log through the host.
+        if let Err(error) = self.store.append_event(&event) {
+            self.store_failed(factory, task, "event", &error.0);
+        }
+    }
+
+    fn store_failed(&self, factory: &str, task: Option<&str>, stage: &str, error: &str) {
+        let mut failures = self.store_failures.borrow_mut();
+        failures.total += 1;
+        if failures.unlogged.len() < STORE_FAILURE_LIMIT {
+            failures.unlogged.push(StoreFailure {
+                factory: factory.to_owned(),
+                task: task.map(str::to_owned),
+                stage: stage.to_owned(),
+                error: judgment::cut(error, 300),
+            });
+        }
+    }
+
+    /// Failed store writes since the last call, for the diagnostic log.
+    pub fn take_store_failures(&self) -> Vec<StoreFailure> {
+        std::mem::take(&mut self.store_failures.borrow_mut().unlogged)
     }
 
     /// Keeps a judgment or letter body with its Task (D-58); like an event,
@@ -374,6 +419,7 @@ impl Engine {
             body: body.to_owned(),
         };
         if let Err(error) = self.store.keep_record(&record) {
+            self.store_failed(factory, task, "record", &error.0);
             self.record(
                 factory,
                 task,
@@ -399,6 +445,7 @@ impl Engine {
         if let Some(factory) = self.factories.get(id)
             && let Err(error) = self.store.put_factory(factory)
         {
+            self.store_failed(id, None, "factory", &error.0);
             self.record(
                 id,
                 None,
@@ -418,6 +465,7 @@ impl Engine {
             return;
         };
         if let Err(error) = self.store.put_task(&task) {
+            self.store_failed(factory, Some(id), "task", &error.0);
             self.record(
                 factory,
                 Some(id),
@@ -3998,7 +4046,9 @@ impl Engine {
             let id = self.factory_id(Some(project))?;
             summary.factories.retain(|f| f.id == id);
         }
-        Ok(serde_json::to_value(&summary).unwrap_or_default())
+        let mut value = serde_json::to_value(&summary).unwrap_or_default();
+        value["store_failures"] = json!(self.store_failures.borrow().total);
+        Ok(value)
     }
 
     /// A Task's kept judgment and letter bodies, oldest first (D-58).
@@ -4094,10 +4144,12 @@ impl Engine {
                 let old = self.processed_order.remove(0);
                 self.processed.remove(&old);
             }
-            let _ = self.store.set_meta(
+            if let Err(error) = self.store.set_meta(
                 "processed_letters",
                 &serde_json::to_string(&self.processed_order).unwrap_or_default(),
-            );
+            ) {
+                self.store_failed("-", None, "letters", &error.0);
+            }
         }
     }
 

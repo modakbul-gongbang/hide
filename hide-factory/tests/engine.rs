@@ -1807,6 +1807,33 @@ fn a_diagnosis_runs_an_enabled_recovery_and_an_approved_proposal_runs_too() {
 }
 
 #[test]
+fn a_failed_store_write_is_counted_and_handed_to_the_host_log() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    assert!(h.engine.take_store_failures().is_empty());
+    // Another connection makes every task write fail, as a full disk would.
+    let db = rusqlite::Connection::open(h.dir.path().join("factory.sqlite3")).unwrap();
+    db.execute_batch(
+        "CREATE TRIGGER refuse_tasks BEFORE INSERT ON tasks BEGIN SELECT RAISE(FAIL, 'disk full'); END;
+         CREATE TRIGGER refuse_task_updates BEFORE UPDATE ON tasks BEGIN SELECT RAISE(FAIL, 'disk full'); END;",
+    )
+    .unwrap();
+    let _ = h.add("Unsaved", &[]);
+    let failures = h.engine.take_store_failures();
+    assert!(
+        failures.iter().any(|failure| failure.stage == "task"),
+        "{failures:?}"
+    );
+    assert!(failures.iter().all(|failure| failure.factory == f));
+    assert!(
+        h.engine.take_store_failures().is_empty(),
+        "handed over once"
+    );
+    let status = h.op(Command::Status { project: None });
+    assert!(status["store_failures"].as_u64().unwrap() > 0, "{status}");
+}
+
+#[test]
 fn a_usage_limit_moves_new_starts_to_the_other_runtime() {
     let mut h = Bench::new(false);
     let f = h.factory(true);

@@ -373,6 +373,11 @@ fn render_init(answer: &Value) -> String {
 
 fn render_status(answer: &Value) -> String {
     let mut text = String::new();
+    if let Some(failures) = answer["store_failures"].as_u64().filter(|n| *n > 0) {
+        text.push_str(&format!(
+            "store writes failed {failures} times since start; see the diagnostic log\n"
+        ));
+    }
     for factory in answer["factories"].as_array().into_iter().flatten() {
         let flow = &factory["flow"];
         text.push_str(&format!(

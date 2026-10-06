@@ -427,6 +427,16 @@ fn run(
             port.deliver_woken();
             publish_recipients(Some(engine), &runtime);
         }
+        for failure in engine.take_store_failures() {
+            crate::diagnostic!(json!({
+                "component": "factory",
+                "kind": "store.write_failed",
+                "factory_id": failure.factory,
+                "task_id": failure.task,
+                "stage": failure.stage,
+                "error": failure.error,
+            }));
+        }
         waiters.retain(|waiter| {
             let settled = engine.review_settled(&waiter.factory, &waiter.task);
             if settled || Instant::now() >= waiter.until {
