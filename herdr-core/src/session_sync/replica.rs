@@ -112,9 +112,11 @@ impl SessionReplica {
         Self::from_decoded(wire::snapshot(snapshot.clone())?)
     }
 
-    pub(crate) fn from_decoded(state: ProjectionState) -> Result<Self, SessionFetchError> {
+    pub(crate) fn from_decoded(mut state: ProjectionState) -> Result<Self, SessionFetchError> {
+        let generation = NEXT_REPLICA_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        state.tab_moves = Some(crate::sidebar::SessionTabMoves::new(generation));
         let replica = Self {
-            generation: NEXT_REPLICA_GENERATION.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
+            generation,
             published_state: state.clone(),
             state,
             pending_layouts: BTreeSet::new(),
@@ -244,6 +246,10 @@ impl SessionReplica {
         .filter(|focus| focused_workspace_id.as_ref() == Some(&focus.workspace_id));
         ProjectionState {
             tab_focus,
+            // Every move is published as it is applied, held workspace or
+            // not: a move answers a request Hide sent and says nothing about
+            // a topology still settling.
+            tab_moves: self.state.tab_moves.clone(),
             focused_pane_id: self.focused_pane_for_partial_publish(&blocked),
             focused_workspace_id,
             workspaces: Self::merge_by_workspace(
@@ -1203,6 +1209,11 @@ impl SessionReplica {
                     ));
                 }
                 workspace.active_tab_id = input_tab_id.clone();
+                self.state
+                    .tab_moves
+                    .as_mut()
+                    .expect("a replica keeps its tab moves from construction")
+                    .record(input_tab_id.clone());
                 // A focus Herdr applied after a held one supersedes it.
                 self.early_focuses.retain(|held| {
                     !matches!(held, ReplicaEvent::TabFocused { workspace_id, .. } if workspace_id == &input_workspace_id)
