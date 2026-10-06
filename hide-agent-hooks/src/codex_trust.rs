@@ -316,8 +316,8 @@ struct Session<'a> {
 
 impl<'a> Session<'a> {
     /// Starts the app-server and completes the handshake. Codex is run with the
-    /// account's HOME and its own `.codex` named outright, in an environment
-    /// built rather than inherited, so a `CODEX_HOME` the launching shell
+    /// account's home and its own `.codex` named outright, in an environment
+    /// built rather than inherited (the login variables and nothing else), so a `CODEX_HOME` the launching shell
     /// carried never redirects whose hooks are trusted; its `PATH` is the one
     /// it was found on, so a script that runs `node` finds it. The working
     /// directory is the account's home, so no project layer is read.
@@ -334,11 +334,11 @@ impl<'a> Session<'a> {
             )
         })?;
         let mut command = Command::new(codex);
+        hide_platform::process::restrict_to_login_environment(&mut command);
         command
             .arg("app-server")
             .current_dir(home)
-            .env_clear()
-            .env("HOME", home)
+            .env(hide_platform::host::HOME_VARIABLE, home)
             .env("CODEX_HOME", AgentRuntime::Codex.home_directory(home))
             .env("PATH", path)
             .stdin(Stdio::piped())
