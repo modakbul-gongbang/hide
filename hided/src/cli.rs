@@ -282,7 +282,7 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
         print!("{}", crate::browser_page::HELP);
         return Ok(());
     }
-    let env = match env::load() {
+    let env = match needed_keys(&kind).map_or_else(env::load, env::load_for) {
         Ok(env) => env,
         Err(_errors)
             if matches!(
@@ -322,9 +322,9 @@ pub fn run(kind: CommandKind) -> Result<(), String> {
         CommandKind::Help | CommandKind::BrowserHelp => unreachable!("handled above"),
         CommandKind::Open => open(&env),
         CommandKind::Connect => connect_json(&env),
-        CommandKind::Status { json: true } => status_json(&env),
-        CommandKind::Status { json: false } => status(&env),
-        CommandKind::Stop => stop(&env),
+        CommandKind::Status { json: true } => status_json(&env.state_dir),
+        CommandKind::Status { json: false } => status(&env.state_dir, env.idle_secs),
+        CommandKind::Stop => stop(&env.state_dir),
         CommandKind::Serve { keep_alive } => serve(env, keep_alive),
         CommandKind::Dev => dev(env),
         CommandKind::BrowserOpen {
@@ -898,8 +898,21 @@ fn connect_json(env: &Env) -> Result<(), String> {
 }
 
 /// The attach-only probe: never starts a daemon.
-fn status_json(env: &Env) -> Result<(), String> {
-    let line = match healthy_state(env) {
+/// The environment keys a command reads. `None` is every key: the command acts
+/// on the daemon's whole configuration, as the daemon does, and refuses on any
+/// invalid one. `stop` and `status` only find a daemon, so an unrelated key
+/// (an opener, a port) must not decide whether a running daemon can be asked
+/// about or stopped.
+fn needed_keys(kind: &CommandKind) -> Option<&'static [&'static str]> {
+    match kind {
+        CommandKind::Stop | CommandKind::Status { json: true } => Some(env::STATE_FOLDER_KEYS),
+        CommandKind::Status { json: false } => Some(env::STATUS_KEYS),
+        _ => None,
+    }
+}
+
+fn status_json(state_dir: &Path) -> Result<(), String> {
+    let line = match healthy_daemon_in(state_dir).map(|(state, _)| state) {
         Some(state) => attached_json(&state, "running"),
         None => serde_json::json!({ "running": false }),
     };
@@ -922,8 +935,8 @@ fn daemon_url(state: &DaemonState) -> String {
     format!("http://127.0.0.1:{}/#token={}", state.port, state.token)
 }
 
-fn status(env: &Env) -> Result<(), String> {
-    match healthy_state(env) {
+fn status(state_dir: &Path, idle_secs: u64) -> Result<(), String> {
+    match healthy_daemon_in(state_dir).map(|(state, _)| state) {
         Some(state) => {
             let health = health_json(state.port, HEALTH_REQUEST)?;
             let clients = health
@@ -933,7 +946,7 @@ fn status(env: &Env) -> Result<(), String> {
             let idle = health
                 .get("idle_remaining_secs")
                 .and_then(|value| value.as_u64())
-                .unwrap_or(env.idle_secs);
+                .unwrap_or(idle_secs);
             println!(
                 "pid {}  port {}  clients {}  idle {}s remaining",
                 state.pid, state.port, clients, idle
@@ -947,9 +960,9 @@ fn status(env: &Env) -> Result<(), String> {
     }
 }
 
-fn stop(env: &Env) -> Result<(), String> {
-    if let Some(state) = state_file::read_state(&env.state_dir).map_err(|e| e.to_string())? {
-        stop_daemon(&env.state_dir, &state)?;
+fn stop(state_dir: &Path) -> Result<(), String> {
+    if let Some(state) = state_file::read_state(state_dir).map_err(|e| e.to_string())? {
+        stop_daemon(state_dir, &state)?;
     }
     Ok(())
 }
@@ -1126,10 +1139,6 @@ fn wait_healthy_within(
         }
         pause(left.min(HEALTH_PAUSE));
     }
-}
-
-fn healthy_state(env: &Env) -> Option<DaemonState> {
-    healthy_daemon(env).map(|(state, _)| state)
 }
 
 /// The live daemon of this state folder and what its `/health` answered.
