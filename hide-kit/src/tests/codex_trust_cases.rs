@@ -113,6 +113,14 @@ fn a_codex_with_no_hook_trust_or_no_codex_adds_nothing_to_the_report() {
     assert_eq!(codex_part(&report).reason, None);
     assert_eq!(codex_part(&status(&fixture.target)).reason, None);
 
+    // A Codex that ends before the handshake (no app-server, or not a Codex at
+    // all, as the package smoke's and the e2e specs' stand-ins are) is the same.
+    mode(&fixture, "no_server");
+    let report = apply(&fixture.target, &Scope::automatic());
+    assert_eq!(codex_part(&report).state, ComponentState::Installed);
+    assert_eq!(codex_part(&report).reason, None);
+    assert_eq!(codex_part(&status(&fixture.target)).reason, None);
+
     let mut none = with_codex();
     none.target.codex = None;
     let report = apply(&none.target, &Scope::automatic());

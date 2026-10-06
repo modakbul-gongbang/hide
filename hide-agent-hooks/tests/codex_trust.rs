@@ -252,6 +252,16 @@ fn a_codex_with_no_hook_trust_is_left_alone_and_says_nothing() {
 }
 
 #[test]
+fn a_codex_that_ends_before_the_handshake_has_no_app_server_and_says_nothing() {
+    let fixture = Fixture::new();
+    fixture.install();
+    fixture.mode("no_server");
+    assert_eq!(fixture.trust(), TrustOutcome::Unsupported);
+    assert_eq!(fixture.calls("config/batchWrite"), 0);
+    assert!(fixture.held().is_empty());
+}
+
+#[test]
 fn a_file_with_no_hide_entry_writes_nothing() {
     let fixture = Fixture::new();
     std::fs::write(
@@ -295,6 +305,8 @@ fn what_codex_does_not_do_is_a_failure_with_its_cause() {
     fixture.mode("ignore_write");
     assert_eq!(failed(fixture.trust()), TrustFailureKind::Unconfirmed);
 
+    // It spoke and then ended: a failure. One that ended before it spoke at all
+    // has no app-server and is `Unsupported` (D-07), not a failure.
     fixture.mode("exit");
     assert_eq!(failed(fixture.trust()), TrustFailureKind::Ended);
 

@@ -94,7 +94,8 @@ fn method_unknown(method: &str, code: i64, message: &str) -> bool {
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum TrustOutcome {
     /// This Codex has no hook trust (its app-server does not know
-    /// `hooks/list`): nothing to record and nothing to show.
+    /// `hooks/list`, or it has no app-server and ends before the handshake):
+    /// nothing to record and nothing to show.
     Unsupported,
     /// Every entry of Hide's that needed it is trusted now; `recorded` is how
     /// many this check wrote, and zero is a check that wrote nothing.
@@ -175,7 +176,8 @@ pub fn trust_own_hooks_within(
     let hooks_json = AgentRuntime::Codex.config_path(home);
     let expected = expected_entries(helper);
     let mut session = match Session::start(codex, home, stop, limits) {
-        Ok(session) => session,
+        Ok(Started::Ready(session)) => session,
+        Ok(Started::Unsupported) => return TrustOutcome::Unsupported,
         Err(failure) => return TrustOutcome::Failed(failure),
     };
     let targets = match session.list(&hooks_json, &expected) {
@@ -339,6 +341,13 @@ struct Session<'a> {
     ended: bool,
 }
 
+/// How a start ended when it did not fail.
+enum Started<'a> {
+    Ready(Session<'a>),
+    /// Codex ended before it answered the handshake.
+    Unsupported,
+}
+
 impl<'a> Session<'a> {
     /// Starts the app-server and completes the handshake. Codex is run with the
     /// account's home and its own `.codex` named outright, in an environment
@@ -346,12 +355,18 @@ impl<'a> Session<'a> {
     /// carried never redirects whose hooks are trusted; its `PATH` is the one
     /// it was found on, so a script that runs `node` finds it. The working
     /// directory is the account's home, so no project layer is read.
+    ///
+    /// A Codex that ends before it answers `initialize` has no app-server to
+    /// speak to (an older build whose `app-server` is not a command, or a
+    /// program that is not a Codex), and that is [`Started::Unsupported`], the
+    /// same answer as one that does not know `hooks/list` (D-07); a Codex that
+    /// starts, speaks, and then fails stays a failure.
     fn start(
         codex: &Path,
         home: &Path,
         stop: &'a AtomicBool,
         limits: Limits,
-    ) -> Result<Self, TrustFailure> {
+    ) -> Result<Started<'a>, TrustFailure> {
         let path = crate::diagnosis::cli_path(home).ok_or_else(|| {
             TrustFailure::new(
                 TrustFailureKind::CouldNotStart,
@@ -404,16 +419,18 @@ impl<'a> Session<'a> {
             stop,
             ended: false,
         };
-        session
-            .request(
-                "initialize",
-                json!({"clientInfo": {"name": "hide-agent-hooks", "version": env!("CARGO_PKG_VERSION")}}),
-            )
-            .map_err(Failed::into_failure)?;
+        match session.request(
+            "initialize",
+            json!({"clientInfo": {"name": "hide-agent-hooks", "version": env!("CARGO_PKG_VERSION")}}),
+        ) {
+            Ok(_) => {}
+            Err(Failed::Gone(_)) => return Ok(Started::Unsupported),
+            Err(failure) => return Err(failure.into_failure()),
+        }
         session
             .write(&json!({"jsonrpc": "2.0", "method": "initialized", "params": {}}))
             .map_err(Failed::into_failure)?;
-        Ok(session)
+        Ok(Started::Ready(session))
     }
 
     /// Reads Codex's hooks and picks the ones to record.

@@ -104,7 +104,7 @@ export function seedKitRecord(home: string): void {
 
 /**
  * A `codex` in the account's `~/.local/bin` that has the shared daemon and
- * answers `codex features` the way Codex 0.160 does (and `codex app-server` as a Codex with no hook trust), so a runner without Codex
+ * answers `codex features` the way Codex 0.160 does, so a runner without Codex
  * reads as a machine that has one. The kit only reads the setting
  * (`features list`); `features disable` writes `fake-daemon`, which a spec
  * checks never appears. A machine whose PATH has a real Codex runs that one
@@ -116,21 +116,6 @@ function seedCodex(home: string): void {
   const script = [
     "#!/bin/sh",
     'state="${CODEX_HOME:-$HOME/.codex}/fake-daemon"',
-    // `app-server` is the kit's trust step: this Codex has no hook trust, so it answers `initialize`
-    // and refuses every other request as an unknown method.
-    'if [ "$1" = app-server ]; then',
-    "  while IFS= read -r line; do",
-    '    case "$line" in',
-    "      *'\"id\"'*)",
-    '        id=$(printf \'%s\' "$line" | sed \'s/.*"id":\\([0-9]*\\).*/\\1/\')',
-    '        case "$line" in',
-    '          *\'"initialize"\'*) printf \'{"id":%s,"result":{}}\\n\' "$id" ;;',
-    '          *) printf \'{"id":%s,"error":{"code":-32601,"message":"method not found"}}\\n\' "$id" ;;',
-    "        esac ;;",
-    "    esac",
-    "  done",
-    "  exit 0",
-    "fi",
     'case "$1 $2" in',
     "  '--version ') echo 'codex-cli 0.160.0' ;;",
     "  'features list') echo \"daemon_auto_start    stable  $(cat \"$state\" 2>/dev/null || echo true)\" ;;",

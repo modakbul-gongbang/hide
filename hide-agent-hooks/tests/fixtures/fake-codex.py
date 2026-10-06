@@ -23,6 +23,8 @@ and `fake-pid` (its own pid). `$CODEX_HOME/fake-mode` selects the behaviour:
   warning       answers normally with a warning about another tool's hook
   escape        answers normally and leaves a process outside its tree
                 holding its output open
+  no_server     ends at once, before it reads the handshake, the way a
+                program with no app-server does
   exit          ends right after initialize
   ignore_write  accepts config/batchWrite and stores nothing
   refuse_write  answers config/batchWrite with an error
@@ -129,6 +131,8 @@ with open(path("fake-pid"), "w") as f:
 with open(path("fake-cwd"), "w") as f:
     f.write(os.getcwd())
 MODE = mode()
+if MODE == "no_server":
+    sys.exit(1)
 
 for raw in sys.stdin:
     raw = raw.strip()
