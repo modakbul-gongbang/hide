@@ -486,10 +486,14 @@ fn run_coordinator(
             }
 
             if let Some(reader) = ai_reader.as_mut() {
-                let Some((request, queued_settings)) = read_ai_request(&context) else {
+                let Some((request, queued_settings, standing_moved)) = read_ai_request(&context)
+                else {
                     stop_subscription(&mut subscription);
                     return;
                 };
+                if standing_moved {
+                    context.notifier.notify();
+                }
                 // The settings write is file I/O, so it happens here rather than
                 // under the runtime mutex that took the operator's choice.
                 if let Some(settings) = queued_settings {
@@ -1326,11 +1330,16 @@ fn read_disk_request(context: &SessionSyncContext) -> Option<crate::disk::DiskRe
 /// write is rare enough that it does not deserve a wake of its own.
 fn read_ai_request(
     context: &SessionSyncContext,
-) -> Option<(crate::ai::AiRequest, Option<hide_ai::AiSettings>)> {
+) -> Option<(crate::ai::AiRequest, Option<hide_ai::AiSettings>, bool)> {
     let runtime = context.runtime.upgrade()?;
     let read = {
         let mut guard = runtime.lock().ok()?;
-        (guard.ai_request(), guard.take_ai_settings_save())
+        let standing_moved = guard.refresh_ai_standing();
+        (
+            guard.ai_request(),
+            guard.take_ai_settings_save(),
+            standing_moved,
+        )
     };
     drop(runtime);
     Some(read)
@@ -1343,9 +1352,8 @@ fn read_ai_request(
 /// once, here, and the defaults are used with that reason attached rather
 /// than in silence.
 fn publish_ai_settings(context: &SessionSyncContext, home: &std::path::Path) {
-    let path = hide_ai::settings::settings_path(home);
-    let (settings, chosen, reason) = match hide_ai::settings::load(home) {
-        Ok(settings) => (settings, path.exists(), None),
+    let (settings, reason) = match hide_ai::settings::load(home) {
+        Ok(settings) => (settings, None),
         Err(error) => {
             crate::diagnostic!(serde_json::json!({
                 "component": "ai_settings",
@@ -1354,7 +1362,6 @@ fn publish_ai_settings(context: &SessionSyncContext, home: &std::path::Path) {
             }));
             (
                 hide_ai::AiSettings::default(),
-                false,
                 Some(format!(
                     "The saved choice could not be read ({error}); the defaults are in use"
                 )),
@@ -1365,7 +1372,7 @@ fn publish_ai_settings(context: &SessionSyncContext, home: &std::path::Path) {
         return;
     };
     let changed = match runtime.lock() {
-        Ok(mut guard) => guard.ingest_ai_settings(settings, chosen, reason),
+        Ok(mut guard) => guard.ingest_ai_settings(settings, reason),
         Err(_) => return,
     };
     drop(runtime);
@@ -1387,7 +1394,7 @@ fn save_ai_settings(
             return false;
         };
         let changed = match runtime.lock() {
-            Ok(mut guard) => guard.ingest_ai_settings(settings.clone(), true, None),
+            Ok(mut guard) => guard.ingest_ai_settings(settings.clone(), None),
             Err(_) => return false,
         };
         drop(runtime);
@@ -2148,6 +2155,47 @@ mod pane_cwd_confirmation_tests {
             herdr.calls(),
             [("pane.get".to_owned(), json!({"pane_id": "w1:p2"}))],
             "one read confirms the pane, and later events read nothing"
+        );
+    }
+
+    #[test]
+    fn a_pane_the_first_snapshot_caught_being_created_publishes_the_cwd_herdr_reads_back() {
+        let herdr = herdr_reading(PROJECT);
+        let context = context_for(&herdr);
+        // The snapshot was read while Herdr created w1:p2, so it holds the
+        // creation cwd, and the creation event follows in the reconcile window.
+        let mut first = snapshot();
+        first["workspaces"][0]["tab_count"] = json!(2);
+        first["workspaces"][0]["pane_count"] = json!(2);
+        first["tabs"].as_array_mut().unwrap().push(json!({
+            "workspace_id": "w1", "tab_id": "w1:t2", "agent_status": "idle",
+            "focused": false, "number": 2, "pane_count": 1, "label": "2"
+        }));
+        first["panes"]
+            .as_array_mut()
+            .unwrap()
+            .push(pane("w1:t2", "w1:p2", "/tmp"));
+        first["layouts"]
+            .as_array_mut()
+            .unwrap()
+            .push(layout("w1:t2", "w1:p2"));
+        let mut replica = SessionReplica::from_snapshot(&first).expect("snapshot");
+
+        replica
+            .apply(
+                event(
+                    "pane_created",
+                    json!({"type": "pane_created", "pane": pane("w1:t2", "w1:p2", "/tmp")}),
+                ),
+                ApplyMode::Reconcile,
+            )
+            .expect("a creation the snapshot holds is reconciled");
+        confirm_pane_cwds(&context, &mut replica).expect("cwd read succeeds");
+
+        assert_eq!(projected_cwd(&replica, "w1:p2").as_deref(), Some(PROJECT));
+        assert_eq!(
+            herdr.calls(),
+            [("pane.get".to_owned(), json!({"pane_id": "w1:p2"}))]
         );
     }
 

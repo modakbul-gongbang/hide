@@ -46,16 +46,21 @@ pub(crate) struct LabelAnalyzer {
 }
 
 impl LabelAnalyzer {
-    pub(crate) fn spawn(settings: SettingsSource) -> Result<Self, String> {
+    pub(crate) fn spawn(
+        settings: SettingsSource,
+        standing: Arc<crate::ai::AiStanding>,
+    ) -> Result<Self, String> {
         Self::spawn_with(
             settings,
             Box::new(|settings| Arc::new(crate::ai::labels_router(settings))),
+            standing,
         )
     }
 
     pub(crate) fn spawn_with(
         settings: SettingsSource,
         router: RouterFactory,
+        standing: Arc<crate::ai::AiStanding>,
     ) -> Result<Self, String> {
         let (sender, receiver) = channel();
         let cancel = CancelToken::new();
@@ -66,7 +71,7 @@ impl LabelAnalyzer {
         };
         let worker = std::thread::Builder::new()
             .name("herdr-core-labels-analyzer".to_owned())
-            .spawn(move || run(receiver, settings, router, thread))
+            .spawn(move || run(receiver, settings, router, standing, thread))
             .map_err(|error| format!("label analyzer could not be started: {error}"))?;
         Ok(Self {
             queue: Mutex::new(Some(sender)),
@@ -139,19 +144,26 @@ fn run(
     receiver: Receiver<AnalysisJob>,
     settings: SettingsSource,
     build: RouterFactory,
+    standing: Arc<crate::ai::AiStanding>,
     running: Running,
 ) {
     let mut router: Option<(AiSettings, Arc<AiRouter>)> = None;
     while let Ok(job) = receiver.recv() {
         let current = settings();
-        if running.stopping.is_cancelled() || !current.agent_summary {
+        if running.stopping.is_cancelled()
+            || !current.agent_summary
+            || !current.enabled
+            || !current.chosen
+        {
             (job.done)(Err(AnalysisFailure::Stopped));
             continue;
         }
         // The switch is not the router's: turning it does not rebuild one.
-        let same_router = |built_for: &AiSettings| {
-            built_for.provider == current.provider && built_for.models == current.models
-        };
+        // Everything the router was built from is: the agents it asks, in
+        // order (Runs on, then the fallback list), and the model each is
+        // asked for. A removed fallback agent must stop receiving
+        // conversation text on the next job, and an added one must be tried.
+        let same_router = |built_for: &AiSettings| built_for.routes_like(&current);
         let active = match router.as_ref() {
             Some((built_for, router)) if same_router(built_for) => Arc::clone(router),
             _ => {
@@ -171,7 +183,12 @@ fn run(
         *lock(&running.job) = Some(cancel.clone());
         // A shutdown or the switch turned off between the checks above and
         // the token's install found no token to cancel; look once more.
-        if running.stopping.is_cancelled() || !settings().agent_summary {
+        let latest = settings();
+        if running.stopping.is_cancelled()
+            || !latest.agent_summary
+            || !latest.enabled
+            || !latest.chosen
+        {
             cancel.cancel();
         }
         // The outcome must arrive whatever happens on this thread: a panic
@@ -185,6 +202,7 @@ fn run(
             ))
         });
         lock(&running.job).take();
+        standing.observe(&active);
         (job.done)(result);
     }
 }
@@ -200,4 +218,181 @@ fn analyze(router: &AiRouter, request: &AiRequest, cancel: &CancelToken) -> Anal
     let analysis = context_label::parse(value)
         .map_err(|error| AnalysisFailure::Invalid(format!("{error:#}")))?;
     Ok((provider, analysis))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::sync::mpsc::channel;
+    use std::time::Duration;
+
+    use hide_ai::{
+        AiBackend, AiError, AiResponse, Availability, FallbackEntry, ModelCatalog, NoopLogSink,
+    };
+
+    use super::*;
+
+    /// A provider that records that it was asked and cannot answer, so the
+    /// router moves on to the next agent of its list.
+    struct Down {
+        id: ProviderId,
+        asked: Arc<Mutex<Vec<(ProviderId, String)>>>,
+        model: String,
+    }
+
+    impl AiBackend for Down {
+        fn id(&self) -> ProviderId {
+            self.id
+        }
+        fn availability(&self) -> Availability {
+            Availability::Ready
+        }
+        fn models(&self) -> ModelCatalog {
+            ModelCatalog::Offered(vec![self.model.clone()])
+        }
+        fn execute(&self, _: &AiRequest, _: &CancelToken) -> Result<AiResponse, AiError> {
+            lock(&self.asked).push((self.id, self.model.clone()));
+            Err(AiError::ProviderUnavailable("down".to_owned()))
+        }
+    }
+
+    struct Fixture {
+        settings: Arc<Mutex<AiSettings>>,
+        asked: Arc<Mutex<Vec<(ProviderId, String)>>>,
+        analyzer: LabelAnalyzer,
+    }
+
+    impl Fixture {
+        fn new(start: AiSettings) -> Self {
+            let settings = Arc::new(Mutex::new(start));
+            let asked = Arc::new(Mutex::new(Vec::new()));
+            let source = Arc::clone(&settings);
+            let log = Arc::clone(&asked);
+            let analyzer = LabelAnalyzer::spawn_with(
+                Box::new(move || lock(&source).clone()),
+                Box::new(move |settings| {
+                    let models = settings.models_by_provider();
+                    let backends: Vec<Arc<dyn AiBackend>> = hide_ai::PROVIDERS
+                        .iter()
+                        .map(|provider| {
+                            Arc::new(Down {
+                                id: *provider,
+                                asked: Arc::clone(&log),
+                                model: models[provider].clone(),
+                            }) as Arc<dyn AiBackend>
+                        })
+                        .collect();
+                    Arc::new(AiRouter::new(
+                        backends,
+                        settings.router_config(),
+                        Arc::new(NoopLogSink),
+                    ))
+                }),
+                Arc::new(crate::ai::AiStanding::default()),
+            )
+            .unwrap();
+            Self {
+                settings,
+                asked,
+                analyzer,
+            }
+        }
+
+        /// Runs one job to its outcome and returns the agents it asked, in
+        /// order, each with the model it was asked for.
+        fn job(&self) -> Vec<(ProviderId, String)> {
+            lock(&self.asked).clear();
+            let (done, outcome) = channel();
+            self.analyzer.submit(AnalysisJob {
+                request: context_label::request("pane", format!("job-{}", rand_id()), "context"),
+                done: Box::new(move |result| {
+                    let _ = done.send(result.is_err());
+                }),
+            });
+            outcome
+                .recv_timeout(Duration::from_secs(30))
+                .expect("the job is answered");
+            lock(&self.asked).clone()
+        }
+
+        fn change(&self, edit: impl FnOnce(&mut AiSettings)) {
+            edit(&mut lock(&self.settings));
+        }
+    }
+
+    fn rand_id() -> u64 {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(1);
+        NEXT.fetch_add(1, std::sync::atomic::Ordering::SeqCst)
+    }
+
+    fn chosen_with_fallback() -> AiSettings {
+        let mut settings = AiSettings::default();
+        settings.set_provider(ProviderId::CLAUDE);
+        settings
+            .add_fallback(ProviderId::CODEX, Some("first".to_owned()))
+            .unwrap();
+        settings
+    }
+
+    #[test]
+    fn a_removed_fallback_agent_is_not_asked_by_the_next_job() {
+        let fixture = Fixture::new(chosen_with_fallback());
+        let before: Vec<ProviderId> = fixture.job().iter().map(|(id, _)| *id).collect();
+        assert_eq!(before, [ProviderId::CLAUDE, ProviderId::CODEX]);
+        fixture.change(|settings| settings.remove_fallback(ProviderId::CODEX));
+        let after: Vec<ProviderId> = fixture.job().iter().map(|(id, _)| *id).collect();
+        assert_eq!(after, [ProviderId::CLAUDE]);
+    }
+
+    #[test]
+    fn an_added_fallback_agent_is_tried_by_the_next_job() {
+        let mut start = AiSettings::default();
+        start.set_provider(ProviderId::CLAUDE);
+        let fixture = Fixture::new(start);
+        let before: Vec<ProviderId> = fixture.job().iter().map(|(id, _)| *id).collect();
+        assert_eq!(before, [ProviderId::CLAUDE]);
+        fixture.change(|settings| {
+            settings.add_fallback(ProviderId::GROK, None).unwrap();
+        });
+        let after: Vec<ProviderId> = fixture.job().iter().map(|(id, _)| *id).collect();
+        assert_eq!(after, [ProviderId::CLAUDE, ProviderId::GROK]);
+    }
+
+    #[test]
+    fn a_changed_fallback_model_is_the_one_the_next_job_asks_for() {
+        let fixture = Fixture::new(chosen_with_fallback());
+        assert_eq!(fixture.job()[1], (ProviderId::CODEX, "first".to_owned()));
+        fixture.change(|settings| {
+            settings.set_fallback_model(ProviderId::CODEX, Some("second".to_owned()));
+        });
+        assert_eq!(fixture.job()[1], (ProviderId::CODEX, "second".to_owned()));
+    }
+
+    #[test]
+    fn a_changed_fallback_order_is_followed_by_the_next_job() {
+        let mut start = chosen_with_fallback();
+        start.add_fallback(ProviderId::GROK, None).unwrap();
+        let fixture = Fixture::new(start);
+        let before: Vec<ProviderId> = fixture.job().iter().map(|(id, _)| *id).collect();
+        assert_eq!(
+            before,
+            [ProviderId::CLAUDE, ProviderId::CODEX, ProviderId::GROK]
+        );
+        fixture.change(|settings| {
+            settings.fallback = vec![
+                FallbackEntry {
+                    provider: ProviderId::GROK,
+                    model: None,
+                },
+                FallbackEntry {
+                    provider: ProviderId::CODEX,
+                    model: Some("first".to_owned()),
+                },
+            ];
+        });
+        let order: Vec<ProviderId> = fixture.job().iter().map(|(id, _)| *id).collect();
+        assert_eq!(
+            order,
+            [ProviderId::CLAUDE, ProviderId::GROK, ProviderId::CODEX]
+        );
+    }
 }

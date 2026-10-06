@@ -9,6 +9,16 @@ use serde_json::{Value, json};
 
 use super::*;
 
+/// What an earlier build wrote, retired agents included: the public
+/// [`super::install`] refuses a retired agent.
+fn install(
+    agent: GuidanceAgent,
+    home: &Path,
+    helper: &Path,
+) -> Result<InstallOutcome, InstallFailure> {
+    install_any(agent, home, helper)
+}
+
 struct Fixture {
     home: tempfile::TempDir,
     helper: PathBuf,
@@ -585,4 +595,18 @@ fn a_settings_file_that_holds_another_key_keeps_it_when_hides_hook_goes() {
         remove(agent, fixture.home()).unwrap();
         assert_eq!(fixture.read(agent), json!({ "model": "x" }), "{agent:?}");
     }
+}
+
+#[test]
+fn a_retired_agent_gets_no_new_hook_and_its_old_entry_comes_out() {
+    let fixture = Fixture::new(GuidanceAgent::Qwen);
+    let failure = super::install(GuidanceAgent::Qwen, fixture.home(), &fixture.helper);
+    assert!(failure.is_err());
+    assert!(!GuidanceAgent::Qwen.config_path(fixture.home()).exists());
+    install_any(GuidanceAgent::Qwen, fixture.home(), &fixture.helper).unwrap();
+    let removed = remove(GuidanceAgent::Qwen, fixture.home()).unwrap();
+    assert_eq!(removed.removed_entries, 1);
+    assert_eq!(GuidanceAgent::from_id("qwen-code"), None);
+    assert!(GuidanceAgent::is_retired_id("qwen-code"));
+    assert!(!GuidanceAgent::is_retired_id("gemini-cli"));
 }

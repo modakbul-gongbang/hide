@@ -255,7 +255,7 @@ test("⌘n selects a tab, ⌥n an agent, and holding ⌘ or ⌥ shows the number
     // B7: the keycap draws from the Light tokens too.
     if (process.env.HIDE_E2E_SCREENSHOT_DIR) {
       await page.locator("[data-open-settings]").click();
-      await page.locator('[data-settings-tab="appearance"]').click();
+      await page.locator('[data-settings-tab="general"]').click();
       await page.locator('[data-theme-option="light"]').click();
       await expect(page.locator("html")).toHaveClass(/\blight\b/);
       await page.keyboard.press("Escape");

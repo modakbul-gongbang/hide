@@ -84,6 +84,7 @@ export function seedAgentFiles(home: string): { claude: AgentSettings; codex: Ag
     fs.writeFileSync(file, `${JSON.stringify(settings, null, 2)}\n`);
   }
   seedCodex(home);
+  seedClaude(home);
   seedKitRecord(home);
   return { claude, codex };
 }
@@ -103,9 +104,11 @@ export function seedKitRecord(home: string): void {
 
 /**
  * A `codex` in the account's `~/.local/bin` that has the shared daemon and
- * answers `codex features` the way Codex 0.160 does, so the kit's
- * `codex_per_pane` part is applied on a runner without Codex. A machine whose
- * PATH has a real Codex runs that one instead, against this HOME's `.codex`.
+ * answers `codex features` the way Codex 0.160 does, so a runner without Codex
+ * reads as a machine that has one. The kit only reads the setting
+ * (`features list`); `features disable` writes `fake-daemon`, which a spec
+ * checks never appears. A machine whose PATH has a real Codex runs that one
+ * instead, against this HOME's `.codex`.
  */
 function seedCodex(home: string): void {
   const bin = path.join(home, ".local", "bin");
@@ -124,6 +127,16 @@ function seedCodex(home: string): void {
   ].join("\n");
   fs.writeFileSync(path.join(bin, "codex"), script, { mode: 0o755 });
 }
+
+/** A `claude` in the account's `~/.local/bin`, so Claude Code reads as installed on a runner without it. */
+function seedClaude(home: string): void {
+  const bin = path.join(home, ".local", "bin");
+  fs.mkdirSync(bin, { recursive: true });
+  fs.writeFileSync(path.join(bin, "claude"), "#!/bin/sh\nexit 0\n", { mode: 0o755 });
+}
+
+/** Whether a Codex setting the kit must never write was written: the stand-in's `features disable` leaves this file. */
+export const codexDaemonWritten = (home: string) => fs.existsSync(path.join(home, ".codex", "fake-daemon"));
 
 /**
  * A daemon folder laid out as the app's Contents/Resources: this build's

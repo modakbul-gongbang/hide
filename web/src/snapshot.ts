@@ -146,7 +146,23 @@ export type PaneChildren = {
   uninstrumented_reason: string | null;
   uninstrumented_label: string | null;
   chips: AgentChip[];
+  /** Whether Hide hears this pane's session; absent for an agent with no connection to judge. */
+  connection?: PaneConnection | null;
 };
+
+/** Why a session is not connected: `codex_shared_server`, `started_before_hide`, or `setup_needed` (fix it in Settings, no Reopen). */
+export type PaneConnectionReason = "codex_shared_server" | "started_before_hide" | "setup_needed";
+
+/** `PaneConnectionSnapshot`: `reason` is present exactly when `connected` is false; `reopen` is the last Reopen of the pane. */
+export type PaneConnection = {
+  connected: boolean;
+  /** Whether the popover offers Reopen: false for `setup_needed` and for a pane on another device. */
+  can_reopen: boolean;
+  reason: PaneConnectionReason | null;
+  reopen: { state: "pending" } | { state: "failed"; reason: PaneReopenFailure } | null;
+};
+
+export type PaneReopenFailure = "start_refused" | "session_gone" | "codex_unread" | "agent_busy" | "end_refused";
 
 /** One step of a pane's lineage, root first and ending at the pane itself. */
 export type LineageStep = { pane_id: string; label: string; siblings: AgentChip[] };
@@ -256,7 +272,7 @@ export type TaskSource = {
   /** The last read failed; the tasks are the answer before it. */
   failure: string | null;
   last_read_at_unix_ms: number | null;
-  /** The operator chose this source in Settings › Issues rather than the default. */
+  /** The operator chose this source from the project's Issue source menu rather than the default. */
   chosen?: boolean;
 };
 
@@ -938,7 +954,7 @@ export type Device = {
 };
 
 /** One part of the install kit (`contracts/snapshot-wire-enums.json`: `kit_component_id`). */
-export type KitComponentId = "cli" | "claude_code_hook" | "codex_hook" | "coordination_retirement" | "codex_per_pane";
+export type KitComponentId = "cli" | "claude_code_hook" | "codex_hook" | "coordination_retirement";
 
 /** What a part is on its machine (`contracts/snapshot-wire-enums.json`: `kit_component_state`). */
 export type KitComponentState = "installed" | "outdated" | "not_installed" | "removed" | "failed" | "absent" | "off";
@@ -962,10 +978,50 @@ export type KitAgent = {
   label: string;
   availability: KitAgentAvailability;
   enabled: boolean;
+  /**
+   * The machine's record holds the operator's own choice for this agent
+   * (`KitAgentSnapshot.chosen`). An agent that is on only by default (Claude
+   * Code, Codex) has none, so it is not kept under Installed once its
+   * program is gone (B9).
+   */
+  chosen: boolean;
   skill: KitPiece;
   hook: KitPiece | null;
+  /** Herdr's own integration for the agent; null for an agent the pinned Herdr has none for (Gemini CLI). */
+  herdr?: KitPiece | null;
+  /** Hide does only some of what it does for Claude Code with this agent: the row wears the Partial chip, on or off. */
+  partial?: boolean;
+  /** Every feature of the Partial popover in the table's order (`hide_kit::Feature` ids); `supported` is what this build does. */
+  features?: { id: KitFeatureId; supported: boolean }[];
+  /** The agent's open sessions on this machine; null for an agent with no connection to judge (Partial agents) and before the machine's sessions are read. */
+  sessions?: KitAgentSessions | null;
   doc_url: string;
 };
+
+export type KitFeatureId =
+  | "skill"
+  | "guidance"
+  | "letters"
+  | "memory"
+  | "subagents"
+  | "herdr_integration"
+  | "sleep"
+  | "fork"
+  | "start"
+  | "titles";
+
+/** `KitAgentSessionsSnapshot`: `not_connected` lists at most 32 sessions, and `not_connected_hidden` counts the rest. */
+export type KitAgentSessions = {
+  connected: number;
+  not_connected: { pane_id: string; title: string; project: string; reason: PaneConnectionReason }[];
+  not_connected_hidden: number;
+};
+
+/** How the last turn-off of Codex's shared server on a machine ended (`CodexDaemonOffSnapshot`). */
+export type CodexDaemonOff =
+  | { state: "pending" }
+  | { state: "done" }
+  | { state: "failed"; reason: "codex_missing" | "codex_refused" | "timed_out" | "unreachable" };
 
 export type KitComponent = {
   id: KitComponentId;
@@ -973,8 +1029,6 @@ export type KitComponent = {
   state: KitComponentState;
   reason: string | null;
   location: string | null;
-  /** Actual target capability, independent of the part's switch; absent in older reports. */
-  codex_daemon?: boolean | null;
 };
 
 /**
@@ -989,8 +1043,18 @@ export type Kit = {
   components: KitComponent[];
   /** Every agent Hide has an adapter for; empty until the machine was checked. */
   agents: KitAgent[];
+  /** A kit read asked with Check again is under way on this machine (B10). */
+  checking?: boolean;
+  /** Why the machine's last read failed, a code; null when it did not (B10). */
+  check_failed?: string | null;
   offers_reinstall: boolean;
   shares_account_with: string | null;
+  /** What the machine's Codex answered about its shared daemon: true has it, false is older, null no answer. */
+  codex_daemon?: boolean | null;
+  /** Whether that Codex starts the shared server on its own now: true is the reason a pane reads not connected; null no answer or an older Codex. */
+  codex_daemon_on?: boolean | null;
+  /** The last turn-off of the shared server on this machine; absent until one was asked. */
+  codex_daemon_off?: CodexDaemonOff | null;
 };
 
 /** One pane's rectangle in a remote tab, as fractions of the tab's area (`RemotePaneLayoutFrame`). */
@@ -1068,27 +1132,79 @@ export type CoreDiagnostic = { kind: string; message: string; occurred_at: numbe
 export type AiProvider = {
   id: string;
   label: string;
-  /** `ready`, `needs_login`, `not_installed`, `unavailable`, `unsupported`, or `unread`. */
+  /** The install kit's adapter id for the same agent (`claude-code`, `codex`, `gemini-cli`, `grok`, `opencode`, `pi`, `cursor`). */
+  agent: string;
+  /** `ready`, `needs_login`, `usage_limited`, `not_installed`, `unavailable`, `unsupported`, or `unread`. */
   state: string;
   headline: string;
+  /** The provider layer's own reason code (`cannot_guarantee_read_only`, `model_not_offered:<model>`), never prose. */
   message: string | null;
+  /** The agent's program was found. */
+  installed: boolean;
+  /** Runs on and Add agent offer it: installed, signed in, a backend, and a call that cannot change files. */
+  selectable: boolean;
+  /** When a usage limit ends (unix ms), when the agent said. */
+  retry_at_ms: number | null;
+  /** False when the agent has no sign-in check (Gemini CLI): `ready` then only means its program was found; absent from an older daemon. */
+  login_checked?: boolean;
+  /** The model it is asked for; empty is the CLI's own default. */
   model: string;
   models: string[];
+  /** The list is the CLI's documented one and cannot be asked for (Gemini CLI). */
+  models_fixed: boolean;
+  /** "CLI default" can be chosen: the agent is asked with no `--model`. */
+  cli_default: boolean;
+  /** Why the list is empty: a code (`not_asked`, `not_observed`, or the provider's own). */
   models_unavailable_reason: string | null;
 };
 
-export type BackgroundAi = {
+/** The agents tried, in this order, when Runs on cannot answer. */
+export type AiFallback = { provider: string; model: string };
+
+/** Why Runs on is not answering, and who answers instead; absent while it answers. */
+export type AiRefusal = {
   provider: string;
+  /** `usage_limited`, `needs_login`, `not_installed`, `unavailable` or `unsupported`. */
+  reason: string;
+  retry_at_ms: number | null;
+  /** The listed agent answering instead; null when none can. */
+  using: string | null;
+};
+
+/** One concrete Host of `~/.ssh/config`: where `ssh -G` says it leads and the device that already uses it. */
+export type SshHost = {
+  alias: string;
+  /** `user@host:port`; null when it could not be resolved (`problem` says why). */
+  address: string | null;
+  /** The name of the registered device using this alias or reaching the same address. */
+  added_as: string | null;
+  problem: "ssh_missing" | "ssh_failed" | "timed_out" | null;
+};
+
+/** `idle` before the first `ssh_hosts_list`, `loading` while one runs (the last answer stays), `ready` once it is in. */
+export type SshHosts = {
+  state: "idle" | "loading" | "ready";
+  hosts: SshHost[];
+  /** The config names more concrete aliases than are listed. */
+  truncated: boolean;
+};
+
+export type BackgroundAi = {
+  /** Use Hide AI; off, no model is asked anything. Absent from an older daemon, which is on. */
+  enabled?: boolean;
+  /** Runs on; null when nobody chose and none can be chosen yet. */
+  provider: string | null;
   chosen: boolean;
   /** The `에이전트 요약` switch; absent from an older daemon, which always summarizes. */
   agent_summary?: boolean;
   providers: AiProvider[];
+  fallback?: AiFallback[];
+  refusal?: AiRefusal | null;
   unavailable_reason: string | null;
 };
 
 /** Each machine's hook parts are its kit rows (`Device.kit`); this section keeps what only the panes say. */
 export type AgentHooks = {
-  sessions_predating_install: { pane_id: string; label: string; message: string }[];
   last_report_failure: string | null;
 };
 
@@ -1359,6 +1475,8 @@ export type SnapshotRest = {
     environment?: EnvironmentStatus[];
     agent_hooks?: AgentHooks;
     background_ai?: BackgroundAi;
+    /** The Host entries Add device lists, read on an `ssh_hosts_list` event (PRD settings-cleanup D-19). */
+    ssh_hosts?: SshHosts;
     diagnostics?: CoreDiagnostic[];
     async_operations?: AsyncOperation[];
     tab_rename?: { request_id: string; tab_id: string; label: string; phase: "pending" | "succeeded" | "failed" } | null;

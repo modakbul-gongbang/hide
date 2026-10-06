@@ -157,7 +157,7 @@ fn a_program_on_the_home_bin_folder_is_the_agent_being_installed() {
         Availability::Available
     );
     assert_eq!(
-        agent(&report, "qwen-code").availability,
+        agent(&report, "grok").availability,
         Availability::NotInstalled
     );
 }
@@ -351,52 +351,6 @@ fn claude_code_and_codex_are_on_without_a_choice_and_off_removes_the_hook_part()
 }
 
 #[test]
-fn an_agent_with_a_documented_minimum_gets_the_hook_only_from_that_version() {
-    let fixture = Fixture::new();
-    set_up(&fixture, ".kiro");
-    version_program(
-        &fixture.home().join(".local/bin/kiro-cli"),
-        "#!/bin/sh\necho 'kiro-cli 2.9.0'\n",
-    );
-
-    let report = apply(&fixture.target, &Scope::agents(["kiro"], []));
-
-    let kiro = agent(&report, "kiro");
-    assert_eq!(kiro.skill.state, ComponentState::Installed);
-    let hook = kiro.hook.as_ref().unwrap();
-    // Nothing a Reinstall changes, so the row is not offered one.
-    assert_eq!(hook.state, ComponentState::Absent);
-    assert!(!kiro.needs_attention());
-    assert!(
-        hook.reason.as_deref().unwrap().contains("older than 3.0.0"),
-        "{hook:?}"
-    );
-    assert!(
-        !fixture
-            .home()
-            .join(".kiro/hooks/hide-guidance.json")
-            .exists()
-    );
-
-    version_program(
-        &fixture.home().join(".local/bin/kiro-cli"),
-        "#!/bin/sh\necho 'kiro-cli 3.0.1'\n",
-    );
-    let report = apply(&fixture.target, &Scope::automatic());
-
-    assert_eq!(
-        agent(&report, "kiro").hook.as_ref().unwrap().state,
-        ComponentState::Installed
-    );
-    assert!(
-        fixture
-            .home()
-            .join(".kiro/hooks/hide-guidance.json")
-            .is_file()
-    );
-}
-
-#[test]
 fn removing_a_machine_takes_every_marked_piece_and_nothing_else() {
     let fixture = Fixture::new();
     install(&fixture, "gemini", ".gemini");
@@ -475,32 +429,6 @@ fn an_agent_found_only_by_its_program_reports_its_folder_as_not_made_yet() {
 }
 
 #[test]
-fn switching_factory_droid_off_finds_its_entry_in_either_file() {
-    let fixture = Fixture::new();
-    install(&fixture, "droid", ".factory");
-    std::fs::write(
-        fixture.home().join(".factory/settings.json"),
-        r#"{"hooks":{"SessionStart":[]}}"#,
-    )
-    .unwrap();
-    apply(&fixture.target, &Scope::agents(["factory-droid"], []));
-    let settings = fixture.home().join(".factory/settings.json");
-    assert!(
-        std::fs::read_to_string(&settings)
-            .unwrap()
-            .contains("hide-guidance")
-    );
-    // The operator later makes a hooks.json: Droid now reads that file.
-    std::fs::write(fixture.home().join(".factory/hooks.json"), "{}").unwrap();
-
-    apply(&fixture.target, &Scope::agents([], ["factory-droid"]));
-
-    // Its entry was found there, and the file held nothing but an empty
-    // `hooks` Hide had filled, so the file goes with it.
-    assert!(!settings.exists());
-}
-
-#[test]
 fn a_file_that_only_mentions_the_marker_is_not_hides_stub() {
     let fixture = Fixture::new();
     install(&fixture, "gemini", ".gemini");
@@ -560,13 +488,8 @@ fn a_folder_the_agent_makes_is_not_the_agent_being_installed() {
         ("pi", "pi", ".pi/agent"),
         ("cursor-agent", "cursor", ".cursor"),
         ("grok", "grok", ".grok"),
-        ("goose", "goose", ".config/goose"),
-        ("amp", "amp", ".config/amp"),
-        ("droid", "factory-droid", ".factory"),
-        ("copilot", "copilot-cli", ".copilot"),
-        ("kilo", "kilo-code", ".config/kilo"),
-        ("kimi", "kimi-code", ".kimi-code"),
-        ("vibe", "mistral-vibe", ".vibe"),
+        ("opencode", "opencode", ".config/opencode"),
+        ("gemini", "gemini-cli", ".gemini"),
     ] {
         let fixture = Fixture::new();
         set_up(&fixture, folder);
@@ -607,6 +530,10 @@ fn an_agent_whose_program_is_gone_keeps_what_hide_put_down_until_it_is_switched_
     let gemini = agent(&report, "gemini-cli");
     assert_eq!(gemini.availability, Availability::NotInstalled);
     assert!(gemini.enabled, "the switch stays so it can be turned off");
+    assert!(
+        gemini.chosen,
+        "the record holds the operator's choice, which is what keeps the row's switch"
+    );
     assert!(!gemini.needs_attention(), "nothing for Reinstall to do");
     for piece in [&gemini.skill, gemini.hook.as_ref().unwrap()] {
         assert_eq!(piece.state, ComponentState::Absent, "{gemini:?}");
@@ -630,6 +557,35 @@ fn an_agent_whose_program_is_gone_keeps_what_hide_put_down_until_it_is_switched_
             .map(|text| text.contains("hide-guidance"))
             .unwrap_or(false)
     );
+}
+
+#[test]
+fn an_agent_on_only_by_default_with_no_program_reports_no_operator_choice() {
+    let fixture = Fixture::new();
+    // A machine that already has a record, so the first-run hold does not
+    // switch the default-on agents off.
+    apply(&fixture.target, &Scope::agents([], ["gemini-cli"]));
+
+    let report = status(&fixture.target);
+
+    let codex = agent(&report, "codex");
+    assert_eq!(codex.availability, Availability::NotInstalled);
+    assert!(codex.enabled, "Codex is on by default");
+    assert!(!codex.chosen, "{codex:?}");
+    // Switched off by the operator, the choice is on record whatever it is.
+    assert!(agent(&report, "gemini-cli").chosen);
+}
+
+#[test]
+fn a_report_from_a_build_that_predates_chosen_reads_as_no_choice() {
+    let fixture = Fixture::new();
+    let report = status(&fixture.target);
+    let mut wire = serde_json::to_value(agent(&report, "codex")).unwrap();
+    wire.as_object_mut().unwrap().remove("chosen");
+
+    let parsed: AgentReport = serde_json::from_value(wire).unwrap();
+
+    assert!(!parsed.chosen);
 }
 
 /// A stand-in login shell that puts `~/.grok/bin` on its `PATH`, as Grok's
@@ -681,28 +637,6 @@ fn a_program_on_the_login_shells_path_is_installed_and_the_shell_is_asked_again_
     .unwrap();
     status(&fixture.target);
     assert_eq!(asked(), 2);
-}
-
-#[test]
-fn a_cli_version_is_asked_once_however_often_the_kit_is_read() {
-    let fixture = Fixture::new();
-    set_up(&fixture, ".kiro");
-    let counter = fixture.home().join("asked");
-    version_program(
-        &fixture.home().join(".local/bin/kiro-cli"),
-        &format!(
-            "#!/bin/sh\n[ \"$1\" = --version ] && echo x >> '{}'\necho 'kiro-cli 3.0.1'\n",
-            counter.display()
-        ),
-    );
-
-    for _ in 0..3 {
-        status(&fixture.target);
-    }
-    apply(&fixture.target, &Scope::agents(["kiro"], []));
-
-    let asked = std::fs::read_to_string(&counter).unwrap().lines().count();
-    assert_eq!(asked, 1, "Settings re-reads the kit every few seconds");
 }
 
 #[test]
@@ -814,11 +748,10 @@ fn a_machine_with_a_record_keeps_what_it_had_when_this_build_arrives() {
 
 #[cfg(unix)]
 #[test]
-fn cursor_augment_and_junie_get_the_guidance_hook_with_the_switch_and_lose_it_with_it() {
+fn cursor_and_gemini_get_the_guidance_hook_with_the_switch_and_lose_it_with_it() {
     for (id, program, folder, file) in [
         ("cursor", "cursor-agent", ".cursor", ".cursor/hooks.json"),
-        ("augment", "auggie", ".augment", ".augment/settings.json"),
-        ("junie", "junie", ".junie", ".junie/config.json"),
+        ("gemini-cli", "gemini", ".gemini", ".gemini/settings.json"),
     ] {
         let fixture = Fixture::new();
         install(&fixture, program, folder);
@@ -839,5 +772,73 @@ fn cursor_augment_and_junie_get_the_guidance_hook_with_the_switch_and_lose_it_wi
         );
         // Hide created the file and nothing else was in it, so the file goes.
         assert!(!fixture.home().join(file).exists(), "{id}");
+    }
+}
+
+#[test]
+fn only_claude_code_and_codex_do_everything_and_the_five_others_are_partial() {
+    use crate::agents::Feature::{self, *};
+    // The expected rows come from the PRD and the hook research, not from
+    // the table: what Hide does for each agent in this build (D-10, B18).
+    let expected: [(&str, &[Feature]); 7] = [
+        ("claude-code", &Feature::ALL),
+        ("codex", &Feature::ALL),
+        ("gemini-cli", &[Skill, Guidance]),
+        ("grok", &[Skill, HerdrIntegration]),
+        ("opencode", &[Skill, HerdrIntegration]),
+        ("pi", &[Skill, HerdrIntegration]),
+        ("cursor", &[Skill, Guidance, HerdrIntegration]),
+    ];
+    assert_eq!(
+        ADAPTERS.iter().map(|row| row.id).collect::<Vec<_>>(),
+        expected.map(|(id, _)| id)
+    );
+    for (id, supported) in expected {
+        let row = crate::agents::adapter(id).unwrap();
+        for feature in Feature::ALL {
+            assert_eq!(
+                row.supports(feature),
+                supported.contains(&feature),
+                "{id}: {feature:?}"
+            );
+        }
+        assert_eq!(row.partial(), supported.len() != Feature::ALL.len(), "{id}");
+    }
+}
+
+#[test]
+fn the_features_the_hook_gives_are_the_ones_a_hook_runtime_exists_for() {
+    // Letters, Memory and subagent counts are the five-event hook, which the
+    // hook crate has a runtime for; an agent claiming them without one would
+    // be a popover that says more than the kit installs.
+    let with_runtime: Vec<&str> = ADAPTERS
+        .iter()
+        .filter(|row| row.supports(crate::agents::Feature::Letters))
+        .map(|row| row.id)
+        .collect();
+    assert_eq!(
+        with_runtime.len(),
+        hide_agent_hooks::AgentRuntime::ALL.len()
+    );
+    for row in ADAPTERS {
+        let part = matches!(row.hook, HookSupport::Part(_));
+        assert_eq!(
+            row.supports(crate::agents::Feature::Letters),
+            part,
+            "{}",
+            row.id
+        );
+        assert_eq!(
+            row.supports(crate::agents::Feature::Memory),
+            part,
+            "{}",
+            row.id
+        );
+        assert_eq!(
+            row.supports(crate::agents::Feature::Subagents),
+            part,
+            "{}",
+            row.id
+        );
     }
 }

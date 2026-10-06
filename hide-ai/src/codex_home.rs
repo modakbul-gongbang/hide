@@ -65,7 +65,7 @@ pub(crate) fn spawn_sweep(sink: Arc<dyn AiLogSink>) {
         });
     if let Err(error) = spawned {
         let mut event = AiLogEvent::new("ai.codex_home.sweep_failed");
-        event.provider = Some(ProviderId::Codex);
+        event.provider = Some(ProviderId::CODEX);
         event.detail = Some(format!("stage=thread;kind={}", error.kind()));
         sink.log(event);
     }
@@ -119,7 +119,7 @@ fn log_sweep(report: Result<SweepReport, std::io::ErrorKind>, sink: &dyn AiLogSi
             event
         }
     };
-    event.provider = Some(ProviderId::Codex);
+    event.provider = Some(ProviderId::CODEX);
     sink.log(event);
 }
 

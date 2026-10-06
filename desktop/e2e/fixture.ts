@@ -9,6 +9,7 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { linkFixtureTranscripts, type HerdrFixture } from "../../web/e2e/herdr-fixture";
+import { aiSettingsFile } from "../../web/e2e/hided-fixture";
 import { ownUntilWorkerExit } from "../../web/e2e/worker-owned";
 import { endWindowsProcesses, fixtureExecutable, fixtureHomeEnv, fixtureOpenCommand, fixtureToolPath, inheritedFixtureEnv } from "../../web/e2e/platform-fixture";
 import { SHOW_INACTIVE_SWITCH } from "../src/main/launchSwitches";
@@ -33,7 +34,7 @@ export type Isolated = {
  * A Herdr fixture with its `root` also lends the daemon its `claude`, which
  * is the label provider the fixture's transcripts are answered by, and those
  * transcripts; without one the daemon finds whatever `claude` PATH has, on a
- * HOME where it is not logged in.
+ * HOME where it is not logged in. It also saves `claude` as the agent Hide AI runs on.
  */
 export function isolate(herdr: Pick<HerdrFixture, "socket" | "bin"> & Partial<Pick<HerdrFixture, "root" | "afterStop">>, label: string): Isolated {
   if (isolations.size >= MAX_ISOLATIONS) throw new Error(`desktop fixture has ${MAX_ISOLATIONS} unclosed homes; clean an owned fixture before creating another`);
@@ -42,7 +43,15 @@ export function isolate(herdr: Pick<HerdrFixture, "socket" | "bin"> & Partial<Pi
   let env: Record<string, string>;
   try {
     fs.mkdirSync(path.join(home, "projects"), { recursive: true });
-    if (herdr.root) linkFixtureTranscripts({ root: herdr.root }, home);
+    if (herdr.root) {
+      linkFixtureTranscripts({ root: herdr.root }, home);
+      // Hide AI asks no model until an agent is chosen (PRD settings-cleanup B47), and this app has
+      // no signed-in agent for the first-run rule to pick, so the operator here has already chosen
+      // the `claude` fixture shim, as a saved choice that is kept (B48).
+      const aiFile = aiSettingsFile(home);
+      fs.mkdirSync(path.dirname(aiFile), { recursive: true });
+      fs.writeFileSync(aiFile, JSON.stringify({ provider: "claude" }));
+    }
     env = {
       ...inheritedFixtureEnv(),
       ...fixtureHomeEnv(home),

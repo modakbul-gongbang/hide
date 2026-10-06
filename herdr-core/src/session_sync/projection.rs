@@ -74,6 +74,9 @@ pub(crate) struct ProjectionState {
     pub(crate) panes: Vec<ProjectedPane>,
     pub(crate) layouts: Vec<SessionLayoutPayload>,
     pub(crate) agents: Vec<ProjectedAgent>,
+    /// The version Herdr's own snapshot named, which the Settings details show
+    /// next to the protocol.
+    pub(crate) herdr_version: Option<String>,
 }
 
 impl ProjectionState {
@@ -173,6 +176,7 @@ impl ProjectionState {
             agents,
             panes,
             workspaces,
+            herdr_version: self.herdr_version.clone(),
         }
     }
 }

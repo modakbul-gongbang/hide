@@ -8,7 +8,18 @@ import { DropdownMenu as MenuPrimitive } from "radix-ui";
 import { Fragment, useState, type ReactNode } from "react";
 import { cn } from "../lib/utils";
 import { ContextMenu, ContextMenuContent, ContextMenuItem, ContextMenuSeparator, ContextMenuShortcut, ContextMenuTrigger } from "./ui/context-menu";
-import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuSeparator, DropdownMenuTrigger } from "./ui/dropdown-menu";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuRadioGroup,
+  DropdownMenuRadioItem,
+  DropdownMenuSeparator,
+  DropdownMenuSub,
+  DropdownMenuSubContent,
+  DropdownMenuSubTrigger,
+  DropdownMenuTrigger,
+} from "./ui/dropdown-menu";
 import { useEscapeLayer, useReturnFocus } from "./ui/layer";
 import { menuContent } from "./ui/menu-styles";
 import { Hint } from "./ui/tooltip";
@@ -24,6 +35,8 @@ export type MenuEntry<Id extends string = string> = {
   destructive?: boolean;
   /** The chord that does the same, drawn at the item's end; "" or absent draws none. */
   shortcut?: string;
+  /** One choice out of several: the entry opens a submenu of radio items and picking one selects that choice's id. */
+  choices?: { id: Id; label: string; checked: boolean }[];
 };
 
 type Parts = { Item: typeof DropdownMenuItem | typeof ContextMenuItem; Separator: typeof DropdownMenuSeparator | typeof ContextMenuSeparator };
@@ -35,13 +48,30 @@ function EntryItems<Id extends string>({ items, onSelect, parts }: { items: Menu
       {items.map((item) => (
         <Fragment key={item.id}>
           {item.separated ? <Separator /> : null}
-          <Item disabled={item.unavailable !== null} variant={item.destructive ? "destructive" : "default"} data-menu-item={item.id} className="flex-col items-stretch gap-none" onSelect={() => onSelect(item.id)}>
-            <span className="flex items-center gap-sm">
-              <span data-menu-label="">{item.label}</span>
-              {item.shortcut ? <ContextMenuShortcut data-menu-shortcut={item.shortcut}>{item.shortcut}</ContextMenuShortcut> : null}
-            </span>
-            {item.unavailable ? <span data-menu-reason="" className="text-caption text-muted-foreground">{item.unavailable}</span> : null}
-          </Item>
+          {item.choices ? (
+            <DropdownMenuSub>
+              <DropdownMenuSubTrigger disabled={item.unavailable !== null} data-menu-item={item.id}>
+                <span data-menu-label="">{item.label}</span>
+              </DropdownMenuSubTrigger>
+              <DropdownMenuSubContent aria-label={item.label} data-menu-choices={item.id}>
+                <DropdownMenuRadioGroup value={item.choices.find((choice) => choice.checked)?.id ?? ""} onValueChange={(value) => onSelect(value as Id)}>
+                  {item.choices.map((choice) => (
+                    <DropdownMenuRadioItem key={choice.id} value={choice.id} data-menu-item={choice.id}>
+                      <span data-menu-label="">{choice.label}</span>
+                    </DropdownMenuRadioItem>
+                  ))}
+                </DropdownMenuRadioGroup>
+              </DropdownMenuSubContent>
+            </DropdownMenuSub>
+          ) : (
+            <Item disabled={item.unavailable !== null} variant={item.destructive ? "destructive" : "default"} data-menu-item={item.id} className="flex-col items-stretch gap-none" onSelect={() => onSelect(item.id)}>
+              <span className="flex items-center gap-sm">
+                <span data-menu-label="">{item.label}</span>
+                {item.shortcut ? <ContextMenuShortcut data-menu-shortcut={item.shortcut}>{item.shortcut}</ContextMenuShortcut> : null}
+              </span>
+              {item.unavailable ? <span data-menu-reason="" className="text-caption text-muted-foreground">{item.unavailable}</span> : null}
+            </Item>
+          )}
         </Fragment>
       ))}
     </>

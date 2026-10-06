@@ -330,16 +330,30 @@ async fn the_checklist_advances_and_the_qr_follows_a_confirmed_serve_entry() {
     let port = running.port;
     assert_eq!(fake.proxy(), Some(format!("http://127.0.0.1:{port}")));
     assert_eq!(exposed["url"], format!("https://{DNS}"));
-    let qr = exposed["qr"].as_str().expect("a QR once exposed (B4)");
+    // Opening Settings > Mobile and exposing issue no code (B58).
+    assert!(exposed["qr"].is_null());
+    assert!(exposed["code_expires_at_ms"].is_null());
+    event(&mut shell, "mobile_show_code", json!({})).await;
+    let shown = mobile_frame(&mut shell, |frame| frame["qr"].is_string()).await;
+    let qr = shown["qr"].as_str().expect("a QR once shown (B4)");
     assert!(qr.starts_with(&format!("https://{DNS}/m/#pair=")));
-    assert!(exposed["code_expires_at_ms"].as_u64().unwrap() > exposed["now_ms"].as_u64().unwrap());
+    assert!(shown["code_expires_at_ms"].as_u64().unwrap() > shown["now_ms"].as_u64().unwrap());
+    // Observing again keeps the shown code and the last page closing takes it.
+    event(&mut shell, "mobile_observe", json!({"observing": true})).await;
+    let kept = mobile_frame(&mut shell, |_| true).await;
+    assert_eq!(kept["qr"], shown["qr"]);
+    event(&mut shell, "mobile_hide_code", json!({})).await;
+    mobile_frame(&mut shell, |frame| frame["qr"].is_null()).await;
+    event(&mut shell, "mobile_show_code", json!({})).await;
+    let qr_frame = mobile_frame(&mut shell, |frame| frame["qr"].is_string()).await;
+    let qr = qr_frame["qr"].as_str().unwrap();
     // Enabling again converges on the same single entry (B9).
     event(&mut shell, "mobile_enable", json!({"enabled": true})).await;
     tokio::time::sleep(Duration::from_millis(500)).await;
     assert_eq!(fake.calls().matches("serve --bg").count(), 1);
     // A new code voids the one in the QR (B10).
     let old = pair_code(qr);
-    event(&mut shell, "mobile_new_code", json!({})).await;
+    event(&mut shell, "mobile_show_code", json!({})).await;
     let renewed = mobile_frame(&mut shell, |frame| {
         frame["qr"].as_str().is_some_and(|next| next != qr)
     })
@@ -448,7 +462,9 @@ async fn a_restart_on_a_new_port_replaces_hides_entry_and_phones_stay_paired() {
     // Settings > Mobile is open, as it is whenever the switch is used.
     event(&mut shell, "mobile_observe", json!({"observing": true})).await;
     event(&mut shell, "mobile_enable", json!({"enabled": true})).await;
-    let exposed = mobile_frame(&mut shell, |frame| frame["exposure"] == "exposed").await;
+    mobile_frame(&mut shell, |frame| frame["exposure"] == "exposed").await;
+    event(&mut shell, "mobile_show_code", json!({})).await;
+    let exposed = mobile_frame(&mut shell, |frame| frame["qr"].is_string()).await;
     let code = pair_code(exposed["qr"].as_str().unwrap());
     let (mut paired, answer) = pair(first_port, &loopback(first_port), &code).await;
     let credential = answer["credential"].as_str().unwrap().to_owned();
@@ -496,6 +512,29 @@ async fn a_restart_on_a_new_port_replaces_hides_entry_and_phones_stay_paired() {
 }
 
 #[tokio::test]
+async fn the_last_mobile_page_closing_takes_the_shown_code_with_it() {
+    let dir = tempfile::tempdir().unwrap();
+    let fake = FakeTailscale::new(dir.path());
+    fake.ready();
+    let running = hided::start_daemon(env(dir.path(), &fake.bin))
+        .await
+        .unwrap();
+    let mut page = renderer(&running).await;
+    event(&mut page, "mobile_observe", json!({"observing": true})).await;
+    event(&mut page, "mobile_enable", json!({"enabled": true})).await;
+    mobile_frame(&mut page, |frame| frame["exposure"] == "exposed").await;
+    event(&mut page, "mobile_show_code", json!({})).await;
+    mobile_frame(&mut page, |frame| frame["qr"].is_string()).await;
+    // Another window that never opened Settings > Mobile is not an observer.
+    let mut other = renderer(&running).await;
+    mobile_frame(&mut other, |frame| frame["qr"].is_string()).await;
+    drop(page);
+    mobile_frame(&mut other, |frame| frame["qr"].is_null()).await;
+    running.mobile.shutdown().await;
+    running.stop();
+}
+
+#[tokio::test]
 async fn phones_are_capped_revoked_and_scoped() {
     let dir = tempfile::tempdir().unwrap();
     let fake = FakeTailscale::new(dir.path());
@@ -509,7 +548,7 @@ async fn phones_are_capped_revoked_and_scoped() {
     mobile_frame(&mut shell, |frame| frame["exposure"] == "exposed").await;
     let mut credentials = Vec::new();
     for _ in 0..4 {
-        event(&mut shell, "mobile_new_code", json!({})).await;
+        event(&mut shell, "mobile_show_code", json!({})).await;
         let paired = credentials.len();
         let frame = mobile_frame(&mut shell, |frame| {
             frame["qr"].is_string()
@@ -531,7 +570,7 @@ async fn phones_are_capped_revoked_and_scoped() {
         ));
         let _ = socket.close(None).await;
     }
-    event(&mut shell, "mobile_new_code", json!({})).await;
+    event(&mut shell, "mobile_show_code", json!({})).await;
     let frame = mobile_frame(&mut shell, |frame| {
         frame["phones"]
             .as_array()
@@ -803,7 +842,10 @@ async fn the_tailnet_reaches_only_the_phone_app_and_transport_trouble_stays_visi
         Some(4002),
         "the shell token is refused through serve even with a loopback Origin"
     );
-    let code = pair_code(exposed["qr"].as_str().unwrap());
+    let _ = exposed;
+    event(&mut shell, "mobile_show_code", json!({})).await;
+    let shown = mobile_frame(&mut shell, |frame| frame["qr"].is_string()).await;
+    let code = pair_code(shown["qr"].as_str().unwrap());
     let (mut paired, answer) = pair(port, &format!("https://{DNS}"), &code).await;
     assert_eq!(answer["type"], "paired");
 
@@ -845,7 +887,7 @@ async fn paired_phone(
 ) -> (Socket, String, String) {
     event(shell, "mobile_enable", json!({"enabled": true})).await;
     mobile_frame(shell, |frame| frame["exposure"] == "exposed").await;
-    event(shell, "mobile_new_code", json!({})).await;
+    event(shell, "mobile_show_code", json!({})).await;
     let frame = mobile_frame(shell, |frame| frame["qr"].is_string()).await;
     let (_pairing, answer) = pair(
         running.port,

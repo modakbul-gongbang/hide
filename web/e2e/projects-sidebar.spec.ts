@@ -87,7 +87,7 @@ async function sidebarTextSizes(page: Page): Promise<string[]> {
 async function chooseTheme(page: Page, theme: "light" | "dark"): Promise<void> {
   await page.keyboard.press(chord("settings"));
   await expect(page.locator('[data-settings="true"]')).toBeVisible();
-  await page.locator('[data-settings-tab="appearance"]').click();
+  await page.locator('[data-settings-tab="general"]').click();
   await page.locator(`[data-theme-option="${theme}"]`).click();
   await expect(page.locator("html")).toHaveClass(new RegExp(`\\b${theme}\\b`));
   await page.keyboard.press("Escape");
@@ -452,7 +452,7 @@ test("the Projects tab: kind, age, status badges, opened checkouts and folded pr
     const agentsAtDefault = { sizes: await sidebarTextSizes(page), row: await rowGeometry(agentRow, nextRow, agentParts) };
     await page.locator('[data-sidebar-mode="projects"]').click();
     await page.keyboard.press(chord("settings"));
-    await page.locator('[data-settings-tab="appearance"]').click();
+    await page.locator('[data-settings-tab="general"]').click();
     const fontSize = page.locator('[data-font-size="true"] [role="slider"]');
     await fontSize.focus();
     await page.keyboard.press("End");

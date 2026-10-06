@@ -19,15 +19,25 @@ const agent = (id: string, label: string, availability: KitAgent["availability"]
   label,
   availability,
   enabled: false,
+  chosen: false,
   skill: { state: "off", reason: null, location: null },
   hook: null,
   doc_url: "https://example.test",
 });
 
-const state = (pending: boolean, agents: KitAgent[]) => ({
+const provider = (id: string, label: string, agentId: string, ready: boolean) => ({ id, label, agent: agentId, state: ready ? "ready" : "needs_login", selectable: ready });
+
+const state = (pending: boolean, agents: KitAgent[], providers: ReturnType<typeof provider>[] = []) => ({
   connection: "live" as const,
-  rest: { ui_state: { agent_onboarding: pending ? "pending" : "done" }, navigator: { devices: [{ id: "local", kit: { agents } }] } },
+  rest: {
+    ui_state: { agent_onboarding: pending ? "pending" : "done" },
+    navigator: { devices: [{ id: "local", kit: { agents } }] },
+    status: { background_ai: { provider: null, chosen: false, providers } },
+  },
 });
+
+/** What the gate sent for the operator's choice: the sign-in probe it asks for while open is not part of it. */
+const choices = (events: Parameters<DispatchFn>[0][]) => events.filter((event) => event.kind !== "ai_settings");
 
 afterEach(() => {
   document.body.innerHTML = "";
@@ -65,7 +75,7 @@ it("shows every agent as a tile, the set-up ones on and the others dimmed with n
   expect(tile("codex", "off")?.getAttribute("aria-checked")).toBe("false");
   await act(async () => { (document.querySelector("[data-onboarding-apply]") as HTMLElement).click(); });
 
-  expect(events).toEqual([{ schema_version: 2, kind: "agent_onboarding_apply", payload: { agents: ["claude-code"] } }]);
+  expect(choices(events)).toEqual([{ schema_version: 2, kind: "agent_onboarding_apply", payload: { agents: ["claude-code"] } }]);
   await unmount();
 });
 
@@ -75,7 +85,7 @@ it("has Apply as its only way out: Escape and a second button do nothing (the ou
   expect(document.querySelectorAll("[data-agent-onboarding] button:not([role=switch])").length).toBe(1);
   await act(async () => { document.dispatchEvent(new KeyboardEvent("keydown", { key: "Escape", bubbles: true })); });
   expect(document.querySelector("[data-agent-onboarding]")).not.toBeNull();
-  expect(shown.events).toEqual([]);
+  expect(choices(shown.events)).toEqual([]);
   await shown.unmount();
 
   const decided = await mount(state(false, AGENTS));
@@ -98,6 +108,31 @@ it("draws what Apply sends: an agent that becomes available while it is open sho
   expect(tile("cursor", "on")).not.toBeNull();
   expect(tile("codex", "off")).not.toBeNull();
   await act(async () => { (document.querySelector("[data-onboarding-apply]") as HTMLElement).click(); });
-  expect(events).toEqual([{ schema_version: 2, kind: "agent_onboarding_apply", payload: { agents: ["claude-code", "cursor"] } }]);
+  expect(choices(events)).toEqual([{ schema_version: 2, kind: "agent_onboarding_apply", payload: { agents: ["claude-code", "cursor"] } }]);
   await unmount();
+});
+
+it("names under Apply the agent Hide AI will use: the first signed-in one still on, and no line when none is (B45, B46)", async () => {
+  const providers = [provider("claude", "Claude Code", "claude-code", true), provider("codex", "Codex", "codex", true)];
+  const { unmount } = await mount(state(true, AGENTS, providers));
+  const tile = (id: string, on: string) => document.querySelector(`[data-onboarding-tile="${id}:${on}"]`) as HTMLElement;
+  const line = () => document.querySelector("[data-onboarding-hide-ai]")?.textContent ?? null;
+  expect(line()).toBe("Hide AI uses Claude Code");
+  await act(async () => { tile("claude-code", "on").click(); });
+  expect(line()).toBe("Hide AI uses Codex");
+  await act(async () => { tile("codex", "on").click(); });
+  expect(line()).toBeNull();
+  await unmount();
+
+  // A switched-on agent that is not signed in is passed over; with nobody signed in there is no line.
+  const signedOut = await mount(state(true, AGENTS, [provider("claude", "Claude Code", "claude-code", false), provider("codex", "Codex", "codex", false)]));
+  expect(document.querySelector("[data-onboarding-hide-ai]")).toBeNull();
+  await signedOut.unmount();
+});
+
+it("asks for the sign-in probe while it is open and stops when it goes away", async () => {
+  const { events, unmount } = await mount(state(true, AGENTS));
+  expect(events.filter((event) => event.kind === "ai_settings")).toEqual([{ schema_version: 2, kind: "ai_settings", payload: { observing: true } }]);
+  await unmount();
+  expect(events.filter((event) => event.kind === "ai_settings").at(-1)).toEqual({ schema_version: 2, kind: "ai_settings", payload: { observing: false } });
 });

@@ -67,8 +67,10 @@ export function stopDaemon(child: ChildProcess, binary: string, env: NodeJS.Proc
  * `bundled` runs the daemon from a `hide.app/Contents/Resources` folder of copies of the debug
  * binaries, which is the one place a daemon installs the kit (`hide_kit::bundled_kit_dir`); the
  * kit then writes into the fixture's private HOME and nowhere else.
+ * `seedHideAi: false` leaves Hide AI unchosen, as a Mac that has never been asked is, for a spec
+ * about the first-run rule.
  */
-export async function startHided(herdr: HerdrFixture, label = "s2", homeOverride?: string, extraEnv: NodeJS.ProcessEnv = {}, bundled = false): Promise<Daemon> {
+export async function startHided(herdr: HerdrFixture, label = "s2", homeOverride?: string, extraEnv: NodeJS.ProcessEnv = {}, bundled = false, options: { seedHideAi?: boolean } = {}): Promise<Daemon> {
   // The daemon places pane-bootstrap.sock below this directory. Keep the
   // fixture root short enough for macOS's Unix socket path limit.
   const dir = fs.realpathSync.native(fs.mkdtempSync(path.join(os.tmpdir(), "hde-")));
@@ -77,7 +79,21 @@ export async function startHided(herdr: HerdrFixture, label = "s2", homeOverride
   fs.mkdirSync(path.join(home, "projects", ".hidden"), { recursive: true });
   fs.writeFileSync(path.join(home, "projects", "notes.txt"), "x");
   linkFixtureTranscripts(herdr, home);
+  // Hide AI asks no model until an agent is chosen (PRD settings-cleanup B47), and a fixture
+  // Mac has no signed-in agent for the first-run rule to pick, so the operator here has
+  // already chosen the `claude` fixture shim; a home that brought its own choice keeps it.
+  const aiFile = aiSettingsFile(home);
+  if (options.seedHideAi !== false && !fs.existsSync(aiFile)) {
+    fs.mkdirSync(path.dirname(aiFile), { recursive: true });
+    fs.writeFileSync(aiFile, JSON.stringify({ provider: "claude" }));
+  }
   return launch(herdr, label, dir, home, "0", extraEnv, bundled ? bundledBinary(dir) : undefined);
+}
+
+/** Where the daemon keeps Hide AI's choice under a home: the platform's state folder, `hide/ai.json`. */
+export function aiSettingsFile(home: string): string {
+  const stateUnderHome = process.platform === "darwin" ? path.join("Library", "Application Support") : process.platform === "win32" ? path.join("AppData", "Local") : path.join(".local", "state");
+  return path.join(home, stateUnderHome, "hide", "ai.json");
 }
 
 /** Copies of the debug binaries laid out as an installed app, so the daemon runs the kit. */
@@ -208,4 +224,15 @@ async function launch(herdr: HerdrFixture, label: string, dir: string, home: str
   }
   stop();
   throw new Error("hided did not write a state file");
+}
+
+/**
+ * Gives the daemon's private HOME an ssh config with one Host, so Add device has an entry to
+ * choose. The host name is reserved for documentation and never resolves, which keeps the
+ * device registered and unreachable; hided reads this file and the operator's own is untouched.
+ */
+export function writeSshHost(daemon: Daemon, alias: string): void {
+  const dir = path.join(daemon.home, ".ssh");
+  fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
+  fs.writeFileSync(path.join(dir, "config"), `Host ${alias}\n  HostName ${alias}.invalid\n  User e2e\n`, { mode: 0o600 });
 }

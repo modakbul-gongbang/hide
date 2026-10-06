@@ -17,7 +17,7 @@ import { openProjectOverview } from "./overview-entry";
 // none (B1-B4), the issue panel beside the board with its read, failure and
 // retry (B10-B16, B19), the keyboard (B20), the preview and quiet hover (B6-B8,
 // B22), the filter (B21), a Local issue made with C and edited in its panel
-// (B18), List and Dependencies, Settings › Issues, and an issue started into a
+// (B18), List and Dependencies, the project row's Issue source menu, and an issue started into a
 // worktree (B23). Light and Dark captures land in HIDE_E2E_SCREENSHOT_DIR.
 
 import { expect, test, type Locator, type Page } from "@playwright/test";
@@ -28,7 +28,7 @@ import { agentsIn, continueFixtureTranscript, declareParent, labelAgent, session
 import { startHided, type Daemon } from "./hided-fixture";
 import { fixtureProgram } from "./platform-fixture";
 import { chooseTheme, countSent, screenshot } from "./wire";
-import { chord, field } from "./chords";
+import { field } from "./chords";
 import { quietFor, unchangedForFrames } from "./wait";
 
 test.describe.configure({ timeout: 240_000 });
@@ -994,14 +994,6 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await page.keyboard.press("Escape");
     await expect(page.locator("[data-new-worktree]")).toHaveCount(0);
     await expect(overview).toBeVisible();
-
-    // Settings › Issues: the sources, each project's source, and how work starts.
-    await page.keyboard.press(chord("settings"));
-    await page.locator('[data-settings-tab="issues"]').click();
-    await expect(page.locator("[data-settings-issues]")).toBeVisible();
-    await expect(page.getByRole("combobox", { name: "Issue source for repo" })).toHaveText("Automatic (GitHub)");
-    await expect(page.getByRole("combobox", { name: "Issue source for quiet" })).toHaveText("Automatic (Local)");
-    await page.keyboard.press("Escape");
 
     // Start on the backlog issue makes a worktree linked to it, so the card
     // moves from Backlog to In progress; its Workspace comes to the front,

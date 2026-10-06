@@ -464,118 +464,160 @@ fn overview_tracks_live_checkout_panes_and_drops_retired_lineage() {
     );
 }
 
-/// The Background AI group's state travels on the ordinary snapshot, and
-/// nothing on the way asks a provider anything under the mutex: this
-/// runtime has no coordinator, and every assertion here still holds.
+fn ai_event(payload: serde_json::Value) -> Vec<u8> {
+    serde_json::to_vec(&serde_json::json!({
+        "schema_version": 2, "kind": "ai_settings", "payload": payload
+    }))
+    .expect("the event encodes")
+}
+
+/// A read that found each named agent signed in and selectable.
+fn ready_read(ids: &[&str]) -> crate::model::BackgroundAiSnapshot {
+    crate::model::BackgroundAiSnapshot {
+        providers: ids
+            .iter()
+            .map(|id| {
+                let provider = hide_ai::ProviderId::from_id(id).expect("a registered agent");
+                crate::model::BackgroundAiProviderSnapshot {
+                    state: "ready".to_owned(),
+                    headline: "Signed in".to_owned(),
+                    selectable: true,
+                    models: vec!["m-1".to_owned(), "m-2".to_owned()],
+                    ..crate::model::BackgroundAiProviderSnapshot::unread(provider)
+                }
+            })
+            .collect(),
+        ..crate::model::BackgroundAiSnapshot::default()
+    }
+}
+
+/// Switches the named agents on in this Mac's kit snapshot, as the first-run
+/// choice or Settings › Agents leaves them.
+fn switch_on(runtime: &mut Runtime, ids: &[&str]) {
+    let mut kit = runtime.kit_state(crate::workspace::LOCAL_DEVICE_ID);
+    kit.agents = hide_kit::agents::ADAPTERS
+        .iter()
+        .map(|adapter| {
+            let piece = crate::model::KitPieceSnapshot {
+                state: hide_kit::ComponentState::Installed,
+                reason: None,
+                location: None,
+            };
+            crate::model::KitAgentSnapshot {
+                id: adapter.id.to_owned(),
+                label: adapter.label.to_owned(),
+                availability: hide_kit::Availability::Available,
+                enabled: ids.contains(&adapter.id),
+                chosen: false,
+                skill: piece.clone(),
+                hook: None,
+                herdr: None,
+                partial: false,
+                features: Vec::new(),
+                sessions: None,
+                doc_url: String::new(),
+            }
+        })
+        .collect();
+    runtime.set_kit_state(crate::workspace::LOCAL_DEVICE_ID, kit);
+}
+
+/// The Hide AI tab's state travels on the ordinary snapshot, and nothing on
+/// the way asks a provider anything under the mutex: this runtime has no
+/// coordinator, and every assertion here still holds.
 #[test]
 fn the_snapshot_carries_the_choice_the_providers_and_their_models() {
     let mut runtime = runtime();
     let section = &runtime.snapshot.status.background_ai;
     assert_eq!(
-        section.provider, "codex",
-        "the default choice is on the snapshot before anything is read"
+        section.provider, None,
+        "nothing is chosen before anything is read (B47)"
     );
-    assert!(!section.chosen, "nobody has chosen yet");
+    assert!(!section.chosen && section.fallback.is_empty());
     assert_eq!(
         section
             .providers
             .iter()
             .map(|provider| provider.id.as_str())
             .collect::<Vec<_>>(),
-        vec!["codex", "claude"],
-        "every provider is a row, in the offered order"
+        vec![
+            "claude",
+            "codex",
+            "gemini-cli",
+            "grok",
+            "opencode",
+            "pi",
+            "cursor"
+        ],
+        "every registered provider is a row, in the registry order"
     );
     assert!(
         section
             .providers
             .iter()
-            .all(|provider| provider.state == "unread"),
-        "a provider nobody has asked is unread, never a guessed state"
+            .all(|provider| provider.state == "unread" && !provider.selectable),
+        "a provider nobody has asked is unread and cannot be chosen, never a guessed state"
     );
 
-    let read = crate::model::BackgroundAiSnapshot {
-        providers: vec![
-            crate::model::BackgroundAiProviderSnapshot {
-                id: "codex".to_owned(),
-                label: "Codex".to_owned(),
-                state: "ready".to_owned(),
-                headline: "Signed in".to_owned(),
-                message: None,
-                model: "gpt-5.6-luna".to_owned(),
-                models: vec!["gpt-5.6-luna".to_owned(), "gpt-5.6".to_owned()],
-                models_unavailable_reason: None,
-            },
-            crate::model::BackgroundAiProviderSnapshot {
-                id: "claude".to_owned(),
-                label: "Claude Code".to_owned(),
-                state: "needs_login".to_owned(),
-                headline: "Sign in required".to_owned(),
-                message: Some("Run `claude login` and check again".to_owned()),
-                model: "haiku".to_owned(),
-                models: vec!["haiku".to_owned(), "sonnet".to_owned()],
-                models_unavailable_reason: None,
-            },
-        ],
-        ..crate::model::BackgroundAiSnapshot::default()
-    };
+    let read = ready_read(&["codex"]);
     assert!(runtime.ingest_background_ai(read.clone()));
     assert!(
         !runtime.ingest_background_ai(read),
         "an unchanged read publishes nothing"
     );
     let section = &runtime.snapshot.status.background_ai;
-    assert_eq!(section.providers[0].state, "ready");
-    assert_eq!(section.providers[1].headline, "Sign in required");
+    let codex = &section.providers[1];
+    assert_eq!((codex.state.as_str(), codex.selectable), ("ready", true));
+    assert_eq!(codex.models, vec!["m-1".to_owned(), "m-2".to_owned()]);
     assert_eq!(
-        section.providers[0].models,
-        vec!["gpt-5.6-luna".to_owned(), "gpt-5.6".to_owned()],
-        "the model list the providers answered reaches the snapshot"
+        section.providers[0].state, "unread",
+        "an agent the read did not ask keeps its own row"
     );
 
     // The whole section survives the wire the shell actually reads.
     let encoded =
         serde_json::to_value(&runtime.snapshot.status.background_ai).expect("it serializes");
-    assert_eq!(encoded["provider"], "codex");
-    assert_eq!(encoded["providers"][1]["state"], "needs_login");
-    assert_eq!(encoded["providers"][0]["models"][1], "gpt-5.6");
+    assert_eq!(encoded["provider"], serde_json::Value::Null);
+    assert_eq!(encoded["enabled"], true);
+    assert_eq!(encoded["providers"][1]["agent"], "codex");
+    assert_eq!(encoded["providers"][1]["selectable"], true);
+    assert_eq!(encoded["providers"][1]["models"][1], "m-2");
+    assert_eq!(encoded["refusal"], serde_json::Value::Null);
 }
 
 #[test]
 fn a_chosen_agent_and_model_move_the_snapshot_and_queue_one_write() {
     let mut runtime = runtime();
-    let event = |payload: serde_json::Value| {
-        serde_json::to_vec(&serde_json::json!({
-            "schema_version": 2, "kind": "ai_settings", "payload": payload
-        }))
-        .expect("the event encodes")
-    };
-
+    runtime.ingest_ai_settings(hide_ai::AiSettings::default(), None);
+    runtime.ingest_background_ai(ready_read(&["claude"]));
     assert!(
         runtime.take_ai_settings_save().is_none(),
         "nothing is written until the operator chooses"
     );
     assert!(!runtime.ai_request().observing, "nobody is looking yet");
 
-    assert!(runtime.dispatch_json(&event(serde_json::json!({"observing": true}))));
+    assert!(runtime.dispatch_json(&ai_event(serde_json::json!({"observing": true}))));
     assert!(
         runtime.ai_request().observing,
-        "the group being on screen is what lets the probe run"
+        "the tab being on screen is what lets the probe run"
     );
     assert!(
         runtime.take_ai_settings_save().is_none(),
         "looking at the screen is not a choice to save"
     );
 
-    assert!(runtime.dispatch_json(&event(serde_json::json!({"provider": "claude"}))));
+    assert!(runtime.dispatch_json(&ai_event(serde_json::json!({"provider": "claude"}))));
     assert_eq!(
-        runtime.snapshot.status.background_ai.provider, "claude",
+        runtime.snapshot.status.background_ai.provider.as_deref(),
+        Some("claude"),
         "the choice is on the snapshot before the file write happens"
     );
-    assert!(runtime.dispatch_json(&event(
+    assert!(runtime.snapshot.status.background_ai.chosen);
+    assert!(runtime.dispatch_json(&ai_event(
         serde_json::json!({"provider": "claude", "model": "sonnet"})
     )));
     assert_eq!(
-        runtime.ai_request().models[&hide_ai::ProviderId::Claude],
+        runtime.ai_request().models[&hide_ai::ProviderId::CLAUDE],
         "sonnet",
         "the probe asks about the model the operator chose"
     );
@@ -583,16 +625,115 @@ fn a_chosen_agent_and_model_move_the_snapshot_and_queue_one_write() {
     let saved = runtime
         .take_ai_settings_save()
         .expect("the choice is queued for the coordinator to write");
-    assert_eq!(saved.provider, hide_ai::ProviderId::Claude);
-    assert_eq!(saved.model(hide_ai::ProviderId::Claude), "sonnet");
+    assert_eq!(saved.provider, hide_ai::ProviderId::CLAUDE);
+    assert!(saved.chosen);
+    assert_eq!(saved.model(hide_ai::ProviderId::CLAUDE), "sonnet");
     assert_eq!(
         saved.router_config().priority,
-        vec![hide_ai::ProviderId::Claude, hide_ai::ProviderId::Codex],
-        "the chosen provider leads and failover still has somewhere to go"
+        vec![hide_ai::ProviderId::CLAUDE],
+        "only the chosen provider is asked until the operator adds a fallback"
     );
     assert!(
         runtime.take_ai_settings_save().is_none(),
         "a taken write is not performed twice"
+    );
+}
+
+/// D-15, B35: an agent that is not signed in, not installed or cannot be
+/// asked without risk to files is refused where it is chosen, and the
+/// refusal says which event and why.
+#[test]
+fn an_agent_that_cannot_be_chosen_is_refused_as_runs_on_and_as_a_fallback() {
+    let mut runtime = runtime();
+    runtime.ingest_ai_settings(hide_ai::AiSettings::default(), None);
+    runtime.ingest_background_ai(ready_read(&["claude"]));
+    assert!(runtime.dispatch_json(&ai_event(serde_json::json!({"provider": "claude"}))));
+    runtime.take_ai_settings_save();
+
+    for payload in [
+        serde_json::json!({"provider": "cursor"}),
+        serde_json::json!({"fallback_add": "cursor"}),
+    ] {
+        assert!(runtime.dispatch_json(&ai_event(payload)));
+        assert_eq!(
+            runtime
+                .snapshot
+                .status
+                .last_error
+                .as_ref()
+                .expect("the refusal is visible")
+                .kind,
+            "ai_settings.provider_not_selectable"
+        );
+    }
+    assert!(runtime.take_ai_settings_save().is_none());
+    assert_eq!(
+        runtime.snapshot.status.background_ai.provider.as_deref(),
+        Some("claude")
+    );
+    assert!(runtime.snapshot.status.background_ai.fallback.is_empty());
+}
+
+/// D-16, D-17, D-27, B38, B39, B44: the fallback list is the operator's, in
+/// the order they added, one model each, and choosing a listed agent as
+/// Runs on takes it out of the list.
+#[test]
+fn the_fallback_list_keeps_the_operators_order_and_runs_on_leaves_it() {
+    let mut runtime = runtime();
+    runtime.ingest_ai_settings(hide_ai::AiSettings::default(), None);
+    runtime.ingest_background_ai(ready_read(&["claude", "codex", "grok"]));
+    assert!(runtime.dispatch_json(&ai_event(serde_json::json!({"provider": "claude"}))));
+    for id in ["grok", "codex"] {
+        assert!(runtime.dispatch_json(&ai_event(serde_json::json!({"fallback_add": id}))));
+    }
+    let listed = |runtime: &Runtime| -> Vec<String> {
+        runtime
+            .snapshot
+            .status
+            .background_ai
+            .fallback
+            .iter()
+            .map(|entry| entry.provider.clone())
+            .collect()
+    };
+    assert_eq!(listed(&runtime), vec!["grok", "codex"]);
+
+    assert!(runtime.dispatch_json(&ai_event(
+        serde_json::json!({"provider": "grok", "model": "m-2"})
+    )));
+    let saved = runtime.take_ai_settings_save().expect("one queued write");
+    assert_eq!(
+        saved.fallback[0].model.as_deref(),
+        Some("m-2"),
+        "a model for a listed agent is that entry's model"
+    );
+    assert_eq!(
+        saved.router_config().priority,
+        vec![
+            hide_ai::ProviderId::CLAUDE,
+            hide_ai::ProviderId::GROK,
+            hide_ai::ProviderId::CODEX
+        ],
+        "the order of adding is the order of trying"
+    );
+
+    assert!(runtime.dispatch_json(&ai_event(serde_json::json!({"provider": "codex"}))));
+    assert_eq!(
+        runtime.snapshot.status.background_ai.provider.as_deref(),
+        Some("codex")
+    );
+    assert_eq!(
+        listed(&runtime),
+        vec!["grok"],
+        "the agent that now answers first is not its own fallback"
+    );
+
+    assert!(runtime.dispatch_json(&ai_event(serde_json::json!({"fallback_remove": "grok"}))));
+    assert!(listed(&runtime).is_empty());
+    assert!(runtime.dispatch_json(&ai_event(serde_json::json!({"fallback_add": "codex"}))));
+    assert_eq!(
+        runtime.snapshot.status.last_error.as_ref().unwrap().kind,
+        "ai_settings.fallback_is_runs_on"
     );
 }
 
@@ -601,34 +742,124 @@ fn a_chosen_agent_and_model_move_the_snapshot_and_queue_one_write() {
 #[test]
 fn the_agent_summary_switch_moves_the_snapshot_and_queues_one_write() {
     let mut runtime = runtime();
-    let event = |payload: serde_json::Value| {
-        serde_json::to_vec(&serde_json::json!({
-            "schema_version": 2, "kind": "ai_settings", "payload": payload
-        }))
-        .expect("the event encodes")
-    };
+    runtime.ingest_ai_settings(hide_ai::AiSettings::default(), None);
+    runtime.ingest_background_ai(ready_read(&["claude"]));
+    assert!(
+        !runtime.agent_summary(),
+        "no agent is chosen yet, so no label is asked for (B47)"
+    );
+    assert!(runtime.snapshot.status.background_ai.agent_summary);
+
+    assert!(runtime.dispatch_json(&ai_event(serde_json::json!({"provider": "claude"}))));
+    runtime.take_ai_settings_save();
     assert!(
         runtime.agent_summary(),
         "on until the operator turns it off"
     );
-    assert!(runtime.snapshot.status.background_ai.agent_summary);
-
-    assert!(runtime.dispatch_json(&event(serde_json::json!({"provider": "claude"}))));
-    runtime.take_ai_settings_save();
-    assert!(runtime.dispatch_json(&event(serde_json::json!({"agent_summary": false}))));
+    assert!(runtime.dispatch_json(&ai_event(serde_json::json!({"agent_summary": false}))));
     assert!(!runtime.agent_summary());
     assert!(!runtime.snapshot.status.background_ai.agent_summary);
     let saved = runtime
         .take_ai_settings_save()
         .expect("the switch is queued for the coordinator to write");
     assert!(!saved.agent_summary);
-    assert_eq!(saved.provider, hide_ai::ProviderId::Claude);
+    assert_eq!(saved.provider, hide_ai::ProviderId::CLAUDE);
 
-    runtime.dispatch_json(&event(serde_json::json!({"agent_summary": false})));
+    runtime.dispatch_json(&ai_event(serde_json::json!({"agent_summary": false})));
     assert!(
         runtime.take_ai_settings_save().is_none(),
         "the same position writes nothing"
     );
+}
+
+/// D-14, B33: Use Hide AI off makes no model call anywhere, keeps every other
+/// value, and turning it on resumes exactly where it was.
+#[test]
+fn use_hide_ai_off_stops_every_model_use_and_keeps_the_choice() {
+    let mut runtime = runtime();
+    runtime.ingest_ai_settings(hide_ai::AiSettings::default(), None);
+    runtime.ingest_background_ai(ready_read(&["claude", "codex"]));
+    assert!(runtime.dispatch_json(&ai_event(serde_json::json!({"provider": "claude"}))));
+    assert!(runtime.dispatch_json(&ai_event(serde_json::json!({"fallback_add": "codex"}))));
+    runtime.take_ai_settings_save();
+    assert!(runtime.ai_active() && runtime.agent_summary());
+
+    assert!(runtime.dispatch_json(&ai_event(serde_json::json!({"enabled": false}))));
+    assert!(!runtime.snapshot.status.background_ai.enabled);
+    assert!(
+        !runtime.ai_active() && !runtime.agent_summary(),
+        "agent titles fall back to the session's own text"
+    );
+    let saved = runtime.take_ai_settings_save().expect("the switch is kept");
+    assert!(!saved.enabled);
+    assert!(
+        !saved.router_config().enabled,
+        "a router built from it asks no model anything"
+    );
+    let section = &runtime.snapshot.status.background_ai;
+    assert_eq!(section.provider.as_deref(), Some("claude"));
+    assert_eq!(section.fallback.len(), 1, "the rest is preserved");
+
+    assert!(runtime.dispatch_json(&ai_event(serde_json::json!({"enabled": true}))));
+    assert!(runtime.ai_active() && runtime.agent_summary());
+    assert_eq!(
+        runtime.snapshot.status.background_ai.fallback.len(),
+        1,
+        "turning it on resumes where it was"
+    );
+}
+
+/// D-18, D-27, B45, B47, B48: with nobody chosen, the first agent of the
+/// fixed order that is switched on and signed in is chosen with its default
+/// model; with none signed in nothing is chosen; a stored choice is kept.
+#[test]
+fn the_first_signed_in_agent_that_is_switched_on_is_chosen_by_itself() {
+    let mut runtime = runtime();
+    runtime.ingest_ai_settings(hide_ai::AiSettings::default(), None);
+    switch_on(&mut runtime, &["codex", "gemini-cli"]);
+    let asked = runtime.ai_request();
+    assert_eq!(
+        asked.selecting.iter().copied().collect::<Vec<_>>(),
+        vec![hide_ai::ProviderId::CODEX, hide_ai::ProviderId::GEMINI],
+        "only agents that are on are asked, while nobody has chosen"
+    );
+
+    // Claude Code is signed in but not switched on here: it is not used.
+    assert!(runtime.ingest_background_ai(ready_read(&["claude"])));
+    assert!(runtime.snapshot.status.background_ai.provider.is_none());
+    assert!(runtime.take_ai_settings_save().is_none());
+
+    // Login is noticed later with no setting touched (B47).
+    assert!(runtime.ingest_background_ai(ready_read(&["codex", "gemini-cli"])));
+    assert_eq!(
+        runtime.snapshot.status.background_ai.provider.as_deref(),
+        Some("codex"),
+        "the first of the fixed order among those on and signed in"
+    );
+    let saved = runtime
+        .take_ai_settings_save()
+        .expect("the choice is stored");
+    assert!(saved.chosen && saved.fallback.is_empty());
+    assert_eq!(
+        saved.model(hide_ai::ProviderId::CODEX),
+        hide_ai::settings::default_model(hide_ai::ProviderId::CODEX)
+    );
+    assert!(
+        runtime.ai_request().selecting.is_empty(),
+        "once chosen nothing selects"
+    );
+
+    // A stored choice is never replaced by the rule.
+    let mut stored = hide_ai::AiSettings::default();
+    stored.set_provider(hide_ai::ProviderId::CLAUDE);
+    stored.set_model(hide_ai::ProviderId::CLAUDE, "haiku");
+    runtime.ingest_ai_settings(stored, None);
+    runtime.ingest_background_ai(ready_read(&["codex"]));
+    assert_eq!(
+        runtime.snapshot.status.background_ai.provider.as_deref(),
+        Some("claude")
+    );
+    assert!(runtime.take_ai_settings_save().is_none());
 }
 
 /// PRD home-device-rail D-18: a start surface's model menu reads the provider
@@ -661,12 +892,11 @@ fn an_unreadable_choice_and_a_failed_write_are_stated_rather_than_dropped() {
     let mut runtime = runtime();
     assert!(runtime.ingest_ai_settings(
         hide_ai::AiSettings::default(),
-        false,
         Some("The saved choice could not be read; the defaults are in use".to_owned()),
     ));
     assert_eq!(
-        runtime.snapshot.status.background_ai.provider, "codex",
-        "the defaults are used"
+        runtime.snapshot.status.background_ai.provider, None,
+        "no choice is invented from a file that could not be read"
     );
     assert!(
         runtime
@@ -715,7 +945,7 @@ fn an_unknown_provider_or_a_model_with_no_provider_is_refused() {
             .kind,
         "ai_settings.unknown_provider"
     );
-    assert_eq!(runtime.snapshot.status.background_ai.provider, "codex");
+    assert_eq!(runtime.snapshot.status.background_ai.provider, None);
     assert!(runtime.take_ai_settings_save().is_none());
 
     assert!(runtime.dispatch_json(&event(serde_json::json!({"model": "sonnet"}))));
@@ -2000,4 +2230,52 @@ fn window_readers_rest_while_no_window_draws_the_snapshot() {
     assert!(!runtime.ui_attached());
     assert!(!runtime.dispatch_json(&event(true)));
     assert!(runtime.ui_attached());
+}
+
+/// A Memory analysis builds its router once; one already running must not
+/// keep sending session text to an agent the operator has since switched off
+/// or taken out of the list, and an unrelated switch must not end it.
+#[test]
+fn a_running_memory_analysis_stops_when_hide_ai_turns_off_or_its_agents_change() {
+    let mut runtime = runtime();
+    runtime.ingest_ai_settings(hide_ai::AiSettings::default(), None);
+    runtime.ingest_background_ai(ready_read(&["claude", "codex", "grok"]));
+    assert!(runtime.dispatch_json(&ai_event(serde_json::json!({"provider": "claude"}))));
+    assert!(runtime.dispatch_json(&ai_event(serde_json::json!({"fallback_add": "codex"}))));
+
+    let running = |runtime: &mut Runtime| {
+        let cancel = hide_ai::CancelToken::new();
+        runtime.memory_cancel = Some(cancel.clone());
+        runtime.memory_analysis_settings = runtime.ai_settings.clone();
+        cancel
+    };
+    let stopped_by = |payload: serde_json::Value, runtime: &mut Runtime| {
+        let cancel = running(runtime);
+        assert!(runtime.dispatch_json(&ai_event(payload)));
+        cancel.is_cancelled()
+    };
+
+    assert!(
+        !stopped_by(serde_json::json!({"agent_summary": false}), &mut runtime),
+        "a switch that changes nobody who may be asked leaves the run alone"
+    );
+    assert!(
+        stopped_by(serde_json::json!({"fallback_add": "grok"}), &mut runtime),
+        "an added fallback agent is not the list the run was built for"
+    );
+    assert!(
+        stopped_by(serde_json::json!({"fallback_remove": "grok"}), &mut runtime),
+        "a removed fallback agent stops receiving session text"
+    );
+    assert!(
+        stopped_by(
+            serde_json::json!({"provider": "codex", "model": "m-2"}),
+            &mut runtime
+        ),
+        "a different Runs on agent or model ends the run"
+    );
+    assert!(
+        stopped_by(serde_json::json!({"enabled": false}), &mut runtime),
+        "Use Hide AI off stops a model call already under way"
+    );
 }

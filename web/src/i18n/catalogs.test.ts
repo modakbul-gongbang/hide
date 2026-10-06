@@ -5,7 +5,9 @@ import { boardEnglish } from "./resources/board";
 import { cleanupEnglish } from "./resources/cleanup";
 import { commonEnglish } from "./resources/common";
 import { agentPresentationEnglish } from "./resources/agentPresentation";
+import { agentsEnglish } from "./resources/agents";
 import { devicesEnglish } from "./resources/devices";
+import { hideAiEnglish } from "./resources/hideAi";
 import { issueSettingsEnglish } from "./resources/issueSettings";
 import { historyEnglish } from "./resources/history";
 import { explorerEnglish } from "./resources/explorer";
@@ -53,6 +55,8 @@ describe("interface resources", () => {
       mobileSetupEnglish,
       workspaceEnglish,
       issueSettingsEnglish,
+      hideAiEnglish,
+      agentsEnglish,
       requestsEnglish,
       issuesEnglish,
       prWorkEnglish,

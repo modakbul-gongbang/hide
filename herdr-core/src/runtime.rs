@@ -25,6 +25,7 @@ mod kit;
 pub(crate) mod links;
 mod memory;
 mod operations;
+mod pane_reopen;
 mod project_sessions;
 mod projects;
 mod pull_requests;
@@ -35,6 +36,7 @@ mod request_view;
 mod session;
 pub(crate) mod session_search;
 mod snapshot_delta;
+mod ssh_hosts;
 mod tab_focus;
 mod terminal;
 mod tree_close;
@@ -1309,6 +1311,9 @@ pub struct Runtime {
     memory_operation_checkout_path: Option<String>,
     memory_pending_action: Option<(String, events::MemoryActionPayload)>,
     memory_cancel: Option<hide_ai::CancelToken>,
+    /// The Hide AI settings the running analysis built its router from; it
+    /// is stopped when they stop describing who may be asked.
+    memory_analysis_settings: Option<hide_ai::AiSettings>,
     /// True only after the operator approves hook updates while enabling
     /// Memory. A diagnosis can finish that intent, but cannot create it.
     memory_enable_after_hook_update: bool,
@@ -1488,6 +1493,10 @@ pub struct Runtime {
     agent_sleep_backoff: HashMap<String, agent_sleep::Backoff>,
     /// Panes whose typed input was dropped while asleep, logged once each (B12).
     agent_sleep_dropped_input: HashSet<String>,
+    /// Panes with a Reopen running or just refused, until the pane connects,
+    /// leaves, or stops showing a connection chip (B29). One entry per pane,
+    /// so a second press while one runs starts nothing.
+    pane_reopens: HashMap<String, crate::model::PaneReopenSnapshot>,
     fork_sequence: u64,
     /// The machine's TCP listeners, refreshed on their own window by the
     /// session-sync coordinator. Held here rather than in the snapshot because
@@ -1575,6 +1584,11 @@ pub struct Runtime {
     next_repository_clone_id: u64,
     /// The clone `snapshot.repository_clone` reports, while its worker runs.
     repository_clone_job: Option<clone::CloneJob>,
+    next_ssh_hosts_id: u64,
+    /// The listing `status.ssh_hosts` reports as loading, while its worker runs.
+    ssh_hosts_job: Option<ssh_hosts::SshHostsJob>,
+    /// The `ssh` that resolves a Host entry with `-G`; tests name a stand-in.
+    ssh_program: PathBuf,
     /// The checkout a purpose receipt belongs to. A remote checkout lives in
     /// `status.remote[].session`, not the local navigator, so the operation
     /// carries this target separately from its shell-facing receipt.
@@ -1871,6 +1885,7 @@ impl Runtime {
             memory_operation_checkout_path: None,
             memory_pending_action: None,
             memory_cancel: None,
+            memory_analysis_settings: None,
             memory_enable_after_hook_update: false,
             memory_poll_in_flight: false,
             memory_next_poll_unix_ms: 0,
@@ -1935,6 +1950,7 @@ impl Runtime {
             agent_sleep_next_decision_unix_ms: 0,
             agent_sleep_backoff: HashMap::new(),
             agent_sleep_dropped_input: HashSet::new(),
+            pane_reopens: HashMap::new(),
             fork_sequence: 0,
             listening_ports: crate::model::ListeningPortsSnapshot::default(),
             worktree_catalog: crate::model::WorktreeCatalogSnapshot::default(),
@@ -1964,6 +1980,9 @@ impl Runtime {
             next_task_operation_id: 0,
             next_repository_clone_id: 0,
             repository_clone_job: None,
+            next_ssh_hosts_id: 0,
+            ssh_hosts_job: None,
+            ssh_program: PathBuf::from("ssh"),
             purpose_operation_target: None,
             created_purpose_writes_in_flight: HashMap::new(),
             unconfirmed_created_purposes: HashMap::new(),

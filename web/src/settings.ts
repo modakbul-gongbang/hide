@@ -6,15 +6,13 @@ import type { TFunction } from "i18next";
 import type { DaemonInfo } from "./store";
 import type { MessageKey } from "./i18n/catalogs";
 import type { AccentName } from "./theme";
-import type { AgentRow, AiProvider, CoreDiagnostic, Device, DeviceHost, EnvironmentStatus, GithubFailureCategory, HerdrStatus, KitAgent, KitComponent, KitComponentId, KitPiece, RemoteStatus, Workspace } from "./snapshot";
+import type { AgentRow, CoreDiagnostic, Device, DeviceHost, EnvironmentStatus, GithubFailureCategory, HerdrStatus, KitComponent, RemoteStatus, Workspace } from "./snapshot";
 
 type Translate = TFunction<"translation">;
 
-export type SettingsTab = "general" | "appearance" | "agents" | "issues" | "devices" | "mobile" | "performance" | "shortcuts";
+export type SettingsTab = "general" | "agents" | "hideAi" | "devices" | "mobile" | "shortcuts";
 
-export const SETTINGS_TABS: readonly SettingsTab[] = [
-  "general", "appearance", "agents", "issues", "devices", "mobile", "performance", "shortcuts",
-];
+export const SETTINGS_TABS: readonly SettingsTab[] = ["general", "agents", "hideAi", "devices", "mobile", "shortcuts"];
 
 /**
  * The Sleep idle agents choices (PRD agent-sleep D-10), in the hours the core
@@ -42,7 +40,7 @@ export function sleepingCount(agents: readonly AgentRow[] | undefined): number {
   return (agents ?? []).filter((agent) => agent.sleep && !agent.pane_id.startsWith("remote:")).length;
 }
 
-/** What `gh` answered across this Mac's Git projects, the Issues tab's GitHub row. */
+/** What `gh` answered across this Mac's Git projects, General's GitHub row. */
 export type GithubAccess = { state: "connected" } | { state: "failed"; category: GithubFailureCategory; reason: string | null };
 
 /**
@@ -163,11 +161,24 @@ export function herdrLine(herdr: HerdrStatus | undefined, t: Translate): { text:
 }
 
 /**
+ * The Herdr protocol row of the details: the number the running Herdr speaks
+ * while it matches what this build requires, and both numbers only when they
+ * differ, so a healthy connection shows one real value (B5).
+ */
+export function herdrProtocolText(herdr: HerdrStatus | undefined, t: Translate): { text: string; matches: boolean } {
+  const received = herdr?.received_protocol;
+  if (received == null) return { text: t("settings.unavailable"), matches: true };
+  const expected = herdr?.expected_protocol;
+  if (expected == null || expected === received) return { text: String(received), matches: true };
+  return { text: t("settings.protocolValue", { received: String(received), expected: String(expected) }), matches: false };
+}
+
+/**
  * What a device row says. The core names `ready`, `unavailable` and
  * `disabled`; the remote status beside it adds whether an attempt is still
  * pending, so "never tried", "trying" and "failed" read differently.
  */
-function deviceState(device: Device, remote: RemoteStatus | undefined): { state: "local" | "ready" | "disabled" | "connecting" | "unavailable"; tone: "ok" | "warn" | "pending" | "local" } {
+export function deviceState(device: Device, remote: RemoteStatus | undefined): { state: "local" | "ready" | "disabled" | "connecting" | "unavailable"; tone: "ok" | "warn" | "pending" | "local" } {
   if (device.kind !== "remote") return { state: "local", tone: "local" };
   if (device.state === "ready") return { state: "ready", tone: "ok" };
   if (device.state === "disabled") return { state: "disabled", tone: "warn" };
@@ -181,16 +192,17 @@ export function deviceLine(device: Device, remote: RemoteStatus | undefined, t: 
 }
 
 /**
- * The facts a device reported about itself (B36): its Herdr version and the
- * platform its helper runs on. Nothing here is read on this machine, so a
- * fact the device has not reported is left out rather than filled in.
+ * The line under a device's name (B54): its SSH alias, the platform its helper
+ * runs on and the Herdr version it reported, in that order. Nothing here is
+ * read on this machine, so a fact the device has not reported is left out
+ * rather than filled in; this machine has no alias to show.
  */
-export function deviceFacts(device: Device, remote: RemoteStatus | undefined, t: Translate): string[] {
-  if (device.kind !== "remote") return [];
-  const facts: string[] = [];
-  if (remote?.herdr_version) facts.push(`Herdr ${remote.herdr_version}`);
-  if (device.host?.state === "ready" && device.host.platform) facts.push(t("devices.helperPlatform", { platform: device.host.platform }));
-  return facts;
+export function deviceSubtitle(device: Device, remote: RemoteStatus | undefined, t: Translate): string {
+  if (device.kind !== "remote") return t("devices.localAlias");
+  const parts: string[] = [device.ssh_alias ?? device.label];
+  if (device.host?.state === "ready" && device.host.platform) parts.push(device.host.platform);
+  if (remote?.herdr_version) parts.push(`Herdr ${remote.herdr_version}`);
+  return parts.join(" · ");
 }
 
 /**
@@ -241,7 +253,6 @@ export function kitConsentTerms(helperRoot: string | null, cliDir: string | null
   return [
     t("devices.terms.copy", { root: helperRoot ?? t("devices.helperFolder") }),
     t("devices.terms.configure", { cliDir: cliDir ?? t("devices.commandFolder") }),
-    t("devices.terms.codex"),
     t("devices.terms.runtime"),
     t("devices.terms.confirm"),
     t("devices.terms.remove"),
@@ -286,98 +297,31 @@ export function kitPartLine(part: Pick<KitComponent, "state">, t: Translate): { 
   }
 }
 
-/**
- * The parts the operator switches on and off from their row rather than
- * taking away by hand (PRD overview-request-view D-24). A part with nothing
- * to switch on that machine, or one that could not be read, shows no switch.
- */
-export const KIT_SWITCHED_PARTS: readonly KitComponentId[] = ["codex_per_pane"];
-
-export function kitPartSwitch(part: KitComponent): { on: boolean } | null {
-  if (!KIT_SWITCHED_PARTS.includes(part.id)) return null;
-  if (part.state === "installed") return { on: true };
-  if (part.state === "off" || part.state === "not_installed") return { on: false };
-  return null;
-}
-
 /** Whether Reinstall would change this part: the same four states the core repairs (B8). */
 export function kitPartNeedsReinstall(part: Pick<KitComponent, "state">): boolean {
   return part.state === "outdated" || part.state === "not_installed" || part.state === "removed" || part.state === "failed";
 }
 
-/** The pieces of an agent Hide manages: its skill, and its hook when it has one. */
-function agentPieces(agent: KitAgent): KitPiece[] {
-  return agent.hook ? [agent.skill, agent.hook] : [agent.skill];
+/**
+ * A part as the details list words it: its state, and why when the reason says
+ * something the state does not. A part that is not on the machine because its
+ * agent is not there says so once ("Not on this machine"), never again as a
+ * reason that repeats it.
+ */
+export function kitPartText(part: Pick<KitComponent, "state" | "reason">, t: Translate): string {
+  const line = kitPartLine(part, t);
+  return part.reason && part.state !== "absent" && part.state !== "installed" ? `${line.text}: ${part.reason}` : line.text;
 }
 
 /**
- * The piece the agent's row speaks for: the first that failed, else the first
- * that Reinstall would repair, else the skill. An agent that is off has no
- * piece to speak for.
+ * The parts of a machine's kit that need the operator, which are the only ones
+ * a device row mentions (B54): the four states Reinstall repairs. A healthy kit,
+ * a part whose agent is not on the machine and one the operator switched off
+ * are not problems and say nothing.
  */
-function agentWorstPiece(agent: KitAgent): KitPiece {
-  const pieces = agentPieces(agent);
-  return (
-    pieces.find((piece) => piece.state === "failed") ??
-    pieces.find((piece) => kitPartNeedsReinstall(piece)) ??
-    pieces[0]!
-  );
-}
-
-/** An agent's state as its row words it (agent adapters): off, or the state of its worst piece. */
-export function kitAgentLine(agent: KitAgent, t: Translate): { text: string; tone: "ok" | "warn" | "error" | "muted"; reason: string | null } {
-  if (!agent.enabled) {
-    // A switch-off whose removal did not finish is not Off.
-    const left = agentPieces(agent).find((piece) => piece.state === "failed");
-    return left ? { text: t("settings.kit.failed"), tone: "error", reason: left.reason } : { text: t("common.off"), tone: "muted", reason: null };
-  }
-  const piece = agentWorstPiece(agent);
-  const line = kitPartLine(piece, t);
-  // A hook that cannot be written here (Kiro below 3.0, a version Hide cannot
-  // read) is no repair, so the skill's "Installed" stands, with the hook's reason beside it.
-  const hookNote = agent.hook?.state === "absent" ? agent.hook.reason : null;
-  return { ...line, reason: piece.state === "installed" ? hookNote : piece.reason };
-}
-
-/**
- * The agent's switch: an agent installed on the machine can be switched; one
- * that is not has nothing to switch, and one that is on keeps a switch so it
- * can be turned off.
- */
-export function kitAgentSwitch(agent: KitAgent): { on: boolean } | null {
-  if (agent.availability === "available" || agent.enabled) return { on: agent.enabled };
-  return null;
-}
-
-/** Whether Reinstall would change something for this agent: only an agent that is on has pieces to repair. */
-export function kitAgentNeedsReinstall(agent: KitAgent): boolean {
-  return agent.enabled && agentPieces(agent).some((piece) => kitPartNeedsReinstall(piece));
-}
-
-/** What the agent's switch puts on the machine, named for the row's second line. */
-export function kitAgentGets(agent: KitAgent, t: Translate): string {
-  return t(agent.hook ? "settings.agentGetsSkillHook" : "settings.agentGetsSkill");
-}
-
-/**
- * Every machine's agents for the Agents tab (B27): This Mac first, then each
- * device in the Devices tab's order. `listed` are the agents installed there
- * (or on, which the operator can still turn off); `others` are the labels of
- * the rest, which have nothing to switch. A machine whose kit does not run
- * carries its reason instead of rows; one not checked yet carries neither.
- */
-export function kitAgentMachines(devices: readonly Device[]): { device: Device; listed: KitAgent[]; others: string[]; unavailable: string | null }[] {
-  return devices
-    .filter((device) => device.kind === "remote" || device.id === "local")
-    .map((device) => {
-      const agents = device.kit?.agents ?? [];
-      return {
-        device,
-        listed: agents.filter((agent) => kitAgentSwitch(agent) !== null),
-        others: agents.filter((agent) => kitAgentSwitch(agent) === null).map((agent) => agent.label),
-        unavailable: device.kit?.unavailable ?? null,
-      };
-    });
+export function kitProblems(kit: Device["kit"]): KitComponent[] {
+  if (!kit || kit.unavailable) return [];
+  return kit.components.filter((part) => kitPartNeedsReinstall(part));
 }
 
 /** A device Herdr socket must be an absolute single-line path on that device, or left empty. */
@@ -468,28 +412,6 @@ export function draftExported(exported: ReadonlyMap<string, string>, current: (t
     const text = exported.get(tabId);
     return text !== undefined && (current(tabId) ?? text) === text;
   };
-}
-
-/** What an SSH alias must look like before it is sent: one token, no spaces or shell syntax. */
-export function aliasProblem(alias: string, t: Translate): string | null {
-  const trimmed = alias.trim();
-  if (!trimmed) return t("devices.aliasRequired");
-  if (!/^[A-Za-z0-9._@-]+$/.test(trimmed)) return t("devices.aliasInvalid");
-  return null;
-}
-
-/** The provider row's state as the operator reads it; the core's headline wins when it has one. */
-export function providerLine(provider: AiProvider): { text: string; tone: "ok" | "warn" | "pending" } {
-  const tone = provider.state === "ready" ? "ok" : provider.state === "unread" ? "pending" : "warn";
-  const text = provider.headline || provider.state.replace(/_/g, " ");
-  return { text: provider.message ? `${text}: ${provider.message}` : text, tone };
-}
-
-/** The models offered for a provider, always including the configured one so it is never swapped silently. */
-export function offeredModels(provider: AiProvider): string[] {
-  const models = [...provider.models];
-  if (provider.model && !models.includes(provider.model)) models.unshift(provider.model);
-  return models;
 }
 
 // A secret-shaped run: the page token and anything like it (32+ hex), or a
