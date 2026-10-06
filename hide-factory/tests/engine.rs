@@ -2950,6 +2950,39 @@ fn a_periodic_check_reads_each_running_task_on_the_watch_cadence() {
 }
 
 #[test]
+fn a_watch_warning_about_a_task_that_moved_since_the_board_was_read_is_only_logged() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let b = h.ready("B", &[]);
+    h.world().watch.push_back(json!({"warnings": [
+        {"text": "B still waits for a slot", "action": "look at B", "task": b},
+    ]}));
+    h.advance(30 * 60_000);
+    // The watch reads the board; before it answers, B moves on.
+    h.world().hold_judgments = true;
+    h.engine.tick();
+    h.advance(1_000);
+    h.op(Command::Pause { task: b.clone() });
+    h.world().hold_judgments = false;
+    h.engine.tick();
+    assert_eq!(
+        h.task(&f, &b)
+            .questions
+            .iter()
+            .filter(|q| q.text.starts_with("감시:"))
+            .count(),
+        0,
+        "the warning describes a board that is gone"
+    );
+    assert!(
+        h.engine
+            .events(&f, Some(&b), 100)
+            .iter()
+            .any(|e| e.kind == "watch.logged" && e.detail["stale"] == true)
+    );
+}
+
+#[test]
 fn the_watch_raises_actionable_warnings_once_each_within_the_daily_cap() {
     let mut h = Bench::new(false);
     let f = h.factory(true);

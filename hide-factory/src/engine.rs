@@ -221,7 +221,10 @@ enum Purpose {
     /// A periodic user check on a running Task: it adds questions or marks
     /// and never holds a merge (B67).
     Periodic,
-    Watch,
+    /// The board the watch read, as of this time.
+    Watch {
+        read_at: UnixMs,
+    },
     Env,
 }
 
@@ -4596,8 +4599,8 @@ impl Engine {
                         ),
                     }
                 }
-                (JudgmentOutcome::Answered { value }, Purpose::Watch, _) => {
-                    self.apply_watch(&factory, value)
+                (JudgmentOutcome::Answered { value }, Purpose::Watch { read_at }, _) => {
+                    self.apply_watch(&factory, value, read_at)
                 }
                 (JudgmentOutcome::Answered { value }, Purpose::Env, _) => {
                     self.apply_diagnosis(&factory, value)
@@ -5850,8 +5853,10 @@ impl Engine {
         }
         self.save_factory(factory_id);
         if self.submit_judgment(judgment.clone()).is_ok() {
-            self.judgments
-                .insert(judgment.id, (factory_id.to_owned(), None, Purpose::Watch));
+            self.judgments.insert(
+                judgment.id,
+                (factory_id.to_owned(), None, Purpose::Watch { read_at: now }),
+            );
         }
         if interval_due {
             self.periodic_checks(&factory, now);
@@ -5908,7 +5913,7 @@ impl Engine {
         }
     }
 
-    fn apply_watch(&mut self, factory_id: &str, value: &Value) {
+    fn apply_watch(&mut self, factory_id: &str, value: &Value, read_at: UnixMs) {
         let Ok(warnings) = judgment::parse_watch(value) else {
             return;
         };
@@ -5945,6 +5950,21 @@ impl Engine {
                 .and_then(|t| self.resolve(&Role::Engine, &t).ok().map(|(_, id)| id))
                 .or_else(|| self.tasks_of(factory_id).last().map(|t| t.id.clone()));
             let Some(anchor) = anchor else { continue };
+            // The board was read before the judgment answered; a Task that
+            // moved since is no longer what the warning describes.
+            if warning.task.is_some()
+                && self
+                    .task(factory_id, &anchor)
+                    .is_some_and(|t| t.state_since > read_at)
+            {
+                self.record(
+                    factory_id,
+                    Some(&anchor),
+                    "watch.logged",
+                    json!({"stale": true}),
+                );
+                continue;
+            }
             // A Task already waiting on a person is in the inbox; a warning
             // about it would say the same thing twice (design #13).
             if warning.task.is_some()
