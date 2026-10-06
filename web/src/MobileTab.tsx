@@ -137,7 +137,7 @@ function useSinceFrame(frame: MobileState, tickMs: number, live: boolean): numbe
   return Math.max(0, now - arrived);
 }
 
-function QrCode({ text }: { text: string }) {
+function QrCode({ text, expired }: { text: string; expired: boolean }) {
   const { t } = useInterfaceTranslation();
   const cells = useMemo(() => {
     const code = qrcode(0, "M");
@@ -158,8 +158,9 @@ function QrCode({ text }: { text: string }) {
       role="img"
       aria-label={t("mobileSetup.qr")}
       viewBox={`${-quiet} ${-quiet} ${cells.count + quiet * 2} ${cells.count + quiet * 2}`}
-      className="size-(--size-mobile-qr) shrink-0 rounded-lg bg-qr-background"
+      className={`size-(--size-mobile-qr) shrink-0 rounded-lg bg-qr-background${expired ? " opacity-(--opacity-disabled)" : ""}`}
       data-mobile-qr={text}
+      data-mobile-qr-expired={expired ? "true" : undefined}
       shapeRendering="crispEdges"
     >
       <path d={cells.path} className="fill-qr-foreground" />
@@ -192,6 +193,8 @@ function Pairing({ state, actions }: { state: MobileState; actions: Actions }) {
   // Until hided has confirmed its serve entry there is nothing to pair with.
   if (state.exposure !== "exposed") return null;
   const countdown = codeCountdown(state.code_expires_at_ms, state.now_ms, since);
+  // An expired code cannot pair: the button offers a fresh one directly instead of Hide QR.
+  const expired = state.qr !== null && countdown === null;
   return (
     <>
       <Row
@@ -203,7 +206,7 @@ function Pairing({ state, actions }: { state: MobileState; actions: Actions }) {
           </span>
         }
       >
-        {state.qr ? (
+        {state.qr && !expired ? (
           <Button variant="secondary" size="sm" onClick={() => actions.hideMobileCode()} data-mobile-hide-code="true">
             {t("mobileSetup.hideQr")}
           </Button>
@@ -215,7 +218,7 @@ function Pairing({ state, actions }: { state: MobileState; actions: Actions }) {
       </Row>
       {state.qr ? (
         <div className="flex flex-wrap items-center gap-xl px-md py-lg" data-mobile-pairing="ready">
-          <QrCode text={state.qr} />
+          <QrCode text={state.qr} expired={expired} />
           <div className="flex min-w-0 flex-1 flex-col gap-sm">
             <span className="text-headline font-semibold text-foreground">{t("mobileSetup.scan")}</span>
             <span className="text-subhead text-muted-foreground">{t("mobileSetup.scanDescription")}</span>

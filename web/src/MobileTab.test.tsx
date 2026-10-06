@@ -76,6 +76,16 @@ it("shows the code with its countdown and a Hide QR that takes it away", async (
   await unmount();
 });
 
+it("offers Show QR directly once the code has expired, and a fresh code is one click away", async () => {
+  const { events, q, unmount } = await mount(frame({ qr: "https://mac.ts.net/m/#pair=x", code_expires_at_ms: 1_000, now_ms: 2_000 }));
+  expect(q("[data-mobile-qr]")?.getAttribute("data-mobile-qr-expired")).toBe("true");
+  expect(q("[data-mobile-countdown]")?.getAttribute("data-mobile-countdown")).toBe("expired");
+  expect(q("[data-mobile-hide-code]")).toBeNull();
+  await act(async () => { q('[data-mobile-show-code="true"]')?.click(); });
+  expect(kinds(events)).toContain("mobile_show_code");
+  await unmount();
+});
+
 it("collapses a passed Tailscale check to one ready line (B57)", async () => {
   const { q, container, unmount } = await mount(frame({}));
   expect(q('[data-mobile-ready="true"]')?.textContent).toContain("Tailscale is ready");
