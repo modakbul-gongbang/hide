@@ -180,7 +180,8 @@ describe("native cycle responder return", () => {
   const WORKSPACE = "local\u0000/fixture";
   const cancel = (windowLost: boolean, id = "d1") => { for (const listener of browserListeners) listener({ kind: "cycle-cancel", workspace: WORKSPACE, id, cycleId: 1, windowLost }); };
   const away = (windowLost = true) => { window.dispatchEvent(new Event("blur")); cancel(windowLost); };
-  const back = () => { window.dispatchEvent(new Event("focus")); flushFrames(); };
+  const key = () => { for (const listener of browserListeners) listener({ kind: "window-key" }); };
+  const back = () => { key(); flushFrames(); };
   const slot = { isConnected: true, getBoundingClientRect: () => ({ left: 0, top: 30, width: 1000, height: 770 }) } as HTMLElement;
 
   it("a lost window cancels the hold and the window's return gives the origin the keyboard once", () => {
@@ -202,14 +203,6 @@ describe("native cycle responder return", () => {
     cancel(true);
     window.dispatchEvent(new Event("blur"));
     back();
-    expect(pageCommands).toEqual([[WORKSPACE, "d1", "focus"]]);
-    pageCommands.length = 0;
-    input();
-    window.dispatchEvent(new Event("blur"));
-    back();
-    expect(pageCommands).toEqual([]);
-    cancel(true);
-    flushFrames();
     expect(pageCommands).toEqual([[WORKSPACE, "d1", "focus"]]);
   });
 
@@ -242,7 +235,7 @@ describe("native cycle responder return", () => {
     const other = registerBrowserSlot("d2", slot);
     input();
     away();
-    window.dispatchEvent(new Event("focus"));
+    key();
     focusBrowserDisplay(WORKSPACE, "d2");
     window.dispatchEvent(new Event("pointerdown"));
     flushFrames();
@@ -272,7 +265,7 @@ describe("native cycle responder return", () => {
     input();
     away();
     unregister?.();
-    window.dispatchEvent(new Event("focus"));
+    key();
     pageFocus("d2");
     unregister = registerBrowserSlot("d1", slot);
     flushFrames();

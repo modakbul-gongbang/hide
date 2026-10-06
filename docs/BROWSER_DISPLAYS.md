@@ -274,12 +274,13 @@ The trusted bridge carries only cycle keydown/keyup and cancellation; the shell 
 The shell also reports the matching identifier when release arrived in its renderer, so a late completion cannot erase a newer hold.
 Release or Escape received by another native page still ends the frozen initiating cycle.
 Window blur, page renderer failure and destruction of the held page cancel the host slot, and a hidden or unfocused page cannot begin a cycle.
-After a window blur cancels a hold, the shell owes the initiating page the keyboard and asks for it when the window returns, as Escape does.
+After a window blur cancels a hold, the shell owes the initiating page the keyboard and asks for it when the host says the shell's own contents hold the keyboard again (`window-key`), as Escape does.
+That event follows the cancel on the same channel, so the shell cannot see the return before the loss, and it is sent after the window's own restore of its responder, which a request made earlier would lose to.
 The host's cancel names the cause with `windowLost`; a shell blur that is only focus moving to a page in the same window, a page that failed, and a page that closed owe nothing.
 A hold the shell ends while the window is not key is reported as lost by the host, so the order of the shell's blur and the host's blur event does not decide whether the debt exists.
 The request is the sync loop's own, apart from the ordinary focus request: it is delivered after the sync that shows the page, kept while the overlay or a still covers the page, and dropped when the page leaves the front Workspace.
 A key or click in the shell, a new hold, or a page's focus once the request is asked ends the debt, including a request not yet delivered; no other focus request is withdrawn.
-A page's focus while the window is still away is the window's own restore of its last responder, not a choice, and leaves the debt standing.
+A page's focus before that event is the window's own restore of its last responder, not a choice, and leaves the debt standing.
 After the core confirms a selected display, the existing keyboard-follow request focuses its document or diff, or schedules one trusted native-page focus command after visible-slot sync.
 The host focuses only a visible page in its already-focused candidate window; it never brings a window forward for this command.
 Cycle menu items are immediate command clicks without accelerators, so one physical key cannot also dispatch a menu selection.

@@ -194,15 +194,13 @@ export function installKeyboard(actions: Actions): () => void {
   // The hold the shell's own blur ended, kept so the host's cancel can name
   // the window as the cause even when it arrives after the blur.
   let blurred: { cycleId: number; workspace: string; id: string } | null = null;
-  let windowAway = false;
   const forgetOwed = () => {
     if (!owed) return;
     withdrawOwedBrowserFocus(owed.workspace, owed.id);
     owed = null;
   };
   const owe = (page: { workspace: string; id: string }) => {
-    owed = { workspace: page.workspace, id: page.id, asked: !windowAway };
-    if (owed.asked) owedBrowserFocus(page.workspace, page.id);
+    owed = { workspace: page.workspace, id: page.id, asked: false };
   };
 
   const run = (id: CommandId, event: KeyboardEvent | null) => {
@@ -478,21 +476,10 @@ export function installKeyboard(actions: Actions): () => void {
   // Losing the window mid-cycle (⌥-Tab switching apps) cancels it; nothing
   // is committed for a chord the operator did not finish here.
   const onBlur = () => {
-    windowAway = true;
     if (nativeCycle) blurred = { ...nativeCycle };
     endNativeCycle();
     if (ui().cycle) ui().setCycle(null);
     endHold();
-  };
-
-  // The window coming back pays what its loss left owed, as Escape would
-  // have. The request is the sync loop's from here, so it waits for a page
-  // the overlay still covers.
-  const onFocus = () => {
-    windowAway = false;
-    if (!owed || owed.asked) return;
-    owed.asked = true;
-    owedBrowserFocus(owed.workspace, owed.id);
   };
 
   // A menu item names a command id; one this registry does not know is a
@@ -505,6 +492,16 @@ export function installKeyboard(actions: Actions): () => void {
       if (names(nativeCycle)) onBlur();
       // Only a lost window leaves the page owed the keyboard; a page that failed or closed owes nothing.
       if (input.windowLost && names(blurred)) owe(blurred!);
+      return;
+    }
+    if (input.kind === "window-key") {
+      // The shell's contents hold the keyboard again, after the window's restore of its responder:
+      // pay what the loss owed, as Escape would have. The request is the sync loop's from here, so
+      // it waits for a page the overlay still covers.
+      if (owed && !owed.asked) {
+        owed.asked = true;
+        owedBrowserFocus(owed.workspace, owed.id);
+      }
       return;
     }
     if (input.kind === "focus") {
@@ -582,7 +579,6 @@ export function installKeyboard(actions: Actions): () => void {
   window.addEventListener("keydown", onKeyDown, true);
   window.addEventListener("keyup", onKeyUp, true);
   window.addEventListener("blur", onBlur);
-  window.addEventListener("focus", onFocus);
   window.addEventListener("pointerdown", forgetOwed, true);
   document.addEventListener("visibilitychange", onVisibility);
   return () => {
@@ -600,7 +596,6 @@ export function installKeyboard(actions: Actions): () => void {
     window.removeEventListener("keydown", onKeyDown, true);
     window.removeEventListener("keyup", onKeyUp, true);
     window.removeEventListener("blur", onBlur);
-    window.removeEventListener("focus", onFocus);
     window.removeEventListener("pointerdown", forgetOwed, true);
     document.removeEventListener("visibilitychange", onVisibility);
   };

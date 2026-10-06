@@ -84,7 +84,7 @@ function candidate() {
     };
   };
   const forwarded = () => send.mock.calls.filter(([channel]) => channel === BROWSER_EVENT_CHANNEL).map(([, value]) => value as { kind: string; id: string; cycleId: number; key: string });
-  return { page, forwarded, shellFocus, shellInput: (type?: string, key?: string, control?: boolean, alt?: boolean) => input(shellContents, type, key, control, alt), registry: (rows: readonly Command[]) => subject.setRegistry(rows), blur: () => window.emit("blur"), windowReturn: () => window.emit("focus"), windowFocus: (focused: boolean) => { windowFocused = focused; } };
+  return { page, forwarded, shellFocus, shellInput: (type?: string, key?: string, control?: boolean, alt?: boolean) => input(shellContents, type, key, control, alt), registry: (rows: readonly Command[]) => subject.setRegistry(rows), blur: () => window.emit("blur"), windowReturn: () => window.emit("focus"), shellRegainsFocus: () => shellContents.emit("focus"), windowFocus: (focused: boolean) => { windowFocused = focused; } };
 }
 
 describe("native held cycle delivery", () => {
@@ -160,6 +160,13 @@ describe("native held cycle delivery", () => {
     origin.input();
     origin.crash();
     expect(forwarded().at(-1)).toMatchObject({ kind: "cycle-cancel", windowLost: false });
+  });
+  it("tells the shell, in order after a cancel, when its own contents hold the keyboard again", () => {
+    const { page, blur, forwarded, shellRegainsFocus } = candidate();
+    page("origin").input();
+    blur();
+    shellRegainsFocus();
+    expect(forwarded().map((event) => event.kind)).toEqual(["cycle-input", "cycle-cancel", "window-key"]);
   });
   it("a hold the shell ends while the window is not key was ended by losing it", () => {
     for (const focused of [true, false]) {

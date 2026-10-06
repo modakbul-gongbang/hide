@@ -69,7 +69,9 @@ export type BrowserHostEvent =
   | { kind: "focus"; workspace: string; id: string }
   | { kind: "cycle-input"; cycleId: number; workspace: string; id: string; type: "keyDown" | "keyUp"; key: string; code: string; control: boolean; alt: boolean; meta: boolean; shift: boolean }
   /** `windowLost` is true when the hold ended because the window lost the keyboard, false for a page that failed or closed. */
-  | { kind: "cycle-cancel"; cycleId: number; workspace: string; id: string; windowLost: boolean };
+  | { kind: "cycle-cancel"; cycleId: number; workspace: string; id: string; windowLost: boolean }
+  /** The shell's own contents hold the keyboard: sent after the window's restore of its responder, in order with `cycle-cancel`. */
+  | { kind: "window-key" };
 
 export type BrowserBridge = {
   sync(state: BrowserSync): void;
