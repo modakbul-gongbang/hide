@@ -16,11 +16,7 @@ pub const OVERLAY_JS: &str = include_str!("../../assets/browser/overlay.js");
 
 /// Below the gateway's ten-second command deadline, which would otherwise
 /// release the whole debugger lease mid-command.
-#[cfg(not(test))]
 pub const STEP: Duration = Duration::from_secs(8);
-/// A test that lets a step lapse waits this long, not the real step.
-#[cfg(test)]
-pub const STEP: Duration = Duration::from_millis(1000);
 const OVERLAY: Duration = Duration::from_secs(1);
 /// Nested cross-origin frames a snapshot follows; the gateway admits 64
 /// sessions per client.
@@ -71,6 +67,9 @@ pub struct Page {
     pub top: String,
     /// Whether the display is its area's selected View, the only one shown.
     selected: bool,
+    /// How long a call waits for an answer: `STEP`, shorter in a test that
+    /// lets one lapse.
+    pub step: Duration,
     frames: Option<Vec<Frame>>,
     silent: Vec<Silent>,
     /// Sessions attach events have named, in attach order, not yet tagged.
@@ -88,29 +87,56 @@ pub struct Composite {
 }
 
 impl Composite {
+    /// The top document and the notes of the frames that did not answer, the
+    /// text its `--diff` baseline keeps: the notes read the same in
+    /// consecutive snapshots, so a diff names a frame only when it goes
+    /// silent or answers again.
+    pub fn top_block(&self) -> String {
+        if self.silent.is_empty() {
+            return self.top.clone();
+        }
+        format!("{}\n\n{}\n", self.top.trim_end(), self.silent.join("\n"))
+    }
+
     pub fn text(&self) -> String {
-        let mut sections: Vec<String> =
-            self.sections.iter().map(|(_, text)| text.clone()).collect();
-        sections.extend(self.silent.iter().cloned());
-        compose(&self.top, &sections)
+        let sections: Vec<String> = self.sections.iter().map(|(_, text)| text.clone()).collect();
+        compose(&self.top_block(), &sections)
     }
 }
 
-/// The origin of an address a page attached a frame at; `opaque` for one
-/// that has none (`about:blank`, `data:`) or is not an `http(s)` address.
+/// The origin of an address a page attached a frame at, spelled as the
+/// frame's own `location.origin` would be: scheme and host in lower case, a
+/// default port dropped. `opaque` for an address with none (`about:blank`,
+/// `data:`) or one that is not `http(s)`.
 fn origin_of(url: &str) -> String {
     let Some((scheme, rest)) = url.split_once("://") else {
         return "opaque".to_owned();
     };
-    if !matches!(scheme, "http" | "https") {
-        return "opaque".to_owned();
-    }
+    let scheme = scheme.to_ascii_lowercase();
+    let default_port = match scheme.as_str() {
+        "http" => "80",
+        "https" => "443",
+        _ => return "opaque".to_owned(),
+    };
     let authority = rest.split(['/', '?', '#']).next().unwrap_or("");
-    let host = authority.rsplit('@').next().unwrap_or("");
-    if host.is_empty() {
+    let host = authority
+        .rsplit('@')
+        .next()
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let (name, port) = match host.rsplit_once(':') {
+        Some((name, port)) if !host.ends_with(']') => (name, Some(port)),
+        _ => (host.as_str(), None),
+    };
+    if name.is_empty() {
         return "opaque".to_owned();
     }
-    format!("{scheme}://{host}")
+    match port {
+        Some(port) if port != default_port && !port.is_empty() => {
+            format!("{scheme}://{name}:{port}")
+        }
+        _ => format!("{scheme}://{name}"),
+    }
 }
 
 /// The displayed text of a top document and its frames' sections.
@@ -134,19 +160,43 @@ pub fn call(asset: &str, op: &str, args: &Value) -> String {
 }
 
 impl Page {
+    #[cfg(test)]
+    pub fn for_test(cdp: Cdp, step: Duration) -> Self {
+        Self {
+            cdp,
+            display: "browser-1".into(),
+            top: "top".into(),
+            selected: true,
+            step,
+            frames: None,
+            silent: Vec::new(),
+            pending: Vec::new(),
+        }
+    }
+
     pub async fn attach(cdp: Cdp, display: &str, selected: bool) -> Result<Self, Failure> {
+        Self::attach_within(cdp, display, selected, STEP).await
+    }
+
+    async fn attach_within(
+        cdp: Cdp,
+        display: &str,
+        selected: bool,
+        step: Duration,
+    ) -> Result<Self, Failure> {
         let mut page = Self {
             cdp,
             display: display.to_owned(),
             top: String::new(),
             selected,
+            step,
             frames: None,
             silent: Vec::new(),
             pending: Vec::new(),
         };
         let targets = page
             .cdp
-            .call("Target.getTargets", json!({}), None, STEP)
+            .call("Target.getTargets", json!({}), None, page.step)
             .await
             .map_err(|error| page.failure(error))?;
         let target = targets["targetInfos"]
@@ -161,7 +211,7 @@ impl Page {
                 "Target.attachToTarget",
                 json!({"targetId": target, "flatten": true}),
                 None,
-                STEP,
+                page.step,
             )
             .await;
         page.top = match attached {
@@ -187,7 +237,7 @@ impl Page {
     async fn enable(&mut self, session: &str) -> Result<(), Failure> {
         match self
             .cdp
-            .call("Page.enable", json!({}), Some(session), STEP)
+            .call("Page.enable", json!({}), Some(session), self.step)
             .await
         {
             Ok(_) => Ok(()),
@@ -199,7 +249,10 @@ impl Page {
     /// The reason a transport or protocol error stands for.
     pub fn failure(&self, error: CdpError) -> Failure {
         match error {
-            CdpError::Timeout => Failure::new("page_unresponsive", None),
+            CdpError::Timeout => Failure {
+                silent: true,
+                ..Failure::new("page_unresponsive", None)
+            },
             CdpError::Protocol(message) => Failure::new("cdp_error", Some(message)),
             CdpError::Closed { code, reason } => match code {
                 crate::browser_relay::CLOSE_MESSAGE_LIMIT => {
@@ -228,7 +281,7 @@ impl Page {
                 "Runtime.evaluate",
                 json!({"expression": expression, "returnByValue": true}),
                 Some(session),
-                STEP,
+                self.step,
             )
             .await
             .map_err(|error| self.blocked(error))?;
@@ -324,17 +377,35 @@ impl Page {
             .retain(|frame| !detached.contains(&frame.session));
         loop {
             if let Some(parent) = parents.pop() {
-                self.cdp
-                    .call(
-                        "Target.setAutoAttach",
-                        json!({"autoAttach": true, "waitForDebuggerOnStart": false, "flatten": true,
-                            "filter": [{"type": "iframe", "exclude": false}, {"exclude": true}]}),
-                        Some(&parent),
-                        STEP,
-                    )
-                    .await
-                    .map_err(|error| self.blocked(error))?;
-                self.flush(&parent).await?;
+                let looked = async {
+                    self.cdp
+                        .call(
+                            "Target.setAutoAttach",
+                            json!({"autoAttach": true, "waitForDebuggerOnStart": false, "flatten": true,
+                                "filter": [{"type": "iframe", "exclude": false}, {"exclude": true}]}),
+                            Some(&parent),
+                            self.step,
+                        )
+                        .await
+                        .map_err(|error| self.blocked(error))?;
+                    self.flush(&parent).await
+                }
+                .await;
+                match looked {
+                    Ok(()) => {}
+                    // A frame that stopped answering has nothing more to give;
+                    // its own frames are not looked for.
+                    Err(failure) if failure.silent && parent != self.top => {
+                        if let Some(frame) = frames.iter().find(|frame| frame.session == parent) {
+                            self.silent.push(Silent {
+                                session: parent.clone(),
+                                origin: frame.origin.clone(),
+                            });
+                        }
+                        frames.retain(|frame| frame.session != parent);
+                    }
+                    Err(failure) => return Err(failure),
+                }
             }
             self.collect_attached();
             if self.pending.is_empty() {
@@ -343,47 +414,60 @@ impl Page {
                 }
                 continue;
             }
-            let Attached {
-                session,
-                target,
-                parent,
-                url,
-            } = self.pending.remove(0);
-            if frames.len() + self.silent.len() >= MAX_FRAMES || detached.contains(&session) {
-                continue;
-            }
-            // A frame that navigated or closed while attaching is no longer
-            // part of the page. A frame that answers nothing is held, by a
+            // Frames that navigated or closed while attaching are no longer
+            // part of the page. One that answers nothing is held, by a
             // script or a dialog, in its own renderer; only a dialog event
-            // this command saw is a dialog the operator must answer.
-            let tag = match self
+            // this command saw is a dialog the operator must answer. Their
+            // `Page.enable` calls go out together, so the frames a page
+            // holds cost one wait between them.
+            let room = MAX_FRAMES.saturating_sub(frames.len() + self.silent.len());
+            let batch: Vec<Attached> = self
+                .pending
+                .drain(..)
+                .filter(|attached| !detached.contains(&attached.session))
+                .take(room)
+                .collect();
+            let enables: Vec<(&str, Value, &str)> = batch
+                .iter()
+                .map(|attached| ("Page.enable", json!({}), attached.session.as_str()))
+                .collect();
+            let answers = self
                 .cdp
-                .call("Page.enable", json!({}), Some(&session), STEP)
+                .call_all(&enables, self.step)
                 .await
-            {
-                Ok(_) => self.dom(&session, "tag", json!({})).await,
-                Err(error) => Err(self.blocked(error)),
-            };
-            let tag = match tag {
-                Ok(tag) => tag,
-                Err(failure) if failure.reason == "page_unresponsive" => {
-                    self.silent.push(Silent {
-                        session,
-                        origin: origin_of(&url),
-                    });
-                    continue;
-                }
-                Err(failure) if failure.page_side() => continue,
-                Err(failure) => return Err(failure),
-            };
-            parents.push(session.clone());
-            frames.push(Frame {
-                session,
-                target,
-                parent,
-                tag: tag["tag"].as_str().unwrap_or("").to_owned(),
-                origin: tag["origin"].as_str().unwrap_or("opaque").to_owned(),
-            });
+                .map_err(|error| self.failure(error))?;
+            for (attached, answer) in batch.into_iter().zip(answers) {
+                let Attached {
+                    session,
+                    target,
+                    parent,
+                    url,
+                } = attached;
+                let tag = match answer {
+                    Ok(_) => self.dom(&session, "tag", json!({})).await,
+                    Err(error) => Err(self.blocked(error)),
+                };
+                let tag = match tag {
+                    Ok(tag) => tag,
+                    Err(failure) if failure.silent => {
+                        self.silent.push(Silent {
+                            session,
+                            origin: origin_of(&url),
+                        });
+                        continue;
+                    }
+                    Err(failure) if failure.page_side() => continue,
+                    Err(failure) => return Err(failure),
+                };
+                parents.push(session.clone());
+                frames.push(Frame {
+                    session,
+                    target,
+                    parent,
+                    tag: tag["tag"].as_str().unwrap_or("").to_owned(),
+                    origin: tag["origin"].as_str().unwrap_or("opaque").to_owned(),
+                });
+            }
         }
         // The tag lives in the frame's own document, so a hostile frame can
         // set any: a malformed one, or one that two frames share, names no
@@ -427,7 +511,7 @@ impl Page {
                 "Runtime.evaluate",
                 json!({"expression": "0", "returnByValue": true}),
                 Some(session),
-                STEP,
+                self.step,
             )
             .await
             .map(|_| ())
@@ -457,7 +541,7 @@ impl Page {
                     "DOM.getFrameOwner",
                     json!({"frameId": current.target}),
                     Some(&current.parent),
-                    STEP,
+                    self.step,
                 )
                 .await
                 .map_err(|error| self.blocked(error))?;
@@ -467,7 +551,7 @@ impl Page {
                     "DOM.getBoxModel",
                     json!({"backendNodeId": owner["backendNodeId"]}),
                     Some(&current.parent),
-                    STEP,
+                    self.step,
                 )
                 .await
                 .map_err(|error| self.blocked(error))?;
@@ -518,7 +602,7 @@ impl Page {
             // stopped answering is noted, and the rest of the page is read.
             let text = match read {
                 Ok(text) => text,
-                Err(failure) if failure.reason == "page_unresponsive" => {
+                Err(failure) if failure.silent => {
                     self.silence(&frame);
                     continue;
                 }
@@ -528,7 +612,7 @@ impl Page {
             match self.dom(&frame.session, "tag", json!({})).await {
                 Ok(current) if current["tag"] == frame.tag.as_str() => {}
                 Ok(_) => continue,
-                Err(failure) if failure.reason == "page_unresponsive" => {
+                Err(failure) if failure.silent => {
                     self.silence(&frame);
                     continue;
                 }
@@ -549,6 +633,26 @@ impl Page {
             sections,
             silent: self.silent.iter().map(Silent::note).collect(),
         })
+    }
+
+    /// The origins of the frames this command found not answering.
+    pub fn silent_origins(&self) -> Vec<String> {
+        self.silent
+            .iter()
+            .map(|frame| frame.origin.clone())
+            .collect()
+    }
+
+    /// Notes the frame of `session` as not answering, as a snapshot does.
+    pub fn silence_session(&mut self, session: &str) {
+        let known = self
+            .frames
+            .as_ref()
+            .and_then(|frames| frames.iter().find(|frame| frame.session == session))
+            .cloned();
+        if let Some(frame) = known {
+            self.silence(&frame);
+        }
     }
 
     /// Moves a frame that stopped answering out of the frames a command
@@ -573,7 +677,11 @@ impl Page {
     ) -> Result<Option<String>, Failure> {
         let top = self.top.clone();
         let previous_top = self
-            .dom(&top, "baseline", json!({"key": key, "text": composite.top}))
+            .dom(
+                &top,
+                "baseline",
+                json!({"key": key, "text": composite.top_block()}),
+            )
             .await?["previous"]
             .as_str()
             .map(str::to_owned);
@@ -590,13 +698,10 @@ impl Page {
                 }
                 // A frame that stopped answering has no baseline to swap; the
                 // next snapshot notes it.
-                Err(failure) if failure.page_side() || failure.reason == "page_unresponsive" => {}
+                Err(failure) if failure.page_side() || failure.silent => {}
                 Err(failure) => return Err(failure),
             }
         }
-        // A silent frame has no baseline: the note stands in both snapshots,
-        // so a diff does not report it as new each time.
-        previous_sections.extend(composite.silent.iter().cloned());
         Ok(previous_top.map(|top| compose(&top, &previous_sections)))
     }
 
@@ -606,7 +711,7 @@ impl Page {
         let top = self.top.clone();
         let tree = self
             .cdp
-            .call("Page.getFrameTree", json!({}), Some(&top), STEP)
+            .call("Page.getFrameTree", json!({}), Some(&top), self.step)
             .await
             .map_err(|error| self.blocked(error))?;
         let world = self
@@ -615,7 +720,7 @@ impl Page {
                 "Page.createIsolatedWorld",
                 json!({"frameId": tree["frameTree"]["frame"]["id"], "worldName": "hide-browser"}),
                 Some(&top),
-                STEP,
+                self.step,
             )
             .await
             .map_err(|error| self.blocked(error))?;
@@ -625,7 +730,7 @@ impl Page {
                 "Runtime.evaluate",
                 json!({"expression": call(RENDER_JS, op, &args), "contextId": world["executionContextId"], "returnByValue": true}),
                 Some(&top),
-                STEP,
+                self.step,
             )
             .await
             .map_err(|error| self.blocked(error))?;
@@ -713,109 +818,28 @@ mod tests {
         );
     }
 
-    /// A scripted gateway on a local socket: `script` answers each request
-    /// with the messages to send back, events first, and none to stay silent.
-    async fn gateway(mut script: impl FnMut(&Value) -> Vec<Value> + Send + 'static) -> Cdp {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            let (stream, _) = listener.accept().await.unwrap();
-            let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
-            while let Some(Ok(message)) = futures_util::StreamExt::next(&mut socket).await {
-                let Ok(text) = message.into_text() else {
-                    continue;
-                };
-                let request: Value = serde_json::from_str(text.as_str()).unwrap();
-                for reply in script(&request) {
-                    let reply = tokio_tungstenite::tungstenite::Message::text(reply.to_string());
-                    futures_util::SinkExt::send(&mut socket, reply)
-                        .await
-                        .unwrap();
-                }
-            }
-        });
-        let (socket, _) = tokio_tungstenite::connect_async(format!("ws://{address}"))
-            .await
-            .unwrap();
-        Cdp::new(socket)
-    }
-
-    fn reply(request: &Value, result: Value) -> Value {
-        let mut answer = json!({"id": request["id"], "result": result});
-        if let Some(session) = request["sessionId"].as_str() {
-            answer["sessionId"] = json!(session);
-        }
-        answer
-    }
-
-    fn attached(session: &str, parent: &str, url: &str) -> Value {
-        json!({"method": "Target.attachedToTarget", "sessionId": parent,
-            "params": {"sessionId": session, "targetInfo": {"type": "iframe", "targetId": format!("t-{session}"), "url": url}}})
-    }
-
-    /// A top document with two cross-origin frames: `f1` never answers
-    /// `Page.enable`, `f2` is a healthy page. `before` is sent ahead of f1's
-    /// silence, the way a dialog event reaches a client that listens.
-    fn page_with_hung_frame(before: Option<Value>) -> impl FnMut(&Value) -> Vec<Value> + Send {
-        move |request| {
-            let session = request["sessionId"].as_str().unwrap_or("");
-            let expression = request["params"]["expression"].as_str().unwrap_or("");
-            match (request["method"].as_str().unwrap(), session) {
-                ("Target.setAutoAttach", "top") => vec![
-                    attached("f1", "top", "http://hung.test:8/ad"),
-                    attached("f2", "top", "http://ok.test:9/child"),
-                    reply(request, json!({})),
-                ],
-                ("Target.setAutoAttach", _) => vec![reply(request, json!({}))],
-                ("Page.enable", "f1") => before.clone().into_iter().collect(),
-                ("Page.enable", _) => vec![reply(request, json!({}))],
-                ("Runtime.evaluate", "top") if expression == "0" => {
-                    vec![reply(
-                        request,
-                        json!({"result": {"type": "number", "value": 0}}),
-                    )]
-                }
-                ("Runtime.evaluate", "top") => vec![reply(
-                    request,
-                    json!({"result": {"value": "# T\n# http://a/\n\n@1 button \"A\"\n"}}),
-                )],
-                ("Runtime.evaluate", "f2") if expression.ends_with("(\"tag\",{})") => vec![reply(
-                    request,
-                    json!({"result": {"value": {"tag": "k7q2", "origin": "http://ok.test:9"}}}),
-                )],
-                ("Runtime.evaluate", "f2") => vec![reply(
-                    request,
-                    json!({"result": {"value": "# Child\n# http://ok.test:9/child\n\n@1 link \"B\"\n"}}),
-                )],
-                _ => Vec::new(),
-            }
-        }
-    }
-
-    async fn page(script: impl FnMut(&Value) -> Vec<Value> + Send + 'static) -> Page {
-        Page {
-            cdp: gateway(script).await,
-            display: "browser-1".into(),
-            top: "top".into(),
-            selected: true,
-            frames: None,
-            silent: Vec::new(),
-            pending: Vec::new(),
-        }
-    }
+    use super::super::fake_gateway::{self as fake, Frames, page, page_with_frames};
 
     #[tokio::test]
     async fn a_frame_that_answers_nothing_is_noted_and_the_rest_of_the_page_is_read() {
-        let mut page = page(page_with_hung_frame(None)).await;
-        let composite = page.snapshot(None, "auto").await.unwrap();
-        let text = composite.text();
+        let mut page = page(page_with_frames(
+            Frames {
+                hung: 1,
+                ..Frames::default()
+            },
+            None,
+        ))
+        .await;
+        let text = page.snapshot(None, "auto").await.unwrap().text();
         assert!(text.contains("@1 button \"A\""), "{text}");
         assert!(
             text.contains("# OOPIF k7q2 origin=http://ok.test:9\n@k7q2:1 link \"B\""),
             "{text}"
         );
+        // Its origin is spelled as the frame's own would be, and the note
+        // follows the top document.
         assert!(
-            text.contains("# OOPIF unresponsive origin=http://hung.test:8 - no answer in time"),
+            text.contains("@1 button \"A\"\n\n# OOPIF unresponsive origin=http://hung1.test - no answer in time"),
             "{text}"
         );
         // It has no tag, so no ref reaches it and no baseline waits on it.
@@ -823,9 +847,63 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_frame_that_stops_answering_while_its_baseline_is_swapped_is_left_out() {
+    async fn frames_a_page_holds_cost_one_wait_between_them() {
+        let mut page = page(page_with_frames(
+            Frames {
+                hung: 5,
+                ..Frames::default()
+            },
+            None,
+        ))
+        .await;
+        let started = std::time::Instant::now();
+        let composite = page.snapshot(None, "auto").await.unwrap();
+        assert_eq!(composite.silent.len(), 5);
+        assert!(
+            started.elapsed() < fake::STEP * 3,
+            "{:?}",
+            started.elapsed()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_closed_connection_is_not_a_frame_that_answers_nothing() {
+        let script = page_with_frames(
+            Frames {
+                hung: 1,
+                ..Frames::default()
+            },
+            Some(fake::close(crate::browser_relay::CLOSE_IDLE)),
+        );
+        let mut page = page(script).await;
+        let failure = page.snapshot(None, "auto").await.err().unwrap();
+        assert_eq!(failure.reason, "page_unresponsive");
+        assert!(!failure.silent);
+    }
+
+    #[tokio::test]
+    async fn a_frame_that_stops_answering_mid_read_is_noted_too() {
+        let mut page = page(page_with_frames(
+            Frames {
+                stops_on_read: true,
+                ..Frames::default()
+            },
+            None,
+        ))
+        .await;
+        let composite = page.snapshot(None, "auto").await.unwrap();
+        assert_eq!(
+            composite.silent,
+            vec![
+                "# OOPIF unresponsive origin=http://ok.test:9 - no answer in time; a script that never yields, or a dialog the operator has not answered"
+            ]
+        );
+    }
+
+    #[tokio::test]
+    async fn the_baseline_keeps_the_silent_notes_with_the_top_document() {
         let mut page = page(|request| match request["sessionId"].as_str() {
-            Some("top") => vec![reply(
+            Some("top") => vec![fake::reply(
                 request,
                 json!({"result": {"value": {"previous": "# T\n# http://a/\n"}}}),
             )],
@@ -837,48 +915,71 @@ mod tests {
             sections: vec![("f1".into(), "# OOPIF k7q2 origin=http://b\n".into())],
             silent: vec!["# OOPIF unresponsive origin=http://c - no answer in time".into()],
         };
+        // What the top document's baseline stores is the block a diff reads
+        // back next time, so a frame that stays silent is not reported again.
+        assert_eq!(
+            composite.top_block(),
+            "# T\n# http://a/\n\n# OOPIF unresponsive origin=http://c - no answer in time\n"
+        );
+        // A frame that stopped answering while its baseline was swapped has
+        // none to give back and is left out.
         let previous = page
             .swap_baseline("full", &composite)
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(
-            previous,
-            "# T\n# http://a/\n\n# OOPIF unresponsive origin=http://c - no answer in time\n"
-        );
+        assert_eq!(previous, "# T\n# http://a/\n");
     }
 
     #[tokio::test]
     async fn a_dialog_event_in_the_same_command_still_fails_dialog_open() {
         let dialog = json!({"method": "Page.javascriptDialogOpening", "sessionId": "f1",
             "params": {"type": "alert", "message": "Hello"}});
-        let mut page = page(page_with_hung_frame(Some(dialog))).await;
+        let mut page = page(page_with_frames(
+            Frames {
+                hung: 1,
+                ..Frames::default()
+            },
+            Some(dialog),
+        ))
+        .await;
         let failure = page.snapshot(None, "auto").await.err().unwrap();
         assert_eq!(failure.reason, "dialog_open");
     }
 
     #[tokio::test]
     async fn a_top_document_that_answers_nothing_still_fails_dialog_open() {
-        let cdp = gateway(|request| match request["method"].as_str().unwrap() {
-            "Target.getTargets" => vec![reply(
+        let cdp = fake::gateway(|request| match request["method"].as_str().unwrap() {
+            "Target.getTargets" => vec![fake::reply(
                 request,
                 json!({"targetInfos": [{"type": "page", "targetId": "p1"}]}),
             )],
-            "Target.attachToTarget" => vec![reply(request, json!({"sessionId": "top"}))],
+            "Target.attachToTarget" => vec![fake::reply(request, json!({"sessionId": "top"}))],
             _ => Vec::new(),
         })
         .await;
-        let failure = Page::attach(cdp, "browser-1", true).await.err().unwrap();
+        let failure = Page::attach_within(cdp, "browser-1", true, fake::STEP)
+            .await
+            .err()
+            .unwrap();
         assert_eq!(failure.reason, "dialog_open");
     }
 
     #[test]
-    fn a_frames_origin_comes_from_the_address_it_attached_at() {
-        assert_eq!(
-            origin_of("https://user:pw@ads.test:8443/a?b#c"),
-            "https://ads.test:8443"
-        );
-        assert_eq!(origin_of("http://localhost:3/"), "http://localhost:3");
+    fn a_frames_origin_is_spelled_as_its_own_would_be() {
+        for (url, origin) in [
+            (
+                "https://user:pw@ads.test:8443/a?b#c",
+                "https://ads.test:8443",
+            ),
+            ("http://localhost:3/", "http://localhost:3"),
+            ("HTTP://Ads.Test:80/x", "http://ads.test"),
+            ("https://ads.test:443", "https://ads.test"),
+            ("http://[::1]:8080/", "http://[::1]:8080"),
+            ("http://[::1]/", "http://[::1]"),
+        ] {
+            assert_eq!(origin_of(url), origin, "{url}");
+        }
         for url in [
             "",
             "about:blank",

@@ -52,7 +52,7 @@ Password, card number, CVC, one-time code and similar values are never shown; yo
 `@N` names an element of the top document, including open shadow roots and same-origin frames.
 A ref stays the same across snapshots of the same document, new elements get the next numbers, and a navigation starts again at `@1`.
 A cross-origin frame shows as its own section, `# OOPIF <tag> origin=<origin>`, and its elements are `@<tag>:N`; its values and links show only their origin.
-A frame that answers nothing in time shows as `# OOPIF unresponsive origin=<origin>` with no refs, and the rest of the page is read; its script may never yield, or a dialog it opened is waiting for the operator.
+A frame that answers nothing in time shows as `# OOPIF unresponsive origin=<origin>` with no refs, and the rest of the page is read; its script may never yield, or a dialog it opened is waiting for the operator. `wait --text` leaves such a frame out and names it when it times out.
 A ref from an older document, or from a frame that navigated, fails `ref_stale` instead of touching another element: take a fresh snapshot.
 
 ## Acting and checking
@@ -99,6 +99,7 @@ Follow `next_action`; the reasons you will meet:
 | `key_unsupported` | Press one of the listed keys. |
 | `invalid_selector` | Use a valid CSS selector or an `@ref`. |
 | `drag_across_frames` | Drag between two points of the same frame. |
+| `drag_carries_files` | The drag carries local files, which a page never receives through `hide browser`; use `--mode pointer`. |
 | `drag_not_started` | The source did not start a native drag; retry with `--mode pointer`. |
 | `timeout` | The condition did not hold in time; look at a snapshot. |
 | `eval_error` | Fix the expression. |

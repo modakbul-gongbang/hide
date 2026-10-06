@@ -40,6 +40,15 @@ const HUNG_CHILD = `<!doctype html><meta charset="utf-8"><title>Hung child</titl
 const HUNG_PAGE = `<!doctype html><meta charset="utf-8"><title>Hung page</title>
 <h1>Beside a hung frame</h1><button>Still readable</button>`;
 let hung = false;
+const DRAG_PAGE = `<!doctype html><meta charset="utf-8"><title>Drag page</title>
+<button id="src" draggable="true">Drag me</button> <button id="dst">Drop here</button> <output></output>
+<script>
+const out = document.querySelector("output");
+document.getElementById("src").addEventListener("dragstart", (event) => event.dataTransfer.setData("text/plain", "hello"));
+const dst = document.getElementById("dst");
+dst.addEventListener("dragover", (event) => event.preventDefault());
+dst.addEventListener("drop", (event) => { event.preventDefault(); out.textContent = "dropped: " + event.dataTransfer.getData("text/plain") + " files: " + event.dataTransfer.files.length; });
+</script>`;
 // A page whose press handler holds the renderer for 12 s, so the press is
 // not answered within a step. It logs every pointer event it receives, and
 // when.
@@ -122,6 +131,7 @@ test.beforeAll(async () => {
   server = createServer((request, response) => {
     if (request.url === "/hung-now") { hung = true; response.writeHead(204).end(); return; }
     response.writeHead(200, { "content-type": "text/html; charset=utf-8" });
+    if (request.url === "/drag") { response.end(DRAG_PAGE); return; }
     if (request.url === "/busy") { response.end(BUSY_PAGE); return; }
     if (request.url === "/hang") { response.end(HUNG_CHILD); return; }
     if (request.url === "/hung") { response.end(HUNG_PAGE.replace("</h1>", `</h1><iframe src="${origin.replace("127.0.0.1", "localhost")}/hang" width="300" height="100"></iframe>`)); return; }
@@ -230,6 +240,15 @@ test("hide browser: a dialog is reported, never answered, and holds the display 
   await expect.poll(() => shown.length).toBe(2);
   await shown[1]!.dismiss();
   expect(await snapshot(display)).toContain('button "Frame confirm"');
+});
+
+test("hide browser: a native HTML5 drag replays through the gateway and drops no files", async () => {
+  await start();
+  const url = `${origin}/drag`;
+  const display = await openDisplay(url);
+  const text = await snapshot(display);
+  expect(await json(["drag", display, ref(text, /button "Drag me"/), ref(text, /button "Drop here"/), "--mode", "html5"])).toMatchObject({ ok: true });
+  expect(await inDisplay<string>(url, "document.querySelector('output').textContent")).toBe("dropped: hello files: 0");
 });
 
 test("hide browser: a cross-origin frame that never answers is noted and the rest of the page is read", async () => {
