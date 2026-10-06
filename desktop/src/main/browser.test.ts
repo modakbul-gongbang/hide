@@ -183,7 +183,29 @@ describe("native held cycle delivery", () => {
     origin.show(true);
     expect(origin.pageFocus).toHaveBeenCalledOnce();
   });
-  it("pays the debt only to its page, and only with the window key", () => {
+  it("pays the debt only after the window's own return, which Electron's focus restore precedes", () => {
+    const { page, blur, windowReturn, windowFocus } = candidate();
+    const origin = page("origin");
+    // Key again but not back yet: the window's return restores the focus
+    // Electron stored on blur, so a page paid before it would lose the keyboard.
+    origin.input();
+    origin.show(false);
+    blur();
+    origin.show(true);
+    expect(origin.pageFocus).not.toHaveBeenCalled();
+    windowReturn();
+    expect(origin.pageFocus).toHaveBeenCalledOnce();
+    // Back while the page is still covered, and shown before the window is key.
+    const late = page("late");
+    late.input();
+    late.show(false);
+    blur();
+    windowFocus(false);
+    windowReturn();
+    late.show(true);
+    expect(late.pageFocus).toHaveBeenCalledOnce();
+  });
+  it("pays the debt only to its page, and only once the window is back", () => {
     const { page, blur, windowReturn, windowFocus } = candidate();
     const origin = page("origin"), other = page("other");
     origin.input();

@@ -100,16 +100,23 @@ export class BrowserViews {
   private registry: readonly Command[] = systemRegistry(keySystemOf(process.platform));
   private cycleInput: { page: Page; release: string; cycleId: number } | null = null;
   private cycleSequence = 0;
-  /** The page a blur cancelled a hold on, owed the keyboard once the window is key and the page shown. */
+  /** The page a blur cancelled a hold on, owed the keyboard once the window is back and the page shown. */
   private returnTo: Page | null = null;
+  /**
+   * Whether the window has had its `focus` event since its last `blur`. On
+   * macOS that event is the window becoming main again, and Electron restores
+   * the focus it stored on `blur` just before it; a window already key but not
+   * yet back would hand that restore the keyboard a page was just given.
+   */
+  private windowBack = true;
 
   setRegistry(registry: readonly Command[]): void { this.registry = registry; }
 
-  /** Pays the keyboard owed to the page a blur cancelled a hold on, once the window is key and the page shown. */
+  /** Pays the keyboard owed to the page a blur cancelled a hold on, once the window is back and the page shown. */
   private giveBack(): void {
     const page = this.returnTo;
     if (!page) return;
-    if (!page.visible || !this.window?.isFocused()) return;
+    if (!page.visible || !this.windowBack) return;
     this.returnTo = null;
     page.view.webContents.focus();
     this.log.event("browser.window_return", { page_focused: page.view.webContents.isFocused() });
@@ -254,6 +261,7 @@ export class BrowserViews {
       if (details.isMainFrame && !details.isSameDocument) this.hideAll();
     });
     window.on("blur", () => {
+      this.windowBack = false;
       const held = this.cycleInput;
       this.cancelCycle();
       // The hold moved the native responder to the shell. When the window
@@ -262,7 +270,10 @@ export class BrowserViews {
       // goes away through the shell's next sync, which can land after the window returns.
       if (held) this.returnTo = held.page;
     });
-    window.on("focus", () => this.giveBack());
+    window.on("focus", () => {
+      this.windowBack = true;
+      this.giveBack();
+    });
     window.on("closed", () => {
       this.cancelCycle();
       for (const page of [...this.pages.values()]) this.destroy(page, "window_closed");
