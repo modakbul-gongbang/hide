@@ -1,5 +1,6 @@
 import { PlusIcon, SquareTerminalIcon } from "lucide-react";
 import { useLayoutEffect, useRef, useState, type ComponentProps, type ReactNode } from "react";
+import { flushSync } from "react-dom";
 import { Badge } from "./components/ui/badge";
 import { Button } from "./components/ui/button";
 import { Kbd } from "./components/ui/kbd";
@@ -18,14 +19,14 @@ import { cn } from "./lib/utils";
 // the answer cannot flip back and forth.
 
 const gapOf = (node: Element) => Number.parseFloat(getComputedStyle(node).columnGap) || 0;
-// A truncated name reports the width of the whole text as its scrollWidth.
-const naturalWidth = (node: HTMLElement) => Math.max(node.offsetWidth, node.scrollWidth);
+// A truncated name reports the width of the whole text as its scrollWidth; the rest is read unrounded so four terms cannot add up to a pixel too many.
+const naturalWidth = (node: HTMLElement) => Math.max(node.getBoundingClientRect().width, node.scrollWidth);
 
 /** Whether the nav at its natural width and the labelled actions fit in the row. */
 function labelledFit(row: HTMLElement, nav: HTMLElement, twin: HTMLElement): boolean {
   const children = [...nav.children] as HTMLElement[];
   const navWidth = children.reduce((sum, child) => sum + naturalWidth(child), 0) + gapOf(nav) * Math.max(children.length - 1, 0);
-  return row.clientWidth >= navWidth + gapOf(row) + twin.offsetWidth;
+  return row.getBoundingClientRect().width >= navWidth + gapOf(row) + twin.getBoundingClientRect().width;
 }
 
 type ActionProps = {
@@ -49,7 +50,7 @@ function Action({ label, icon, keycap, variant, iconOnly, twin = false, button }
     </Button>
   );
   if (twin) return control;
-  // The span takes the pointer a disabled button does not, so a dimmed icon still says what it is.
+  // The span takes the pointer a disabled button does not, so a dimmed icon still says what it is. `reveals` keeps the label off the span as a second name: the button's own text names it.
   return (
     <Hint reveals active={iconOnly} label={label} shortcut={keycap ? <Kbd>{keycap}</Kbd> : undefined}>
       <span className="inline-flex">{control}</span>
@@ -85,9 +86,10 @@ export function OverviewTitleRow({
   useLayoutEffect(() => {
     const [rowNode, navNode, twinNode] = [row.current, nav.current, twin.current];
     if (!rowNode || !navNode || !twinNode) return;
-    const measure = () => setIconOnly(!labelledFit(rowNode, navNode, twinNode));
-    measure();
-    const observer = new ResizeObserver(measure);
+    const measure = () => !labelledFit(rowNode, navNode, twinNode);
+    setIconOnly(measure());
+    // Flushed, so a frame of a dragged window is never drawn in the old state.
+    const observer = new ResizeObserver(() => flushSync(() => setIconOnly(measure())));
     for (const node of [rowNode, twinNode, ...navNode.children]) observer.observe(node);
     return () => observer.disconnect();
   }, [name, remoteDevice, issues, agentLabel, issueLabel]);
@@ -109,9 +111,12 @@ export function OverviewTitleRow({
       </nav>
       <Action label={agentLabel} icon={agentIcon} variant="ghost" iconOnly={iconOnly} button={{ onClick: newAgent.run, disabled: newAgent.disabled, "data-overview-new-agent": "true" }} />
       {newIssue ? <Action label={issueLabel} icon={issueIcon} keycap="C" iconOnly={iconOnly} button={{ onClick: newIssue, "data-overview-new-issue": "true" }} /> : null}
-      <div ref={twin} aria-hidden="true" className="invisible pointer-events-none absolute flex w-max items-center gap-lg">
-        <Action label={agentLabel} icon={agentIcon} variant="ghost" iconOnly={false} twin />
-        {newIssue ? <Action label={issueLabel} icon={issueIcon} keycap="C" iconOnly={false} twin /> : null}
+      {/* Clipped to the row, so the copy adds nothing to what scrolls, and measured at its own width. */}
+      <div aria-hidden="true" className="invisible pointer-events-none absolute inset-0 overflow-hidden">
+        <div ref={twin} className="flex w-max items-center gap-lg">
+          <Action label={agentLabel} icon={agentIcon} variant="ghost" iconOnly={false} twin />
+          {newIssue ? <Action label={issueLabel} icon={issueIcon} keycap="C" iconOnly={false} twin /> : null}
+        </div>
       </div>
     </div>
   );

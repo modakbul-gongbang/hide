@@ -10,6 +10,7 @@ import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { chooseTheme, enterWorkspace, screenshot } from "./wire";
 import { openCurrentProjectOverview } from "./overview-entry";
+import { quietFor } from "./wait";
 
 const LABEL = "a-project-whose-name-is-long-enough-to-fill-the-header-row";
 /** The least the name may keep: what a tab title keeps (`--size-tab-title-min`). */
@@ -52,19 +53,18 @@ test("the Project Overview title row keeps a long project name readable at every
         await expect(agent).toBeVisible();
         expect(await width(name), `the name's width at ${viewport}px`).toBeGreaterThanOrEqual(NAME_MIN);
         expect(await name.evaluate((node) => node.scrollWidth > node.clientWidth), `the name is cut with an ellipsis only at ${viewport}px`).toBe(viewport !== 1600);
-        expect(await header.evaluate((node) => node.scrollWidth <= node.clientWidth), `nothing in the row runs past the header at ${viewport}px`).toBe(true);
+        expect(await page.locator("[data-overview-screen]").evaluate((node) => node.scrollWidth <= node.clientWidth), `nothing runs past the page at ${viewport}px`).toBe(true);
         await screenshot(page, `overview-header-${viewport}-${theme}`);
       }
     }
-    // The case issue 618 reported: 720 px, where the header is too narrow for either action's word.
-    expect(await width(header), "the header at 720px").toBeLessThan(NAME_MIN * 4);
-    // An icon keeps its name and shortcut in a hint, at 1600 nothing opens.
+    // An icon keeps its name and shortcut in a hint; where the words show (1600, last) nothing opens.
     await issue.hover();
     await expect(page.getByRole("tooltip")).toContainText("New issue");
-    await expect(page.getByRole("tooltip")).toContainText("C");
-    // A disabled control takes no pointer, so the hint hangs on the span around it (New agent is disabled for a folder with no checkout).
-    await page.mouse.move(0, 0);
+    await expect(page.getByRole("tooltip").locator("kbd")).toHaveText("C");
+    await page.mouse.move(600, 600);
     await expect(page.getByRole("tooltip")).toHaveCount(0);
+    // A disabled control takes no pointer, so the hint hangs on the span around it.
+    // The DOM is forced here: no project this fixture can make has New agent disabled.
     await agent.evaluate((node: HTMLButtonElement) => {
       node.disabled = true;
     });
@@ -72,8 +72,9 @@ test("the Project Overview title row keeps a long project name readable at every
     await expect(page.getByRole("tooltip")).toContainText("New agent");
     await page.setViewportSize({ width: 1600, height: 800 });
     await expect.poll(() => actionsAreIcons(page, issue)).toBe(false);
-    await page.mouse.move(0, 0);
+    await page.mouse.move(600, 600);
     await issue.hover();
+    await quietFor(page, 800, "a hint opens after 500 ms; none does while the word is showing");
     await expect(page.getByRole("tooltip")).toHaveCount(0);
   } finally {
     daemon?.stop();

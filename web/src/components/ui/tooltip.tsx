@@ -158,7 +158,7 @@ function Hint({
 }) {
   const { open, onOpenChange, triggerProps } = useHintOpen();
   return (
-    <Tooltip open={active && open} onOpenChange={(next) => active && onOpenChange(next)}>
+    <Tooltip open={active && open} onOpenChange={(next) => (active || !next) && onOpenChange(next)}>
       <TooltipTrigger asChild aria-label={reveals ? undefined : label} {...triggerProps}>
         {children}
       </TooltipTrigger>
