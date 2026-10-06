@@ -995,7 +995,7 @@ fn view_authority_a_stale_herdr_tab_does_not_undo_an_unconfirmed_switch() {
         checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
         Some("w-order:t3")
     );
-    assert!(runtime.pending_tab_focus.is_none());
+    assert!(sent_tab_moves(&runtime).is_empty());
 }
 
 /// Issue #413. The operator drops a tab into a new area (t2) and clicks back
@@ -1105,8 +1105,8 @@ fn view_authority_a_pane_focus_s_late_tab_move_is_its_answer_not_an_outside_focu
     }
     assert_eq!(diagnostic_count(&runtime, "tab.focus.followed"), 0);
     assert!(
-        runtime.pending_tab_focus.is_none(),
-        "Herdr arriving confirms the last move"
+        sent_tab_moves(&runtime).is_empty(),
+        "Herdr arriving answers every move"
     );
 
     // Once Herdr has answered, a tab it focuses on its own is followed.
@@ -1169,8 +1169,7 @@ fn view_authority_a_tab_focus_that_leaves_after_its_wait_was_replaced_is_superse
         );
     }
     assert_eq!(diagnostic_count(&runtime, "tab.focus.followed"), 0);
-    assert!(runtime.superseded_tab_focus.is_empty());
-    assert!(runtime.pending_tab_focus.is_none());
+    assert!(sent_tab_moves(&runtime).is_empty());
 
     // Each answer was consumed, so a tab Herdr focuses on its own is followed.
     runtime.ingest_session(herdr_on("w-order:t2"));
@@ -1299,6 +1298,227 @@ fn view_authority_a_tab_focus_on_the_tab_herdr_shows_is_confirmed_by_its_answer(
     );
 }
 
+/// Issue #653. Quick clicks t2, t1, t2, t1, t2 meet Herdr events that trail
+/// its answers. After t2 leaves, Hide still holds a session from before t1
+/// was applied, which shows t2 from the first click; that is Herdr from
+/// before both requests, not the answer to the second t2. Read as one, it
+/// let the late t2 and t1 of the third and fourth clicks be followed as
+/// Herdr's own moves, and the screen ended on t1 while the last click was
+/// t2. At every step the screen is on the tab of the last click.
+#[test]
+fn view_authority_a_session_from_before_an_earlier_request_does_not_answer_a_later_one() {
+    let checkout_path = "/private/tmp/hide-view-authority-aba";
+    let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
+    let tabs = ["w-order:t1", "w-order:t2", "w-order:t3"];
+    let herdr_on = |tab: &str| Ok(tab_order_payload(checkout_path, &tabs, &tabs, tab));
+    let answer = |runtime: &mut Runtime, tab_id: &str| {
+        runtime.complete_lane_tab(
+            RemoteControlAction::FocusTab {
+                tab_id: tab_id.to_owned(),
+            },
+            Ok(RemoteControlOutcome::Acknowledged {
+                created_tab_id: None,
+                created_pane_id: None,
+            }),
+            3,
+        );
+    };
+    let on_screen = |runtime: &Runtime| checkout_active_tab_id(runtime, &checkout_id);
+    runtime.ingest_session(herdr_on("w-order:t1"));
+    assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2")));
+    answer(&mut runtime, "w-order:t2");
+    runtime.ingest_session(herdr_on("w-order:t2"));
+
+    // Second and third clicks: both answered, neither event in yet; a
+    // session still from before the second arrives in between.
+    assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t1")));
+    answer(&mut runtime, "w-order:t1");
+    assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2")));
+    runtime.ingest_session(herdr_on("w-order:t2"));
+    answer(&mut runtime, "w-order:t2");
+    runtime.ingest_session(herdr_on("w-order:t1"));
+    assert_eq!(on_screen(&runtime).as_deref(), Some("w-order:t2"));
+
+    // Fourth click, answered before the third click's event arrives.
+    assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t1")));
+    answer(&mut runtime, "w-order:t1");
+    runtime.ingest_session(herdr_on("w-order:t2"));
+    assert_eq!(
+        on_screen(&runtime).as_deref(),
+        Some("w-order:t1"),
+        "the third click's late t2 is its answer, not Herdr's own move"
+    );
+
+    // Fifth click, then the fourth and fifth clicks' events.
+    assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2")));
+    answer(&mut runtime, "w-order:t2");
+    for event in ["w-order:t1", "w-order:t2"] {
+        runtime.ingest_session(herdr_on(event));
+        assert_eq!(
+            on_screen(&runtime).as_deref(),
+            Some("w-order:t2"),
+            "Herdr naming {event} leaves the screen on the last click"
+        );
+    }
+    assert_eq!(diagnostic_count(&runtime, "tab.focus.followed"), 0);
+
+    // Every request is answered, so a move Herdr makes on its own is followed.
+    runtime.ingest_session(herdr_on("w-order:t3"));
+    assert_eq!(on_screen(&runtime).as_deref(), Some("w-order:t3"));
+    assert_eq!(diagnostic_count(&runtime, "tab.focus.followed"), 1);
+}
+
+/// The orders Herdr's answers and moves can arrive in, one row each. Herdr
+/// applies Hide's tab focuses in the order they were sent, so whichever way
+/// they come back the screen is on the tab of the last request sent; once
+/// each is answered (by its move, by an answer that moves nothing, by a
+/// refusal, or by the deadline) a move Herdr makes on its own is followed.
+#[test]
+fn view_authority_the_screen_stays_on_the_last_request_whatever_order_herdr_answers_in() {
+    #[derive(Debug)]
+    enum Step {
+        Click(&'static str),
+        Answer(&'static str),
+        Refuse(&'static str),
+        /// A session whose active tab moved.
+        Herdr(&'static str),
+        /// A session carrying a fresh focus event: moves folded into one
+        /// session can leave the active tab where it was.
+        Folded(&'static str),
+        Deadline,
+    }
+    use Step::*;
+    let cases: [(&str, &[Step]); 6] = [
+        (
+            "in order",
+            &[
+                Click("t2"),
+                Answer("t2"),
+                Herdr("t2"),
+                Click("t3"),
+                Answer("t3"),
+                Herdr("t3"),
+            ],
+        ),
+        (
+            "two moves folded into one session",
+            &[
+                Click("t2"),
+                Answer("t2"),
+                Click("t3"),
+                Answer("t3"),
+                Herdr("t3"),
+            ],
+        ),
+        (
+            "A to B to A folded into one session",
+            &[
+                Click("t2"),
+                Answer("t2"),
+                Click("t1"),
+                Answer("t1"),
+                Folded("t1"),
+            ],
+        ),
+        (
+            "focusing the tab Herdr shows publishes no event",
+            &[Click("t2"), Refuse("t2"), Click("t1"), Answer("t1")],
+        ),
+        (
+            "refused while the next waits",
+            &[
+                Click("t2"),
+                Click("t3"),
+                Refuse("t2"),
+                Answer("t3"),
+                Herdr("t3"),
+            ],
+        ),
+        ("never reported", &[Click("t2"), Answer("t2"), Deadline]),
+    ];
+    let tabs = ["w-order:t1", "w-order:t2", "w-order:t3", "w-order:t4"];
+    for (index, (name, steps)) in cases.into_iter().enumerate() {
+        let checkout_path = format!("/private/tmp/hide-view-authority-order-{index}");
+        let (mut runtime, checkout_id) = live_tab_order_runtime(&checkout_path);
+        let session = |tab: &str| tab_order_payload(&checkout_path, &tabs, &tabs, tab);
+        let tab = |short: &str| format!("w-order:{short}");
+        let control = |runtime: &mut Runtime, short: &str, result| {
+            runtime.complete_lane_tab(
+                RemoteControlAction::FocusTab { tab_id: tab(short) },
+                result,
+                3,
+            );
+        };
+        runtime.ingest_session(Ok(session("w-order:t1")));
+        let mut last_sent = tab("t1");
+        for step in steps {
+            match step {
+                Click(short) => {
+                    assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, &tab(short))));
+                    last_sent = tab(short);
+                }
+                Answer(short) => control(
+                    &mut runtime,
+                    short,
+                    Ok(RemoteControlOutcome::Acknowledged {
+                        created_tab_id: None,
+                        created_pane_id: None,
+                    }),
+                ),
+                Refuse(short) => control(
+                    &mut runtime,
+                    short,
+                    Err(live::ControlFailure::Definite("tab.focus rejected".into())),
+                ),
+                Herdr(short) => {
+                    runtime.ingest_session(Ok(session(&tab(short))));
+                }
+                Folded(short) => {
+                    let mut payload = session(&tab(short));
+                    payload.tab_focus = Some(crate::sidebar::SessionTabFocus {
+                        generation: 1,
+                        workspace_id: "w-order".into(),
+                        tab_id: tab(short),
+                        revision: 9,
+                        creation: false,
+                    });
+                    runtime.ingest_session(Ok(payload));
+                }
+                Deadline => {
+                    let deadline = newest_sent_at(&runtime) + VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS;
+                    runtime.expire_pending_view_focus(deadline);
+                }
+            }
+            assert_eq!(
+                checkout_active_tab_id(&runtime, &checkout_id),
+                Some(last_sent.clone()),
+                "{name}: after {step:?} the screen is on the last request sent"
+            );
+        }
+        assert!(
+            sent_tab_moves(&runtime).is_empty(),
+            "{name}: every request is answered"
+        );
+        assert_eq!(
+            diagnostic_count(&runtime, "tab.focus.followed"),
+            0,
+            "{name}"
+        );
+
+        runtime.ingest_session(Ok(session("w-order:t4")));
+        assert_eq!(
+            checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+            Some("w-order:t4"),
+            "{name}: then a move Herdr makes on its own is followed"
+        );
+        assert_eq!(
+            diagnostic_count(&runtime, "tab.focus.followed"),
+            1,
+            "{name}"
+        );
+    }
+}
+
 /// The tab wait a pane focus arms always ends: Herdr refusing the focus
 /// moves no tab, a focus in the tab Herdr already shows arms nothing, and a
 /// tab move Herdr never reports runs out with a tab focus's deadline. After
@@ -1317,17 +1537,18 @@ fn view_authority_a_pane_focus_tab_wait_ends_when_no_tab_move_will_arrive() {
 
     // Refused: Herdr stays on t1, so nothing of this focus will arrive.
     assert!(runtime.dispatch_json(&operator_focus_event("w-order:t2:p")));
-    assert!(
-        runtime.pending_tab_focus.is_some(),
+    assert_eq!(
+        sent_tab_moves(&runtime),
+        ["w-order:t2"],
         "a focus in another tab moves Herdr's tab"
     );
     finish_running_pane_focus(&mut runtime, Err("pane focus refused"));
-    assert!(runtime.pending_tab_focus.is_none());
+    assert!(sent_tab_moves(&runtime).is_empty());
 
-    // Herdr already shows t1, so focusing its pane moves no Herdr tab.
+    // Herdr already shows t1, so the answer to focusing its pane is all of it.
     assert!(runtime.dispatch_json(&operator_focus_event("w-order:t1:p")));
-    assert!(runtime.pending_tab_focus.is_none());
     finish_running_pane_focus(&mut runtime, Ok(()));
+    assert!(sent_tab_moves(&runtime).is_empty());
     runtime.ingest_session(Ok(tab_order_payload(
         checkout_path,
         &tabs,
@@ -1343,13 +1564,9 @@ fn view_authority_a_pane_focus_tab_wait_ends_when_no_tab_move_will_arrive() {
     // Never reported: the wait runs out at the tab focus deadline.
     assert!(runtime.dispatch_json(&operator_focus_event("w-order:t2:p")));
     finish_running_pane_focus(&mut runtime, Ok(()));
-    let requested_at = runtime
-        .pending_tab_focus
-        .as_ref()
-        .expect("the tab move is awaited")
-        .requested_at_unix_ms;
+    let requested_at = newest_sent_at(&runtime);
     assert!(runtime.expire_pending_view_focus(requested_at + VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS));
-    assert!(runtime.pending_tab_focus.is_none());
+    assert!(sent_tab_moves(&runtime).is_empty());
     runtime.ingest_session(Ok(tab_order_payload(
         checkout_path,
         &tabs,
@@ -1363,13 +1580,13 @@ fn view_authority_a_pane_focus_tab_wait_ends_when_no_tab_move_will_arrive() {
     assert_eq!(diagnostic_count(&runtime, "tab.focus.followed"), 2);
 }
 
-/// The superseded requests are bounded in count and in time, and one Herdr
+/// The sent tab moves are bounded in count and in time, and one Herdr
 /// refused is not waited on; each of those ends the claim, so Herdr then
 /// focusing that tab is followed. A request whose result was lost may have
 /// been applied, so it keeps its claim.
 #[test]
-fn view_authority_a_superseded_switch_stops_claiming_its_tab_when_capped_expired_or_refused() {
-    let checkout_path = "/private/tmp/hide-view-authority-superseded-bounds";
+fn view_authority_sent_tab_moves_stop_claiming_their_tab_when_capped_expired_or_refused() {
+    let checkout_path = "/private/tmp/hide-view-authority-sent-bounds";
     let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
     let tabs = (1..=20)
         .map(|n| format!("w-order:t{n}"))
@@ -1381,17 +1598,10 @@ fn view_authority_a_superseded_switch_stops_claiming_its_tab_when_capped_expired
         &tabs,
         "w-order:t20",
     )));
-    let superseded = |runtime: &Runtime| {
-        runtime
-            .superseded_tab_focus
-            .iter()
-            .map(|held| held.target_id.clone())
-            .collect::<Vec<_>>()
-    };
 
-    // Each request is sent before the next replaces it, which is what leaves
-    // an answer of its own on its way.
-    for (index, tab) in tabs[..=SUPERSEDED_TAB_FOCUS_LIMIT + 1].iter().enumerate() {
+    // Each request is answered before the next leaves, and none of their
+    // moves has arrived.
+    for (index, tab) in tabs[..=TAB_FOCUS_REQUEST_LIMIT + 1].iter().enumerate() {
         assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, tab)));
         if index > 0 {
             runtime.complete_lane_tab(
@@ -1406,36 +1616,33 @@ fn view_authority_a_superseded_switch_stops_claiming_its_tab_when_capped_expired
             );
         }
     }
-    assert_eq!(superseded(&runtime).len(), SUPERSEDED_TAB_FOCUS_LIMIT);
-    assert!(!superseded(&runtime).contains(&"w-order:t1".to_owned()));
+    assert_eq!(sent_tab_moves(&runtime).len(), TAB_FOCUS_REQUEST_LIMIT);
+    assert!(!sent_tab_moves(&runtime).contains(&"w-order:t1".to_owned()));
+    assert_eq!(diagnostic_count(&runtime, "tab.focus.followed"), 0);
 
     runtime.ingest_local_control_result(
         RemoteControlAction::FocusTab {
-            tab_id: "w-order:t2".to_owned(),
+            tab_id: "w-order:t4".to_owned(),
         },
         Err("tab.focus rejected".to_owned()),
         3,
     );
     runtime.ingest_local_control_failure(
         RemoteControlAction::FocusTab {
-            tab_id: "w-order:t3".to_owned(),
+            tab_id: "w-order:t5".to_owned(),
         },
         Err(live::ControlFailure::Ambiguous(
             "tab.focus result is unknown".into(),
         )),
         3,
     );
-    assert!(!superseded(&runtime).contains(&"w-order:t2".to_owned()));
-    assert!(superseded(&runtime).contains(&"w-order:t3".to_owned()));
+    assert!(!sent_tab_moves(&runtime).contains(&"w-order:t4".to_owned()));
+    assert!(sent_tab_moves(&runtime).contains(&"w-order:t5".to_owned()));
 
-    // The latest request is the youngest, so its deadline is past every one.
-    let requested_at = runtime
-        .pending_tab_focus
-        .as_ref()
-        .expect("the latest switch is in flight")
-        .requested_at_unix_ms;
+    // The newest request is the youngest, so its deadline is past every one.
+    let requested_at = newest_sent_at(&runtime);
     runtime.expire_pending_view_focus(requested_at + VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS);
-    assert!(runtime.superseded_tab_focus.is_empty());
+    assert!(sent_tab_moves(&runtime).is_empty());
 
     // With every claim gone, Herdr focusing t2 is an outside move again.
     runtime.ingest_session(Ok(tab_order_payload(
@@ -1463,7 +1670,7 @@ fn view_authority_an_external_tab_focus_is_followed_and_reported() {
         &tabs,
         "w-order:t1",
     )));
-    assert!(runtime.pending_tab_focus.is_none());
+    assert!(sent_tab_moves(&runtime).is_empty());
 
     assert!(runtime.ingest_session(Ok(tab_order_payload(
         checkout_path,
@@ -1557,7 +1764,7 @@ fn view_authority_a_refused_tab_focus_keeps_the_tab_and_reports_it() {
         "w-order:t1",
     )));
     assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t3")));
-    assert!(runtime.pending_tab_focus.is_some());
+    assert!(!sent_tab_moves(&runtime).is_empty());
 
     runtime.ingest_local_control_result(
         RemoteControlAction::FocusTab {
@@ -1573,7 +1780,7 @@ fn view_authority_a_refused_tab_focus_keeps_the_tab_and_reports_it() {
         "a refusal is reported, not acted on by moving the screen"
     );
     assert_eq!(diagnostic_count(&runtime, "tab.focus.refused"), 1);
-    assert!(runtime.pending_tab_focus.is_none());
+    assert!(sent_tab_moves(&runtime).is_empty());
 }
 
 /// AC2, R1. A notification Herdr never answers stops being pending, the
@@ -1591,17 +1798,13 @@ fn view_authority_an_unanswered_notification_times_out_and_keeps_its_value() {
         "w-order:t1",
     )));
     assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t3")));
-    let requested_at = runtime
-        .pending_tab_focus
-        .as_ref()
-        .expect("a notification is in flight")
-        .requested_at_unix_ms;
+    let requested_at = newest_sent_at(&runtime);
 
     assert!(!runtime.expire_pending_view_focus(requested_at + 1));
-    assert!(runtime.pending_tab_focus.is_some());
+    assert!(!sent_tab_moves(&runtime).is_empty());
     assert!(runtime.expire_pending_view_focus(requested_at + VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS));
 
-    assert!(runtime.pending_tab_focus.is_none());
+    assert!(sent_tab_moves(&runtime).is_empty());
     assert_eq!(
         checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
         Some("w-order:t3"),
@@ -1635,7 +1838,7 @@ fn split_checkout_a_tab_focus_is_confirmed_by_the_workspace_that_owns_the_tab() 
     );
 
     assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "wa:t2")));
-    assert!(runtime.pending_tab_focus.is_some());
+    assert!(!sent_tab_moves(&runtime).is_empty());
     assert_eq!(
         runtime.snapshot().terminal.pane_id.as_deref(),
         Some("wa:t2:p")
@@ -1649,7 +1852,7 @@ fn split_checkout_a_tab_focus_is_confirmed_by_the_workspace_that_owns_the_tab() 
     runtime.ingest_session(Ok(split_checkout_payload(checkout_path, &confirmed, "wb")));
 
     assert!(
-        runtime.pending_tab_focus.is_none(),
+        sent_tab_moves(&runtime).is_empty(),
         "the notification is confirmed"
     );
     assert_eq!(
@@ -1761,13 +1964,9 @@ fn split_checkout_an_expired_notification_keeps_its_tab_through_the_next_reconci
     ];
     runtime.ingest_session(Ok(split_checkout_payload(checkout_path, &session, "wa")));
     assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "wa:t2")));
-    let requested_at = runtime
-        .pending_tab_focus
-        .as_ref()
-        .expect("a notification is in flight")
-        .requested_at_unix_ms;
+    let requested_at = newest_sent_at(&runtime);
     assert!(runtime.expire_pending_view_focus(requested_at + VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS));
-    assert!(runtime.pending_tab_focus.is_none());
+    assert!(sent_tab_moves(&runtime).is_empty());
 
     // Herdr never answered; its focus is where it was.
     runtime.ingest_session(Ok(split_checkout_payload(checkout_path, &session, "wa")));
@@ -1812,7 +2011,7 @@ fn split_checkout_a_created_tab_is_visible_on_the_acknowledgment() {
         Some("wa:t2"),
         "the created tab is Hide's visible tab before Herdr lists it"
     );
-    assert!(runtime.pending_tab_focus.is_some());
+    assert!(!sent_tab_moves(&runtime).is_empty());
     assert_eq!(
         runtime.snapshot().terminal.pane_id.as_deref(),
         Some("wa:t2:p")
@@ -1823,7 +2022,7 @@ fn split_checkout_a_created_tab_is_visible_on_the_acknowledgment() {
         ("wb", &["wb:t1"], "wb:t1"),
     ];
     runtime.ingest_session(Ok(split_checkout_payload(checkout_path, &after, "wa")));
-    assert!(runtime.pending_tab_focus.is_none());
+    assert!(sent_tab_moves(&runtime).is_empty());
     assert_eq!(
         checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
         Some("wa:t2")

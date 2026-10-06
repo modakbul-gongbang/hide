@@ -1226,7 +1226,6 @@ impl Runtime {
     ) {
         let mut followed: Vec<(String, String, String)> = Vec::new();
         let mut follow_pane: Option<String> = None;
-        let mut confirmed_pending = false;
         // A changed value or a new focus event is an action to follow. Repeated
         // projections of the same event are only state; a later explicit focus
         // on the same Herdr tab still carries a fresh intent after creation.
@@ -1241,6 +1240,14 @@ impl Runtime {
             self.herdr_tab_focus_seen = Some(event.clone());
         }
         self.herdr_focused_tab_seen = herdr.focused_tab_id.clone();
+        // Herdr's moves since the last session answer Hide's requests in
+        // the order they were sent; a focus move among them is not followed.
+        let answered = self.take_tab_focus_answers(herdr, herdr_focus_moved);
+        let focus_answered = herdr_focus_moved
+            && herdr
+                .focused_tab_id
+                .as_ref()
+                .is_some_and(|tab_id| answered.iter().any(|request| request.tab_id == *tab_id));
         let selected_pane_id = self.snapshot.terminal.pane_id.clone();
         // The catalog is rebuilt whole on every pass, so a checkout absent
         // from it is gone rather than momentarily missing. Keeping its tab
@@ -1388,9 +1395,8 @@ impl Runtime {
                             // use first membership; local creates carry a claim.
                             && (workspace.device_id != workspace::LOCAL_DEVICE_ID
                                 || self.workspace_views.is_none()
-                                || self.pending_tab_focus.as_ref().is_some_and(|pending| {
-                                    pending.target_id == *tab_id
-                                })
+                                || answered.iter().any(|request| request.tab_id == *tab_id)
+                                || self.tab_move_asked(tab_id)
                                 || (herdr.focus_event.as_ref().is_some_and(|event| !event.creation))
                                 || (herdr.focus_event.is_none() && self.snapshot.navigator.workspaces.iter().any(|previous| {
                                     previous.checkouts.iter().any(|previous| {
@@ -1402,21 +1408,8 @@ impl Runtime {
                                 })))
                     })
                     .map(str::to_owned);
-                let pending = self
-                    .pending_tab_focus
-                    .as_ref()
-                    .filter(|pending| pending.scope_id == checkout.id);
-                let pending_tab = pending.map(|pending| pending.target_id.clone());
-                // A tab focus is confirmed by the workspace that owns the
-                // tab showing it, whichever workspace Herdr's keyboard is in,
-                // and only once it has left: a session that arrives before
-                // that is Herdr from before the request, whatever it shows,
-                // and the request still reaches Herdr afterwards (#629).
-                if pending.is_some_and(|pending| {
-                    pending.sent && herdr.is_active_in_its_workspace(&pending.target_id)
-                }) {
-                    confirmed_pending = true;
-                }
+                let pending_tab = self.newest_tab_ask_in(&checkout.id);
+                let outstanding = self.tab_moves_outstanding(&checkout.id);
                 // The tab holding the selected pane, when it is in this
                 // checkout. With no tab of its own yet, Hide shows the tab the
                 // keyboard is in rather than one Herdr remembers, so a restore
@@ -1439,55 +1432,44 @@ impl Runtime {
                         .any(|tab| tab.id.as_deref() == Some(tab_id))
                 });
                 // Herdr arriving at a tab Hide asked for and has since moved
-                // off is that request's answer. It is consumed, so the same
-                // tab focused again later is followed like any outside move.
-                let answers_superseded = herdr_tab.as_deref().is_some_and(|tab_id| {
-                    self.superseded_tab_focus
-                        .iter()
-                        .any(|held| held.scope_id == checkout.id && held.target_id == tab_id)
-                });
-                if answers_superseded && let Some(tab_id) = herdr_tab.as_deref() {
-                    self.superseded_tab_focus
-                        .retain(|held| held.scope_id != checkout.id || held.target_id != tab_id);
-                    // Recorded only where the answer would have been followed.
-                    if hide_tab
-                        .as_deref()
-                        .is_some_and(|hide_tab| hide_tab != tab_id)
-                    {
-                        crate::diagnostic!(serde_json::json!({
-                            "component": "view_state",
-                            "kind": "tab.focus.late_answer",
-                            "checkout_id": checkout.id,
-                            "from_tab_id": hide_tab,
-                            "tab_id": tab_id,
-                        }));
-                    }
+                // off is that request's answer, recorded where it would have
+                // been followed.
+                if focus_answered
+                    && let (Some(hide_tab), Some(tab_id)) =
+                        (hide_tab.as_deref(), herdr_tab.as_deref())
+                    && hide_tab != tab_id
+                {
+                    crate::diagnostic!(serde_json::json!({
+                        "component": "view_state",
+                        "kind": "tab.focus.late_answer",
+                        "checkout_id": checkout.id,
+                        "from_tab_id": hide_tab,
+                        "tab_id": tab_id,
+                    }));
                 }
                 let visible = match (hide_tab, herdr_tab) {
                     (Some(hide_tab), Some(herdr_tab)) if hide_tab == herdr_tab => Some(hide_tab),
-                    (Some(hide_tab), Some(_)) if answers_superseded => Some(hide_tab),
+                    // Hide's own answer, or Herdr about to be moved again by
+                    // a request still outstanding: neither is followed.
+                    (Some(hide_tab), Some(_)) if focus_answered || outstanding => Some(hide_tab),
                     (Some(hide_tab), Some(herdr_tab)) => {
-                        if pending_tab.as_deref() == Some(hide_tab.as_str()) {
-                            Some(hide_tab)
-                        } else {
-                            // Following the tab has to bring the keyboard with
-                            // it. Leaving the projection on the tab that just
-                            // stopped being visible parks the focus ring and
-                            // the first responder on a pane nobody can see.
-                            if self.snapshot.navigator.focused_checkout_id.as_deref()
-                                == Some(checkout.id.as_str())
-                            {
-                                let first_pane_id = checkout
-                                    .tabs
-                                    .iter()
-                                    .find(|tab| tab.id.as_deref() == Some(herdr_tab.as_str()))
-                                    .and_then(|tab| tab.panes.first())
-                                    .map(|pane| pane.id.clone());
-                                follow_pane = self.tab_focus_pane_id(&herdr_tab, first_pane_id);
-                            }
-                            followed.push((checkout.id.clone(), hide_tab, herdr_tab.clone()));
-                            Some(herdr_tab)
+                        // Following the tab has to bring the keyboard with
+                        // it. Leaving the projection on the tab that just
+                        // stopped being visible parks the focus ring and
+                        // the first responder on a pane nobody can see.
+                        if self.snapshot.navigator.focused_checkout_id.as_deref()
+                            == Some(checkout.id.as_str())
+                        {
+                            let first_pane_id = checkout
+                                .tabs
+                                .iter()
+                                .find(|tab| tab.id.as_deref() == Some(herdr_tab.as_str()))
+                                .and_then(|tab| tab.panes.first())
+                                .map(|pane| pane.id.clone());
+                            follow_pane = self.tab_focus_pane_id(&herdr_tab, first_pane_id);
                         }
+                        followed.push((checkout.id.clone(), hide_tab, herdr_tab.clone()));
+                        Some(herdr_tab)
                     }
                     (Some(hide_tab), None) => Some(hide_tab),
                     // With no value of its own yet, Hide takes the first of:
@@ -1527,7 +1509,6 @@ impl Runtime {
                                 .find(|tab| tab.id.as_deref() == Some(&tab_id))
                                 .and_then(|tab| tab.panes.first())
                                 .map(|pane| pane.id.clone());
-                            confirmed_pending = true;
                         }
                         if !pending_tab_unlisted {
                             self.visible_tab_ids
@@ -1549,9 +1530,6 @@ impl Runtime {
         }
         for error in agent_layout_errors {
             self.push_diagnostic("agent_layout.reconcile_refused", error);
-        }
-        if confirmed_pending {
-            self.pending_tab_focus = None;
         }
         if let Some(pane_id) = follow_pane {
             self.select_terminal_pane(Some(pane_id));
@@ -1654,68 +1632,46 @@ impl Runtime {
     /// screen out from under them. Dropping the wait is what lets the next
     /// Herdr event be read as an external focus rather than as a late answer.
     pub(super) fn expire_pending_view_focus(&mut self, now_unix_ms: u64) -> bool {
-        // A superseded request Herdr never visibly answered (its event was
-        // folded into the next one) stops claiming that tab with the same
-        // bound; Hide's value never depended on it, so nothing is reported.
-        self.superseded_tab_focus
-            .retain(|held| !held.expired_at(now_unix_ms));
-        let mut expired = Vec::new();
-        for slot in ViewFocusSlot::ALL {
-            // A socket control already has its own bounded transport wait.
-            // Expiring its latest intent would misread its eventual response
-            // as external focus and could release an older request's successor.
-            if slot == ViewFocusSlot::Pane && self.pane_focus_in_flight.is_some() {
-                continue;
-            }
-            // The tab move a running pane focus makes waits with it, and its
-            // deadline starts again when Herdr answers the focus.
-            if slot == ViewFocusSlot::Tab
-                && let (Some(tab), Some(control)) = (
-                    self.pending_tab_focus.as_ref(),
-                    self.pane_focus_in_flight.as_ref(),
-                )
-                && tab.pane_control_serial == Some(control.serial)
-            {
-                continue;
-            }
-            let pending = self.pending_view_focus(slot);
-            if let Some(pending) = pending.as_ref()
-                && pending.expired_at(now_unix_ms)
-            {
-                expired.push((slot, pending.clone()));
-                *self.pending_view_focus_mut(slot) = None;
-            }
+        let tab_timed_out = self.expire_tab_focus_requests(now_unix_ms);
+        // A socket control already has its own bounded transport wait.
+        // Expiring its latest intent would misread its eventual response as
+        // external focus and could release an older request's successor.
+        if self.pane_focus_in_flight.is_some() {
+            return tab_timed_out;
         }
-        let changed = !expired.is_empty();
-        for (slot, pending) in expired {
-            let what = slot.what();
-            let target_id = pending.target_id;
-            if slot == ViewFocusSlot::Pane {
-                self.finish_pane_focus_request(
-                    pending.request_id.as_deref(),
-                    &target_id,
-                    "failed",
-                    Some(format!(
-                        "Herdr did not confirm pane focus within {VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS} ms."
-                    )),
-                    true,
-                );
-            }
-            crate::diagnostic!(serde_json::json!({
-                "component": "view_state",
-                "kind": "view_focus.timed_out",
-                "what": what,
-                "target_id": target_id,
-                "timeout_ms": VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS,
-            }));
-            self.push_diagnostic(
-                "view_focus.timed_out",
-                format!(
-                    "Herdr did not confirm {what} focus {target_id} within {VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS} ms; Hide keeps it"
-                ),
-            );
-        }
-        changed
+        let Some(pending) = self
+            .pending_pane_focus
+            .take_if(|pending| pending.expired_at(now_unix_ms))
+        else {
+            return tab_timed_out;
+        };
+        self.finish_pane_focus_request(
+            pending.request_id.as_deref(),
+            &pending.target_id,
+            "failed",
+            Some(format!(
+                "Herdr did not confirm pane focus within {VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS} ms."
+            )),
+            true,
+        );
+        self.report_timed_out_view_focus(ViewFocusSlot::Pane, &pending.target_id);
+        true
+    }
+    pub(super) fn report_timed_out_view_focus(&mut self, slot: ViewFocusSlot, target_id: &str) {
+        let what = slot.what();
+        crate::diagnostic!(serde_json::json!({
+            "component": "view_state",
+            "kind": "view_focus.timed_out",
+            "what": what,
+            "target_id": target_id,
+            "timeout_ms": VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS,
+        }));
+        self.push_diagnostic(
+            "view_focus.timed_out",
+            format!(
+                "Herdr did not confirm {what} focus {target_id} within {VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS} ms; Hide keeps it"
+            ),
+        );
     }
     pub(super) fn sync_active_tab_projection(&mut self) {
         let Some(focused_checkout_id) = self.snapshot.navigator.focused_checkout_id.as_deref()
@@ -2961,11 +2917,6 @@ impl Runtime {
                     Some("A newer pane focus replaced this request.".to_owned()),
                     true,
                 );
-                // One that never left moves no tab; one that left is answered
-                // anyway, and the wait below supersedes its tab.
-                if !pending.sent {
-                    self.drop_pane_focus_tab_wait(pending.pane_control_serial);
-                }
             }
             self.push_diagnostic("pane.focus.requested", format!("Focusing pane {pane_id}"));
             let Some(serial) = self.next_pane_focus_serial.checked_add(1) else {
@@ -2983,12 +2934,10 @@ impl Runtime {
             self.next_pane_focus_serial = serial;
             let mut pending = match request_id {
                 Some(request_id) => PendingViewFocus::pane_request(pane_id.clone(), request_id),
-                None => PendingViewFocus::new(String::new(), pane_id.clone()),
+                None => PendingViewFocus::new(pane_id.clone()),
             };
             pending.pane_control_serial = Some(serial);
             self.pending_pane_focus = Some(pending);
-            // Armed before the submission, which sends at once on an idle lane.
-            self.await_pane_focus_tab(&pane_id, serial);
             if let Err(message) = self.submit_pane_focus_turn() {
                 self.fail_unsent_pane_focus(&pane_id, message);
                 return;
@@ -3022,19 +2971,12 @@ impl Runtime {
         let serial = pending.pane_control_serial?;
         pending.sent = true;
         pending.requested_at_unix_ms = unix_milliseconds();
-        if let Some(tab) = self
-            .pending_tab_focus
-            .as_mut()
-            .filter(|tab| tab.pane_control_serial == Some(serial))
-        {
-            tab.sent = true;
-            tab.requested_at_unix_ms = unix_milliseconds();
-        }
         let control = PendingPaneFocusControl {
             serial,
             target_id: pending.target_id.clone(),
             live_generation: self.live_generation,
         };
+        self.send_pane_focus_tab(&control.target_id, serial);
         self.pane_focus_in_flight = Some(control.clone());
         Some((context, control))
     }
@@ -3106,7 +3048,7 @@ impl Runtime {
             return;
         };
         self.pending_pane_focus = None;
-        self.drop_pane_focus_tab_wait(pending.pane_control_serial);
+        self.drop_pane_focus_tab(pending.pane_control_serial);
         self.finish_pane_focus_request(
             pending.request_id.as_deref(),
             target_pane_id,
@@ -3234,10 +3176,7 @@ impl Runtime {
         // that was already on its way.
         let previous_focus = self.snapshot.focused.pane_id.clone();
         let pending_pane = self.pending_pane_focus.clone();
-        let arriving_confirms_pending_tab = self
-            .pending_tab_focus
-            .as_ref()
-            .is_some_and(|pending| pending.target_id == arriving_tab_id);
+        let arriving_confirms_pending_tab = self.tab_move_asked(&arriving_tab_id);
         let mut adopt_focus = match pending_pane.as_ref() {
             _ if self.pane_focus_in_flight.is_some() => false,
             Some(pending)
@@ -3343,37 +3282,35 @@ impl Runtime {
                     .collect::<Vec<_>>();
         layout_changed || projection_changed
     }
-    /// Ends the wait on a view-state focus Herdr refused, keeping the value
-    /// Hide chose and reporting the refusal.
+    /// Ends the wait on a pane focus Herdr refused, keeping the pane Hide
+    /// chose and reporting the refusal.
     ///
-    /// A refusal that names some other target is not this wait's answer and
-    /// is left alone, so a late refusal for a tab the operator has already
+    /// A refusal that names some other pane is not this wait's answer and
+    /// is left alone, so a late refusal for a pane the operator has already
     /// moved on from cannot end the wait on the current one.
-    pub(super) fn clear_refused_view_focus(
+    pub(super) fn clear_refused_pane_focus(&mut self, pane_id: &str, message: &str) {
+        let Some(pending) = self
+            .pending_pane_focus
+            .take_if(|pending| pending.target_id == pane_id)
+        else {
+            return;
+        };
+        self.drop_pane_focus_tab(pending.pane_control_serial);
+        self.finish_pane_focus_request(
+            pending.request_id.as_deref(),
+            pane_id,
+            "failed",
+            Some(message.to_owned()),
+            true,
+        );
+        self.report_refused_view_focus(ViewFocusSlot::Pane, pane_id, message);
+    }
+    pub(super) fn report_refused_view_focus(
         &mut self,
         slot: ViewFocusSlot,
         target_id: &str,
         message: &str,
     ) {
-        let Some(pending) = self
-            .pending_view_focus(slot)
-            .as_ref()
-            .filter(|pending| pending.target_id == target_id)
-            .cloned()
-        else {
-            return;
-        };
-        *self.pending_view_focus_mut(slot) = None;
-        if slot == ViewFocusSlot::Pane {
-            self.drop_pane_focus_tab_wait(pending.pane_control_serial);
-            self.finish_pane_focus_request(
-                pending.request_id.as_deref(),
-                target_id,
-                "failed",
-                Some(message.to_owned()),
-                true,
-            );
-        }
         let what = slot.what();
         crate::diagnostic!(serde_json::json!({
             "component": "view_state",
@@ -3389,113 +3326,7 @@ impl Runtime {
             ),
         );
     }
-    /// Waits on a new tab notification. One still unanswered is remembered
-    /// as superseded rather than forgotten: Herdr applies it anyway, and its
-    /// answer can arrive after the new request has already been confirmed by
-    /// a session that predates both.
-    pub(super) fn await_tab_focus(&mut self, next: PendingViewFocus) {
-        let next_target_id = next.target_id.clone();
-        // Only a request that already left can be answered late. One still
-        // waiting on the control lane is remembered when it leaves, if it
-        // does (`mark_tab_focus_sent`); a newer tab focus replaces it there,
-        // so it never does.
-        if let Some(previous) = self.pending_tab_focus.replace(next)
-            && previous.target_id != next_target_id
-            && previous.sent
-        {
-            self.supersede_tab_focus(previous);
-        }
-    }
-    /// Ends the wait on the tab focus for `tab_id` when Herdr has answered it
-    /// and the session Hide last read already shows that tab, the one case
-    /// in which no confirming event follows.
-    pub(super) fn confirm_tab_focus_already_shown(&mut self, tab_id: &str) {
-        let confirmed = self.pending_tab_focus.as_ref().is_some_and(|pending| {
-            pending.sent
-                && pending.target_id == tab_id
-                && self.herdr_active_tab_ids.contains(tab_id)
-        });
-        if confirmed && let Some(pending) = self.pending_tab_focus.take() {
-            crate::diagnostic!(serde_json::json!({
-                "component": "view_state",
-                "kind": "tab.focus.confirmed_by_answer",
-                "checkout_id": pending.scope_id,
-                "tab_id": pending.target_id,
-            }));
-        }
-    }
-    /// Remembers a tab notification Herdr will answer after Hide has moved
-    /// on, so the answer is consumed rather than followed.
-    pub(super) fn supersede_tab_focus(&mut self, held: PendingViewFocus) {
-        self.superseded_tab_focus
-            .retain(|kept| kept.scope_id != held.scope_id || kept.target_id != held.target_id);
-        self.superseded_tab_focus.push(held);
-        if self.superseded_tab_focus.len() > SUPERSEDED_TAB_FOCUS_LIMIT {
-            let evicted = self.superseded_tab_focus.remove(0);
-            crate::diagnostic!(serde_json::json!({
-                "component": "view_state",
-                "kind": "tab.focus.superseded_evicted",
-                "checkout_id": evicted.scope_id,
-                "tab_id": evicted.target_id,
-                "limit": SUPERSEDED_TAB_FOCUS_LIMIT,
-            }));
-        }
-    }
-    /// A pane focus in a tab Herdr is not showing moves Herdr's tab too, and
-    /// Herdr reports that move on its session stream after it has answered
-    /// the focus itself. The tab is awaited like a tab focus Hide asked for,
-    /// so its arrival confirms this request, and once a newer move replaces
-    /// it, arriving late is that request's answer rather than an outside
-    /// focus (#594). A pane in the tab Herdr shows, or will show once Hide's
-    /// outstanding tab request lands, moves no tab and arms nothing.
-    pub(super) fn await_pane_focus_tab(&mut self, pane_id: &str, serial: u64) {
-        let Some((checkout_id, tab_id)) = self.checkout_tab_holding_pane(pane_id) else {
-            return;
-        };
-        let awaited = self
-            .pending_tab_focus
-            .as_ref()
-            .filter(|pending| pending.scope_id == checkout_id)
-            .map(|pending| pending.target_id == tab_id);
-        let moves_herdr = match awaited {
-            Some(same) => !same,
-            None => !self.herdr_active_tab_ids.contains(&tab_id),
-        };
-        if moves_herdr {
-            let mut wait = PendingViewFocus::new(checkout_id, tab_id);
-            wait.pane_control_serial = Some(serial);
-            self.await_tab_focus(wait);
-        }
-    }
-    /// Ends the tab wait `await_pane_focus_tab` armed for the pane focus
-    /// `serial`, once that focus will not move Herdr's tab: refused, or
-    /// replaced or failed before it left. Nothing is kept as superseded,
-    /// because Herdr has no move of it to report.
-    pub(super) fn drop_pane_focus_tab_wait(&mut self, serial: Option<u64>) {
-        if serial.is_some()
-            && self
-                .pending_tab_focus
-                .as_ref()
-                .is_some_and(|pending| pending.pane_control_serial == serial)
-        {
-            self.pending_tab_focus = None;
-        }
-    }
-    pub(super) fn checkout_holding_tab(&self, tab_id: &str) -> Option<String> {
-        self.snapshot
-            .navigator
-            .workspaces
-            .iter()
-            .flat_map(|workspace| &workspace.checkouts)
-            .find(|checkout| {
-                checkout
-                    .tabs
-                    .iter()
-                    .any(|tab| tab.id.as_deref() == Some(tab_id))
-            })
-            .map(|checkout| checkout.id.clone())
-    }
-    fn checkout_tab_holding_pane(&self, pane_id: &str) -> Option<(String, String)> {
+    pub(super) fn checkout_tab_holding_pane(&self, pane_id: &str) -> Option<(String, String)> {
         self.snapshot
             .navigator
             .workspaces
@@ -3512,26 +3343,17 @@ impl Runtime {
     }
     /// Rule 11: whether repeating this view-state change would converge on
     /// what the core already holds, so Herdr needs no second notification.
-    /// True when nothing is in flight for the slot, or what is in flight is
-    /// this very target.
+    /// True when nothing is asked for, or what was asked last is this very
+    /// target.
     pub(super) fn view_focus_settled_on(&self, slot: ViewFocusSlot, target_id: &str) -> bool {
-        self.pending_view_focus(slot)
-            .as_ref()
-            .is_none_or(|pending| pending.target_id == target_id)
-    }
-    pub(super) fn pending_view_focus(&self, slot: ViewFocusSlot) -> &Option<PendingViewFocus> {
         match slot {
-            ViewFocusSlot::Tab => &self.pending_tab_focus,
-            ViewFocusSlot::Pane => &self.pending_pane_focus,
-        }
-    }
-    pub(super) fn pending_view_focus_mut(
-        &mut self,
-        slot: ViewFocusSlot,
-    ) -> &mut Option<PendingViewFocus> {
-        match slot {
-            ViewFocusSlot::Tab => &mut self.pending_tab_focus,
-            ViewFocusSlot::Pane => &mut self.pending_pane_focus,
+            ViewFocusSlot::Tab => self
+                .newest_tab_ask()
+                .is_none_or(|tab_id| tab_id == target_id),
+            ViewFocusSlot::Pane => self
+                .pending_pane_focus
+                .as_ref()
+                .is_none_or(|pending| pending.target_id == target_id),
         }
     }
     /// Reports that Hide moved its keyboard focus to follow a pane focus made
@@ -4650,20 +4472,17 @@ impl Runtime {
                     ) {
                         self.visible_tab_ids
                             .insert(checkout_id.clone(), tab_id.clone());
-                        self.await_tab_focus(
-                            PendingViewFocus::new(checkout_id, tab_id.clone()).already_sent(),
-                        );
+                        self.send_created_tab(checkout_id, tab_id.clone());
                     }
                     self.yield_surface_to_terminal();
                     self.persist_current_ui_state();
                 }
                 // Herdr publishes no event for focusing the tab it already
-                // shows, so a tab focus that lands where the session Hide last
-                // read already had Herdr is confirmed by this answer; waiting
-                // for an event would hold every move Herdr makes until the
-                // deadline. A late event of an earlier request is superseded.
+                // shows, so a tab focus that lands where Herdr already was is
+                // settled by this answer; waiting for an event would hold
+                // every move Herdr makes until the deadline.
                 if let RemoteControlAction::FocusTab { tab_id } = &action {
-                    self.confirm_tab_focus_already_shown(tab_id);
+                    self.answer_tab_focus(tab_id);
                 }
                 self.push_diagnostic(
                     "tab.control.ready",
@@ -4706,14 +4525,7 @@ impl Runtime {
                 // and the wait ends, so the next Herdr event naming another
                 // tab is read as an external focus rather than a late answer.
                 if let RemoteControlAction::FocusTab { tab_id } = &action {
-                    // A refused superseded request will never be answered.
-                    // One whose result was lost may still have been applied,
-                    // so it keeps waiting for its answer until it expires.
-                    if !error.is_ambiguous() {
-                        self.superseded_tab_focus
-                            .retain(|held| held.target_id != *tab_id);
-                    }
-                    self.clear_refused_view_focus(ViewFocusSlot::Tab, tab_id, &message);
+                    self.refuse_tab_focus(tab_id, &message, !error.is_ambiguous());
                 }
                 self.set_error(
                     "tab.control.failed",

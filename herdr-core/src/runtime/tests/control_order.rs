@@ -156,13 +156,8 @@ fn a_tab_focus_replaced_before_it_was_sent_leaves_no_late_answer_to_wait_for() {
     for tab in ["w-order:t2", "w-order:t3", "w-order:t1"] {
         assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, tab)));
     }
-    let superseded = runtime
-        .superseded_tab_focus
-        .iter()
-        .map(|held| held.target_id.as_str())
-        .collect::<Vec<_>>();
     assert_eq!(
-        superseded,
+        sent_tab_moves(&runtime),
         ["w-order:t2"],
         "t2 was sent and may be answered late; t3 never left"
     );
@@ -204,7 +199,11 @@ fn a_lost_tab_focus_answer_does_not_release_the_focus_waiting_behind_it() {
         checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
         Some("w-order:t1")
     );
-    assert!(runtime.pending_tab_focus.is_none());
+    assert_eq!(
+        sent_tab_moves(&runtime),
+        ["w-order:t2"],
+        "the lost one may still land; the one behind it never left"
+    );
 
     assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t3")));
     herdr.wait_for_requests(2, Duration::from_secs(5));
@@ -384,12 +383,10 @@ fn a_tab_focus_waits_for_the_pane_focus_ahead_of_it() {
         .expect("the pane focus is on the wire");
     assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t3")));
     assert_eq!(runtime.control_lane.queued_len(), 1);
-    assert!(
-        runtime
-            .pending_tab_focus
-            .as_ref()
-            .is_some_and(|pending| !pending.sent),
-        "the tab focus has not left"
+    assert_eq!(
+        sent_tab_moves(&runtime),
+        ["w-order:t2"],
+        "only the pane focus has left; the tab focus has not"
     );
 
     let layout = runtime
@@ -399,10 +396,7 @@ fn a_tab_focus_waits_for_the_pane_focus_ahead_of_it() {
     runtime.complete_lane_pane_focus(running, Ok(layout), 5);
 
     assert!(
-        runtime
-            .pending_tab_focus
-            .as_ref()
-            .is_some_and(|pending| pending.sent),
+        sent_tab_moves(&runtime).contains(&"w-order:t3".to_owned()),
         "the tab focus left once the pane focus was answered"
     );
     assert_eq!(runtime.control_lane.queued_len(), 0);
@@ -477,7 +471,11 @@ fn a_lost_pane_focus_answer_does_not_release_the_tab_focus_behind_it() {
             && message.contains("1 newer tab focus was not sent"),
         "{message}"
     );
-    assert!(runtime.pending_tab_focus.is_none());
+    assert_eq!(
+        sent_tab_moves(&runtime),
+        ["w-order:t2"],
+        "the lost pane focus may still move Herdr; the tab focus never left"
+    );
 }
 
 /// A pane focus accepted behind a pane focus whose answer was lost is

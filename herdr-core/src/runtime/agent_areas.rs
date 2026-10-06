@@ -168,7 +168,6 @@ impl Runtime {
                 checkout.active_tab_id = tab_id;
             }
             if selected_waiting {
-                self.pending_tab_focus = None;
                 self.select_terminal_pane(pane);
                 self.operator_focused_pane_id = None;
             }

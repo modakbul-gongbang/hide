@@ -6,8 +6,9 @@
 //! - **Queued**: accepted, not sent. Nothing about it can reach Herdr, so a
 //!   newer request that replaces it leaves no late answer behind.
 //! - **In flight**: sent, unanswered. Herdr applies it whatever Hide has
-//!   decided since, so a request replaced now is *superseded*: its answer is
-//!   still coming and must not be read as someone else moving the focus.
+//!   decided since, so its answer is still coming after a newer request and
+//!   must not be read as someone else moving the focus; the tab moves in
+//!   flight are kept in the order they left (`tab_focus.rs`).
 //! - **Settled**: answered, refused, or lost. The runtime records the result
 //!   where it always did.
 //!
@@ -95,6 +96,11 @@ impl ControlLane {
     #[cfg(test)]
     pub(super) fn queued_len(&self) -> usize {
         self.queued.len()
+    }
+
+    /// The jobs waiting behind the running one, in the order they will run.
+    pub(super) fn queued_jobs(&self) -> impl Iterator<Item = &LaneJob> {
+        self.queued.iter().map(|(_, job)| job)
     }
 
     /// The serial of the job running now. A result that lands while it is
@@ -276,20 +282,12 @@ impl Runtime {
     fn release_unsent_claim(&mut self, claim: UnsentClaim) {
         match claim {
             UnsentClaim::None => {}
-            UnsentClaim::TabFocus(tab_id) => {
-                if self
-                    .pending_tab_focus
-                    .as_ref()
-                    .is_some_and(|pending| pending.target_id == tab_id && pending.sent)
-                {
-                    self.pending_tab_focus = None;
-                }
-            }
+            UnsentClaim::TabFocus(tab_id) => self.unsend_tab_focus(&tab_id),
             UnsentClaim::PaneFocus(control) => {
                 if self.pane_focus_in_flight.as_ref() == Some(&control) {
                     self.pane_focus_in_flight = None;
                 }
-                self.drop_pane_focus_tab_wait(Some(control.serial));
+                self.drop_pane_focus_tab(Some(control.serial));
             }
         }
     }
@@ -312,7 +310,7 @@ impl Runtime {
                         continue;
                     };
                     if let RemoteControlAction::FocusTab { tab_id } = &action {
-                        self.mark_tab_focus_sent(tab_id);
+                        self.send_tab_focus(tab_id);
                     }
                     let live_generation = self.live_generation;
                     if let RemoteControlAction::MoveTab {
@@ -386,11 +384,7 @@ impl Runtime {
                 RemoteControlAction::FocusTab { tab_id } => Some(LostAnswer {
                     kind: "tab.focus",
                     target_id: tab_id.clone(),
-                    request_id: self
-                        .pending_tab_focus
-                        .as_ref()
-                        .filter(|pending| pending.target_id == *tab_id && pending.sent)
-                        .and_then(|pending| pending.request_id.clone()),
+                    request_id: None,
                     serial: None,
                 }),
                 _ => None,
@@ -473,13 +467,6 @@ impl Runtime {
         if dropped == 0 {
             return false;
         }
-        let unsent = self
-            .pending_tab_focus
-            .as_ref()
-            .is_some_and(|pending| !pending.sent);
-        if unsent {
-            self.pending_tab_focus = None;
-        }
         self.record_dropped_focus(
             "tab.focus.unknown",
             dropped,
@@ -527,33 +514,5 @@ impl Runtime {
             self.set_error("pane.focus_unknown", message, true);
         }
         true
-    }
-
-    /// Records that the tab focus for `tab_id` has left for Herdr: from now
-    /// on its answer can arrive after something newer replaced it. One whose
-    /// wait was replaced or settled while it waited here still leaves (a
-    /// pane focus's tab wait does not take it off the lane), so its answer
-    /// is remembered as superseded from now (#629). A tab no checkout lists
-    /// has nothing to follow, so nothing of it is remembered.
-    fn mark_tab_focus_sent(&mut self, tab_id: &str) {
-        match self
-            .pending_tab_focus
-            .as_mut()
-            .filter(|pending| pending.target_id == tab_id)
-        {
-            Some(pending) => {
-                if !pending.sent {
-                    pending.sent = true;
-                    pending.requested_at_unix_ms = unix_milliseconds();
-                }
-            }
-            None => {
-                if let Some(checkout_id) = self.checkout_holding_tab(tab_id) {
-                    self.supersede_tab_focus(
-                        PendingViewFocus::new(checkout_id, tab_id).already_sent(),
-                    );
-                }
-            }
-        }
     }
 }
