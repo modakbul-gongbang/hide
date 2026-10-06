@@ -1239,6 +1239,7 @@ pub(super) enum Event {
     AgentSleepSet(AgentSleepSetPayload),
     AgentSleep(PaneTargetPayload),
     PaneInputSubmitted(PaneTargetPayload),
+    PaneInputSent(PaneTargetPayload),
     PaneVisit(PaneTargetPayload),
     AgentWake(AgentWakePayload),
     AgentTreeToggle(PaneTargetPayload),
@@ -1443,6 +1444,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "agent_sleep_set" => decode!(AgentSleepSetPayload, AgentSleepSet),
         "agent_sleep" => decode!(PaneTargetPayload, AgentSleep),
         "pane_input_submitted" => decode!(PaneTargetPayload, PaneInputSubmitted),
+        "pane_input_sent" => decode!(PaneTargetPayload, PaneInputSent),
         "pane_visit" => decode!(PaneTargetPayload, PaneVisit),
         "agent_wake" => decode!(AgentWakePayload, AgentWake),
         "agent_tree_toggle" => decode!(PaneTargetPayload, AgentTreeToggle),
@@ -1580,9 +1582,8 @@ impl Runtime {
             Event::AttachmentReady(payload) => self.attachment_ready(payload),
             Event::AttachmentAction(payload) => self.attachment_action(payload),
             Event::Key(payload) => {
-                if let Some(observation) = self.delivery_observations.get_mut(&payload.pane_id) {
-                    observation.last_input_at_unix_ms = super::unix_milliseconds();
-                }
+                let submits = crate::labels::input::key_submits(&payload.bytes_base64);
+                self.note_delivery_key(&payload.pane_id);
                 if let Some(changed) = self.drop_input_to_sleeping_pane(&payload.pane_id) {
                     return changed;
                 }
@@ -1595,7 +1596,7 @@ impl Runtime {
                 self.snapshot.terminal.pane_id = Some(payload.pane_id.clone());
                 self.ensure_terminal_pane(&payload.pane_id);
                 self.sync_focused_terminal_projection();
-                if crate::labels::input::key_submits(&payload.bytes_base64) {
+                if submits {
                     self.record_operator_submit(&payload.pane_id);
                 }
                 if self.live.is_some()
@@ -1625,7 +1626,14 @@ impl Runtime {
             Event::AgentSleep(payload) => self.request_agent_sleep(&payload.pane_id),
             // The phone's reply reached the pane; nothing on screen moves.
             Event::PaneInputSubmitted(payload) => {
+                self.note_delivery_reply(&payload.pane_id);
                 self.record_operator_submit(&payload.pane_id);
+                false
+            }
+            // A phone key or reply is about to be written to the pane: a draft
+            // may grow there, which the doorbell must not type over.
+            Event::PaneInputSent(payload) => {
+                self.note_delivery_key(&payload.pane_id);
                 false
             }
             Event::PaneVisit(payload) => self.record_pane_visit(payload.pane_id),
@@ -2883,60 +2891,50 @@ impl Runtime {
                 {
                     return true;
                 }
-                self.start_explorer_operation(
-                    |root| {
-                        files::ExplorerOperation::create(
-                            files::ExplorerOperationKind::FileCreate,
-                            root,
-                            &payload.parent,
-                            &payload.name,
-                        )
+                self.request_explorer_change(ExplorerRequest {
+                    root: payload.root,
+                    device: payload.device_id,
+                    change: ExplorerChange::Create {
+                        kind: files::ExplorerOperationKind::FileCreate,
+                        parent: payload.parent,
+                        name: payload.name,
                     },
-                    &payload.root,
-                    &payload.parent,
-                    payload.device_id.as_deref(),
-                )
+                })
             }
-            Event::DirCreate(payload) => self.start_explorer_operation(
-                |root| {
-                    files::ExplorerOperation::create(
-                        files::ExplorerOperationKind::DirCreate,
-                        root,
-                        &payload.parent,
-                        &payload.name,
-                    )
+            Event::DirCreate(payload) => self.request_explorer_change(ExplorerRequest {
+                root: payload.root,
+                device: payload.device_id,
+                change: ExplorerChange::Create {
+                    kind: files::ExplorerOperationKind::DirCreate,
+                    parent: payload.parent,
+                    name: payload.name,
                 },
-                &payload.root,
-                &payload.parent,
-                payload.device_id.as_deref(),
-            ),
-            Event::PathRename(payload) => self.start_explorer_operation(
-                |root| files::ExplorerOperation::rename(root, &payload.path, &payload.name),
-                &payload.root,
-                &payload.path,
-                payload.device_id.as_deref(),
-            ),
-            Event::PathMove(payload) => self.start_explorer_operation(
-                |root| {
-                    files::ExplorerOperation::move_into(root, &payload.path, &payload.destination)
+            }),
+            Event::PathRename(payload) => self.request_explorer_change(ExplorerRequest {
+                root: payload.root,
+                device: payload.device_id,
+                change: ExplorerChange::Rename {
+                    path: payload.path,
+                    name: payload.name,
                 },
-                &payload.root,
-                &payload.path,
-                payload.device_id.as_deref(),
-            ),
-            Event::PathTrash(payload) => self.start_explorer_operation(
-                |root| {
-                    files::ExplorerOperation::trash(
-                        root,
-                        &payload.path,
-                        &payload.select_after,
-                        payload.inode,
-                    )
+            }),
+            Event::PathMove(payload) => self.request_explorer_change(ExplorerRequest {
+                root: payload.root,
+                device: payload.device_id,
+                change: ExplorerChange::Move {
+                    path: payload.path,
+                    destination: payload.destination,
                 },
-                &payload.root,
-                &payload.path,
-                payload.device_id.as_deref(),
-            ),
+            }),
+            Event::PathTrash(payload) => self.request_explorer_change(ExplorerRequest {
+                root: payload.root,
+                device: payload.device_id,
+                change: ExplorerChange::Trash {
+                    path: payload.path,
+                    select_after: payload.select_after,
+                    inode: payload.inode,
+                },
+            }),
             Event::TerminalClick(payload) => {
                 // D8 explicitly chooses Herdr's detected agent as the policy
                 // boundary until its frame protocol carries mouse mode.

@@ -23,10 +23,15 @@ fn context(stdout: &str) -> Result<String> {
         .to_owned())
 }
 
+/// The prompt hook of the turn Hide's own bell opened: only that turn receives
+/// the letter bodies, an operator's prompt receives a count.
 fn hook(binary: &std::path::Path, session: &str) -> String {
     format!(
         "printf '%s' {} | {} hook --runtime claude-code --event UserPromptSubmit",
-        quote(serde_json::json!({"session_id":session,"prompt":"fixture input"}).to_string()),
+        quote(
+            serde_json::json!({"session_id":session,"prompt":hide_agent_hooks::delivery::BELL_PROMPT})
+                .to_string()
+        ),
         quote(binary)
     )
 }

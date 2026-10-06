@@ -73,6 +73,9 @@ impl Runtime {
             let pending = self.pending_pane_focus.take().expect("latest focus intent");
             match result {
                 Ok(layout) => {
+                    // Read before the answer updates it: whether the session
+                    // Hide last read already had Herdr on this tab.
+                    let tab_already_shown = self.herdr_active_tab_ids.contains(&layout.tab_id);
                     // Update the focus memory from the authoritative reads;
                     // geometry still belongs to the sequenced session stream.
                     for stored in &mut self.snapshot.pane_layouts {
@@ -83,14 +86,19 @@ impl Runtime {
                             stored.focused_pane_id = layout.focused_pane_id.clone();
                         }
                     }
-                    self.herdr_active_tab_ids.insert(layout.tab_id);
+                    self.herdr_active_tab_ids.insert(layout.tab_id.clone());
                     // Herdr moves its tab now; the session stream reports
-                    // that move within a tab focus's deadline from here.
+                    // that move within a tab focus's deadline from here. A
+                    // tab Herdr already showed moves nowhere and publishes no
+                    // event, so this answer is the confirmation.
                     if let Some(tab) = self.pending_tab_focus.as_mut().filter(|tab| {
                         tab.pane_control_serial.is_some()
                             && tab.pane_control_serial == pending.pane_control_serial
                     }) {
                         tab.requested_at_unix_ms = unix_milliseconds();
+                        if tab_already_shown && tab.target_id == layout.tab_id {
+                            self.confirm_tab_focus_already_shown(&layout.tab_id);
+                        }
                     }
                     self.finish_pane_focus_request(
                         pending.request_id.as_deref(),
@@ -504,6 +512,10 @@ impl Runtime {
             "pane_id": pane_id, "request_id": request_id, "route": route,
             "reason": unavailable_reason,
         }));
+        if route == PaneFindRoute::Agent {
+            // The keys went into the agent's own search box.
+            self.note_delivery_key(pane_id);
+        }
         self.snapshot.find = PaneFindSnapshot {
             pane_id: Some(pane_id.to_owned()),
             unavailable_reason,

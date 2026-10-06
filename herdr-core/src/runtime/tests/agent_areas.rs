@@ -1272,6 +1272,10 @@ fn a_followed_reopen_seed_that_goes_leaves_the_operator_on_the_restored_tab() {
         &mut runtime,
         serde_json::json!({"action":"focus","tab_id":"w-order:t2"}),
     );
+    // This fixture's Herdr never answers, so its lane never moves on by
+    // itself; it is moved on here as Herdr's answer would, so the click
+    // leaves, and only a request that has left is confirmed.
+    let _ = runtime.advance_lane();
     // Herdr confirms the click on the right area's tab.
     runtime.ingest_session(Ok(tab_order_payload(
         "/agent-groups",

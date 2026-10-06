@@ -21,8 +21,8 @@ import path from "node:path";
 import { claudeProjects, declareParent, elsewhereTab, finishFixtureTurn, labelAgent, labelMarker, setFixtureLifecycle, setFixtureSession, startHerdr, type HerdrFixture } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
 import { chord, field } from "./chords";
-import { countSent, screenshot } from "./wire";
-import { animationsFinished, quietFor, unchangedForFrames } from "./wait";
+import { chooseTheme, countSent, screenshot } from "./wire";
+import { quietFor, unchangedForFrames } from "./wait";
 
 test.describe.configure({ timeout: 240_000 });
 
@@ -78,17 +78,6 @@ function longSession(herdr: HerdrFixture, pane: string): void {
   fs.mkdirSync(dir, { recursive: true });
   fs.writeFileSync(path.join(dir, `${sessionId}.jsonl`), records.map((record) => `${JSON.stringify(record)}\n`).join(""));
   setFixtureSession(herdr, pane, sessionId);
-}
-
-async function chooseTheme(page: Page, theme: "light" | "dark"): Promise<void> {
-  await page.keyboard.press(chord("settings"));
-  await expect(page.locator('[data-settings="true"]')).toBeVisible();
-  await page.locator('[data-settings-tab="appearance"]').click();
-  await page.locator(`[data-theme-option="${theme}"]`).click();
-  await expect(page.locator("html")).toHaveClass(new RegExp(`\\b${theme}\\b`));
-  await page.keyboard.press("Escape");
-  await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
-  await animationsFinished(page);
 }
 
 async function atRest(page: Page): Promise<void> {

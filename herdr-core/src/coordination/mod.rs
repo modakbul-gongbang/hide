@@ -16,7 +16,9 @@ pub(crate) const SPAWN_LIMIT: usize = 4096;
 pub enum Command {
     Register {
         check: bool,
-        machine: String,
+        /// The caller's own machine when given; absent means the machine
+        /// the caller's pane capability already names.
+        machine: Option<String>,
         host_scope: String,
         session: String,
         instance: String,

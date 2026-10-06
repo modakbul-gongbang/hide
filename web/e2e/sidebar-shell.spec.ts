@@ -7,26 +7,13 @@
 // Search field row, the bottom new-workspace button and the All projects row
 // inside the list are gone. Captured in Dark and Light.
 
-import { expect, test, type Page } from "@playwright/test";
+import { expect, test } from "@playwright/test";
 import { startHerdr } from "./herdr-fixture";
 import { startHided, type Daemon } from "./hided-fixture";
-import { screenshot } from "./wire";
+import { chooseTheme, screenshot } from "./wire";
 import { chord, commandLabel } from "./chords";
-import { animationsFinished } from "./wait";
 
 test.describe.configure({ timeout: 120_000 });
-
-async function chooseTheme(page: Page, theme: "light" | "dark"): Promise<void> {
-  await page.keyboard.press(chord("settings"));
-  await expect(page.locator('[data-settings="true"]')).toBeVisible();
-  await page.locator('[data-settings-tab="appearance"]').click();
-  await page.locator(`[data-theme-option="${theme}"]`).click();
-  await expect(page.locator("html")).toHaveClass(new RegExp(`\\b${theme}\\b`));
-  await page.keyboard.press("Escape");
-  await expect(page.locator('[data-settings="true"]')).toHaveCount(0);
-  // Controls fade their colors into the new theme; a capture waits them out.
-  await animationsFinished(page);
-}
 
 test("the Home row, the Projects | Agents strip and its Search icon, with no Add project in a browser tab", async ({ page }) => {
   await page.setViewportSize({ width: 1280, height: 800 });
