@@ -5,7 +5,8 @@
 //! forgets an agent whose process ended. So sleeping is Hide ending the
 //! pane's foreground process group with SIGTERM, which returns the pane to
 //! its shell, and waking is Herdr's own `agent.start` in that same pane with
-//! the provider's resume arguments. When Herdr offers a hibernate or an
+//! the provider's resume arguments; the signal is sent by the pane's node.
+//! When Herdr offers a hibernate or an
 //! exit mark of its own, this file is what changes; the decision, the
 //! records and the screens in `agent_sleep.rs` and the runtime stay.
 //!
@@ -16,7 +17,9 @@ use std::thread;
 use std::time::{Duration, Instant};
 
 use hide_herdr_client::{ApiConnector, ApiError, request_with_connector};
-use hide_platform::process;
+use hide_node_link::protocol::Call;
+
+use crate::node_access::{NodeLink, call_as};
 
 use crate::agent_sleep::WakeMode;
 use crate::agent_start::StartError;
@@ -62,6 +65,7 @@ impl std::fmt::Display for EndError {
 #[allow(clippy::disallowed_methods)] // a production wait, not test code
 pub(crate) fn end_agent(
     connector: &dyn ApiConnector,
+    node: &dyn NodeLink,
     pane_id: &str,
     kind: &str,
 ) -> Result<u64, EndError> {
@@ -107,7 +111,12 @@ pub(crate) fn end_agent(
         ));
     }
     // The group Herdr reported as the pane's foreground gets SIGTERM.
-    process::terminate_group(foreground).map_err(|error| {
+    call_as::<()>(
+        node,
+        Call::TerminateGroup { leader: foreground },
+        REQUEST_TIMEOUT,
+    )
+    .map_err(|error| {
         EndError::Failed(format!("ending process group {foreground} failed: {error}"))
     })?;
     let deadline = Instant::now() + END_TIMEOUT;
@@ -227,8 +236,13 @@ pub(crate) fn spawn_end(context: LiveContext, pane_id: String, kind: String) -> 
     thread::Builder::new()
         .name("herdr-core-agent-sleep".into())
         .spawn(move || {
-            let result = end_agent(context.api_connector.as_ref(), &pane_id, &kind)
-                .map_err(|error| error.to_string());
+            let result = end_agent(
+                context.api_connector.as_ref(),
+                context.node.as_ref(),
+                &pane_id,
+                &kind,
+            )
+            .map_err(|error| error.to_string());
             let Some(runtime) = context.runtime.upgrade() else {
                 return;
             };
@@ -276,6 +290,7 @@ mod tests {
 
     use super::*;
     use crate::fake_herdr::FakeHerdr;
+    use hide_platform::process;
 
     fn agent_info(status: &str, seq: u64) -> Value {
         json!({"type": "agent_info", "agent": {
@@ -314,7 +329,15 @@ mod tests {
             let _ = child.wait();
             exited.store(true, Ordering::SeqCst);
         });
-        assert_eq!(end_agent(&herdr.connector(), "w1:p1", "claude"), Ok(7));
+        assert_eq!(
+            end_agent(
+                &herdr.connector(),
+                &hide_node::Local::of_process(),
+                "w1:p1",
+                "claude"
+            ),
+            Ok(7)
+        );
         reaper.join().expect("reaped");
         assert!(!process::is_alive(pid));
     }
@@ -326,9 +349,14 @@ mod tests {
             "pane.process_info" => process_info(42, 42),
             other => panic!("unexpected {other}"),
         });
-        let error = end_agent(&herdr.connector(), "w1:p1", "claude")
-            .expect_err("nothing to end")
-            .to_string();
+        let error = end_agent(
+            &herdr.connector(),
+            &hide_node::Local::of_process(),
+            "w1:p1",
+            "claude",
+        )
+        .expect_err("nothing to end")
+        .to_string();
         assert!(error.contains("shell already holds"), "{error}");
         assert_eq!(herdr.methods(), ["agent.get", "pane.process_info"]);
     }
@@ -341,9 +369,14 @@ mod tests {
                 "pane.process_info" => process_info(shell, foreground),
                 other => panic!("unexpected {other}"),
             });
-            let error = end_agent(&herdr.connector(), "w1:p1", "claude")
-                .expect_err("refused")
-                .to_string();
+            let error = end_agent(
+                &herdr.connector(),
+                &hide_node::Local::of_process(),
+                "w1:p1",
+                "claude",
+            )
+            .expect_err("refused")
+            .to_string();
             assert!(error.contains("not a pane's"), "{error}");
             assert_eq!(herdr.methods(), ["agent.get", "pane.process_info"]);
         }
@@ -355,7 +388,13 @@ mod tests {
             "agent.get" => agent_info("working", 3),
             other => panic!("unexpected {other}"),
         });
-        let error = end_agent(&herdr.connector(), "w1:p1", "claude").expect_err("working");
+        let error = end_agent(
+            &herdr.connector(),
+            &hide_node::Local::of_process(),
+            "w1:p1",
+            "claude",
+        )
+        .expect_err("working");
         assert!(matches!(error, EndError::Busy(ref message) if message.contains("working")));
         assert_eq!(herdr.methods(), ["agent.get"]);
     }

@@ -440,6 +440,21 @@ pub fn handle_with_progress(
         Call::Git { root, command } => {
             to_value(crate::git_command::run(&absolute(&root)?, &command)?)
         }
+        Call::TerminateGroup { leader } => {
+            if leader <= 1 {
+                return Err(HostError::new(
+                    ErrorCode::InvalidPath,
+                    format!("Process group {leader} is not a pane's"),
+                ));
+            }
+            hide_platform::process::terminate_group(leader).map_err(|error| {
+                HostError::new(
+                    ErrorCode::Io,
+                    format!("ending process group {leader} failed: {error}"),
+                )
+            })?;
+            to_value(())
+        }
         Call::ProcessStarts { pids } => to_value(
             pids.into_iter()
                 .map(|pid| match hide_platform::process::start_time(pid) {
