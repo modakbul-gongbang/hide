@@ -211,7 +211,7 @@ export const PaneView = memo(function PaneView({
   // when the focus leaves the pane or the operator takes the keys elsewhere
   // first. Catching up is not itself a move: the answer to a click on the
   // pane that was already focused leaves the keys where the operator took
-  // them since (#608).
+  // them since (issue 608).
   const snapshotIncludesLastClick = useShellStore(caughtUp);
   const wasFocused = useRef(false);
   const waiting = useRef<{ keys: Element | null } | null>(null);
