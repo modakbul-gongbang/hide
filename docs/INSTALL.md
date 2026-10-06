@@ -266,6 +266,11 @@ The first launch of a newer app moves them once:
 - the state folder is renamed to `~/.hide/state` as a whole after the daemon running from it is stopped; a `~/.hide/state` that already exists is used, the old folder is left untouched, and the daemon's log records `state.legacy_left` with both paths;
 - `~/.local/state/hide-plugin-upgrade`, `~/.local/share/hide/agent-context-labels`, and then `~/.local/share/hide` if it is empty, are removed; `~/.local/state` and `~/.local/share` stay.
 
+A build that names this machine by its own id rather than `local` converts the state folder once, when its daemon first starts (see [ARCHITECTURE.md](ARCHITECTURE.md#the-cores-node-id)).
+The files it rewrites are copied first to `~/.hide/state/node-migration-backup/<time>/`, the Project Memory under `~/Library/Application Support/hide` among them, and `~/.hide/state/node.json` records the machine the folder belongs to.
+An older app started on a converted folder reads this Mac's projects as another device's; to go back, stop the daemon and copy the backup's files over the converted ones.
+A state folder whose `node.json` names another machine is not started: the daemon stops and its log names the file and both machines.
+
 
 Settings > Devices shows each of these on This Mac's row, with where it is or why it is not.
 A part you remove by hand stays removed; Reinstall on that row puts it back.
