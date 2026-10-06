@@ -712,6 +712,9 @@ fn a_newer_schema_is_refused_and_left_as_it_is() {
     assert!(!corrupt_path(&path).exists());
 }
 
+/// The mode bits are a Unix fact; on Windows the private-file helper owns
+/// the ACL and its own contract tests check it.
+#[cfg(unix)]
 #[test]
 fn the_store_file_is_private() {
     use std::os::unix::fs::PermissionsExt;
