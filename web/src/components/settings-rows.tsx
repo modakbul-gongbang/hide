@@ -51,8 +51,12 @@ export function Disclosure({ title, summary, children, ...data }: { title: React
 }
 
 /** A value a row reports; long paths break anywhere rather than overflow the sheet. */
-export function Value({ children, mono = true }: { children: ReactNode; mono?: boolean }) {
-  return <span className={`min-w-0 break-all text-right text-body text-subtle-foreground ${mono ? "font-mono" : ""}`}>{children}</span>;
+export function Value({ children, mono = true, ...data }: { children: ReactNode; mono?: boolean } & Record<`data-${string}`, string>) {
+  return (
+    <span className={`min-w-0 break-all text-right text-body text-subtle-foreground ${mono ? "font-mono" : ""}`} {...data}>
+      {children}
+    </span>
+  );
 }
 
 export type Tone = "ok" | "warn" | "error" | "pending" | "local" | "muted";

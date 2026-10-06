@@ -15,11 +15,9 @@ import { useInterfaceTranslation } from "./i18n/client";
 import { MobileTab } from "./MobileTab";
 import { SETTINGS_TABS, type SettingsTab } from "./settings";
 import { AgentsTab } from "./settings/AgentsTab";
-import { AppearanceTab } from "./settings/AppearanceTab";
 import { DevicesTab } from "./settings/DevicesTab";
 import { GeneralTab } from "./settings/GeneralTab";
-import { IssuesTab } from "./settings/IssuesTab";
-import { PerformanceTab } from "./settings/PerformanceTab";
+import { HideAiTab } from "./settings/HideAiTab";
 import { ShortcutsTab } from "./settings/ShortcutsTab";
 import { useShellStore } from "./store";
 import { useUiStore } from "./ui";
@@ -34,7 +32,6 @@ function SettingsSheet({ actions }: { actions: Actions }) {
   const close = () => useUiStore.getState().closeOverlay("settings");
   const [tab, setTab] = useState<SettingsTab>(() => useUiStore.getState().settingsTab);
   const subtitle = t(`settings.tabs.${tab}Description`);
-  const daemon = useShellStore((s) => s.daemon);
   const selected = useShellStore((s) => {
     const id = s.rest?.navigator?.focused_device_id ?? "local";
     return s.rest?.navigator?.devices?.find((device) => device.id === id) ?? null;
@@ -53,10 +50,14 @@ function SettingsSheet({ actions }: { actions: Actions }) {
           <div className="min-w-0 flex-1">
             <DialogTitle className="text-headline">{t("common.settings")}</DialogTitle>
             <DialogDescription>{subtitle}</DialogDescription>
-            <p className="mt-xxs text-caption text-muted-foreground" data-settings-owner={daemon?.host_name ?? "unknown"}>
-              {t("settings.owner", { host: daemon?.host_name ?? t("settings.daemonMachine") })}
-              {selected?.kind === "remote" ? ` ${t("settings.ownerRemote", { device: selected.label })}` : ""}
-            </p>
+            {/* A remote device's name shows only while it is the selected device (B6). */}
+            {selected?.kind === "remote" ? (
+              <Hint label={t("settings.ownerRemote", { device: selected.label })}>
+                <span className="mt-xxs inline-block max-w-full truncate rounded-sm border border-border px-xs text-caption text-muted-foreground outline-none focus-visible:ring-1 focus-visible:ring-ring" tabIndex={0} data-settings-device={selected.id}>
+                  {selected.label}
+                </span>
+              </Hint>
+            ) : null}
           </div>
           <Hint label={t("settings.close")} shortcut="Esc">
             <Button variant="ghost" size="icon-sm" aria-label={t("settings.close")} onClick={close} data-settings-close="true">
@@ -76,12 +77,10 @@ function SettingsSheet({ actions }: { actions: Actions }) {
           </TabsList>
           <TabsContent value={tab} className="min-h-0 flex-1 overflow-auto px-xl py-lg">
             {tab === "general" ? <GeneralTab actions={actions} /> : null}
-            {tab === "appearance" ? <AppearanceTab actions={actions} /> : null}
             {tab === "agents" ? <AgentsTab actions={actions} /> : null}
-            {tab === "issues" ? <IssuesTab actions={actions} /> : null}
+            {tab === "hideAi" ? <HideAiTab actions={actions} /> : null}
             {tab === "devices" ? <DevicesTab actions={actions} /> : null}
             {tab === "mobile" ? <MobileTab actions={actions} /> : null}
-            {tab === "performance" ? <PerformanceTab actions={actions} /> : null}
             {tab === "shortcuts" ? <ShortcutsTab actions={actions} /> : null}
           </TabsContent>
         </Tabs>

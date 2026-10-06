@@ -74,8 +74,8 @@ test("an agent slept from the pane menu keeps its row and wakes in the same pane
 
     // B2, B3: Settings > Performance counts it and keeps the choice.
     await page.keyboard.press(chord("settings"));
-    await page.locator('[data-settings-tab="performance"]').click();
-    await expect(page.locator('[data-settings-group="idle-agents"]')).toContainText("1 sleeping");
+    await page.locator('[data-settings-tab="agents"]').click();
+    await expect(page.locator('[data-settings-group="idle-agents"]')).toContainText("1 sleeping now");
     const choice = page.locator("[data-agent-sleep-after]");
     await expect(choice).toHaveAttribute("data-agent-sleep-after", "never");
     await choice.click();

@@ -61,7 +61,7 @@ test("server picker and conversation search in a background native window", asyn
     };
     const theme = async (value: "light" | "dark") => {
       await page.getByRole("button", { name: /^Settings \(/ }).click();
-      await page.locator('[data-settings-tab="appearance"]').click();
+      await page.locator('[data-settings-tab="general"]').click();
       await page.locator(`[data-theme-option="${value}"]`).click();
       await page.keyboard.press("Escape");
       await expect(page.locator("html")).toHaveClass(new RegExp(value));

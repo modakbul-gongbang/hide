@@ -989,11 +989,6 @@ export function createActions(send: DispatchFn) {
       dispatch({ schema_version: 2, kind: "kit_agent_set", payload: { device_id: deviceId, agent, enabled } });
     },
 
-    /** A switchable kit part's switch on its machine's row (PRD overview-request-view D-24). */
-    setKitComponent(deviceId: string, component: KitComponentId, enabled: boolean) {
-      dispatch({ schema_version: 2, kind: "kit_component_set", payload: { device_id: deviceId, component, enabled } });
-    },
-
     /** A tab showing the kit opened: this Mac's parts are read once. */
     checkKit() {
       dispatch({ schema_version: 2, kind: "kit_check", payload: {} });
@@ -1128,6 +1123,11 @@ export function createActions(send: DispatchFn) {
      */
     readProjectTasks(workspaceId: string) {
       dispatch({ schema_version: 2, kind: "github_request", payload: { workspace_id: workspaceId, refresh: false } });
+    },
+
+    /** Reads each of these local Git projects' GitHub answer again (General's GitHub row, Check again). */
+    refreshGithub(workspaceIds: readonly string[]) {
+      for (const workspaceId of workspaceIds) dispatch({ schema_version: 2, kind: "github_request", payload: { workspace_id: workspaceId, refresh: true } });
     },
 
     /** Re-read a local Git project's checkout facts and pull requests when its Overview opens. */

@@ -2,7 +2,7 @@ import type { Actions } from "../actions";
 import { Switch } from "../components/ui/switch";
 import { Note, Status } from "../components/settings-rows";
 import { useInterfaceTranslation } from "../i18n/client";
-import { kitAgentLine, kitAgentSwitch, kitConsentTerms, kitPartLine, kitPartSwitch } from "../settings";
+import { kitAgentLine, kitAgentSwitch, kitConsentTerms, kitPartLine } from "../settings";
 import type { Device } from "../snapshot";
 
 export function KitTerms({ helperRoot, cliDir }: { helperRoot: string | null; cliDir: string | null }) {
@@ -43,7 +43,6 @@ export function MachineKit({ device, actions }: { device: Device; actions: Actio
     <div className="mt-xs grid grid-cols-[auto_auto_minmax(0,1fr)_auto] gap-x-xs gap-y-xxs" data-machine-kit={`${device.id}:${kit.busy ? "busy" : "read"}`}>
       {kit.components.map((part) => {
         const line = kitPartLine(part, t);
-        const switched = kitPartSwitch(part);
         const mark = part.state === "installed" ? "✓" : part.state === "absent" ? "–" : part.state === "off" ? "○" : part.state === "failed" ? "✕" : "!";
         const markTone = line.tone === "ok" ? "text-success" : line.tone === "muted" ? "text-muted-foreground" : line.tone === "error" ? "text-destructive" : "text-warning";
         return (
@@ -58,17 +57,7 @@ export function MachineKit({ device, actions }: { device: Device; actions: Actio
               {/* An installed part can still carry a reason, such as a setting that applies to newly opened sessions. */}
               {part.state === "installed" && part.reason ? <span className="block text-muted-foreground" data-kit-part-note="">{part.reason}</span> : null}
             </span>
-            {switched ? (
-              <Switch
-                checked={switched.on}
-                disabled={kit.busy}
-                onCheckedChange={(checked) => actions.setKitComponent(device.id, part.id, checked)}
-                aria-label={t(switched.on ? "devices.kitSwitchOff" : "devices.kitSwitchOn", { part: part.label })}
-                data-kit-part-switch={`${device.id}:${part.id}:${switched.on ? "on" : "off"}`}
-              />
-            ) : (
-              <span aria-hidden="true" />
-            )}
+            <span aria-hidden="true" />
           </div>
         );
       })}

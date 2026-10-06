@@ -6,15 +6,13 @@ import type { TFunction } from "i18next";
 import type { DaemonInfo } from "./store";
 import type { MessageKey } from "./i18n/catalogs";
 import type { AccentName } from "./theme";
-import type { AgentRow, AiProvider, CoreDiagnostic, Device, DeviceHost, EnvironmentStatus, GithubFailureCategory, HerdrStatus, KitAgent, KitComponent, KitComponentId, KitPiece, RemoteStatus, Workspace } from "./snapshot";
+import type { AgentRow, AiProvider, CoreDiagnostic, Device, DeviceHost, EnvironmentStatus, GithubFailureCategory, HerdrStatus, KitAgent, KitComponent, KitPiece, RemoteStatus, Workspace } from "./snapshot";
 
 type Translate = TFunction<"translation">;
 
-export type SettingsTab = "general" | "appearance" | "agents" | "issues" | "devices" | "mobile" | "performance" | "shortcuts";
+export type SettingsTab = "general" | "agents" | "hideAi" | "devices" | "mobile" | "shortcuts";
 
-export const SETTINGS_TABS: readonly SettingsTab[] = [
-  "general", "appearance", "agents", "issues", "devices", "mobile", "performance", "shortcuts",
-];
+export const SETTINGS_TABS: readonly SettingsTab[] = ["general", "agents", "hideAi", "devices", "mobile", "shortcuts"];
 
 /**
  * The Sleep idle agents choices (PRD agent-sleep D-10), in the hours the core
@@ -42,7 +40,7 @@ export function sleepingCount(agents: readonly AgentRow[] | undefined): number {
   return (agents ?? []).filter((agent) => agent.sleep && !agent.pane_id.startsWith("remote:")).length;
 }
 
-/** What `gh` answered across this Mac's Git projects, the Issues tab's GitHub row. */
+/** What `gh` answered across this Mac's Git projects, General's GitHub row. */
 export type GithubAccess = { state: "connected" } | { state: "failed"; category: GithubFailureCategory; reason: string | null };
 
 /**
@@ -160,6 +158,19 @@ export function herdrLine(herdr: HerdrStatus | undefined, t: Translate): { text:
     return { text: t("settings.protocolMismatch", { received: String(herdr.received_protocol), expected: String(herdr.expected_protocol) }), tone: "error" };
   }
   return { text: state.replace(/_/g, " "), tone: "warn" };
+}
+
+/**
+ * The Herdr protocol row of the details: the number the running Herdr speaks
+ * while it matches what this build requires, and both numbers only when they
+ * differ, so a healthy connection shows one real value (B5).
+ */
+export function herdrProtocolText(herdr: HerdrStatus | undefined, t: Translate): { text: string; matches: boolean } {
+  const received = herdr?.received_protocol;
+  if (received == null) return { text: t("settings.unavailable"), matches: true };
+  const expected = herdr?.expected_protocol;
+  if (expected == null || expected === received) return { text: String(received), matches: true };
+  return { text: t("settings.protocolValue", { received: String(received), expected: String(expected) }), matches: false };
 }
 
 /**
@@ -284,20 +295,6 @@ export function kitPartLine(part: Pick<KitComponent, "state">, t: Translate): { 
     case "off":
       return { text: t("common.off"), tone: "muted" };
   }
-}
-
-/**
- * The parts the operator switches on and off from their row rather than
- * taking away by hand (PRD overview-request-view D-24). A part with nothing
- * to switch on that machine, or one that could not be read, shows no switch.
- */
-export const KIT_SWITCHED_PARTS: readonly KitComponentId[] = ["codex_per_pane"];
-
-export function kitPartSwitch(part: KitComponent): { on: boolean } | null {
-  if (!KIT_SWITCHED_PARTS.includes(part.id)) return null;
-  if (part.state === "installed") return { on: true };
-  if (part.state === "off" || part.state === "not_installed") return { on: false };
-  return null;
 }
 
 /** Whether Reinstall would change this part: the same four states the core repairs (B8). */

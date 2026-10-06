@@ -171,7 +171,7 @@ async function open(page: Page, daemon: Daemon): Promise<void> {
 async function chooseTheme(page: Page, theme: "light" | "dark"): Promise<void> {
   await page.keyboard.press(chord("settings"));
   await expect(page.locator('[data-settings="true"]')).toBeVisible();
-  await page.locator('[data-settings-tab="appearance"]').click();
+  await page.locator('[data-settings-tab="general"]').click();
   await page.locator(`[data-theme-option="${theme}"]`).click();
   await expect(page.locator("html")).toHaveClass(new RegExp(`\\b${theme}\\b`));
   await page.keyboard.press("Escape");
@@ -1006,14 +1006,6 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await page.keyboard.press("Escape");
     await expect(page.locator("[data-new-worktree]")).toHaveCount(0);
     await expect(overview).toBeVisible();
-
-    // Settings › Issues: the sources, each project's source, and how work starts.
-    await page.keyboard.press(chord("settings"));
-    await page.locator('[data-settings-tab="issues"]').click();
-    await expect(page.locator("[data-settings-issues]")).toBeVisible();
-    await expect(page.getByRole("combobox", { name: "Issue source for repo" })).toHaveText("Automatic (GitHub)");
-    await expect(page.getByRole("combobox", { name: "Issue source for quiet" })).toHaveText("Automatic (Local)");
-    await page.keyboard.press("Escape");
 
     // Start on the backlog issue makes a worktree linked to it, so the card
     // moves from Backlog to In progress; its Workspace comes to the front,

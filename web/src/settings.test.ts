@@ -13,6 +13,7 @@ import {
   kitConsentTerms as kitConsentTermsIn,
   kitRemovalLine as kitRemovalLineIn,
   herdrLine as herdrLineIn,
+  herdrProtocolText as herdrProtocolTextIn,
   hostLine as hostLineIn,
   kitAgentLine as kitAgentLineIn,
   kitAgentMachines,
@@ -20,7 +21,6 @@ import {
   kitAgentSwitch,
   kitPartLine as kitPartLineIn,
   kitPartNeedsReinstall,
-  kitPartSwitch,
   offeredModels,
   redact,
   shownIn,
@@ -44,6 +44,7 @@ const deviceLine = (device: Device, remote: RemoteStatus | undefined) => deviceL
 const kitConsentTerms = (helperRoot: string | null, cliDir: string | null) => kitConsentTermsIn(helperRoot, cliDir, t);
 const kitRemovalLine = (device: Device) => kitRemovalLineIn(device, t);
 const herdrLine = (herdr: Parameters<typeof herdrLineIn>[0]) => herdrLineIn(herdr, t);
+const herdrProtocolText = (herdr: Parameters<typeof herdrProtocolTextIn>[0]) => herdrProtocolTextIn(herdr, t);
 const hostLine = (host: DeviceHost | undefined) => hostLineIn(host, t);
 const kitPartLine = (part: KitComponent) => kitPartLineIn(part, t);
 const kitAgentLine = (agent: KitAgent) => kitAgentLineIn(agent, t);
@@ -152,6 +153,12 @@ describe("settings rules", () => {
     expect(herdrLine({ state: "protocol_mismatch", expected_protocol: 3, received_protocol: 2 }).tone).toBe("error");
     expect(herdrLine({ state: "connected" }).text).toBe("Connected");
     expect(herdrLine(undefined).text).toBe("unavailable");
+  });
+
+  it("shows the protocol as one real number while it matches, and both numbers only when it does not (B5)", () => {
+    expect(herdrProtocolText({ state: "connected", expected_protocol: 22, received_protocol: 22 })).toEqual({ text: "22", matches: true });
+    expect(herdrProtocolText({ state: "protocol_mismatch", expected_protocol: 23, received_protocol: 22 })).toEqual({ text: "22 (expects 23)", matches: false });
+    expect(herdrProtocolText({ state: "socket_missing" })).toEqual({ text: "unavailable", matches: true });
   });
 
   it("keeps the configured model among the offered ones", () => {
@@ -265,13 +272,8 @@ describe("the install kit rows (PRD device-parity B7, B8, B27)", () => {
     expect(kitPartLine(part("coordination_retirement", "absent")).tone).toBe("muted");
   });
 
-  it("gives the Codex part a switch while it has a setting to switch, and reads off as neutral (PRD overview-request-view B36)", () => {
-    expect(kitPartSwitch(part("codex_per_pane", "installed"))).toEqual({ on: true });
-    expect(kitPartSwitch(part("codex_per_pane", "off"))).toEqual({ on: false });
-    expect(kitPartSwitch(part("codex_per_pane", "absent"))).toBeNull();
-    expect(kitPartSwitch(part("codex_per_pane", "failed"))).toBeNull();
-    expect(kitPartSwitch(part("cli", "installed"))).toBeNull();
-    expect(kitPartLine(part("codex_per_pane", "off"))).toEqual({ text: "Off", tone: "muted" });
+  it("reads an off part as neutral", () => {
+    expect(kitPartLine(part("cli", "off"))).toEqual({ text: "Off", tone: "muted" });
   });
 
   it("lists This Mac first and then each device, with the agents that are installed and the labels of the rest", () => {
