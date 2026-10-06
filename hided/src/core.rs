@@ -404,7 +404,16 @@ fn owner_loop(
     ready: Sender<Result<(), String>>,
     notify: broadcast::Sender<()>,
 ) {
-    let Some(core) = Core::create(options, std::sync::Arc::new(hide_node::Local)) else {
+    // The core's own node answers for the home the core reads and writes
+    // for: the configured one, else the process's, as the core decides.
+    let own_node = hide_node::Local::new(
+        options
+            .home
+            .as_ref()
+            .map(std::path::PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(std::path::PathBuf::from)),
+    );
+    let Some(core) = Core::create(options, std::sync::Arc::new(own_node)) else {
         let _ = ready.send(Err(
             "herdr-core create failed (check schema_version and paths)".to_owned(),
         ));

@@ -704,7 +704,7 @@ impl crate::node_access::NodeLink for HelperAt {
                     .map(crate::node_access::LinkAnswer::Parsed)
                     .map_err(crate::node_access::LinkError::Refused)
             }
-            call => hide_node::Local.call(call, timeout),
+            call => hide_node::Local::of_process().call(call, timeout),
         }
     }
 
@@ -939,14 +939,14 @@ fn a_core_given_its_own_home_imports_labels_from_that_home_only() {
     assert!(
         crate::Core::create(
             options("relative/home".to_owned()),
-            std::sync::Arc::new(hide_node::Local),
+            std::sync::Arc::new(hide_node::Local::of_process()),
         )
         .is_none(),
         "a relative home names no account folder"
     );
     let core = crate::Core::create(
         options(home.path().display().to_string()),
-        std::sync::Arc::new(hide_node::Local),
+        std::sync::Arc::new(hide_node::Local::of_process()),
     )
     .expect("a core starts");
     drop(core);

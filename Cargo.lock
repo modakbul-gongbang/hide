@@ -1306,6 +1306,7 @@ version = "0.1.0"
 dependencies = [
  "hide-host",
  "hide-node-link",
+ "serde_json",
 ]
 
 [[package]]

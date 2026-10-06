@@ -2795,8 +2795,13 @@ mod tests {
             json!({"result":{"type":"ok"}}),
             worktree_list(missing, "other"),
         ]);
-        let error =
-            create_worktree(&server, &hide_node::Local, true, &task("feature")).unwrap_err();
+        let error = create_worktree(
+            &server,
+            &hide_node::Local::of_process(),
+            true,
+            &task("feature"),
+        )
+        .unwrap_err();
         assert!(error.contains("rolled back"));
         assert!(!Path::new(missing).exists());
         let methods = server
@@ -2872,7 +2877,13 @@ mod tests {
             worktree_list(&listed_path, "feature"),
         ]);
 
-        let outcome = create_worktree(&server, &hide_node::Local, true, &task("feature")).unwrap();
+        let outcome = create_worktree(
+            &server,
+            &hide_node::Local::of_process(),
+            true,
+            &task("feature"),
+        )
+        .unwrap();
         assert_eq!(outcome.path, response_path);
         assert_eq!(
             server
@@ -2890,7 +2901,13 @@ mod tests {
     fn migrate_branch_blocked_when_dirty() {
         let git = ScriptedGit::new(vec![Ok(" M file")]);
         let server = server(vec![]);
-        let error = migrate_branch(&server, &hide_node::Local, &git, &task("feature")).unwrap_err();
+        let error = migrate_branch(
+            &server,
+            &hide_node::Local::of_process(),
+            &git,
+            &task("feature"),
+        )
+        .unwrap_err();
         assert!(error.contains("uncommitted changes"));
         assert!(server.requests.lock().unwrap().is_empty());
     }
@@ -2905,7 +2922,13 @@ mod tests {
             worktree_list(&path, "feature"),
         ]);
         let git = ScriptedGit::new(vec![Ok(""), Ok("feature"), Ok("")]);
-        let outcome = migrate_branch(&server, &hide_node::Local, &git, &task("feature")).unwrap();
+        let outcome = migrate_branch(
+            &server,
+            &hide_node::Local::of_process(),
+            &git,
+            &task("feature"),
+        )
+        .unwrap();
         assert_eq!(outcome.path, path);
         assert_eq!(
             git.calls.lock().unwrap()[2],
@@ -2928,7 +2951,13 @@ mod tests {
             json!({"error":{"code":"injected","message":"pane creation failed"}}),
         ]);
         let git = ScriptedGit::new(vec![Ok(""), Ok("feature"), Ok(""), Ok("")]);
-        let error = migrate_branch(&server, &hide_node::Local, &git, &task("feature")).unwrap_err();
+        let error = migrate_branch(
+            &server,
+            &hide_node::Local::of_process(),
+            &git,
+            &task("feature"),
+        )
+        .unwrap_err();
         assert!(error.contains("restored the main worktree to feature"));
         assert_eq!(
             git.calls.lock().unwrap()[3],
@@ -2952,7 +2981,12 @@ mod tests {
         let server = server(vec![
             json!({"error":{"code":"injected","message":"create failed"}}),
         ]);
-        let _ = migrate_branch(&server, &hide_node::Local, &git, &task("feature"));
+        let _ = migrate_branch(
+            &server,
+            &hide_node::Local::of_process(),
+            &git,
+            &task("feature"),
+        );
         assert!(
             server
                 .requests
@@ -2971,7 +3005,13 @@ mod tests {
         ]);
         let git = ScriptedGit::new(vec![Ok(""), Ok("feature"), Ok(""), Ok("")]);
 
-        let error = migrate_branch(&server, &hide_node::Local, &git, &task("feature")).unwrap_err();
+        let error = migrate_branch(
+            &server,
+            &hide_node::Local::of_process(),
+            &git,
+            &task("feature"),
+        )
+        .unwrap_err();
 
         assert!(error.contains("restored the main worktree to feature"));
         assert_eq!(
@@ -2995,7 +3035,13 @@ mod tests {
             Err("injected checkout failure"),
         ]);
         let server = server(vec![]);
-        let error = migrate_branch(&server, &hide_node::Local, &git, &task("feature")).unwrap_err();
+        let error = migrate_branch(
+            &server,
+            &hide_node::Local::of_process(),
+            &git,
+            &task("feature"),
+        )
+        .unwrap_err();
         assert!(error.contains("checkout base branch"));
         assert_eq!(git.calls.lock().unwrap().len(), 3);
         assert!(server.requests.lock().unwrap().is_empty());
@@ -3039,7 +3085,13 @@ mod tests {
             base_branch: Some("main".into()),
             ..task("feature")
         };
-        let error = migrate_branch(&server, &hide_node::Local, &SystemGit, &request).unwrap_err();
+        let error = migrate_branch(
+            &server,
+            &hide_node::Local::of_process(),
+            &SystemGit,
+            &request,
+        )
+        .unwrap_err();
 
         assert!(error.contains("checkout base branch"));
         assert_eq!(
@@ -3068,7 +3120,13 @@ mod tests {
             Err("injected restore failure"),
             Ok("main"),
         ]);
-        let error = migrate_branch(&server, &hide_node::Local, &git, &task("feature")).unwrap_err();
+        let error = migrate_branch(
+            &server,
+            &hide_node::Local::of_process(),
+            &git,
+            &task("feature"),
+        )
+        .unwrap_err();
         assert!(error.contains("main worktree is now on main"));
         assert!(error.contains("open the repository at /fixture/repo and check out feature"));
     }

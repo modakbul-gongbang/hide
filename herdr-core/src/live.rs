@@ -4177,7 +4177,7 @@ mod tests {
             .expect("deny traversal");
 
         let result = run_file_reopen(
-            &hide_node::Local,
+            &hide_node::Local::of_process(),
             &crate::files::DocumentRoot {
                 device_id: crate::node::TEST_NODE.to_owned(),
                 path: root.to_string_lossy().into_owned(),

@@ -573,7 +573,7 @@ fn runtime_for_fixture(socket_path: &Path, state_path: &Path) -> Arc<Mutex<Runti
             home_path: None,
             codex_home: None,
         },
-        std::sync::Arc::new(hide_node::Local),
+        std::sync::Arc::new(hide_node::Local::of_process()),
     )))
 }
 
@@ -585,7 +585,7 @@ fn context_for_fixture(runtime: &Arc<Mutex<Runtime>>, socket_path: &Path) -> Ses
         notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(hide_herdr_client::LocalSocketConnector::new(socket_path)),
     };
-    SessionSyncContext::local(&live, std::sync::Arc::new(hide_node::Local))
+    SessionSyncContext::local(&live, std::sync::Arc::new(hide_node::Local::of_process()))
 }
 
 fn remove_fixture(root: &Path, socket_path: &Path, state_path: &Path) {
@@ -987,7 +987,7 @@ fn official_remote_session_coordinator_probe() {
             home_path: Some(PathBuf::from(home)),
             codex_home: None,
         },
-        std::sync::Arc::new(hide_node::Local),
+        std::sync::Arc::new(hide_node::Local::of_process()),
     )));
     // The same path the shell takes: register the device, and the runtime
     // resolves the alias, asks the host for its socket and starts the

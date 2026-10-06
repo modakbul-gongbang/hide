@@ -40,6 +40,7 @@ pub fn handle(
     cli_dir: &str,
     herdr_socket: Option<&str>,
     retirement_projects: &[String],
+    home: Option<&Path>,
 ) -> HostResult<Value> {
     let executable = std::env::current_exe().map_err(|error| {
         HostError::new(
@@ -48,12 +49,10 @@ pub fn handle(
         )
     })?;
     let (root, version) = install_layout(&executable)?;
-    let home = hide_platform::host::home_dir().map_err(|error| {
+    let home = home.map(Path::to_path_buf).ok_or_else(|| {
         HostError::new(
             ErrorCode::Unsupported,
-            format!(
-                "The home folder is unknown ({error}), so the helper cannot tell where to install"
-            ),
+            "The home folder is unknown, so the helper cannot tell where to install",
         )
     })?;
     run_for_projects(

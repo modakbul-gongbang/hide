@@ -150,7 +150,7 @@ pub(super) fn runtime_with_home() -> Runtime {
             home_path: Some(folder.path().join("home")),
             codex_home: None,
         },
-        std::sync::Arc::new(hide_node::Local),
+        std::sync::Arc::new(hide_node::Local::of_process()),
     );
     runtime.test_dirs.push(folder);
     runtime

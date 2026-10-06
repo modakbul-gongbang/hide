@@ -3,7 +3,7 @@
 //! the connection that started it (PRD S5.5 D-20).
 
 use std::io::{self, BufRead, Read, Write};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc;
 use std::sync::{Arc, Mutex};
 
@@ -201,16 +201,49 @@ pub fn session_activity(
     to_value(activity)
 }
 
-/// Answers one request. Public so the core's tests can drive the exact
-/// dispatch the helper runs without a process.
+/// What a node answers from besides the request: the account home its
+/// sessions, kit and Home folder live in. A helper reads it from its process
+/// once; the core's own node is given the home the core was configured with,
+/// so a daemon running with a private home never answers from the
+/// operator's.
+#[derive(Clone, Debug)]
+pub struct Env {
+    pub home: Option<PathBuf>,
+}
+
+impl Env {
+    pub fn of_process() -> Self {
+        Self {
+            home: std::env::var_os("HOME").map(PathBuf::from),
+        }
+    }
+
+    fn home(&self, missing: &str) -> HostResult<PathBuf> {
+        self.home
+            .clone()
+            .ok_or_else(|| HostError::new(ErrorCode::Unsupported, missing))
+    }
+}
+
+/// Answers one request with this process's environment. Public so the
+/// core's tests can drive the exact dispatch the helper runs without a
+/// process.
 pub fn handle(call: Call) -> HostResult<Value> {
+    handle_in(call, &Env::of_process())
+}
+
+/// Answers one request for the node whose environment is `env`.
+pub fn handle_in(call: Call, env: &Env) -> HostResult<Value> {
     match call {
         Call::Hello => to_value(Hello {
             protocol: PROTOCOL_VERSION,
             version: env!("CARGO_PKG_VERSION").to_owned(),
             os: std::env::consts::OS.to_owned(),
             arch: std::env::consts::ARCH.to_owned(),
-            home: std::env::var_os("HOME").map(|home| home.to_string_lossy().into_owned()),
+            home: env
+                .home
+                .as_ref()
+                .map(|home| home.to_string_lossy().into_owned()),
             machine_identity: match hide_platform::host::machine_id() {
                 Ok(id) => MachineIdentity::Available { id },
                 Err(error) => MachineIdentity::Unavailable {
@@ -278,12 +311,7 @@ pub fn handle(call: Call) -> HostResult<Value> {
         }
         Call::Directory { path } => to_value(worktrees::directory(&absolute(&path)?)),
         Call::Registrable { path } => {
-            let home = std::env::var_os("HOME").ok_or_else(|| {
-                HostError::new(
-                    ErrorCode::Unsupported,
-                    "HOME is not set, so no folder can be judged against it",
-                )
-            })?;
+            let home = env.home("HOME is not set, so no folder can be judged against it")?;
             // `~` is this host's home, as a shell on it would read it.
             let path = match path.strip_prefix('~') {
                 Some(rest) if rest.is_empty() || rest.starts_with('/') => {
@@ -294,12 +322,7 @@ pub fn handle(call: Call) -> HostResult<Value> {
             to_value(crate::register::check(&absolute(&path)?, Path::new(&home))?)
         }
         Call::HomeSync { projects } => {
-            let home = std::env::var_os("HOME").ok_or_else(|| {
-                HostError::new(
-                    ErrorCode::Unsupported,
-                    "HOME is not set, so Hide's Home folder has no place to live",
-                )
-            })?;
+            let home = env.home("HOME is not set, so Hide's Home folder has no place to live")?;
             if !Path::new(&home).is_absolute() {
                 return Err(HostError::new(
                     ErrorCode::Unsupported,
@@ -318,25 +341,21 @@ pub fn handle(call: Call) -> HostResult<Value> {
             &cli_dir,
             herdr_socket.as_deref(),
             &retirement_projects,
+            env.home.as_deref(),
         ),
         Call::LabelTranscript { request } => {
-            let home = std::env::var_os("HOME").ok_or_else(|| {
-                HostError::new(ErrorCode::Unsupported, "label_session_home_unavailable")
-            })?;
+            let home = env.home("label_session_home_unavailable")?;
             label_transcript(Path::new(&home), &request)
         }
         Call::SessionActivity { request } => {
-            let home = std::env::var_os("HOME").ok_or_else(|| {
-                HostError::new(ErrorCode::Unsupported, "session_activity_home_unavailable")
-            })?;
+            let home = env.home("session_activity_home_unavailable")?;
             session_activity(Path::new(&home), &request)
         }
         Call::LinkFiles {
             since_unix_ms,
             until_unix_ms,
         } => {
-            let home = std::env::var_os("HOME")
-                .ok_or_else(|| HostError::new(ErrorCode::Unsupported, "links_home_unavailable"))?;
+            let home = env.home("links_home_unavailable")?;
             let listed =
                 hide_session::links::candidates(Path::new(&home), since_unix_ms, until_unix_ms)
                     .map_err(|code| HostError::new(ErrorCode::Io, code))?;
@@ -349,8 +368,7 @@ pub fn handle(call: Call) -> HostResult<Value> {
                     "links_read_limit",
                 ));
             }
-            let home = std::env::var_os("HOME")
-                .ok_or_else(|| HostError::new(ErrorCode::Unsupported, "links_home_unavailable"))?;
+            let home = env.home("links_home_unavailable")?;
             to_value(hide_session::links::read(Path::new(&home), &requests))
         }
         Call::WorktreeRemove { removal } => {

@@ -3531,7 +3531,7 @@ fn primary_checkout_switch_survives_restart_and_catalog_refresh() {
                 home_path: None,
                 codex_home: None,
             },
-            std::sync::Arc::new(hide_node::Local),
+            std::sync::Arc::new(hide_node::Local::of_process()),
         )
     };
     let set = |id: &str| {

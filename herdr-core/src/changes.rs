@@ -383,7 +383,6 @@ fn snapshot_of(root_path: &str, file: ChangedFile) -> ChangedFileSnapshot {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hide_node::Local as InProcessHost;
 
     fn git(directory: &std::path::Path, arguments: &[&str]) {
         let output = std::process::Command::new("git")
@@ -406,7 +405,7 @@ mod tests {
                 path: checkout.to_string_lossy().into_owned(),
                 identity: None,
             },
-            channel: Ok(ChannelRef(Arc::new(InProcessHost))),
+            channel: Ok(ChannelRef(Arc::new(hide_node::Local::of_process()))),
             root_path: folder.to_string_lossy().into_owned(),
             selected_path: selected.map(|path| path.to_string_lossy().into_owned()),
             selected_committed: false,

@@ -1655,7 +1655,7 @@ mod worktree_observer_tests {
                     home_path: None,
                     codex_home: None,
                 },
-                std::sync::Arc::new(hide_node::Local),
+                std::sync::Arc::new(hide_node::Local::of_process()),
             );
             let catalog = WorktreeCatalogSnapshot {
                 projects: vec![ProjectWorktreesSnapshot {
@@ -1712,7 +1712,7 @@ mod worktree_observer_tests {
                         &socket_path,
                     )),
                 },
-                std::sync::Arc::new(hide_node::Local),
+                std::sync::Arc::new(hide_node::Local::of_process()),
             );
             let baseline: Value = serde_json::from_slice(&core.snapshot_delta(0, 0))
                 .expect("initial observer snapshot");
@@ -1938,7 +1938,7 @@ mod focus_readback_order_tests {
                 home_path: None,
                 codex_home: None,
             },
-            std::sync::Arc::new(hide_node::Local),
+            std::sync::Arc::new(hide_node::Local::of_process()),
         );
         runtime.ingest_session(Ok(first.project()));
         Arc::new(Mutex::new(runtime))
@@ -1953,7 +1953,7 @@ mod focus_readback_order_tests {
                 notifier: ChangeNotifier::noop(),
                 api_connector: Arc::new(herdr.connector()),
             },
-            std::sync::Arc::new(hide_node::Local),
+            std::sync::Arc::new(hide_node::Local::of_process()),
         )
     }
 
@@ -2144,7 +2144,7 @@ mod pane_cwd_confirmation_tests {
                 notifier: ChangeNotifier::noop(),
                 api_connector: Arc::new(herdr.connector()),
             },
-            std::sync::Arc::new(hide_node::Local),
+            std::sync::Arc::new(hide_node::Local::of_process()),
         )
     }
 

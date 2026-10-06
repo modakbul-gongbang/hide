@@ -682,7 +682,12 @@ pub(crate) mod tests {
             path: path.parent().unwrap().to_string_lossy().into_owned(),
             identity: None,
         };
-        open_document(&hide_node::Local, &root, &path.to_string_lossy()).expect("fixture document")
+        open_document(
+            &hide_node::Local::of_process(),
+            &root,
+            &path.to_string_lossy(),
+        )
+        .expect("fixture document")
     }
 
     /// A checkout whose path is replaced after a document opened refuses
@@ -706,7 +711,7 @@ pub(crate) mod tests {
             path: pinned_path.to_string_lossy().into_owned(),
             identity: Some(identity),
         };
-        let channel = hide_node::Local;
+        let channel = hide_node::Local::of_process();
         let (document, place) = open_document(
             &channel,
             &document_root,
@@ -778,13 +783,24 @@ pub(crate) mod tests {
             path: root.to_string_lossy().into_owned(),
             identity: None,
         };
-        let (document, place) =
-            open_document(&hide_node::Local, &root_path, &spelled.to_string_lossy()).unwrap();
+        let (document, place) = open_document(
+            &hide_node::Local::of_process(),
+            &root_path,
+            &spelled.to_string_lossy(),
+        )
+        .unwrap();
         assert_eq!(document.path, spelled.to_string_lossy());
         assert_eq!(place.relative.as_str(), "src/a.txt");
         let outside = sandbox.path().join("alias/../elsewhere.txt");
         fs::write(sandbox.path().join("elsewhere.txt"), "b").unwrap();
-        assert!(open_document(&hide_node::Local, &root_path, &outside.to_string_lossy(),).is_err());
+        assert!(
+            open_document(
+                &hide_node::Local::of_process(),
+                &root_path,
+                &outside.to_string_lossy(),
+            )
+            .is_err()
+        );
     }
 
     /// Names no other Trash entry can carry, so a trashed fixture can be

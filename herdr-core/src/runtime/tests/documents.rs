@@ -12,7 +12,6 @@ use crate::model::{ViewDisplayState, ViewNodeSnapshot};
 use crate::node_access::{LinkAnswer, LinkError, NodeLink};
 use crate::view_layout::{DisplayKind, Edge};
 use hide_host::protocol::Call;
-use hide_node::Local as InProcessHost;
 use serde_json::Value;
 use std::sync::Condvar;
 
@@ -141,19 +140,19 @@ impl NodeLink for FakeDevice {
                 "The connection ended before the device answered".to_owned(),
             )),
             Answer::LoseAfterEffectThenDrop if is_save => {
-                let _ = InProcessHost.call(call, timeout);
+                let _ = hide_node::Local::of_process().call(call, timeout);
                 *self.answer.lock().unwrap() = Answer::Unreachable;
                 Err(LinkError::Unknown(
                     "The connection ended before the device answered".to_owned(),
                 ))
             }
             Answer::LoseAfterEffect if is_save => {
-                let _ = InProcessHost.call(call, timeout);
+                let _ = hide_node::Local::of_process().call(call, timeout);
                 Err(LinkError::Unknown(
                     "The connection ended before the device answered".to_owned(),
                 ))
             }
-            _ => InProcessHost.call(call, timeout),
+            _ => hide_node::Local::of_process().call(call, timeout),
         }
     }
 

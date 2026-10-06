@@ -10,3 +10,6 @@ publish = false
 [dependencies]
 hide-host = { path = "../hide-host" }
 hide-node-link = { path = "../hide-node-link" }
+
+[dev-dependencies]
+serde_json = "=1.0.151"

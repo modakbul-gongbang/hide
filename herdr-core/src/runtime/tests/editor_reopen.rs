@@ -1039,7 +1039,7 @@ fn explorer_rename_carries_expansion_and_open_tabs_to_the_new_path() {
         "remote:macbook:checkout:w1",
     ));
     let (document, place) = files::open_document(
-        &hide_node::Local,
+        &hide_node::Local::of_process(),
         &files::DocumentRoot {
             device_id: crate::node::TEST_NODE.to_owned(),
             path: root.to_string_lossy().into_owned(),

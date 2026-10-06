@@ -66,7 +66,7 @@ fn restart(path: &str) -> Runtime {
             home_path: None,
             codex_home: None,
         },
-        std::sync::Arc::new(hide_node::Local),
+        std::sync::Arc::new(hide_node::Local::of_process()),
     )
 }
 
