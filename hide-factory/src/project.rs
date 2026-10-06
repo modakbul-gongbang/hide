@@ -354,8 +354,8 @@ impl TaskSource for SharedProjects {
                 probe.default_branch = branch.to_owned();
             }
             for (key, method) in [
-                ("squashMergeAllowed", MergeMethod::Squash),
                 ("mergeCommitAllowed", MergeMethod::Merge),
+                ("squashMergeAllowed", MergeMethod::Squash),
                 ("rebaseMergeAllowed", MergeMethod::Rebase),
             ] {
                 if view[key].as_bool() == Some(true) {

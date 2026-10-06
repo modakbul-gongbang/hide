@@ -512,7 +512,13 @@ pub enum QuestionKind {
     /// The new-task cap was reached (B31).
     NewTaskCap,
     /// A worker proposed a new Task outside autonomy (B30).
-    ProposedTask { draft: Box<Card> },
+    ProposedTask {
+        draft: Box<Card>,
+        /// The prerequisite discovery it answers; on approval the proposer
+        /// waits on the new Task (D-16 ④).
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        discovery: Option<String>,
+    },
     /// A stop, a main break or a recovery that needs a person; the choices
     /// are the actions.
     Action,

@@ -1916,7 +1916,7 @@ impl Engine {
                     }
                 }
             }
-            QuestionKind::ProposedTask { draft } => {
+            QuestionKind::ProposedTask { draft, discovery } => {
                 if decision == "approve" {
                     let new_id = self.create_child(factory, id, (**draft).clone(), None);
                     self.record(
@@ -1925,6 +1925,9 @@ impl Engine {
                         "proposal.approved",
                         json!({"task": new_id}),
                     );
+                    if let Some(discovery) = discovery {
+                        self.wait_on_prerequisite(factory, id, discovery, &new_id);
+                    }
                 }
             }
             QuestionKind::Action => match decision.as_str() {
@@ -2043,6 +2046,29 @@ impl Engine {
         self.save(factory, &id);
         self.record(factory, Some(&id), "task.added", json!({"via": "engine"}));
         id
+    }
+
+    /// The proposer waits on the prerequisite it found and gives its slot
+    /// back (D-16 ④); `unblock` starts it again once the prerequisite landed.
+    /// A Task already past its work keeps going: the new Task is only linked.
+    fn wait_on_prerequisite(&mut self, factory: &str, id: &str, discovery: &str, new_id: &str) {
+        let mut waits = false;
+        self.with_task(factory, id, |task| {
+            if let Some(found) = task.discoveries.iter_mut().find(|d| d.id == discovery) {
+                found.task = Some(new_id.to_owned());
+            }
+            waits = matches!(
+                task.state,
+                TaskState::Running | TaskState::Waiting | TaskState::Blocked | TaskState::Paused
+            );
+            if waits && !task.card.depends_on.iter().any(|d| d == new_id) {
+                task.card.depends_on.push(new_id.to_owned());
+            }
+        });
+        if waits && self.task(factory, id).is_some_and(|t| t.state == TaskState::Running) {
+            self.put_to_sleep(factory, id);
+            self.set_state(factory, id, TaskState::Blocked);
+        }
     }
 
     fn create_child(
@@ -2270,6 +2296,7 @@ impl Engine {
                             QuestionOrigin::Worker,
                             QuestionKind::ProposedTask {
                                 draft: Box::new(draft.clone()),
+                                discovery: Some(discovery_id.clone()),
                             },
                             &format!("새 Task 제안: {}", draft.title),
                             "approve",
@@ -2281,21 +2308,9 @@ impl Engine {
                         (None, "proposed; a person approves before it is drafted")
                     }
                 };
-                self.with_task(factory, id, |task| {
-                    task.new_tasks += 1;
-                    if let Some(new_id) = &created {
-                        if let Some(discovery) =
-                            task.discoveries.iter_mut().find(|d| d.id == discovery_id)
-                        {
-                            discovery.task = Some(new_id.clone());
-                        }
-                        // The current Task waits on the prerequisite (D-16 ④).
-                        task.card.depends_on.push(new_id.clone());
-                    }
-                });
-                if created.is_some() {
-                    self.put_to_sleep(factory, id);
-                    self.set_state(factory, id, TaskState::Blocked);
+                self.with_task(factory, id, |task| task.new_tasks += 1);
+                if let Some(new_id) = &created {
+                    self.wait_on_prerequisite(factory, id, &discovery_id, new_id);
                 }
                 let reached = self
                     .task(factory, id)
@@ -3289,6 +3304,16 @@ impl Engine {
             task.cancelled_from = Some(task.state);
             if let Some(worker) = &mut task.worker {
                 worker.asleep = true;
+            }
+            // A cancelled Task asks nothing of a person, and no deadline
+            // applies a default to it; a revived worker asks again.
+            for question in task.questions.iter_mut().filter(|q| q.open()) {
+                question.answer = Some(Answer {
+                    text: "취소됨".into(),
+                    chose: None,
+                    relayed_by: "cancel".into(),
+                    at: now,
+                });
             }
         });
         self.set_state(factory_id, id, TaskState::Cancelled);

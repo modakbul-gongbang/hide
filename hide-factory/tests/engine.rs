@@ -793,6 +793,12 @@ fn a_proposed_task_waits_for_a_person_and_its_worker_cannot_propose() {
         .id
         .clone();
     assert_eq!(h.task(&f, &child).proposed_by.as_deref(), Some(t.as_str()));
+    assert_eq!(h.task(&f, &t).card.depends_on, vec![child.clone()]);
+    assert_eq!(
+        h.task(&f, &t).state,
+        TaskState::Blocked,
+        "the proposer waits on the approved prerequisite and gives its slot back (D-16)"
+    );
     tick_until(&mut h, &f, &child, TaskState::Running);
     let refused = h.as_worker(
         &f,
@@ -1349,6 +1355,31 @@ fn pause_resume_cancel_and_revive_keep_the_same_worker_and_pull_request() {
     assert!(h.world().removed.contains(&t));
     let refused = h.op(Command::Revive { task: t.clone() });
     assert_eq!(refused["reason"], "revive_expired");
+}
+
+#[test]
+fn a_cancelled_task_leaves_no_question_for_a_person_or_a_deadline() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let t = h.ready("Asks then goes", &[]);
+    h.as_worker(
+        &f,
+        &t,
+        Command::Ask {
+            text: "Name the flag?".into(),
+            suggestion: "--fast".into(),
+            default_action: "use --fast".into(),
+            deadline_hours: Some(1),
+            letter: None,
+        },
+    );
+    h.op(Command::Cancel { task: t.clone() });
+    assert_eq!(h.task(&f, &t).open_questions().count(), 0);
+    h.advance(2 * HOUR_MS);
+    h.engine.tick();
+    let question = &h.task(&f, &t).questions[0];
+    assert_eq!(question.answer.as_ref().unwrap().relayed_by, "cancel");
+    assert_eq!(h.state(&f, &t), TaskState::Cancelled);
 }
 
 #[test]
