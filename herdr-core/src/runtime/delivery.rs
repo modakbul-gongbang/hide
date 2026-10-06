@@ -170,6 +170,13 @@ impl Runtime {
         }
     }
 
+    /// The submit half of a key whose write was accepted. The input half is
+    /// noted when the key arrives, so a key the shell then drops or holds for
+    /// an attachment restarts the quiet period but ends no draft.
+    pub(crate) fn note_delivery_submit(&mut self, pane_id: &str) {
+        self.note_delivery_key(pane_id, true);
+    }
+
     /// A prompt hook ran in the pane, so whatever was in its composer was
     /// submitted, whoever typed it and wherever it was typed.
     fn note_prompt_submitted(&mut self, pane_id: &str) {
@@ -779,6 +786,23 @@ pub(crate) mod tests {
             .unwrap(),
         );
         assert_eq!(written(&mut guard), (true, true, false));
+    }
+
+    #[test]
+    fn a_phone_write_is_input_and_only_a_reply_is_a_submit() {
+        let root = tempfile::tempdir().unwrap();
+        let (runtime, _, _, _) = fixture(root.path());
+        let mut guard = runtime.lock().unwrap();
+        observe_recipient_status(&mut guard, "idle", 2);
+        clocks(&mut guard, "recipient", true);
+        guard.dispatch_json(
+            &serde_json::to_vec(&json!({
+                "schema_version": SCHEMA_VERSION, "kind": "pane_input_sent",
+                "payload": {"pane_id": "recipient"},
+            }))
+            .unwrap(),
+        );
+        assert_eq!(written(&mut guard), (true, false, false));
     }
 
     #[test]

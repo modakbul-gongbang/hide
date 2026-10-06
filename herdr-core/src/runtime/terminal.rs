@@ -512,6 +512,10 @@ impl Runtime {
             "pane_id": pane_id, "request_id": request_id, "route": route,
             "reason": unavailable_reason,
         }));
+        if route == PaneFindRoute::Agent {
+            // The keys went into the agent's own search box.
+            self.note_delivery_key(pane_id, false);
+        }
         self.snapshot.find = PaneFindSnapshot {
             pane_id: Some(pane_id.to_owned()),
             unavailable_reason,

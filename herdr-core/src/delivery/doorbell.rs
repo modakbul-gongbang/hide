@@ -191,6 +191,9 @@ pub(crate) fn run(runtime: Weak<Mutex<Runtime>>, client: Client, stop: Arc<Atomi
                 if tried.get(&letter.id) == Some(&episode)
                     || rung.get(&letter.recipient.pane_id) == Some(&episode)
                 {
+                    // Nothing holds it, so a later hold for the same reason
+                    // is a change and is logged again.
+                    held.remove(&letter.id);
                     continue;
                 }
                 count += 1;

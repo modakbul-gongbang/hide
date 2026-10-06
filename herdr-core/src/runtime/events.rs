@@ -1239,6 +1239,7 @@ pub(super) enum Event {
     AgentSleepSet(AgentSleepSetPayload),
     AgentSleep(PaneTargetPayload),
     PaneInputSubmitted(PaneTargetPayload),
+    PaneInputSent(PaneTargetPayload),
     PaneVisit(PaneTargetPayload),
     AgentWake(AgentWakePayload),
     AgentTreeToggle(PaneTargetPayload),
@@ -1443,6 +1444,7 @@ pub(super) fn validate_event(event: EventEnvelope) -> Result<Event, EventValidat
         "agent_sleep_set" => decode!(AgentSleepSetPayload, AgentSleepSet),
         "agent_sleep" => decode!(PaneTargetPayload, AgentSleep),
         "pane_input_submitted" => decode!(PaneTargetPayload, PaneInputSubmitted),
+        "pane_input_sent" => decode!(PaneTargetPayload, PaneInputSent),
         "pane_visit" => decode!(PaneTargetPayload, PaneVisit),
         "agent_wake" => decode!(AgentWakePayload, AgentWake),
         "agent_tree_toggle" => decode!(PaneTargetPayload, AgentTreeToggle),
@@ -1581,7 +1583,7 @@ impl Runtime {
             Event::AttachmentAction(payload) => self.attachment_action(payload),
             Event::Key(payload) => {
                 let submits = crate::labels::input::key_submits(&payload.bytes_base64);
-                self.note_delivery_key(&payload.pane_id, submits);
+                self.note_delivery_key(&payload.pane_id, false);
                 if let Some(changed) = self.drop_input_to_sleeping_pane(&payload.pane_id) {
                     return changed;
                 }
@@ -1595,6 +1597,7 @@ impl Runtime {
                 self.ensure_terminal_pane(&payload.pane_id);
                 self.sync_focused_terminal_projection();
                 if submits {
+                    self.note_delivery_submit(&payload.pane_id);
                     self.record_operator_submit(&payload.pane_id);
                 }
                 if self.live.is_some()
@@ -1626,6 +1629,12 @@ impl Runtime {
             Event::PaneInputSubmitted(payload) => {
                 self.note_delivery_key(&payload.pane_id, true);
                 self.record_operator_submit(&payload.pane_id);
+                false
+            }
+            // A phone key or reply is on its way to the pane: a draft may
+            // grow there, which the doorbell must not type over.
+            Event::PaneInputSent(payload) => {
+                self.note_delivery_key(&payload.pane_id, false);
                 false
             }
             Event::PaneVisit(payload) => self.record_pane_visit(payload.pane_id),

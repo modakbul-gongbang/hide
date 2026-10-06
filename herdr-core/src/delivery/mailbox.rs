@@ -213,11 +213,12 @@ pub fn apply(
             if matches!(command, Command::Ack { .. }) {
                 if matches!(letter.state, State::Pending | State::Delivered) {
                     letter.state = State::Acknowledged;
-                }
-                // An agent with no prompt hook has no other way to take a
-                // letter in, so its acknowledgement is the receipt.
-                if !prompt_hook(&letter.recipient.kind) {
-                    ended = record_intake(letter, now);
+                    // An agent with no prompt hook has no other way to take a
+                    // letter in, so its acknowledgement is the receipt; a
+                    // letter already cancelled or expired has none to give.
+                    if !prompt_hook(&letter.recipient.kind) {
+                        ended = record_intake(letter, now);
+                    }
                 }
             } else {
                 letter.state = State::Cancelled;
@@ -252,7 +253,7 @@ pub fn apply(
             ))
         }
         Command::Pull { bell: true, .. } => Ok(json!(pull(ledger, actor)?)),
-        Command::Pull { bell: false, .. } => Ok(json!(operator_prompt_intake(ledger, actor)?)),
+        Command::Pull { bell: false, .. } => Ok(json!(operator_prompt_intake(ledger, actor, now)?)),
         Command::Confirm { ids } => {
             if ids.len() > HOOK_LETTERS {
                 return Err("capacity".into());
@@ -343,26 +344,22 @@ pub(crate) fn prompt_hook(kind: &str) -> bool {
 /// are spent, or whose recipient is never belled, stays pending for
 /// `hide inbox` and expires undelivered; the operator's own prompt promises
 /// it nothing.
-fn bell_pending(letter: &Letter) -> bool {
+fn bell_pending(letter: &Letter, now: u64) -> bool {
     letter.state == State::Pending
+        && now.saturating_sub(letter.created_at_unix_ms) < super::DELIVERY_EXPIRY_MS
         && letter.attempts() < 3
         && super::doorbell::bell_target(&letter.recipient.kind)
-}
-
-/// The letter bodies for the turn Hide's bell opened.
-pub fn pull(ledger: &Ledger, actor: &Actor) -> Result<Intake, String> {
-    intake(ledger, actor)
 }
 
 /// What the hook hands the agent when the operator's own prompt was
 /// submitted: never a letter body, only a line counting the letters a bell
 /// will still bring, so the operator's turn is not mixed with them.
-fn operator_prompt_intake(ledger: &Ledger, actor: &Actor) -> Result<Intake, String> {
+fn operator_prompt_intake(ledger: &Ledger, actor: &Actor, now: u64) -> Result<Intake, String> {
     actor.require_native_identity()?;
     let waiting = ledger
         .letters
         .iter()
-        .filter(|letter| letter.recipient.same_identity(actor) && bell_pending(letter))
+        .filter(|letter| letter.recipient.same_identity(actor) && bell_pending(letter, now))
         .count();
     let mut intake = Intake::default();
     if waiting > 0 && prompt_hook(&actor.kind) {
@@ -371,7 +368,8 @@ fn operator_prompt_intake(ledger: &Ledger, actor: &Actor) -> Result<Intake, Stri
     Ok(intake)
 }
 
-fn intake(ledger: &Ledger, actor: &Actor) -> Result<Intake, String> {
+/// The letter bodies for the turn Hide's bell opened.
+pub fn pull(ledger: &Ledger, actor: &Actor) -> Result<Intake, String> {
     actor.require_native_identity()?;
     if !prompt_hook(&actor.kind) {
         return Ok(Intake::default());
@@ -869,6 +867,17 @@ mod tests {
             assert_eq!(letter.awaiting_intake(), !receipt, "{kind}");
             assert_eq!(ledger.watches.is_empty(), receipt, "{kind}");
         }
+    }
+
+    #[test]
+    fn a_pull_from_an_older_kit_is_an_operator_prompt_pull() {
+        assert_eq!(
+            serde_json::from_str::<Command>(r#"{"op":"pull"}"#).unwrap(),
+            Command::Pull {
+                bell: false,
+                session: None
+            }
+        );
     }
 
     #[test]
