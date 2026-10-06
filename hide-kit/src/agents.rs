@@ -527,7 +527,7 @@ type VersionAnswers = std::collections::HashMap<VersionKey, (Option<String>, std
 /// re-reads the kit every few seconds, and a subprocess per read would put a
 /// slow or hanging program on the kit worker for as long as Settings is open.
 /// The probe itself is bounded (`hide_agent_hooks::program_version`).
-pub(crate) fn program_version(binary: &Path) -> Option<String> {
+pub(crate) fn program_version(binary: &Path, home: &Path) -> Option<String> {
     use std::sync::{LazyLock, Mutex};
     use std::time::Instant;
 
@@ -542,7 +542,7 @@ pub(crate) fn program_version(binary: &Path) -> Option<String> {
     {
         return version.clone();
     }
-    let version = hide_agent_hooks::program_version(binary);
+    let version = hide_agent_hooks::program_version(binary, home);
     if let Some(key) = key
         && let Ok(mut answers) = ANSWERS.lock()
     {
