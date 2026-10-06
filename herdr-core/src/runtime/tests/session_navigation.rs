@@ -1050,6 +1050,124 @@ fn view_authority_a_late_answer_to_a_superseded_switch_is_not_followed() {
     assert_eq!(diagnostic_count(&runtime, "tab.focus.followed"), 1);
 }
 
+/// Issue #594. Each Agent cycle commit is one pane focus, and a pane in
+/// another tab moves Herdr's tab too. Herdr answers the focus at once, but
+/// its session stream reports the tab moves afterwards, in order. Those are
+/// the answers to Hide's own requests, not outside focus: following them
+/// replayed every tab the operator passed through and left the screen on an
+/// older one, which the shell then recorded as a visit.
+#[test]
+fn view_authority_a_pane_focus_s_late_tab_move_is_its_answer_not_an_outside_focus() {
+    let checkout_path = "/private/tmp/hide-view-authority-pane-tab";
+    let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
+    let tabs = ["w-order:t1", "w-order:t2", "w-order:t3"];
+    runtime.ingest_session(Ok(tab_order_payload(
+        checkout_path,
+        &tabs,
+        &tabs,
+        "w-order:t1",
+    )));
+    for tab in ["w-order:t3", "w-order:t1", "w-order:t2", "w-order:t1"] {
+        assert!(runtime.dispatch_json(&operator_focus_event(&format!("{tab}:p"))));
+        finish_running_pane_focus(&mut runtime, Ok(()));
+    }
+
+    for answer in ["w-order:t3", "w-order:t1", "w-order:t2", "w-order:t1"] {
+        runtime.ingest_session(Ok(tab_order_payload(checkout_path, &tabs, &tabs, answer)));
+        assert_eq!(
+            checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+            Some("w-order:t1"),
+            "Herdr naming {answer} does not move the tab the operator chose last"
+        );
+        assert_eq!(
+            runtime.snapshot().terminal.pane_id.as_deref(),
+            Some("w-order:t1:p")
+        );
+    }
+    assert_eq!(diagnostic_count(&runtime, "tab.focus.followed"), 0);
+    assert!(
+        runtime.pending_tab_focus.is_none(),
+        "Herdr arriving confirms the last move"
+    );
+
+    // Once Herdr has answered, a tab it focuses on its own is followed.
+    runtime.ingest_session(Ok(tab_order_payload(
+        checkout_path,
+        &tabs,
+        &tabs,
+        "w-order:t3",
+    )));
+    assert_eq!(
+        checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+        Some("w-order:t3")
+    );
+    assert_eq!(diagnostic_count(&runtime, "tab.focus.followed"), 1);
+}
+
+/// The tab wait a pane focus arms always ends: Herdr refusing the focus
+/// moves no tab, a focus in the tab Herdr already shows arms nothing, and a
+/// tab move Herdr never reports runs out with a tab focus's deadline. After
+/// each, a tab Herdr focuses on its own is followed.
+#[test]
+fn view_authority_a_pane_focus_tab_wait_ends_when_no_tab_move_will_arrive() {
+    let checkout_path = "/private/tmp/hide-view-authority-pane-tab-ends";
+    let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
+    let tabs = ["w-order:t1", "w-order:t2", "w-order:t3"];
+    runtime.ingest_session(Ok(tab_order_payload(
+        checkout_path,
+        &tabs,
+        &tabs,
+        "w-order:t1",
+    )));
+
+    // Refused: Herdr stays on t1, so nothing of this focus will arrive.
+    assert!(runtime.dispatch_json(&operator_focus_event("w-order:t2:p")));
+    assert!(
+        runtime.pending_tab_focus.is_some(),
+        "a focus in another tab moves Herdr's tab"
+    );
+    finish_running_pane_focus(&mut runtime, Err("pane focus refused"));
+    assert!(runtime.pending_tab_focus.is_none());
+
+    // Herdr already shows t1, so focusing its pane moves no Herdr tab.
+    assert!(runtime.dispatch_json(&operator_focus_event("w-order:t1:p")));
+    assert!(runtime.pending_tab_focus.is_none());
+    finish_running_pane_focus(&mut runtime, Ok(()));
+    runtime.ingest_session(Ok(tab_order_payload(
+        checkout_path,
+        &tabs,
+        &tabs,
+        "w-order:t3",
+    )));
+    assert_eq!(
+        checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+        Some("w-order:t3")
+    );
+    assert_eq!(diagnostic_count(&runtime, "tab.focus.followed"), 1);
+
+    // Never reported: the wait runs out at the tab focus deadline.
+    assert!(runtime.dispatch_json(&operator_focus_event("w-order:t2:p")));
+    finish_running_pane_focus(&mut runtime, Ok(()));
+    let requested_at = runtime
+        .pending_tab_focus
+        .as_ref()
+        .expect("the tab move is awaited")
+        .requested_at_unix_ms;
+    assert!(runtime.expire_pending_view_focus(requested_at + VIEW_FOCUS_NOTIFICATION_TIMEOUT_MS));
+    assert!(runtime.pending_tab_focus.is_none());
+    runtime.ingest_session(Ok(tab_order_payload(
+        checkout_path,
+        &tabs,
+        &tabs,
+        "w-order:t1",
+    )));
+    assert_eq!(
+        checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+        Some("w-order:t1")
+    );
+    assert_eq!(diagnostic_count(&runtime, "tab.focus.followed"), 2);
+}
+
 /// The superseded requests are bounded in count and in time, and one Herdr
 /// refused is not waited on; each of those ends the claim, so Herdr then
 /// focusing that tab is followed. A request whose result was lost may have

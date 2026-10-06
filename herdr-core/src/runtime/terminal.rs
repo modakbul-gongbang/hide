@@ -84,6 +84,14 @@ impl Runtime {
                         }
                     }
                     self.herdr_active_tab_ids.insert(layout.tab_id);
+                    // Herdr moves its tab now; the session stream reports
+                    // that move within a tab focus's deadline from here.
+                    if let Some(tab) = self.pending_tab_focus.as_mut().filter(|tab| {
+                        tab.pane_control_serial.is_some()
+                            && tab.pane_control_serial == pending.pane_control_serial
+                    }) {
+                        tab.requested_at_unix_ms = unix_milliseconds();
+                    }
                     self.finish_pane_focus_request(
                         pending.request_id.as_deref(),
                         &pending.target_id,
@@ -101,6 +109,8 @@ impl Runtime {
                 }
                 Err(error) => {
                     let message = error.message().to_owned();
+                    // Herdr did not move, so no tab move of it will arrive.
+                    self.drop_pane_focus_tab_wait(pending.pane_control_serial);
                     self.finish_pane_focus_request(
                         pending.request_id.as_deref(),
                         &pending.target_id,
