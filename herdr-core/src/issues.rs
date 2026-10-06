@@ -89,6 +89,10 @@ pub struct ProjectIssuesSnapshot {
     /// Reader provenance, not a wire field.
     #[serde(skip)]
     pub dependencies_failure: Option<String>,
+    /// GitHub's id of the repository, which a rename keeps: the link record
+    /// follows it (PRD link-graph D-35). Reader provenance, not a wire field.
+    #[serde(skip)]
+    pub repository_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]

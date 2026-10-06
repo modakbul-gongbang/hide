@@ -73,6 +73,7 @@ fn pr_runtime(pull_requests: Vec<PullRequestSnapshot>) -> Runtime {
                 issues: (1..=4).map(issue).collect(),
                 overflow: false,
                 dependencies_failure: None,
+                repository_id: None,
             },
             status: crate::model::GithubStatusSnapshot {
                 available: true,

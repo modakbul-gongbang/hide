@@ -680,14 +680,14 @@ fn scrolling_herdr(name: &str, max: Arc<Mutex<u64>>) -> FakeHerdr {
     })
 }
 
-fn observed_runtime(herdr: &FakeHerdr, pane: &str) -> Arc<Mutex<Runtime>> {
-    let shared = Arc::new(Mutex::new(runtime()));
+fn observed_runtime(herdr: &FakeHerdr, pane: &str) -> SharedRuntime {
+    let shared = SharedRuntime::new(runtime());
     {
         let mut runtime = shared.lock().unwrap();
         runtime.live = Some(live::LiveContext {
             socket_path: herdr.socket_path().to_path_buf(),
             herdr_bin: None,
-            runtime: Arc::downgrade(&shared),
+            runtime: shared.weak(),
             notifier: crate::handle::ChangeNotifier::noop(),
             api_connector: Arc::new(herdr.connector()),
         });
@@ -856,7 +856,7 @@ fn a_device_pane_is_searched_on_its_own_herdr() {
             "text": "alpha\nneedle\nomega\n", "revision": 1, "truncated": false
         }})
     });
-    let shared = Arc::new(Mutex::new(runtime()));
+    let shared = SharedRuntime::new(runtime());
     let pane = "remote:mini:pane:w1:p2";
     let find = serde_json::to_vec(&serde_json::json!({
         "schema_version": SCHEMA_VERSION,
@@ -890,7 +890,7 @@ fn a_device_pane_is_searched_on_its_own_herdr() {
         runtime.install_remote_control(live::RemoteControlContext::new(
             "mini",
             Arc::new(herdr.connector()),
-            Arc::downgrade(&shared),
+            shared.weak(),
             crate::handle::ChangeNotifier::noop(),
         ));
         runtime.dispatch_json(&find);

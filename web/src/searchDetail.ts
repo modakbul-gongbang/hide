@@ -11,7 +11,8 @@ import { relationRows, relationsOf, type RelationTarget, type Relations } from "
 import type { EntryStatus, SearchEntry } from "./search";
 import { lastReadWords } from "./searchGithub";
 import { searchDevices } from "./search";
-import type { PullRequest, SnapshotRest } from "./snapshot";
+import type { LinkSummaries, PullRequest, SnapshotRest } from "./snapshot";
+import { sameIssue } from "./linkPanel";
 
 export type Detail = {
   /** `Pull request`, `Agent · Claude`: the kind the title is of. */
@@ -65,7 +66,14 @@ function lastWords(entry: SearchEntry): string | null {
   return text ? (text.split("\n")[0] ?? null) : null;
 }
 
-export function detailOf(rest: SnapshotRest | null, entry: SearchEntry, now: number, t: TFunction<"translation">, language: InterfaceLanguage): Detail {
+/** `Sessions N` (PRD link-graph B35): the record's session lines for a PR or an issue, absent at zero. */
+function sessionsFact(links: LinkSummaries | null, entry: SearchEntry, t: TFunction<"translation">): [string, string | null] {
+  const summary = entry.workspace ? links?.projects[entry.workspace.id] : undefined;
+  const count = entry.kind === "pr" ? summary?.prs?.[String(entry.number)] : entry.kind === "issue" && entry.taskKey ? Object.entries(summary?.issues ?? {}).find(([key]) => sameIssue(key, entry.taskKey!))?.[1] : undefined;
+  return [t("links.sessions"), count ? String(count) : null];
+}
+
+export function detailOf(rest: SnapshotRest | null, entry: SearchEntry, now: number, t: TFunction<"translation">, language: InterfaceLanguage, links: LinkSummaries | null = null): Detail {
   const relations = relationsFor(rest, entry, t);
   const device = entry.chip?.label ?? searchDevices(rest ?? ({} as SnapshotRest)).find((scope) => scope.device.id === entry.deviceId)?.device.label;
   const base = { relations, tags: [] as string[], pills: [] as EntryStatus[] };
@@ -116,6 +124,7 @@ export function detailOf(rest: SnapshotRest | null, entry: SearchEntry, now: num
           [t("search.fact.review"), pr?.review ? t(REVIEW[pr.review]) : null],
           [t("workspace.branch"), pr?.head_branch],
           [t("search.fact.closingIssues"), closes],
+          sessionsFact(links, entry, t),
           [t("search.fact.read"), entry.workspace ? lastReadWords(entry.workspace, now, t, language) : null],
         ]),
         action: t("search.openPrs"),
@@ -137,6 +146,7 @@ export function detailOf(rest: SnapshotRest | null, entry: SearchEntry, now: num
           [t("common.project"), entry.workspace?.label],
           [t("search.fact.assigned"), owners.map((checkout) => checkout.branch ?? checkout.label).join(", ")],
           [t("search.fact.closingPrs"), closing.map((checkout) => `#${checkout.pull_request?.number}`).join(", ")],
+          sessionsFact(links, entry, t),
           [t("search.fact.read"), entry.workspace ? lastReadWords(entry.workspace, now, t, language) : null],
         ]),
         action: t("search.openIssue"),

@@ -1210,6 +1210,72 @@ export type ProjectSessions = {
   detail: ProjectSessionDetail | null;
 };
 
+/** Where a pull request's issue link comes from: GitHub's closing reference or Hide's branch link. */
+export type LinkIssueSource = "closes" | "hide";
+/** `created`: the session printed the pull request's address when GitHub made it. */
+export type LinkSessionRole = "created" | "worked";
+/** Whether the session's own file is still there; `unknown` for a device's file. */
+export type LinkFileState = "present" | "missing" | "unknown";
+export type LinkTarget = { kind: "pr"; number: number } | { kind: "issue"; key: string };
+
+/** One session line of a link panel: a session, or several joined by continuation (`ids`, oldest first). */
+export type LinkedSession = {
+  agent: string;
+  id: string;
+  ids: string[];
+  device_id: string;
+  role: LinkSessionRole;
+  /** The pull request the line belongs to. */
+  pr: number;
+  request: string | null;
+  started_at_unix_ms: number | null;
+  ended_at_unix_ms: number | null;
+  path: string | null;
+  cwd: string | null;
+  file: LinkFileState;
+  parent: { name: string; agent: string; session_id: string; available: boolean } | null;
+};
+
+/**
+ * The link record for the one pull request or issue a panel shows (PRD
+ * link-graph D-45), on its own section of the wire. Failures are codes the
+ * shell words.
+ */
+export type LinkPanel = {
+  workspace_id: string;
+  target: LinkTarget;
+  loading: boolean;
+  failure: string | null;
+  pr: {
+    number: number;
+    branch: string;
+    title: string;
+    url: string;
+    created_at_unix_ms: number | null;
+    closed_at_unix_ms: number | null;
+    merged_at_unix_ms: number | null;
+    issues: { key: string; source: LinkIssueSource }[];
+    /** Recorded worktree paths for the branch, newest first. */
+    worktrees: string[];
+  } | null;
+  /** The pull requests an issue target is linked to, newest first. */
+  prs: number[];
+  sessions: LinkedSession[];
+  /** Every line the record holds for the target; `sessions` carries at most 200. */
+  total: number;
+};
+
+/** Each Project's link counts and session chips by workspace id. */
+export type LinkSummaries = {
+  projects: Record<string, {
+    prs?: Record<string, number>;
+    issues?: Record<string, number>;
+    sessions?: Record<string, { number: number; created: boolean }[]>;
+  }>;
+  /** Session files are still being read for the first time. */
+  filling: boolean;
+};
+
 export type SnapshotRest = {
   git_worktrees_loading?: boolean;
   navigator?: {

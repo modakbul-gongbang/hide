@@ -52,12 +52,13 @@ import {
   type KitComponentId,
   type Tab,
   type Workspace,
+  type LinkTarget,
 } from "./snapshot";
 import { fileUrl } from "./browserViews";
 import { requestLine } from "./editor/lineRequest";
 import { owningCheckout, probePaths, type FoundPath } from "./terminalLinkProvider";
 import { useShellStore } from "./store";
-import { useUiStore, type PendingClose, type SidebarMode } from "./ui";
+import { useUiStore, type PendingClose, type SessionTarget, type SidebarMode } from "./ui";
 import type { DispatchFn } from "./ws";
 import { closeShortcutPolicy, drawnViews, keyboardOwner, newTabPolicy } from "./viewFocus";
 import {
@@ -1150,6 +1151,8 @@ export function createActions(send: DispatchFn) {
       model?: string | null;
       prompt?: string | null;
       requestId?: string;
+      /** The session to resume instead of a new conversation (PRD link-graph B12); never with a prompt. */
+      resumeSessionId?: string;
     }) {
       dispatch({
         schema_version: 2,
@@ -1161,6 +1164,7 @@ export function createActions(send: DispatchFn) {
           ...(request.model ? { model: request.model } : {}),
           ...(request.prompt ? { prompt: request.prompt } : {}),
           ...(request.requestId ? { request_id: request.requestId } : {}),
+          ...(request.resumeSessionId ? { resume_session_id: request.resumeSessionId } : {}),
         },
       });
     },
@@ -1237,7 +1241,21 @@ export function createActions(send: DispatchFn) {
       dispatch({ schema_version: 2, kind: "pr_delegate", payload: { workspace_id: workspaceId, pr_number: prNumber, provider, ...(model ? { model } : {}), prompt } });
     },
 
-    /** A pull request's row on its Project's PRs tab, unfolded (PRD overview-lenses-prs B21); ⌘-click stays GitHub's. */
+    /**
+     * The link record of one pull request or issue for the panel showing it
+     * (PRD link-graph B24, B25): read off the core's lock and answered in
+     * `link_panel`; Retry sends the same event.
+     */
+    openLinks(workspaceId: string, target: LinkTarget) {
+      dispatch({ schema_version: 2, kind: "links_open", payload: { workspace_id: workspaceId, target } });
+    },
+
+    /** The panel went away; an answer still on its way is dropped. */
+    closeLinks() {
+      dispatch({ schema_version: 2, kind: "links_close", payload: {} });
+    },
+
+    /** A pull request's row on its Project's PRs tab with its panel open (PRD overview-lenses-prs B21, link-graph B36); ⌘-click stays GitHub's. */
     openPullRequestRow(projectId: string, number: number | null) {
       const project = catalogWorkspaces(rest()).find((row) => row.id === projectId);
       if (project) this.openOverview(project.device_id, projectId, { pullRequest: number });
@@ -1249,10 +1267,17 @@ export function createActions(send: DispatchFn) {
      * Overview shows, as one action. The screen is this page's own state, so
      * the only event is the device's (PRD cmdk-navigation B20).
      */
-    openOverview(deviceId: string, projectId: string, lens?: { issue: string } | { pullRequest: number | null }) {
+    openOverview(deviceId: string, projectId: string, lens?: { issue: string } | { pullRequest: number | null } | { session: SessionTarget }) {
       const state = ui();
       const next = state.overviewProjectId === projectId ? state.overviewLens : projectEntryLens(rest(), projectId);
-      const selected = lens && "pullRequest" in lens ? pullRequestLens(next, lens.pullRequest) : lens ? { ...next, tab: "issues" as const, focusTask: lens.issue, panel: lens.issue } : next;
+      const selected =
+        lens && "pullRequest" in lens
+          ? pullRequestLens(next, lens.pullRequest)
+          : lens && "session" in lens
+            ? { ...next, tab: "sessions" as const, focusTask: null, panel: null, session: lens.session }
+            : lens
+              ? { ...next, tab: "issues" as const, focusTask: lens.issue, panel: lens.issue }
+              : next;
       const modal = state.screen?.kind === "workspace" && Boolean(frontCheckout(rest()) && rest()?.workspace_view);
       const target = state.overlay === "search" ? state.searchReturnFocus : document.activeElement instanceof HTMLElement ? document.activeElement : null;
       useUiStore.setState({ overviewProjectId: projectId, overviewLens: selected, overviewOpen: modal, overviewReturnFocus: target, overlay: "none", ...(!modal ? { screen: { kind: "main" as const, deviceId } } : {}) });

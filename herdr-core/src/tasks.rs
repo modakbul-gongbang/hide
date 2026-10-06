@@ -408,6 +408,7 @@ mod tests {
             ],
             overflow: true,
             dependencies_failure: None,
+            repository_id: None,
         }
     }
 

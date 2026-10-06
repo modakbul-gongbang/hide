@@ -515,6 +515,7 @@ impl Runtime {
                 prompt,
                 model: payload.model,
                 request_id: None,
+                resume_session_id: None,
             }),
             None => self.start_worktree_task(
                 CreateWorktreePayload {

@@ -1,0 +1,1168 @@
+//! The link worker: one named thread that holds the record's only write
+//! connection and does every file and SQLite read and write for it outside
+//! `Mutex<Runtime>` (D-27, D-29).
+//!
+//! Its mailbox holds the newest copy of each core fact (projects, panes,
+//! parents) and the newest panel read; older ones are replaced, never queued
+//! (D-40). Between them it reads changed session files from this machine,
+//! one file and one read budget at a time, yielding after 20 ms so a
+//! backfill never competes with input.
+
+use super::store::{IssueLinks, LinkStore, Opened, PrLinks};
+use super::{BACKFILL_MS, PaneFact, ParentFact, ProjectFacts, ProjectLinkSummary, now_ms};
+use crate::host_access::{HostCallError, HostChannel, call_as};
+use hide_host::protocol::Call;
+use hide_session::links::{self, Candidate, ReadRequest};
+use std::collections::{BTreeMap, HashMap, VecDeque};
+use std::path::{Path, PathBuf};
+use std::sync::{Arc, Condvar, Mutex};
+use std::thread;
+use std::time::{Duration, Instant};
+
+/// How often the session folders are listed for changed files.
+const LIST_EVERY: Duration = Duration::from_secs(15);
+/// How often while a panel is open, so new activity reaches it in seconds
+/// (B29); a listing is a walk of directory entries, not a read of files.
+const LIST_OPEN_EVERY: Duration = Duration::from_secs(3);
+/// How often the panes' spans are extended while they stay.
+const PANES_EVERY: Duration = Duration::from_secs(60);
+/// How often each connected device is asked for its changed files (D-21).
+const DEVICE_EVERY: Duration = Duration::from_secs(60);
+/// How long one device call may take before the next turn.
+const DEVICE_TIMEOUT: Duration = Duration::from_secs(10);
+/// How long a device whose call failed is left alone before it is asked
+/// again, so an unreachable helper costs one timeout a minute, not one a turn.
+const DEVICE_RETRY: Duration = Duration::from_secs(60);
+/// How often expired sessions are removed (D-18).
+const PRUNE_EVERY: Duration = Duration::from_secs(30 * 60);
+/// The longest a summary waits after a write, so a burst publishes once.
+const SUMMARY_AFTER: Duration = Duration::from_secs(2);
+/// One turn of file reading.
+const TURN: Duration = Duration::from_millis(20);
+/// The rest between two turns while files wait to be read.
+const REST: Duration = Duration::from_millis(30);
+/// A listing reaches back this far before the last one started, so a file
+/// written while it ran is listed again.
+const LIST_OVERLAP_MS: u64 = 60_000;
+
+const BACKFILL_DONE: &str = "backfill_done";
+const LISTED_AT: &str = "listed_at";
+
+/// What the worker hands back to the runtime.
+pub trait Sink: Send + 'static {
+    /// Each project's counts and chips, by workspace id, when one changed.
+    fn summaries(&self, summaries: BTreeMap<String, ProjectLinkSummary>);
+    /// A panel read's answer; `generation` fences a superseded one.
+    fn panel(&self, generation: u64, answer: Result<PanelAnswer, String>);
+    /// Whether the first fill or a listing's reads are running (B24).
+    fn filling(&self, filling: bool);
+    /// The devices whose helper is connected now (D-21).
+    fn devices(&self) -> Vec<(String, Arc<dyn HostChannel>)>;
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PanelTarget {
+    Pr(u64),
+    Issue(String),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PanelRequest {
+    pub generation: u64,
+    /// The project's record key.
+    pub project: String,
+    pub target: PanelTarget,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PanelAnswer {
+    Pr(Option<PrLinks>),
+    Issue(IssueLinks),
+}
+
+#[derive(Default)]
+struct Mailbox {
+    stop: bool,
+    projects: Option<Arc<Vec<ProjectFacts>>>,
+    panes: Option<Arc<Vec<PaneFact>>>,
+    parents: Option<Arc<Vec<ParentFact>>>,
+    panel: Option<PanelRequest>,
+    /// The open panel closed: its reads stop following writes.
+    panel_closed: bool,
+}
+
+/// The runtime's handle on the worker's mailbox.
+#[derive(Clone)]
+pub struct LinkClient(Arc<(Mutex<Mailbox>, Condvar)>);
+
+impl LinkClient {
+    fn post(&self, put: impl FnOnce(&mut Mailbox)) {
+        let (lock, wake) = &*self.0;
+        if let Ok(mut mailbox) = lock.lock() {
+            put(&mut mailbox);
+            wake.notify_one();
+        }
+    }
+
+    pub fn projects(&self, projects: Arc<Vec<ProjectFacts>>) {
+        self.post(|mailbox| mailbox.projects = Some(projects));
+    }
+
+    pub fn panes(&self, panes: Arc<Vec<PaneFact>>) {
+        self.post(|mailbox| mailbox.panes = Some(panes));
+    }
+
+    pub fn parents(&self, parents: Arc<Vec<ParentFact>>) {
+        self.post(|mailbox| mailbox.parents = Some(parents));
+    }
+
+    pub fn read(&self, request: PanelRequest) {
+        self.post(|mailbox| {
+            mailbox.panel = Some(request);
+            mailbox.panel_closed = false;
+        });
+    }
+
+    pub fn close_panel(&self) {
+        self.post(|mailbox| {
+            mailbox.panel = None;
+            mailbox.panel_closed = true;
+        });
+    }
+}
+
+/// Where the worker reads and writes.
+#[derive(Clone, Debug)]
+pub struct Paths {
+    pub store: PathBuf,
+    /// The search index, whose `policy` holds each project's Copied history.
+    pub search: PathBuf,
+    /// The home whose session folders are this machine's.
+    pub home: Option<PathBuf>,
+    pub local_device: String,
+}
+
+pub struct LinkWorker {
+    client: LinkClient,
+    join: Option<thread::JoinHandle<()>>,
+}
+
+impl Drop for LinkWorker {
+    fn drop(&mut self) {
+        self.client.post(|mailbox| mailbox.stop = true);
+        if let Some(join) = self.join.take() {
+            let _ = join.join();
+        }
+    }
+}
+
+impl LinkWorker {
+    pub fn spawn(paths: Paths, sink: impl Sink) -> Result<Self, String> {
+        let client = LinkClient(Arc::new((Mutex::new(Mailbox::default()), Condvar::new())));
+        let mailbox = client.clone();
+        let join = thread::Builder::new()
+            .name("hide-links".into())
+            .spawn(move || run(&mailbox, &paths, &sink))
+            .map_err(|error| error.to_string())?;
+        Ok(Self {
+            client,
+            join: Some(join),
+        })
+    }
+
+    pub fn client(&self) -> LinkClient {
+        self.client.clone()
+    }
+}
+
+struct State {
+    projects: Arc<Vec<ProjectFacts>>,
+    /// Projects posted but not yet written, kept while the store is closed.
+    projects_due: bool,
+    panes: Arc<Vec<PaneFact>>,
+    /// Parents posted but not yet written.
+    parents: Option<Arc<Vec<ParentFact>>>,
+    panel: Option<PanelRequest>,
+    panel_answer: Option<Result<PanelAnswer, String>>,
+    summaries: BTreeMap<String, ProjectLinkSummary>,
+    queue: VecDeque<Candidate>,
+    /// The listing whose files are being read, until its last page drains.
+    listing: Option<Listing>,
+    /// Whether this machine's first fill has finished (D-17).
+    filled: bool,
+    /// Whether `filled` still has to be read from the store.
+    filled_unknown: bool,
+    /// Per device: its files waiting to be read, and when it was last listed.
+    devices: HashMap<String, DeviceQueue>,
+    /// When the connected devices were last asked for.
+    devices_at: Option<Instant>,
+    filling: bool,
+    /// The last write's failure, while writes keep failing: a panel then
+    /// says the record failed rather than showing what it could not keep.
+    write_failure: Option<String>,
+    dirty_at: Option<Instant>,
+    listed: Option<Instant>,
+    panes_at: Option<Instant>,
+    pruned: Option<Instant>,
+}
+
+impl State {
+    /// Notes a write's outcome; a change of failure re-answers the panel.
+    fn wrote(&mut self, result: Result<(), String>, what: &str) -> bool {
+        let failure = result.err();
+        if let Some(code) = &failure {
+            log_write(code, what);
+        }
+        if failure != self.write_failure {
+            self.write_failure = failure.clone();
+            self.dirty_at.get_or_insert_with(Instant::now);
+        }
+        failure.is_none()
+    }
+
+    /// Whether a device has files to read and is not waiting out a failure.
+    fn device_reading(&self) -> bool {
+        self.devices.values().any(DeviceQueue::reading)
+    }
+}
+
+/// One listing of changed files, read page by page: its time is recorded as
+/// listed only once every page has been read without a failed write, so a
+/// failure is listed again rather than skipped (D-17, B32).
+struct Listing {
+    started: u64,
+    since: u64,
+    /// The next page's end: a full page may hide older files.
+    next: Option<u64>,
+    failed: bool,
+}
+
+impl Listing {
+    fn start(since: u64) -> Self {
+        Self {
+            started: now_ms(),
+            since,
+            next: None,
+            failed: false,
+        }
+    }
+
+    /// Takes one page, newest first, and sets where the next one ends.
+    fn page(&mut self, page: &[Candidate], until: Option<u64>, device: &str) {
+        self.next = None;
+        if page.len() < links::CANDIDATE_LIMIT {
+            return;
+        }
+        let oldest = page
+            .last()
+            .map_or(0, |candidate| candidate.modified_unix_ms);
+        crate::diagnostic!(serde_json::json!({
+            "component": "links", "kind": "listing.capped", "device_id": device,
+            "files": page.len(), "until_unix_ms": oldest,
+        }));
+        // A page of files that all share one time cannot move on; what it
+        // could not hold is left, and the log says so.
+        if until != Some(oldest) {
+            self.next = Some(oldest);
+        }
+    }
+}
+
+/// The files of one page not yet read at their current stamp, oldest first,
+/// so a session's earlier file is read before the one that continues it.
+fn unread(page: Vec<Candidate>, stamps: &HashMap<String, String>) -> VecDeque<Candidate> {
+    page.into_iter()
+        .rev()
+        .filter(|candidate| stamps.get(&candidate.path) != Some(&candidate.stamp))
+        .collect()
+}
+
+fn open_store(path: &Path) -> Result<LinkStore, String> {
+    let (store, opened) = LinkStore::open(path).inspect_err(|code| {
+        crate::diagnostic!(serde_json::json!({
+            "component": "links", "kind": "store.open_failed", "code": code,
+        }));
+    })?;
+    if opened == Opened::Rebuilt {
+        crate::diagnostic!(serde_json::json!({
+            "component": "links", "kind": "store.rebuilt", "code": "links_store_corrupt",
+        }));
+    }
+    Ok(store)
+}
+
+fn run(client: &LinkClient, paths: &Paths, sink: &impl Sink) {
+    // A store that cannot open (busy, a newer schema, a full disk) is tried
+    // again every listing period; until then a panel says why.
+    let mut store = open_store(&paths.store);
+    let mut opened_at = Instant::now();
+    let mut state = State {
+        projects: Arc::default(),
+        projects_due: false,
+        panes: Arc::default(),
+        parents: None,
+        panel: None,
+        panel_answer: None,
+        summaries: BTreeMap::new(),
+        queue: VecDeque::new(),
+        listing: None,
+        filled: false,
+        filled_unknown: true,
+        devices: HashMap::new(),
+        devices_at: None,
+        filling: false,
+        write_failure: None,
+        dirty_at: None,
+        listed: None,
+        panes_at: None,
+        pruned: None,
+    };
+    loop {
+        let (lock, wake) = &*client.0;
+        let Ok(mut mailbox) = lock.lock() else { return };
+        let wait = if store.is_ok() {
+            next_wait(&state)
+        } else {
+            LIST_EVERY.saturating_sub(opened_at.elapsed())
+        };
+        if !mailbox.stop
+            && mailbox.projects.is_none()
+            && mailbox.panes.is_none()
+            && mailbox.parents.is_none()
+            && mailbox.panel.is_none()
+            && !mailbox.panel_closed
+            && wait > Duration::ZERO
+        {
+            mailbox = match wake.wait_timeout(mailbox, wait) {
+                Ok((mailbox, _)) => mailbox,
+                Err(_) => return,
+            };
+        }
+        if mailbox.stop {
+            return;
+        }
+        let projects = mailbox.projects.take();
+        let panes = mailbox.panes.take();
+        let parents = mailbox.parents.take();
+        let panel = mailbox.panel.take();
+        let panel_closed = std::mem::take(&mut mailbox.panel_closed);
+        drop(mailbox);
+
+        if panel_closed {
+            state.panel = None;
+            state.panel_answer = None;
+        }
+        if store.is_err() && opened_at.elapsed() >= LIST_EVERY {
+            store = open_store(&paths.store);
+            opened_at = Instant::now();
+            if store.is_ok() {
+                // The facts posted while it was closed are the newest ones.
+                state.panes_at = None;
+                state.dirty_at.get_or_insert_with(Instant::now);
+            }
+        }
+        if let Some(request) = panel {
+            state.panel = Some(request);
+            state.panel_answer = None;
+        }
+        if let Some(projects) = projects {
+            state.projects = projects;
+            state.projects_due = true;
+        }
+        // Facts are handed only when they change, so what arrives while the
+        // store is closed waits for it.
+        if let Some(panes) = panes {
+            state.panes = panes;
+            state.panes_at = None;
+        }
+        if let Some(parents) = parents {
+            state.parents = Some(parents);
+        }
+        let store = match store.as_mut() {
+            Ok(store) => store,
+            Err(code) => {
+                if let Some(request) = state.panel.as_ref()
+                    && state.panel_answer.is_none()
+                {
+                    let answer = Err(code.clone());
+                    sink.panel(request.generation, answer.clone());
+                    state.panel_answer = Some(answer);
+                }
+                continue;
+            }
+        };
+        if state.filled_unknown {
+            state.filled_unknown = false;
+            state.filled = store.meta(BACKFILL_DONE).is_ok_and(|done| done.is_some());
+        }
+        if std::mem::take(&mut state.projects_due) {
+            let projects = Arc::clone(&state.projects);
+            for project in projects.iter() {
+                let result = store.apply_project(project, now_ms());
+                state.wrote(result, "project");
+            }
+            state.dirty_at.get_or_insert_with(Instant::now);
+        }
+        if state.panes_at.is_none_or(|at| at.elapsed() >= PANES_EVERY) {
+            if !state.panes.is_empty() {
+                let result = store.apply_panes(&state.panes, now_ms());
+                state.wrote(result, "panes");
+                state.dirty_at.get_or_insert_with(Instant::now);
+            }
+            state.panes_at = Some(Instant::now());
+        }
+        if let Some(parents) = state.parents.take() {
+            let result = store.apply_parents(&parents);
+            state.wrote(result, "parents");
+            state.dirty_at.get_or_insert_with(Instant::now);
+        }
+        if state.panel.is_some() && state.panel_answer.is_none() {
+            answer_panel(store, paths, &mut state, sink);
+        }
+        if let Some(home) = paths.home.as_deref() {
+            if state.queue.is_empty() {
+                let next_page = state.listing.as_ref().and_then(|listing| listing.next);
+                if next_page.is_some()
+                    || (state.listing.is_none()
+                        && state
+                            .listed
+                            .is_none_or(|at| at.elapsed() >= list_every(&state)))
+                {
+                    list(store, home, paths, &mut state);
+                }
+            }
+            read_turn(store, home, paths, &mut state);
+            if state.queue.is_empty() {
+                finish_listing(store, &mut state);
+            }
+        }
+        device_turn(store, sink, &mut state);
+        // The spinner is the first fill's, never a later listing's (B24).
+        let filling = (!state.filled && !state.queue.is_empty())
+            || state
+                .devices
+                .values()
+                .any(|device| !device.filled && device.reading());
+        if filling != state.filling {
+            state.filling = filling;
+            sink.filling(filling);
+        }
+        if state.pruned.is_none_or(|at| at.elapsed() >= PRUNE_EVERY) {
+            prune(store, paths);
+            state.pruned = Some(Instant::now());
+            state.dirty_at.get_or_insert_with(Instant::now);
+        }
+        if state
+            .dirty_at
+            .is_some_and(|at| at.elapsed() >= SUMMARY_AFTER || state.queue.is_empty())
+        {
+            state.dirty_at = None;
+            publish_summaries(store, &mut state, sink);
+            if state.panel.is_some() {
+                answer_panel(store, paths, &mut state, sink);
+            }
+        }
+    }
+}
+
+fn list_every(state: &State) -> Duration {
+    if state.panel.is_some() {
+        LIST_OPEN_EVERY
+    } else {
+        LIST_EVERY
+    }
+}
+
+fn next_wait(state: &State) -> Duration {
+    // A listing with another page to take goes on at once, even when the
+    // page before held nothing new.
+    let paging = state
+        .listing
+        .as_ref()
+        .is_some_and(|listing| listing.next.is_some())
+        || state.devices.values().any(|device| {
+            device.retry_at.is_none_or(|at| at <= Instant::now())
+                && device
+                    .listing
+                    .as_ref()
+                    .is_some_and(|listing| listing.next.is_some())
+        });
+    if !state.queue.is_empty() || state.device_reading() || paging {
+        return REST;
+    }
+    let every = list_every(state);
+    let mut wait = every;
+    if let Some(at) = state.dirty_at {
+        wait = wait.min(SUMMARY_AFTER.saturating_sub(at.elapsed()));
+    }
+    if let Some(at) = state.listed {
+        wait = wait.min(every.saturating_sub(at.elapsed()));
+    }
+    for device in state.devices.values() {
+        let waiting = !device.queue.is_empty()
+            || device
+                .listing
+                .as_ref()
+                .is_some_and(|listing| listing.next.is_some());
+        if let Some(at) = device.retry_at
+            && waiting
+        {
+            wait = wait.min(at.saturating_duration_since(Instant::now()));
+        }
+    }
+    wait
+}
+
+fn log_write(code: &str, what: &str) {
+    crate::diagnostic!(serde_json::json!({
+        "component": "links", "kind": "store.write_failed", "what": what, "code": code,
+    }));
+}
+
+/// Lists one page of the session files changed since the last listing (the
+/// last 90 days the first time, D-17) and queues the ones whose stamp moved.
+fn list(store: &LinkStore, home: &Path, paths: &Paths, state: &mut State) {
+    state.listed = Some(Instant::now());
+    if state.listing.is_none() {
+        let since = match (store.meta(BACKFILL_DONE), store.meta(LISTED_AT)) {
+            (Ok(Some(_)), Ok(Some(at))) => at
+                .parse::<u64>()
+                .unwrap_or(0)
+                .saturating_sub(LIST_OVERLAP_MS),
+            (Ok(_), Ok(_)) => now_ms().saturating_sub(BACKFILL_MS),
+            (Err(code), _) | (_, Err(code)) => {
+                log_write(&code, "listing");
+                return;
+            }
+        };
+        state.listing = Some(Listing::start(since));
+    }
+    let Some(listing) = state.listing.as_mut() else {
+        return;
+    };
+    let until = listing.next;
+    let page = match links::candidates(home, listing.since, until) {
+        Ok(page) => page,
+        Err(code) => {
+            crate::diagnostic!(serde_json::json!({
+                "component": "links", "kind": "listing.failed", "code": code,
+            }));
+            listing.failed = true;
+            listing.next = None;
+            return;
+        }
+    };
+    listing.page(&page, until, &paths.local_device);
+    match store.stamps(&paths.local_device) {
+        Ok(stamps) => state.queue = unread(page, &stamps),
+        Err(code) => {
+            log_write(&code, "listing");
+            listing.failed = true;
+            listing.next = None;
+        }
+    }
+}
+
+/// Once a listing's last page has drained, records its time as listed and
+/// the first fill as done, unless something in it failed (D-17, B32).
+fn finish_listing(store: &LinkStore, state: &mut State) {
+    let Some(listing) = state.listing.take_if(|listing| listing.next.is_none()) else {
+        return;
+    };
+    if listing.failed {
+        return;
+    }
+    if let Err(code) = store.set_meta(LISTED_AT, &listing.started.to_string()) {
+        log_write(&code, "listing");
+        return;
+    }
+    if !state.filled {
+        if let Err(code) = store.set_meta(BACKFILL_DONE, "1") {
+            log_write(&code, "backfill");
+            return;
+        }
+        state.filled = true;
+        crate::diagnostic!(serde_json::json!({"component": "links", "kind": "backfill.done"}));
+    }
+}
+
+/// Reads queued files for one turn: one read budget per file per step, a
+/// file with more waiting goes back to the front.
+fn read_turn(store: &mut LinkStore, home: &Path, paths: &Paths, state: &mut State) {
+    if state.queue.is_empty() {
+        return;
+    }
+    let turn = Instant::now();
+    while turn.elapsed() < TURN {
+        let Some(candidate) = state.queue.pop_front() else {
+            break;
+        };
+        let checkpoint = match store.checkpoint(&paths.local_device, &candidate.path) {
+            Ok(checkpoint) => checkpoint,
+            Err(code) => {
+                log_write(&code, "cursor");
+                if let Some(listing) = state.listing.as_mut() {
+                    listing.failed = true;
+                }
+                continue;
+            }
+        };
+        let answer = links::read(
+            home,
+            &[ReadRequest {
+                agent: candidate.agent,
+                path: candidate.path.clone(),
+                checkpoint,
+            }],
+        )
+        .remove(0);
+        if let Some(code) = answer.error.as_deref() {
+            crate::diagnostic!(serde_json::json!({
+                "component": "links", "kind": "session.read_failed",
+                "agent": candidate.agent.as_str(), "code": code,
+                "session_id": answer.facts.session_id,
+            }));
+        }
+        let more = answer.has_more && answer.error.is_none();
+        let result = store.apply_answer(&paths.local_device, &answer, &candidate.stamp);
+        if !state.wrote(result, "session") {
+            if let Some(listing) = state.listing.as_mut() {
+                listing.failed = true;
+            }
+            continue;
+        }
+        state.dirty_at.get_or_insert_with(Instant::now);
+        if more {
+            state.queue.push_front(candidate);
+        }
+    }
+}
+
+#[derive(Default)]
+struct DeviceQueue {
+    queue: VecDeque<Candidate>,
+    listing: Option<Listing>,
+    listed: Option<Instant>,
+    /// After a failed call, when the device is asked again.
+    retry_at: Option<Instant>,
+    /// Whether its first listing has been read through (B24).
+    filled: bool,
+}
+
+impl DeviceQueue {
+    fn reading(&self) -> bool {
+        !self.queue.is_empty() && self.retry_at.is_none_or(|at| at <= Instant::now())
+    }
+
+    fn failed(&mut self) {
+        self.retry_at = Some(Instant::now() + DEVICE_RETRY);
+    }
+}
+
+/// One step for each connected device: list its changed files every
+/// [`DEVICE_EVERY`], then read up to a few of them per turn through its
+/// helper. A device that is gone keeps every row it gave; when it returns,
+/// its listing starts where the last one did, so what changed meanwhile is
+/// read then (B40). A failed call leaves the device for [`DEVICE_RETRY`].
+fn device_turn(store: &mut LinkStore, sink: &impl Sink, state: &mut State) {
+    let paging = state.devices.values().any(|device| {
+        device
+            .listing
+            .as_ref()
+            .is_some_and(|listing| listing.next.is_some())
+    });
+    if !state.device_reading()
+        && !paging
+        && state
+            .devices_at
+            .is_some_and(|at| at.elapsed() < DEVICE_EVERY)
+    {
+        return;
+    }
+    state.devices_at = Some(Instant::now());
+    let devices = sink.devices();
+    state
+        .devices
+        .retain(|id, _| devices.iter().any(|(device, _)| device == id));
+    for (device, channel) in devices {
+        let entry = state
+            .devices
+            .entry(device.clone())
+            .or_insert_with(|| DeviceQueue {
+                // A device listed through before is not filling for the first time.
+                filled: store
+                    .meta(&format!("{LISTED_AT}:{device}"))
+                    .is_ok_and(|at| at.is_some()),
+                ..DeviceQueue::default()
+            });
+        if entry.retry_at.is_some_and(|at| at > Instant::now()) {
+            continue;
+        }
+        entry.retry_at = None;
+        let next_page = entry.listing.as_ref().and_then(|listing| listing.next);
+        if entry.queue.is_empty()
+            && (next_page.is_some()
+                || (entry.listing.is_none()
+                    && entry.listed.is_none_or(|at| at.elapsed() >= DEVICE_EVERY)))
+        {
+            entry.listed = Some(Instant::now());
+            if let Err(code) = list_device(store, &device, channel.as_ref(), entry) {
+                entry.failed();
+                log_device(&device, "listing", &code);
+            }
+        }
+        if !entry.queue.is_empty() {
+            read_device(
+                store,
+                &device,
+                channel.as_ref(),
+                entry,
+                &mut state.write_failure,
+            );
+            state.dirty_at.get_or_insert_with(Instant::now);
+        }
+        if entry.queue.is_empty() {
+            finish_device(store, &device, entry);
+        }
+    }
+}
+
+fn read_device(
+    store: &mut LinkStore,
+    device: &str,
+    channel: &dyn HostChannel,
+    entry: &mut DeviceQueue,
+    write_failure: &mut Option<String>,
+) {
+    let batch = entry
+        .queue
+        .drain(..entry.queue.len().min(links::READ_FILE_LIMIT))
+        .collect::<Vec<_>>();
+    let mut requests = Vec::with_capacity(batch.len());
+    for candidate in &batch {
+        match store.checkpoint(device, &candidate.path) {
+            Ok(checkpoint) => requests.push(ReadRequest {
+                agent: candidate.agent,
+                path: candidate.path.clone(),
+                checkpoint,
+            }),
+            Err(code) => {
+                log_write(&code, "cursor");
+                if let Some(listing) = entry.listing.as_mut() {
+                    listing.failed = true;
+                }
+            }
+        }
+    }
+    let answers = match call_as::<Vec<links::ReadAnswer>>(
+        channel,
+        Call::LinkRead { requests },
+        DEVICE_TIMEOUT,
+    ) {
+        Ok(answers) => answers,
+        Err(error) => {
+            // The files wait for the device's next try.
+            for candidate in batch.into_iter().rev() {
+                entry.queue.push_front(candidate);
+            }
+            entry.failed();
+            log_device(device, "read", &device_code(&error));
+            return;
+        }
+    };
+    for candidate in batch {
+        let Some(answer) = answers.iter().find(|answer| answer.path == candidate.path) else {
+            if let Some(listing) = entry.listing.as_mut() {
+                listing.failed = true;
+            }
+            continue;
+        };
+        if let Some(code) = answer.error.as_deref() {
+            log_device(device, "session", code);
+        }
+        if let Err(code) = store.apply_answer(device, answer, &candidate.stamp) {
+            log_write(&code, "session");
+            *write_failure = Some(code);
+            if let Some(listing) = entry.listing.as_mut() {
+                listing.failed = true;
+            }
+            continue;
+        }
+        *write_failure = None;
+        if answer.has_more && answer.error.is_none() {
+            entry.queue.push_back(candidate);
+        }
+    }
+}
+
+fn list_device(
+    store: &LinkStore,
+    device: &str,
+    channel: &dyn HostChannel,
+    entry: &mut DeviceQueue,
+) -> Result<(), String> {
+    if entry.listing.is_none() {
+        let since = match store.meta(&format!("{LISTED_AT}:{device}"))? {
+            Some(at) => at
+                .parse::<u64>()
+                .unwrap_or(0)
+                .saturating_sub(LIST_OVERLAP_MS),
+            None => now_ms().saturating_sub(BACKFILL_MS),
+        };
+        entry.listing = Some(Listing::start(since));
+    }
+    let Some(listing) = entry.listing.as_mut() else {
+        return Ok(());
+    };
+    let until = listing.next;
+    // A page that could not be listed is files not read: the listing is not
+    // recorded as listed through, and the next one starts where it did.
+    let listed = call_as::<Vec<Candidate>>(
+        channel,
+        Call::LinkFiles {
+            since_unix_ms: listing.since,
+            until_unix_ms: until,
+        },
+        DEVICE_TIMEOUT,
+    )
+    .map_err(|error| device_code(&error))
+    .and_then(|page| Ok((store.stamps(device)?, page)));
+    let (stamps, page) = listed.inspect_err(|_| {
+        listing.failed = true;
+        listing.next = None;
+    })?;
+    listing.page(&page, until, device);
+    entry.queue = unread(page, &stamps);
+    Ok(())
+}
+
+/// The device's counterpart of [`finish_listing`].
+fn finish_device(store: &LinkStore, device: &str, entry: &mut DeviceQueue) {
+    let Some(listing) = entry.listing.take_if(|listing| listing.next.is_none()) else {
+        return;
+    };
+    if listing.failed {
+        return;
+    }
+    match store.set_meta(
+        &format!("{LISTED_AT}:{device}"),
+        &listing.started.to_string(),
+    ) {
+        Ok(()) => entry.filled = true,
+        Err(code) => log_write(&code, "listing"),
+    }
+}
+
+fn device_code(error: &HostCallError) -> String {
+    match error {
+        HostCallError::NotConnected(_) => "device_helper_not_connected".to_owned(),
+        HostCallError::Busy => "device_helper_busy".to_owned(),
+        HostCallError::Unknown(_) => "device_helper_unknown".to_owned(),
+        // A helper older than protocol 18 does not know the call.
+        HostCallError::Refused(error) if error.code == hide_host::ErrorCode::InvalidRequest => {
+            "device_helper_unsupported".to_owned()
+        }
+        HostCallError::Refused(error) => error.message.clone(),
+    }
+}
+
+fn log_device(device: &str, what: &str, code: &str) {
+    crate::diagnostic!(serde_json::json!({
+        "component": "links", "kind": "device.read_failed", "device_id": device,
+        "what": what, "code": code,
+    }));
+}
+
+fn prune(store: &mut LinkStore, paths: &Paths) {
+    let policies = match store.policies(&paths.search) {
+        Ok(policies) => policies,
+        Err(code) => {
+            // An unreadable policy is not Off: nothing is removed this pass.
+            crate::diagnostic!(serde_json::json!({
+                "component": "links", "kind": "policy.read_failed", "code": code,
+            }));
+            return;
+        }
+    };
+    let days = |project: &str| policies.get(project).copied();
+    let exists = |path: &str| Path::new(path).is_file();
+    match store.prune(&days, &paths.local_device, &exists, now_ms()) {
+        Ok(0) => {}
+        Ok(removed) => crate::diagnostic!(serde_json::json!({
+            "component": "links", "kind": "retention.pruned", "sessions": removed,
+        })),
+        Err(code) => log_write(&code, "retention"),
+    }
+}
+
+fn publish_summaries(store: &LinkStore, state: &mut State, sink: &impl Sink) {
+    let mut summaries = BTreeMap::new();
+    for project in state.projects.iter() {
+        match store.summary(&project.key) {
+            Ok(summary) => {
+                summaries.insert(project.workspace_id.clone(), summary);
+            }
+            Err(code) => {
+                crate::diagnostic!(serde_json::json!({
+                    "component": "links", "kind": "summary.failed",
+                    "workspace_id": project.workspace_id, "code": code,
+                }));
+                if let Some(held) = state.summaries.get(&project.workspace_id) {
+                    summaries.insert(project.workspace_id.clone(), held.clone());
+                }
+            }
+        }
+    }
+    if summaries != state.summaries {
+        state.summaries = summaries.clone();
+        sink.summaries(summaries);
+    }
+}
+
+fn answer_panel(store: &LinkStore, paths: &Paths, state: &mut State, sink: &impl Sink) {
+    let Some(request) = state.panel.as_ref() else {
+        return;
+    };
+    let local = Some(paths.local_device.as_str());
+    let answer = if let Some(code) = &state.write_failure {
+        Err(code.clone())
+    } else {
+        match &request.target {
+            PanelTarget::Pr(number) => store
+                .pr_panel(&request.project, *number, local)
+                .map(PanelAnswer::Pr),
+            PanelTarget::Issue(key) => store
+                .issue_panel(&request.project, key, local)
+                .map(PanelAnswer::Issue),
+        }
+    };
+    if let Err(code) = &answer {
+        crate::diagnostic!(serde_json::json!({
+            "component": "links", "kind": "panel.read_failed", "code": code,
+            "generation": request.generation,
+        }));
+    }
+    if state.panel_answer.as_ref() != Some(&answer) {
+        state.panel_answer = Some(answer.clone());
+        sink.panel(request.generation, answer);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::host_access::HostAnswer;
+    use crate::links::{FileState, PrFact, ProjectFacts, SessionRole, WorktreeFact};
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    const CREATED: u64 = 1_790_000_000_000;
+
+    /// A connected device whose helper answers the two link calls from its
+    /// own home, the way `hide-host-helper serve` does.
+    struct Device {
+        home: PathBuf,
+        connected: AtomicBool,
+    }
+
+    impl HostChannel for Device {
+        fn call(&self, call: Call, _timeout: Duration) -> Result<HostAnswer, HostCallError> {
+            if !self.connected.load(Ordering::SeqCst) {
+                return Err(HostCallError::NotConnected("gone".into()));
+            }
+            let value = match call {
+                Call::LinkFiles {
+                    since_unix_ms,
+                    until_unix_ms,
+                } => serde_json::to_value(
+                    links::candidates(&self.home, since_unix_ms, until_unix_ms).unwrap(),
+                ),
+                Call::LinkRead { requests } => {
+                    serde_json::to_value(links::read(&self.home, &requests))
+                }
+                other => panic!("unexpected call {other:?}"),
+            };
+            Ok(HostAnswer::Parsed(value.unwrap()))
+        }
+    }
+
+    #[derive(Default)]
+    struct Seen {
+        panel: Option<Result<PanelAnswer, String>>,
+        summaries: BTreeMap<String, ProjectLinkSummary>,
+    }
+
+    struct TestSink {
+        seen: Arc<Mutex<Seen>>,
+        device: Arc<Device>,
+    }
+
+    impl Sink for TestSink {
+        fn summaries(&self, summaries: BTreeMap<String, ProjectLinkSummary>) {
+            self.seen.lock().unwrap().summaries = summaries;
+        }
+        fn panel(&self, _generation: u64, answer: Result<PanelAnswer, String>) {
+            self.seen.lock().unwrap().panel = Some(answer);
+        }
+        fn filling(&self, _filling: bool) {}
+        fn devices(&self) -> Vec<(String, Arc<dyn HostChannel>)> {
+            vec![(
+                "mini".to_owned(),
+                self.device.clone() as Arc<dyn HostChannel>,
+            )]
+        }
+    }
+
+    fn iso(ms: u64) -> String {
+        jiff::Timestamp::from_millisecond(ms as i64)
+            .unwrap()
+            .to_string()
+    }
+
+    /// The device's session that made PR 7 from its own checkout.
+    fn device_session(home: &Path) {
+        let dir = home.join(".claude/projects/-mini-app");
+        std::fs::create_dir_all(&dir).unwrap();
+        let lines = [
+            serde_json::json!({
+                "type": "user", "isSidechain": false, "uuid": "u1", "parentUuid": null,
+                "message": {"role": "user", "content": "mini에서 PR 올려 줘"},
+                "timestamp": iso(CREATED - 60_000), "promptId": "p",
+                "origin": {"kind": "human"}, "userType": "external", "entrypoint": "cli",
+                "cwd": "/mini/app", "sessionId": "s-mini", "gitBranch": "feat",
+            }),
+            serde_json::json!({
+                "type": "pr-link", "sessionId": "s-mini", "prNumber": 7,
+                "prRepository": "acme/app", "prUrl": "https://github.com/acme/app/pull/7",
+                "timestamp": iso(CREATED + 1_000),
+            }),
+        ];
+        let text = lines.map(|line| line.to_string()).join("\n") + "\n";
+        std::fs::write(dir.join("s-mini.jsonl"), text).unwrap();
+    }
+
+    fn wait_until(what: &str, ready: impl Fn() -> bool) {
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while !ready() {
+            assert!(Instant::now() < deadline, "timed out waiting for {what}");
+            #[allow(clippy::disallowed_methods)] // a polling helper bounded by a deadline
+            thread::sleep(Duration::from_millis(5));
+        }
+    }
+
+    struct Refusing;
+
+    impl HostChannel for Refusing {
+        fn call(&self, _call: Call, _timeout: Duration) -> Result<HostAnswer, HostCallError> {
+            Err(HostCallError::NotConnected("gone".into()))
+        }
+    }
+
+    /// A device that drops during its listing is not recorded as listed
+    /// through, so what it holds is listed again when it is back (B40).
+    #[test]
+    fn a_failed_device_listing_is_not_recorded_as_listed() {
+        let state = tempfile::tempdir().unwrap();
+        let (store, _) = LinkStore::open(&state.path().join("links.sqlite3")).unwrap();
+        let mut entry = DeviceQueue::default();
+        assert!(list_device(&store, "mini", &Refusing, &mut entry).is_err());
+        finish_device(&store, "mini", &mut entry);
+        assert_eq!(store.meta("listed_at:mini").unwrap(), None);
+        assert!(!entry.filled);
+        assert!(entry.listing.is_none());
+    }
+
+    /// B20, B40: a connected device's session reaches a Mac project's panel
+    /// with its device, its rows stay while the device is gone, and what it
+    /// adds meanwhile is read when it is back.
+    #[test]
+    fn a_devices_session_joins_the_panel_and_outlives_the_connection() {
+        let state = tempfile::tempdir().unwrap();
+        let device_home = tempfile::tempdir().unwrap();
+        device_session(device_home.path());
+        let device = Arc::new(Device {
+            home: device_home.path().to_path_buf(),
+            connected: AtomicBool::new(true),
+        });
+        let seen = Arc::new(Mutex::new(Seen::default()));
+        let worker = LinkWorker::spawn(
+            Paths {
+                store: state.path().join("links.sqlite3"),
+                search: state.path().join("session-search.sqlite3"),
+                home: None,
+                local_device: "local".into(),
+            },
+            TestSink {
+                seen: Arc::clone(&seen),
+                device: Arc::clone(&device),
+            },
+        )
+        .unwrap();
+        let client = worker.client();
+        client.projects(Arc::new(vec![ProjectFacts {
+            key: "app".into(),
+            device_id: "local".into(),
+            workspace_id: "w".into(),
+            root: "/work/app".into(),
+            repository: Some("acme/app".into()),
+            repository_id: None,
+            worktrees: vec![WorktreeFact {
+                path: "/work/app".into(),
+                branch: Some("main".into()),
+            }],
+            prs: vec![PrFact {
+                repository: "acme/app".into(),
+                number: 7,
+                branch: "feat".into(),
+                title: "PR 7".into(),
+                url: "https://github.com/acme/app/pull/7".into(),
+                created_at: Some(CREATED),
+                closed_at: None,
+                merged_at: None,
+                issues: Vec::new(),
+                hide_issue_known: false,
+            }],
+            prs_read: true,
+        }]));
+        client.read(PanelRequest {
+            generation: 1,
+            project: "app".into(),
+            target: PanelTarget::Pr(7),
+        });
+        let lines = || match &seen.lock().unwrap().panel {
+            Some(Ok(PanelAnswer::Pr(Some(links)))) => links.sessions.clone(),
+            _ => Vec::new(),
+        };
+        wait_until("the device's line", || !lines().is_empty());
+        let line = &lines()[0];
+        assert_eq!(
+            (line.device_id.as_str(), line.role),
+            ("mini", SessionRole::Created)
+        );
+        assert_eq!(line.request.as_deref(), Some("mini에서 PR 올려 줘"));
+        // This machine cannot look at a device's file.
+        assert_eq!(line.file, FileState::Unknown);
+        wait_until("the chip", || {
+            seen.lock()
+                .unwrap()
+                .summaries
+                .get("w")
+                .is_some_and(|summary| summary.sessions.contains_key("s-mini"))
+        });
+
+        // Gone: nothing is read and nothing leaves (B40).
+        device.connected.store(false, Ordering::SeqCst);
+        client.read(PanelRequest {
+            generation: 2,
+            project: "app".into(),
+            target: PanelTarget::Pr(7),
+        });
+        wait_until("the reread", || {
+            matches!(
+                &seen.lock().unwrap().panel,
+                Some(Ok(PanelAnswer::Pr(Some(_))))
+            )
+        });
+        assert_eq!(lines().len(), 1);
+        drop(worker);
+    }
+}
