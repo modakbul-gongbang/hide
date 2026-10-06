@@ -430,6 +430,8 @@ A session whose file is no longer found after the history listed it stays listed
 The list place shows one small mark per state: loading, no sessions yet, no matching sessions (with Clear filters), sessions could not be read (with the reason and Retry), and on a device Project, sessions unavailable with the device's reason and no Retry.
 The open session shows its row's provider, checkout, and time with Copy source location, its request as the title, then each request and answer in order as plain text; injected context, where Project Memory travels, is not shown.
 A session that cannot be opened shows the same reason in the detail place with Retry, which reads the history again and then the session.
+A session the link record joined to pull requests carries a chip for each on its row and on the open session's head, `#317 만듦` for one it made and `#317` for one it worked on, which opens the PRs tab with that pull request's panel (PRD link-graph B36); a session with none has no chip, and a chip that arrives while the record fills just appears.
+A link panel's `대화 보기` or parent line opens this tab at that session and scrolls once to the line's request; scrolling afterwards is the operator's.
 When another window names another Project, this one says so and offers `Show this project's sessions`, which names this Project again only when chosen, so two windows never take it from each other.
 The web shell has no Project Memory entry point, disabled control, or placeholder until the Memory stage (PRD S8); Memory currently has no UI in any shell and works only through the `UserPromptSubmit`/`SessionStart` hooks (see [PERFORMANCE_TESTING.md: Project Memory cost contract](PERFORMANCE_TESTING.md#project-memory-cost-contract)).
 
@@ -543,7 +545,7 @@ A worktree box's head reads the kind glyph in its pull request's colour and the 
 A worktree whose Git state has not been read shows `?` where the files go, never a false zero; before GitHub answers there is no PR chip and no PR colour, and the head stands on Git facts alone.
 A worktree shows its open pull request by branch (never one from a fork) and a merged or closed one only while the worktree is on that pull request's last commit (one amended, rebased or left behind after the last push shows none), so a branch name used again for new work shows no old merge and moving the worktree's HEAD takes the chip away or brings it back; a merged or closed pull request whose CI was never read while it was open shows the lifecycle colour and no CI mark, never a guessed one.
 The head is one button: its click opens that checkout's Workspace, main included, `↵ Workspace` appears over the end of the branch line without moving the branch, and resting half a second on it opens the checkout card (the path, the base and `↑N ↓N`, the changed files, the last commit's age and the pull request with its checks).
-The issue chip opens the Issues view with that issue's panel, the PR chip opens the pull request's row on the PRs view, unfolded, resting on either opens its own card, and a ⌘-click on a head, a row or a chip opens the pull request on GitHub, else the issue.
+The issue chip opens the Issues view with that issue's panel, the PR chip opens the pull request's row on the PRs view with its panel, resting on either opens its own card, and a ⌘-click on a head, a row or a chip opens the pull request on GitHub, else the issue.
 A merged worktree is dimmed with the purple merge glyph and a folder-less one reads `× 폴더 없음`; both carry the one word `정리` at the head's right, always visible, whose tooltip says what it removes and whose click opens the existing Delete worktree dialog, so cancelling it removes nothing.
 
 A row reads the status mark, the provider mark, the title and the age on one line; only an agent that asks has a second line, its question in warning with the title in bold.
@@ -603,7 +605,7 @@ Merged is Git ancestry against the base the core resolves, in the local branch o
 백로그 holds the open issues no checkout works on, most recently changed first; past 20 cards the rest wait behind `+N · 최근 갱신 순`.
 The primary checkout or a folder is a card only while an agent works there on a linked issue; an agent there with no issue is on the Agents view, not an issue.
 A worktree with no issue is one line at the foot of 진행 중, `이슈 없는 워크트리 N`, whose popover says it goes to Agents and names them, and whose click opens the Agents graph with its `에이전트 없는 워크트리` line unfolded.
-A pull request with no issue is one line at the foot of 리뷰, `이슈 없는 PR N`, whose popover says it goes to the PRs view and names them, and whose click opens that view, where each has an issue cell to link.
+A pull request with no issue is one line at the foot of 리뷰, `이슈 없는 PR N`, whose popover says it goes to the PRs view and names them, and whose click opens that view, where each one's panel offers 이슈 잇기.
 A line at zero is not drawn, and done work with no issue is not shown.
 완료 starts folded to one line per issue, the glyph, the id, the title and the number of the pull request that closed it, and resting on that number says `PR #N 머지 · 날짜`; a line opens the issue's panel, and the head unfolds the column into cards (on the Overview of every project, one line per project with its count).
 
@@ -626,6 +628,7 @@ A mention that does not close an issue (a `Related:` line, a `#N` in a body) is 
 The body is drawn as Markdown, and under it a GitHub issue shows `댓글 N`, the latest three comments and `쓰기는 GitHub에서`; a Local issue has no comments.
 Opening the panel reads the issue's body, labels, author, assignees and comments once, on a worker off the core's lock; while it reads, the body and those properties are skeletons and the rest stands on the snapshot, and an issue opened again shows what was read before while it reads again.
 A failed read puts one line of why and `재시도` in the body's place and leaves the rest of the panel standing; `재시도` reads that issue again.
+An issue linked to pull requests, by a closing reference or a Hide link, has the PR panel's `세션 N` section (PRD link-graph B34) for the sessions on those pull requests' branches, with the same lines and states, and a made-it chip names its pull request (`#619 만듦`) and opens that PR's panel; an issue no pull request is linked to has no such section.
 A Local issue's title or body edits in place on a click or the edit icon: ⌘↵ saves, Escape cancels, the card changes only once the save is answered, and a refused save keeps the text with the reason in place.
 The arrow keys move the panel with the card: ↑↓ within a column, ←→ to the card at the same height in the next column, staying at a column's end; Escape closes the panel first and leaves the Overview after, and choosing another tab closes it.
 On the board a card takes focus, the arrows move between cards, Enter opens the panel, Space the preview, `S` starts, `O` opens the Workspace, and `C` makes a new issue.
@@ -662,21 +665,31 @@ A closed pull request that was not merged is not shown.
 최근 머지 starts folded and its head unfolds it: every merged pull request whose worktree record is still here, and the others merged in the last 14 days, newest merge first, each row dimmed.
 The core sends the web only these pull requests, from the list `gh` already read; nothing more is read for the view.
 
-A row reads, left to right, `▸`, the state glyph in its lifecycle colour, the number, the title, the issue cell, a yellow `확인` while an agent there finished unseen, then the agents' marks (three and `+N`; the branch's agents and the agent whose session made the pull request, PRD overview-request-view D-45), the branch in mono, the CI mark, the review in one word and the time.
-The issue cell is the issue's chip, from the branch's issue link or else the first issue the body closes, and a dotted circle when there is none; only `변경 요청` and `확인` are yellow.
-The row's click and Enter unfold it: the branch's agents under their ancestors, root first, the operator's turn on its yellow line, then GitHub, Workspace and, with no issue, 이슈 잇기 as icon buttons.
-→ unfolds, ← folds, ↑↓ move between rows, and ⌘↵ or a ⌘-click is GitHub.
-Under the pointer or the keyboard the time's fixed slot holds the row's buttons and nothing moves: `▷ 맡기기` on a failing or change-requested pull request with no working agent, `정리` on a merged one whose worktree is still here, otherwise the GitHub icon and `⋯` with 맡기기, 이슈 잇기 and 브랜치 이름 복사.
-Resting half a second on the issue cell opens the issue's preview, on the number the PR card, on the branch the checkout card, and on an agent's mark everything that agent last said; an empty issue cell turns into the 이슈 잇기 icon under the pointer, whose popover says `이 PR을 이슈에 잇는다. 이을 이슈가 없으면 PR 제목 · 본문으로 새로 만든다`.
-The issue chip opens the issue's panel, the branch its Workspace, the CI mark the checks on GitHub, the review word the review on GitHub, and one agent's mark its pane (several unfold the row).
+A row is one line that reads, left to right, the state glyph in its lifecycle colour, the title (ellipsized, in full in its tooltip), the agents' marks (three and `+N`; the branch's agents and the agent whose session made the pull request, PRD overview-request-view D-45), the CI mark and the time; the number, the issue, the branch and the review word are the panel's.
+The row's click and Enter open its panel beside the list, which keeps the width left with the title shortened first and the time column in place, and the row stays highlighted; ↑↓ move between rows and the panel follows, Escape closes the panel before the Overview, another tab closes it, and ⌘↵ or a ⌘-click is GitHub.
+Under the pointer or the keyboard the time's fixed slot holds the row's buttons and nothing moves: `▷ 맡기기` on a failing or change-requested pull request with no working agent, `정리` on a merged one whose worktree is still here, otherwise the GitHub icon and `⋯` with 맡기기, 이슈 잇기 and 브랜치 이름 복사; 이슈 잇기 there opens the panel with its picker.
+Resting half a second on the glyph opens the PR card and on an agent's mark everything that agent last said; the CI mark opens the checks on GitHub and one agent's mark its pane (several open the panel).
+
+The panel (PRD link-graph) heads with the glyph, `#N`, the state in its colour (열림, 초안, 머지됨, 닫힘), Workspace when a worktree of the branch is here, GitHub and ×; under it the title wraps to two lines, then the facts line: the branch in mono, the CI mark, the review in one word and `N분 전 업데이트` or `10월 2일 머지`.
+`연결` lists each issue with its glyph, `#N 제목` and where the link came from, `Closes` (the body's closing reference) or `Hide 링크` (the branch's issue link), then each worktree the branch had, a removed one dim with `정리됨`; with no issue it reads `연결된 이슈 없음` with `이슈 잇기`.
+An issue line opens that issue's panel on the Issues tab, or GitHub for one the project does not list.
+What is true now (the pull request, CI, the review, whether a worktree is still here, whether a pane is live) is the snapshot's; the links and the sessions are the link record's, read when the panel opens.
+`세션 N` lists the sessions that made the pull request or worked on its branch while it lived, N counted from the record: a session asking the operator and one working come first, then the ended ones newest first, joined by a vertical line.
+Each line is the agent's mark and the request (for the session that made the pull request, the request just before its address was printed; otherwise the last request on the branch; dim `요청 없음` without one), then `작업 중 · 지금` with `pane으로 가기`, or the question in yellow with `답을 기다림` and `답하러 가기` (the panel's only accent button), or the `PR 만듦` chip or a dim `작업함` and the time `10/6 13:10 - 13:52`.
+Sessions joined by compaction or resume are one line with `이어짐 N`, a session on a connected device carries the device's chip, and a delegated one has `↰ <부모>가 맡김`, which opens the parent session on the Sessions tab, dim and inert once the parent's record is gone.
+Under the pointer or the keyboard an ended line shows `대화 보기`, which opens the Sessions tab at that session and scrolls once to its request, and `이어서 하기`, which starts `claude --resume <id>` or `codex resume <id>` in a new tab of the worktree it worked in and moves the screen there; a failed start leaves one line of why and `다시 시도` on the line.
+An off button stays reachable and its tooltip says why: the worktree was cleaned up, the device is not connected, another device's conversation cannot be opened here yet (PRD link-graph D-41), an OpenCode session cannot resume (D-42), or the file is gone; a line whose file is gone is dim with `대화 파일 없음` and copies the path the file had.
+Six lines or more show the newest five with `이전 세션 N개`, which unfolds the rest; with none the section reads `이 PR에서 일한 세션이 없어요` with `▷ 맡기기`.
+While the record fills for the first time or the panel reads, a small spinner turns beside `세션 N` and the lines read before stay; a record that cannot be read puts one line of why and `다시 시도` in the section, and the rest of the panel stands.
+
 Until GitHub has answered the view is three skeleton rows and the tab has no number; when a read fails the last pull requests stay, the PRs tab carries ⚠ whose popover says `GitHub 읽기 실패 · N분 전 값 · 이유는 로그에`, and there is no banner.
 A repository with no GitHub remote has no pull requests, which is an answer: the tab reads 0.
-Hover, focus, unfolding and a half-second rest are the screen's own state and publish nothing; the view's state rides on the screen, so Recent Panels brings back its unfolded rows.
+Hover, focus and a half-second rest are the screen's own state and publish nothing; the open panel rides on the screen, so Recent Panels brings it back.
 
 이슈 잇기 opens the project source's open issues, searchable, with `새 이슈 만들기` last; closed issues and another repository's are not in it.
-A GitHub issue asks once, `PR #N 본문에 "Closes #M"을 씁니다. 머지되면 GitHub가 이슈를 닫습니다.`, with `그만두기` first and `본문에 쓰기`; confirmed, Hide links the branch to the issue (its issue link and the Workspace token, when the branch has a worktree here) and writes the line at the end of the body after a blank line, reading the body just before, and the issue cell fills.
+A GitHub issue asks once, `PR #N 본문에 "Closes #M"을 씁니다. 머지되면 GitHub가 이슈를 닫습니다.`, with `그만두기` first and `본문에 쓰기`; confirmed, Hide links the branch to the issue (its issue link and the Workspace token, when the branch has a worktree here) and writes the line at the end of the body after a blank line, reading the body just before, and the panel's issue line fills.
 When the body already closes that issue by a closing keyword, nothing is written and the link succeeds, so a retry never adds a second line.
-A failed body write keeps the link and the filled cell; the dialog stays with one line of why and `본문 다시 쓰기`, which writes only the body, and `닫기`.
+A failed body write keeps the link and the filled line; the dialog stays with one line of why and `본문 다시 쓰기`, which writes only the body, and `닫기`.
 A Local issue is Hide's link alone: choosing it asks nothing and writes nothing to GitHub, and the dialog appears only when the link fails.
 `새 이슈 만들기` opens the pull request's title and body (read when it opens) in editable fields and one confirmation, `이슈를 만들고 PR #N 본문에 "Closes #(새 번호)"를 씁니다`, `만들고 쓰기` then makes the issue and writes the body; when the body write fails the issue stays made and linked, the dialog says `이슈 #M은 만들었고 PR 본문 쓰기는 실패했습니다`, and `본문 다시 쓰기` writes only the body.
 On a Local source the same form says `Local 이슈를 만들어 이 PR에 잇습니다. GitHub에는 쓰지 않습니다.`, and `만들고 잇기` makes a Local issue and links it, with nothing written to GitHub.
@@ -1248,6 +1261,7 @@ On a screen with nothing in front, such as Settings, the palette shows Recent al
 ### The detail
 
 The highlighted row says what it is with the facts the snapshot carries and no others (a missing value has no line): a pull request's review, branch and the issues it closes, an issue's owner checkout and closing pull request, an agent's checkout and last words, and `N분 전 읽음` for the GitHub-backed ones.
+A pull request or an issue with sessions in the link record adds `세션 N`, the count the record's summary carries (PRD link-graph B35); with none there is no line, and the list and Related are unchanged.
 Under `관계` it draws the same groups the empty list draws for the row, when it has more than itself; the footer line says what ↵ does.
 
 ### GitHub
