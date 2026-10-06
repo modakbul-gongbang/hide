@@ -2159,6 +2159,47 @@ mod pane_cwd_confirmation_tests {
     }
 
     #[test]
+    fn a_pane_the_first_snapshot_caught_being_created_publishes_the_cwd_herdr_reads_back() {
+        let herdr = herdr_reading(PROJECT);
+        let context = context_for(&herdr);
+        // The snapshot was read while Herdr created w1:p2, so it holds the
+        // creation cwd, and the creation event follows in the reconcile window.
+        let mut first = snapshot();
+        first["workspaces"][0]["tab_count"] = json!(2);
+        first["workspaces"][0]["pane_count"] = json!(2);
+        first["tabs"].as_array_mut().unwrap().push(json!({
+            "workspace_id": "w1", "tab_id": "w1:t2", "agent_status": "idle",
+            "focused": false, "number": 2, "pane_count": 1, "label": "2"
+        }));
+        first["panes"]
+            .as_array_mut()
+            .unwrap()
+            .push(pane("w1:t2", "w1:p2", "/tmp"));
+        first["layouts"]
+            .as_array_mut()
+            .unwrap()
+            .push(layout("w1:t2", "w1:p2"));
+        let mut replica = SessionReplica::from_snapshot(&first).expect("snapshot");
+
+        replica
+            .apply(
+                event(
+                    "pane_created",
+                    json!({"type": "pane_created", "pane": pane("w1:t2", "w1:p2", "/tmp")}),
+                ),
+                ApplyMode::Reconcile,
+            )
+            .expect("a creation the snapshot holds is reconciled");
+        confirm_pane_cwds(&context, &mut replica).expect("cwd read succeeds");
+
+        assert_eq!(projected_cwd(&replica, "w1:p2").as_deref(), Some(PROJECT));
+        assert_eq!(
+            herdr.calls(),
+            [("pane.get".to_owned(), json!({"pane_id": "w1:p2"}))]
+        );
+    }
+
+    #[test]
     fn a_pane_closed_before_its_read_keeps_the_cwd_its_event_carried() {
         let herdr = FakeHerdr::start_with_errors("pane-cwd-gone", |method, _| match method {
             "pane.get" => Err(("pane_not_found".to_owned(), "no such pane".to_owned())),

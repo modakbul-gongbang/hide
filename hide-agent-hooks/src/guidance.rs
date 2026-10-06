@@ -638,22 +638,24 @@ pub fn install(
             "Hide no longer writes this agent's hook",
         ));
     }
-    install_any(agent, home, helper)
-}
-
-/// [`install`] without the retirement check; the tests use it to lay down
-/// the files an earlier build wrote for a retired agent.
-fn install_any(
-    agent: GuidanceAgent,
-    home: &Path,
-    helper: &Path,
-) -> Result<InstallOutcome, InstallFailure> {
     agent
         .supported_here()
         .map_err(|why| InstallFailure::UnexpectedShape {
             path: agent.config_path(home).display().to_string(),
             detail: why.to_owned(),
         })?;
+    install_any(agent, home, helper)
+}
+
+/// [`install`] without the retirement and system checks; the tests use it to
+/// lay down the files an earlier build wrote for a retired agent, on any
+/// system, since taking such an entry out never depends on the system's hook
+/// shell.
+fn install_any(
+    agent: GuidanceAgent,
+    home: &Path,
+    helper: &Path,
+) -> Result<InstallOutcome, InstallFailure> {
     let layout = agent.layout(home);
     let mut document = read_document(&layout.path)?.unwrap_or_else(|| blank_document(&layout));
     let before = serde_json::to_string(&document).unwrap_or_default();
