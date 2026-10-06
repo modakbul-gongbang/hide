@@ -214,6 +214,47 @@ fn the_shared_stub_goes_with_the_last_retired_agent_that_read_it() {
     );
 }
 
+/// A stub that cannot be removed this pass stays in the record, and a later
+/// pass finishes it although the retired agents that owned it have left the
+/// record by then.
+#[cfg(unix)]
+#[test]
+fn a_shared_stub_that_could_not_be_removed_is_removed_by_a_later_pass() {
+    use std::os::unix::fs::PermissionsExt;
+    let fixture = Fixture::new();
+    let folder = fixture.home().join(".agents/skills").join(SKILL_NAME);
+    let shared = folder.join("SKILL.md");
+    write(&shared, &skill_text());
+    write(
+        &fixture.home().join(".hide/kit/installed.json"),
+        r#"{"format":1,"installed":["skill:agents"],"agents":{"amp":true}}"#,
+    );
+    // A folder the account cannot write to refuses the removal.
+    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o555)).unwrap();
+
+    let first = apply(&fixture.target, &Scope::automatic());
+    let held = record(&fixture);
+    std::fs::set_permissions(&folder, std::fs::Permissions::from_mode(0o755)).unwrap();
+
+    assert!(
+        first
+            .legacy_retirement
+            .failures
+            .iter()
+            .any(|failure| failure.contains("shared skill")),
+        "{first:?}"
+    );
+    assert!(shared.is_file());
+    assert!(held.contains("skill:agents"), "the entry stays: {held}");
+    assert!(!held.contains("amp"), "the retired agent has left: {held}");
+
+    let second = apply(&fixture.target, &Scope::automatic());
+
+    assert!(!shared.exists(), "the later pass finished it");
+    assert!(second.legacy_retirement.failures.is_empty(), "{second:?}");
+    assert!(!record(&fixture).contains("skill:agents"));
+}
+
 #[test]
 fn removing_the_kit_takes_a_retired_agents_marked_hook_too() {
     let fixture = Fixture::new();

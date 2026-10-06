@@ -253,7 +253,8 @@ Earlier builds supported thirteen more agents: GitHub Copilot CLI, Amp, Factory 
 The kit takes out what it put on a machine for them, once, by ownership: only a piece the record names is looked at, and then only what carries Hide's own marker, the skill stub's marker line and the hook entry's `hide-guidance` source.
 A file the operator wrote or edited stays, and a file that does not parse is left as it is and reported on the machine's retirement line; its record entry stays too, so the next pass tries again.
 Each piece leaves the record once it is out and an agent with nothing left in the record is not looked at again, so a second pass asks and rescans nothing.
-The shared skill stub stays while a supported agent that reads it is on and installed.
+The shared skill stub stays while a supported agent that reads it is on and installed, or was switched on by the operator and has lost its program.
+Its record entry is what is retried, so a stub that could not be removed (a folder the account cannot write to) is removed by a later pass even after the retired agents that owned it have left the record.
 `hide-agent-hooks` keeps the layouts of the six retired guidance hooks only so this removal can find them, and a hook entry that an earlier build left behind prints nothing and writes nothing when it runs.
 This is a transition path: it goes with the release after the one that ships it.
 

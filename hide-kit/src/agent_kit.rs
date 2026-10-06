@@ -633,11 +633,14 @@ pub(crate) fn apply(
     // The agents Hide stopped supporting: what the record says an earlier
     // build put down for them goes first, so the shared skill folder below is
     // judged for the agents that are left.
+    // An agent the operator switched on keeps its pieces whether or not its
+    // program is found (D-20, D-26), so the stub stays for it too; one that is
+    // only on by default needs its program found to count.
     let live_reads_shared = ADAPTERS.iter().any(|adapter| {
         adapter.skill_dir == SkillDir::Shared
             && adapter.skill_supported()
             && enabled(record, scope, adapter)
-            && detection.installed(adapter)
+            && (detection.installed(adapter) || record.agent_choice(adapter.id) == Some(true))
     });
     let retirement = retired_agents::retire(target, record, record_readable, live_reads_shared);
     changed |= retirement.changed;

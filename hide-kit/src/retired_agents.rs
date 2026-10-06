@@ -127,7 +127,6 @@ pub(crate) fn retire(
     if !record_readable {
         return outcome;
     }
-    let mut shared_was_on = false;
     for agent in &RETIRED {
         let hook_code = format!("hook:{}", agent.id);
         let own_skill = match agent.skills {
@@ -143,7 +142,6 @@ pub(crate) fn retire(
         if !owned {
             continue;
         }
-        let was_on = record.agent_choice(agent.id) == Some(true);
         if let Some(hook) = agent.hook
             && record.contains_piece(&hook_code)
         {
@@ -187,16 +185,15 @@ pub(crate) fn retire(
                 }
             }
         }
-        shared_was_on |= was_on && matches!(agent.skills, Skills::Shared);
         outcome.changed |= record.forget_agent_choice(agent.id);
     }
     // The shared stub was Hide's for the agents that read it. It stays while
     // an agent that is still supported reads it; otherwise nothing Hide
-    // switched on needs it, and it goes with the last of them.
-    if shared_was_on
-        && !live_reads_shared
-        && record.contains_piece(&format!("skill:{}", SkillDir::Shared.code()))
-    {
+    // switched on needs it. This is judged from what the record still names,
+    // not from which retired agent was on in this pass: a stub that could not
+    // be removed keeps its record entry, so every later pass tries again even
+    // though the retired agents that owned it have left the record.
+    if !live_reads_shared && record.contains_piece(&format!("skill:{}", SkillDir::Shared.code())) {
         match remove_skill(SkillDir::Shared, &target.home) {
             Ok(removed) => {
                 if removed {
