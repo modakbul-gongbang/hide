@@ -11,7 +11,7 @@ import { captureNativeWindow } from "./native-window";
 import { installSpawnProvider, prepareSpawnCommand, waitForSpawnShell } from "./agent-spawn-fixture";
 
 type NativeAgent = { pane_id: string; terminal_id: string; agent_session?: { value: string }; tokens: Record<string, unknown> };
-type Reply = { ok: boolean; value: { id: string; pane: string; parent?: string; watch?: string; session?: string } };
+type Reply = { ok: boolean; value: { id: string; pane: string; machine?: string; parent?: string; watch?: string; session?: string } };
 
 test("a spawned child appears in the native delegation tree", async () => {
   const herdr = await startHerdr({ agents: false });
@@ -51,7 +51,8 @@ test("a spawned child appears in the native delegation tree", async () => {
       expect(answer.ok, JSON.stringify(answer)).toBe(true);
       return answer.value;
     };
-    const registered = await command(["agent", "register", "--machine", "local", "--host-scope", herdr.socket, "--session", native.agent_session!.value, "--instance", native.terminal_id, "--name", "parent", "--pane", parent]);
+    const registered = await command(["agent", "register", "--host-scope", herdr.socket, "--session", native.agent_session!.value, "--instance", native.terminal_id, "--name", "parent", "--pane", parent]);
+    expect(registered.machine).toBe("local");
     const child = await command(["agent", "spawn", "--parent", "here", "--name", "child", "--intent", "native-delegation", "--kind", "claude", "--repo", repo, "--branch", "child-task"]);
     expect(child.parent).toBe(registered.id);
     expect(child.watch).toBeTruthy();
