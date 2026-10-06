@@ -1,8 +1,10 @@
 //! The agents Hide AI can name, and how each one's backend is built.
 //!
 //! A provider is one row here: its stable id, the name a person reads, the
-//! kit adapter it is the same agent as, the programs its CLI is found by and
-//! the model it is asked for when nobody chose one. Nothing else in the
+//! kit adapter it is the same agent as, whether its sign-in can be checked
+//! without a request, and the model it is asked for when nobody chose one.
+//! Where its CLI is found is not kept here: that is `hide_platform::programs`,
+//! the one search the install kit uses too. Nothing else in the
 //! workspace keeps a list of them; settings, the router and the core's
 //! Settings reader all iterate this one, in this order (D-06, D-18): Claude
 //! Code, Codex, Gemini CLI, Grok, OpenCode, Pi, Cursor.
@@ -50,6 +52,12 @@ impl ProviderId {
     /// not know.
     pub fn from_id(id: &str) -> Option<Self> {
         PROVIDERS.iter().copied().find(|provider| provider.0 == id)
+    }
+
+    /// Whether this agent's sign-in can be checked without a request
+    /// ([`ProviderDescriptor::login_probe`]).
+    pub fn login_probe(self) -> bool {
+        self.descriptor().login_probe
     }
 
     pub fn descriptor(self) -> &'static ProviderDescriptor {
@@ -114,8 +122,11 @@ pub struct ProviderDescriptor {
     /// how the shell joins "this agent is on and installed" to "Hide AI can
     /// use it".
     pub agent: &'static str,
-    /// The program names the agent's CLI is found by, first match wins.
-    pub programs: &'static [&'static str],
+    /// Whether the CLI can say it is signed in without making a request. An
+    /// agent that cannot (Gemini CLI) is `ready` only because its program was
+    /// found: it is never chosen by itself, and a sign-in failure on its first
+    /// request is remembered for the cooldown, not re-tried on every probe.
+    pub login_probe: bool,
     pub default_model: &'static str,
 }
 
@@ -124,49 +135,49 @@ const DESCRIPTORS: &[ProviderDescriptor] = &[
         id: ProviderId::CLAUDE,
         label: "Claude Code",
         agent: "claude-code",
-        programs: &["claude"],
+        login_probe: true,
         default_model: crate::claude::DEFAULT_MODEL,
     },
     ProviderDescriptor {
         id: ProviderId::CODEX,
         label: "Codex",
         agent: "codex",
-        programs: &["codex"],
+        login_probe: true,
         default_model: crate::codex::DEFAULT_MODEL,
     },
     ProviderDescriptor {
         id: ProviderId::GEMINI,
         label: "Gemini CLI",
         agent: "gemini-cli",
-        programs: &["gemini"],
+        login_probe: false,
         default_model: CLI_DEFAULT_MODEL,
     },
     ProviderDescriptor {
         id: ProviderId::GROK,
         label: "Grok",
         agent: "grok",
-        programs: &["grok"],
+        login_probe: true,
         default_model: CLI_DEFAULT_MODEL,
     },
     ProviderDescriptor {
         id: ProviderId::OPENCODE,
         label: "OpenCode",
         agent: "opencode",
-        programs: &["opencode"],
+        login_probe: true,
         default_model: CLI_DEFAULT_MODEL,
     },
     ProviderDescriptor {
         id: ProviderId::PI,
         label: "Pi",
         agent: "pi",
-        programs: &["pi"],
+        login_probe: true,
         default_model: CLI_DEFAULT_MODEL,
     },
     ProviderDescriptor {
         id: ProviderId::CURSOR,
         label: "Cursor",
         agent: "cursor",
-        programs: &["cursor-agent", "agent"],
+        login_probe: true,
         default_model: CLI_DEFAULT_MODEL,
     },
 ];

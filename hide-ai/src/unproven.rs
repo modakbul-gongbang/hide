@@ -9,9 +9,6 @@
 //! these yet" with this reason (B38). Flipping an agent over is writing its
 //! real backend, not removing this one's refusal.
 
-use std::path::Path;
-
-use crate::codex::resolve_binary;
 use crate::{
     AiBackend, AiError, AiRequest, AiResponse, Availability, CancelToken, ModelCatalog, ProviderId,
 };
@@ -28,14 +25,6 @@ impl UnprovenReadOnlyBackend {
     pub fn new(provider: ProviderId) -> Self {
         Self { provider }
     }
-
-    fn installed(&self) -> bool {
-        self.provider
-            .descriptor()
-            .programs
-            .iter()
-            .any(|program| resolve_binary(Path::new(program)).is_some())
-    }
 }
 
 impl AiBackend for UnprovenReadOnlyBackend {
@@ -43,15 +32,12 @@ impl AiBackend for UnprovenReadOnlyBackend {
         self.provider
     }
 
-    /// Not installed is its own answer, so the shell lists only agents the
-    /// operator actually has under the "can't use yet" heading.
+    /// Always unsupported. Whether the agent's program is on this machine is
+    /// the install kit's answer, which the core puts on the row (`ai::project`),
+    /// so there is no second program table or search here.
     fn availability(&self) -> Availability {
-        if self.installed() {
-            Availability::Unsupported {
-                reason: CANNOT_GUARANTEE_READ_ONLY.to_owned(),
-            }
-        } else {
-            Availability::NotInstalled
+        Availability::Unsupported {
+            reason: CANNOT_GUARANTEE_READ_ONLY.to_owned(),
         }
     }
 

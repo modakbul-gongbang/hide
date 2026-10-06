@@ -173,7 +173,7 @@ A session with no home directory to write to reports that on the tab for the sam
 Choosing a provider changes which provider is asked first and nothing else.
 Every feature, Project Memory included, asks the chosen provider and then the fallback list under the policy below, while the router's retry, cooldown, cancellation, duplicate-suppression, process, and budget rules apply to all of them.
 
-The Hide AI tab reads `status.background_ai`, one section the core publishes (`herdr-core/src/model.rs`, `BackgroundAiSnapshot`): `enabled`, `provider` (null until one is chosen), `chosen`, `agent_summary`, one `providers` row per registered agent in the fixed order (`agent` is the kit adapter id, `state` one of `ready`, `needs_login`, `usage_limited`, `not_installed`, `unavailable`, `unsupported`, `unread`, `installed`, `selectable`, `retry_at_ms`, `model`, `models`, `models_fixed`, `cli_default`, and `models_unavailable_reason`), the ordered `fallback` list, and `refusal`.
+The Hide AI tab reads `status.background_ai`, one section the core publishes (`herdr-core/src/model.rs`, `BackgroundAiSnapshot`): `enabled`, `provider` (null until one is chosen), `chosen`, `agent_summary`, one `providers` row per registered agent in the fixed order (`agent` is the kit adapter id, `state` one of `ready`, `needs_login`, `usage_limited`, `not_installed`, `unavailable`, `unsupported`, `unread`, `installed`, `login_checked`, `selectable`, `retry_at_ms`, `model`, `models`, `models_fixed`, `cli_default`, and `models_unavailable_reason`), the ordered `fallback` list, and `refusal`.
 Every reason in it is a code the shell turns into words, never prose, an account, a path or a conversation, and the cause of a failed model-list read stays in the diagnostic log (B68).
 `ai_settings` carries `enabled`, `provider` (Runs on), `model` (for Runs on, or for an agent in the fallback list, which keeps its own), `fallback_add`, `fallback_remove`, `agent_summary` and the two observation hints; the core refuses an agent that the last read did not find selectable (`ai_settings.provider_not_selectable`), an unknown one (`ai_settings.unknown_provider`), the Runs on agent as its own fallback (`ai_settings.fallback_is_runs_on`) and a listed one twice (`ai_settings.fallback_listed`).
 `refusal` is how the label analyzer last found the chosen agent (`AiStanding`, written on the analyzer's thread after each job): its reason class, the end of a usage limit when the agent said, and the listed agent a request made now would run on (`using`), or none when no listed agent can answer, which is the Runs on row's reason (B41, B42).
@@ -183,6 +183,7 @@ With Hide AI off or no agent chosen, the label analyzer answers every job as sto
 A request already running when the switch turns off finishes or is cancelled by the analyzer's own check, and `AiError::Disabled` reaching a turn is a wait (`AnalysisFailure::retry_after`), not a parked failure.
 
 Project Memory's disclosure is version 2: analysis may go to the agent Hide AI runs on or one added under fallback.
+A Memory analysis builds its router once, so one already running is stopped when Use Hide AI turns off or Runs on, its model or the fallback list changes (`Runtime::stop_memory_analysis_if_ai_moved`); the stored Memory stays and Retry starts a run on the new choice.
 Opening a Memory store from the earlier version disables the projects that accepted version 1 until the operator accepts again; their stored Memory, search and Sessions stay.
 
 Settings shows each provider's availability and the models it offers.
@@ -346,7 +347,7 @@ Hide's core writes the events of its own routers and backends (the label analyze
   The list `models()` offers is the CLI's own, read through `initialize`, so no model list is written into the code except Gemini CLI's documented aliases, which its CLI cannot be asked for.
   The Settings model control always offers the configured model even when it is not on the provider's list, so reaching the screen never silently changes the operator's choice.
 - Gemini CLI, Grok and Pi have not been run live by this repository's checks; see the proof level under [The text-mode CLIs](#the-text-mode-clis).
-  Gemini's login is learned only from a failed request.
+  Gemini's login is learned only from a failed request: its row says `login_checked: false` (so `ready` there means only that the program was found), the first-run choice never picks it, and a sign-in failure is kept for the router's cooldown instead of being tried again every availability window.
 - Cursor and OpenCode cannot be selected until a read-only one-shot mode is documented for them.
 - A Claude usage limit has not been observed against the live account.
   The mapping was measured end to end instead, by answering the CLI's own API request with each HTTP status and reading the frame it printed; the run that measured it is local evidence, not a tracked file.

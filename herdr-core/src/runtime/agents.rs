@@ -1555,10 +1555,26 @@ impl Runtime {
         } else {
             std::collections::BTreeSet::new()
         };
+        let kit = self.kit_state(crate::workspace::LOCAL_DEVICE_ID);
+        // The kit's own answer to "is this agent's program on this Mac"; none
+        // until it has read, so no agent is called missing from no reading.
+        let cli_found = (!kit.agents.is_empty()).then(|| {
+            kit.agents
+                .iter()
+                .filter(|row| !matches!(row.availability, hide_kit::Availability::NotInstalled))
+                .filter_map(|row| {
+                    hide_ai::PROVIDERS
+                        .iter()
+                        .find(|provider| provider.descriptor().agent == row.id)
+                        .copied()
+                })
+                .collect()
+        });
         crate::ai::AiRequest {
             observing: self.ai_observing || self.ai_start_observing,
             models: settings.models_by_provider(),
             selecting,
+            cli_found,
         }
     }
 
@@ -1729,8 +1745,7 @@ impl Runtime {
     /// agents and models it may ask changed; the stored Memory is untouched
     /// and Retry starts a run on the new choice (B33).
     fn stop_memory_analysis_if_ai_moved(&mut self, settings: &hide_ai::AiSettings) {
-        let (Some(cancel), Some(started)) =
-            (&self.memory_cancel, &self.memory_analysis_settings)
+        let (Some(cancel), Some(started)) = (&self.memory_cancel, &self.memory_analysis_settings)
         else {
             return;
         };

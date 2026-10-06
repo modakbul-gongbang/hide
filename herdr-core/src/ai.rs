@@ -58,6 +58,11 @@ pub struct AiRequest {
     /// agent can be chosen by itself (D-18, D-27, B45, B47). Empty otherwise.
     /// Nothing but availability is asked of them: no model list.
     pub selecting: BTreeSet<ProviderId>,
+    /// The agents whose program this Mac's install kit found, `None` while
+    /// the kit has not answered. The kit owns "is it installed": an agent Hide
+    /// AI cannot use yet is listed as not installed from this, not from a
+    /// program table of its own.
+    pub cli_found: Option<BTreeSet<ProviderId>>,
 }
 
 impl AiRequest {
@@ -123,7 +128,12 @@ impl AiReader {
                     }
                 };
                 drop(guard);
-                read(&router, &request.models, request.observing)
+                read(
+                    &router,
+                    &request.models,
+                    request.observing,
+                    request.cli_found.as_ref(),
+                )
             }),
         }
     }
@@ -217,6 +227,7 @@ fn read(
     router: &AiRouter,
     models: &BTreeMap<ProviderId, String>,
     with_catalogs: bool,
+    cli_found: Option<&BTreeSet<ProviderId>>,
 ) -> BackgroundAiSnapshot {
     let statuses = router.statuses();
     let catalogs = if with_catalogs {
@@ -232,7 +243,7 @@ fn read(
                 .iter()
                 .find(|(id, _)| id == provider)
                 .map(|(_, catalog)| catalog);
-            project(*provider, status, catalog, models, with_catalogs)
+            project(*provider, status, catalog, models, with_catalogs, cli_found)
         })
         .collect();
     BackgroundAiSnapshot {
@@ -257,6 +268,7 @@ fn project(
     catalog: Option<&ModelCatalog>,
     models: &BTreeMap<ProviderId, String>,
     catalogs_asked: bool,
+    cli_found: Option<&BTreeSet<ProviderId>>,
 ) -> BackgroundAiProviderSnapshot {
     let mut row = BackgroundAiProviderSnapshot::unread(provider);
     row.model = models
@@ -280,6 +292,14 @@ fn project(
         row.headline = headline.to_owned();
         row.message = message;
         row.installed = !matches!(status.availability, Availability::NotInstalled);
+        // An agent Hide AI cannot use yet has no backend that looks for its
+        // program; the install kit says whether it is on this machine.
+        if state == "unsupported" && cli_found.is_some_and(|found| !found.contains(&provider)) {
+            row.state = "not_installed".to_owned();
+            row.headline = "Not installed".to_owned();
+            row.message = None;
+            row.installed = false;
+        }
         row.selectable = status.selectable;
         row.retry_at_ms = status
             .parked_for
@@ -513,6 +533,7 @@ mod tests {
             observing: false,
             models: models(),
             selecting: BTreeSet::new(),
+            cli_found: None,
         };
         // The first read starts the worker; once it has ended, the next read
         // hands its answer back.
@@ -542,6 +563,7 @@ mod tests {
             observing: false,
             models: models(),
             selecting: only.clone(),
+            cli_found: None,
         };
         assert!(request.asks());
         assert_eq!(request.only(), Some(&only));
@@ -555,7 +577,7 @@ mod tests {
 
     #[test]
     fn a_provider_that_was_not_asked_is_unread_rather_than_unavailable() {
-        let row = project(ProviderId::CODEX, None, None, &models(), true);
+        let row = project(ProviderId::CODEX, None, None, &models(), true, None);
         assert_eq!(row.state, "unread");
         assert!(row.models.is_empty());
         assert!(!row.selectable);
@@ -572,6 +594,7 @@ mod tests {
             None,
             &models,
             true,
+            None,
         );
         assert_eq!((ready.state.as_str(), ready.selectable), ("ready", true));
         assert_eq!(ready.message, None);
@@ -583,6 +606,7 @@ mod tests {
             None,
             &models,
             true,
+            None,
         );
         assert_eq!(needs_login.state, "needs_login");
         assert!(needs_login.installed && !needs_login.selectable);
@@ -593,6 +617,7 @@ mod tests {
             None,
             &models,
             true,
+            None,
         );
         assert_eq!(missing.state, "not_installed");
         assert!(!missing.installed);
@@ -608,6 +633,7 @@ mod tests {
             None,
             &models,
             true,
+            None,
         );
         assert_eq!(unsupported.state, "unsupported");
         assert_eq!(
@@ -616,6 +642,65 @@ mod tests {
             "the provider layer's own reason code reaches the screen"
         );
         assert!(unsupported.installed && !unsupported.selectable);
+    }
+
+    /// The install kit owns "is the program on this Mac": an agent Hide AI
+    /// cannot use yet is listed as not installed from what the kit found, and
+    /// a kit that has not answered claims nothing.
+    #[test]
+    fn an_unsupported_agent_is_not_installed_when_the_kit_did_not_find_it() {
+        let unsupported = status(
+            Availability::Unsupported {
+                reason: "cannot_guarantee_read_only".to_owned(),
+            },
+            false,
+        );
+        let row = |found: Option<&BTreeSet<ProviderId>>| {
+            project(
+                ProviderId::CURSOR,
+                Some(&unsupported),
+                None,
+                &models(),
+                true,
+                found,
+            )
+        };
+        let found: BTreeSet<ProviderId> = [ProviderId::CURSOR].into();
+        let missing: BTreeSet<ProviderId> = [ProviderId::CODEX].into();
+
+        let on_this_mac = row(Some(&found));
+        assert_eq!(on_this_mac.state, "unsupported");
+        assert!(on_this_mac.installed);
+
+        let absent = row(Some(&missing));
+        assert_eq!(absent.state, "not_installed");
+        assert_eq!(absent.message, None);
+        assert!(!absent.installed);
+
+        assert_eq!(
+            row(None).state,
+            "unsupported",
+            "no kit answer yet is not a claim that the program is missing"
+        );
+    }
+
+    /// Gemini CLI has no sign-in check, so its row says so: `ready` there
+    /// means only that the program was found.
+    #[test]
+    fn only_an_agent_with_no_sign_in_check_reports_its_login_unchecked() {
+        let ready = status(Availability::Ready, true);
+        for provider in hide_ai::PROVIDERS {
+            let row = project(*provider, Some(&ready), None, &models(), true, None);
+            assert_eq!(
+                row.login_checked,
+                *provider != ProviderId::GEMINI,
+                "{provider}"
+            );
+        }
+        assert!(
+            !BackgroundAiProviderSnapshot::unread(ProviderId::GEMINI).login_checked,
+            "the row before any read already says it"
+        );
     }
 
     #[test]
@@ -627,7 +712,14 @@ mod tests {
             true,
         );
         parked.parked_for = Some(Duration::from_secs(60));
-        let row = project(ProviderId::CLAUDE, Some(&parked), None, &models(), true);
+        let row = project(
+            ProviderId::CLAUDE,
+            Some(&parked),
+            None,
+            &models(),
+            true,
+            None,
+        );
         assert_eq!(row.state, "usage_limited");
         assert!(row.selectable);
         let at = row.retry_at_ms.expect("the end of the limit is known");
@@ -645,6 +737,7 @@ mod tests {
             }),
             &models(),
             true,
+            None,
         );
         assert!(row.models.is_empty());
         assert_eq!(
@@ -658,6 +751,7 @@ mod tests {
             Some(&ModelCatalog::Offered(vec!["haiku".to_owned()])),
             &models(),
             true,
+            None,
         );
         assert_eq!(offered.models, vec!["haiku".to_owned()]);
         assert_eq!(offered.models_unavailable_reason, None);
@@ -669,6 +763,7 @@ mod tests {
             Some(&ModelCatalog::Fixed(vec!["pro".to_owned()])),
             &models(),
             true,
+            None,
         );
         assert!(fixed.models_fixed && fixed.models == vec!["pro".to_owned()]);
         assert!(
@@ -686,11 +781,11 @@ mod tests {
         let mut models = models();
         models.insert(ProviderId::CLAUDE, "opus".to_owned());
         assert_eq!(
-            project(ProviderId::CLAUDE, None, None, &models, true).model,
+            project(ProviderId::CLAUDE, None, None, &models, true, None).model,
             "opus"
         );
         assert_eq!(
-            project(ProviderId::CLAUDE, None, None, &BTreeMap::new(), true).model,
+            project(ProviderId::CLAUDE, None, None, &BTreeMap::new(), true, None).model,
             hide_ai::settings::default_model(ProviderId::CLAUDE),
             "a provider with no configured model reports the backend's own default"
         );

@@ -4052,6 +4052,10 @@ pub struct BackgroundAiProviderSnapshot {
     /// Whether the agent's program was found; false only for
     /// `not_installed`.
     pub installed: bool,
+    /// Whether the agent's sign-in is checked without a request. False for
+    /// Gemini CLI, whose `ready` only means its program was found, so the
+    /// shell does not call it signed in and it is never chosen by itself.
+    pub login_checked: bool,
     /// Whether Runs on and Add agent offer it: installed, signed in, a
     /// backend, and a call that cannot change files (D-15). Parked in a usage
     /// limit is still selectable.
@@ -4082,6 +4086,7 @@ impl BackgroundAiProviderSnapshot {
             state: "unread".to_owned(),
             headline: "Not checked yet".to_owned(),
             installed: true,
+            login_checked: provider.login_probe(),
             model: provider.default_model().to_owned(),
             cli_default: provider.default_model().is_empty(),
             ..Self::default()

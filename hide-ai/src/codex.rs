@@ -861,6 +861,8 @@ pub fn resolve_binary(binary: &Path) -> Option<PathBuf> {
     if binary.components().count() > 1 {
         return binary.is_file().then(|| binary.to_path_buf());
     }
-    let path = hide_platform::host::login_path().ok()?;
-    hide_platform::host::find_program(&path, binary.to_str()?)
+    // The search the install kit uses to say an agent is installed, so the
+    // two cannot disagree about a CLI only the login shell's `PATH` or an
+    // install folder reaches.
+    hide_platform::programs::find_cli(binary.to_str()?)
 }

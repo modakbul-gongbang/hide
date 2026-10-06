@@ -299,7 +299,9 @@ impl AiSettings {
 
     /// The agent a first run should start on: the first of the fixed order
     /// that can answer, `None` when none can (D-18). `availability` is what
-    /// the router reported; an agent missing from it cannot answer.
+    /// the router reported; an agent missing from it cannot answer. An agent
+    /// whose sign-in cannot be checked is `ready` only because its program was
+    /// found, so it is never picked here: the operator can still choose it.
     ///
     /// This is only consulted while nobody has chosen. Once the operator has
     /// chosen, their choice stands even while it is degraded, because the
@@ -309,9 +311,10 @@ impl AiSettings {
         availability: &[(ProviderId, Availability)],
     ) -> Option<ProviderId> {
         PROVIDERS.iter().copied().find(|provider| {
-            availability
-                .iter()
-                .any(|(id, state)| id == provider && state.is_ready())
+            provider.login_probe()
+                && availability
+                    .iter()
+                    .any(|(id, state)| id == provider && state.is_ready())
         })
     }
 }
@@ -697,6 +700,27 @@ mod tests {
             (ProviderId::CLAUDE, Availability::NeedsLogin),
         ];
         assert_eq!(AiSettings::provider_for_first_run(&neither), None);
+    }
+
+    /// Gemini CLI answers `ready` only because its program was found, so a
+    /// first run never picks it, ahead of or instead of an agent that is
+    /// really signed in.
+    #[test]
+    fn the_first_run_never_picks_an_agent_whose_sign_in_cannot_be_checked() {
+        let gemini_and_grok = [
+            (ProviderId::GEMINI, Availability::Ready),
+            (ProviderId::GROK, Availability::Ready),
+        ];
+        assert_eq!(
+            AiSettings::provider_for_first_run(&gemini_and_grok),
+            Some(ProviderId::GROK),
+            "Gemini is ahead of Grok in the order and still passed over"
+        );
+        assert_eq!(
+            AiSettings::provider_for_first_run(&[(ProviderId::GEMINI, Availability::Ready)]),
+            None,
+            "a lone program that was merely found chooses nothing"
+        );
     }
 
     #[test]

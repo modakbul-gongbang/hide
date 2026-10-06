@@ -888,10 +888,19 @@ impl AiRouter {
 
     fn cached_availability(&self, backend: &dyn AiBackend) -> Availability {
         let provider = backend.id();
-        if let Some((state, checked)) = self.lock().availability.get(&provider)
-            && (self.now)().saturating_duration_since(*checked) < self.config.availability_ttl
-        {
-            return state.clone();
+        if let Some((state, checked)) = self.lock().availability.get(&provider) {
+            // A sign-in failure on an agent whose sign-in cannot be checked
+            // is only ever learned by asking it, and its next probe would say
+            // "ready" again: it is kept for the cooldown, so a request is not
+            // repeated at it every few seconds.
+            let ttl = if matches!(state, Availability::NeedsLogin) && !provider.login_probe() {
+                self.config.default_cooldown
+            } else {
+                self.config.availability_ttl
+            };
+            if (self.now)().saturating_duration_since(*checked) < ttl {
+                return state.clone();
+            }
         }
         let state = backend.availability();
         self.lock()
@@ -1644,6 +1653,49 @@ mod tests {
                 .unwrap()
                 .value["summary"],
             "logged in"
+        );
+    }
+
+    /// An agent with a sign-in check is asked again once the availability
+    /// window passes, because its probe will say whether the login came. One
+    /// without a check (Gemini CLI) would answer "ready" to that probe, so a
+    /// request would be made at it every window: its failure is kept for the
+    /// cooldown instead.
+    #[test]
+    fn a_sign_in_failure_of_an_agent_with_no_check_is_kept_for_the_cooldown() {
+        let window = RouterConfig::default().availability_ttl;
+        let cooldown = RouterConfig::default().default_cooldown;
+        let tried_after = |provider: ProviderId, wait: Duration| {
+            let agent = Scripted::new(
+                provider,
+                vec![Err(AiError::NotAuthenticated), ok("signed in")],
+            );
+            let clock = ManualClock::new();
+            let router = make_router(vec![agent.clone()], Arc::new(Recorder::default()))
+                .with_clock(clock.source());
+            assert_eq!(
+                router.execute(&request("p1", "x"), &CancelToken::new()),
+                Err(AiError::NotAuthenticated)
+            );
+            clock.advance(wait);
+            let _ = router.execute(&request("p2", "y"), &CancelToken::new());
+            agent.calls()
+        };
+
+        assert_eq!(
+            tried_after(ProviderId::CODEX, window + Duration::from_secs(1)),
+            2,
+            "a probed agent is asked again when the window passes"
+        );
+        assert_eq!(
+            tried_after(ProviderId::GEMINI, window + Duration::from_secs(1)),
+            1,
+            "an unprobed agent is not asked again every window"
+        );
+        assert_eq!(
+            tried_after(ProviderId::GEMINI, cooldown + Duration::from_secs(1)),
+            2,
+            "and is asked once the cooldown has passed"
         );
     }
 
