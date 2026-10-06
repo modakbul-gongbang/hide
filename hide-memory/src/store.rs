@@ -14,8 +14,11 @@ use crate::{
     MEMORY_BODY_LIMIT_CHARS, PROMPT_ITEM_LIMIT, SESSION_START_ITEM_LIMIT, redact,
 };
 
-const SCHEMA_VERSION: i64 = 6;
-const MEMORY_DISCLOSURE_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 7;
+/// Version 2 names where analysis can go: the agent Hide AI runs on and any
+/// agent the operator added under its fallback list (PRD settings-cleanup
+/// D-26), which now includes vendors other than the two it was limited to.
+const MEMORY_DISCLOSURE_VERSION: i64 = 2;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum StoreMode {
@@ -1436,6 +1439,10 @@ COMMIT;"#,
     }
     if version == 5 {
         migrate_version_five(connection)?;
+        version = 6;
+    }
+    if version == 6 {
+        migrate_version_six(connection)?;
         version = SCHEMA_VERSION;
     }
     if version != SCHEMA_VERSION {
@@ -1569,6 +1576,20 @@ fn migrate_version_five(connection: &Connection) -> Result<(), MemoryError> {
 CREATE TABLE IF NOT EXISTS project_receipt_keys(project_id TEXT PRIMARY KEY REFERENCES projects(id) ON DELETE CASCADE,auth_key BLOB NOT NULL);
 INSERT OR IGNORE INTO project_receipt_keys(project_id,auth_key) SELECT id,randomblob(32) FROM projects;
 PRAGMA user_version=6;
+COMMIT;"#,
+    )?;
+    Ok(())
+}
+
+fn migrate_version_six(connection: &Connection) -> Result<(), MemoryError> {
+    // The disclosure now says analysis may go to the agent Hide AI runs on or
+    // one added under its fallback list. A project that accepted the earlier
+    // wording sees the new one before analysis or injection resumes; its
+    // stored Memory, search and Sessions stay as they are.
+    connection.execute_batch(
+        r#"BEGIN IMMEDIATE;
+UPDATE projects SET enabled=0 WHERE disclosure_version<2;
+PRAGMA user_version=7;
 COMMIT;"#,
     )?;
     Ok(())
@@ -3466,5 +3487,38 @@ mod tests {
                 .unwrap(),
             0
         );
+    }
+
+    #[test]
+    fn a_project_that_accepted_the_earlier_disclosure_must_accept_the_new_one_and_keeps_its_memory()
+    {
+        let connection = Connection::open_in_memory().unwrap();
+        connection
+            .execute_batch(&format!(
+                "{SCHEMA} PRAGMA user_version=6; UPDATE projects SET enabled=0;"
+            ))
+            .unwrap();
+        connection
+            .execute(
+                "INSERT INTO projects VALUES('p','/fixture','local',1,123,1,1,1)",
+                [],
+            )
+            .unwrap();
+
+        migrate(&connection).unwrap();
+
+        let store = MemoryStore {
+            connection,
+            mode: StoreMode::Writer,
+            path: PathBuf::new(),
+        };
+        let state = store.project_state("p").unwrap();
+        assert!(
+            !state.enabled && state.disclosure_accepted_at_unix_ms.is_none(),
+            "analysis waits for the operator to accept the wording that names where it can go"
+        );
+        store.set_enabled("p", true, true).unwrap();
+        let state = store.project_state("p").unwrap();
+        assert!(state.enabled && state.disclosure_accepted_at_unix_ms.is_some());
     }
 }

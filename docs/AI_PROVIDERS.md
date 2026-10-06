@@ -158,7 +158,10 @@ Off, the label analyzer asks nothing and cancels the request it is running, and 
 Turning it does not rebuild the router, because it is not part of the router's choice.
 
 The defaults are the registry's own constants: `claude` with `sonnet`, `codex` with `gpt-5.6-luna`, and the CLI's own model for every other agent.
+`provider` is in the file only once it was chosen (`AiSettings.chosen`), so a file that only turned a switch makes no choice for the operator, and a settings value with nothing chosen asks no model anything (`router_config().enabled` is `enabled && chosen`).
 `AiSettings::provider_for_first_run(availability)` is the one rule for what a first run chooses: the first provider in the fixed order that is `Ready`, and none when none is, which leaves the feature off until the operator chooses.
+The core applies it, not the settings crate: while nothing is chosen and Use Hide AI is on, the coordinator asks only the agents that are switched on in this Mac's kit and installed whether they are signed in (`AiRequest.selecting`, availability only, no model list, every five minutes while the tab is closed and at once while it is open), and the first of the fixed order that answers `ready` is chosen with its default model and the choice is stored (D-18, D-27).
+A stored choice is never replaced by that rule, an agent that is not switched on in the kit is never chosen by it, and with none signed in nothing is chosen and Hide features run without a model; signing in later is noticed without any setting being touched (B45, B47, B48).
 A file Hide wrote before this default changed names `haiku` for claude like any other choice, so it keeps haiku until the operator picks a model in Settings.
 A file that is not there means nobody has chosen, so the defaults stand and nothing is reported.
 A field that is missing takes its default and a field the crate does not know is ignored, so an older Hide reads a file a newer one wrote.
@@ -169,6 +172,18 @@ A session with no home directory to write to reports that on the group for the s
 
 Choosing a provider changes which provider is asked first and nothing else.
 Every feature, Project Memory included, asks the chosen provider and then the fallback list under the policy below, while the router's retry, cooldown, cancellation, duplicate-suppression, process, and budget rules apply to all of them.
+
+The Hide AI tab reads `status.background_ai`, one section the core publishes (`herdr-core/src/model.rs`, `BackgroundAiSnapshot`): `enabled`, `provider` (null until one is chosen), `chosen`, `agent_summary`, one `providers` row per registered agent in the fixed order (`agent` is the kit adapter id, `state` one of `ready`, `needs_login`, `usage_limited`, `not_installed`, `unavailable`, `unsupported`, `unread`, `installed`, `selectable`, `retry_at_ms`, `model`, `models`, `models_fixed`, `cli_default`, and `models_unavailable_reason`), the ordered `fallback` list, and `refusal`.
+Every reason in it is a code the shell turns into words, never prose, an account, a path or a conversation, and the cause of a failed model-list read stays in the diagnostic log (B68).
+`ai_settings` carries `enabled`, `provider` (Runs on), `model` (for Runs on, or for an agent in the fallback list, which keeps its own), `fallback_add`, `fallback_remove`, `agent_summary` and the two observation hints; the core refuses an agent that the last read did not find selectable (`ai_settings.provider_not_selectable`), an unknown one (`ai_settings.unknown_provider`), the Runs on agent as its own fallback (`ai_settings.fallback_is_runs_on`) and a listed one twice (`ai_settings.fallback_listed`).
+`refusal` is how the label analyzer last found the chosen agent (`AiStanding`, written on the analyzer's thread after each job): its reason class, the end of a usage limit when the agent said, and the listed agent a request made now would run on (`using`), or none when no listed agent can answer, which is the Runs on row's reason (B41, B42).
+It is absent while the chosen agent answers and while Hide AI is off.
+
+With Hide AI off or no agent chosen, the label analyzer answers every job as stopped without asking anything and the runtime says `agent_summary()` is false, so rows show the session's own text and a turn is made once it is on again; worktree naming returns the dialog's own name; Project Memory analysis waits (the project stays enabled, its saved Memory and Sessions keep working).
+A request already running when the switch turns off finishes or is cancelled by the analyzer's own check, and `AiError::Disabled` reaching a turn is a wait (`AnalysisFailure::retry_after`), not a parked failure.
+
+Project Memory's disclosure is version 2: analysis may go to the agent Hide AI runs on or one added under fallback.
+Opening a Memory store from the earlier version disables the projects that accepted version 1 until the operator accepts again; their stored Memory, search and Sessions stay.
 
 Settings shows each provider's availability and the models it offers.
 Both come from asking the provider, so no model list is written into the core or the shell; `AiRouter::availability()`, `AiRouter::models()` and `AiRouter::statuses()` are the source, and they cover every registered provider whether or not it is chosen.
