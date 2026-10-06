@@ -255,6 +255,9 @@ struct State {
     /// for, so entering and leaving failover are each announced once rather
     /// than on every request.
     announced_degraded: Option<ProviderId>,
+    /// The reason each provider's model list was last unavailable, so a read
+    /// that fails the same way again is not logged again.
+    models_unavailable: HashMap<ProviderId, String>,
     /// The provider that answered the most recent request.
     last_answered: Option<ProviderId>,
     rollup: Rollup,
@@ -304,6 +307,7 @@ impl AiRouter {
                 cooldown_until: HashMap::new(),
                 availability: HashMap::new(),
                 announced_degraded: None,
+                models_unavailable: HashMap::new(),
                 last_answered: None,
                 rollup: Rollup {
                     day: utc_day(),
@@ -354,10 +358,48 @@ impl AiRouter {
     /// a model list is not part of a selection decision and has no window of
     /// its own; the caller decides how often to ask.
     pub fn models(&self) -> Vec<(ProviderId, ModelCatalog)> {
-        self.inspected_backends()
+        let catalogs: Vec<(ProviderId, ModelCatalog)> = self
+            .inspected_backends()
             .into_iter()
             .map(|backend| (backend.id(), backend.models()))
-            .collect()
+            .collect();
+        self.log_unreadable_catalogs(&catalogs);
+        catalogs
+    }
+
+    /// The screen shows only that a list is unavailable and a code for it
+    /// (design rule 13); what the operator or a maintainer needs to find the
+    /// cause is here. Written when a provider's reason first appears or
+    /// changes, not on every read, which the open tab repeats every few
+    /// seconds, and again if the list comes back and fails later.
+    fn log_unreadable_catalogs(&self, catalogs: &[(ProviderId, ModelCatalog)]) {
+        let mut announced = Vec::new();
+        {
+            let mut state = self.lock();
+            for (provider, catalog) in catalogs {
+                match catalog.unknown_reason() {
+                    Some(reason) => {
+                        if state.models_unavailable.get(provider).map(String::as_str)
+                            != Some(reason)
+                        {
+                            state
+                                .models_unavailable
+                                .insert(*provider, reason.to_owned());
+                            announced.push((*provider, reason.to_owned()));
+                        }
+                    }
+                    None => {
+                        state.models_unavailable.remove(provider);
+                    }
+                }
+            }
+        }
+        for (provider, reason) in announced {
+            let mut event = AiLogEvent::new("ai.models.unavailable");
+            event.provider = Some(provider);
+            event.detail = Some(format!("reason={reason}"));
+            self.sink.log(event);
+        }
     }
 
     /// Every registered provider's standing for the Settings screen: which can
@@ -1110,6 +1152,8 @@ mod tests {
         probes: AtomicUsize,
         outcomes: Mutex<VecDeque<Result<Value, AiError>>>,
         calls: AtomicUsize,
+        /// Why `models()` cannot list, while it cannot.
+        models_unreadable: Mutex<Option<String>>,
     }
 
     impl Scripted {
@@ -1120,6 +1164,7 @@ mod tests {
                 probes: AtomicUsize::new(0),
                 outcomes: Mutex::new(outcomes.into()),
                 calls: AtomicUsize::new(0),
+                models_unreadable: Mutex::new(None),
             })
         }
 
@@ -1130,6 +1175,7 @@ mod tests {
                 probes: AtomicUsize::new(0),
                 outcomes: Mutex::new(VecDeque::new()),
                 calls: AtomicUsize::new(0),
+                models_unreadable: Mutex::new(None),
             })
         }
 
@@ -1139,6 +1185,10 @@ mod tests {
 
         fn probes(&self) -> usize {
             self.probes.load(Ordering::SeqCst)
+        }
+
+        fn set_models_unreadable(&self, reason: Option<&str>) {
+            *self.models_unreadable.lock().unwrap() = reason.map(str::to_owned);
         }
 
         fn set_availability(&self, state: Availability) {
@@ -1164,7 +1214,10 @@ mod tests {
             self.availability.lock().unwrap().clone()
         }
         fn models(&self) -> ModelCatalog {
-            ModelCatalog::Offered(vec![format!("{}-model", self.id)])
+            match self.models_unreadable.lock().unwrap().clone() {
+                Some(reason) => ModelCatalog::Unknown { reason },
+                None => ModelCatalog::Offered(vec![format!("{}-model", self.id)]),
+            }
         }
         fn execute(&self, _: &AiRequest, _: &CancelToken) -> Result<AiResponse, AiError> {
             self.calls.fetch_add(1, Ordering::SeqCst);
@@ -1696,6 +1749,48 @@ mod tests {
             tried_after(ProviderId::GEMINI, cooldown + Duration::from_secs(1)),
             2,
             "and is asked once the cooldown has passed"
+        );
+    }
+
+    /// The screen shows a code only; the cause of a list that could not be
+    /// read is in the log, once per change rather than on every read the open
+    /// tab repeats (B68).
+    #[test]
+    fn a_model_list_that_could_not_be_read_is_logged_once_with_its_reason() {
+        let sink = Arc::new(Recorder::default());
+        let grok = Scripted::new(ProviderId::GROK, vec![]);
+        let router = make_router(vec![grok.clone()], sink.clone());
+
+        router.models();
+        assert!(sink.events("ai.models.unavailable").is_empty());
+
+        grok.set_models_unreadable(Some("grok_models_unreadable"));
+        router.models();
+        router.models();
+        let logged = sink.events("ai.models.unavailable");
+        assert_eq!(logged.len(), 1, "a repeated failure is not logged again");
+        assert_eq!(logged[0].provider, Some(ProviderId::GROK));
+        assert_eq!(
+            logged[0].detail.as_deref(),
+            Some("reason=grok_models_unreadable")
+        );
+
+        grok.set_models_unreadable(Some("grok_not_authenticated"));
+        router.models();
+        assert_eq!(
+            sink.events("ai.models.unavailable").len(),
+            2,
+            "a new cause is"
+        );
+
+        grok.set_models_unreadable(None);
+        router.models();
+        grok.set_models_unreadable(Some("grok_not_authenticated"));
+        router.models();
+        assert_eq!(
+            sink.events("ai.models.unavailable").len(),
+            3,
+            "a failure after the list came back is a new one"
         );
     }
 
