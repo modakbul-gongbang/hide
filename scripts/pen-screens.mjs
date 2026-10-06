@@ -552,7 +552,7 @@ function newIssueButton(tokens, id) {
 
 // The view tabs under a scope's header: the Agents trigger carries, in
 // warning, how many agents wait on the operator - the only place outside the
-// cards that says so (MainScreen.tsx; a project has tiles instead).
+// cards that says so (MainScreen.tsx; a project's tabs add their numbers).
 function viewTabs(id, items, activeIndex, waiting, answering = 0) {
   return frame(id, 'Tabs', {layout: 'horizontal', gap: '$--spacing-xxs', padding: '$--spacing-xxs', fill: '$--card', cornerRadius: '$--radius-sm'}, items.map((label, index) => {
     const active = index === activeIndex;
@@ -578,11 +578,12 @@ function viewRow(id, tabs, mode, width) {
 }
 
 // A project's Overview header (ProjectOverview.tsx, PRD
-// overview-lenses-tiles-agents B1, B8, B9): the path back, New agent as the
-// quiet action and 새 이슈 as the primary one, the facts line with the view's
-// control at its right end (the Agents graph's filter, PRD agents-graph-view
-// B24; the Issues filter and mode), then the tiles where the tab row was.
-// `filter` is the graph's filter control, drawn by graphParts().filter.
+// overview-lenses-tiles-agents B8, B9): the path back, New agent as the
+// quiet action and 새 이슈 as the primary one, the facts line, then the lens
+// tabs with the view's control at the row's right end, as All projects' tab
+// row has it (the Agents graph's filter, PRD agents-graph-view B24; the
+// Issues filter and mode). `filter` is the graph's filter control, drawn by
+// graphParts().filter.
 function overviewHeader(tokens, id, suffix, {project, facts, view, width, mode, filter}) {
   const control = view === 'agents'
     ? [filter(`${id}-gfilter-${suffix}`)]
@@ -601,49 +602,45 @@ function overviewHeader(tokens, id, suffix, {project, facts, view, width, mode, 
       screenButton(`${id}-new-${suffix}`, 'New agent', {variant: 'ghost', height: num(tokens, '--size-control'), icon: 'square-terminal'}),
       newIssueButton(tokens, `${id}-issue-${suffix}`),
     ]),
-    frame(`${id}-factsrow-${suffix}`, 'Facts row', {layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', width}, [
-      factsLine(`${id}-facts-${suffix}`, facts),
+    factsLine(`${id}-facts-${suffix}`, facts),
+    frame(`${id}-rule-${suffix}`, 'Rule', {width, height: 1, fill: '$--border'}, []),
+    frame(`${id}-viewrow-${suffix}`, 'View row', {layout: 'horizontal', justifyContent: 'space_between', alignItems: 'center', width}, [
+      lensTabs(tokens, `${id}-tabs-${suffix}`, view),
       ...control,
     ]),
-    lensTiles(tokens, `${id}-tiles-${suffix}`, view, width),
-    frame(`${id}-rule-${suffix}`, 'Rule', {width, height: 1, fill: '$--border'}, []),
   ]);
 }
 
-// The tiles (OverviewLenses.tsx LensTiles, B1-B5; 요청 first, PRD
-// overview-request-view B2): one width each, the chosen
-// one outlined; the name, the yellow badge of the operator's turn, the large
-// number and its unit, and one bar whose parts carry the bar's tones.
+// The lens tabs (OverviewLenses.tsx LensTabs; Agents first as every entry
+// opens it): each tab its name, its number, the yellow count of the
+// operator's turn, and on the chosen tab its bar as a thin line along its foot.
 const HERDR_TILES = [
-  {id: 'requests', label: '요청', value: '5', badge: '2', bar: [['$--warning', 2], ['$--destructive', 1], ['$--success', 1], ['$--primary', 1]]},
   {id: 'agents', label: 'Agents', value: '11', badge: '2', bar: [['$--warning', 2], ['$--success', 2], ['$--agent-working', 2], ['$--muted-foreground', 5]]},
-  {id: 'issues', label: 'Issues', value: '22', unit: '열림', bar: [['$--muted-foreground', 18], ['$--warning', 2], ['$--success', 2]]},
-  {id: 'prs', label: 'PRs', value: '9', unit: '열림', badge: '4', bar: [['$--warning', 4], ['$--agent-working', 1], ['$--destructive', 4]]},
-  {id: 'sessions', label: 'Sessions', value: '14', unit: '오늘', bar: [['$--file-orange', 9], ['$--agent-working', 5]]},
+  {id: 'requests', label: '요청', value: '5', badge: '2', bar: [['$--warning', 2], ['$--destructive', 1], ['$--success', 1], ['$--primary', 1]]},
+  {id: 'issues', label: 'Issues', value: '22', bar: [['$--muted-foreground', 18], ['$--warning', 2], ['$--success', 2]]},
+  {id: 'prs', label: 'PRs', value: '9', badge: '4', bar: [['$--warning', 4], ['$--agent-working', 1], ['$--destructive', 4]]},
+  {id: 'sessions', label: 'Sessions', value: '14', bar: [['$--file-orange', 9], ['$--agent-working', 5]]},
 ];
-function lensTiles(tokens, id, view, width) {
-  const gap = num(tokens, '--spacing-md');
-  const tileWidth = Math.floor((width - gap * (HERDR_TILES.length - 1)) / HERDR_TILES.length);
-  const inner = tileWidth - 2 * num(tokens, '--spacing-sm');
-  const barGap = num(tokens, '--spacing-xxs');
-  return frame(id, 'Tiles', {layout: 'horizontal', gap: '$--spacing-md', width}, HERDR_TILES.map((tile) => {
+function lensTabs(tokens, id, view) {
+  const control = num(tokens, '--size-control-sm');
+  const barHeight = num(tokens, '--lens-tab-bar-height');
+  const inset = num(tokens, '--spacing-sm');
+  return frame(id, 'Tabs', {layout: 'horizontal', gap: '$--spacing-xxs', padding: '$--spacing-xxs', fill: '$--card', cornerRadius: '$--radius-sm'}, HERDR_TILES.map((tile) => {
+    const active = tile.id === view;
+    const row = frame(`${id}-${tile.id}-row`, 'Label', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'center', height: active ? control - barHeight : control, padding: [0, '$--spacing-sm']}, [
+      text(`${id}-${tile.id}-label`, tile.label, {size: '$--text-body', weight: '500', fill: active ? '$--foreground' : '$--subtle-foreground'}),
+      text(`${id}-${tile.id}-n`, tile.value, {size: '$--text-caption', fill: '$--muted-foreground', mono: true}),
+      ...(tile.badge ? [text(`${id}-${tile.id}-badge`, tile.badge, {size: '$--text-micro', fill: '$--warning', mono: true})] : []),
+    ]);
+    if (!active) return frame(`${id}-${tile.id}`, tile.label, {layout: 'vertical', cornerRadius: '$--radius-xs'}, [row]);
+    // The bar spans the tab less its side padding; Pen has no absolute foot, so it stands under the label row.
     const total = tile.bar.reduce((sum, [, count]) => sum + count, 0);
-    const room = inner - barGap * (tile.bar.length - 1);
-    return frame(`${id}-${tile.id}`, tile.label, {
-      layout: 'vertical', gap: '$--spacing-xs', padding: '$--spacing-sm', width: tileWidth, fill: '$--card', cornerRadius: '$--radius-md',
-      stroke: tile.id === view ? '$--primary' : '$--border', strokeWidth: '$--size-hairline', strokeAlignment: 'inner',
-    }, [
-      frame(`${id}-${tile.id}-name`, 'Name', {layout: 'horizontal', alignItems: 'center', width: inner}, [
-        text(`${id}-${tile.id}-label`, tile.label, {size: '$--text-body', weight: '500'}),
-        frame(`${id}-${tile.id}-sp`, 'Spacer', {width: 'fill_container', height: 1}, []),
-        ...(tile.badge ? [text(`${id}-${tile.id}-badge`, tile.badge, {size: '$--text-caption', fill: '$--warning', mono: true})] : []),
-      ]),
-      frame(`${id}-${tile.id}-value`, 'Value', {layout: 'horizontal', gap: '$--spacing-xs', alignItems: 'end', height: num(tokens, '--size-control')}, [
-        text(`${id}-${tile.id}-n`, tile.value, {size: '$--text-headline', weight: '600', mono: true}),
-        ...(tile.unit ? [text(`${id}-${tile.id}-u`, tile.unit, {size: '$--text-caption', fill: '$--muted-foreground'})] : []),
-      ]),
-      frame(`${id}-${tile.id}-bar`, 'Bar', {layout: 'horizontal', gap: '$--spacing-xxs', width: inner, height: num(tokens, '--lens-bar-height')},
-        tile.bar.map(([fill, count], index) => frame(`${id}-${tile.id}-bar${index}`, 'Part', {width: Math.max(2, Math.round(room * count / total)), height: num(tokens, '--lens-bar-height'), fill, cornerRadius: num(tokens, '--lens-bar-height') / 2}, []))),
+    // About a label's width: Pen measures no text before layout.
+    const room = 64;
+    return frame(`${id}-${tile.id}`, tile.label, {layout: 'vertical', alignItems: 'center', cornerRadius: '$--radius-xs', fill: '$--secondary'}, [
+      row,
+      frame(`${id}-${tile.id}-bar`, 'Bar', {layout: 'horizontal', gap: '$--spacing-xxs', height: barHeight, padding: [0, inset]},
+        tile.bar.map(([fill, count], index) => frame(`${id}-${tile.id}-bar${index}`, 'Part', {width: Math.max(2, Math.round(room * count / total)), height: barHeight, fill, cornerRadius: barHeight / 2}, []))),
     ]);
   }));
 }
@@ -1301,7 +1298,7 @@ const LOCAL_5 = {task: local(5), project: 'creator', title: '소프트웨어 팩
 
 const MAIN_SPEC = 'web/src/App.tsx, sidebar.tsx, MainScreen.tsx, RequestView.tsx, TaskBoards.tsx, projectBoard.ts: Overview, the scope the sidebar’s global Overview row opens and marks. Its title carries Add project and 새 이슈 as the primary action (C); its facts line the project count, the open issues once every source has answered, and the open-PR and merged totals only when every project can give its part; its 요청 · Tasks · Agents · Projects tabs the count of rows to answer on 요청 and of agents waiting on the operator on Agents. 요청, which every way in opens, is the Project Overview’s request view over every project, each row with its project’s name; Agents’ view is the Project Overview’s graph over every project with the project’s name above each project’s band. Every project’s issues share one board, 백로그 · 진행 중 · 리뷰 · 완료, each card an issue with its project beside its id (a Local issue as L-N): 시작 on a backlog card under the pointer, the operator’s-turn cards in the warning border, the worktrees with no issue folded into one line at the foot of 진행 중, and 완료 folded to one line per project with its count. Every project has an issue source, so no project is set apart as unconnected. Its Dependencies mode draws an arrow that crosses projects, the blocker named with its repository on the lock line. The Projects view is the project list grouped by device.';
 
-const OVERVIEW_SPEC = 'web/src/ProjectOverview.tsx, GraphView.tsx, agentGraph.ts, OverviewLenses.tsx, overviewLens.ts, TaskBoards.tsx, projectBoard.ts: a project’s Overview (PRD overview-lenses-tiles-agents, PRD agents-graph-view). The header carries the path back, New agent as the quiet action and 새 이슈 as the primary one (C), the facts line of worktrees, disk, main behind and N merged → 정리 with the view’s control at its right end, then the tiles 요청 · Agents · Issues · PRs · Sessions where the tab row was: the name, the yellow badge of the operator’s turn, the large number and its unit, one bar; the chosen tile outlined. Every entry opens 요청 (PRD overview-request-view, RequestView.tsx, requestList.ts): one row per agent grouped 답할 것, 고칠 것, 리뷰·머지, 멈춤, 결과 볼 것, 일하는 중, 기다리는 중 and 쉬는 중 (folded); a row is the status mark, the kind mark and the title, then on the right the descendants (자식 N · 일하는 중 M, 질문 K in warning), the PR chip with CI and +N, the issue chip, the checkout and the time; under it 나 › and the request on one line, its front cut and its end kept, then the result line (warning on a row to answer) with its open chips; an expanded row adds the request as written, the agent’s last words, its pull requests (예전 PR #N 머지됨 for one settled before), its descendants with 열기, and 패널 열기 ⌘↵. With no agent the view is one line and New agent; with nothing to do it is 할 일 없음 above the folded 쉬는 중. The Agents tile opens one graph (PRD agents-graph-view): a checkout is a box with its head (the glyph in its PR’s colour and the branch, the purpose, then the issue chip, the PR chip with its CI mark and 변경 요청, ↑N ↓N and the files in warning; main the house and 에이전트 N; a merged box dimmed with 정리) and a row per agent (mark, provider, title and age; a step in with a corner arrow for a delegation inside the checkout; a tucked badge such as ✓2 for folded children; only an asking row has a second line, its question in warning). The front checkout’s box carries the selection outline, main’s box is first, and boxes stand in columns by how deep their delegation runs. A delegation into another checkout is a rounded orthogonal line from the parent row’s right port to the child row’s left port, coloured by the child: blue with dashes while it works, orange when it asks, pale blue while it waits on children, grey otherwise. The worktrees with no agent, the ones to clean up and the resting ones fold into one line each. The facts line’s right end carries the filter: the status chips 내 차례 · 일하는 중 · 쉬는 중, a search field and, only with two devices in view, the device choice. Below the graph the box states (primary, a worktree with its chips, a merged box, an asking row, a row with a tucked badge, the selected box) and the filter that matches nothing, one line with 필터 해제. The Issues tile opens a board of issues only (PRD overview-lenses-issues): a card is the glyph, id and at most two labels, the title, the lock line, the checkout chip and the PR chip with its CI and review word, and at most two agents; its buttons fill the id line’s slot under the pointer (시작 S, Workspace O, the PR icon, a Local issue’s edit, ⋯); only the operator’s turn is outlined in warning. The worktrees and pull requests with no issue are one line each under 진행 중 and 리뷰, and 완료 is folded to one line per issue with the pull request that closed it. The facts line’s right end carries the filter and Board · List · Dependencies. A card opens the issue panel beside the board: the head (glyph, id, source, Open, ×), the title, the action line, the properties, 이 이슈로 한 일, the Markdown body and a GitHub issue’s latest comments; a Local issue edits in place, and a failed read is one line with 재시도. The PRs tile opens the project’s pull requests grouped 내 차례, 에이전트가 고치는 중, CI 실패 · 맡은 에이전트 없음 and 최근 머지 (folded) (PRD overview-lenses-prs): a row is ▸, the state glyph, the number, the title, the issue cell (a dotted circle when empty, the 이슈 잇기 icon under the pointer), 확인, the agents’ marks, the branch, CI, the review word and the time, whose fixed slot holds GitHub and ⋯, ▷ 맡기기 or 정리 under the pointer; an unfolded row shows the branch’s agents and GitHub, Workspace and 이슈 잇기. 이슈 잇기 on a GitHub issue asks once, 그만두기 first, before it writes Closes #N into the body.';
+const OVERVIEW_SPEC = 'web/src/ProjectOverview.tsx, GraphView.tsx, agentGraph.ts, OverviewLenses.tsx, overviewLens.ts, TaskBoards.tsx, projectBoard.ts: a project’s Overview (PRD overview-lenses-tiles-agents, PRD agents-graph-view). The header carries the path back, New agent as the quiet action and 새 이슈 as the primary one (C), the facts line of worktrees, disk, main behind and N merged → 정리, then one row of lens tabs Agents · 요청 · Issues · PRs · Sessions with the view’s control at its right end: each tab its name, its number and the yellow count of the operator’s turn; the chosen tab carries its bar as a thin line along its foot. Every entry opens Agents. 요청 (PRD overview-request-view, RequestView.tsx, requestList.ts): one row per agent grouped 답할 것, 고칠 것, 리뷰·머지, 멈춤, 결과 볼 것, 일하는 중, 기다리는 중 and 쉬는 중 (folded); a row is the status mark, the kind mark and the title, then on the right the descendants (자식 N · 일하는 중 M, 질문 K in warning), the PR chip with CI and +N, the issue chip, the checkout and the time; under it 나 › and the request on one line, its front cut and its end kept, then the result line (warning on a row to answer) with its open chips; an expanded row adds the request as written, the agent’s last words, its pull requests (예전 PR #N 머지됨 for one settled before), its descendants with 열기, and 패널 열기 ⌘↵. With no agent the view is one line and New agent; with nothing to do it is 할 일 없음 above the folded 쉬는 중. The Agents tab opens one graph (PRD agents-graph-view): a checkout is a box with its head (the glyph in its PR’s colour and the branch, the purpose, then the issue chip, the PR chip with its CI mark and 변경 요청, ↑N ↓N and the files in warning; main the house and 에이전트 N; a merged box dimmed with 정리) and a row per agent (mark, provider, title and age; a step in with a corner arrow for a delegation inside the checkout; a tucked badge such as ✓2 for folded children; only an asking row has a second line, its question in warning). The front checkout’s box carries the selection outline, main’s box is first, and boxes stand in columns by how deep their delegation runs. A delegation into another checkout is a rounded orthogonal line from the parent row’s right port to the child row’s left port, coloured by the child: blue with dashes while it works, orange when it asks, pale blue while it waits on children, grey otherwise. The worktrees with no agent, the ones to clean up and the resting ones fold into one line each. The tab row’s right end carries the filter: the status chips 내 차례 · 일하는 중 · 쉬는 중, a search field and, only with two devices in view, the device choice. Below the graph the box states (primary, a worktree with its chips, a merged box, an asking row, a row with a tucked badge, the selected box) and the filter that matches nothing, one line with 필터 해제. The Issues tab opens a board of issues only (PRD overview-lenses-issues): a card is the glyph, id and at most two labels, the title, the lock line, the checkout chip and the PR chip with its CI and review word, and at most two agents; its buttons fill the id line’s slot under the pointer (시작 S, Workspace O, the PR icon, a Local issue’s edit, ⋯); only the operator’s turn is outlined in warning. The worktrees and pull requests with no issue are one line each under 진행 중 and 리뷰, and 완료 is folded to one line per issue with the pull request that closed it. The tab row’s right end carries the filter and Board · List · Dependencies. A card opens the issue panel beside the board: the head (glyph, id, source, Open, ×), the title, the action line, the properties, 이 이슈로 한 일, the Markdown body and a GitHub issue’s latest comments; a Local issue edits in place, and a failed read is one line with 재시도. The PRs tab opens the project’s pull requests grouped 내 차례, 에이전트가 고치는 중, CI 실패 · 맡은 에이전트 없음 and 최근 머지 (folded) (PRD overview-lenses-prs): a row is ▸, the state glyph, the number, the title, the issue cell (a dotted circle when empty, the 이슈 잇기 icon under the pointer), 확인, the agents’ marks, the branch, CI, the review word and the time, whose fixed slot holds GitHub and ⋯, ▷ 맡기기 or 정리 under the pointer; an unfolded row shows the branch’s agents and GitHub, Workspace and 이슈 잇기. 이슈 잇기 on a GitHub issue asks once, 그만두기 first, before it writes Closes #N into the body.';
 
 // -- Screen / Main ------------------------------------------------------------
 
@@ -1332,7 +1329,7 @@ function buildMain(tokens) {
         {glyph: 'git-merge', label: '19 merged', fill: '$--pr-merged'},
       ]),
       frame(`main-rule-${key}`, 'Rule', {width, height: 1, fill: '$--border'}, []),
-      viewRow(`main-row-${key}`, viewTabs(`main-tabs-${key}`, ['요청', 'Tasks', 'Agents', 'Projects'], mode ? 1 : 0, 3, 2), mode, width),
+      viewRow(`main-row-${key}`, viewTabs(`main-tabs-${key}`, ['Agents', '요청', 'Tasks', 'Projects'], mode ? 2 : 1, 3, 2), mode, width),
     ]);
   }
   function build(suffix) {
@@ -1381,8 +1378,8 @@ function buildMain(tokens) {
         card('d4', {...ISSUE_186, project: 'herdr-ide', word: '리뷰'}),
       ]),
     ]);
-    // 요청 as every way into Home opens it (PRD overview-request-view B1, B3):
-    // each row carries its project's name.
+    // 요청, the tab beside Agents (PRD overview-request-view B1, B3): each row
+    // carries its project's name.
     const rows = requestRowsOf('herdr-ide');
     const r = (key, spec) => requestRow(`main-rq-${key}-${suffix}`, spec, width);
     const requests = frame(`main-requests-${suffix}`, 'Overview · 요청', {width, layout: 'vertical', gap: '$--spacing-md'}, [
@@ -1591,10 +1588,9 @@ function prParts(tokens) {
 // -- Screen / Project Overview -------------------------------------------------
 
 // The Overview (ProjectOverview.tsx, PRD agents-graph-view): the header with
-// the tiles and the graph filter, 요청 as every entry opens it (PRD
-// overview-request-view), its empty and nothing-to-do states, Agents (one graph, a
+// the lens tabs and the graph filter, 요청 (PRD overview-request-view), its empty and nothing-to-do states, Agents (one graph, a
 // box per checkout and a line per delegation), the box states and the filter
-// that matches nothing, then the Issues tile's board and Dependencies mode,
+// that matches nothing, then the Issues tab's board and Dependencies mode,
 // #218's Tasks board under its new name.
 const SIGTERM_ASK = {mark: 'ask', provider: 'codex', title: 'SIGTERM 처리와 자식 정리', line: '기존 stdin 종료 경로도 남길까요?', age: '4m'};
 const SIGTERM_REVIEW = {mark: 'work', title: '리뷰: 종료 경로 회귀', age: '2m'};
@@ -1811,7 +1807,7 @@ function buildProjectOverview(tokens) {
         card('d6', {task: gh(199), title: 'Read the remote primary checkout over device connections', word: '백로그'}),
       ]),
     ]);
-    // The PRs tile's view (PRD overview-lenses-prs B2-B6, B19): the groups by
+    // The PRs tab's view (PRD overview-lenses-prs B2-B6, B19): the groups by
     // whose move it is, a row unfolded to its lineage and icon buttons, a row
     // under the pointer with 맡기기 in the time slot, 최근 머지 folded; then
     // 이슈 잇기's confirmation over it (B10).
@@ -1841,7 +1837,7 @@ function buildProjectOverview(tokens) {
         actions: [screenButton(`ov-prcd-no-${suffix}`, '그만두기', {variant: 'secondary'}), screenButton(`ov-prcd-yes-${suffix}`, '본문에 쓰기')],
       }),
     ]);
-    // The request view as every entry opens it (PRD overview-request-view
+    // The request view (PRD overview-request-view
     // B1-B8, B13, B52): the groups in their order with 쉬는 중 folded, a
     // working row's long request cut front and end, a finished row expanded,
     // then the empty view and the view with nothing to do.
@@ -3400,7 +3396,7 @@ function buildWorkspaceSupplemental() {
 
 // -- Screen / Project Sessions --------------------------------------------------
 
-// The Overview on its Sessions tile: the same header as the Issues board, then
+// The Overview on its Sessions tab: the same header as the Issues board, then
 // the Project's session list and the read-only detail beside it.
 function buildSessions(tokens) {
   function build(suffix) {

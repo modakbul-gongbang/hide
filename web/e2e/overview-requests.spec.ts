@@ -139,12 +139,12 @@ test("the request view: what each agent was asked, what came of it, and what is 
     await page.goto(`${daemon.origin}/#token=${daemon.token}`);
     await expect(page.locator("[data-main-screen]").or(page.locator("[data-workspace-screen]"))).toBeVisible({ timeout: 20_000 });
 
-    // The sidebar's project row opens the request view, the first tile (B1).
+    // The sidebar's project row opens the Agents graph; 요청 is the tab beside it.
     await page.locator('[data-sidebar-mode="projects"]').click();
     await openProjectOverview(page, "repo");
     const overview = page.locator("[data-overview-screen]");
-    await expect(overview).toHaveAttribute("data-overview-view", "requests");
-    expect(await overview.locator("[data-lens-tile]").evaluateAll((tiles) => tiles.map((tile) => tile.getAttribute("data-lens-tile")))).toEqual(["requests", "agents", "issues", "prs", "sessions"]);
+    expect(await overview.locator("[data-lens-tile]").evaluateAll((tiles) => tiles.map((tile) => tile.getAttribute("data-lens-tile")))).toEqual(["agents", "requests", "issues", "prs", "sessions"]);
+    await overview.locator('[data-lens-tile-button="requests"]').click();
     await expect(overview.locator('[data-lens-tile="requests"]')).toHaveAttribute("data-selected", "true");
     await expect.poll(() => last.get("request_view")?.observing).toBe(true);
 
@@ -159,7 +159,7 @@ test("the request view: what each agent was asked, what came of it, and what is 
     await expect(row(donePane)).toHaveAttribute("data-request-verb", "result");
     await expect(row(mainPane)).toHaveAttribute("data-request-verb", "waiting");
 
-    // The tile: three to do, one to answer, the bar by verb, no sentence (B2).
+    // The tab: three to do, one to answer, the bar by verb, no sentence (B2).
     const tile = overview.locator('[data-lens-tile="requests"]');
     await expect(tile.locator("[data-lens-tile-value]")).toHaveAttribute("data-lens-tile-value", "3");
     await expect(tile.locator("[data-lens-tile-badge]")).toHaveText("1");
@@ -256,16 +256,16 @@ test("the request view: what each agent was asked, what came of it, and what is 
     await expect(page.locator(`[data-pane-view="${askingPane}"]`)).toHaveAttribute("data-focused", "true", { timeout: 15_000 });
     await expect.poll(() => last.get("request_view")?.observing).toBe(false);
 
-    // ⌘⇧H comes back to the request view; Home opens All projects on its Requests tab (B1).
+    // The project scope comes back on the Agents graph; Home opens All projects on its Agents tab, 요청 beside it (B1).
     await page.locator("body").click({ position: { x: 1, y: 1 } });
     await page.locator("[data-go-main]").click();
     await page.getByRole("tab", { name: "repo", exact: true }).click();
-    await expect(overview).toHaveAttribute("data-overview-view", "requests");
     await page.locator("[data-home-destination]").click();
     const main = page.locator("[data-main-screen]");
-    await expect(main).toHaveAttribute("data-main-view", "requests");
-    expect(await main.locator("[data-main-tab]").evaluateAll((tabs) => tabs.map((tab) => tab.getAttribute("data-main-tab")))).toEqual(["requests", "tasks", "agents", "projects"]);
+    await expect(main).toHaveAttribute("data-main-view", "agents");
+    expect(await main.locator("[data-main-tab]").evaluateAll((tabs) => tabs.map((tab) => tab.getAttribute("data-main-tab")))).toEqual(["agents", "requests", "tasks", "projects"]);
     await expect(main.locator('[data-main-tab="requests"] [data-requests-answer]')).toHaveText("1");
+    await main.locator('[data-main-tab="requests"]').click();
     await expect(main.locator(`[data-request-row="${askingPane}"]`)).toContainText("repo");
     await atRest(page);
     await screenshot(page, "requests-all-projects-light");

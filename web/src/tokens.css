@@ -103,8 +103,8 @@
   --home-collapsed-width: 148px;
   --home-child-indent: 12px;
   --home-dependency-gap: 96px;
-  --lens-tile-min: 208px;
   --lens-bar-height: 4px;
+  --lens-tab-bar-height: 2px;
   --graph-box-width: 272px;
   --graph-head-height: 74px;
   --graph-head-line: 18px;
@@ -256,6 +256,8 @@
   --size-settings-sheet-h: 560px;
   --size-settings-sheet-h-max: 800px;
   --size-settings-sheet-window-inset: 40px;
+  --size-overview-sheet-w: 1440px;
+  --size-overview-sheet-h: 960px;
   --size-add-device-sheet-w: 470px;
   --size-add-device-sheet-h: 300px;
   --size-device-test-stage-col: 64px;

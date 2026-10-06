@@ -501,8 +501,8 @@ The core never renames the Herdr tab for this; the Recent Panels label is projec
 ### Project Home
 
 Project Home is the empty local checkout surface and the Shift-Command-H overlay.
-Every entry opens its request view (PRD overview-request-view D-05), except Recent Panels, which restores the lens and expanded rows as they were left.
-The Agents tile opens the graph with the checkout in front selected (PRD agents-graph-view D-22); the Agents view reads the rows' groups into four buckets, the operator's turn (Needs You, or Done unread), waiting on children (`waiting_on_descendants`), working, and resting, which order the graph's bands, boxes and rows (`web/src/agentGraph.ts`), fill the Agents tile's bar and give the status chips their states (`web/src/overviewLens.ts`).
+Every entry opens the Agents graph with the checkout in front selected (PRD agents-graph-view D-22), except Recent Panels, which restores the lens and expanded rows as they were left; the request view is the tab beside it.
+The Agents view reads the rows' groups into four buckets, the operator's turn (Needs You, or Done unread), waiting on children (`waiting_on_descendants`), working, and resting, which order the graph's bands, boxes and rows (`web/src/agentGraph.ts`), fill the Agents tab's bar and give the status chips their states (`web/src/overviewLens.ts`).
 The Issues view is the Tasks board below.
 Tasks derives delivery in priority order: merged worktree or merged PR, open PR, then in progress; an open issue no checkout works on is the backlog.
 Needs You changes the halo and stable sort priority, never this delivery stage.

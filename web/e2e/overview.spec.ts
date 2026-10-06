@@ -301,21 +301,21 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await open(page, daemon);
     await expect(page.locator("[data-main-screen]").or(page.locator("[data-workspace-screen]"))).toBeVisible({ timeout: 20_000 });
 
-    // Shared Overview's current-project scope opens the request view.
-    // Its Agents tile keeps the front checkout's box selected (B1).
+    // The current-project scope opens the Agents graph, the front checkout's box selected (B1).
     await page.locator('[data-sidebar-mode="projects"]').click();
     const repoRow = page.locator("[data-project-row]", { hasText: /^repo/ });
     const refreshesBefore = sent.get("sessions_refresh") ?? 0;
     await openProjectOverview(page, "repo");
     const overview = page.locator("[data-overview-screen]");
     const tile = (id: string) => overview.locator(`[data-lens-tile="${id}"]`);
-    /** Every way in lands on the request view; the graph is one tile away. */
+    /** Every way in lands on the graph; after another tab it is one tab away. */
     const toGraph = async () => {
       await tile("agents").locator("[data-lens-tile-button]").click();
       await expect(overview).toHaveAttribute("data-overview-view", "agents");
     };
     await expect(overview).toBeVisible();
-    await expect(overview).toHaveAttribute("data-overview-view", "requests");
+    await expect(overview).toHaveAttribute("data-overview-view", "agents");
+    await tile("requests").locator("[data-lens-tile-button]").click();
     await expect.poll(() => sent.get("request_view") ?? 0).toBeGreaterThanOrEqual(1);
     expect(last.get("request_view")?.observing).toBe(true);
     await tile("agents").locator("[data-lens-tile-button]").click();
@@ -363,24 +363,24 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     // New agent and New issue stay on the title row (B9).
     await expect(overview.locator("[data-overview-new-agent]")).toBeVisible();
 
-    // The tiles where the tab row was: Agents chosen, four agents, one of
-    // them the operator's turn, the bar by bucket; Issues two open, the bar
-    // by stage; Sessions today's count once the history is read (B1-B5).
+    // The lens tabs: Agents chosen, four agents, one the operator's turn, the bar by bucket;
+    // Issues three open, the bar by stage; Sessions today's count once read (B1-B5).
     await expect(overview.locator("[data-lens-tile]")).toHaveCount(5);
-    expect(await overview.locator("[data-lens-tile]").evaluateAll((tiles) => tiles.map((tile) => tile.getAttribute("data-lens-tile")))).toEqual(["requests", "agents", "issues", "prs", "sessions"]);
+    expect(await overview.locator("[data-lens-tile]").evaluateAll((tiles) => tiles.map((tile) => tile.getAttribute("data-lens-tile")))).toEqual(["agents", "requests", "issues", "prs", "sessions"]);
     await expect(tile("agents")).toHaveAttribute("data-selected", "true");
     await expect(tile("agents").locator("[data-lens-tile-value]")).toHaveAttribute("data-lens-tile-value", "4", { timeout: 20_000 });
     await expect(tile("agents").locator("[data-lens-tile-badge]")).toHaveText("1");
     await expect(tile("agents").locator("[data-lens-tile-bar]")).toHaveAttribute("data-lens-tile-bar", "turn:1 working:1 delegating:1 resting:1");
     await expect(tile("issues").locator("[data-lens-tile-value]")).toHaveAttribute("data-lens-tile-value", "3", { timeout: 20_000 });
-    await expect(tile("issues")).toContainText("open");
     await expect(tile("issues").locator("[data-lens-tile-bar]")).toHaveAttribute("data-lens-tile-bar", "backlog:1 working:1 review:1");
     await expect(tile("issues").locator("[data-lens-tile-badge]")).toHaveCount(0);
     await expect(tile("sessions").locator("[data-lens-tile-value]")).toHaveAttribute("data-lens-tile-value", "0", { timeout: 20_000 });
-    await expect(tile("sessions")).toContainText("today");
-    // Resting on the bar shows its legend and on the badge its breakdown (B4).
+    // Resting on a tab shows its unit, legend and breakdown; only the chosen tab draws its bar (B4).
+    await restOn(page, tile("issues").locator("[data-lens-tile-button]"), ["3 open", "Backlog 1"]);
+    await restOn(page, tile("sessions").locator("[data-lens-tile-button]"), ["0 today"]);
     await restOn(page, tile("agents").locator("[data-lens-tile-bar]"), ["My turn 1"]);
     await restOn(page, tile("agents").locator("[data-lens-tile-badge]"), ["Approval 1"]);
+    expect(await overview.locator("[data-lens-tab-bar]").evaluateAll((bars) => bars.map((bar) => bar.closest("[data-lens-tile]")?.getAttribute("data-lens-tile")))).toEqual(["agents"]);
 
     // Boxes (B2-B5, D-37): the asking worktree's band stands first, above main's, because
     // its question outranks main's band; main holds the Observer and the Implementor it
@@ -485,7 +485,7 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await expect(workspace).toBeVisible();
     await expect(page.locator(`[data-pane-view="${askingPane}"]`)).toHaveAttribute("data-focused", "true", { timeout: 15_000 });
 
-    // ⌘⇧H from that Workspace opens the request view, and the graph its box selected (B1).
+    // ⌘⇧H from that Workspace opens the graph with its box selected (B1).
     await page.locator("body").click({ position: { x: 1, y: 1 } });
     await page.locator("[data-go-main]").click();
     await page.getByRole("tab", { name: "repo", exact: true }).click();
@@ -547,18 +547,17 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await expect(dialog).toHaveCount(0);
     await expect(shippedBox).toBeVisible();
 
-    // The filter (B24-B28). A tile bar's segment lights its status chip alone
-    // (B25); chips are OR, search and chips AND; folds and non-matching rows go,
+    // The filter (B24-B28): chips are OR, search and chips AND; folds and non-matching rows go,
     // the parent chain stays dimmed (B27); nothing matching says so with a way back (B28).
     const chip = (name: string) => overview.locator(`[data-graph-chip="${name}"]`);
     const rows = overview.locator("[data-graph-row]");
     await chip("working").click();
     await chip("turn").click();
     await expect(rows).toHaveCount(3);
-    await tile("agents").locator('[data-lens-tile-segment="resting"]').click();
+    await chip("working").click();
+    await chip("turn").click();
+    await chip("resting").click();
     await expect(chip("resting")).toHaveAttribute("data-state", "on");
-    await expect(chip("turn")).toHaveAttribute("data-state", "off");
-    await expect(chip("working")).toHaveAttribute("data-state", "off");
     await expect(rows).toHaveCount(1);
     await expect(row(shippedPane)).toBeVisible();
     await expect(overview.locator("[data-graph-fold]")).toHaveCount(0);
@@ -884,7 +883,7 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await expect(allProjects).not.toHaveAttribute("aria-current", "page");
     await expect(page.locator('[data-main-stats] [data-stat="projects"]')).toHaveText("3 projects");
     await expect(main.locator("[data-main-tab]")).toHaveCount(4);
-    await expect(main).toHaveAttribute("data-main-view", "requests");
+    await expect(main).toHaveAttribute("data-main-view", "agents");
     await expect(main.locator('[data-main-tab="agents"] [data-agents-waiting]')).toBeVisible();
     await page.locator('[data-main-tab="agents"]').click();
     await expect(main.locator("[data-graph=all]")).toBeVisible();
@@ -909,7 +908,7 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await expect(workspace).toBeVisible();
     await page.locator("[data-go-main]").click();
     await page.getByRole("tab", { name: "fixture", exact: true }).click();
-    await expect(overview).toHaveAttribute("data-overview-view", "requests");
+    await expect(overview).toHaveAttribute("data-overview-view", "agents");
     await tile("issues").locator("[data-lens-tile-button]").click();
     await expect(overview).toHaveAttribute("data-overview-state", "empty");
     await expect(page.locator('[data-overview-column="backlog"] [data-backlog-empty]')).toBeVisible();
@@ -981,6 +980,7 @@ test("a project's Overview: tiles, the Agents graph, and the Issues board", asyn
     await page.locator("[data-go-main]").click();
     await page.getByRole("tab", { name: "quiet", exact: true }).click();
     // The request view of a project with no agent is one line and New agent (overview-request-view B40).
+    await tile("requests").locator("[data-lens-tile-button]").click();
     await expect(overview).toHaveAttribute("data-overview-state", "empty");
     await expect(overview.locator("[data-requests-empty]")).toBeVisible();
     await expect(overview.locator("[data-requests-new-agent]")).toBeVisible();

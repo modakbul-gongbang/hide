@@ -38,9 +38,9 @@ import { commandLabel } from "./shortcutLabels";
 // answer says why on its own section, with Retry where retrying can help.
 
 const VIEWS: readonly { view: MainView; label: "requests.title" | "overview.tasks" | "overview.agents" | "overview.projects" }[] = [
+  { view: "agents", label: "overview.agents" },
   { view: "requests", label: "requests.title" },
   { view: "tasks", label: "overview.tasks" },
-  { view: "agents", label: "overview.agents" },
   { view: "projects", label: "overview.projects" },
 ];
 
@@ -118,8 +118,8 @@ export function MainScreen({ actions }: { actions: Actions }) {
       setFolds((open) => [...open, ...projects.map(({ workspace }) => foldId("empty", workspace.id)).filter((id) => !open.includes(id))]);
     },
   };
-  // The Agents tab keeps the count of agents whose turn it is, the Agents tile's badge;
-  // the 요청 tab the rows to answer, the 요청 tile's.
+  // The Agents tab keeps the count of agents whose turn it is, as a project's Agents tab does;
+  // the 요청 tab the rows to answer, as a project's 요청 tab does.
   const waiting = agentsTile(lensAgents, { state: "ready" }, t).badge?.count ?? 0;
   const answering = rows.filter((row) => row.verb === "answer").length;
   const lensActions = useMemo(() => lensHandlers(actions, {

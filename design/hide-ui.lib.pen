@@ -39523,10 +39523,6 @@
       "type": "number",
       "value": 4
     },
-    "--lens-tile-min": {
-      "type": "number",
-      "value": 208
-    },
     "--issue-label-dot": {
       "type": "number",
       "value": 6
@@ -39784,6 +39780,18 @@
     "--size-onboarding-tile": {
       "type": "number",
       "value": 120
+    },
+    "--lens-tab-bar-height": {
+      "type": "number",
+      "value": 2
+    },
+    "--size-overview-sheet-h": {
+      "type": "number",
+      "value": 960
+    },
+    "--size-overview-sheet-w": {
+      "type": "number",
+      "value": 1440
     }
   },
   "fileToken": "61e6a599-bafe-4c87-80e7-10732d9e7fe4"
