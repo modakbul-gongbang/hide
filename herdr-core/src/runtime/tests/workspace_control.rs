@@ -297,7 +297,14 @@ fn background_view_commands_preserve_front_focus_and_retried_split_converges() {
         .unwrap();
     assert!(first.changed);
     let retry = runtime
-        .workspace_control_action(crate::node::TEST_NODE, "pane-b", &expected, &retry_id, action, Ok(None))
+        .workspace_control_action(
+            crate::node::TEST_NODE,
+            "pane-b",
+            &expected,
+            &retry_id,
+            action,
+            Ok(None),
+        )
         .unwrap();
     assert_eq!(retry, first);
     assert_eq!(
@@ -584,7 +591,13 @@ fn file_open_reads_outside_the_runtime_then_places_once_in_the_callers_workspace
     };
     let reveal_id = action_id("reveal-open-file");
     let ActionPreparation::Read(source) = runtime
-        .workspace_control_prepare_action(crate::node::TEST_NODE, "pane-b", &expected, &reveal_id, &reveal)
+        .workspace_control_prepare_action(
+            crate::node::TEST_NODE,
+            "pane-b",
+            &expected,
+            &reveal_id,
+            &reveal,
+        )
         .unwrap()
     else {
         panic!("a new intent checks its source")
@@ -632,7 +645,10 @@ fn browser_load_status_tracks_the_current_load_and_retry_does_not_reload() {
         )
         .unwrap();
     assert_eq!(runtime.snapshot.navigator.focused_workspace_id, before);
-    let key = (crate::node::TEST_NODE.to_owned(), expected.checkout_path.clone());
+    let key = (
+        crate::node::TEST_NODE.to_owned(),
+        expected.checkout_path.clone(),
+    );
     let load = runtime
         .view_layout_of(&key)
         .unwrap()
@@ -746,7 +762,14 @@ fn browser_new_target_uses_the_named_area_and_duplicate_intent_converges() {
     };
     let id = action_id("new-browser-target");
     let first = runtime
-        .workspace_control_action(crate::node::TEST_NODE, "pane-b", &expected, &id, action.clone(), Ok(None))
+        .workspace_control_action(
+            crate::node::TEST_NODE,
+            "pane-b",
+            &expected,
+            &id,
+            action.clone(),
+            Ok(None),
+        )
         .unwrap();
     assert_ne!(first.view_id, existing);
     assert_eq!(first.area_id.as_deref(), Some("a1"));
@@ -773,7 +796,14 @@ fn browser_new_target_uses_the_named_area_and_duplicate_intent_converges() {
     assert_eq!(cached, first);
     assert_eq!(
         runtime
-            .workspace_control_action(crate::node::TEST_NODE, "pane-b", &expected, &id, action.clone(), Ok(None))
+            .workspace_control_action(
+                crate::node::TEST_NODE,
+                "pane-b",
+                &expected,
+                &id,
+                action.clone(),
+                Ok(None)
+            )
             .unwrap(),
         first
     );
@@ -915,7 +945,13 @@ fn browser_unknown_area_refuses_without_mutating_empty_or_existing_views() {
         let id = action_id("unknown-browser-area");
         let before = browser_control_state(&runtime);
         let refusal = runtime
-            .workspace_control_prepare_action(crate::node::TEST_NODE, "pane-b", &expected, &id, &action)
+            .workspace_control_prepare_action(
+                crate::node::TEST_NODE,
+                "pane-b",
+                &expected,
+                &id,
+                &action,
+            )
             .err()
             .unwrap();
         assert_eq!(refusal.reason, "view_layout.unknown_area");
@@ -935,7 +971,13 @@ fn browser_unknown_area_refuses_without_mutating_empty_or_existing_views() {
         );
         assert_eq!(browser_control_state(&runtime), before);
         let ActionPreparation::Cached(Err(cached)) = runtime
-            .workspace_control_prepare_action(crate::node::TEST_NODE, "pane-b", &expected, &id, &action)
+            .workspace_control_prepare_action(
+                crate::node::TEST_NODE,
+                "pane-b",
+                &expected,
+                &id,
+                &action,
+            )
             .unwrap()
         else {
             panic!("a committed refusal is idempotent too")
@@ -1034,7 +1076,13 @@ fn scoped_browser_close_and_select_refuse_a_page_moved_after_prepare() {
         let id = action_id("scoped-before-move");
         assert!(matches!(
             runtime
-                .workspace_control_prepare_action(crate::node::TEST_NODE, "pane-b", &expected, &id, &action)
+                .workspace_control_prepare_action(
+                    crate::node::TEST_NODE,
+                    "pane-b",
+                    &expected,
+                    &id,
+                    &action
+                )
                 .unwrap(),
             ActionPreparation::Ready
         ));
@@ -1066,7 +1114,14 @@ fn scoped_browser_close_and_select_refuse_a_page_moved_after_prepare() {
         let before = browser_control_state(&runtime);
         assert_eq!(
             runtime
-                .workspace_control_action(crate::node::TEST_NODE, "pane-b", &expected, &id, action, Ok(None))
+                .workspace_control_action(
+                    crate::node::TEST_NODE,
+                    "pane-b",
+                    &expected,
+                    &id,
+                    action,
+                    Ok(None)
+                )
                 .unwrap_err()
                 .reason,
             "browser_scope_changed"
@@ -1114,7 +1169,13 @@ fn scoped_browser_close_and_select_refuse_a_document_in_the_named_area() {
         let before = browser_control_state(&runtime);
         assert_eq!(
             runtime
-                .workspace_control_prepare_action(crate::node::TEST_NODE, "pane-b", &expected, &id, &action)
+                .workspace_control_prepare_action(
+                    crate::node::TEST_NODE,
+                    "pane-b",
+                    &expected,
+                    &id,
+                    &action
+                )
                 .err()
                 .unwrap()
                 .reason,
@@ -1122,7 +1183,14 @@ fn scoped_browser_close_and_select_refuse_a_document_in_the_named_area() {
         );
         assert_eq!(
             runtime
-                .workspace_control_action(crate::node::TEST_NODE, "pane-b", &expected, &id, action, Ok(None))
+                .workspace_control_action(
+                    crate::node::TEST_NODE,
+                    "pane-b",
+                    &expected,
+                    &id,
+                    action,
+                    Ok(None)
+                )
                 .unwrap_err()
                 .reason,
             "browser_scope_changed"
@@ -1219,7 +1287,13 @@ fn browser_scope_is_part_of_retry_identity_and_closed_target_replays_its_receipt
     );
     let after_close = browser_control_state(&runtime);
     let ActionPreparation::Cached(Ok(cached)) = runtime
-        .workspace_control_prepare_action(crate::node::TEST_NODE, "pane-b", &expected, &close_id, &close_action)
+        .workspace_control_prepare_action(
+            crate::node::TEST_NODE,
+            "pane-b",
+            &expected,
+            &close_id,
+            &close_action,
+        )
         .unwrap()
     else {
         panic!("a closed browser target must replay its successful receipt")
@@ -1397,7 +1471,13 @@ fn diff_open_requires_a_real_working_tree_change() {
     };
     let clean_id = action_id("clean");
     let ActionPreparation::Read(source) = runtime
-        .workspace_control_prepare_action(crate::node::TEST_NODE, "pane-b", &expected, &clean_id, &action)
+        .workspace_control_prepare_action(
+            crate::node::TEST_NODE,
+            "pane-b",
+            &expected,
+            &clean_id,
+            &action,
+        )
         .unwrap()
     else {
         panic!("diff needs a Git read")
@@ -1422,7 +1502,13 @@ fn diff_open_requires_a_real_working_tree_change() {
     );
     std::fs::write(&path, "changed\n").unwrap();
     let ActionPreparation::Cached(Err(retried)) = runtime
-        .workspace_control_prepare_action(crate::node::TEST_NODE, "pane-b", &expected, &clean_id, &action)
+        .workspace_control_prepare_action(
+            crate::node::TEST_NODE,
+            "pane-b",
+            &expected,
+            &clean_id,
+            &action,
+        )
         .unwrap()
     else {
         panic!("the failed intent must keep its refusal")
@@ -1482,13 +1568,21 @@ fn checkout_caller_resolves_the_longest_registered_checkout_containing_its_cwd()
     assert!(nested.views.is_none());
 
     let parent = runtime
-        .workspace_control_query(crate::node::TEST_NODE, &caller("k1", "/checkouts/a/src"), Query::ViewList)
+        .workspace_control_query(
+            crate::node::TEST_NODE,
+            &caller("k1", "/checkouts/a/src"),
+            Query::ViewList,
+        )
         .unwrap();
     assert_eq!(parent.context.checkout_id, "checkout-a");
     assert_eq!(parent.views, Some(Vec::new()));
 
     let exact = runtime
-        .workspace_control_query(crate::node::TEST_NODE, &caller("k1", "/checkouts/b"), Query::Info)
+        .workspace_control_query(
+            crate::node::TEST_NODE,
+            &caller("k1", "/checkouts/b"),
+            Query::Info,
+        )
         .unwrap();
     assert_eq!(exact.context.checkout_id, "checkout-b");
     // A checkout caller is offered the Workspace, never delivery, which acts
@@ -1509,7 +1603,11 @@ fn checkout_caller_resolves_the_longest_registered_checkout_containing_its_cwd()
     for outside in ["/checkouts/ab", "/checkouts", "/elsewhere/checkouts/a"] {
         assert_eq!(
             runtime
-                .workspace_control_query(crate::node::TEST_NODE, &caller("k1", outside), Query::Info)
+                .workspace_control_query(
+                    crate::node::TEST_NODE,
+                    &caller("k1", outside),
+                    Query::Info
+                )
                 .unwrap_err()
                 .reason,
             "checkout_not_registered",
@@ -1520,7 +1618,11 @@ fn checkout_caller_resolves_the_longest_registered_checkout_containing_its_cwd()
     runtime.snapshot.status.herdr.state = "disconnected".to_owned();
     assert_eq!(
         runtime
-            .workspace_control_query(crate::node::TEST_NODE, &caller("k1", "/checkouts/a"), Query::Info)
+            .workspace_control_query(
+                crate::node::TEST_NODE,
+                &caller("k1", "/checkouts/a"),
+                Query::Info
+            )
             .unwrap_err()
             .reason,
         "checkout_not_registered"

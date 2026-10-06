@@ -2345,8 +2345,7 @@ impl Runtime {
             .iter()
             // Creations in flight are this machine's folders only (B2).
             .filter(|registration| {
-                registration.id == workspace_id
-                    && registration.device_id == self.node.as_str()
+                registration.id == workspace_id && registration.device_id == self.node.as_str()
             })
             .any(|registration| {
                 self.workspace_creations_in_flight

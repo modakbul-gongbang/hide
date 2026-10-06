@@ -4781,14 +4781,8 @@ mod tests {
 
         assert_eq!(
             registered_owner(&crate::node::test_node(), &folder, "Notes"),
-            OwnerOpen::for_checkout(
-                crate::node::TEST_NODE,
-                &folder,
-                &folder,
-                false,
-                "Notes"
-            )
-            .on_node()
+            OwnerOpen::for_checkout(crate::node::TEST_NODE, &folder, &folder, false, "Notes")
+                .on_node()
         );
         assert_eq!(
             registered_owner(&crate::node::test_node(), &repo, "Repo"),

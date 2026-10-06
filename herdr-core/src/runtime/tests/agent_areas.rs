@@ -17,7 +17,8 @@ fn ingest(runtime: &mut Runtime, tabs: &[&str]) {
     runtime.sync_workspace_view();
 }
 fn action(runtime: &mut Runtime, mut payload: serde_json::Value) {
-    payload["workspace"] = serde_json::json!({"device_id":crate::node::TEST_NODE,"path":"/agent-groups"});
+    payload["workspace"] =
+        serde_json::json!({"device_id":crate::node::TEST_NODE,"path":"/agent-groups"});
     runtime.dispatch_json(&explorer_event("agent_layout", payload));
 }
 fn layout(runtime: &Runtime) -> crate::agent_layout::Layout {

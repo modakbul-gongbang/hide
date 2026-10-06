@@ -16,7 +16,6 @@
 use std::collections::{HashMap, VecDeque};
 use std::sync::Mutex;
 
-
 /// Submits kept per pane, newest last.
 pub(crate) const SUBMITS_PER_PANE: usize = 32;
 /// Panes kept; the pane submitted to longest ago goes first.

@@ -147,8 +147,7 @@ impl Runtime {
             .iter()
             .find(|workspace| workspace.id == workspace_id)
             .ok_or_else(|| "This Project is no longer registered.".to_owned())?;
-        if workspace.remote_target_id.is_some() || workspace.device_id != self.node.as_str()
-        {
+        if workspace.remote_target_id.is_some() || workspace.device_id != self.node.as_str() {
             return Err(self.device_sessions_reason(&workspace.device_id));
         }
         Ok(workspace.path.clone())

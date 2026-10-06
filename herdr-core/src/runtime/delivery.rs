@@ -636,19 +636,7 @@ impl Runtime {
             actor,
         ))
     }
-    pub(crate) fn coordination_context(
-        &self,
-        device: &str,
-    ) -> Result<
-        (
-            Arc<dyn hide_herdr_client::ApiConnector>,
-            String,
-            String,
-            crate::codex_launch::CodexDaemon,
-            bool,
-        ),
-        String,
-    > {
+    pub(crate) fn coordination_context(&self, device: &str) -> Result<CoordinationContext, String> {
         let on_node = self.node == device;
         let (connector, scope, machine) = if on_node {
             let live = self.live.as_ref().ok_or("herdr_unavailable")?;
@@ -670,8 +658,24 @@ impl Runtime {
                     .ok_or("machine_identity_unavailable")?,
             )
         };
-        Ok((connector, scope, machine, self.codex_daemon(device), on_node))
+        Ok(CoordinationContext {
+            connector,
+            host_scope: scope,
+            machine,
+            codex: self.codex_daemon(device),
+            on_node,
+        })
     }
+}
+
+/// What a coordination command needs of the machine it acts on.
+pub(crate) struct CoordinationContext {
+    pub(crate) connector: Arc<dyn hide_herdr_client::ApiConnector>,
+    pub(crate) host_scope: String,
+    pub(crate) machine: String,
+    pub(crate) codex: crate::codex_launch::CodexDaemon,
+    /// The machine is the core's own node, whose Herdr the core reaches directly.
+    pub(crate) on_node: bool,
 }
 
 #[cfg(test)]
@@ -1070,7 +1074,13 @@ pub(crate) mod tests {
         let context = authority(&target.actor).context;
         clocks(&mut guard, "recipient", true);
         guard
-            .prepare_delivery(crate::node::TEST_NODE, "recipient", &context, None, Command::Inbox)
+            .prepare_delivery(
+                crate::node::TEST_NODE,
+                "recipient",
+                &context,
+                None,
+                Command::Inbox,
+            )
             .unwrap();
         assert_eq!(written(&mut guard), (false, false, false));
         for (bell, session, submitted) in [
@@ -1106,7 +1116,13 @@ pub(crate) mod tests {
         // An id past the key bound is refused before it is hashed under the lock.
         assert_eq!(
             guard
-                .prepare_delivery(crate::node::TEST_NODE, "recipient", &context, None, pull("x".repeat(257)))
+                .prepare_delivery(
+                    crate::node::TEST_NODE,
+                    "recipient",
+                    &context,
+                    None,
+                    pull("x".repeat(257))
+                )
                 .err()
                 .as_deref(),
             Some("session_invalid")

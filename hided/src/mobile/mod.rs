@@ -1553,7 +1553,10 @@ impl Mobile {
                             });
                             self.answers.send_if_modified(|current| {
                                 let mut kept = current.as_ref().clone();
-                                let changed = start::record(&mut kept, start::answers_of(&rest, self.node().as_str()));
+                                let changed = start::record(
+                                    &mut kept,
+                                    start::answers_of(&rest, self.node().as_str()),
+                                );
                                 if changed {
                                     *current = Arc::new(kept);
                                 }

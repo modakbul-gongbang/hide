@@ -978,7 +978,11 @@ fn pane_close_preserves_a_dirty_last_view_after_closing_its_twin() {
     let first = display(&mut runtime, 0, "notes.md");
     let second = display(&mut runtime, 1, "notes.md");
     let expected = runtime
-        .workspace_control_query(crate::node::TEST_NODE, pane_id, crate::workspace_control::Query::Info)
+        .workspace_control_query(
+            crate::node::TEST_NODE,
+            pane_id,
+            crate::workspace_control::Query::Info,
+        )
         .unwrap()
         .context;
     let first_id = format!("{}-first", unix_milliseconds());

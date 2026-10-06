@@ -497,7 +497,11 @@ mod tests {
         let unset = project(&rest, "local");
         assert_eq!(unset.interface_language, None, "null");
         rest["ui_state"] = json!({"interface_language": 7});
-        assert_eq!(project(&rest, "local").interface_language, None, "not a string");
+        assert_eq!(
+            project(&rest, "local").interface_language,
+            None,
+            "not a string"
+        );
         rest["ui_state"] = json!({"interface_language": "ko"});
         let korean = project(&rest, "local");
         assert_eq!(korean.interface_language.as_deref(), Some("ko"));

@@ -197,12 +197,23 @@ pub async fn start_daemon(env: Env) -> Result<RunningDaemon, String> {
     // Stored state from before node ids is converted once, before the core
     // reads it; a store that cannot be converted stops the start and names
     // the file (PRD core-host-node B2).
-    let converted = herdr_core::node_migration::convert(
-        &env.state_dir,
-        &env.home,
-        &node,
-    )
-    .map_err(|refusal| refusal.to_string())?;
+    let converted = herdr_core::node_migration::convert(&env.state_dir, &env.home, &node).map_err(
+        |refusal| {
+            let record = serde_json::json!({
+                "component": "hided",
+                "kind": "node_migration.refused",
+                "node": node.as_str(),
+                "file": refusal.file.display().to_string(),
+                "reason": &refusal.reason,
+            });
+            if let Err(error) =
+                herdr_core::diagnostics::record_now(&env.state_dir.join("core-state.json"), record)
+            {
+                eprintln!("the start refusal could not be logged: {error}");
+            }
+            refusal.to_string()
+        },
+    )?;
     if !converted.files.is_empty() {
         eprintln!(
             "{}",
@@ -624,12 +635,7 @@ fn apply_snapshot(
     index.set_roots(
         &roots
             .iter()
-            .map(|root| {
-                (
-                    boundary.node().to_string(),
-                    root.path.display().to_string(),
-                )
-            })
+            .map(|root| (boundary.node().to_string(), root.path.display().to_string()))
             .chain(
                 device_roots
                     .iter()

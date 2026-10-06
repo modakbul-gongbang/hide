@@ -16,11 +16,11 @@ use hide_platform::fs::identity;
 use hide_platform::path;
 
 use crate::git_dir::{self, Repository};
-use crate::node::NodeId;
 use crate::model::{
     CheckoutPurposeOrigin, CheckoutPurposeSnapshot, CheckoutSnapshot, DeviceRegistration,
     DeviceSnapshot, TabSnapshot, WorkspaceRegistration, WorkspaceSnapshot, WorktreeCatalogSnapshot,
 };
+use crate::node::NodeId;
 
 /// The row for the machine the core runs on. Its id is the node id; its
 /// `kind` stays `local`, the role "the core's own machine", not a name.
@@ -1055,7 +1055,12 @@ mod tests {
         ];
 
         let before = git_calls_on_this_thread();
-        let catalog = build_catalog(&crate::node::test_node(), &[demo, plain], &spaces, &no_worktrees());
+        let catalog = build_catalog(
+            &crate::node::test_node(),
+            &[demo, plain],
+            &spaces,
+            &no_worktrees(),
+        );
         let roots = root_index(&spaces);
         assert_eq!(git_calls_on_this_thread(), before, "the catalog ran git");
 
@@ -1142,8 +1147,8 @@ mod tests {
             .expect("git worktree add");
         assert!(worktree.success());
 
-        let registration =
-            registration(root.to_str().unwrap(), "Demo", crate::node::TEST_NODE).expect("registration");
+        let registration = registration(root.to_str().unwrap(), "Demo", crate::node::TEST_NODE)
+            .expect("registration");
         let snapshot = inspect_registered(&registration);
         // A registration is one row for where it is. The `feature` worktree
         // exists on disk but has no pane, so it is not a checkout row.
@@ -1242,7 +1247,12 @@ mod tests {
             &[space],
             &no_worktrees(),
         );
-        let released = build_catalog(&crate::node::test_node(), std::slice::from_ref(&registration), &[], &no_worktrees());
+        let released = build_catalog(
+            &crate::node::test_node(),
+            std::slice::from_ref(&registration),
+            &[],
+            &no_worktrees(),
+        );
 
         assert_eq!(occupied[0].id, released[0].id);
         assert_eq!(occupied[0].label, released[0].label);
@@ -1268,11 +1278,22 @@ mod tests {
         };
         let registrations = [
             registration(first.to_str().unwrap(), "First", crate::node::TEST_NODE).expect("first"),
-            registration(second.to_str().unwrap(), "Second", crate::node::TEST_NODE).expect("second"),
+            registration(second.to_str().unwrap(), "Second", crate::node::TEST_NODE)
+                .expect("second"),
         ];
 
-        let unregistered = build_catalog(&crate::node::test_node(), &[], std::slice::from_ref(&space), &no_worktrees());
-        let catalog = build_catalog(&crate::node::test_node(), &registrations, &[space], &no_worktrees());
+        let unregistered = build_catalog(
+            &crate::node::test_node(),
+            &[],
+            std::slice::from_ref(&space),
+            &no_worktrees(),
+        );
+        let catalog = build_catalog(
+            &crate::node::test_node(),
+            &registrations,
+            &[space],
+            &no_worktrees(),
+        );
 
         assert_eq!(unregistered.len(), 2);
         assert!(
@@ -1491,8 +1512,8 @@ mod tests {
         ));
         fs::create_dir_all(&idle).expect("idle worktree");
         fs::create_dir_all(&second).expect("second worktree");
-        let registration =
-            registration(root.to_str().unwrap(), "Project", crate::node::TEST_NODE).expect("registration");
+        let registration = registration(root.to_str().unwrap(), "Project", crate::node::TEST_NODE)
+            .expect("registration");
         let worktrees = WorktreeCatalogSnapshot {
             projects: vec![ProjectWorktreesSnapshot {
                 root_path: root.to_string_lossy().into_owned(),
@@ -1609,7 +1630,12 @@ mod tests {
         let registration =
             registration(root.to_str().unwrap(), "Project", crate::node::TEST_NODE).expect("registration");
 
-        let before = build_catalog(&crate::node::test_node(), std::slice::from_ref(&registration), &[], &no_worktrees());
+        let before = build_catalog(
+            &crate::node::test_node(),
+            std::slice::from_ref(&registration),
+            &[],
+            &no_worktrees(),
+        );
         let unrelated = build_catalog(
             &crate::node::test_node(),
             &[registration],
@@ -1633,7 +1659,12 @@ mod tests {
             .expect("registration");
         let registration_id = registration.id.clone();
 
-        let catalog = build_catalog(&crate::node::test_node(), &[registration], &[], &no_worktrees());
+        let catalog = build_catalog(
+            &crate::node::test_node(),
+            &[registration],
+            &[],
+            &no_worktrees(),
+        );
 
         assert_eq!(catalog.len(), 1);
         assert_eq!(catalog[0].id, registration_id);

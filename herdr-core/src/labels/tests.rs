@@ -183,7 +183,8 @@ impl Harness {
     fn store(&self) -> Arc<LabelStore> {
         Arc::new(LabelStore::open(
             Some(self.state.path()),
-            Some(self.home.path()), LOCAL_TARGET,
+            Some(self.home.path()),
+            LOCAL_TARGET,
         ))
     }
 

@@ -1687,7 +1687,12 @@ mod worktree_observer_tests {
             let spaces = Runtime::session_spaces(&payload);
             let precomputed = PrecomputedCatalog {
                 registrations: Vec::new(),
-                workspaces: workspace::build_catalog(&crate::node::test_node(), &[], &spaces, &catalog),
+                workspaces: workspace::build_catalog(
+                    &crate::node::test_node(),
+                    &[],
+                    &spaces,
+                    &catalog,
+                ),
                 roots: workspace::root_index(&spaces),
             };
             runtime.ingest_session_with_catalog(Ok(payload), Some(precomputed));

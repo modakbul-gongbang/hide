@@ -290,10 +290,7 @@ impl Runtime {
                     .iter()
                     .any(|tab| tab.id.as_deref() == Some(tab_id) && !tab.delegated)
                     && self
-                        .agent_layout_of(&(
-                            self.node.as_str().to_owned(),
-                            checkout.path.clone(),
-                        ))
+                        .agent_layout_of(&(self.node.as_str().to_owned(), checkout.path.clone()))
                         .is_some_and(|layout| layout.tree.display(tab_id).is_none())
             })
     }

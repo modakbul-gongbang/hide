@@ -403,10 +403,7 @@ fn home_links_follow_registrations_once_home_exists() {
         .snapshot
         .ui_state
         .workspace_registrations
-        .push(registration(
-            &machine.projects[0],
-            crate::node::TEST_NODE,
-        ));
+        .push(registration(&machine.projects[0], crate::node::TEST_NODE));
 
     dispatch(
         &shared,
@@ -436,10 +433,7 @@ fn home_links_follow_registrations_once_home_exists() {
             .snapshot
             .ui_state
             .workspace_registrations
-            .push(registration(
-                &machine.projects[1],
-                crate::node::TEST_NODE,
-            ));
+            .push(registration(&machine.projects[1], crate::node::TEST_NODE));
         runtime.persist_ui_state();
     }
     wait_for("both projects' links", || {
@@ -479,19 +473,13 @@ fn the_first_registration_after_launch_is_linked_into_an_existing_home() {
     {
         let mut runtime = shared.lock().unwrap();
         let registrations = &mut runtime.snapshot.ui_state.workspace_registrations;
-        registrations.push(registration(
-            &machine.projects[0],
-            crate::node::TEST_NODE,
-        ));
+        registrations.push(registration(&machine.projects[0], crate::node::TEST_NODE));
         registrations.push(WorkspaceRegistration {
             pinned: true,
             home: true,
             ..registration(&earlier.home, crate::node::TEST_NODE)
         });
-        registrations.push(registration(
-            &machine.projects[1],
-            crate::node::TEST_NODE,
-        ));
+        registrations.push(registration(&machine.projects[1], crate::node::TEST_NODE));
         runtime.persist_ui_state();
     }
     let home = machine.user_home.join("hide");

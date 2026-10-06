@@ -3533,8 +3533,14 @@ mod tests {
         );
         // The id this machine had before node ids is a device's now, and a
         // device path never resolves through this machine's checkouts.
-        assert_eq!(event_device(&boundary, &event(json!("local"))).as_deref(), Some("local"));
-        assert_eq!(event_device(&boundary, &event(json!("mini"))).as_deref(), Some("mini"));
+        assert_eq!(
+            event_device(&boundary, &event(json!("local"))).as_deref(),
+            Some("local")
+        );
+        assert_eq!(
+            event_device(&boundary, &event(json!("mini"))).as_deref(),
+            Some("mini")
+        );
     }
 
     #[test]

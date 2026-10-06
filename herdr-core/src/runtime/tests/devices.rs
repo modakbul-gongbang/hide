@@ -108,7 +108,11 @@ fn testing_an_unconnected_device_reports_the_way_out() {
     assert_eq!(error.kind, "device.not_connected");
     assert!(device(&runtime, "studio").test.is_none());
 
-    assert!(dispatch_device(&mut runtime, "test_device", crate::node::TEST_NODE));
+    assert!(dispatch_device(
+        &mut runtime,
+        "test_device",
+        crate::node::TEST_NODE
+    ));
     let error = runtime
         .snapshot()
         .status
@@ -291,7 +295,11 @@ fn returning_to_this_machine_gives_the_keyboard_back_to_the_local_pane() {
         Some("remote:studio:pane:w9:p1")
     );
 
-    assert!(dispatch_device(&mut runtime, "focus_device", crate::node::TEST_NODE));
+    assert!(dispatch_device(
+        &mut runtime,
+        "focus_device",
+        crate::node::TEST_NODE
+    ));
 
     assert_eq!(
         runtime.snapshot().terminal.pane_id.as_deref(),

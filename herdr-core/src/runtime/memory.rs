@@ -1,10 +1,10 @@
 use super::*;
-use crate::node::NodeId;
 use crate::model::{
     ArchiveEventSnapshot, MemoryAnalysisSnapshot, MemoryDetailSnapshot, MemoryNoticeSnapshot,
     MemoryRevisionSnapshot, MemoryRowSnapshot, MemorySourceSnapshot, SessionsMode,
     SessionsProviderFilter, SessionsSnapshot,
 };
+use crate::node::NodeId;
 use hide_agent_hooks::{HookEvent, HookStatus};
 use hide_ai::{AiError, CancelToken};
 use hide_memory::{
@@ -704,8 +704,9 @@ impl Runtime {
                             &checkout_path,
                             &settings,
                             &cancel,
-                            &context,
-                            generation,
+                            |snapshot| {
+                                report_analysis(&context, generation, &checkout_path, snapshot);
+                            },
                         )),
                         None => Err("The home directory is unavailable".to_owned()),
                     };
@@ -1385,8 +1386,7 @@ fn analyze_project(
     checkout_path: &str,
     settings: &hide_ai::AiSettings,
     cancel: &CancelToken,
-    context: &RuntimeWorkerContext,
-    generation: u64,
+    progress: impl FnMut(MemoryAnalysisSnapshot),
 ) -> MemoryMutationOutcome {
     let result = analyze_project_inner(
         node,
@@ -1395,9 +1395,7 @@ fn analyze_project(
         checkout_path,
         settings,
         cancel,
-        |snapshot| {
-            report_analysis(context, generation, checkout_path, snapshot);
-        },
+        progress,
     );
     match result {
         Ok(result) => result,

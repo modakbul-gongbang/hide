@@ -1036,7 +1036,12 @@ async fn a_start_the_sheet_never_offered_is_refused_by_the_daemon() {
     open_sheet(&mut socket).await;
     for (request_id, target, kind, reason) in [
         ("bad-target", "/etc", "claude", "unknown_target"),
-        ("bad-kind", home_target().as_str(), "terminal", "unknown_kind"),
+        (
+            "bad-kind",
+            home_target().as_str(),
+            "terminal",
+            "unknown_kind",
+        ),
     ] {
         send_phone(
             &mut socket,

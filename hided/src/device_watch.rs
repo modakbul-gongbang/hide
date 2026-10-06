@@ -299,8 +299,14 @@ mod tests {
                 ],
             })
         );
-        assert_eq!(target_from_value(&snapshot("changes", "ready"), "local"), None);
-        assert_eq!(target_from_value(&snapshot("explorer", "connecting"), "local"), None);
+        assert_eq!(
+            target_from_value(&snapshot("changes", "ready"), "local"),
+            None
+        );
+        assert_eq!(
+            target_from_value(&snapshot("explorer", "connecting"), "local"),
+            None
+        );
         let mut local = snapshot("explorer", "ready");
         local["rest"]["navigator"]["focused_device_id"] = "local".into();
         assert_eq!(target_from_value(&local, "local"), None);

@@ -256,23 +256,23 @@ fn read_activity(work: WatchWork) -> watch::Reading {
         let request = observation.session.ok_or("session_reference_missing")?;
         match work.source {
             ActivitySource::Node { home } => {
-            let home = home.ok_or("session_home_unavailable")?;
-            hide_session::session_activity::read(&home, &request)
-                .map_err(|_| "session_activity_failed")
+                let home = home.ok_or("session_home_unavailable")?;
+                hide_session::session_activity::read(&home, &request)
+                    .map_err(|_| "session_activity_failed")
             }
             ActivitySource::Device { channel } => {
-            let channel = channel.ok_or("helper_unavailable")?;
-            crate::host_access::call_as::<hide_session::session_activity::SessionActivity>(
-                channel.as_ref(),
-                hide_host::protocol::Call::SessionActivity { request },
-                Duration::from_secs(5),
-            )
-            .map_err(|error| match error {
-                crate::host_access::HostCallError::NotConnected(_) => "helper_unavailable",
-                crate::host_access::HostCallError::Busy => "helper_busy",
-                crate::host_access::HostCallError::Refused(_) => "session_activity_refused",
-                crate::host_access::HostCallError::Unknown(_) => "helper_timeout_or_format",
-            })
+                let channel = channel.ok_or("helper_unavailable")?;
+                crate::host_access::call_as::<hide_session::session_activity::SessionActivity>(
+                    channel.as_ref(),
+                    hide_host::protocol::Call::SessionActivity { request },
+                    Duration::from_secs(5),
+                )
+                .map_err(|error| match error {
+                    crate::host_access::HostCallError::NotConnected(_) => "helper_unavailable",
+                    crate::host_access::HostCallError::Busy => "helper_busy",
+                    crate::host_access::HostCallError::Refused(_) => "session_activity_refused",
+                    crate::host_access::HostCallError::Unknown(_) => "helper_timeout_or_format",
+                })
             }
         }
     })();

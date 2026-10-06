@@ -653,15 +653,24 @@ mod tests {
     #[test]
     fn roots_announce_needs_you_and_done_once_each() {
         let mut transitions = Transitions::default();
-        let seed = project(&rest(json!([row("w1:p1", "needs_you", "question", None)])), "local");
+        let seed = project(
+            &rest(json!([row("w1:p1", "needs_you", "question", None)])),
+            "local",
+        );
         assert_eq!(
             transitions.observe(&seed),
             (Vec::new(), BTreeSet::new()),
             "the first look only seeds"
         );
-        let working = project(&rest(json!([row("w1:p1", "working", "none", None)])), "local");
+        let working = project(
+            &rest(json!([row("w1:p1", "working", "none", None)])),
+            "local",
+        );
         assert!(transitions.observe(&working).0.is_empty());
-        let asking = project(&rest(json!([row("w1:p1", "needs_you", "approval", None)])), "local");
+        let asking = project(
+            &rest(json!([row("w1:p1", "needs_you", "approval", None)])),
+            "local",
+        );
         let (notices, _) = transitions.observe(&asking);
         assert_eq!(notices.len(), 1);
         assert_eq!(notices[0].title, "task w1:p1");
@@ -730,15 +739,21 @@ mod tests {
     #[test]
     fn a_descendant_request_is_announced_on_its_root() {
         let mut transitions = Transitions::default();
-        let quiet = project(&rest(json!([
-            row("w1:p1", "working", "none", None),
-            row("w1:p2", "working", "none", Some("w1:p1")),
-        ])), "local");
+        let quiet = project(
+            &rest(json!([
+                row("w1:p1", "working", "none", None),
+                row("w1:p2", "working", "none", Some("w1:p1")),
+            ])),
+            "local",
+        );
         transitions.observe(&quiet);
-        let asking = project(&rest(json!([
-            row("w1:p1", "working", "none", None),
-            row("w1:p2", "working", "question", Some("w1:p1")),
-        ])), "local");
+        let asking = project(
+            &rest(json!([
+                row("w1:p1", "working", "none", None),
+                row("w1:p2", "working", "question", Some("w1:p1")),
+            ])),
+            "local",
+        );
         let (notices, _) = transitions.observe(&asking);
         assert_eq!(notices.len(), 1);
         assert_eq!(notices[0].key.pane_id, "w1:p1");
@@ -749,7 +764,10 @@ mod tests {
     fn an_agent_that_comes_back_in_the_same_state_is_not_announced_again() {
         let mut transitions = Transitions::default();
         let start = std::time::Instant::now();
-        let asking = project(&rest(json!([row("w1:p1", "needs_you", "question", None)])), "local");
+        let asking = project(
+            &rest(json!([row("w1:p1", "needs_you", "question", None)])),
+            "local",
+        );
         let empty = project(&rest(json!([])), "local");
         transitions.observe_at(&asking, start);
         assert_eq!(

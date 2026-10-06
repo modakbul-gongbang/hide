@@ -340,7 +340,9 @@ fn maximum_korean_relation_context_and_event_group_fit_one_request() {
     let root = folder.path().to_path_buf();
     let mut store = hide_memory::MemoryStore::open(&root.join("memory.sqlite3")).unwrap();
     let project_id = "project:request-budget";
-    store.ensure_project(project_id, &root, crate::node::TEST_NODE).unwrap();
+    store
+        .ensure_project(project_id, &root, crate::node::TEST_NODE)
+        .unwrap();
     store
         .apply_candidates(
             &hide_memory::AnalysisBatch {

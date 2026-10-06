@@ -1289,9 +1289,7 @@ impl Runtime {
                 let key = (workspace.device_id.clone(), checkout.path.clone());
                 let mut restored_agent_tab = None;
                 let mut placed_tabs: Option<HashSet<String>> = None;
-                if workspace.device_id == self.node.as_str()
-                    && self.workspace_views.is_some()
-                {
+                if workspace.device_id == self.node.as_str() && self.workspace_views.is_some() {
                     let topology = checkout
                         .tabs
                         .iter()
@@ -4164,12 +4162,8 @@ impl Runtime {
             kind: operation.agent_kind.clone()?,
             prompt: launch.and_then(|launch| launch.prompt.clone()),
             args: launch.map(|launch| launch.args.clone()).unwrap_or_default(),
-            codex_daemon: self.codex_daemon(
-                operation
-                    .device_id
-                    .as_deref()
-                    .unwrap_or(self.node.as_str()),
-            ),
+            codex_daemon: self
+                .codex_daemon(operation.device_id.as_deref().unwrap_or(self.node.as_str())),
         })
     }
 

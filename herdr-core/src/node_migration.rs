@@ -52,12 +52,32 @@ pub enum Mechanism {
 /// is converted. The contract test holds a fully populated legacy folder to
 /// this list, so a store that gains a machine-bound key must be added here.
 pub const KEYS: &[(&str, &str, Mechanism)] = &[
-    (CORE_STATE, "/workspace_registrations/*/device_id", Mechanism::Rewritten),
+    (
+        CORE_STATE,
+        "/workspace_registrations/*/device_id",
+        Mechanism::Rewritten,
+    ),
     (CORE_STATE, "/focused_device_id", Mechanism::Rewritten),
-    (CORE_STATE, "/expanded_inactive_project_device_ids/*", Mechanism::Rewritten),
-    (CORE_STATE, "/recent_checkouts/*/device_id", Mechanism::Rewritten),
-    (CORE_STATE, "/device_expanded_paths/{key}", Mechanism::Rewritten),
-    (CORE_STATE, "/sessions_mode_by_project/{key}", Mechanism::Rewritten),
+    (
+        CORE_STATE,
+        "/expanded_inactive_project_device_ids/*",
+        Mechanism::Rewritten,
+    ),
+    (
+        CORE_STATE,
+        "/recent_checkouts/*/device_id",
+        Mechanism::Rewritten,
+    ),
+    (
+        CORE_STATE,
+        "/device_expanded_paths/{key}",
+        Mechanism::Rewritten,
+    ),
+    (
+        CORE_STATE,
+        "/sessions_mode_by_project/{key}",
+        Mechanism::Rewritten,
+    ),
     (CORE_STATE, "/selected_pane_id", Mechanism::Owned),
     (CORE_STATE, "/expanded_agent_pane_ids/*", Mechanism::Owned),
     (CORE_STATE, "/recent_pane_ids/*", Mechanism::Owned),
@@ -70,26 +90,82 @@ pub const KEYS: &[(&str, &str, Mechanism)] = &[
     (CORE_STATE, "/expanded_paths/*", Mechanism::Owned),
     (CORE_STATE, "/project_base_branches/{key}", Mechanism::Owned),
     (CORE_STATE, "/project_issue_sources/{key}", Mechanism::Owned),
-    (CORE_STATE, "/expanded_inactive_checkout_project_paths/*", Mechanism::Owned),
-    (WORKSPACE_VIEWS, "/workspaces/*/device_id", Mechanism::Rewritten),
+    (
+        CORE_STATE,
+        "/expanded_inactive_checkout_project_paths/*",
+        Mechanism::Owned,
+    ),
+    (
+        WORKSPACE_VIEWS,
+        "/workspaces/*/device_id",
+        Mechanism::Rewritten,
+    ),
     (WORKSPACE_VIEWS, "/workspaces/*/path", Mechanism::Owned),
-    (WORKSPACE_VIEWS, "/workspaces/*/agent_layout", Mechanism::Owned),
-    (WORKSPACE_VIEWS, "/workspaces/*/view_bookmarks", Mechanism::Owned),
+    (
+        WORKSPACE_VIEWS,
+        "/workspaces/*/agent_layout",
+        Mechanism::Owned,
+    ),
+    (
+        WORKSPACE_VIEWS,
+        "/workspaces/*/view_bookmarks",
+        Mechanism::Owned,
+    ),
     (LABELS, "/targets/{key}", Mechanism::Rewritten),
     (LABELS, "/targets/*/{key}", Mechanism::Owned),
-    (DELIVERY_LEDGER, "/letters/*/sender/device_id", Mechanism::Rewritten),
-    (DELIVERY_LEDGER, "/letters/*/recipient/device_id", Mechanism::Rewritten),
-    (DELIVERY_LEDGER, "/letters/*/watch_warning/target/device_id", Mechanism::Rewritten),
-    (DELIVERY_LEDGER, "/watches/*/parent/device_id", Mechanism::Rewritten),
-    (DELIVERY_LEDGER, "/watches/*/target/device_id", Mechanism::Rewritten),
+    (
+        DELIVERY_LEDGER,
+        "/letters/*/sender/device_id",
+        Mechanism::Rewritten,
+    ),
+    (
+        DELIVERY_LEDGER,
+        "/letters/*/recipient/device_id",
+        Mechanism::Rewritten,
+    ),
+    (
+        DELIVERY_LEDGER,
+        "/letters/*/watch_warning/target/device_id",
+        Mechanism::Rewritten,
+    ),
+    (
+        DELIVERY_LEDGER,
+        "/watches/*/parent/device_id",
+        Mechanism::Rewritten,
+    ),
+    (
+        DELIVERY_LEDGER,
+        "/watches/*/target/device_id",
+        Mechanism::Rewritten,
+    ),
     (DELIVERY_LEDGER, "/agents/*/machine", Mechanism::Rewritten),
-    (DELIVERY_LEDGER, "/agents/*/actor/device_id", Mechanism::Rewritten),
-    (DELIVERY_LEDGER, "/letters/*/sender/pane_id", Mechanism::Owned),
+    (
+        DELIVERY_LEDGER,
+        "/agents/*/actor/device_id",
+        Mechanism::Rewritten,
+    ),
+    (
+        DELIVERY_LEDGER,
+        "/letters/*/sender/pane_id",
+        Mechanism::Owned,
+    ),
     (DELIVERY_LEDGER, "/agents/*/pane", Mechanism::Owned),
     (DELIVERY_LEDGER, "/agents/*/host_scope", Mechanism::Owned),
-    (PROJECT_MEMORY, "projects.device_id, every project_id column", Mechanism::Rewritten),
-    (SESSION_SEARCH, "policy, control_outcomes, files, messages: project", Mechanism::Rewritten),
-    ("github-snapshot.json", "/projects/*/root_path", Mechanism::Owned),
+    (
+        PROJECT_MEMORY,
+        "projects.device_id, every project_id column",
+        Mechanism::Rewritten,
+    ),
+    (
+        SESSION_SEARCH,
+        "policy, control_outcomes, files, messages: project",
+        Mechanism::Rewritten,
+    ),
+    (
+        "github-snapshot.json",
+        "/projects/*/root_path",
+        Mechanism::Owned,
+    ),
     ("local-issues.json", "/{key}", Mechanism::Owned),
 ];
 
@@ -173,7 +249,9 @@ pub fn convert(state_dir: &Path, home: &Path, node: &NodeId) -> Result<Outcome, 
     // Project ids are a digest of device and root. The roots a Project was
     // known by are the Memory store's and the registered folders'.
     let core_state_path = state_dir.join(CORE_STATE);
-    if let Some(value) = read_json(&core_state_path).map_err(|reason| refuse(&core_state_path, reason))? {
+    if let Some(value) =
+        read_json(&core_state_path).map_err(|reason| refuse(&core_state_path, reason))?
+    {
         for path in registered_paths(&value) {
             if let Ok(identity) = hide_project::resolve(Path::new(&path), LEGACY) {
                 let pair = (
@@ -188,14 +266,19 @@ pub fn convert(state_dir: &Path, home: &Path, node: &NodeId) -> Result<Outcome, 
     }
     let project_ids: BTreeMap<String, String> = project_pairs.iter().cloned().collect();
 
-    for (file, convert) in JSON_STORES {
+    for (file, version_key, versions, convert) in JSON_STORES {
         let path = state_dir.join(file);
         let Some(mut value) = read_json(&path).map_err(|reason| refuse(&path, reason))? else {
             continue;
         };
+        let version = value.get(*version_key).and_then(Value::as_u64);
+        if !version.is_some_and(|version| versions.contains(&version)) {
+            continue;
+        }
         if convert(&mut value, node.as_str(), &project_ids) {
             backup.copy(&path).map_err(|reason| refuse(&path, reason))?;
-            let bytes = serde_json::to_vec(&value).map_err(|error| refuse(&path, error.to_string()))?;
+            let bytes =
+                serde_json::to_vec(&value).map_err(|error| refuse(&path, error.to_string()))?;
             write(&path, &bytes).map_err(|reason| refuse(&path, reason))?;
             outcome.files.push(path.display().to_string());
         }
@@ -228,11 +311,19 @@ pub fn convert(state_dir: &Path, home: &Path, node: &NodeId) -> Result<Outcome, 
 
 type JsonConverter = fn(&mut Value, &str, &BTreeMap<String, String>) -> bool;
 
-const JSON_STORES: &[(&str, JsonConverter)] = &[
-    (CORE_STATE, convert_core_state),
-    (WORKSPACE_VIEWS, convert_workspace_views),
-    (LABELS, convert_labels),
-    (DELIVERY_LEDGER, convert_delivery_ledger),
+/// Each JSON store, the field that names its version, and the versions this
+/// build reads. A file of any other version, or with none, is left as it is
+/// for its own loader, which reports it or keeps it aside byte for byte.
+const JSON_STORES: &[(&str, &str, &[u64], JsonConverter)] = &[
+    (CORE_STATE, "schema_version", &[1], convert_core_state),
+    (
+        WORKSPACE_VIEWS,
+        "schema_version",
+        &[1, 2],
+        convert_workspace_views,
+    ),
+    (LABELS, "version", &[1], convert_labels),
+    (DELIVERY_LEDGER, "version", &[1], convert_delivery_ledger),
 ];
 
 fn read_marker(path: &Path) -> Result<Option<String>, String> {
@@ -382,7 +473,9 @@ fn convert_labels(value: &mut Value, node: &str, _: &BTreeMap<String, String>) -
 
 fn convert_delivery_ledger(value: &mut Value, node: &str, _: &BTreeMap<String, String>) -> bool {
     let mut changed = false;
-    let actor = |actor: Option<&mut Value>| rewrite(actor.and_then(|actor| actor.get_mut("device_id")), node);
+    let actor = |actor: Option<&mut Value>| {
+        rewrite(actor.and_then(|actor| actor.get_mut("device_id")), node)
+    };
     for letter in each(value, "letters") {
         changed |= actor(letter.get_mut("sender"));
         changed |= actor(letter.get_mut("recipient"));
@@ -406,7 +499,11 @@ fn convert_delivery_ledger(value: &mut Value, node: &str, _: &BTreeMap<String, S
 /// A store that does not open is left to Project Memory, which already
 /// reports a damaged store as unavailable; only a readable store that fails
 /// to convert stops the start.
-fn convert_memory(path: &Path, node: &NodeId, backup: &Backup) -> Result<Vec<(String, String)>, String> {
+fn convert_memory(
+    path: &Path,
+    node: &NodeId,
+    backup: &Backup,
+) -> Result<Vec<(String, String)>, String> {
     let Ok(store) = hide_memory::MemoryStore::open(path) else {
         return Ok(Vec::new());
     };
@@ -417,7 +514,9 @@ fn convert_memory(path: &Path, node: &NodeId, backup: &Backup) -> Result<Vec<(St
         return Ok(Vec::new());
     }
     backup.copy_with(path, |destination| {
-        store.copy_to(destination).map_err(|error| error.to_string())
+        store
+            .copy_to(destination)
+            .map_err(|error| error.to_string())
     })?;
     store
         .convert_device(LEGACY, node.as_str())
@@ -559,11 +658,16 @@ mod tests {
                 "spawns": [],
             }),
         );
-        write("github-snapshot.json", json!({"projects": [{"root_path": root}]}));
+        write(
+            "github-snapshot.json",
+            json!({"projects": [{"root_path": root}]}),
+        );
         write("local-issues.json", json!({root.clone(): []}));
 
         let memory = hide_memory::MemoryStore::open(&state.join(PROJECT_MEMORY)).unwrap();
-        memory.ensure_project(&old_project, &project, LEGACY).unwrap();
+        memory
+            .ensure_project(&old_project, &project, LEGACY)
+            .unwrap();
         drop(memory);
         let connection = rusqlite::Connection::open(state.join(PROJECT_MEMORY)).unwrap();
         connection
@@ -657,7 +761,8 @@ mod tests {
         let outcome = convert(&legacy.state, &legacy.home, &node()).unwrap();
         assert!(outcome.files.len() >= 6, "{outcome:?}");
 
-        for (file, pattern, mechanism) in KEYS.iter().filter(|(file, _, _)| file.ends_with(".json")) {
+        for (file, pattern, mechanism) in KEYS.iter().filter(|(file, _, _)| file.ends_with(".json"))
+        {
             let after = reach(&read(&legacy.state.join(file)), pattern);
             match mechanism {
                 Mechanism::Rewritten => {
@@ -680,10 +785,16 @@ mod tests {
         }
         let core_state = read(&legacy.state.join(CORE_STATE));
         assert_eq!(core_state["workspace_registrations"][1]["device_id"], NODE);
-        assert_eq!(core_state["workspace_registrations"][2]["device_id"], "mini");
+        assert_eq!(
+            core_state["workspace_registrations"][2]["device_id"],
+            "mini"
+        );
         assert_eq!(core_state["device_expanded_paths"][NODE], json!(["/x"]));
         let new_project = hide_project::project_id(NODE, &legacy.project);
-        assert_eq!(core_state["sessions_mode_by_project"][&new_project], "memory");
+        assert_eq!(
+            core_state["sessions_mode_by_project"][&new_project],
+            "memory"
+        );
         assert_eq!(
             read(&legacy.state.join(LABELS))["targets"][NODE]["w1:p1"]["owner"],
             "v1:a"
@@ -699,7 +810,9 @@ mod tests {
         drop(memory);
         let connection = rusqlite::Connection::open(legacy.state.join(PROJECT_MEMORY)).unwrap();
         let topics: String = connection
-            .query_row("SELECT project_id FROM session_topics", [], |row| row.get(0))
+            .query_row("SELECT project_id FROM session_topics", [], |row| {
+                row.get(0)
+            })
             .unwrap();
         assert_eq!(topics, new_project);
         let search = rusqlite::Connection::open(legacy.state.join(SESSION_SEARCH)).unwrap();
@@ -710,7 +823,10 @@ mod tests {
                 |row| Ok((row.get(0)?, row.get(1)?)),
             )
             .unwrap();
-        assert_eq!((policy.as_str(), messages.as_str()), (new_project.as_str(), new_project.as_str()));
+        assert_eq!(
+            (policy.as_str(), messages.as_str()),
+            (new_project.as_str(), new_project.as_str())
+        );
         assert_ne!(legacy.old_project, new_project);
 
         assert_eq!(read(&legacy.state.join(MARKER_FILE))["node"], NODE);
@@ -727,7 +843,11 @@ mod tests {
             .collect();
         assert_eq!(backups.len(), 1);
         for file in [CORE_STATE, WORKSPACE_VIEWS, LABELS, DELIVERY_LEDGER] {
-            assert_eq!(std::fs::read(backups[0].join(file)).unwrap(), before[file], "{file}");
+            assert_eq!(
+                std::fs::read(backups[0].join(file)).unwrap(),
+                before[file],
+                "{file}"
+            );
         }
         assert!(backups[0].join(PROJECT_MEMORY).is_file());
 
@@ -744,21 +864,37 @@ mod tests {
         // legacy one onto it would merge two Projects, so nothing moves.
         let memory = hide_memory::MemoryStore::open(&legacy.state.join(PROJECT_MEMORY)).unwrap();
         memory
-            .ensure_project(&hide_project::project_id(NODE, &legacy.project), &legacy.project, NODE)
+            .ensure_project(
+                &hide_project::project_id(NODE, &legacy.project),
+                &legacy.project,
+                NODE,
+            )
             .unwrap();
         drop(memory);
         let before = snapshot(&legacy.state);
 
         let refusal = convert(&legacy.state, &legacy.home, &node()).unwrap_err();
         assert_eq!(refusal.file, legacy.state.join(PROJECT_MEMORY));
-        assert!(refusal.to_string().contains("project-memory.sqlite3"), "{refusal}");
+        assert!(
+            refusal.to_string().contains("project-memory.sqlite3"),
+            "{refusal}"
+        );
         let after = snapshot(&legacy.state);
-        for file in [CORE_STATE, WORKSPACE_VIEWS, LABELS, DELIVERY_LEDGER, SESSION_SEARCH] {
+        for file in [
+            CORE_STATE,
+            WORKSPACE_VIEWS,
+            LABELS,
+            DELIVERY_LEDGER,
+            SESSION_SEARCH,
+        ] {
             assert_eq!(after[file], before[file], "{file} changed");
         }
         assert!(!legacy.state.join(MARKER_FILE).exists());
         let memory = hide_memory::MemoryStore::open(&legacy.state.join(PROJECT_MEMORY)).unwrap();
-        assert!(memory.has_device(LEGACY).unwrap(), "the transaction rolled back");
+        assert!(
+            memory.has_device(LEGACY).unwrap(),
+            "the transaction rolled back"
+        );
     }
 
     #[test]
@@ -777,10 +913,27 @@ mod tests {
     }
 
     #[test]
+    fn a_store_of_a_version_this_build_does_not_read_is_left_to_its_loader() {
+        let dir = tempfile::tempdir().unwrap();
+        let unknown = br#"{"schema_version": 3, "workspaces": [{"device_id": "local"}]}"#;
+        std::fs::write(dir.path().join(WORKSPACE_VIEWS), unknown).unwrap();
+        let outcome = convert(dir.path(), dir.path(), &node()).unwrap();
+        assert!(outcome.files.is_empty(), "{outcome:?}");
+        assert_eq!(
+            std::fs::read(dir.path().join(WORKSPACE_VIEWS)).unwrap(),
+            unknown
+        );
+        assert!(!dir.path().join(BACKUP_DIR).exists());
+    }
+
+    #[test]
     fn an_empty_folder_gets_only_its_owner() {
         let dir = tempfile::tempdir().unwrap();
         let outcome = convert(dir.path(), dir.path(), &node()).unwrap();
         assert_eq!(outcome, Outcome::default());
-        assert_eq!(read(&dir.path().join(MARKER_FILE)), json!({"version": 1, "node": NODE}));
+        assert_eq!(
+            read(&dir.path().join(MARKER_FILE)),
+            json!({"version": 1, "node": NODE})
+        );
     }
 }

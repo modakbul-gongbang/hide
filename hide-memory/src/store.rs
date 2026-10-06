@@ -466,7 +466,11 @@ impl MemoryStore {
     /// A receipt tag is an HMAC over the Project id, so a receipt printed
     /// into a conversation before the move no longer verifies; the receipt key
     /// itself moves with its Project.
-    pub fn convert_device(&self, from: &str, to: &str) -> Result<Vec<(String, String)>, MemoryError> {
+    pub fn convert_device(
+        &self,
+        from: &str,
+        to: &str,
+    ) -> Result<Vec<(String, String)>, MemoryError> {
         if self.mode != StoreMode::Writer {
             return Err(MemoryError::ReadOnly);
         }
@@ -476,7 +480,9 @@ impl MemoryStore {
             let mut statement =
                 transaction.prepare("SELECT id, root FROM projects WHERE device_id=?1")?;
             statement
-                .query_map([from], |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)))?
+                .query_map([from], |row| {
+                    Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?))
+                })?
                 .collect::<Result<Vec<_>, _>>()?
         };
         if projects.is_empty() {

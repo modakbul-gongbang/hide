@@ -47,10 +47,7 @@ impl Runtime {
         // removing the old tab so its area cannot collapse between the two effects.
         self.ingest_session(Ok(payload));
         if !self
-            .agent_layout_of(&(
-                self.node.as_str().to_owned(),
-                context.checkout_path.clone(),
-            ))
+            .agent_layout_of(&(self.node.as_str().to_owned(), context.checkout_path.clone()))
             .is_some_and(|layout| layout.tree.display(tab_id).is_some())
             && self.workspace_views.is_some()
         {
@@ -87,10 +84,7 @@ impl Runtime {
         let Some(store) = self.workspace_views.as_mut() else {
             return Ok(());
         };
-        let key = (
-            self.node.as_str().to_owned(),
-            context.checkout_path.clone(),
-        );
+        let key = (self.node.as_str().to_owned(), context.checkout_path.clone());
         let area = context.agent_area.clone().or_else(|| {
             store
                 .views

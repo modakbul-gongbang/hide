@@ -137,7 +137,10 @@ fn browser_inventory_revokes_removed_and_disconnected_catalog_checkouts() {
     assert_eq!(runtime.snapshot.browser_views[0].view_id, id);
     assert_eq!(runtime.snapshot.browser_views[0].area_id, "a1");
     assert_eq!(runtime.snapshot.browser_scopes.len(), 1);
-    assert_eq!(runtime.snapshot.browser_scopes[0].device_id, crate::node::TEST_NODE);
+    assert_eq!(
+        runtime.snapshot.browser_scopes[0].device_id,
+        crate::node::TEST_NODE
+    );
     assert_eq!(runtime.snapshot.browser_scopes[0].path, path);
     assert_eq!(runtime.snapshot.browser_scopes[0].area_id, "a1");
     let original_incarnation = runtime.snapshot.browser_scopes[0].incarnation;
@@ -890,7 +893,11 @@ fn saved_displays(runtime: &Runtime, path: &Path) -> Vec<String> {
     runtime
         .workspace_views
         .as_ref()
-        .and_then(|store| store.views.get(crate::node::TEST_NODE, &path.to_string_lossy()))
+        .and_then(|store| {
+            store
+                .views
+                .get(crate::node::TEST_NODE, &path.to_string_lossy())
+        })
         .map(|entry| {
             entry
                 .layout
@@ -1066,7 +1073,9 @@ fn removing_a_device_forgets_its_workspace_views() {
         });
     let store = runtime.workspace_views.as_mut().unwrap();
     store.views.entry("studio", "/srv/app").views = true;
-    store.views.entry(crate::node::TEST_NODE, &directory.to_string_lossy());
+    store
+        .views
+        .entry(crate::node::TEST_NODE, &directory.to_string_lossy());
     runtime.apply_area_intent_to(
         &("studio".to_owned(), "/srv/app".to_owned()),
         AreaIntent::Views,
@@ -1079,7 +1088,11 @@ fn removing_a_device_forgets_its_workspace_views() {
 
     let views = &runtime.workspace_views.as_ref().unwrap().views;
     assert!(views.get("studio", "/srv/app").is_none());
-    assert!(views.get(crate::node::TEST_NODE, &directory.to_string_lossy()).is_some());
+    assert!(
+        views
+            .get(crate::node::TEST_NODE, &directory.to_string_lossy())
+            .is_some()
+    );
     assert!(
         runtime
             .workspace_views

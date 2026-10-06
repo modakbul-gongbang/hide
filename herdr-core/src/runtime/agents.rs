@@ -522,7 +522,9 @@ impl Runtime {
                         return true;
                     }
                     (None, None) => RemoteControlAction::OpenOwner {
-                        owner: super::projects::owner_open(project, checkout, &target_id, &self.node),
+                        owner: super::projects::owner_open(
+                            project, checkout, &target_id, &self.node,
+                        ),
                         cwd: checkout.path.clone(),
                         label: checkout.next_tab_label.clone(),
                         area_id: None,
@@ -2298,9 +2300,7 @@ impl Runtime {
                     Some(target) => crate::session_sync::remote_pane_id(target, parent),
                     None => parent.to_owned(),
                 }),
-                Some(machine) if self.node == machine => {
-                    Some(parent.to_owned())
-                }
+                Some(machine) if self.node == machine => Some(parent.to_owned()),
                 Some(machine) => machine_targets
                     .get(machine)
                     .map(|target| crate::session_sync::remote_pane_id(target, parent)),

@@ -276,7 +276,8 @@ impl Runtime {
             .iter()
             .map(|device| (device.id.clone(), device.agent_count))
             .collect::<HashMap<_, _>>();
-        let mut devices = workspace::devices(&self.node, &self.snapshot.ui_state.device_registrations);
+        let mut devices =
+            workspace::devices(&self.node, &self.snapshot.ui_state.device_registrations);
         for device in &mut devices {
             if let Some(count) = counts.get(&device.id) {
                 device.agent_count = *count;

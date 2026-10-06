@@ -3,6 +3,7 @@ use crate::delivery::{
     Actor,
     worker::{Authority, Client, Effect},
 };
+use crate::runtime::delivery::CoordinationContext;
 use crate::session_sync::ProjectedAgent;
 use hide_herdr_client::{ApiConnector, request_with_connector};
 use serde_json::{Value, json};
@@ -40,19 +41,7 @@ fn mutate(
         STORE_TIMEOUT,
     )
 }
-fn context(
-    client: &Client,
-    device: &str,
-) -> Result<
-    (
-        Arc<dyn ApiConnector>,
-        String,
-        String,
-        crate::codex_launch::CodexDaemon,
-        bool,
-    ),
-    String,
-> {
+fn context(client: &Client, device: &str) -> Result<CoordinationContext, String> {
     client
         .runtime
         .upgrade()
@@ -222,8 +211,13 @@ pub(crate) fn run(
                 return Err("invalid_registration".into());
             }
             let machine = registration_machine(machine, &actor.device_id)?;
-            let (connector, actual_scope, native_machine, _, on_node) =
-                context(&client, &machine)?;
+            let CoordinationContext {
+                connector,
+                host_scope: actual_scope,
+                machine: native_machine,
+                on_node,
+                ..
+            } = context(&client, &machine)?;
             if on_node && host_scope != actual_scope {
                 return Err("host_scope_conflict".into());
             }
@@ -382,8 +376,13 @@ fn spawn(
         if let Some(parent) = super::live_self(&ledger, actor).next() {
             parent.id.clone()
         } else {
-            let (connector, host_scope, native_machine, _, on_node) =
-                context(client, &actor.device_id)?;
+            let CoordinationContext {
+                connector,
+                host_scope,
+                machine: native_machine,
+                on_node,
+                ..
+            } = context(client, &actor.device_id)?;
             let observed = agents(connector.as_ref())?;
             let native = observed
                 .iter()
@@ -447,8 +446,13 @@ fn spawn(
             &ledger,
         ));
     }
-    let (connector, host_scope, native_machine, codex_daemon, on_node) =
-        context(client, &actor.device_id)?;
+    let CoordinationContext {
+        connector,
+        host_scope,
+        machine: native_machine,
+        codex: codex_daemon,
+        on_node,
+    } = context(client, &actor.device_id)?;
     if reserved.pane.is_none() {
         // Reconcile a worktree whose creation reply was interrupted. The
         // existing local/device connector and checkout owner are shared with
@@ -630,8 +634,13 @@ pub(crate) fn link_fork(
         .lock()
         .map_err(|_| "delivery_unavailable")?
         .coordination_fork_context(parent)?;
-    let (connector, host_scope, native_machine, _, on_node) =
-        self::context(&client, &actor.device_id)?;
+    let CoordinationContext {
+        connector,
+        host_scope,
+        machine: native_machine,
+        on_node,
+        ..
+    } = self::context(&client, &actor.device_id)?;
     let observed = agents(connector.as_ref())?;
     let native_parent = observed
         .iter()
@@ -715,7 +724,10 @@ mod tests {
 
     #[test]
     fn a_registration_lands_on_the_callers_own_machine() {
-        assert_eq!(registration_machine(None, crate::node::TEST_NODE).as_deref(), Ok(crate::node::TEST_NODE));
+        assert_eq!(
+            registration_machine(None, crate::node::TEST_NODE).as_deref(),
+            Ok(crate::node::TEST_NODE)
+        );
         assert_eq!(registration_machine(None, "mini").as_deref(), Ok("mini"));
         assert_eq!(
             registration_machine(Some("mini".into()), "mini").as_deref(),

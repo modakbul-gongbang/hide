@@ -15,7 +15,6 @@ use std::time::Duration;
 use serde::Serialize;
 use serde_json::{Value, json};
 
-
 /// The agent kinds a phone may start; `terminal` is a desktop-only start.
 pub const KINDS: [&str; 2] = ["claude", "codex"];
 /// How long a start may wait for the core's creation receipt: longer than a
@@ -737,9 +736,12 @@ mod tests {
 
     #[test]
     fn answers_come_from_the_task_slot_and_the_last_error() {
-        let started = answers_of(&json!({"task_operation": {
-            "kind": "agent_start", "phase": "ready", "request_id": "r1", "pane_id": "remote:mini:pane:1", "device_id": "mini",
-        }}), "local");
+        let started = answers_of(
+            &json!({"task_operation": {
+                "kind": "agent_start", "phase": "ready", "request_id": "r1", "pane_id": "remote:mini:pane:1", "device_id": "mini",
+            }}),
+            "local",
+        );
         assert_eq!(
             started,
             [(
@@ -750,9 +752,12 @@ mod tests {
                 }
             )]
         );
-        let local = answers_of(&json!({"task_operation": {
-            "kind": "agent_start", "phase": "ready", "request_id": "r2", "pane_id": "w1:p1", "device_id": null,
-        }}), "local");
+        let local = answers_of(
+            &json!({"task_operation": {
+                "kind": "agent_start", "phase": "ready", "request_id": "r2", "pane_id": "w1:p1", "device_id": null,
+            }}),
+            "local",
+        );
         assert_eq!(
             local[0].1,
             Answer::Started {
@@ -761,15 +766,18 @@ mod tests {
             }
         );
         let working = answers_of(
-            &json!({"task_operation": {"kind": "agent_start", "phase": "working", "request_id": "r3"}}), "local",
+            &json!({"task_operation": {"kind": "agent_start", "phase": "working", "request_id": "r3"}}),
+            "local",
         );
         assert!(working.is_empty());
         let other = answers_of(
-            &json!({"task_operation": {"kind": "worktree_create", "phase": "ready", "request_id": "r4"}}), "local",
+            &json!({"task_operation": {"kind": "worktree_create", "phase": "ready", "request_id": "r4"}}),
+            "local",
         );
         assert!(other.is_empty());
         let refused = answers_of(
-            &json!({"status": {"last_error": {"kind": "task_operation.busy", "request_id": "r5"}}}), "local",
+            &json!({"status": {"last_error": {"kind": "task_operation.busy", "request_id": "r5"}}}),
+            "local",
         );
         assert_eq!(
             refused,
@@ -780,8 +788,10 @@ mod tests {
                 }
             )]
         );
-        let unlabeled =
-            answers_of(&json!({"status": {"last_error": {"kind": "x", "request_id": null}}}), "local");
+        let unlabeled = answers_of(
+            &json!({"status": {"last_error": {"kind": "x", "request_id": null}}}),
+            "local",
+        );
         assert!(unlabeled.is_empty());
     }
 

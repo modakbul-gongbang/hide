@@ -4,7 +4,6 @@
 
 use std::fs::{self, File, OpenOptions};
 use std::io::{self, Write};
-#[cfg(not(test))]
 use std::path::Path;
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -13,7 +12,6 @@ use std::sync::mpsc;
 use std::sync::mpsc::SyncSender;
 use std::sync::{Arc, Mutex, OnceLock};
 
-#[cfg(not(test))]
 const FILE_LIMIT: u64 = 1024 * 1024;
 #[cfg(not(test))]
 const LINE_LIMIT: usize = 64 * 1024;
@@ -131,6 +129,20 @@ pub fn emit(record: serde_json::Value) {
     } else {
         write_stderr_line(&message);
     }
+}
+
+/// Writes one record to the Logs file beside `state_path` at once, before
+/// any core exists: a daemon that refuses to start leaves its reason where
+/// its operator reads, since a detached daemon's stderr goes nowhere and the
+/// process ends before a queued record would be written.
+pub fn record_now(state_path: &Path, record: serde_json::Value) -> io::Result<()> {
+    let line = record.to_string();
+    write_stderr_line(&line);
+    let directory = state_path
+        .parent()
+        .ok_or_else(|| io::Error::other("state path has no parent"))?
+        .join("Logs");
+    RotatingLog::open(directory, FILE_LIMIT)?.append(&line)
 }
 
 fn sink_slot() -> &'static Mutex<Option<DiagnosticSink>> {

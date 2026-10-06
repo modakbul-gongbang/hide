@@ -129,8 +129,7 @@ impl Runtime {
         let Some(entered_tab_id) = self.focused_visible_tab_id() else {
             return false;
         };
-        if left_tab_id == Some(entered_tab_id.as_str())
-            || !self.device_in_front(self.node.as_str())
+        if left_tab_id == Some(entered_tab_id.as_str()) || !self.device_in_front(self.node.as_str())
         {
             return false;
         }
