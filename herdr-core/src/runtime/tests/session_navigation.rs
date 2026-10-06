@@ -1069,6 +1069,76 @@ fn view_authority_a_late_answer_to_a_superseded_switch_is_not_followed() {
     assert_eq!(diagnostic_count(&runtime, "tab.focus.followed"), 1);
 }
 
+/// Issue #660. The same drop and click as #413, then a click back into the
+/// new area, with Herdr's session stream behind its answers. The answer to
+/// the click on t1 finds the session from before the drop still naming t1,
+/// and the answer to the click on t2 finds the drop's late t2; each answer
+/// confirms its request, but Herdr still reports each move afterwards, in
+/// order. Following the late t1 moved the keyboard out of t2 in the middle
+/// of typing there.
+#[test]
+fn view_authority_answers_confirmed_ahead_of_their_events_are_not_followed() {
+    let checkout_path = "/private/tmp/hide-view-authority-answer-ahead";
+    let (mut runtime, checkout_id) = live_tab_order_runtime(checkout_path);
+    let tabs = ["w-order:t1", "w-order:t2"];
+    let acknowledged = || {
+        Ok(RemoteControlOutcome::Acknowledged {
+            created_tab_id: None,
+            created_pane_id: None,
+        })
+    };
+    let focus = |tab_id: &str| RemoteControlAction::FocusTab {
+        tab_id: tab_id.to_owned(),
+    };
+    runtime.ingest_session(Ok(tab_order_payload(
+        checkout_path,
+        &tabs,
+        &tabs,
+        "w-order:t1",
+    )));
+    assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2")));
+    runtime.complete_lane_tab(focus("w-order:t2"), acknowledged(), 3);
+    assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t1")));
+    runtime.complete_lane_tab(focus("w-order:t1"), acknowledged(), 3);
+    runtime.ingest_session(Ok(tab_order_payload(
+        checkout_path,
+        &tabs,
+        &tabs,
+        "w-order:t2",
+    )));
+    assert!(runtime.dispatch_json(&focus_tab_event(&checkout_id, "w-order:t2")));
+    runtime.complete_lane_tab(focus("w-order:t2"), acknowledged(), 3);
+
+    // Herdr's reports of the click on t1 and then the click on t2.
+    for answer in ["w-order:t1", "w-order:t2"] {
+        runtime.ingest_session(Ok(tab_order_payload(checkout_path, &tabs, &tabs, answer)));
+        assert_eq!(
+            checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+            Some("w-order:t2"),
+            "Herdr naming {answer} does not move the tab the operator chose"
+        );
+        assert_eq!(
+            runtime.snapshot().terminal.pane_id.as_deref(),
+            Some("w-order:t2:p"),
+            "the keyboard stays in the operator's pane while Herdr names {answer}"
+        );
+    }
+    assert_eq!(diagnostic_count(&runtime, "tab.focus.followed"), 0);
+
+    // Once Herdr has reported every move, one it makes on its own is followed.
+    runtime.ingest_session(Ok(tab_order_payload(
+        checkout_path,
+        &tabs,
+        &tabs,
+        "w-order:t1",
+    )));
+    assert_eq!(
+        checkout_active_tab_id(&runtime, &checkout_id).as_deref(),
+        Some("w-order:t1")
+    );
+    assert_eq!(diagnostic_count(&runtime, "tab.focus.followed"), 1);
+}
+
 /// Issue #594. Each Agent cycle commit is one pane focus, and a pane in
 /// another tab moves Herdr's tab too. Herdr answers the focus at once, but
 /// its session stream reports the tab moves afterwards, in order. Those are
