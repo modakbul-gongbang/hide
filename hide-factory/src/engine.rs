@@ -85,7 +85,7 @@ pub const GITHUB_WRITES: [&str; 6] = [
     "the factory label",
     "issue create and edit",
     "branch push to factory/*",
-    "pull request open, merge and close",
+    "pull request open, merge, close and reopen",
     "revert pull request",
     "rerun of a failed workflow run",
 ];
