@@ -206,7 +206,7 @@ Every launch of the installed app installs Hide's kit on this Mac without asking
 The one exception is a Mac the kit has never run on: it holds Claude Code's and Codex's hook entries and skills, and Codex's per-pane daemon setting, until the operator answers the first-run agent choice (UI_BEHAVIOR.md, Settings > Agents); both agents are recorded off in the hold, installed or not, so an agent installed later also starts off, and the rest below is installed as usual:
 
 - `~/.local/bin/hide`, a link to the app's `hide` command, unless a `hide` that is not Hide's is already there;
-- Hide's entries in `~/.claude/settings.json` and `~/.codex/hooks.json`, for each of Claude Code and Codex that is set up on this Mac, next to whatever other tools put there;
+- Hide's entries in `~/.claude/settings.json` and `~/.codex/hooks.json`, for each of Claude Code and Codex whose folder (`~/.claude`, `~/.codex`) is on this Mac, next to whatever other tools put there;
 - A one-release retirement stage removes the former coordination installation after its read-only preflight succeeds; see Coordination retirement below;
 - `Codex를 pane마다 실행`: when this Mac's Codex has the shared app-server daemon turned on, `codex features disable daemon_auto_start`, so each Codex runs in its own pane and Hide can read it. A daemon already running keeps running, and the setting reaches each Codex started after it. Settings > Devices turns it back on (`codex features enable daemon_auto_start`), and Hide then leaves it on.
 
@@ -266,7 +266,8 @@ The first launch of a newer app moves them once:
 Settings > Devices shows each of these on This Mac's row, with where it is or why it is not.
 A part you remove by hand stays removed; Reinstall on that row puts it back.
 Each agent Hide knows also has a switch on that row, and Claude Code and Codex are on until you turn them off.
-An agent that is on gets a `hide-browser` skill stub in the folder it reads skills from, and, where its documentation supports one, a `SessionStart` hook entry; every other agent is off until you switch it on, and an agent that is not set up on the machine has no switch there.
+An agent that is on gets a `hide-browser` skill stub in the folder it reads skills from, and, where its documentation supports one, a `SessionStart` hook entry; every other agent is off until you switch it on, and an agent that is not installed on the machine has no switch there.
+An agent is installed when Hide finds its program where your terminal would: on your login shell's `PATH` and in the usual install folders; a folder the agent creates does not count.
 Switching an agent off takes out only the entries and stubs Hide wrote, and [agent-hooks.md](agent-hooks.md#other-agents-skill-and-guidance-hook) lists every agent, its skill folder, and why a hook is or is not written for it.
 A `hided` run outside the installed app, such as a development build, installs nothing on this Mac and says so there.
 Agent labels are made by hide's own daemon, so there is no labels part to install.

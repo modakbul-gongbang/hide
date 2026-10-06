@@ -65,6 +65,7 @@ pub fn local_target(
         herdr_socket: herdr_socket.to_path_buf(),
         herdr_bin: herdr.is_file().then(|| herdr.clone()),
         codex: hide_agent_hooks::codex_daemon::find_codex(home),
+        login_shell: crate::agents::login_shell(),
         legacy_coordination_home: relocated,
         user_agents: hide_platform::user_agents::UserAgents::current(),
         retirement_projects: Vec::new(),
