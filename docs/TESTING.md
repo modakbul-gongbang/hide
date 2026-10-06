@@ -177,7 +177,7 @@ A piece that another open change is still building is marked as pending with the
 1. **Start from the fixture, one stack per test.**
    `web/e2e/herdr-fixture.ts` starts a private Herdr and `web/e2e/hided-fixture.ts` a private `hided`; `desktop/e2e/fixture.ts` takes a started Herdr fixture and gives the packaged window its own `HOME` and `hided` state.
    Why: a test that shares a server with another inherits its panes, focus and timers, and its failure cannot be read alone.
-   The config runs one worker (`web/playwright.config.ts`) so a timing assertion does not compete with a neighbour for cores; CI deals tests out across runners with `--shard`.
+   The config runs one worker (`web/playwright.config.ts`) so a timing assertion does not compete with a neighbour for cores; CI deals tests out across runners by their recorded durations (`scripts/web-e2e-shard.py`, [Balancing the web e2e shards](#balancing-the-web-e2e-shards)).
 2. **Wait for a product signal, never for time.**
    The signals a spec waits on, in order of preference:
    - A DOM state the product exports as a data attribute: `data-pane-view` and `data-focused` for pane focus, `data-checkout-kind` for a checkout row, `data-tab`, `data-sidebar-mode`.
@@ -336,7 +336,7 @@ A run that plans every lane a pull request can plan starts at most 17 jobs, down
 | --- | --- | --- |
 | `plan`, `policy`, `rust`, `checks`, `windows check`, `verify` | 6 | `checks` merges `web checks` and `desktop checks`: both install the same dependencies, run for a minute or two and start a runner each |
 | `windows e2e` | 1 | the reusable workflow no longer starts a `plan` job that only fanned the shard numbers out; a matrix picks its list by index |
-| `web e2e` (Linux) | 5 | one build, which also downloads the zsh packages the `fetch zsh` job used to, and four shards instead of six; fewer jobs queue at the 20-job limit, and a shard's time at four is measured after merge |
+| `web e2e` (Linux) | 5 | one build, which also downloads the zsh packages the `fetch zsh` job used to, and four shards instead of six, dealt by recorded durations; fewer jobs queue at the 20-job limit, and a shard's time at four is measured after merge |
 | `os contract` (Linux, Windows), `os contract (macOS)` | 3 | one job per system, the macOS leg planned only for its two crates |
 | `remote mailbox` | 1 | the lane that was the tail of the macOS `@platform` job, now on Linux and, in the nightly, on macOS |
 | `desktop e2e` | 1 | the only macOS job of the desktop app's own changes |
@@ -344,6 +344,22 @@ A run that plans every lane a pull request can plan starts at most 17 jobs, down
 The common runs are smaller: a `herdr-core` or `hided` change starts 14 jobs and none on macOS, a web shell change 10, a desktop-only change 5 with one on macOS, a `hide-platform` change 15 with one on macOS, and a documentation change 3.
 The median wall time, the share of runs whose Linux shards waited more than 10 minutes, and each shard's time at four shards come from a measurement of the pull request runs after this change merges, taken the way issue #561 took its baseline; they are not in this guide because a pull request cannot prove them.
 The `plan` job's summary lists each lane with the paths that chose it.
+
+### Balancing the web e2e shards
+
+Playwright's `--shard` cuts the tests in file order into runs of equal count, and a test takes from 1 second to a minute, so with four shards one shard job took 11 minutes and another 6 (run `37402687007`, 2026-10-06).
+A shard of a lane with more than one shard therefore runs the tests `scripts/web-e2e-shard.py split` deals it: each listed test (`playwright test --list`) weighs its seconds in `web/e2e/shard-durations.json`, a test the table lacks weighs the table's median, and the longest test goes first into the shard with the least work so far.
+The same list and table always give the same shards, every listed test lands in exactly one shard, and a shard that would run no test fails its step instead of passing with none.
+The shard runs them with `--test-list`, so Playwright's retry, the flaky report and `--grep` work as before.
+`scripts/tests/test_web_e2e_shard.py` checks the split on a fixed list and that the committed table deals four shards within 5 % of each other.
+
+The table is the median over 20 runs of a passing test's duration on the Linux runner (2026-10-06); on that table the four shards plan 472 seconds each, where Playwright's count split planned 306 to 577.
+It does not need to be exact, only close enough that no shard is far above the others, and a new test is dealt by the median until the table learns it.
+Refresh it when a shard's time drifts from the others in a run, or after tests were added or renamed in bulk:
+
+1. Download the logs of the Linux `web e2e` shard jobs of about twenty recent successful runs (`gh api repos/<owner>/<repo>/actions/jobs/<job id>/logs`) into a directory outside the repository.
+2. `python3 scripts/web-e2e-shard.py durations <logs>... > table.json`, then keep only the tests `bash scripts/verify-web.sh web e2e --list --reporter=list` names.
+3. Commit `web/e2e/shard-durations.json`; the nightly's macOS and Windows shards use the same table, so their balance is the Linux one's.
 
 ## Flaky tests
 

@@ -9,7 +9,9 @@
 # issue (scripts/ci-flaky-report.py); a test that fails twice fails the lane.
 #
 # Each spec starts its own Herdr, hided and Chromium, so one worker per runner
-# keeps timing assertions honest; the shards are the parallelism.
+# keeps timing assertions honest; the shards are the parallelism. A shard runs
+# the tests `scripts/web-e2e-shard.py` deals it from the durations in
+# web/e2e/shard-durations.json, so the shards take about the same time.
 #
 # With more than one shard the daemon is built once, in the `build` job, and
 # every shard downloads it to the path the fixtures read, `target/debug`. A
@@ -241,8 +243,16 @@ jobs:
           SHARD: ${{ matrix.shard }}/${{ inputs.shards }}
         run: |
           mkdir -p "$HIDE_E2E_SCREENSHOT_DIR"
-          args=(--shard="$SHARD")
+          args=()
           if [ -n "$GREP" ]; then args+=(--grep "$GREP"); fi
+          if [ "${SHARD#*/}" -gt 1 ]; then
+            # The shard's tests are dealt by their recorded durations, not by
+            # Playwright's equal counts; a list or a table that names no test
+            # for this shard fails here rather than running none.
+            bash scripts/verify-web.sh web e2e --list --reporter=list "${args[@]}" > "$RUNNER_TEMP/web-e2e-list.txt"
+            python3 scripts/web-e2e-shard.py split --shard "$SHARD" "$RUNNER_TEMP/web-e2e-list.txt" > "$RUNNER_TEMP/web-e2e-shard.txt"
+            args+=(--test-list "$RUNNER_TEMP/web-e2e-shard.txt")
+          fi
           bash scripts/verify-web.sh web e2e "${args[@]}"
       - name: Report flaky tests
         # A test that failed and passed its retry becomes an issue with a
