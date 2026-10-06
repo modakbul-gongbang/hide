@@ -1160,6 +1160,93 @@ fn a_dirty_local_main_holds_the_merge() {
     assert_eq!(merged["ok"], true, "{merged}");
 }
 
+#[test]
+fn a_refused_merge_waits_for_a_person_with_its_reason_and_is_tried_once() {
+    let mut h = Bench::new(true);
+    let f = github_factory(&mut h, MergeMode::Auto);
+    let t = h.ready("Refused", &[]);
+    h.world().merge_refusal = Some(hide_factory::adapters::Failure::task(
+        "github.merge",
+        "base branch policy prohibits the merge",
+    ));
+    h.done(&f, &t);
+    tick_until(&mut h, &f, &t, TaskState::MergeWaiting);
+    for _ in 0..10 {
+        h.engine.tick();
+    }
+    assert_eq!(h.world().merge_attempts, 1, "not retried every tick");
+    assert_eq!(h.task(&f, &t).gates, vec![Gate::MergeRefused]);
+    // A person's merge tries again and lands.
+    let merged = h.op(Command::Merge { task: t.clone() });
+    assert_eq!(merged["ok"], true, "{merged}");
+}
+
+#[test]
+fn a_broken_main_holds_auto_merge_without_reading_it_every_tick() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    h.engine.tick();
+    {
+        let mut world = h.world();
+        world.head = "outside1".into();
+        world.main_checks.insert(
+            "outside1".into(),
+            MainCheck::Red {
+                link: "run/9".into(),
+            },
+        );
+    }
+    h.advance(3 * MINUTE_MS);
+    h.engine.tick();
+    assert!(h.engine.factories().next().unwrap().main.broken);
+    let t = h.ready("Held", &[]);
+    h.done(&f, &t);
+    let before = h.world().premerge_calls;
+    for _ in 0..20 {
+        h.engine.tick();
+    }
+    assert_eq!(h.world().premerge_calls, before, "no merge-tree on red");
+    assert_eq!(h.state(&f, &t), TaskState::Verifying);
+    assert!(h.writes("merge").is_empty());
+}
+
+#[test]
+fn an_outside_push_still_running_its_checks_is_read_until_it_finishes() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    h.engine.tick();
+    {
+        let mut world = h.world();
+        world.head = "outside2".into();
+        world.main_checks.insert(
+            "outside2".into(),
+            MainCheck::Red {
+                link: "run/10".into(),
+            },
+        );
+        world.main_check_script.insert(
+            "outside2".into(),
+            [
+                MainCheck::Pending,
+                MainCheck::Pending,
+                MainCheck::Red {
+                    link: "run/10".into(),
+                },
+            ]
+            .into(),
+        );
+    }
+    // The push is read at the next outside read, then every paced interval.
+    for _ in 0..6 {
+        h.advance(MINUTE_MS);
+        h.engine.tick();
+    }
+    let factory = h.engine.factories().next().unwrap().clone();
+    assert!(factory.main.broken, "the late red result counts (B47)");
+    assert!(h.world().main_check_script["outside2"].is_empty());
+    assert_eq!(factory.id, f);
+}
+
 // ------------------------------------------------------------- main breaks
 
 #[test]

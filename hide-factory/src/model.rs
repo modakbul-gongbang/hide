@@ -650,6 +650,7 @@ pub enum Gate {
     CheckFailed,
     AutonomyDiff,
     DirtyMain,
+    MergeRefused,
 }
 
 impl Gate {
@@ -665,6 +666,7 @@ impl Gate {
             Self::CheckFailed => "점검을 하지 못함",
             Self::AutonomyDiff => "자율 처리 diff 상한 초과",
             Self::DirtyMain => "main checkout에 커밋 안 된 변경",
+            Self::MergeRefused => "머지가 거절됨",
         }
     }
 }

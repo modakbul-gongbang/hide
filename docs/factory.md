@@ -302,12 +302,15 @@ A gate sends an `auto` Task to `merge_waiting` and appears in the Task page and 
 | `check_failed` | A judgment could not run. |
 | `autonomy_diff` | An autonomy Task changed more than 200 lines. |
 | `dirty_main` | A local merge finds the main checkout uncommitted or off the default branch. |
+| `merge_refused` | GitHub or git refused the merge for a reason that is not the environment's, such as a branch policy; the reason is in the Task's events and in the answer to a person's `merge`. |
 
 A review by an agent alone never merges.
-A person's `merge` runs the same merge at once; `request-changes --comment` returns the Task to `running`, clears its gates and sends the worker the comment.
+A person's `merge` runs merge-tree and the quick check again on the latest main, then the same merge at once; a conflict sends the worker to rebase and a failed quick check counts as a verification failure.
+A refused merge is tried once and then waits for a person, never once per tick; only an environment signal, or a merge GitHub answered before naming its commit, is asked again.
+`request-changes --comment` returns the Task to `running`, clears its gates and sends the worker the comment.
 
 **GitHub.** The merge is `gh pr merge` with the Factory's `merge_method` and `--match-head-commit` set to the pull request's head as read just before the merge, and a pull request already merged returns its merge commit.
-`init` picks the first merge method the repository allows, in the order squash, merge, rebase, and `config` changes it.
+`init` picks the first merge method the repository allows, in the order merge, squash, rebase, and `config` changes it.
 **Local.** The Factory merges into the project's primary checkout with `git merge --no-ff`, only while that checkout is on the default branch with no uncommitted tracked changes.
 Otherwise the Task stays in `merge_waiting` with `dirty_main` until it is clean.
 
@@ -316,6 +319,7 @@ Main verification is the chosen verification on that commit: the push run's chec
 A green result, or no main verification, makes the Task `done` and removes its worker, pane and worktree.
 
 A red result breaks main and stops auto merge; manual merges still run.
+While main is broken an `auto` Task that passed verification waits in `verifying` without merge-tree or quick-check reads, unless a person's gate sends it to `merge_waiting`; main is read again every 30 seconds.
 If the broken commit is among the Factory's own merges since the last green, the Factory finds the first failing one, asking again for runs that were skipped or cancelled, and reverts that merge alone.
 On GitHub the revert is a pull request from `factory/revert-<task id>`, which the Factory force-pushes, checks and merges with `--merge`; locally it is a revert commit made in `factory-main` and fast-forwarded into the primary checkout.
 A revert whose verification passes is merged on its own, and the original Task becomes `relanding`: it runs again in the same worktree and session on the latest main, with a new pull request.
@@ -337,7 +341,7 @@ A failed read backs off 1, 2, 5, 15 and then 30 minutes on a rate-limit, server 
 | A person edits the issue body | A Task before its start goes back to `drafting` and is reviewed again. A running Task gets a scope-change question. |
 | A person labels an issue the Factory does not hold | A new Task is drafted from the issue, and a person confirms its card in the inbox before it is Ready. The body is not edited. |
 | A finished Task's issue reopens | A notice only. |
-| A push to main the Factory did not make | Main verification runs, and a red result takes the outside-push path above. |
+| A push to main the Factory did not make | Main verification runs; while its checks are still running the head is read again every 30 seconds, and a red result takes the outside-push path above. |
 
 A pull request or issue the Factory does not hold is ignored.
 Cancelling a Task closes its open Factory pull request, and reviving reopens it.

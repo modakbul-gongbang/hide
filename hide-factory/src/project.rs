@@ -14,7 +14,7 @@ use std::time::{Duration, Instant};
 use serde_json::Value;
 
 use crate::adapters::*;
-use crate::engine::task_marker;
+use crate::engine::{MERGE_COMMIT_AGAIN_MS, task_marker};
 use crate::exec::{Runner, checked, classify};
 use crate::model::*;
 use crate::store::sha256_hex;
@@ -1348,7 +1348,10 @@ impl Verifier for SharedProjects {
 fn merge_commit(stage: &str, view: &Value) -> Result<String, Failure> {
     match view["mergeCommit"]["oid"].as_str() {
         Some(oid) if !oid.is_empty() => Ok(oid.to_owned()),
-        _ => Err(Failure::task(stage, "merge commit not named yet")),
+        _ => Err(Failure {
+            again_in_ms: Some(MERGE_COMMIT_AGAIN_MS),
+            ..Failure::task(stage, "merge commit not named yet")
+        }),
     }
 }
 

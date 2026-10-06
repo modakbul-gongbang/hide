@@ -63,6 +63,11 @@ const ENV_RECHECK_MS: u64 = MINUTE_MS;
 /// How often a worker whose agent has not shown a session is asked again,
 /// and when the person is told to look at its pane.
 const START_RETRY_MS: u64 = 30_000;
+/// How often a broken main, or a main head with checks still running, is
+/// read again.
+const MAIN_CHECK_EVERY_MS: u64 = 30_000;
+/// When a merge that GitHub answered without its commit is asked again.
+pub const MERGE_COMMIT_AGAIN_MS: u64 = 30_000;
 const START_NOTICE_MS: u64 = 10 * MINUTE_MS;
 
 struct VerifyState {
@@ -121,6 +126,12 @@ pub struct Engine {
     reverts: BTreeMap<String, RevertPhase>,
     /// Main heads already checked per Factory.
     main_seen: BTreeMap<String, String>,
+    /// Factories whose main head has a check still running: read again at
+    /// the paced interval until it finishes (B47).
+    main_pending: BTreeSet<String>,
+    /// When each Factory's main was last read, to pace a broken or pending
+    /// main to [`MAIN_CHECK_EVERY_MS`].
+    main_checked_at: BTreeMap<String, UnixMs>,
     processed: BTreeSet<String>,
     processed_order: Vec<String>,
     /// Recent environment and Task failures the cascade rules read.
@@ -180,6 +191,8 @@ impl Engine {
             checks_running: BTreeMap::new(),
             reverts: BTreeMap::new(),
             main_seen: BTreeMap::new(),
+            main_pending: BTreeSet::new(),
+            main_checked_at: BTreeMap::new(),
             processed: BTreeSet::new(),
             processed_order: Vec::new(),
             env_failures: Vec::new(),
@@ -2789,23 +2802,25 @@ impl Engine {
             return;
         }
         let mode = task.merge_mode(&factory);
+        if factory.main.broken && mode == MergeMode::Auto {
+            // Auto merge is stopped until main is green again (B44, D-47):
+            // a person's gate still shows now, and nothing is read per tick.
+            let mut gates = self.person_gates(&factory, &task, mode);
+            if waits_on_answer(&task) {
+                gates.push(Gate::OpenQuestion);
+            }
+            if !gates.is_empty() {
+                self.with_task(factory_id, id, |task| task.gates = gates.clone());
+                self.set_state(factory_id, id, TaskState::MergeWaiting);
+            }
+            return;
+        }
         // Merge-tree and the quick check, in seconds (B38).
         if factory.config.verification.exists() || factory.source == SourceKind::Local {
             match self.ports.merge.premerge(&factory, &task) {
                 Ok(PreMerge::Clean) => {}
                 Ok(PreMerge::Conflict { files }) => {
-                    // A rebase is not a verification failure.
-                    self.record(
-                        factory_id,
-                        Some(id),
-                        "merge.conflict",
-                        json!({"files": files.len()}),
-                    );
-                    self.set_state(factory_id, id, TaskState::Running);
-                    self.wake(factory_id, id, &format!(
-                        "Factory: 최신 main과 충돌합니다 ({}). main 위로 rebase한 뒤 다시 hide factory done 하세요. 이 일은 검증 실패로 세지 않습니다.",
-                        files.join(", ")
-                    ));
+                    self.send_to_rebase(factory_id, id, &files);
                     return;
                 }
                 Ok(PreMerge::QuickCheckFailed { check }) => {
@@ -2845,6 +2860,53 @@ impl Engine {
             .copied()
             .filter(|g| matches!(g, Gate::RiskPath | Gate::CheckFailed))
             .collect();
+        gates.extend(self.person_gates(&factory, &task, mode));
+        if task.autonomy.is_some() {
+            let lines = self
+                .ports
+                .merge
+                .diff_lines(&factory, &task)
+                .unwrap_or(u32::MAX);
+            if lines > factory.config.autonomy_diff_limit {
+                gates.push(Gate::AutonomyDiff);
+            }
+        }
+        if waits_on_answer(&task) {
+            gates.push(Gate::OpenQuestion);
+        }
+        gates.dedup();
+        if !gates.is_empty() {
+            self.with_task(factory_id, id, |task| task.gates = gates.clone());
+            self.set_state(factory_id, id, TaskState::MergeWaiting);
+            return;
+        }
+        if factory.main.broken {
+            // A manual Task always has its gate; nothing merges on red.
+            return;
+        }
+        let _ = self.merge_now(factory_id, id);
+    }
+
+    /// A conflict with main sends the worker to rebase; it is not a
+    /// verification failure (B40).
+    fn send_to_rebase(&mut self, factory_id: &str, id: &str, files: &[String]) {
+        self.record(
+            factory_id,
+            Some(id),
+            "merge.conflict",
+            json!({"files": files.len()}),
+        );
+        self.with_task(factory_id, id, |task| task.gates.clear());
+        self.set_state(factory_id, id, TaskState::Running);
+        self.wake(factory_id, id, &format!(
+            "Factory: 최신 main과 충돌합니다 ({}). main 위로 rebase한 뒤 다시 hide factory done 하세요. 이 일은 검증 실패로 세지 않습니다.",
+            files.join(", ")
+        ));
+    }
+
+    /// The gates a person decides that need no git read (D-25).
+    fn person_gates(&self, factory: &Factory, task: &Task, mode: MergeMode) -> Vec<Gate> {
+        let mut gates = Vec::new();
         if task.human.review_directly {
             gates.push(Gate::ReviewDirectly);
         }
@@ -2860,40 +2922,20 @@ impl Engine {
         if mode == MergeMode::Manual {
             gates.push(Gate::ManualMode);
         }
-        if task.autonomy.is_some() {
-            let lines = self
-                .ports
-                .merge
-                .diff_lines(&factory, &task)
-                .unwrap_or(u32::MAX);
-            if lines > factory.config.autonomy_diff_limit {
-                gates.push(Gate::AutonomyDiff);
-            }
-        }
-        if task.open_questions().any(|q| {
-            !matches!(
-                q.kind,
-                QuestionKind::Notice | QuestionKind::Default | QuestionKind::ScopeChange { .. }
-            )
-        }) {
-            gates.push(Gate::OpenQuestion);
-        }
-        gates.dedup();
-        if !gates.is_empty() {
-            self.with_task(factory_id, id, |task| task.gates = gates.clone());
-            self.set_state(factory_id, id, TaskState::MergeWaiting);
-            return;
-        }
-        if factory.main.broken {
-            // Auto merge is stopped until main is green again (B44, D-47).
-            return;
-        }
-        self.merge_now(factory_id, id);
+        gates
     }
 
-    fn merge_now(&mut self, factory_id: &str, id: &str) -> Option<String> {
-        let factory = self.factories.get(factory_id).cloned()?;
-        let task = self.task(factory_id, id).cloned()?;
+    /// Merges now. A refusal that is neither the environment's nor a merge
+    /// GitHub has not finished naming waits for a person with its reason
+    /// instead of being retried every tick.
+    fn merge_now(&mut self, factory_id: &str, id: &str) -> Result<String, Failure> {
+        let unknown = || Failure::task("merge", "unknown Task");
+        let factory = self
+            .factories
+            .get(factory_id)
+            .cloned()
+            .ok_or_else(unknown)?;
+        let task = self.task(factory_id, id).cloned().ok_or_else(unknown)?;
         if factory.source == SourceKind::Local {
             match self.ports.merge.main_dirty(&factory) {
                 Ok(true) => {
@@ -2903,12 +2945,12 @@ impl Engine {
                         }
                     });
                     self.set_state(factory_id, id, TaskState::MergeWaiting);
-                    return None;
+                    return Err(Failure::task("merge", "main_dirty"));
                 }
                 Ok(false) => {}
                 Err(failure) => {
                     self.external_failure(factory_id, Some(id), &failure);
-                    return None;
+                    return Err(failure);
                 }
             }
         }
@@ -2936,11 +2978,25 @@ impl Engine {
                 self.record(factory_id, Some(id), "merge.done", json!({"sha": sha}));
                 self.set_state(factory_id, id, TaskState::Landed);
                 self.check_landed(factory_id, id);
-                Some(sha)
+                Ok(sha)
             }
             Err(failure) => {
                 self.external_failure(factory_id, Some(id), &failure);
-                None
+                if failure.signal.is_none() && failure.again_in_ms.is_none() {
+                    self.with_task(factory_id, id, |task| {
+                        if !task.gates.contains(&Gate::MergeRefused) {
+                            task.gates.push(Gate::MergeRefused);
+                        }
+                    });
+                    self.record(
+                        factory_id,
+                        Some(id),
+                        "merge.refused",
+                        json!({"stage": failure.stage, "detail": judgment::cut(&failure.detail, 300)}),
+                    );
+                    self.set_state(factory_id, id, TaskState::MergeWaiting);
+                }
+                Err(failure)
             }
         }
     }
@@ -2959,13 +3015,41 @@ impl Engine {
                 "Commit or stash the changes in the main checkout, then merge",
             ));
         }
+        // Main may have moved since the Task waited: merge-tree and the
+        // quick check run again right before a person's merge (B38, B40).
+        if let Some(task) = self.task(factory_id, id).cloned() {
+            match self.ports.merge.premerge(&factory, &task) {
+                Ok(PreMerge::Clean) | Ok(PreMerge::RiskPath { .. }) => {}
+                Ok(PreMerge::Conflict { files }) => {
+                    self.send_to_rebase(factory_id, id, &files);
+                    return Err(refuse(
+                        "merge_conflict",
+                        "The Task conflicts with main; its worker rebases and reports again",
+                    ));
+                }
+                Ok(PreMerge::QuickCheckFailed { check }) => {
+                    self.verification_failed(factory_id, id, &check, "quick check");
+                    return Err(refuse(
+                        "quick_check_failed",
+                        "The quick check failed on the latest main; its worker was told",
+                    ));
+                }
+                Err(failure) => {
+                    self.external_failure(factory_id, Some(id), &failure);
+                    return Err(refuse(
+                        "merge_failed",
+                        &format!("{}: {}", failure.stage, judgment::cut(&failure.detail, 300)),
+                    ));
+                }
+            }
+        }
         match self.merge_now(factory_id, id) {
-            Some(sha) => Ok(
+            Ok(sha) => Ok(
                 json!({"message": "merged", "sha": sha, "task": self.task_answer(factory_id, id, "")["task"]}),
             ),
-            None => Err(refuse(
+            Err(failure) => Err(refuse(
                 "merge_failed",
-                "See hide factory show for the reason",
+                &format!("{}: {}", failure.stage, judgment::cut(&failure.detail, 300)),
             )),
         }
     }
@@ -3003,8 +3087,6 @@ impl Engine {
         self.watch_due(factory_id, true);
     }
 
-    /// A finished Task's worker ends and its worktree goes; the branch stays
-    /// with the merge. A failure is logged and the disk recovery retries it.
     /// Stops a worker; a refusal is recorded against its Task.
     fn stop_worker(&mut self, factory_id: &str, id: &str, worker: &WorkerRef) {
         if let Err(failure) = self.ports.workers.stop(worker) {
@@ -3031,6 +3113,8 @@ impl Engine {
         });
     }
 
+    /// A finished Task's worker ends and its worktree goes; the branch stays
+    /// with the merge. A failure is logged and the disk recovery retries it.
     fn release_worker(&mut self, factory_id: &str, id: &str) {
         let Some(worker) = self.task(factory_id, id).and_then(|t| t.worker.clone()) else {
             return;
@@ -4630,14 +4714,20 @@ impl Engine {
             .cloned()
             .collect();
         for factory in factories {
-            let due = factory.main.broken
+            let now = self.now();
+            let paced = self
+                .main_checked_at
+                .get(&factory.id)
+                .is_some_and(|at| now.saturating_sub(*at) < MAIN_CHECK_EVERY_MS);
+            let due = !self.main_seen.contains_key(&factory.id)
                 || factory
                     .outside_read_at
-                    .is_some_and(|at| self.now().saturating_sub(at) < 1000)
-                || !self.main_seen.contains_key(&factory.id);
+                    .is_some_and(|at| now.saturating_sub(at) < 1000)
+                || ((factory.main.broken || self.main_pending.contains(&factory.id)) && !paced);
             if !due {
                 continue;
             }
+            self.main_checked_at.insert(factory.id.clone(), now);
             let Ok(head) = self.ports.merge.main_head(&factory) else {
                 continue;
             };
@@ -4656,6 +4746,7 @@ impl Engine {
             }
             match self.ports.merge.main_check(&factory, &head) {
                 Ok(MainCheck::Green) => {
+                    self.main_pending.remove(&factory.id);
                     self.main_seen.insert(factory.id.clone(), head.clone());
                     if factory.main.broken && !self.reverts.contains_key(&factory.id) {
                         // Green again: auto merge resumes (D-47).
@@ -4670,10 +4761,19 @@ impl Engine {
                     }
                 }
                 Ok(MainCheck::Red { link }) if !known && !factory.main.broken => {
+                    self.main_pending.remove(&factory.id);
                     self.main_seen.insert(factory.id.clone(), head.clone());
                     self.main_broken(&factory.id, &head, &link);
                 }
+                // Not finished: the head is not seen yet, so a red result
+                // that arrives later still counts (B47).
+                Ok(MainCheck::Pending) => {
+                    if !factory.main.broken {
+                        self.main_pending.insert(factory.id.clone());
+                    }
+                }
                 Ok(_) => {
+                    self.main_pending.remove(&factory.id);
                     if !factory.main.broken {
                         self.main_seen.insert(factory.id.clone(), head);
                     }
@@ -5264,6 +5364,16 @@ impl Engine {
             self.record(&factory, Some(&id), "cleanup.cancelled", json!({}));
         }
     }
+}
+
+/// An open question a person answers before the Task merges.
+fn waits_on_answer(task: &Task) -> bool {
+    task.open_questions().any(|q| {
+        !matches!(
+            q.kind,
+            QuestionKind::Notice | QuestionKind::Default | QuestionKind::ScopeChange { .. }
+        )
+    })
 }
 
 /// A Task whose worktree waits out the keep period: cancelled, taken over

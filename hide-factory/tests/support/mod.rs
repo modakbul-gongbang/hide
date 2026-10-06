@@ -33,6 +33,12 @@ pub struct World {
     pub verify_runs: Vec<String>,
     pub cancelled_runs: Vec<String>,
     pub premerge: BTreeMap<String, VecDeque<PreMerge>>,
+    pub premerge_calls: u32,
+    /// The next merge is refused with this failure.
+    pub merge_refusal: Option<Failure>,
+    pub merge_attempts: u32,
+    /// Main verification answers by commit, read before `main_checks`.
+    pub main_check_script: BTreeMap<String, VecDeque<MainCheck>>,
     /// Main verification by commit; `Green` when absent.
     pub main_checks: BTreeMap<String, MainCheck>,
     pub head: String,
@@ -233,6 +239,7 @@ impl MergeTarget for Shared {
         Ok(format!("diff for {}", task.id))
     }
     fn premerge(&mut self, _factory: &Factory, task: &Task) -> Result<PreMerge, Failure> {
+        self.world().premerge_calls += 1;
         Ok(self
             .world()
             .premerge
@@ -250,6 +257,10 @@ impl MergeTarget for Shared {
         _method: MergeMethod,
     ) -> Result<String, Failure> {
         let mut world = self.world();
+        world.merge_attempts += 1;
+        if let Some(failure) = world.merge_refusal.take() {
+            return Err(failure);
+        }
         world.next_sha += 1;
         let sha = format!("sha{:04}-{}", world.next_sha, task.id);
         world.writes.push(format!("merge {}", task.id));
@@ -257,6 +268,14 @@ impl MergeTarget for Shared {
         Ok(sha)
     }
     fn main_check(&mut self, _factory: &Factory, sha: &str) -> Result<MainCheck, Failure> {
+        if let Some(next) = self
+            .world()
+            .main_check_script
+            .get_mut(sha)
+            .and_then(VecDeque::pop_front)
+        {
+            return Ok(next);
+        }
         Ok(self
             .world()
             .main_checks
