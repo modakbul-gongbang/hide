@@ -3,7 +3,7 @@ import { foldLines, requestTurn, resumeBlock, resumeCheckout, sameIssue, session
 import type { AgentRow, Checkout, Device, LinkedSession, Workspace } from "./snapshot";
 
 function line(id: string, patch: Partial<LinkedSession> = {}): LinkedSession {
-  return { agent: "claude", id, ids: [id], device_id: "local", role: "worked", pr: 7, request: null, started_at_unix_ms: null, ended_at_unix_ms: null, path: `/home/.claude/${id}.jsonl`, cwd: "/repo/task", file: "present", parent: null, ...patch };
+  return { agent: "claude", id, ids: [id], device_id: "local", role: "worked", pr: 7, request: null, started_at_unix_ms: null, ended_at_unix_ms: null, path: `/Users/example/.claude/${id}.jsonl`, cwd: "/repo/task", file: "present", parent: null, ...patch };
 }
 
 function agent(session: string, patch: Partial<AgentRow>): AgentRow {

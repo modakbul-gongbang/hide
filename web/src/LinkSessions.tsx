@@ -255,7 +255,7 @@ function SessionLineView({ entry, last, project, checkoutBranch, onOpenPr, actio
   );
 }
 
-/** `Created PR`, or on the Issue panel `#619 created`, a chip that opens that PR; else the muted `Worked` (B6, B34). */
+/** `Created PR`, or on the Issue panel `#N created` with its number, a chip that opens that PR; else the muted `Worked` (B6, B34). */
 function RoleChip({ line, onOpenPr }: { line: SessionLine["line"]; onOpenPr?: (pr: number) => void }) {
   const { t } = useInterfaceTranslation();
   if (line.role !== "created") return <span data-link-chip="worked">{t("links.worked")}</span>;
@@ -364,7 +364,7 @@ function ParentLine({ parent, project, actions }: { parent: NonNullable<SessionL
 const NO_CHIPS: readonly { number: number; created: boolean }[] = [];
 
 /**
- * The pull requests a session made (`#317 created`) or worked on (`#317`), on
+ * The pull requests a session made (`#N created`) or worked on (`#N`), on
  * its Sessions row and its open head (PRD link-graph B36); each opens that
  * PR's panel. A session the record has not linked has none, and a chip that
  * arrives while the record fills just appears.
