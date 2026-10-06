@@ -18,7 +18,7 @@ use hide_platform::process::GuardedSpawnError;
 use hide_platform::process::{
     CaptureFailureKind, MAX_CAPTURE_BYTES, OWNER_LAUNCH_KEYS, OwnedChild, OwnerWatch,
     RUN_OUTPUT_CAP, RunFailure, cwd_of, descends_from, detach, is_alive, kill_tree, measure_tree,
-    parent_of, run_to_end, start_time, terminate, terminate_group,
+    parent_of, restrict_to_login_environment, run_to_end, start_time, terminate, terminate_group,
 };
 
 const ROLE: &str = "HIDE_PLATFORM_PROC_ROLE";
@@ -204,6 +204,24 @@ fn child_role() {
             #[allow(clippy::zombie_processes)]
             let daemon = command.spawn().unwrap();
             println!("READY {}", daemon.id());
+        }
+        // The second process of `a_login_child_gets_the_account_variables_and_nothing_else`:
+        // starts a child restricted to the login environment, from an
+        // environment that carries variables it must not pass on.
+        "login_env_parent" => {
+            let mut command = Command::new(std::env::current_exe().unwrap());
+            restrict_to_login_environment(&mut command);
+            let output = command
+                .args(["--exact", "child_role", "--nocapture", "--test-threads=1"])
+                .env(ROLE, "login_env")
+                .output()
+                .unwrap();
+            std::io::stdout().write_all(&output.stdout).unwrap();
+        }
+        "login_env" => {
+            for (key, _) in std::env::vars_os() {
+                println!("ENVKEY {}", key.to_string_lossy().to_uppercase());
+            }
         }
         other => panic!("unknown role {other}"),
     }
@@ -1021,4 +1039,49 @@ fn an_escaped_pipe_holder_cannot_extend_the_run_deadline() {
     );
     assert!(matches!(answer, Err(RunFailure::TimedOut)), "{answer:?}");
     assert!(elapsed < Duration::from_secs(1), "{elapsed:?}");
+}
+
+/// What a child that must find the account's login is started with: the
+/// variables its system reads for the account, the programs and the scratch
+/// folders, and none of the hook and nested-session markers the parent was
+/// started with. Windows names its own set because Node and the CLI read the
+/// home folder from `USERPROFILE` and fail to start without `SystemRoot`.
+#[test]
+fn a_login_child_gets_the_account_variables_and_nothing_else() {
+    let _serial = serial();
+    let mut command = role_command("login_env_parent");
+    command
+        .env("HERDR_ENV", "1")
+        .env("CLAUDECODE", "1")
+        .env("HIDE_PLATFORM_PROC_UNLISTED", "1");
+    let output = command.output().unwrap();
+    let keys: Vec<String> = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| line.split_once("ENVKEY ").map(|(_, key)| key.to_owned()))
+        .collect();
+    assert!(!keys.is_empty(), "the child reported no environment");
+
+    for withheld in ["HERDR_ENV", "CLAUDECODE", "HIDE_PLATFORM_PROC_UNLISTED"] {
+        assert!(
+            !keys.iter().any(|key| key == withheld),
+            "{withheld} {keys:?}"
+        );
+    }
+    let expected: &[&str] = if cfg!(windows) {
+        &[
+            "SYSTEMROOT",
+            "USERPROFILE",
+            "TEMP",
+            "TMP",
+            "PATHEXT",
+            "APPDATA",
+            "LOCALAPPDATA",
+            "PATH",
+        ]
+    } else {
+        &["HOME", "PATH"]
+    };
+    for needed in expected {
+        assert!(keys.iter().any(|key| key == needed), "{needed} {keys:?}");
+    }
 }

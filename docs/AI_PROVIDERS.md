@@ -163,7 +163,8 @@ It uses the user's existing CLI logins to read each provider's seven-day account
 For Claude Code, the core runs `claude -p "/usage" --output-format json --no-session-persistence` through `ClaudeCliBackend::usage_text` and parses the `result` text the CLI prints.
 `/usage` is a local command: the CLI authenticates against its own keychain item, makes no model turn (`duration_api_ms` 0, cost 0), and with `--no-session-persistence` leaves nothing under `~/.claude/projects/`, in `claude --resume`, or in Hide's Agent Conversation list.
 Hide holds no Claude token at any point and never opens the keychain itself; the earlier direct keychain read is gone because an ad hoc signed dev build has a new code identity on every rebuild, so macOS revoked "always allow" and the row fell to a three-second timeout.
-The child receives exactly `HOME`, `PATH`, `USER`, `LOGNAME` and `TMPDIR` (`hide_ai::USAGE_ENVIRONMENT`) and runs in Hide's state directory (`~/.hide/state` by default).
+The child receives exactly the variables `hide_platform::process::LOGIN_CHILD_VARIABLES` names (`hide_ai::USAGE_ENVIRONMENT`): `HOME`, `PATH`, `USER`, `LOGNAME` and `TMPDIR` on macOS and Linux, and `PATH`, `PATHEXT`, `SystemRoot`, `USERPROFILE`, `USERNAME`, `TEMP`, `TMP`, `APPDATA`, `LOCALAPPDATA`, `ComSpec`, `windir`, `SystemDrive`, `ProgramFiles`, `ProgramFiles(x86)`, `ProgramData`, `HOMEDRIVE`, `HOMEPATH` and `CLAUDE_CODE_GIT_BASH_PATH` on Windows, where Node reads its home from `USERPROFILE` and does not start without `SystemRoot`, and the Claude CLI needs Git Bash, which it finds through `CLAUDE_CODE_GIT_BASH_PATH` or `ProgramFiles`.
+It runs in Hide's state directory (`~/.hide/state` by default).
 `USER` is what lets the CLI find its keychain account; without it the CLI prints `/cost` text as if logged out.
 `HERDR_*` and `CLAUDECODE` are withheld on purpose: without `HERDR_ENV` the operator's Herdr and hide agent hooks exit early, and any other hook in the operator's `settings.json` runs as it would for any `claude -p`.
 `--bare` cannot be used, because it never reads the keychain.
@@ -174,7 +175,7 @@ The parser reads the `Current week` lines as `Current week (<scope>): <n>% (used
 A `Current session` line only proves the CLI read its login; nothing past its prefix is parsed, because the CLI prints the session line without a reset until a session starts, and a first read after an idle morning once failed on that line alone.
 The CLI prints ` · resets …` only when the window has a reset and the year only when the reset falls in another year.
 A row line without a reset is the `reset_missing` failure, a bucket line without one is an unavailable bucket, and a reset the reader cannot read is `reset_format`.
-The reset instant is the printed year's wall clock in the printed zone, or without a year the next wall-clock match, resolved through the system tz database (`herdr-core/src/zoneinfo.rs`); a match that passed within the last window is the reset that just passed, so the row reads as expired until the next read.
+The reset instant is the printed year's wall clock in the printed zone, or without a year the next wall-clock match, resolved through a tz database (`herdr-core/src/zoneinfo.rs`, on `jiff`: the system's `/usr/share/zoneinfo` on macOS and Linux, the database `jiff` bundles on Windows, which has none, so a Windows host answers reset times too); a match that passed within the last window is the reset that just passed, so the row reads as expired until the next read.
 The observed 2.1.274 output is fixed as a test fixture under `herdr-core/tests/fixtures/claude-usage/`, and the parsed reset agrees with the CLI's own `.usage-cache.json` value for the same window.
 Only English output is parsed; another locale reads as unavailable.
 

@@ -49,8 +49,8 @@ function printedReset(at: Date, now: Date): string {
  * A `claude` on its own PATH directory that waits for `release()` and then
  * prints a `/usage` result frame: 62% of the week with a 6% Fable bucket,
  * both resetting on the whole hour five days and five hours from now. The
- * usage child only receives HOME, PATH, USER, LOGNAME and TMPDIR, so the
- * script carries its paths itself.
+ * usage child only receives the account's login variables (`hide-platform`'s
+ * `LOGIN_CHILD_VARIABLES`), so the script carries its paths itself.
  */
 function usageShim() {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), "hide-e2e-usage-"));
@@ -80,11 +80,12 @@ process.stdout.write(fs.readFileSync(${JSON.stringify(frame)}));
   return {
     path: fixtureToolPath(bin),
     release: () => fs.writeFileSync(gate, ""),
-    cleanup: () => fs.rmSync(root, { recursive: true, force: true }),
+    cleanup: () => fs.rmSync(root, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 }),
   };
 }
 
-test("weekly usage: a loading, an available and an unavailable row, and the hints the page sends", async ({ page }) => {
+// @platform: The usage child gets a restricted environment that differs per OS (USERPROFILE and SystemRoot on Windows), and a Node-based `claude` only starts with it.
+test("weekly usage: a loading, an available and an unavailable row, and the hints the page sends", { tag: "@platform" }, async ({ page }) => {
   await page.setViewportSize({ width: 1440, height: 900 });
   const herdr = await startHerdr();
   const usage = usageShim();
