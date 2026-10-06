@@ -530,11 +530,11 @@ fn at_the_display_cap_a_reopen_a_created_file_or_a_reveal_is_refused() {
 fn a_reopen_that_lands_after_the_views_filled_is_refused_and_stays_reopenable() {
     use crate::view_layout::{DisplayKind, MAX_VIEW_DISPLAYS};
     let (runtime, checkout_id, directory) = views_runtime("view-cap-landing");
-    let shared = Arc::new(Mutex::new(runtime));
-    shared.lock().unwrap().install_worker_context(
-        Arc::downgrade(&shared),
-        crate::handle::ChangeNotifier::noop(),
-    );
+    let shared = SharedRuntime::new(runtime);
+    shared
+        .lock()
+        .unwrap()
+        .install_worker_context(shared.weak(), crate::handle::ChangeNotifier::noop());
     open(
         &mut shared.lock().unwrap(),
         &checkout_id,
@@ -1090,11 +1090,11 @@ fn a_close_that_reaches_the_last_view_of_unsaved_text_without_a_save_is_refused(
 fn closing_the_last_display_of_a_dirty_document_saves_it_first() {
     let (runtime, checkout_id, directory) = views_runtime("view-close-last");
     let path = directory.join("notes.md");
-    let shared = Arc::new(Mutex::new(runtime));
-    shared.lock().unwrap().install_worker_context(
-        Arc::downgrade(&shared),
-        crate::handle::ChangeNotifier::noop(),
-    );
+    let shared = SharedRuntime::new(runtime);
+    shared
+        .lock()
+        .unwrap()
+        .install_worker_context(shared.weak(), crate::handle::ChangeNotifier::noop());
     open(
         &mut shared.lock().unwrap(),
         &checkout_id,
@@ -1193,11 +1193,11 @@ fn a_draft_in_one_display_keeps_every_display_of_its_document_open() {
 fn a_save_without_a_draft_keeps_every_display_of_its_document_open() {
     let (runtime, checkout_id, directory) = views_runtime("view-save-pins");
     let path = directory.join("notes.md");
-    let shared = Arc::new(Mutex::new(runtime));
-    shared.lock().unwrap().install_worker_context(
-        Arc::downgrade(&shared),
-        crate::handle::ChangeNotifier::noop(),
-    );
+    let shared = SharedRuntime::new(runtime);
+    shared
+        .lock()
+        .unwrap()
+        .install_worker_context(shared.weak(), crate::handle::ChangeNotifier::noop());
     open(
         &mut shared.lock().unwrap(),
         &checkout_id,

@@ -949,7 +949,6 @@ pub(crate) fn fnv1a(bytes: &[u8]) -> u64 {
 mod tests {
     use super::*;
     use crate::model::{ProjectWorktreesSnapshot, WorktreeSnapshot};
-    use std::time::{SystemTime, UNIX_EPOCH};
 
     /// The catalog before the worktree reader has answered. Every case that
     /// is not about worktree rows uses this, so those tests still assert what
@@ -958,22 +957,25 @@ mod tests {
         WorktreeCatalogSnapshot::default()
     }
 
-    fn temp_dir(name: &str) -> PathBuf {
-        let stamp = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .expect("clock")
-            .as_nanos();
-        let path =
-            temp_base_outside_any_repository().join(format!("hide-workspace-{name}-{stamp}"));
-        fs::create_dir_all(&path).expect("temp directory");
-        path
+    /// A folder named `name` inside a new scratch folder outside every
+    /// repository. The scratch folder goes when the first value is dropped,
+    /// with everything a test makes beside `name` (a linked worktree, a
+    /// second checkout), so nothing is left behind however the test ends.
+    fn temp_dir(name: &str) -> (tempfile::TempDir, PathBuf) {
+        let scratch = tempfile::Builder::new()
+            .prefix(&format!("hide-workspace-{name}-"))
+            .tempdir_in(temp_base_outside_any_repository())
+            .expect("a scratch folder");
+        let path = scratch.path().join(name);
+        fs::create_dir(&path).expect("temp directory");
+        (scratch, path)
     }
 
     /// A repository with one commit on `main` and a linked worktree on
     /// `feature`, made with git itself so the catalog is measured against
     /// what git would say.
-    fn repository_with_worktree(name: &str) -> (PathBuf, PathBuf) {
-        let root = temp_dir(name);
+    fn repository_with_worktree(name: &str) -> (tempfile::TempDir, PathBuf, PathBuf) {
+        let (scratch, root) = temp_dir(name);
         let run = |dir: &Path, args: &[&str]| {
             let status = Command::new("git")
                 .arg("-C")
@@ -1014,7 +1016,7 @@ mod tests {
                 worktree.to_str().unwrap(),
             ],
         );
-        (root, worktree)
+        (scratch, root, worktree)
     }
 
     // The catalog is rebuilt on the session-sync coordinator, the thread that
@@ -1023,10 +1025,10 @@ mod tests {
     // for seconds (2026-09-10 audit). Every fact now comes from a file read.
     #[test]
     fn the_catalog_is_built_without_running_git() {
-        let (root, worktree) = repository_with_worktree("no-spawn");
+        let (_scratch, root, worktree) = repository_with_worktree("no-spawn");
         let nested = worktree.join("src");
         fs::create_dir_all(&nested).expect("nested directory");
-        let folder = temp_dir("no-spawn-plain");
+        let (_plain_scratch, folder) = temp_dir("no-spawn-plain");
         let demo =
             registration(root.to_str().unwrap(), "Demo", LOCAL_DEVICE_ID).expect("registration");
         let plain =
@@ -1086,7 +1088,7 @@ mod tests {
 
     #[test]
     fn discovers_git_default_branch_and_worktrees_without_mutating_the_repository() {
-        let root = temp_dir("git");
+        let (_scratch, root) = temp_dir("git");
         let status = Command::new("git")
             .arg("-C")
             .arg(&root)
@@ -1171,14 +1173,11 @@ mod tests {
                     && checkout.branch.as_deref() == Some("feature"))
         );
         assert!(root.join("README.md").exists());
-
-        let _ = fs::remove_dir_all(&root);
-        let _ = fs::remove_dir_all(&checkout_path);
     }
 
     #[test]
     fn flat_folder_is_visible_without_implicit_git_init() {
-        let root = temp_dir("flat");
+        let (_scratch, root) = temp_dir("flat");
         let registration =
             registration(root.to_str().unwrap(), "Flat", LOCAL_DEVICE_ID).expect("registration");
         let snapshot = inspect_registered(&registration);
@@ -1189,12 +1188,11 @@ mod tests {
             root.file_name().unwrap().to_string_lossy()
         );
         assert!(!root.join(".git").exists());
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
     fn a_space_occupying_a_registered_directory_does_not_duplicate_it() {
-        let root = temp_dir("temporary");
+        let (_scratch, root) = temp_dir("temporary");
         let registration = registration(root.to_str().unwrap(), "Registered", LOCAL_DEVICE_ID)
             .expect("registration");
         let spaces = [SessionSpace {
@@ -1215,7 +1213,6 @@ mod tests {
         assert_eq!(catalog[0].label, "Registered");
         assert!(catalog[0].registered);
         assert_eq!(catalog[0].session_workspace_ids, vec!["w1".to_owned()]);
-        let _ = fs::remove_dir_all(root);
     }
 
     /// Herdr closes a workspace together with its last pane. The project and
@@ -1224,7 +1221,7 @@ mod tests {
     /// terminal instead of the app falling back to "no workspace".
     #[test]
     fn a_project_keeps_its_identity_when_herdr_closes_its_workspace() {
-        let root = temp_dir("identity");
+        let (_scratch, root) = temp_dir("identity");
         let registration = registration(root.to_str().unwrap(), "Identity", LOCAL_DEVICE_ID)
             .expect("registration");
         let space = SessionSpace {
@@ -1246,15 +1243,14 @@ mod tests {
         assert_eq!(occupied[0].checkouts[0].id, released[0].checkouts[0].id);
         assert_eq!(occupied[0].session_workspace_ids, vec!["w7".to_owned()]);
         assert!(released[0].session_workspace_ids.is_empty());
-        let _ = fs::remove_dir_all(root);
     }
 
     /// A Herdr workspace with panes in two repositories is two projects, and
     /// each registration lands on its own repository.
     #[test]
     fn a_space_spanning_two_repositories_is_two_projects() {
-        let first = temp_dir("first-repo");
-        let second = temp_dir("second-repo");
+        let (_first_scratch, first) = temp_dir("first-repo");
+        let (_second_scratch, second) = temp_dir("second-repo");
         let space = SessionSpace {
             id: "w9".to_owned(),
             label: "hide main".to_owned(),
@@ -1286,13 +1282,11 @@ mod tests {
                 && project.checkouts.len() == 1
                 && project.session_workspace_ids == vec!["w9".to_owned()]
         }));
-        let _ = fs::remove_dir_all(first);
-        let _ = fs::remove_dir_all(second);
     }
 
     #[test]
     fn an_unregistered_space_is_keyed_by_its_repository_path() {
-        let root = temp_dir("unregistered-space");
+        let (_scratch, root) = temp_dir("unregistered-space");
         let space = SessionSpace {
             id: "w8".to_owned(),
             label: "scratch".to_owned(),
@@ -1307,12 +1301,11 @@ mod tests {
         assert_eq!(catalog[0].id, workspace_id_for_path(&canonical));
         assert_eq!(catalog[0].session_workspace_ids, vec!["w8".to_owned()]);
         assert!(!catalog[0].registered);
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
     fn later_space_without_a_purpose_clears_the_earlier_token_projection() {
-        let root = temp_dir("shared-root");
+        let (_scratch, root) = temp_dir("shared-root");
         let cwd = root.to_string_lossy().into_owned();
         let spaces = [
             SessionSpace {
@@ -1346,7 +1339,6 @@ mod tests {
                 has_shadowed_purpose: true,
             })
         );
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
@@ -1407,7 +1399,7 @@ mod tests {
 
     #[test]
     fn purpose_authority_normalizes_symlink_and_dot_segment_cwds() {
-        let root = temp_dir("purpose-authority-alias");
+        let (_scratch, root) = temp_dir("purpose-authority-alias");
         let checkout = root.join("checkout");
         let nested = checkout.join("nested");
         let alias = root.join("checkout-alias");
@@ -1465,7 +1457,6 @@ mod tests {
         assert_eq!(effective.workspace_id, "dot-segment");
         assert_eq!(effective.purpose, None);
         assert!(effective.has_shadowed_purpose);
-        let _ = fs::remove_dir_all(root);
     }
 
     fn listed_worktree(path: &str, branch: &str, is_main: bool) -> WorktreeSnapshot {
@@ -1483,7 +1474,7 @@ mod tests {
     /// be selected and started in.
     #[test]
     fn every_worktree_is_a_row_whether_or_not_a_pane_sits_in_it() {
-        let root = temp_dir("all-worktrees");
+        let (_scratch, root) = temp_dir("all-worktrees");
         let idle = root.with_file_name(format!(
             "{}-idle",
             root.file_name().unwrap().to_string_lossy()
@@ -1568,17 +1559,13 @@ mod tests {
         // Every row is keyed under the project, so a persisted selection on a
         // worktree with no pane still resolves.
         assert!(rows.iter().all(|row| row.workspace_id == catalog[0].id));
-
-        let _ = fs::remove_dir_all(&root);
-        let _ = fs::remove_dir_all(&idle);
-        let _ = fs::remove_dir_all(&second);
     }
 
     /// A worktree git lists but disk does not have keeps its row and reports
     /// that the path is gone, so the operator can see what to clean up.
     #[test]
     fn a_missing_worktree_is_a_row_that_says_it_is_missing() {
-        let root = temp_dir("missing-worktree");
+        let (_scratch, root) = temp_dir("missing-worktree");
         let registration =
             registration(root.to_str().unwrap(), "Project", LOCAL_DEVICE_ID).expect("registration");
         let worktrees = WorktreeCatalogSnapshot {
@@ -1605,14 +1592,13 @@ mod tests {
             .find(|row| row.label == "gone")
             .expect("the missing worktree is still a row");
         assert!(!gone.exists);
-        let _ = fs::remove_dir_all(root);
     }
 
     /// Before the reader answers, and for a project it has no answer for, the
     /// rows the pane-derived catalog produced stay exactly as they were.
     #[test]
     fn a_project_with_no_worktree_answer_keeps_the_rows_it_had() {
-        let root = temp_dir("no-answer");
+        let (_scratch, root) = temp_dir("no-answer");
         let registration =
             registration(root.to_str().unwrap(), "Project", LOCAL_DEVICE_ID).expect("registration");
 
@@ -1630,12 +1616,11 @@ mod tests {
 
         assert_eq!(before, unrelated);
         assert_eq!(before[0].checkouts.len(), 1);
-        let _ = fs::remove_dir_all(root);
     }
 
     #[test]
     fn a_registration_no_space_occupies_stays_listed() {
-        let root = temp_dir("unopened");
+        let (_scratch, root) = temp_dir("unopened");
         let registration = registration(root.to_str().unwrap(), "Unopened", LOCAL_DEVICE_ID)
             .expect("registration");
         let registration_id = registration.id.clone();
@@ -1644,7 +1629,6 @@ mod tests {
 
         assert_eq!(catalog.len(), 1);
         assert_eq!(catalog[0].id, registration_id);
-        let _ = fs::remove_dir_all(root);
     }
 
     /// Create new project makes the folder and its own repository, even inside
@@ -1652,7 +1636,7 @@ mod tests {
     /// it made, and a folder with contents is refused and left untouched.
     #[test]
     fn a_new_project_folder_is_made_as_its_own_repository_and_a_retry_converges() {
-        let (outer, _worktree) = repository_with_worktree("new-project");
+        let (_scratch, outer, _worktree) = repository_with_worktree("new-project");
         let target = outer.join("fresh");
         assert_eq!(project_folder(&target), ProjectFolder::Free);
 
@@ -1684,13 +1668,12 @@ mod tests {
         // A symlink at the name is refused, never followed into its target.
         #[cfg(unix)]
         {
-            let elsewhere = temp_dir("new-project-elsewhere");
+            let (_elsewhere_scratch, elsewhere) = temp_dir("new-project-elsewhere");
             let link = outer.join("link");
             std::os::unix::fs::symlink(&elsewhere, &link).unwrap();
             assert_eq!(project_folder(&link), ProjectFolder::Taken);
             assert!(create_project_folder(&link).is_err());
             assert!(!elsewhere.join(".git").exists());
-            let _ = fs::remove_dir_all(&elsewhere);
         }
 
         let taken = outer.join("taken");
@@ -1709,6 +1692,5 @@ mod tests {
         fs::write(&file, "x").unwrap();
         assert_eq!(project_folder(&file), ProjectFolder::Taken);
         assert!(create_project_folder(&file).is_err());
-        let _ = fs::remove_dir_all(outer);
     }
 }

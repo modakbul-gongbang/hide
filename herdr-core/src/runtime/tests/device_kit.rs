@@ -128,8 +128,8 @@ fn dispatch(shared: &Mutex<Runtime>, kind: &str, payload: serde_json::Value) {
 fn device_runtime(
     consent: Option<crate::model::HostConsent>,
     helper: Option<Arc<KitDevice>>,
-) -> Arc<Mutex<Runtime>> {
-    let shared = Arc::new(Mutex::new(runtime()));
+) -> SharedRuntime {
+    let shared = SharedRuntime::new(runtime());
     dispatch(
         &shared,
         "register_device",
@@ -159,10 +159,7 @@ fn device_runtime(
                 },
             );
         }
-        runtime.install_worker_context(
-            Arc::downgrade(&shared),
-            crate::handle::ChangeNotifier::noop(),
-        );
+        runtime.install_worker_context(shared.weak(), crate::handle::ChangeNotifier::noop());
         runtime.refresh_device_snapshots();
     }
     shared
@@ -199,7 +196,7 @@ fn settle(shared: &Mutex<Runtime>) {
     }
 }
 
-fn with_consent(helper: Option<Arc<KitDevice>>) -> Arc<Mutex<Runtime>> {
+fn with_consent(helper: Option<Arc<KitDevice>>) -> SharedRuntime {
     let probe = device_runtime(None, None);
     let consent = granted(&probe);
     device_runtime(Some(consent), helper)
