@@ -240,9 +240,9 @@ impl Runtime {
             .actor
             .clone();
         actor.require_native_identity()?;
-        // Only the pane's own session proves its composer was submitted: any
-        // process in the pane can run `hide inbox --hook`, and none of them
-        // may clear the operator's draft. The id is checked before it is
+        // Only the pane's own session proves its composer was submitted, so a
+        // stray `hide inbox --hook` from a tool in the pane clears no draft.
+        // The id is not a secret (D-18 external input stays outside this). The id is checked before it is
         // hashed because this runs under the runtime lock.
         if let Command::Pull {
             session: Some(session),

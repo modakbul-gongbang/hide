@@ -738,10 +738,10 @@ async fn input(
             (None, None) => unreachable!("validated above"),
         };
         let reply = matches!(input, Input::Reply(_));
+        // Before the write, so the doorbell cannot judge the pane clean
+        // while the key is landing; a refused write only holds the pane.
+        writer.note_input(&core_pane_id);
         let sent = pane::send(&connector, &pane_id, input);
-        if !matches!(sent, Err(PaneError::Gone | PaneError::DeviceUnreachable)) {
-            writer.note_input(&core_pane_id);
-        }
         if reply && sent.is_ok() {
             writer.note_submit(&core_pane_id);
         }

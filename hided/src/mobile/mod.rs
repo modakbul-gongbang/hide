@@ -1420,10 +1420,10 @@ impl Mobile {
         }
     }
 
-    /// Tells the core a phone write may have reached `pane_id`, so the
-    /// doorbell treats the pane as typed into. A write Herdr certainly
-    /// refused is not reported; one that may have landed is, and the pane
-    /// then stays held until a prompt hook or a turn clears it.
+    /// Tells the core a phone write to `pane_id` is about to be made, so the
+    /// doorbell treats the pane as typed into. Sent before the write: one
+    /// Herdr then refuses still holds the pane until a prompt hook or a turn
+    /// clears it, which is safer than a window where the write lands unseen.
     pub fn note_input(&self, pane_id: &str) {
         let event = json!({
             "schema_version": 2,

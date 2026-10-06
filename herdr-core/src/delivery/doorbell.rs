@@ -39,10 +39,10 @@ pub(crate) enum Hold {
     Blocked,
     /// Herdr reports a status that is not rest (or none at all).
     Status,
-    /// A key hide routed after the last submission and the last start of
+    /// Input hide routed after the last submission and the last start of
     /// work: an unsent draft, a prompt Esc brought back, a recalled input.
     Draft,
-    /// Less than the quiet period since the last key or the last change of
+    /// Less than the quiet period since the last input or the last change of
     /// status.
     Quiet,
     /// The pane changed between the verdict and the input.
@@ -75,10 +75,10 @@ pub(crate) fn bell_target(kind: &str) -> bool {
 
 /// Whether the pane is at rest and a bell can be typed into it. All of these
 /// must hold: Herdr reports `idle` or `done` and has for the quiet period,
-/// hide has routed no key for the quiet period, no key hide routed is newer
-/// than the last submission and the last start of work (a key before either
-/// was consumed by it, a menu answer for one), and the pane still hosts the
-/// session the letter was written for.
+/// hide has routed no input for the quiet period, no input hide routed is
+/// newer than the last submission and the last start of work (input before
+/// either was consumed by it, a menu answer for one), and the pane still hosts
+/// the session the letter was written for.
 pub(crate) fn judge(observation: &Observation, now: u64) -> Result<(), Hold> {
     if !bell_target(&observation.actor.kind) {
         return Err(Hold::Kind);

@@ -1630,8 +1630,8 @@ impl Runtime {
                 self.record_operator_submit(&payload.pane_id);
                 false
             }
-            // A phone key or reply is on its way to the pane: a draft may
-            // grow there, which the doorbell must not type over.
+            // A phone key or reply is about to be written to the pane: a draft
+            // may grow there, which the doorbell must not type over.
             Event::PaneInputSent(payload) => {
                 self.note_delivery_key(&payload.pane_id);
                 false

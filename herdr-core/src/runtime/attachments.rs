@@ -158,9 +158,6 @@ impl Runtime {
         {
             return false;
         }
-        // The paste text lands only when the upload ends, which can be long
-        // after; the operator is typing into the pane meanwhile.
-        self.note_delivery_key(&payload.pane_id);
         let refusal = if !ingress::valid_request_id(&payload.request_id) {
             Some("Invalid attachment request identity.")
         } else if self.attachment.is_some()
@@ -194,6 +191,9 @@ impl Runtime {
             self.sync_async_operations();
             return true;
         }
+        // The paste text lands only when the upload ends, which can be long
+        // after; the operator is typing into the pane meanwhile.
+        self.note_delivery_key(&payload.pane_id);
         let remote = self
             .remote_file_transports
             .keys()
