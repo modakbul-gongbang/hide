@@ -27,13 +27,15 @@ const MAX_EVENTS: usize = 4096;
 /// Commands the gateway holds per client (`MAX_PENDING` in `browserCdp.ts`);
 /// a client that sends one more has its connection closed.
 const MAX_PENDING: usize = 32;
-/// How long the gateway keeps an unanswered command pending
-/// (`REQUEST_TIMEOUT_MS` in `browserCdp.ts`). A call this client gave up on
-/// after its own, shorter step is still counted against the cap until then.
-const GATEWAY_DEADLINE: Duration = Duration::from_secs(10);
-/// The gateway starts that clock when the command reaches it, a little after
-/// this client sent it, so a command is counted for this much longer.
-const GATEWAY_SLACK: Duration = Duration::from_millis(250);
+/// The most commands a batch of frame reads brings the count to, so the
+/// top document and an input event always have room: they are sent whatever
+/// the frames hold, and never wait behind them.
+const FRAME_ROOM: usize = MAX_PENDING - 4;
+/// The most commands a frame read that asks again a session which has not
+/// answered its last one brings the count to. Another ask of a renderer that
+/// is not answering is the least useful one, and must not take the room a
+/// session that has not been asked yet needs.
+const REPEAT_ROOM: usize = 16;
 const MAX_EVENT_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Debug)]
@@ -69,11 +71,13 @@ pub struct Cdp {
     next_id: u64,
     events: VecDeque<(Event, usize)>,
     event_bytes: usize,
-    /// The commands sent and not yet answered, with when each was sent: the
-    /// gateway still holds them, however long this client waited for them.
-    pending: HashMap<u64, Instant>,
-    /// How long the gateway holds a command nobody answers.
-    hold: Duration,
+    /// The commands sent and not yet answered, with the session each went to.
+    /// The gateway holds each until it answers, or reports its own deadline
+    /// with an error answer, however long this client waited for it, so an
+    /// entry ends only with a message the gateway sent.
+    pending: HashMap<u64, String>,
+    /// The display's page session, whose calls are never held back.
+    top: Option<String>,
     /// A JavaScript dialog the page opened while this client listened.
     pub dialog: Option<Value>,
 }
@@ -86,17 +90,15 @@ impl Cdp {
             events: VecDeque::new(),
             event_bytes: 0,
             pending: HashMap::new(),
-            hold: GATEWAY_DEADLINE,
+            top: None,
             dialog: None,
         }
     }
 
-    /// A client whose gateway holds an unanswered command for `hold`, for a
-    /// test that lets calls lapse on a step shorter than the production one.
-    #[cfg(test)]
-    pub fn holding(mut self, hold: Duration) -> Self {
-        self.hold = hold;
-        self
+    /// Names the page session whose calls are sent whatever else the gateway
+    /// holds.
+    pub fn set_top(&mut self, session: &str) {
+        self.top = Some(session.to_owned());
     }
 
     pub async fn call(
@@ -141,9 +143,8 @@ impl Cdp {
             return Err(CdpError::Timeout);
         }
         let deadline = Instant::now() + timeout;
-        if !self.reserve(1, deadline).await? {
-            return Err(CdpError::Timeout);
-        }
+        // A single call is the top document's or a frame's own action, an
+        // input event among them: the batches never fill the room it needs.
         let id = self.send(method, params, session).await?;
         loop {
             let (value, bytes) = self.next_message(deadline).await?;
@@ -156,57 +157,38 @@ impl Cdp {
         }
     }
 
-    /// Sends every call before reading any answer and reads them under one
-    /// deadline, so calls the page holds cost one timeout between them, not
-    /// one each. A call with no answer by the deadline is `Timeout`; the
-    /// connection ending is the error of the whole batch.
+    /// Sends the calls together and reads them under one deadline, so calls
+    /// the page holds cost one timeout between them, not one each. A call
+    /// with no answer by the deadline is `Timeout`; the connection ending is
+    /// the error of the whole batch.
+    ///
+    /// The gateway keeps `MAX_PENDING` commands in flight and answers each as
+    /// its page does, not in order, and a command this client stopped waiting
+    /// for is still held until the gateway ends it. So the calls go in rounds
+    /// that bring the commands held to a bound, the top document's first
+    /// and always, then the sessions with nothing held, then those that have
+    /// not answered their last call (under the lower bound). A call that does
+    /// not fit, with no room to come before the deadline, is not sent and
+    /// reads as unanswered; the others are never refused for it.
     pub async fn call_all(
         &mut self,
         calls: &[(&str, Value, &str)],
         timeout: Duration,
     ) -> Result<Vec<Result<Value, CdpError>>, CdpError> {
-        // The gateway keeps `MAX_PENDING` (32) commands in flight per client
-        // and answers each as its page does, not in order, so a batch is one
-        // round of concurrent calls, each under the same deadline from the
-        // moment it was sent; a larger one goes in rounds of that size. A
-        // round also waits for room: commands an earlier round gave up on
-        // are pending until the gateway's own deadline, and count.
-        let mut answers = Vec::with_capacity(calls.len());
-        for chunk in calls.chunks(MAX_PENDING) {
-            answers.extend(self.call_round(chunk, timeout).await?);
-        }
-        Ok(answers)
-    }
-
-    async fn call_round(
-        &mut self,
-        calls: &[(&str, Value, &str)],
-        timeout: Duration,
-    ) -> Result<Vec<Result<Value, CdpError>>, CdpError> {
-        let deadline = Instant::now() + timeout;
-        // Without time or room before the deadline nothing is sent, and every
-        // call is as unanswered as one the page held.
-        if timeout.is_zero() || !self.reserve(calls.len(), deadline).await? {
-            return Ok(calls.iter().map(|_| Err(CdpError::Timeout)).collect());
-        }
-        let mut ids = Vec::with_capacity(calls.len());
-        for (method, params, session) in calls {
-            ids.push(self.send(method, params.clone(), Some(session)).await?);
-        }
-        let mut answers: Vec<Option<Result<Value, CdpError>>> = ids.iter().map(|_| None).collect();
-        while answers.iter().any(Option::is_none) {
-            let (value, bytes) = match self.next_message(deadline).await {
-                Ok(message) => message,
-                Err(CdpError::Timeout) => break,
-                Err(error) => return Err(error),
-            };
-            match value["id"]
-                .as_u64()
-                .and_then(|id| ids.iter().position(|sent| *sent == id))
-            {
-                Some(index) => answers[index] = Some(answer(&value)),
-                None => {
-                    self.note(&value, bytes);
+        let mut answers: Vec<Option<Result<Value, CdpError>>> =
+            calls.iter().map(|_| None).collect();
+        if !timeout.is_zero() {
+            let deadline = Instant::now() + timeout;
+            let mut queue: Vec<usize> = (0..calls.len()).collect();
+            while !queue.is_empty() {
+                self.take_ready().await?;
+                let round = self.admit(calls, &mut queue);
+                if round.is_empty() {
+                    break;
+                }
+                let complete = self.round(calls, &round, &mut answers, deadline).await?;
+                if !complete {
+                    break;
                 }
             }
         }
@@ -216,28 +198,83 @@ impl Cdp {
             .collect())
     }
 
-    /// Waits until the gateway can take `count` more commands, or says it
-    /// cannot before `deadline`. The commands it holds are those sent and not
-    /// answered, until the gateway's own deadline ends each.
-    async fn reserve(&mut self, count: usize, deadline: Instant) -> Result<bool, CdpError> {
-        loop {
-            let (now, held_for) = (Instant::now(), self.hold + GATEWAY_SLACK);
-            self.pending.retain(|_, sent| now < *sent + held_for);
-            if self.pending.len() + count <= MAX_PENDING {
-                return Ok(true);
+    /// Takes the calls of the queue that fit now out of it, in the order they
+    /// are sent.
+    fn admit(&self, calls: &[(&str, Value, &str)], queue: &mut Vec<usize>) -> Vec<usize> {
+        let held = |session: &str| self.pending.values().any(|held| held == session);
+        let class = |index: usize| {
+            let session = calls[index].2;
+            if self.top.as_deref() == Some(session) {
+                0
+            } else if held(session) {
+                2
+            } else {
+                1
             }
-            let Some(free) = self.pending.values().map(|sent| *sent + held_for).min() else {
-                return Ok(true);
+        };
+        queue.sort_by_key(|index| class(*index));
+        let mut count = self.pending.len();
+        let (mut round, mut rest) = (Vec::new(), Vec::new());
+        for index in queue.drain(..) {
+            let fits = match class(index) {
+                0 => true,
+                1 => count < FRAME_ROOM,
+                _ => count < REPEAT_ROOM,
             };
-            if free >= deadline {
-                return Ok(false);
+            if fits {
+                count += 1;
+                round.push(index);
+            } else {
+                rest.push(index);
             }
-            // A late answer frees its place sooner than the deadline does.
-            match self.next_message(free).await {
+        }
+        *queue = rest;
+        round
+    }
+
+    /// Sends the round's calls and reads their answers until the deadline;
+    /// false when one had none.
+    async fn round(
+        &mut self,
+        calls: &[(&str, Value, &str)],
+        round: &[usize],
+        answers: &mut [Option<Result<Value, CdpError>>],
+        deadline: Instant,
+    ) -> Result<bool, CdpError> {
+        let mut ids = Vec::with_capacity(round.len());
+        for index in round {
+            let (method, params, session) = &calls[*index];
+            ids.push(self.send(method, params.clone(), Some(session)).await?);
+        }
+        while round.iter().any(|index| answers[*index].is_none()) {
+            let (value, bytes) = match self.next_message(deadline).await {
+                Ok(message) => message,
+                Err(CdpError::Timeout) => return Ok(false),
+                Err(error) => return Err(error),
+            };
+            match value["id"]
+                .as_u64()
+                .and_then(|id| ids.iter().position(|sent| *sent == id))
+            {
+                Some(position) => answers[round[position]] = Some(answer(&value)),
+                None => {
+                    self.note(&value, bytes);
+                }
+            }
+        }
+        Ok(true)
+    }
+
+    /// Reads what the gateway has already sent, without waiting for more: the
+    /// answers, including its own deadline errors, that end the commands it
+    /// held.
+    async fn take_ready(&mut self) -> Result<(), CdpError> {
+        loop {
+            match self.next_message(Instant::now()).await {
                 Ok((value, bytes)) => {
                     self.note(&value, bytes);
                 }
-                Err(CdpError::Timeout) => {}
+                Err(CdpError::Timeout) => return Ok(()),
                 Err(error) => return Err(error),
             }
         }
@@ -251,7 +288,8 @@ impl Cdp {
     ) -> Result<u64, CdpError> {
         self.next_id += 1;
         let id = self.next_id;
-        self.pending.insert(id, Instant::now());
+        self.pending
+            .insert(id, session.unwrap_or_default().to_owned());
         let mut message = json!({"id": id, "method": method, "params": params});
         if let Some(session) = session {
             message["sessionId"] = json!(session);

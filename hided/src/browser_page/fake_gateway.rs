@@ -16,20 +16,64 @@ pub fn close(code: u16) -> Value {
     json!({"__close": code})
 }
 
+/// What a script returns to send a reply some time after the request, as the
+/// real gateway answers a command its page never does: an error at its own
+/// deadline.
+pub fn after(delay: Duration, reply: Value) -> Value {
+    let mut reply = reply;
+    reply["__after_ms"] = json!(u64::try_from(delay.as_millis()).unwrap());
+    reply
+}
+
 pub async fn gateway(mut script: impl FnMut(&Value) -> Vec<Value> + Send + 'static) -> Cdp {
+    use futures_util::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
+    use tokio_tungstenite::tungstenite::protocol::CloseFrame;
+
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     tokio::spawn(async move {
         let (stream, _) = listener.accept().await.unwrap();
         let mut socket = tokio_tungstenite::accept_async(stream).await.unwrap();
-        while let Some(Ok(message)) = futures_util::StreamExt::next(&mut socket).await {
-            let Ok(text) = message.into_text() else {
-                continue;
-            };
-            let request: Value = serde_json::from_str(text.as_str()).unwrap();
-            for reply in script(&request) {
-                use tokio_tungstenite::tungstenite::Message;
-                use tokio_tungstenite::tungstenite::protocol::CloseFrame;
+        // Replies that are due later, with when.
+        let mut later: Vec<(tokio::time::Instant, Value)> = Vec::new();
+        loop {
+            let due = later.iter().map(|(at, _)| *at).min();
+            let mut replies = Vec::new();
+            tokio::select! {
+                message = socket.next() => {
+                    let Some(Ok(message)) = message else { return };
+                    let Ok(text) = message.into_text() else {
+                        continue;
+                    };
+                    let request: Value = serde_json::from_str(text.as_str()).unwrap();
+                    for reply in script(&request) {
+                        match reply["__after_ms"].as_u64() {
+                            Some(ms) => later.push((
+                                tokio::time::Instant::now() + Duration::from_millis(ms),
+                                reply,
+                            )),
+                            None => replies.push(reply),
+                        }
+                    }
+                }
+                () = async {
+                    match due {
+                        Some(at) => tokio::time::sleep_until(at).await,
+                        None => std::future::pending().await,
+                    }
+                } => {
+                    let now = tokio::time::Instant::now();
+                    let (ready, rest): (Vec<_>, Vec<_>) =
+                        later.drain(..).partition(|(at, _)| *at <= now);
+                    later = rest;
+                    replies.extend(ready.into_iter().map(|(_, reply)| reply));
+                }
+            }
+            for mut reply in replies {
+                reply
+                    .as_object_mut()
+                    .map(|object| object.remove("__after_ms"));
                 let message = match reply["__close"].as_u64() {
                     Some(code) => Message::Close(Some(CloseFrame {
                         code: u16::try_from(code).unwrap().into(),
@@ -37,10 +81,7 @@ pub async fn gateway(mut script: impl FnMut(&Value) -> Vec<Value> + Send + 'stat
                     })),
                     None => Message::text(reply.to_string()),
                 };
-                if futures_util::SinkExt::send(&mut socket, message)
-                    .await
-                    .is_err()
-                {
+                if socket.send(message).await.is_err() {
                     return;
                 }
             }
@@ -49,15 +90,15 @@ pub async fn gateway(mut script: impl FnMut(&Value) -> Vec<Value> + Send + 'stat
     let (socket, _) = tokio_tungstenite::connect_async(format!("ws://{address}"))
         .await
         .unwrap();
-    Cdp::new(socket).holding(HOLD)
+    Cdp::new(socket)
 }
 
 /// A page whose calls wait this long for an answer, not the production step.
 pub const STEP: Duration = Duration::from_millis(500);
 
-/// How long the scripted gateway keeps a command nobody answers pending, the
-/// way the real one does for ten seconds against the production step of
-/// eight.
+/// How long the scripted gateway keeps a command nobody answers pending
+/// before it answers with an error, the way the real one does at ten seconds
+/// against the production step of eight.
 pub const HOLD: Duration = Duration::from_millis(625);
 
 pub async fn page(script: impl FnMut(&Value) -> Vec<Value> + Send + 'static) -> Page {
@@ -94,9 +135,9 @@ impl Traffic {
 pub type Seen = Arc<Mutex<Traffic>>;
 
 /// Wraps a script with the gateway's own bookkeeping: a command no reply
-/// answers stays pending until `HOLD` after it arrived, and one that arrives
-/// while 32 are pending closes the connection with 1013, as the real gateway
-/// does.
+/// answers stays pending until `HOLD` after it arrived, when it is answered
+/// with an error, and one that arrives while 32 are pending closes the
+/// connection with 1013, as the real gateway does.
 pub fn recording(
     mut script: impl FnMut(&Value) -> Vec<Value> + Send + 'static,
 ) -> (impl FnMut(&Value) -> Vec<Value> + Send + 'static, Seen) {
@@ -115,9 +156,14 @@ pub fn recording(
             return vec![close(1013)];
         }
         seen.most_pending = seen.most_pending.max(pending.len() + 1);
-        let replies = script(request);
+        let mut replies = script(request);
         if !replies.iter().any(|reply| reply["id"] == request["id"]) {
             pending.push(now);
+            replies.push(after(
+                HOLD,
+                json!({"id": request["id"], "sessionId": request["sessionId"],
+                    "error": {"message": "CDP command timed out"}}),
+            ));
         }
         replies
     };
@@ -165,6 +211,9 @@ pub struct Frames {
     pub slow_enable_once: bool,
     /// The first healthy frame leaves its first snapshot read unanswered.
     pub slow_read_once: bool,
+    /// The first healthy frame leaves every other snapshot read unanswered,
+    /// the first included.
+    pub flaky_reads: bool,
     /// The first healthy frame answers everything but the look for its own
     /// frames (`Target.setAutoAttach`).
     pub scan_silent: bool,
@@ -310,7 +359,9 @@ pub fn page_with_frames(
                 }
                 if n == 1 {
                     reads_of_first += 1;
-                    if frames.slow_read_once && reads_of_first == 1 {
+                    if frames.slow_read_once && reads_of_first == 1
+                        || frames.flaky_reads && reads_of_first % 2 == 1
+                    {
                         return Vec::new();
                     }
                 }

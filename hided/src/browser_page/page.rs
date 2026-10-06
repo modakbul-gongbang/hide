@@ -22,10 +22,11 @@ const OVERLAY: Duration = Duration::from_secs(1);
 /// Nested cross-origin frames a snapshot follows; the gateway admits 64
 /// sessions per client.
 const MAX_FRAMES: usize = 24;
-/// How many rounds in one command may go unanswered by the same frame, in
-/// whatever it was asked (its `Page.enable`, a read, its look for its own
-/// frames), before it is noted and left alone for the rest of the command: the
-/// one that found it silent, and one more in case it was only slow. Every read of a page
+/// How many rounds in a row may go unanswered by the same frame, in whatever
+/// it was asked (its `Page.enable`, a read, its look for its own frames),
+/// before it is noted and left alone for the rest of the command: the one that
+/// found it silent, and one more in case it was only slow. A frame that
+/// answers starts again: the budget is for silence, not for a frame's history. Every read of a page
 /// asks the frames again, so without this a frame that never answers costs a
 /// whole step on each read of a command.
 pub const MISS_LIMIT: u8 = 2;
@@ -58,7 +59,7 @@ struct Known {
     silent: bool,
     /// Its document's tag and origin, once read.
     document: Option<(String, String)>,
-    /// How many rounds of this command it left unanswered.
+    /// How many rounds in a row it left unanswered.
     misses: u8,
 }
 
@@ -109,6 +110,8 @@ pub struct Composite {
     pub silent: Vec<String>,
     /// The session and origin of each frame this read could not read.
     pub unread: Vec<(String, String)>,
+    /// The session of the frame each section's frame is embedded in.
+    pub lineage: Vec<(String, String)>,
 }
 
 /// Two reads of the page set side by side: what they can be compared on.
@@ -121,15 +124,36 @@ pub struct Comparison {
 }
 
 /// Compares like with like. A frame one of the reads could not read is left
-/// out of both, with its note, so a frame that answered in one read and not
-/// the other is never a content change.
+/// out of both, with its note, and so are the frames inside it, which that
+/// read could not list; so a frame that answered in one read and not the other
+/// is never a content change.
 pub fn compare(before: &Composite, after: &Composite) -> Comparison {
-    let excluded = |session: &str| {
+    let parent_of = |session: &str| {
+        before
+            .lineage
+            .iter()
+            .chain(&after.lineage)
+            .find(|(frame, _)| frame == session)
+            .map(|(_, parent)| parent.as_str())
+    };
+    let unread_in = |session: &str| {
         before
             .unread
             .iter()
             .chain(&after.unread)
             .any(|(unread, _)| unread == session)
+    };
+    let excluded = |session: &str| {
+        let mut current = Some(session);
+        // Frames nest at most `MAX_FRAMES` deep.
+        for _ in 0..=MAX_FRAMES {
+            let Some(frame) = current else { return false };
+            if unread_in(frame) {
+                return true;
+            }
+            current = parent_of(frame);
+        }
+        false
     };
     let text = |composite: &Composite| {
         let sections: Vec<String> = composite
@@ -230,7 +254,8 @@ pub fn call(asset: &str, op: &str, args: &Value) -> String {
 
 impl Page {
     #[cfg(test)]
-    pub fn for_test(cdp: Cdp, step: Duration) -> Self {
+    pub fn for_test(mut cdp: Cdp, step: Duration) -> Self {
+        cdp.set_top("top");
         Self {
             cdp,
             display: "browser-1".into(),
@@ -296,6 +321,7 @@ impl Page {
             Err(error) => return Err(page.failure(error)),
         };
         let top = page.top.clone();
+        page.cdp.set_top(&top);
         page.enable(&top).await?;
         Ok(page)
     }
@@ -318,7 +344,7 @@ impl Page {
 
     /// Whether this command has stopped asking the frame, because it has
     /// left too many rounds unanswered.
-    fn given_up(&self, session: &str) -> bool {
+    pub fn given_up(&self, session: &str) -> bool {
         self.known
             .iter()
             .any(|frame| frame.session == session && frame.misses >= MISS_LIMIT)
@@ -328,6 +354,22 @@ impl Page {
     fn missed(&mut self, session: &str) {
         if let Some(frame) = self.known.iter_mut().find(|frame| frame.session == session) {
             frame.misses = frame.misses.saturating_add(1);
+        }
+    }
+
+    /// Records that the frame answered, in whatever way: its silence so far
+    /// no longer counts against it.
+    fn answered(&mut self, session: &str) {
+        if let Some(frame) = self.known.iter_mut().find(|frame| frame.session == session) {
+            frame.misses = 0;
+        }
+    }
+
+    /// Counts a frame's outcome of one read against, or for, its budget.
+    fn account(&mut self, session: &str, outcome: &Result<Value, Failure>) {
+        match outcome {
+            Err(failure) if failure.silent => self.missed(session),
+            _ => self.answered(session),
         }
     }
 
@@ -390,9 +432,7 @@ impl Page {
             )
             .await;
         let outcome = self.value_of(answer);
-        if matches!(&outcome, Err(failure) if failure.silent) {
-            self.missed(session);
-        }
+        self.account(session, &outcome);
         outcome
     }
 
@@ -429,13 +469,13 @@ impl Page {
             .map_err(|error| self.failure(error))?;
         let mut answers = answers.into_iter();
         let mut outcomes = Vec::with_capacity(calls.len());
-        for ((session, _), skipped) in calls.iter().zip(skipped) {
-            let outcome = match skipped {
+        for ((session, _), skipped_now) in calls.iter().zip(skipped) {
+            let outcome = match skipped_now {
                 true => Err(self.blocked(CdpError::Timeout)),
                 false => self.value_of(answers.next().unwrap_or(Err(CdpError::Timeout))),
             };
-            if matches!(&outcome, Err(failure) if failure.silent) {
-                self.missed(session);
+            if !skipped_now {
+                self.account(session, &outcome);
             }
             outcomes.push(outcome);
         }
@@ -534,6 +574,9 @@ impl Page {
             .retain(|frame| !detached.contains(&frame.session));
         self.scanned.retain(|session| !detached.contains(session));
         let mut tried: Vec<String> = Vec::new();
+        // A look that went unanswered waits for the next read of the page, so
+        // the frame's budget is not spent in one call.
+        let mut scanned_now: Vec<String> = Vec::new();
         loop {
             let mut parents = Vec::new();
             if !self.scanned.contains(&self.top) {
@@ -545,10 +588,12 @@ impl Page {
                     .filter(|frame| {
                         frame.document.is_some()
                             && !self.scanned.contains(&frame.session)
+                            && !scanned_now.contains(&frame.session)
                             && frame.misses < MISS_LIMIT
                     })
                     .map(|frame| frame.session.clone()),
             );
+            scanned_now.extend(parents.iter().cloned());
             self.scan(&parents).await?;
             self.collect_attached();
             let todo: Vec<String> = self
@@ -569,6 +614,7 @@ impl Page {
             let unscanned = self.known.iter().any(|frame| {
                 frame.document.is_some()
                     && !self.scanned.contains(&frame.session)
+                    && !scanned_now.contains(&frame.session)
                     && frame.misses < MISS_LIMIT
             });
             if !unscanned {
@@ -652,7 +698,13 @@ impl Page {
             .map_err(|error| self.failure(error))?;
         for (parent, answer) in attached.into_iter().zip(answers) {
             match answer {
-                Ok(_) => self.scanned.push(parent.to_owned()),
+                Ok(_) => {
+                    self.scanned.push(parent.to_owned());
+                    self.answered(parent);
+                    if let Some(frame) = self.known.iter_mut().find(|f| f.session == parent) {
+                        frame.silent = false;
+                    }
+                }
                 Err(error) => {
                     let failure = self.blocked(error);
                     self.scan_missed(parent, failure)?;
@@ -665,6 +717,10 @@ impl Page {
     fn scan_missed(&mut self, parent: &str, failure: Failure) -> Result<(), Failure> {
         if failure.silent && parent != self.top {
             self.missed(parent);
+            // Its own frames could not be listed: they are unread, not absent.
+            if let Some(frame) = self.known.iter_mut().find(|f| f.session == parent) {
+                frame.silent = true;
+            }
             Ok(())
         } else {
             Err(failure)
@@ -705,12 +761,18 @@ impl Page {
                 continue;
             };
             match outcome {
-                Ok(()) => frame.enabled = true,
+                Ok(()) => {
+                    frame.enabled = true;
+                    frame.misses = 0;
+                }
                 Err(failure) if failure.silent => {
                     frame.silent = true;
                     frame.misses = frame.misses.saturating_add(1);
                 }
-                Err(failure) if failure.page_side() => frame.silent = false,
+                Err(failure) if failure.page_side() => {
+                    frame.silent = false;
+                    frame.misses = 0;
+                }
                 Err(failure) => return Err(failure),
             }
         }
@@ -965,6 +1027,10 @@ impl Page {
             sections,
             silent: self.notes(),
             unread: self.unreadable(),
+            lineage: frames
+                .iter()
+                .map(|frame| (frame.session.clone(), frame.parent.clone()))
+                .collect(),
         })
     }
 
@@ -991,7 +1057,7 @@ impl Page {
                 None if frame.silent => {
                     Some((frame.session.clone(), frame.attached_origin.clone()))
                 }
-                Some((_, origin)) if self.unread.contains(&frame.session) => {
+                Some((_, origin)) if frame.silent || self.unread.contains(&frame.session) => {
                     Some((frame.session.clone(), origin.clone()))
                 }
                 _ => None,
@@ -1165,6 +1231,7 @@ mod tests {
             )],
             silent: Vec::new(),
             unread: Vec::new(),
+            lineage: Vec::new(),
         };
         assert_eq!(
             composite.text(),
@@ -1184,6 +1251,7 @@ mod tests {
                 .iter()
                 .map(|(session, origin)| ((*session).into(), (*origin).into()))
                 .collect(),
+            lineage: Vec::new(),
         }
     }
 
@@ -1320,11 +1388,13 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn commands_an_earlier_round_gave_up_on_count_against_the_gateways_cap() {
-        // 24 frames never answer `Page.enable`. The second call asks them
-        // again once the step has lapsed, while the gateway still holds the
-        // first call's 24 until its own, longer deadline: sent at once, that
-        // is 48 pending and the gateway closes the connection.
+    async fn commands_the_gateway_still_holds_never_pass_its_cap_and_never_hold_back_the_top_document()
+     {
+        // 24 frames never answer `Page.enable`. The step lapses and the
+        // gateway still holds the 24 until its own, longer deadline: sent
+        // again at once that is 48 pending, and the gateway closes the
+        // connection. The ask of a session that has not answered its last one
+        // is not sent; the page's own calls are, whatever is held.
         let (script, seen) = fake::recording(page_with_frames(
             Frames {
                 hung: 24,
@@ -1335,11 +1405,134 @@ mod tests {
         let mut page = page(script).await;
         page.frames().await.unwrap();
         page.frames().await.unwrap();
+        let mut asks: Vec<(&str, String)> = Vec::new();
+        let sessions: Vec<String> = (1..=24).map(|n| format!("f{n}")).collect();
+        asks.extend(
+            sessions
+                .iter()
+                .map(|session| (session.as_str(), "1".to_owned())),
+        );
+        page.eval_all(&asks).await.unwrap();
         let seen = seen.lock().unwrap();
         assert!(seen.most_pending >= 24, "{}", seen.most_pending);
         assert!(seen.most_pending <= 32, "{}", seen.most_pending);
-        // Both rounds were sent: the cap made the second wait, not give up.
-        assert_eq!(seen.sent("Page.enable", "f1"), 2);
+        assert_eq!(seen.sent("Page.enable", "f1"), 1);
+        // The look for frames' flush, once.
+        assert_eq!(seen.sent("Runtime.evaluate", "top"), 1);
+    }
+
+    #[tokio::test]
+    async fn the_top_document_is_asked_when_frame_reads_have_filled_their_room() {
+        // 28 sessions the gateway holds a command of, as many as frame reads
+        // take: the top document is asked beside them all the same, and
+        // answers.
+        let (script, seen) = fake::recording(page_with_frames(Frames::default(), None));
+        let mut page = page(script).await;
+        let sessions: Vec<String> = (1..=28).map(|n| format!("g{n}")).collect();
+        let asks: Vec<(&str, String)> = sessions
+            .iter()
+            .map(|session| (session.as_str(), "1".to_owned()))
+            .collect();
+        page.eval_all(&asks).await.unwrap();
+        assert_eq!(seen.lock().unwrap().most_pending, 28);
+        let top = page.top.clone();
+        let outcomes = page
+            .eval_all(&[(top.as_str(), "1".to_owned())])
+            .await
+            .unwrap();
+        assert!(outcomes[0].is_ok(), "{:?}", outcomes[0]);
+        assert!(seen.lock().unwrap().most_pending <= 32);
+    }
+
+    #[tokio::test]
+    async fn frames_that_answer_are_read_beside_frames_the_gateway_still_holds_commands_of() {
+        // 16 of 24 frames never answer. Reads that include them go on reading
+        // the 8 that do, and no read charges those a miss.
+        let (script, seen) = fake::recording(page_with_frames(
+            Frames {
+                hung: 16,
+                healthy: 8,
+                ..Frames::default()
+            },
+            None,
+        ));
+        let mut page = page(script).await;
+        for _ in 0..4 {
+            let composite = page.snapshot(None, "auto").await.unwrap();
+            assert_eq!(composite.sections.len(), 8);
+            assert_eq!(composite.silent.len(), 16, "{:?}", composite.silent);
+        }
+        assert!(seen.lock().unwrap().most_pending <= 32);
+    }
+
+    #[tokio::test]
+    async fn a_frame_that_answers_starts_its_budget_again() {
+        // The frame leaves every other read unanswered. Two silent rounds in a
+        // row give a frame up; two in the whole command do not.
+        let mut page = page(page_with_frames(
+            Frames {
+                healthy: 1,
+                flaky_reads: true,
+                ..Frames::default()
+            },
+            None,
+        ))
+        .await;
+        let mut read = Vec::new();
+        for _ in 0..6 {
+            read.push(page.snapshot(None, "stable").await.unwrap().sections.len());
+        }
+        assert_eq!(read, [0, 1, 0, 1, 0, 1]);
+    }
+
+    #[tokio::test]
+    async fn a_look_for_a_frames_own_frames_that_went_unanswered_leaves_the_frame_noted_and_its_children_unread()
+     {
+        let mut page = page(page_with_frames(
+            Frames {
+                healthy: 1,
+                scan_silent: true,
+                ..Frames::default()
+            },
+            None,
+        ))
+        .await;
+        let composite = page.snapshot(None, "auto").await.unwrap();
+        // Its own document is read, and it is named: what is inside it is not
+        // known to be absent.
+        assert_eq!(composite.sections.len(), 1);
+        assert_eq!(
+            composite.unread,
+            [("ok1".to_owned(), "http://ok.test:9".to_owned())]
+        );
+        assert_eq!(composite.silent.len(), 1);
+        // Given up after two looks, it is still named by the later reads.
+        for _ in 0..3 {
+            assert_eq!(page.snapshot(None, "auto").await.unwrap().silent.len(), 1);
+        }
+    }
+
+    #[test]
+    fn frames_inside_a_frame_one_read_could_not_list_are_left_out_of_both_texts() {
+        let top = "# T\n# http://a/\n\n@1 button \"A\"\n";
+        let mut before = composite(
+            top,
+            &[
+                ("s1", "# OOPIF k7q2\n@k7q2:1 link \"B\""),
+                ("s2", "# OOPIF k7q3\n@k7q3:1 link \"C\""),
+            ],
+            &[],
+        );
+        before.lineage = vec![("s1".into(), "top".into()), ("s2".into(), "s1".into())];
+        // The later read could not look inside s1: s2 is not there, and not gone.
+        let after = composite(
+            top,
+            &[("s1", "# OOPIF k7q2\n@k7q2:1 link \"B\"")],
+            &[("s1", "http://b.test")],
+        );
+        let seen = compare(&before, &after);
+        assert_eq!(seen.before, seen.after);
+        assert_eq!(seen.unread, ["http://b.test"]);
     }
 
     #[tokio::test]

@@ -52,8 +52,14 @@ Password, card number, CVC, one-time code and similar values are never shown; yo
 `@N` names an element of the top document, including open shadow roots and same-origin frames.
 A ref stays the same across snapshots of the same document, new elements get the next numbers, and a navigation starts again at `@1`.
 A cross-origin frame shows as its own section, `# OOPIF <tag> origin=<origin>`, and its elements are `@<tag>:N`; its values and links show only their origin.
-A frame that answers nothing in time shows as `# OOPIF unresponsive origin=<origin>` with no refs, and the rest of the page is read; its script may never yield, or a dialog it opened is waiting for the operator. A frame that did not answer is asked once more within the same command, in case it was only slow, and is then left alone for the rest of that command, so a frame that never answers costs a step or two, not one on every read; the next command asks it afresh. `wait` ends at its own timeout whatever a frame does and names the frames it could not read, and an action that could not read a frame says so instead of reporting that nothing changed, and `type` or `press` that cannot tell which frame holds the focus, because a frame did not answer, sends nothing and fails `page_unresponsive`.
-A ref from an older document, or from a frame that navigated, fails `ref_stale` instead of touching another element: take a fresh snapshot. While a frame that did not answer may be the ref's frame, the ref cannot be told stale, so it fails `page_unresponsive` with the same advice to take a fresh snapshot.
+A frame that answers nothing in time shows as `# OOPIF unresponsive origin=<origin>` with no refs, and the rest of the page is read; its script may never yield, or a dialog it opened is waiting for the operator.
+A frame that did not answer is asked again by the next read, so one that was only slow shows up in the next snapshot or poll.
+After two silent rounds in a row a command leaves it alone until the command ends, so a frame that never answers costs a step or two, not one on every read; the next command asks it afresh.
+`wait` ends at its own timeout and names the frames it could not read, and it never reports a frame that did not answer as one that lacks the text.
+An action that could not read a frame says so instead of reporting that nothing changed.
+`type` or `press` that cannot tell which frame holds the focus, because a frame did not answer, sends nothing and fails `page_unresponsive`.
+A ref from an older document, or from a frame that navigated, fails `ref_stale` instead of touching another element: take a fresh snapshot.
+While a frame that did not answer may be the ref's frame, the ref cannot be told stale, so it fails `page_unresponsive` with the same advice to take a fresh snapshot.
 
 ## Acting and checking
 
@@ -111,7 +117,7 @@ Follow `next_action`; the reasons you will meet:
 | `display_busy` | Another debugger (agent-browser, Playwright) or another `hide browser` command holds the display; let it finish. |
 | `display_unsupported` | Only http(s) and blank displays can be driven; open the page with `hide browser open <url>`. |
 | `display_missing`, `display_closed` | Run `hide view list` and choose a current browser display. |
-| `page_unresponsive` | The page did not answer in time; retry or ask the operator. After an input (click, type, press, drag, scroll) the event was sent and may already have taken effect: look with `snapshot --diff` before repeating it. |
+| `page_unresponsive` | The page did not answer in time; retry or ask the operator. For a ref whose frame may be one that did not answer, take a fresh snapshot (`hide browser snapshot <display>`) and use its refs, since retrying a stale ref repeats the failure. After an input (click, type, press, drag, scroll) the event was sent and may already have taken effect: look with `snapshot --diff` before repeating it. |
 | `browser_relay_limit`, `browser_control_busy` | Other `hide browser` commands or CDP clients are running; let one finish. |
 | `browser_relay_message_limit`, `browser_limit` | A message crossed a size or rate limit; capture a region with `screenshot --ref`, narrow the request, or wait a minute. |
 | `browser_control_unavailable` | Reconnect the Hide desktop app. |

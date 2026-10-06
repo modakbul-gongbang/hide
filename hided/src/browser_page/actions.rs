@@ -862,7 +862,7 @@ struct Poll {
     page_silent: bool,
 }
 
-async fn poll(page: &mut Page, wait: &Wait, deadline: Instant) -> Result<Poll, Failure> {
+async fn poll(page: &mut Page, wait: &Wait, deadline: Option<Instant>) -> Result<Poll, Failure> {
     let mut polled = 1;
     let mut page_silent = false;
     let found = match wait {
@@ -872,7 +872,12 @@ async fn poll(page: &mut Page, wait: &Wait, deadline: Instant) -> Result<Poll, F
             // the command has given up on it.
             let mut sessions = vec![page.top.clone()];
             sessions.extend(page.frames().await?.into_iter().map(|frame| frame.session));
-            polled = sessions.len();
+            // One command per session that is asked: a frame the command has
+            // given up on costs the gateway nothing.
+            polled = sessions
+                .iter()
+                .filter(|session| !page.given_up(session))
+                .count();
             let probe = call(DOM_JS, "waitText", &json!({"text": text}));
             let asks: Vec<(&str, String)> = sessions
                 .iter()
@@ -894,7 +899,8 @@ async fn poll(page: &mut Page, wait: &Wait, deadline: Instant) -> Result<Poll, F
                     // out of time: the wait's own deadline cut the read short.
                     Err(failure)
                         if failure.silent
-                            && (*session != page.top || Instant::now() >= deadline) =>
+                            && (*session != page.top
+                                || deadline.is_some_and(|deadline| Instant::now() >= deadline)) =>
                     {
                         page_silent |= *session == page.top;
                         unread.push(session.clone());
@@ -970,25 +976,34 @@ async fn poll(page: &mut Page, wait: &Wait, deadline: Instant) -> Result<Poll, F
 async fn wait_for(page: &mut Page, wait: Wait, timeout: Duration) -> Result<Output, Failure> {
     let started = Instant::now();
     let deadline = started + timeout;
-    // Every read of a poll waits no longer than the wait has left, so the last
-    // poll ends at the deadline, not a step after it.
-    page.end_at(deadline);
+    // The first poll is a whole read, each call as long as a step, so a short
+    // timeout still finds what is already there. Every later read waits no
+    // longer than the wait has left, so the last poll ends at the deadline,
+    // not a step after it.
+    let mut first = true;
     loop {
+        // Silence that ends a poll at the wait's deadline is the wait running
+        // out of time; silence that lasted a whole step is not.
+        let cut = (!first).then_some(deadline);
         let Poll {
             found,
             polled,
             page_silent,
-        } = match poll(page, &wait, deadline).await {
+        } = match poll(page, &wait, cut).await {
             Ok(outcome) => outcome,
             // The poll ran out the wait's own time before something answered:
             // that is the wait timing out, not the page failing.
-            Err(failure) if failure.silent && Instant::now() >= deadline => Poll {
-                found: false,
-                polled: 1,
-                page_silent: true,
-            },
+            Err(failure) if failure.silent && cut.is_some_and(|cut| Instant::now() >= cut) => {
+                Poll {
+                    found: false,
+                    polled: 1,
+                    page_silent: true,
+                }
+            }
             Err(failure) => return Err(failure),
         };
+        page.end_at(deadline);
+        first = false;
         let waited = started.elapsed().as_millis() as u64;
         if found {
             let answer = match &wait {
@@ -1694,6 +1709,7 @@ mod tests {
             )],
             silent: Vec::new(),
             unread: Vec::new(),
+            lineage: Vec::new(),
         };
         let message = changed(&mut page, Duration::ZERO, &before, None)
             .await
@@ -1718,6 +1734,7 @@ mod tests {
             sections: Vec::new(),
             silent: Vec::new(),
             unread: Vec::new(),
+            lineage: Vec::new(),
         };
         let message = changed(&mut page, Duration::ZERO, &before, None)
             .await
@@ -1874,43 +1891,42 @@ mod tests {
         );
     }
 
-    #[tokio::test]
-    async fn a_wait_shorter_than_a_step_times_out_whatever_a_frame_does() {
-        // The step is a minute: a poll that waits it out on the frame that
-        // never answers is cut off by the hang guard, not by the wait.
-        let hung = Frames {
-            hung: 1,
-            ..Frames::default()
-        };
-        for wait in [
-            Wait::Text("never shown".into()),
-            Wait::Selector {
-                selector: "@zz9z:3".into(),
-                gone: false,
-            },
-        ] {
-            let mut page = page_within(page_with_frames(hung, None), Duration::from_secs(60)).await;
-            let outcome = tokio::time::timeout(
-                Duration::from_secs(20),
-                wait_for(&mut page, wait, Duration::from_secs(1)),
-            )
-            .await
-            .expect("the wait ended by its own deadline");
-            let failure = outcome.err().unwrap();
-            assert_eq!(failure.reason, "timeout");
-            assert!(failure.detail.unwrap().contains("http://hung1.test"));
+    /// A top document that answers the first `waitText` and no other.
+    fn answers_once(
+        mut script: impl FnMut(&Value) -> Vec<Value> + Send + 'static,
+    ) -> impl FnMut(&Value) -> Vec<Value> + Send + 'static {
+        let mut asked = 0;
+        move |request| {
+            let waiting = request["params"]["expression"]
+                .as_str()
+                .is_some_and(|expression| expression.contains("\"waitText\""));
+            if waiting {
+                asked += 1;
+                if asked > 1 {
+                    return Vec::new();
+                }
+            }
+            script(request)
         }
     }
 
     #[tokio::test]
-    async fn a_wait_cut_short_before_the_page_answered_does_not_say_the_text_is_absent() {
-        let mut page = page_within(|_: &Value| Vec::new(), Duration::from_secs(60)).await;
+    async fn a_polls_reads_after_the_first_end_with_the_wait_and_say_the_text_is_not_known_absent()
+    {
+        // The step is a minute: a second poll that waited it out on the top
+        // document, silent now, would be cut off by the hang guard, not by the
+        // wait.
+        let mut page = page_within(
+            answers_once(page_with_frames(Frames::default(), None)),
+            Duration::from_secs(60),
+        )
+        .await;
         let failure = tokio::time::timeout(
             Duration::from_secs(20),
             wait_for(
                 &mut page,
                 Wait::Text("never shown".into()),
-                Duration::from_millis(200),
+                Duration::from_secs(1),
             ),
         )
         .await
@@ -1922,8 +1938,50 @@ mod tests {
             failure
                 .detail
                 .unwrap()
-                .contains("ended before the page answered"),
+                .contains("ended before the page answered")
         );
+    }
+
+    #[tokio::test]
+    async fn a_wait_shorter_than_a_read_still_gets_one_whole_read() {
+        // The page shows the text and a frame holds the page's attention for
+        // several round trips: a read cut to the wait's 1 ms would give up
+        // before the first answer.
+        let shown = Frames {
+            healthy: 2,
+            wait_found: true,
+            ..Frames::default()
+        };
+        let mut page = page_with(shown).await;
+        let outcome = wait_for(
+            &mut page,
+            Wait::Text("Ready".into()),
+            Duration::from_millis(1),
+        )
+        .await;
+        assert!(
+            matches!(outcome, Ok(Output::Json(_))),
+            "{:?}",
+            outcome.err()
+        );
+    }
+
+    #[tokio::test]
+    async fn a_poll_counts_only_the_frames_it_asks() {
+        // Three frames answer nothing to a read. After two polls the command
+        // has given them up, and a poll asks the top document alone.
+        let silent = Frames {
+            healthy: 3,
+            stops_on_read: true,
+            ..Frames::default()
+        };
+        let mut page = page_with(silent).await;
+        let wait = Wait::Text("never shown".into());
+        let mut asked = Vec::new();
+        for _ in 0..3 {
+            asked.push(poll(&mut page, &wait, None).await.unwrap().polled);
+        }
+        assert_eq!(asked, [4, 4, 1]);
     }
 
     #[tokio::test]
@@ -1979,6 +2037,33 @@ mod tests {
             changed.contains("1 frame(s) did not answer (http://hung1.test)"),
             "{changed}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_drag_ends_with_its_release_whatever_the_gateway_holds_of_frame_reads() {
+        // 24 frames never answer, and the gateway holds what was asked of
+        // them. The drag's events, the release last, are the page's own and
+        // are never refused for it, so the button is not left held down.
+        let hung = Frames {
+            hung: 24,
+            ..Frames::default()
+        };
+        let (script, seen) = recording(acting(page_with_frames(hung, None)));
+        let mut page = page(script).await;
+        page.frames().await.unwrap();
+        let sessions: Vec<String> = (1..=24).map(|n| format!("f{n}")).collect();
+        let asks: Vec<(&str, String)> = sessions
+            .iter()
+            .map(|session| (session.as_str(), "1".to_owned()))
+            .collect();
+        page.eval_all(&asks).await.unwrap();
+        drag_moves(&mut page, &point(), &point(), 2, false)
+            .await
+            .unwrap();
+        let seen = seen.lock().unwrap();
+        // Move, press, two moves, release.
+        assert_eq!(seen.sent("Input.dispatchMouseEvent", "top"), 5);
+        assert!(seen.most_pending <= 32, "{}", seen.most_pending);
     }
 
     /// The page answers the input events of an action.
