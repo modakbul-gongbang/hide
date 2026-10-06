@@ -68,10 +68,12 @@ impl SearchIndex {
     }
     /// Moves every row of each `(old, new)` Project to its new id, in one
     /// transaction (PRD core-host-node D-23). A row whose new key is already
-    /// taken keeps its old id. Returns how many rows moved.
-    pub fn rekey_projects(&mut self, pairs: &[(String, String)]) -> Result<usize, String> {
+    /// taken is a stale copy of one the index made since, and is dropped; the
+    /// index is rebuilt from the session files. Returns the rows moved and
+    /// the rows dropped.
+    pub fn rekey_projects(&mut self, pairs: &[(String, String)]) -> Result<(usize, usize), String> {
         let tx = self.db.transaction().map_err(|e| e.to_string())?;
-        let mut moved = 0;
+        let (mut moved, mut dropped) = (0, 0);
         for (old, new) in pairs {
             for table in ["policy", "control_outcomes", "files", "messages"] {
                 moved += tx
@@ -80,10 +82,13 @@ impl SearchIndex {
                         params![new, old],
                     )
                     .map_err(|e| e.to_string())?;
+                dropped += tx
+                    .execute(&format!("DELETE FROM {table} WHERE project=?1"), [old])
+                    .map_err(|e| e.to_string())?;
             }
         }
         tx.commit().map_err(|e| e.to_string())?;
-        Ok(moved)
+        Ok((moved, dropped))
     }
     pub fn last_update_reads(&self) -> UpdateReads {
         self.reads

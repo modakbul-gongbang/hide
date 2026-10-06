@@ -529,6 +529,17 @@ impl MemoryStore {
         Ok(moved)
     }
 
+    /// The roots of every Project stored under device `device`.
+    pub fn roots_of_device(&self, device: &str) -> Result<Vec<String>, MemoryError> {
+        let mut statement = self
+            .connection
+            .prepare("SELECT root FROM projects WHERE device_id=?1")?;
+        let roots = statement
+            .query_map([device], |row| row.get::<_, String>(0))?
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(roots)
+    }
+
     /// Whether any Project is stored under device `device`.
     pub fn has_device(&self, device: &str) -> Result<bool, MemoryError> {
         Ok(self.connection.query_row(

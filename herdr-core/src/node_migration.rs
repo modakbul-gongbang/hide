@@ -89,6 +89,11 @@ pub const KEYS: &[(&str, &str, Mechanism)] = &[
     (CORE_STATE, "/agent_sleep/stamps/{key}", Mechanism::Owned),
     (CORE_STATE, "/agent_sleep/records/{key}", Mechanism::Owned),
     (CORE_STATE, "/expanded_paths/*", Mechanism::Owned),
+    (CORE_STATE, "/selected_path", Mechanism::Owned),
+    (CORE_STATE, "/focused_checkout_id", Mechanism::Owned),
+    (CORE_STATE, "/collapsed_workspace_ids/*", Mechanism::Owned),
+    (CORE_STATE, "/collapsed_checkout_ids/*", Mechanism::Owned),
+    (CORE_STATE, "/expanded_checkout_ids/*", Mechanism::Owned),
     (CORE_STATE, "/project_base_branches/{key}", Mechanism::Owned),
     (CORE_STATE, "/project_issue_sources/{key}", Mechanism::Owned),
     (
@@ -152,6 +157,17 @@ pub const KEYS: &[(&str, &str, Mechanism)] = &[
     ),
     (DELIVERY_LEDGER, "/agents/*/pane", Mechanism::Owned),
     (DELIVERY_LEDGER, "/agents/*/host_scope", Mechanism::Owned),
+    (DELIVERY_LEDGER, "/agents/*/project", Mechanism::Owned),
+    (DELIVERY_LEDGER, "/agents/*/session", Mechanism::Owned),
+    (DELIVERY_LEDGER, "/agents/*/instance", Mechanism::Owned),
+    (DELIVERY_LEDGER, "/spawns/*/repo", Mechanism::Owned),
+    (DELIVERY_LEDGER, "/spawns/*/path", Mechanism::Owned),
+    (
+        DELIVERY_LEDGER,
+        "/spawns/*/requested_path",
+        Mechanism::Owned,
+    ),
+    (DELIVERY_LEDGER, "/spawns/*/pane", Mechanism::Owned),
     (
         PROJECT_MEMORY,
         "projects.device_id, every project_id column",
@@ -178,6 +194,27 @@ pub const KEYS: &[(&str, &str, Mechanism)] = &[
         Mechanism::Owned,
     ),
     ("local-issues.json", "/{key}", Mechanism::Owned),
+];
+
+/// The rest of a state folder, which names no machine: the daemon's own
+/// files, phone pairing, pane credentials, attachments, label generators,
+/// Workspace bridges, logs, and this conversion's own files. A file in the
+/// folder that is neither here nor in `KEYS` fails the contract test.
+pub const UNBOUND: &[&str] = &[
+    "hided.json",
+    "hided.lock",
+    "connect.lock",
+    "host-id",
+    "mobile.json",
+    "phones.json",
+    "pane-capabilities",
+    "attachments",
+    "TerminalClipboard",
+    "label-generators",
+    "workspace-bridges",
+    "Logs",
+    MARKER_FILE,
+    BACKUP_DIR,
 ];
 
 /// `node.json`: the node that owns every unqualified key in this folder,
@@ -212,6 +249,8 @@ pub struct Outcome {
     pub files: Vec<String>,
     pub projects: usize,
     pub search_rows: usize,
+    /// Search rows whose new key was already taken, dropped as stale.
+    pub search_rows_dropped: usize,
 }
 
 /// Converts the state folder at `state_dir` for `node`, with the two Project
@@ -234,7 +273,8 @@ pub fn convert(state_dir: &Path, home: &Path, node: &NodeId) -> Result<Outcome, 
                 format!(
                     "this folder's unqualified keys belong to node {owner}, not to this \
                      machine ({node}); a core that reads another node's state is not \
-                     supported yet"
+                     supported yet, so start this machine with its own state folder or \
+                     run the folder on node {owner}"
                 ),
             ));
         }
@@ -249,12 +289,23 @@ pub fn convert(state_dir: &Path, home: &Path, node: &NodeId) -> Result<Outcome, 
         if !path.is_file() {
             continue;
         }
-        let pairs = convert_memory(path, node, &backup).map_err(|reason| refuse(path, reason))?;
-        if !pairs.is_empty() {
+        let moved = convert_memory(path, node, &backup).map_err(|reason| refuse(path, reason))?;
+        if moved > 0 {
             outcome.files.push(path.display().to_string());
-            outcome.projects += pairs.len();
+            outcome.projects += moved;
         }
-        project_pairs.extend(pairs);
+        // The pairs come from the node's Projects as they are now, not from
+        // the ones this start moved, so a start retried after a later store
+        // failed still re-keys the rows of a Project no folder registers.
+        for root in memory_roots(path, node).map_err(|reason| refuse(path, reason))? {
+            let pair = (
+                hide_project::project_id(LEGACY, Path::new(&root)),
+                hide_project::project_id(node.as_str(), Path::new(&root)),
+            );
+            if !project_pairs.contains(&pair) {
+                project_pairs.push(pair);
+            }
+        }
     }
 
     // Project ids are a digest of device and root. The roots a Project was
@@ -263,7 +314,7 @@ pub fn convert(state_dir: &Path, home: &Path, node: &NodeId) -> Result<Outcome, 
     if let Some(value) =
         read_json(&core_state_path).map_err(|reason| refuse(&core_state_path, reason))?
     {
-        for path in registered_paths(&value) {
+        for path in registered_paths(&value, node) {
             if let Ok(identity) = hide_project::resolve(Path::new(&path), LEGACY) {
                 let pair = (
                     identity.id,
@@ -301,10 +352,11 @@ pub fn convert(state_dir: &Path, home: &Path, node: &NodeId) -> Result<Outcome, 
         // either moves every row or none.
         let mut index = hide_session::search::SearchIndex::open(&search)
             .map_err(|reason| refuse(&search, reason))?;
-        outcome.search_rows = index
-            .rekey_projects(&project_pairs)
-            .map_err(|reason| refuse(&search, reason))?;
-        if outcome.search_rows > 0 {
+        (outcome.search_rows, outcome.search_rows_dropped) =
+            index
+                .rekey_projects(&project_pairs)
+                .map_err(|reason| refuse(&search, reason))?;
+        if outcome.search_rows + outcome.search_rows_dropped > 0 {
             outcome.files.push(search.display().to_string());
         }
     }
@@ -378,7 +430,9 @@ fn write(path: &Path, bytes: &[u8]) -> Result<(), String> {
 }
 
 /// The folders this machine's registrations name: their Projects' roots.
-fn registered_paths(core_state: &Value) -> Vec<String> {
+/// The folders registered on this machine, under either name, so a start
+/// retried after the file was converted still finds them.
+fn registered_paths(core_state: &Value, node: &NodeId) -> Vec<String> {
     core_state
         .get("workspace_registrations")
         .and_then(Value::as_array)
@@ -387,7 +441,7 @@ fn registered_paths(core_state: &Value) -> Vec<String> {
         .filter(|row| {
             row.get("device_id")
                 .and_then(Value::as_str)
-                .is_none_or(|device| device == LEGACY)
+                .is_none_or(|device| device == LEGACY || device == node.as_str())
         })
         .filter_map(|row| row.get("path").and_then(Value::as_str).map(str::to_owned))
         .collect()
@@ -517,19 +571,15 @@ fn convert_delivery_ledger(value: &mut Value, node: &str, _: &BTreeMap<String, S
 /// A store that does not open is left to Project Memory, which already
 /// reports a damaged store as unavailable; only a readable store that fails
 /// to convert stops the start.
-fn convert_memory(
-    path: &Path,
-    node: &NodeId,
-    backup: &Backup,
-) -> Result<Vec<(String, String)>, String> {
+fn convert_memory(path: &Path, node: &NodeId, backup: &Backup) -> Result<usize, String> {
     let Ok(store) = hide_memory::MemoryStore::open(path) else {
-        return Ok(Vec::new());
+        return Ok(0);
     };
     let pending: bool = store
         .has_device(LEGACY)
         .map_err(|error| error.to_string())?;
     if !pending {
-        return Ok(Vec::new());
+        return Ok(0);
     }
     backup.copy_with(path, |destination| {
         store
@@ -538,6 +588,18 @@ fn convert_memory(
     })?;
     store
         .convert_device(LEGACY, node.as_str())
+        .map(|moved| moved.len())
+        .map_err(|error| error.to_string())
+}
+
+/// The roots of the node's Projects in a Memory store; none when the store
+/// does not open, which Project Memory reports on its own.
+fn memory_roots(path: &Path, node: &NodeId) -> Result<Vec<String>, String> {
+    let Ok(store) = hide_memory::MemoryStore::open(path) else {
+        return Ok(Vec::new());
+    };
+    store
+        .roots_of_device(node.as_str())
         .map_err(|error| error.to_string())
 }
 
@@ -668,6 +730,11 @@ mod tests {
                 "project_base_branches": {root.clone(): "main"},
                 "project_issue_sources": {root.clone(): "github"},
                 "expanded_inactive_checkout_project_paths": [root],
+                "selected_path": root,
+                "focused_checkout_id": "workspace:a",
+                "collapsed_workspace_ids": ["workspace:a"],
+                "collapsed_checkout_ids": ["workspace:a"],
+                "expanded_checkout_ids": ["workspace:a"],
             }),
         );
         write(
@@ -689,8 +756,9 @@ mod tests {
                 "letters": [{"sender": actor("local"), "recipient": actor("mini"),
                              "watch_warning": {"target": actor("local")}}],
                 "watches": [{"parent": actor("local"), "target": actor("local")}],
-                "agents": [{"machine": "local", "actor": actor("local"), "pane": "w1:p1", "host_scope": "/tmp/herdr.sock"}],
-                "spawns": [],
+                "agents": [{"machine": "local", "actor": actor("local"), "pane": "w1:p1", "host_scope": "/tmp/herdr.sock",
+                            "project": root, "session": "s1", "instance": "term_1"}],
+                "spawns": [{"repo": root, "path": root, "requested_path": root, "pane": "w1:p2"}],
             }),
         );
         write(
@@ -942,6 +1010,27 @@ mod tests {
     }
 
     #[test]
+    fn every_file_a_state_folder_holds_is_listed_with_how_its_machine_keys_are_kept() {
+        let legacy = legacy();
+        convert(&legacy.state, &legacy.home, &node()).unwrap();
+        let listed: Vec<&str> = KEYS
+            .iter()
+            .map(|(file, _, _)| *file)
+            .chain(UNBOUND.iter().copied())
+            .collect();
+        for entry in std::fs::read_dir(&legacy.state).unwrap() {
+            let name = entry.unwrap().file_name().to_string_lossy().into_owned();
+            assert!(
+                listed.contains(&name.as_str()),
+                "{name} is in the state folder but neither KEYS nor UNBOUND names it"
+            );
+        }
+        for file in UNBOUND {
+            assert!(!KEYS.iter().any(|(listed, _, _)| listed == file), "{file}");
+        }
+    }
+
+    #[test]
     fn the_originals_are_kept_and_a_second_start_writes_nothing() {
         let legacy = legacy();
         let before = snapshot(&legacy.state);
@@ -1024,6 +1113,43 @@ mod tests {
             memory.has_device(LEGACY).unwrap(),
             "the transaction rolled back"
         );
+    }
+
+    #[test]
+    fn a_start_retried_after_a_later_store_failed_still_rekeys_an_unregistered_project() {
+        let legacy = legacy();
+        // A Project Memory knows but no folder registers.
+        let beta = legacy.project.with_file_name("beta");
+        std::fs::create_dir_all(&beta).unwrap();
+        let old_beta = hide_project::project_id(LEGACY, &beta);
+        let memory = hide_memory::MemoryStore::open(&legacy.state.join(PROJECT_MEMORY)).unwrap();
+        memory.ensure_project(&old_beta, &beta, LEGACY).unwrap();
+        drop(memory);
+        let search_path = legacy.state.join(SESSION_SEARCH);
+        let search = rusqlite::Connection::open(&search_path).unwrap();
+        search
+            .execute("INSERT INTO policy VALUES(?1, 7)", [&old_beta])
+            .unwrap();
+        drop(search);
+
+        // The search index fails after Memory has moved its Projects.
+        let index = std::fs::read(&search_path).unwrap();
+        std::fs::write(&search_path, b"not a database").unwrap();
+        let refusal = convert(&legacy.state, &legacy.home, &node()).unwrap_err();
+        assert_eq!(refusal.file, search_path);
+        let memory = hide_memory::MemoryStore::open(&legacy.state.join(PROJECT_MEMORY)).unwrap();
+        assert!(!memory.has_device(LEGACY).unwrap(), "Memory moved first");
+        drop(memory);
+
+        std::fs::write(&search_path, index).unwrap();
+        convert(&legacy.state, &legacy.home, &node()).unwrap();
+        let search = rusqlite::Connection::open(&search_path).unwrap();
+        let beta_policy: String = search
+            .query_row("SELECT project FROM policy WHERE days=7", [], |row| {
+                row.get(0)
+            })
+            .unwrap();
+        assert_eq!(beta_policy, hide_project::project_id(NODE, &beta));
     }
 
     #[test]
