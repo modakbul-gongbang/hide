@@ -139,6 +139,7 @@ fn tree_runtime(status: &[(&str, &str)]) -> Runtime {
         runtime: std::sync::Weak::new(),
         notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(hide_herdr_client::LocalSocketConnector::new(&socket_path)),
+        node: Arc::new(hide_node::Local::of_process()),
     });
     assert!(
         runtime.ingest_session_with_catalog(Ok(tree_payload(&EVERY, status)), Some(tree_catalog()))

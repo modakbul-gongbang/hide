@@ -1289,6 +1289,7 @@ fn close_checkout(
     }
     super::close_checkout_panes(
         context.api_connector.as_ref(),
+        context.node.as_ref(),
         &[path.to_owned()],
         &to_close,
         super::ProcessWait::for_folder_removal(true),

@@ -13,3 +13,87 @@ pub struct DiffTarget {
     pub path: String,
     pub committed: bool,
 }
+
+/// A branch setting Hide keeps in a repository's own configuration.
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BranchConfigKey {
+    /// `branch.<name>.description`: the checkout's purpose.
+    Description,
+    /// `branch.<name>.issue`: the issue the checkout works on.
+    Issue,
+}
+
+impl BranchConfigKey {
+    fn name(self) -> &'static str {
+        match self {
+            Self::Description => "description",
+            Self::Issue => "issue",
+        }
+    }
+}
+
+/// One git command the core has a node run in a repository on that node's
+/// machine. Each is a fixed command line ([`GitCommand::args`]); a request
+/// names the branch and value, never the arguments.
+#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "command", rename_all = "snake_case")]
+pub enum GitCommand {
+    /// Every uncommitted change, untracked files included.
+    Status,
+    /// The branch the worktree has checked out.
+    CurrentBranch,
+    Checkout {
+        branch: String,
+    },
+    /// Answers only when `refs/heads/<branch>` exists.
+    HasLocalBranch {
+        branch: String,
+    },
+    /// Fetches `branch` from `origin` into its remote-tracking ref.
+    FetchBranch {
+        branch: String,
+    },
+    SetBranchConfig {
+        branch: String,
+        key: BranchConfigKey,
+        value: String,
+    },
+    /// Removing a setting that is not there succeeds.
+    UnsetBranchConfig {
+        branch: String,
+        key: BranchConfigKey,
+    },
+}
+
+impl GitCommand {
+    /// The arguments after `git --no-optional-locks -C <root>`.
+    pub fn args(&self) -> Vec<String> {
+        let owned = |args: &[&str]| args.iter().map(|arg| (*arg).to_owned()).collect();
+        match self {
+            Self::Status => owned(&["status", "--porcelain=v1", "--untracked-files=all"]),
+            Self::CurrentBranch => owned(&["symbolic-ref", "--quiet", "--short", "HEAD"]),
+            Self::Checkout { branch } => owned(&["checkout", "--no-overwrite-ignore", branch]),
+            Self::HasLocalBranch { branch } => owned(&[
+                "show-ref",
+                "--verify",
+                "--quiet",
+                &format!("refs/heads/{branch}"),
+            ]),
+            Self::FetchBranch { branch } => owned(&[
+                "fetch",
+                "--no-tags",
+                "origin",
+                &format!("+refs/heads/{branch}:refs/remotes/origin/{branch}"),
+            ]),
+            Self::SetBranchConfig { branch, key, value } => {
+                owned(&["config", &format!("branch.{branch}.{}", key.name()), value])
+            }
+            Self::UnsetBranchConfig { branch, key } => owned(&[
+                "config",
+                "--unset-all",
+                &format!("branch.{branch}.{}", key.name()),
+            ]),
+        }
+    }
+}

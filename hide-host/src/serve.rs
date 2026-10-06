@@ -17,6 +17,7 @@ use crate::protocol::{
 };
 use crate::root::{Root, relative_path};
 use crate::{bytes, document, git, index, list, mutate, save, worktrees};
+use hide_node_link::process::ProcessStart;
 
 /// Requests the helper works on at once; the core also admits at most this
 /// many per device, so the helper never queues behind itself.
@@ -364,6 +365,20 @@ pub fn handle_in(call: Call, env: &Env) -> HostResult<Value> {
             herdr_socket.as_deref(),
             &retirement_projects,
             env,
+        ),
+        Call::Git { root, command } => {
+            to_value(crate::git_command::run(&absolute(&root)?, &command)?)
+        }
+        Call::ProcessStarts { pids } => to_value(
+            pids.into_iter()
+                .map(|pid| match hide_platform::process::start_time(pid) {
+                    Ok(started) => ProcessStart::Running { started },
+                    Err(error) if error.kind() == io::ErrorKind::NotFound => ProcessStart::Gone,
+                    Err(error) => ProcessStart::Unreadable {
+                        reason: format!("process {pid} could not be read: {error}"),
+                    },
+                })
+                .collect::<Vec<_>>(),
         ),
         Call::HookDiagnosis => {
             let home = env.home("HOME is not set, so the agent hooks have no account to read")?;

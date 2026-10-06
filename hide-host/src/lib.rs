@@ -14,6 +14,7 @@ pub mod bytes;
 pub mod clone;
 pub mod document;
 pub mod git;
+pub mod git_command;
 pub mod home;
 pub mod index;
 pub mod kit;

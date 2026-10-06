@@ -2,16 +2,23 @@
 use super::*;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::Path;
-use std::process::Command;
 use std::sync::mpsc::{SyncSender, TrySendError, sync_channel};
 
 use crate::agent_start::StartError;
+use hide_node_link::git::{BranchConfigKey, GitCommand};
+use hide_node_link::process::ProcessStart;
+use hide_node_link::protocol::Call;
 
 pub(crate) const CONFIRM_TIMEOUT: Duration = Duration::from_secs(5);
 const CONFIRM_POLL: Duration = Duration::from_millis(100);
 /// A host's Git checks answer in seconds; a removal deletes a whole folder.
 const HOST_CHECK_TIMEOUT: Duration = Duration::from_secs(30);
 const HOST_REMOVE_TIMEOUT: Duration = Duration::from_secs(120);
+/// A git command on a repository's node: a checkout of a large tree is the
+/// slowest; a branch check and a fetch carry the node's own bound.
+const GIT_TIMEOUT: Duration = Duration::from_secs(120);
+/// A read of a few pids' start times.
+const PROCESS_READ_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// Where a worktree task runs: the Herdr that creates or closes the
 /// checkout's panes and the file host that answers its Git checks and runs
@@ -126,6 +133,7 @@ pub fn spawn_worktree_close(
         .spawn(move || {
             let result = close_checkout_panes(
                 context.connector.as_ref(),
+                context.host.as_ref(),
                 std::slice::from_ref(&checkout_path),
                 &pane_ids,
                 ProcessWait::for_folder_removal(context.local),
@@ -260,6 +268,7 @@ pub fn spawn_workspace_close(
         .spawn(move || {
             let result = close_checkout_panes(
                 context.connector.as_ref(),
+                context.host.as_ref(),
                 &checkout_paths,
                 &pane_ids,
                 ProcessWait::Skip,
@@ -414,12 +423,16 @@ pub struct PurposeMirror {
 impl PurposeMirror {
     const QUEUE_CAPACITY: usize = 64;
 
-    pub fn new(connector: Arc<dyn ApiConnector>) -> Result<Self, String> {
+    /// `node` holds the repositories whose purposes are mirrored.
+    pub fn new(
+        connector: Arc<dyn ApiConnector>,
+        node: Arc<dyn crate::node_access::NodeLink>,
+    ) -> Result<Self, String> {
         let (sender, receiver) = sync_channel(Self::QUEUE_CAPACITY);
         let worker = thread::Builder::new()
             .name("herdr-core-purpose-mirror".to_owned())
             .spawn(move || {
-                let git = SystemGit;
+                let git = NodeGit(node.as_ref());
                 while let Ok(message) = receiver.recv() {
                     let request = match message {
                         PurposeMirrorMessage::Write(request) => request,
@@ -431,19 +444,19 @@ impl PurposeMirror {
                                     crate::diagnostic!(serde_json::json!({"component":"checkout_issue","kind":"removed_worktree.token_cleanup_failed","workspace_id":id,"message":error}));
                                 }
                             }
-                            if let Err(error) = git.unset(&repository_root, &format!("branch.{branch}.issue")) {
+                            if let Err(error) = git.run(&repository_root, GitCommand::UnsetBranchConfig { branch, key: BranchConfigKey::Issue }) {
                                 crate::diagnostic!(serde_json::json!({"component":"checkout_issue","kind":"removed_worktree.cleanup_failed","message":error}));
                             }
                             continue;
                         }
                     };
-                    let key = format!("branch.{}.description", request.branch);
-                    let result = match request.purpose.as_deref() {
-                        Some(purpose) => git
-                            .run(&request.repository_root, &["config", &key, purpose])
-                            .map(|_| ()),
-                        None => git.unset(&request.repository_root, &key),
+                    let branch = request.branch.clone();
+                    let key = BranchConfigKey::Description;
+                    let command = match request.purpose.clone() {
+                        Some(value) => GitCommand::SetBranchConfig { branch, key, value },
+                        None => GitCommand::UnsetBranchConfig { branch, key },
                     };
+                    let result = git.run(&request.repository_root, command).map(|_| ());
                     match result {
                         Ok(()) => crate::diagnostic!(serde_json::json!({
                             "component": "checkout_purpose",
@@ -645,23 +658,37 @@ pub fn spawn_existing_branch_worktree(
     context: WorktreeTarget,
     request: WorktreeTaskRequest,
 ) -> Result<(), String> {
-    spawn_worktree_task(context, request, |_, request| {
-        request.base_branch = existing_branch_base(&request.repository_root, &request.branch)?;
+    spawn_worktree_task(context, request, |context, request| {
+        request.base_branch = existing_branch_base(
+            &NodeGit(context.host.as_ref()),
+            &request.repository_root,
+            &request.branch,
+        )?;
         Ok(())
     })
 }
 
 /// `None` when `branch` is a local branch, else `origin/<branch>` once it
 /// has been fetched from `origin`.
-fn existing_branch_base(repository_root: &str, branch: &str) -> Result<Option<String>, String> {
-    let root = Path::new(repository_root);
-    let local = format!("refs/heads/{branch}");
-    if hide_host::worktrees::git(root, &["show-ref", "--verify", "--quiet", &local]).is_ok() {
+fn existing_branch_base(
+    git: &dyn GitCommands,
+    repository_root: &str,
+    branch: &str,
+) -> Result<Option<String>, String> {
+    let branch = branch.to_owned();
+    let has_local = GitCommand::HasLocalBranch {
+        branch: branch.clone(),
+    };
+    if git.run(repository_root, has_local).is_ok() {
         return Ok(None);
     }
-    let refspec = format!("+refs/heads/{branch}:refs/remotes/origin/{branch}");
-    hide_host::worktrees::git(root, &["fetch", "--no-tags", "origin", &refspec])
-        .map_err(|error| format!("fetch {branch} from origin: {error}"))?;
+    git.run(
+        repository_root,
+        GitCommand::FetchBranch {
+            branch: branch.clone(),
+        },
+    )
+    .map_err(|error| format!("fetch {branch} from origin: {error}"))?;
     Ok(Some(format!("origin/{branch}")))
 }
 
@@ -717,7 +744,7 @@ pub fn spawn_purpose_write(
     thread::Builder::new()
         .name("herdr-core-purpose-write".into())
         .spawn(move || {
-            let git = SystemGit;
+            let git = NodeGit(context.node.as_ref());
             let result = write_purpose(context.api_connector.as_ref(), &git, &request);
             if let Some(runtime) = context.runtime.upgrade() {
                 if let Ok(mut guard) = runtime.lock() {
@@ -753,7 +780,7 @@ fn write_issue_metadata(
     previous: Option<&str>,
 ) -> Result<(), IssueWriteFailure> {
     let (detail, token_may_have_changed) =
-        match write_workspace_metadata(connector, git, request, "issue", "issue") {
+        match write_workspace_metadata(connector, git, request, "issue", BranchConfigKey::Issue) {
             Ok(PurposeTaskOutcome::Saved { .. }) => return Ok(()),
             Ok(PurposeTaskOutcome::GitFailed {
                 detail,
@@ -801,7 +828,7 @@ pub fn spawn_issue_write(
                 };
                 write_issue_metadata(
                     context.api_connector.as_ref(),
-                    &SystemGit,
+                    &NodeGit(context.node.as_ref()),
                     &request,
                     previous.as_deref(),
                 )?;
@@ -830,7 +857,7 @@ pub fn spawn_local_issue_write(
         .spawn(move || {
             let result = write_issue_metadata(
                 context.api_connector.as_ref(),
-                &SystemGit,
+                &NodeGit(context.node.as_ref()),
                 &request,
                 previous.as_deref(),
             )
@@ -853,7 +880,7 @@ pub fn spawn_remote_purpose_write(
     thread::Builder::new()
         .name("herdr-core-remote-purpose-write".into())
         .spawn(move || {
-            let git = SystemGit;
+            let git = HerdrOnly;
             let result = write_purpose(context.api_connector.as_ref(), &git, &request);
             if let Some(runtime) = context.runtime.upgrade() {
                 if let Ok(mut guard) = runtime.lock() {
@@ -1244,7 +1271,7 @@ pub fn spawn_branch_migration(
     thread::Builder::new()
         .name("herdr-core-branch-migrate".into())
         .spawn(move || {
-            let runner = SystemGit;
+            let runner = NodeGit(host.as_ref());
             let result = migrate_branch(
                 context.api_connector.as_ref(),
                 host.as_ref(),
@@ -1319,7 +1346,7 @@ fn create_worktree_observing_purpose(
     if identity_matches {
         let purpose_failure = request.purpose.as_ref().and_then(|purpose| {
             on_purpose_write(&created.path, purpose);
-            let git = SystemGit;
+            let git = NodeGit(host);
             let purpose_request = PurposeTaskRequest {
                 id: request.id,
                 checkout_id: String::new(),
@@ -1343,7 +1370,7 @@ fn create_worktree_observing_purpose(
                 session_workspace_id: Some(created.workspace_id.clone()),
                 purpose: issue.clone(),
             };
-            write_issue_metadata(connector, &SystemGit, &issue_request, None)
+            write_issue_metadata(connector, &NodeGit(host), &issue_request, None)
                 .err()
                 .map(|failure| failure.detail)
         });
@@ -1411,53 +1438,34 @@ fn create_worktree_observing_purpose(
 }
 
 trait GitCommands {
-    fn run(&self, cwd: &str, args: &[&str]) -> Result<String, String>;
+    fn run(&self, cwd: &str, command: GitCommand) -> Result<String, String>;
+}
 
-    fn unset(&self, cwd: &str, key: &str) -> Result<(), String> {
-        self.run(cwd, &["config", "--unset-all", key]).map(|_| ())
+/// The git of the node that holds the repository.
+struct NodeGit<'a>(&'a dyn crate::node_access::NodeLink);
+
+impl GitCommands for NodeGit<'_> {
+    fn run(&self, cwd: &str, command: GitCommand) -> Result<String, String> {
+        crate::node_access::call_as(
+            self.0,
+            Call::Git {
+                root: cwd.to_owned(),
+                command,
+            },
+            GIT_TIMEOUT,
+        )
+        .map_err(|error| error.to_string())
     }
 }
 
-struct SystemGit;
-impl GitCommands for SystemGit {
-    fn run(&self, cwd: &str, args: &[&str]) -> Result<String, String> {
-        let output = Command::new("git")
-            .arg("--no-optional-locks")
-            .arg("-C")
-            .arg(cwd)
-            .args(args)
-            .output()
-            .map_err(|error| format!("git could not be run: {error}"))?;
-        if output.status.success() {
-            Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned())
-        } else {
-            let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-            Err(if detail.is_empty() {
-                format!("git {} exited with {}", args[0], output.status)
-            } else {
-                format!("git {}: {detail}", args[0])
-            })
-        }
-    }
+/// A device checkout keeps its purpose in Herdr's metadata only; the branch
+/// description mirror is this machine's (B30), so a device write never asks
+/// for git.
+struct HerdrOnly;
 
-    fn unset(&self, cwd: &str, key: &str) -> Result<(), String> {
-        let output = Command::new("git")
-            .arg("--no-optional-locks")
-            .arg("-C")
-            .arg(cwd)
-            .args(["config", "--unset-all", key])
-            .output()
-            .map_err(|error| format!("git could not be run: {error}"))?;
-        if output.status.success() || output.status.code() == Some(5) {
-            Ok(())
-        } else {
-            let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
-            Err(if detail.is_empty() {
-                format!("git config exited with {}", output.status)
-            } else {
-                format!("git config: {detail}")
-            })
-        }
+impl GitCommands for HerdrOnly {
+    fn run(&self, _cwd: &str, _command: GitCommand) -> Result<String, String> {
+        Err("A device checkout keeps its purpose in Herdr only".to_owned())
     }
 }
 
@@ -1466,7 +1474,13 @@ fn write_purpose(
     git: &dyn GitCommands,
     request: &PurposeTaskRequest,
 ) -> Result<PurposeTaskOutcome, String> {
-    write_workspace_metadata(connector, git, request, "purpose", "description")
+    write_workspace_metadata(
+        connector,
+        git,
+        request,
+        "purpose",
+        BranchConfigKey::Description,
+    )
 }
 
 fn write_workspace_metadata(
@@ -1474,7 +1488,7 @@ fn write_workspace_metadata(
     git: &dyn GitCommands,
     request: &PurposeTaskRequest,
     token: &str,
-    config_key: &str,
+    config_key: BranchConfigKey,
 ) -> Result<PurposeTaskOutcome, String> {
     let purpose = request.purpose.trim().to_owned();
     if purpose.chars().count() > 80 {
@@ -1508,16 +1522,20 @@ fn write_workspace_metadata(
             token_written,
         });
     };
-    let key = format!("branch.{branch}.{config_key}");
-    let git_result = if purpose.is_empty() {
-        git.unset(&request.repository_root, &key)
+    let branch = branch.to_owned();
+    let command = if purpose.is_empty() {
+        GitCommand::UnsetBranchConfig {
+            branch,
+            key: config_key,
+        }
     } else {
-        git.run(
-            &request.repository_root,
-            &["config", &key, purpose.as_str()],
-        )
-        .map(|_| ())
+        GitCommand::SetBranchConfig {
+            branch,
+            key: config_key,
+            value: purpose.clone(),
+        }
     };
+    let git_result = git.run(&request.repository_root, command).map(|_| ());
     match git_result {
         Ok(()) => Ok(PurposeTaskOutcome::Saved {
             purpose,
@@ -1589,19 +1607,13 @@ fn migrate_branch(
     git: &dyn GitCommands,
     request: &WorktreeTaskRequest,
 ) -> Result<WorktreeTaskOutcome, String> {
-    let status = git.run(
-        &request.repository_root,
-        &["status", "--porcelain=v1", "--untracked-files=all"],
-    )?;
+    let status = git.run(&request.repository_root, GitCommand::Status)?;
     if !status.is_empty() {
         return Err(
             "preflight: commit or discard uncommitted changes before moving the branch".into(),
         );
     }
-    let original = git.run(
-        &request.repository_root,
-        &["symbolic-ref", "--quiet", "--short", "HEAD"],
-    )?;
+    let original = git.run(&request.repository_root, GitCommand::CurrentBranch)?;
     let Some(base) = request.base_branch.as_deref() else {
         return Err("preflight: the project base branch is unknown".into());
     };
@@ -1610,7 +1622,9 @@ fn migrate_branch(
     }
     git.run(
         &request.repository_root,
-        &["checkout", "--no-overwrite-ignore", base],
+        GitCommand::Checkout {
+            branch: base.to_owned(),
+        },
     )
     .map_err(|error| format!("checkout base branch: {error}"))?;
 
@@ -1625,17 +1639,16 @@ fn migrate_branch(
         Ok(outcome) => Ok(outcome),
         Err(create_error) => match git.run(
             &request.repository_root,
-            &["checkout", "--no-overwrite-ignore", &original],
+            GitCommand::Checkout {
+                branch: original.clone(),
+            },
         ) {
             Ok(_) => Err(format!(
                 "create worktree: {create_error}; restored the main worktree to {original}"
             )),
             Err(restore_error) => {
                 let current = git
-                    .run(
-                        &request.repository_root,
-                        &["symbolic-ref", "--quiet", "--short", "HEAD"],
-                    )
+                    .run(&request.repository_root, GitCommand::CurrentBranch)
                     .unwrap_or_else(|_| "an unknown branch".into());
                 Err(format!(
                     "restore original branch: {restore_error}. The main worktree is now on {current}. After resolving the Git error, open the repository at {} and check out {original}.",
@@ -1683,21 +1696,31 @@ struct PaneProcess {
     started: u64,
 }
 
-impl PaneProcess {
-    /// Only a process that does not exist, or is another one now, has ended;
-    /// a process that cannot be read is not claimed to be gone.
-    fn has_ended(&self) -> Result<bool, String> {
-        match hide_platform::process::start_time(self.pid) {
-            Ok(started) => Ok(started != self.started),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(true),
-            Err(error) => Err(format!("process {} could not be read: {error}", self.pid)),
-        }
+/// What `node`'s kernel says about each of `pids`, in order.
+fn process_starts(
+    node: &dyn crate::node_access::NodeLink,
+    pids: Vec<u32>,
+) -> Result<Vec<ProcessStart>, String> {
+    let asked = pids.len();
+    let starts: Vec<ProcessStart> =
+        crate::node_access::call_as(node, Call::ProcessStarts { pids }, PROCESS_READ_TIMEOUT)
+            .map_err(|error| format!("the pane processes could not be read: {error}"))?;
+    if starts.len() != asked {
+        return Err(format!(
+            "the pane processes could not be read: {asked} asked, {} answered",
+            starts.len()
+        ));
     }
+    Ok(starts)
 }
 
 /// The shell and foreground processes Herdr reports for `pane_id`. A process
 /// that already ended is not listed: there is nothing to wait for.
-fn pane_processes(connector: &dyn ApiConnector, pane_id: &str) -> Result<Vec<PaneProcess>, String> {
+fn pane_processes(
+    connector: &dyn ApiConnector,
+    node: &dyn crate::node_access::NodeLink,
+    pane_id: &str,
+) -> Result<Vec<PaneProcess>, String> {
     let value = control_request(
         connector,
         "pane.process_info",
@@ -1714,11 +1737,11 @@ fn pane_processes(connector: &dyn ApiConnector, pane_id: &str) -> Result<Vec<Pan
     pids.sort_unstable();
     pids.dedup();
     let mut running = Vec::new();
-    for pid in pids {
-        match hide_platform::process::start_time(pid) {
-            Ok(started) => running.push(PaneProcess { pid, started }),
-            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-            Err(error) => return Err(format!("process {pid} could not be read: {error}")),
+    for (pid, start) in pids.clone().into_iter().zip(process_starts(node, pids)?) {
+        match start {
+            ProcessStart::Running { started } => running.push(PaneProcess { pid, started }),
+            ProcessStart::Gone => {}
+            ProcessStart::Unreadable { reason } => return Err(reason),
         }
     }
     Ok(running)
@@ -1728,18 +1751,28 @@ fn pane_processes(connector: &dyn ApiConnector, pane_id: &str) -> Result<Vec<Pan
 /// more at the deadline, and names the pids still running when it does.
 /// `pause` is how long it lets the processes go on, which a test replaces.
 fn wait_for_processes_to_end(
+    node: &dyn crate::node_access::NodeLink,
     held: &mut Vec<PaneProcess>,
     deadline: Instant,
     mut pause: impl FnMut(Duration),
 ) -> Result<(), String> {
     loop {
-        let mut running = Vec::new();
-        for process in held.drain(..) {
-            if !process.has_ended()? {
-                running.push(process);
+        if !held.is_empty() {
+            let starts = process_starts(node, held.iter().map(|process| process.pid).collect())?;
+            let mut running = Vec::new();
+            // Only a process that does not exist, or is another one now, has
+            // ended; a process that cannot be read is not claimed to be gone.
+            for (process, start) in held.drain(..).zip(starts) {
+                match start {
+                    ProcessStart::Running { started } if started == process.started => {
+                        running.push(process);
+                    }
+                    ProcessStart::Running { .. } | ProcessStart::Gone => {}
+                    ProcessStart::Unreadable { reason } => return Err(reason),
+                }
             }
+            *held = running;
         }
-        *held = running;
         if held.is_empty() {
             return Ok(());
         }
@@ -1766,6 +1799,7 @@ fn wait_for_processes_to_end(
 #[allow(clippy::disallowed_methods)] // a production wait, not test code
 pub(crate) fn close_checkout_panes(
     connector: &dyn ApiConnector,
+    node: &dyn crate::node_access::NodeLink,
     paths: &[String],
     pane_ids: &[String],
     wait: ProcessWait,
@@ -1779,7 +1813,7 @@ pub(crate) fn close_checkout_panes(
         let mut held = Vec::new();
         if wait == ProcessWait::ForEnd {
             for pane_id in pane_ids {
-                held.extend(pane_processes(connector, pane_id)?);
+                held.extend(pane_processes(connector, node, pane_id)?);
             }
         }
         for pane_id in pane_ids {
@@ -1815,7 +1849,7 @@ pub(crate) fn close_checkout_panes(
             let (present, pane_at_checkout) = confirmation_state(panes, paths)?;
             if pane_ids.iter().all(|id| !present.contains(id)) && !pane_at_checkout {
                 // Herdr has nothing more to say; only the processes remain.
-                return wait_for_processes_to_end(&mut held, deadline, thread::sleep);
+                return wait_for_processes_to_end(node, &mut held, deadline, thread::sleep);
             }
             thread::sleep(CONFIRM_POLL.min(deadline.saturating_duration_since(Instant::now())));
         }
@@ -1977,11 +2011,8 @@ mod tests {
         }
     }
     impl GitCommands for ScriptedGit {
-        fn run(&self, _cwd: &str, args: &[&str]) -> Result<String, String> {
-            self.calls
-                .lock()
-                .unwrap()
-                .push(args.iter().map(|arg| (*arg).to_owned()).collect());
+        fn run(&self, _cwd: &str, command: GitCommand) -> Result<String, String> {
+            self.calls.lock().unwrap().push(command.args());
             self.replies
                 .lock()
                 .unwrap()
@@ -2025,10 +2056,17 @@ mod tests {
             &git,
             &purpose_request("acme/project#42"),
             "issue",
-            "issue",
+            BranchConfigKey::Issue,
         )
         .unwrap();
-        write_workspace_metadata(&server, &git, &purpose_request(""), "issue", "issue").unwrap();
+        write_workspace_metadata(
+            &server,
+            &git,
+            &purpose_request(""),
+            "issue",
+            BranchConfigKey::Issue,
+        )
+        .unwrap();
         let requests = server.requests.lock().unwrap();
         assert_eq!(requests[0]["params"]["tokens"]["issue"], "acme/project#42");
         assert!(requests[1]["params"]["tokens"]["issue"].is_null());
@@ -2552,6 +2590,7 @@ mod tests {
         ]);
         let result = close_checkout_panes(
             &server,
+            &hide_node::Local::of_process(),
             &["/fixture/topic".into()],
             &["w1:p1".into(), "w1:p2".into()],
             ProcessWait::Skip,
@@ -2570,6 +2609,7 @@ mod tests {
         ]);
         close_checkout_panes(
             &server,
+            &hide_node::Local::of_process(),
             &["/fixture/topic".into()],
             &["w1:p1".into(), "w1:p2".into()],
             ProcessWait::Skip,
@@ -2607,6 +2647,7 @@ mod tests {
             assert!(
                 close_checkout_panes(
                     &server,
+                    &hide_node::Local::of_process(),
                     &["/fixture/topic".into()],
                     &["w1:p1".into()],
                     ProcessWait::Skip,
@@ -2648,12 +2689,17 @@ mod tests {
         let mut child = LongLived::start();
         let pid = child.0.id();
         let server = server(vec![process_info("w1:p1", pid)]);
-        let mut held = pane_processes(&server, "w1:p1").unwrap();
+        let mut held = pane_processes(&server, &hide_node::Local::of_process(), "w1:p1").unwrap();
         let mut pauses = 0;
-        wait_for_processes_to_end(&mut held, Instant::now() + CONFIRM_TIMEOUT, |_| {
-            pauses += 1;
-            child.end();
-        })
+        wait_for_processes_to_end(
+            &hide_node::Local::of_process(),
+            &mut held,
+            Instant::now() + CONFIRM_TIMEOUT,
+            |_| {
+                pauses += 1;
+                child.end();
+            },
+        )
         .unwrap();
         assert_eq!(
             pauses, 1,
@@ -2668,12 +2714,15 @@ mod tests {
         let child = LongLived::start();
         let pid = child.0.id();
         let server = server(vec![process_info("w1:p1", pid)]);
-        let mut held = pane_processes(&server, "w1:p1").unwrap();
+        let mut held = pane_processes(&server, &hide_node::Local::of_process(), "w1:p1").unwrap();
         assert_eq!(held.len(), 1);
         // A deadline that has passed still checks once before it fails.
-        let error = wait_for_processes_to_end(&mut held, Instant::now(), |_| {
-            panic!("no time is left to wait")
-        })
+        let error = wait_for_processes_to_end(
+            &hide_node::Local::of_process(),
+            &mut held,
+            Instant::now(),
+            |_| panic!("no time is left to wait"),
+        )
         .unwrap_err();
         assert!(
             error.contains(&format!("still running (pid {pid})")),
@@ -2687,8 +2736,13 @@ mod tests {
             pid: u32::MAX - 1,
             started: 1,
         }];
-        wait_for_processes_to_end(&mut held, Instant::now(), |_| panic!("nothing to wait for"))
-            .unwrap();
+        wait_for_processes_to_end(
+            &hide_node::Local::of_process(),
+            &mut held,
+            Instant::now(),
+            |_| panic!("nothing to wait for"),
+        )
+        .unwrap();
         assert!(held.is_empty());
     }
 
@@ -2698,13 +2752,15 @@ mod tests {
         for shell in [0, 1, u32::MAX - 1] {
             let server = server(vec![process_info("w1:p1", shell)]);
             assert!(
-                pane_processes(&server, "w1:p1").unwrap().is_empty(),
+                pane_processes(&server, &hide_node::Local::of_process(), "w1:p1")
+                    .unwrap()
+                    .is_empty(),
                 "pid {shell}"
             );
         }
         // The shell is also the foreground process, and is listed once.
         let server = server(vec![process_info("w1:p1", me)]);
-        let held = pane_processes(&server, "w1:p1").unwrap();
+        let held = pane_processes(&server, &hide_node::Local::of_process(), "w1:p1").unwrap();
         assert_eq!(
             held.iter().map(|process| process.pid).collect::<Vec<_>>(),
             [me]
@@ -2718,6 +2774,7 @@ mod tests {
         ]);
         let error = close_checkout_panes(
             &server,
+            &hide_node::Local::of_process(),
             &["/fixture/topic".into()],
             &["w1:p1".into(), "w1:p2".into()],
             ProcessWait::ForEnd,
@@ -2733,6 +2790,7 @@ mod tests {
         let server = server(vec![json!({"result":{"type":"ok"}}), snapshot(&[])]);
         close_checkout_panes(
             &server,
+            &hide_node::Local::of_process(),
             &["/fixture/topic".into()],
             &["w1:p1".into()],
             ProcessWait::Skip,
@@ -2748,6 +2806,7 @@ mod tests {
         assert!(
             close_checkout_panes(
                 &server,
+                &hide_node::Local::of_process(),
                 &["/fixture/topic".into()],
                 &["w1:p1".into()],
                 ProcessWait::Skip,
@@ -3085,24 +3144,16 @@ mod tests {
             base_branch: Some("main".into()),
             ..task("feature")
         };
-        let error = migrate_branch(
-            &server,
-            &hide_node::Local::of_process(),
-            &SystemGit,
-            &request,
-        )
-        .unwrap_err();
+        let node = hide_node::Local::of_process();
+        let error = migrate_branch(&server, &node, &NodeGit(&node), &request).unwrap_err();
 
         assert!(error.contains("checkout base branch"));
         assert_eq!(
             std::fs::read_to_string(root.join("ignored.txt")).unwrap(),
             "private ignored bytes"
         );
-        let branch = SystemGit
-            .run(
-                root.to_str().unwrap(),
-                &["symbolic-ref", "--quiet", "--short", "HEAD"],
-            )
+        let branch = NodeGit(&node)
+            .run(root.to_str().unwrap(), GitCommand::CurrentBranch)
             .unwrap();
         assert_eq!(branch, "feature");
         assert!(server.requests.lock().unwrap().is_empty());

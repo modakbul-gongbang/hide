@@ -18,6 +18,7 @@ pub mod index;
 pub mod link;
 pub mod list;
 pub mod mutate;
+pub mod process;
 pub mod protocol;
 pub mod register;
 pub mod save;

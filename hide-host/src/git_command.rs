@@ -1,0 +1,51 @@
+//! The fixed git commands the core has a node run in one of its
+//! repositories (`hide_node_link::git::GitCommand`): reading a worktree's
+//! state, switching its branch, fetching a branch, and the branch settings
+//! Hide keeps in the repository's configuration.
+
+use std::path::Path;
+use std::process::Command;
+
+use hide_node_link::git::GitCommand;
+
+use crate::error::{ErrorCode, HostError, HostResult};
+
+/// Runs `command` in `root` and answers its output, trimmed. A branch check
+/// and a fetch are bounded like every other read (`worktrees::git`); the rest
+/// run as the operator's git would.
+pub fn run(root: &Path, command: &GitCommand) -> HostResult<String> {
+    let args = command.args();
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let failed = |message: String| HostError::new(ErrorCode::Io, message);
+    match command {
+        GitCommand::HasLocalBranch { .. } | GitCommand::FetchBranch { .. } => {
+            crate::worktrees::git(root, &args).map_err(failed)
+        }
+        GitCommand::Status
+        | GitCommand::CurrentBranch
+        | GitCommand::Checkout { .. }
+        | GitCommand::SetBranchConfig { .. }
+        | GitCommand::UnsetBranchConfig { .. } => {
+            let output = Command::new("git")
+                .arg("--no-optional-locks")
+                .arg("-C")
+                .arg(root)
+                .args(&args)
+                .output()
+                .map_err(|error| failed(format!("git could not be run: {error}")))?;
+            // `config --unset-all` exits 5 when the setting is not there,
+            // which is the state it was asked for.
+            let unset_absent = matches!(command, GitCommand::UnsetBranchConfig { .. })
+                && output.status.code() == Some(5);
+            if output.status.success() || unset_absent {
+                return Ok(String::from_utf8_lossy(&output.stdout).trim().to_owned());
+            }
+            let detail = String::from_utf8_lossy(&output.stderr).trim().to_owned();
+            Err(failed(if detail.is_empty() {
+                format!("git {} exited with {}", args[0], output.status)
+            } else {
+                format!("git {}: {detail}", args[0])
+            }))
+        }
+    }
+}

@@ -218,6 +218,16 @@ pub enum Call {
     /// Whether the node's account has Hide's agent hooks in place, read from
     /// that account's own configuration (`hide_agent_hooks::Diagnosis`).
     HookDiagnosis,
+    /// One fixed git command in the repository at `root`; answers its
+    /// output, trimmed.
+    Git {
+        root: String,
+        command: crate::git::GitCommand,
+    },
+    /// The start time of each pid, in order (`process::ProcessStart`).
+    ProcessStarts {
+        pids: Vec<u32>,
+    },
     /// One bounded read of a pane's conversation for its label, from the
     /// checkpoint the caller kept (`hide_session::label_transcript::read`).
     /// The helper keeps nothing between reads; it answers events and the

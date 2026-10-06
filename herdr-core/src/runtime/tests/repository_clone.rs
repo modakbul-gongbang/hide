@@ -84,6 +84,7 @@ fn shared_runtime() -> SharedRuntime {
         runtime: shared.weak(),
         notifier: crate::handle::ChangeNotifier::noop(),
         api_connector: Arc::new(hide_herdr_client::LocalSocketConnector::new(&socket_path)),
+        node: Arc::new(hide_node::Local::of_process()),
     });
     shared
 }

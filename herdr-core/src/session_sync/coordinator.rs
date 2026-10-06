@@ -58,8 +58,10 @@ fn run_coordinator(
     let mut catalog_cache: Option<CatalogCache> = None;
     // The runtime's settled worktree removals the catalog was last rebuilt for.
     let mut published_removals = 0;
-    let mut purpose_mirror = if context.is_local() {
-        match live::PurposeMirror::new(Arc::clone(&context.api_connector)) {
+    let mut purpose_mirror = if context.is_local()
+        && let Some(node) = context.node()
+    {
+        match live::PurposeMirror::new(Arc::clone(&context.api_connector), Arc::clone(node)) {
             Ok(mirror) => Some(mirror),
             Err(message) => {
                 crate::diagnostic!(json!({
@@ -1719,6 +1721,7 @@ mod worktree_observer_tests {
                     api_connector: Arc::new(hide_herdr_client::LocalSocketConnector::new(
                         &socket_path,
                     )),
+                    node: Arc::new(hide_node::Local::of_process()),
                 },
                 std::sync::Arc::new(hide_node::Local::of_process()),
             );
@@ -1960,6 +1963,7 @@ mod focus_readback_order_tests {
                 runtime: Arc::downgrade(runtime),
                 notifier: ChangeNotifier::noop(),
                 api_connector: Arc::new(herdr.connector()),
+                node: Arc::new(hide_node::Local::of_process()),
             },
             std::sync::Arc::new(hide_node::Local::of_process()),
         )
@@ -2151,6 +2155,7 @@ mod pane_cwd_confirmation_tests {
                 runtime: Weak::new(),
                 notifier: ChangeNotifier::noop(),
                 api_connector: Arc::new(herdr.connector()),
+                node: Arc::new(hide_node::Local::of_process()),
             },
             std::sync::Arc::new(hide_node::Local::of_process()),
         )

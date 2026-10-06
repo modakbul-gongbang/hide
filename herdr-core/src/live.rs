@@ -70,6 +70,9 @@ pub struct LiveContext {
     pub runtime: Weak<Mutex<Runtime>>,
     pub notifier: ChangeNotifier,
     pub(crate) api_connector: Arc<dyn ApiConnector>,
+    /// The core's own node, which does this machine's work (PRD
+    /// core-host-node D-21).
+    pub(crate) node: Arc<dyn crate::node_access::NodeLink>,
 }
 
 /// Everything an official remote terminal session needs. SSH transports the
@@ -2907,6 +2910,7 @@ pub(crate) fn install(
         runtime: Arc::downgrade(runtime),
         notifier: notifier.clone(),
         api_connector: Arc::new(LocalSocketConnector::new(socket_path)),
+        node: Arc::clone(&own_node),
     };
     if let Ok(mut guard) = runtime.lock() {
         guard.set_live(context.clone());
@@ -5352,6 +5356,7 @@ mod tests {
             runtime: Weak::new(),
             notifier: ChangeNotifier::noop(),
             api_connector: Arc::new(herdr.connector()),
+            node: Arc::new(hide_node::Local::of_process()),
         };
 
         spawn_pane_control(

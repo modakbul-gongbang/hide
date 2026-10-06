@@ -202,6 +202,7 @@ fn local_runtime(herdr: &FakeHerdr, machine: &Machine) -> SharedRuntime {
         runtime: shared.weak(),
         notifier: ChangeNotifier::noop(),
         api_connector: Arc::new(herdr.connector()),
+        node: Arc::new(hide_node::Local::of_process()),
     });
     runtime.install_worker_context(shared.weak(), ChangeNotifier::noop());
     drop(runtime);
