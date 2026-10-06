@@ -283,8 +283,43 @@ impl Page {
                 Some(session),
                 self.step,
             )
+            .await;
+        self.value_of(answer)
+    }
+
+    /// Evaluates one expression in each of several sessions, all sent before
+    /// any answer is read and read under one deadline, so frames a page holds
+    /// cost one wait between them. Each session's outcome is its own; only
+    /// the connection ending fails the batch.
+    pub async fn eval_all(
+        &mut self,
+        calls: &[(&str, String)],
+    ) -> Result<Vec<Result<Value, Failure>>, Failure> {
+        let requests: Vec<(&str, Value, &str)> = calls
+            .iter()
+            .map(|(session, expression)| {
+                (
+                    "Runtime.evaluate",
+                    json!({"expression": expression, "returnByValue": true}),
+                    *session,
+                )
+            })
+            .collect();
+        let answers = self
+            .cdp
+            .call_all(&requests, self.step)
             .await
-            .map_err(|error| self.blocked(error))?;
+            .map_err(|error| self.failure(error))?;
+        Ok(answers
+            .into_iter()
+            .map(|answer| self.value_of(answer))
+            .collect())
+    }
+
+    /// What a `Runtime.evaluate` answer says: its value, or the reason it
+    /// stands for.
+    fn value_of(&self, answer: Result<Value, CdpError>) -> Result<Value, Failure> {
+        let answer = answer.map_err(|error| self.blocked(error))?;
         if let Some(details) = answer.get("exceptionDetails") {
             return Err(Failure::new(
                 "page_script_failed",
@@ -436,6 +471,15 @@ impl Page {
                 .call_all(&enables, self.step)
                 .await
                 .map_err(|error| self.failure(error))?;
+            // Of the frames that answered, the tags are read together too.
+            let tag_call = call(DOM_JS, "tag", &json!({}));
+            let answered: Vec<(&str, String)> = batch
+                .iter()
+                .zip(&answers)
+                .filter(|(_, answer)| answer.is_ok())
+                .map(|(attached, _)| (attached.session.as_str(), tag_call.clone()))
+                .collect();
+            let mut tags = self.eval_all(&answered).await?.into_iter();
             for (attached, answer) in batch.into_iter().zip(answers) {
                 let Attached {
                     session,
@@ -444,7 +488,9 @@ impl Page {
                     url,
                 } = attached;
                 let tag = match answer {
-                    Ok(_) => self.dom(&session, "tag", json!({})).await,
+                    Ok(_) => tags
+                        .next()
+                        .unwrap_or_else(|| Err(Failure::new("cdp_error", None))),
                     Err(error) => Err(self.blocked(error)),
                 };
                 let tag = match tag {
@@ -585,35 +631,44 @@ impl Page {
             )
             .await?;
         let top_text = text.as_str().unwrap_or("").to_owned();
-        let mut sections = Vec::new();
-        for frame in self.frames().await? {
-            let read = self
-                .eval(
-                    &frame.session,
-                    &format!(
-                        "({SNAPSHOT_JS})({},{},true)",
-                        json!(filter),
-                        json!(clickable)
-                    ),
-                )
-                .await;
-            // A frame that navigated mid-read has a new document, and its
-            // refs a new tag; the next snapshot reads it again. One that
-            // stopped answering is noted, and the rest of the page is read.
-            let text = match read {
-                Ok(text) => text,
-                Err(failure) if failure.silent => {
-                    self.silence(&frame);
-                    continue;
-                }
-                Err(failure) if failure.page_side() => continue,
+        // Every frame is read together, then each document's tag is read
+        // together again to see that it is still the one that was read.
+        let frames = self.frames().await?;
+        let read = format!(
+            "({SNAPSHOT_JS})({},{},true)",
+            json!(filter),
+            json!(clickable)
+        );
+        let reads: Vec<(&str, String)> = frames
+            .iter()
+            .map(|frame| (frame.session.as_str(), read.clone()))
+            .collect();
+        let texts = self.eval_all(&reads).await?;
+        // A frame that navigated mid-read has a new document, and its refs a
+        // new tag; the next snapshot reads it again. One that stopped
+        // answering is noted, and the rest of the page is read.
+        let mut read_frames = Vec::new();
+        for (frame, text) in frames.iter().zip(texts) {
+            match text {
+                Ok(text) => read_frames.push((frame, text)),
+                Err(failure) if failure.silent => self.silence(frame),
+                Err(failure) if failure.page_side() => {}
                 Err(failure) => return Err(failure),
-            };
-            match self.dom(&frame.session, "tag", json!({})).await {
+            }
+        }
+        let tag_call = call(DOM_JS, "tag", &json!({}));
+        let checks: Vec<(&str, String)> = read_frames
+            .iter()
+            .map(|(frame, _)| (frame.session.as_str(), tag_call.clone()))
+            .collect();
+        let current = self.eval_all(&checks).await?;
+        let mut sections = Vec::new();
+        for ((frame, text), current) in read_frames.into_iter().zip(current) {
+            match current {
                 Ok(current) if current["tag"] == frame.tag.as_str() => {}
                 Ok(_) => continue,
                 Err(failure) if failure.silent => {
-                    self.silence(&frame);
+                    self.silence(frame);
                     continue;
                 }
                 Err(failure) if failure.page_side() => continue,
@@ -624,7 +679,7 @@ impl Page {
                 continue;
             }
             sections.push((
-                frame.session,
+                frame.session.clone(),
                 format!("# OOPIF {} origin={}\n{body}", frame.tag, frame.origin),
             ));
         }
@@ -643,18 +698,6 @@ impl Page {
             .collect()
     }
 
-    /// Notes the frame of `session` as not answering, as a snapshot does.
-    pub fn silence_session(&mut self, session: &str) {
-        let known = self
-            .frames
-            .as_ref()
-            .and_then(|frames| frames.iter().find(|frame| frame.session == session))
-            .cloned();
-        if let Some(frame) = known {
-            self.silence(&frame);
-        }
-    }
-
     /// Moves a frame that stopped answering out of the frames a command
     /// reads, so the rest of the command does not wait on it again.
     fn silence(&mut self, frame: &Frame) {
@@ -670,11 +713,54 @@ impl Page {
     /// Swaps the composite into each frame's document as the new baseline
     /// of `key` and returns the previous composite, or none when the top
     /// document has none (a first snapshot or a new document).
+    ///
+    /// A frame that stops answering while its baseline is swapped has none to
+    /// give back, so it leaves the composite and is noted like one that never
+    /// answered: the diff then shows its note, not every line of it as new.
+    /// The top document's baseline is swapped last, with those notes in it.
     pub async fn swap_baseline(
         &mut self,
         key: &str,
-        composite: &Composite,
+        composite: &mut Composite,
     ) -> Result<Option<String>, Failure> {
+        let calls: Vec<(&str, String)> = composite
+            .sections
+            .iter()
+            .map(|(session, section)| {
+                (
+                    session.as_str(),
+                    call(DOM_JS, "baseline", &json!({"key": key, "text": section})),
+                )
+            })
+            .collect();
+        let answers = self.eval_all(&calls).await?;
+        let mut previous_sections = Vec::new();
+        let mut silent = Vec::new();
+        for ((session, _), answer) in composite.sections.iter().zip(answers) {
+            match answer {
+                Ok(answer) => {
+                    if let Some(previous) = answer["previous"].as_str() {
+                        previous_sections.push(previous.to_owned());
+                    }
+                }
+                Err(failure) if failure.silent => silent.push(session.clone()),
+                // A frame that navigated has no baseline to swap either.
+                Err(failure) if failure.page_side() => {}
+                Err(failure) => return Err(failure),
+            }
+        }
+        for session in silent {
+            composite.sections.retain(|(known, _)| *known != session);
+            let known = self
+                .frames
+                .as_ref()
+                .and_then(|frames| frames.iter().find(|frame| frame.session == session))
+                .cloned();
+            if let Some(frame) = known {
+                self.silence(&frame);
+            }
+        }
+        composite.silent = self.silent.iter().map(Silent::note).collect();
         let top = self.top.clone();
         let previous_top = self
             .dom(
@@ -685,23 +771,6 @@ impl Page {
             .await?["previous"]
             .as_str()
             .map(str::to_owned);
-        let mut previous_sections = Vec::new();
-        for (session, section) in &composite.sections {
-            match self
-                .dom(session, "baseline", json!({"key": key, "text": section}))
-                .await
-            {
-                Ok(answer) => {
-                    if let Some(previous) = answer["previous"].as_str() {
-                        previous_sections.push(previous.to_owned());
-                    }
-                }
-                // A frame that stopped answering has no baseline to swap; the
-                // next snapshot notes it.
-                Err(failure) if failure.page_side() || failure.silent => {}
-                Err(failure) => return Err(failure),
-            }
-        }
         Ok(previous_top.map(|top| compose(&top, &previous_sections)))
     }
 
@@ -825,6 +894,7 @@ mod tests {
         let mut page = page(page_with_frames(
             Frames {
                 hung: 1,
+                healthy: 1,
                 ..Frames::default()
             },
             None,
@@ -847,23 +917,27 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn frames_a_page_holds_cost_one_wait_between_them() {
-        let mut page = page(page_with_frames(
-            Frames {
-                hung: 5,
-                ..Frames::default()
-            },
-            None,
-        ))
-        .await;
-        let started = std::time::Instant::now();
-        let composite = page.snapshot(None, "auto").await.unwrap();
-        assert_eq!(composite.silent.len(), 5);
-        assert!(
-            started.elapsed() < fake::STEP * 3,
-            "{:?}",
-            started.elapsed()
-        );
+    async fn every_request_of_a_kind_goes_out_before_any_answer_is_read() {
+        // A frame answers only once all three have asked, so a client that
+        // waits for each answer before the next request is told they are
+        // silent: this holds for the frames' `Page.enable`, their tags, their
+        // snapshot reads, the tag checks after them and their baselines.
+        let together = Frames {
+            healthy: 3,
+            together: true,
+            ..Frames::default()
+        };
+        let mut page = page(page_with_frames(together, None)).await;
+        let mut composite = page.snapshot(None, "auto").await.unwrap();
+        assert_eq!(composite.sections.len(), 3);
+        assert!(composite.silent.is_empty(), "{:?}", composite.silent);
+        let previous = page
+            .swap_baseline("full", &mut composite)
+            .await
+            .unwrap()
+            .unwrap();
+        assert_eq!(composite.sections.len(), 3);
+        assert_eq!(previous.matches("\nold").count(), 3, "{previous}");
     }
 
     #[tokio::test]
@@ -885,6 +959,7 @@ mod tests {
     async fn a_frame_that_stops_answering_mid_read_is_noted_too() {
         let mut page = page(page_with_frames(
             Frames {
+                healthy: 1,
                 stops_on_read: true,
                 ..Frames::default()
             },
@@ -901,34 +976,40 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn the_baseline_keeps_the_silent_notes_with_the_top_document() {
-        let mut page = page(|request| match request["sessionId"].as_str() {
-            Some("top") => vec![fake::reply(
-                request,
-                json!({"result": {"value": {"previous": "# T\n# http://a/\n"}}}),
-            )],
-            _ => Vec::new(),
-        })
+    async fn a_frame_that_stops_answering_while_its_baseline_is_swapped_is_noted_not_shown_as_new()
+    {
+        let mut page = page(page_with_frames(
+            Frames {
+                healthy: 2,
+                stops_on_baseline: true,
+                ..Frames::default()
+            },
+            None,
+        ))
         .await;
-        let composite = Composite {
-            top: "# T\n# http://a/\n".into(),
-            sections: vec![("f1".into(), "# OOPIF k7q2 origin=http://b\n".into())],
-            silent: vec!["# OOPIF unresponsive origin=http://c - no answer in time".into()],
-        };
-        // What the top document's baseline stores is the block a diff reads
-        // back next time, so a frame that stays silent is not reported again.
-        assert_eq!(
-            composite.top_block(),
-            "# T\n# http://a/\n\n# OOPIF unresponsive origin=http://c - no answer in time\n"
-        );
-        // A frame that stopped answering while its baseline was swapped has
-        // none to give back and is left out.
+        let mut composite = page.snapshot(None, "auto").await.unwrap();
+        assert_eq!(composite.sections.len(), 2);
         let previous = page
-            .swap_baseline("full", &composite)
+            .swap_baseline("full", &mut composite)
             .await
             .unwrap()
             .unwrap();
-        assert_eq!(previous, "# T\n# http://a/\n");
+        // The first frame leaves the composite for a note; the diff then
+        // reads the other frame's section against its own previous one.
+        assert_eq!(composite.sections.len(), 1);
+        assert!(composite.sections[0].1.starts_with("# OOPIF k7q3 "));
+        assert_eq!(composite.silent.len(), 1);
+        assert!(
+            composite
+                .text()
+                .contains("# OOPIF unresponsive origin=http://ok.test:9")
+        );
+        assert_eq!(
+            previous,
+            "# T\n# http://a/\n\n# OOPIF k7q3 origin=http://ok.test:9\nold\n"
+        );
+        // The note is part of what the top document's baseline keeps.
+        assert!(composite.top_block().contains("# OOPIF unresponsive"));
     }
 
     #[tokio::test]

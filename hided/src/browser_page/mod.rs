@@ -467,7 +467,7 @@ fn next_action(reason: &str, display: &str) -> String {
         "key_unsupported" => "Press one of the listed keys".to_owned(),
         "invalid_selector" => "Use a valid CSS selector or an @ref".to_owned(),
         "drag_across_frames" => "Drag between two points of the same frame".to_owned(),
-        "drag_carries_files" => "The drag carries local files, which a page never receives through hide browser; use --mode pointer or drop nothing".to_owned(),
+        "drag_carries_files" => "The drag carries local files, which hide browser never drops on a page; do not retry it (--mode pointer would start a native drag the gateway cannot see), and ask the operator if the page needs them".to_owned(),
         "display_busy" => "Another CDP client or hide browser command holds this display; close it (agent-browser, Playwright) or let it finish, then retry".to_owned(),
         "display_hidden" => format!(
             "The display is not in front; ask the operator to show it, or run hide view select {display} --reveal, then retry"

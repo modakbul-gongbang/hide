@@ -79,9 +79,9 @@ pub async fn run(page: &mut Page, command: Command) -> Result<Output, Failure> {
             ..
         } => {
             let filter = interactive.then_some("interactive");
-            let composite = page.snapshot(filter, "auto").await?;
+            let mut composite = page.snapshot(filter, "auto").await?;
             let key = if interactive { "interactive" } else { "full" };
-            let previous = page.swap_baseline(key, &composite).await?;
+            let previous = page.swap_baseline(key, &mut composite).await?;
             let text = composite.text();
             let shown = if diff {
                 page.render("diff", json!({"previous": previous, "current": text}))
@@ -535,7 +535,7 @@ async fn input(page: &mut Page, session: &str, method: &str, params: Value) -> R
             let mut failure = unanswered(page, error).await;
             // The event was sent. A page held by a script takes it when the
             // script yields, so the failure does not say it was not delivered.
-            if failure.silent {
+            if failure.reason == "page_unresponsive" {
                 failure.next_action = Some(format!(
                     "The input was sent and the page did not answer in time, so it may already have taken effect; run hide browser snapshot {} --diff before repeating it",
                     page.display
@@ -550,15 +550,22 @@ async fn input(page: &mut Page, session: &str, method: &str, params: Value) -> R
 /// other silence is the page's. A View the host hides, such as one of a
 /// Workspace that is not in front, is not such a page: it answers at once.
 async fn unanswered(page: &mut Page, error: CdpError) -> Failure {
+    let held = || Failure {
+        silent: true,
+        ..Failure::new("page_unresponsive", None)
+    };
     if !matches!(error, CdpError::Timeout) || page.cdp.dialog.is_some() {
         return page.blocked(error);
     }
     match page.probe().await {
         Ok(probe) if probe["visibility"] == "hidden" => Failure::new("display_hidden", None),
-        _ => Failure {
-            silent: true,
-            ..Failure::new("page_unresponsive", None)
-        },
+        // A probe that answers, or that only finds the document changed
+        // under it, leaves the unanswered call as the cause.
+        Ok(_) => held(),
+        Err(failure) if failure.page_side() => held(),
+        // Any other failure of the probe is the cause: the page held again
+        // (silent), a dialog, a closed connection.
+        Err(failure) => failure,
     }
 }
 
@@ -582,7 +589,10 @@ async fn drag(
             .map_err(|error| page.blocked(error))?;
     }
     let result = drag_moves(page, start, end, steps, html5).await;
-    if html5 {
+    // A page that answered nothing is sent nothing more, interception
+    // switching included: it ends with the session.
+    let held = matches!(&result, Err(failure) if failure.silent);
+    if html5 && !held {
         let _ = page
             .cdp
             .call(
@@ -774,15 +784,23 @@ async fn changed(
 async fn wait_for(page: &mut Page, wait: Wait, timeout: Duration) -> Result<Output, Failure> {
     let started = Instant::now();
     let deadline = started + timeout;
+    // Origins of the frames the last poll got no answer from.
+    let mut late: Vec<String> = Vec::new();
     loop {
         let mut polled = 1;
         let found = match &wait {
             Wait::Text(text) => {
-                let mut sessions = vec![page.top.clone()];
-                sessions.extend(page.frames().await?.into_iter().map(|frame| frame.session));
+                let mut sessions = vec![(page.top.clone(), None)];
+                sessions.extend(
+                    page.frames()
+                        .await?
+                        .into_iter()
+                        .map(|frame| (frame.session, Some(frame.origin))),
+                );
                 polled = sessions.len();
                 let mut found = false;
-                for session in sessions {
+                late.clear();
+                for (session, origin) in sessions {
                     match page.dom(&session, "waitText", json!({"text": text})).await {
                         Ok(answer) if answer["found"] == true => {
                             found = true;
@@ -791,10 +809,11 @@ async fn wait_for(page: &mut Page, wait: Wait, timeout: Duration) -> Result<Outp
                         Ok(_) => {}
                         // A frame that navigated mid-poll is read again next time.
                         Err(failure) if failure.page_side() => {}
-                        // One that stopped answering is noted, as a snapshot
-                        // does, and left out of the polls after this.
-                        Err(failure) if failure.silent && session != page.top => {
-                            page.silence_session(&session);
+                        // One that did not answer this time is read again the
+                        // next: it may only be slow. The wait names it if it
+                        // never answers in time.
+                        Err(failure) if failure.silent && origin.is_some() => {
+                            late.extend(origin);
                         }
                         Err(failure) => return Err(failure),
                     }
@@ -802,41 +821,58 @@ async fn wait_for(page: &mut Page, wait: Wait, timeout: Duration) -> Result<Outp
                 found
             }
             Wait::Selector { selector, gone } => {
+                // None: this poll could not tell, because the element's frame
+                // navigated or did not answer; the next poll asks again. A
+                // frame that stays silent never satisfies the wait, `--gone`
+                // included.
+                late.clear();
                 let visible = match super::parse_ref(selector) {
                     Some(Target::Ref {
                         tag: Some(tag),
                         number,
                     }) => match page.frame(&tag).await {
-                        Ok(frame) => {
-                            page.dom(
+                        Ok(frame) => match page
+                            .dom(
                                 &frame.session,
                                 "waitSelector",
                                 json!({"selector": self::selector(number)}),
                             )
-                            .await?["found"]
-                                == true
-                        }
+                            .await
+                        {
+                            Ok(answer) => Some(answer["found"] == true),
+                            Err(failure) if failure.silent => {
+                                late.push(frame.origin);
+                                None
+                            }
+                            Err(failure) if failure.page_side() => None,
+                            Err(failure) => return Err(failure),
+                        },
                         // The frame's document is gone, so is its element.
-                        Err(_) => false,
+                        Err(failure) if failure.reason == "ref_stale" => Some(false),
+                        Err(failure) => return Err(failure),
                     },
                     Some(Target::Ref { tag: None, number }) => {
                         let top = page.top.clone();
-                        page.dom(
-                            &top,
-                            "waitSelector",
-                            json!({"selector": self::selector(number)}),
+                        Some(
+                            page.dom(
+                                &top,
+                                "waitSelector",
+                                json!({"selector": self::selector(number)}),
+                            )
+                            .await?["found"]
+                                == true,
                         )
-                        .await?["found"]
-                            == true
                     }
                     _ => {
                         let top = page.top.clone();
-                        page.dom(&top, "waitSelector", json!({"selector": selector}))
-                            .await?["found"]
-                            == true
+                        Some(
+                            page.dom(&top, "waitSelector", json!({"selector": selector}))
+                                .await?["found"]
+                                == true,
+                        )
                     }
                 };
-                visible != *gone
+                visible.is_some_and(|visible| visible != *gone)
             }
         };
         let waited = started.elapsed().as_millis() as u64;
@@ -875,7 +911,10 @@ async fn wait_for(page: &mut Page, wait: Wait, timeout: Duration) -> Result<Outp
                 } => format!("{selector} still visible"),
             };
             let mut detail = format!("{what} after {} ms", timeout.as_millis());
-            let silent = page.silent_origins();
+            let mut silent = page.silent_origins();
+            silent.extend(late.iter().cloned());
+            silent.sort();
+            silent.dedup();
             if !silent.is_empty() {
                 detail.push_str(&format!(
                     "; a frame that did not answer was not read ({})",
@@ -1209,6 +1248,11 @@ mod tests {
         let seen = Arc::new(Mutex::new(Vec::new()));
         let log = Arc::clone(&seen);
         let script = move |request: &Value| match request["method"].as_str().unwrap() {
+            "Input.setInterceptDrags" => {
+                let on = request["params"]["enabled"] == true;
+                log.lock().unwrap().push(format!("intercept:{on}"));
+                vec![reply(request, json!({}))]
+            }
             "Input.dispatchMouseEvent" => {
                 let mut seen = log.lock().unwrap();
                 seen.push(request["params"]["type"].as_str().unwrap().to_owned());
@@ -1272,13 +1316,24 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn a_wait_leaves_out_a_frame_that_stops_answering_and_says_so_when_it_times_out() {
-        let frames = Frames {
-            hung: 1,
-            stops_on_read: true,
-            wait_found: false,
+    async fn a_wait_asks_a_slow_frame_again_and_names_a_silent_one_when_it_times_out() {
+        // A frame that misses one poll is read in the next.
+        let slow = Frames {
+            healthy: 1,
+            slow_once_on_wait: true,
+            ..Frames::default()
         };
-        let mut page = page(page_with_frames(frames, None)).await;
+        let mut page = page(page_with_frames(slow, None)).await;
+        let found = wait_for(&mut page, Wait::Text("Done".into()), Duration::from_secs(5)).await;
+        assert!(matches!(found, Ok(Output::Json(_))), "{:?}", found.err());
+
+        let silent = Frames {
+            hung: 1,
+            healthy: 1,
+            stops_on_read: true,
+            ..Frames::default()
+        };
+        let mut page = super::super::fake_gateway::page(page_with_frames(silent, None)).await;
         let failure = wait_for(
             &mut page,
             Wait::Text("never shown".into()),
@@ -1290,8 +1345,68 @@ mod tests {
         assert_eq!(failure.reason, "timeout");
         let detail = failure.detail.unwrap();
         assert!(
-            detail.contains("a frame that did not answer was not read (http://hung1.test"),
+            detail.contains(
+                "a frame that did not answer was not read (http://hung1.test, http://ok.test:9)"
+            ),
             "{detail}"
         );
+    }
+
+    #[tokio::test]
+    async fn a_wait_for_a_frame_element_never_reads_a_silent_frame_as_gone() {
+        let silent = Frames {
+            healthy: 1,
+            stops_on_read: true,
+            ..Frames::default()
+        };
+        let mut page = page(page_with_frames(silent, None)).await;
+        let failure = wait_for(
+            &mut page,
+            Wait::Selector {
+                selector: "@k7q2:3".into(),
+                gone: true,
+            },
+            Duration::from_millis(100),
+        )
+        .await
+        .err()
+        .unwrap();
+        assert_eq!(failure.reason, "timeout");
+        assert!(failure.detail.unwrap().contains("http://ok.test:9"));
+    }
+
+    #[tokio::test]
+    async fn an_input_the_relay_ends_keeps_its_hint_but_is_not_silence() {
+        let mut page = page(|request| match request["method"].as_str().unwrap() {
+            "Input.dispatchMouseEvent" => Vec::new(),
+            _ => vec![super::super::fake_gateway::close(
+                crate::browser_relay::CLOSE_IDLE,
+            )],
+        })
+        .await;
+        let failure = input(&mut page, "top", "Input.dispatchMouseEvent", json!({}))
+            .await
+            .unwrap_err();
+        assert_eq!(failure.reason, "page_unresponsive");
+        assert!(!failure.silent);
+        assert!(
+            failure
+                .next_action
+                .unwrap()
+                .contains("may already have taken effect")
+        );
+    }
+
+    #[tokio::test]
+    async fn an_html5_drag_the_page_stops_answering_leaves_interception_to_the_session() {
+        let (script, seen) = mouse_page(Some(3));
+        let mut page = page(script).await;
+        let failure = drag(&mut page, &point(), &point(), 3, true)
+            .await
+            .unwrap_err();
+        assert!(failure.silent, "{failure:?}");
+        let seen = seen.lock().unwrap();
+        assert_eq!(seen.first().unwrap(), "intercept:true");
+        assert!(!seen.contains(&"intercept:false".to_owned()), "{seen:?}");
     }
 }

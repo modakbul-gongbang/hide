@@ -76,22 +76,50 @@ pub fn attached(session: &str, parent: &str, url: &str) -> Value {
 pub struct Frames {
     /// Frames `f1`..`fN` that never answer `Page.enable`.
     pub hung: usize,
-    /// A healthy frame `ok` that answers everything but its snapshot read.
+    /// Healthy frames `ok1`..`okN`, with tags `k7q2`, `k7q3`, ...
+    pub healthy: usize,
+    /// A healthy frame answers a kind of request (`Page.enable`, its tag, its
+    /// snapshot, its baseline) only once every healthy frame has asked, so a
+    /// client that sends one request and waits for its answer before the next
+    /// never gets one.
+    pub together: bool,
+    /// The healthy frames answer everything but their snapshot read.
     pub stops_on_read: bool,
+    /// The first healthy frame answers everything but its baseline swap.
+    pub stops_on_baseline: bool,
+    /// The first healthy frame leaves its first `waitText` unanswered, then
+    /// finds the text.
+    pub slow_once_on_wait: bool,
     /// What the top document answers a `waitText` with.
     pub wait_found: bool,
 }
 
-/// A top document with `hung` frames that never answer `Page.enable` and a
-/// healthy frame `ok`. `before` is sent ahead of the first hung frame's
+/// A top document with `hung` frames that never answer `Page.enable` and
+/// `healthy` frames. `before` is sent ahead of the first hung frame's
 /// silence, the way a dialog event reaches a client that listens.
 pub fn page_with_frames(
     frames: Frames,
     before: Option<Value>,
 ) -> impl FnMut(&Value) -> Vec<Value> + Send {
+    let mut held: std::collections::HashMap<&'static str, Vec<Value>> = Default::default();
+    let mut waits = 0;
     move |request| {
         let session = request["sessionId"].as_str().unwrap_or("");
         let expression = request["params"]["expression"].as_str().unwrap_or("");
+        let healthy = session
+            .strip_prefix("ok")
+            .and_then(|n| n.parse::<usize>().ok());
+        let mut answer = |kind: &'static str, answer: Value| -> Vec<Value> {
+            if !frames.together {
+                return vec![answer];
+            }
+            let waiting = held.entry(kind).or_default();
+            waiting.push(answer);
+            if waiting.len() < frames.healthy {
+                return Vec::new();
+            }
+            std::mem::take(waiting)
+        };
         match (request["method"].as_str().unwrap(), session) {
             ("Target.setAutoAttach", "top") => {
                 let mut messages: Vec<Value> = (1..=frames.hung)
@@ -103,15 +131,18 @@ pub fn page_with_frames(
                         )
                     })
                     .collect();
-                messages.push(attached("ok", "top", "http://ok.test:9/child"));
+                messages.extend(
+                    (1..=frames.healthy)
+                        .map(|n| attached(&format!("ok{n}"), "top", "http://ok.test:9/child")),
+                );
                 messages.push(reply(request, json!({})));
                 messages
             }
             ("Target.setAutoAttach", _) => vec![reply(request, json!({}))],
             ("Page.enable", "f1") => before.clone().into_iter().collect(),
             ("Page.enable", session) if session.starts_with('f') => Vec::new(),
-            ("Page.enable", _) => vec![reply(request, json!({}))],
-            ("Runtime.evaluate", "top") if expression == "0" => vec![reply(
+            ("Page.enable", _) => answer("enable", reply(request, json!({}))),
+            ("Runtime.evaluate", _) if expression == "0" => vec![reply(
                 request,
                 json!({"result": {"type": "number", "value": 0}}),
             )],
@@ -119,23 +150,68 @@ pub fn page_with_frames(
                 request,
                 json!({"result": {"value": {"found": frames.wait_found}}}),
             )],
+            ("Runtime.evaluate", "top") if expression.contains("\"baseline\"") => vec![reply(
+                request,
+                json!({"result": {"value": {"previous": "# T\n# http://a/\n"}}}),
+            )],
             ("Runtime.evaluate", "top") => vec![reply(
                 request,
                 json!({"result": {"value": "# T\n# http://a/\n\n@1 button \"A\"\n"}}),
             )],
-            ("Runtime.evaluate", "ok") if expression.ends_with("(\"tag\",{})") => vec![reply(
-                request,
-                json!({"result": {"value": {"tag": "k7q2", "origin": "http://ok.test:9"}}}),
-            )],
-            ("Runtime.evaluate", "ok") if frames.stops_on_read => Vec::new(),
-            ("Runtime.evaluate", "ok") if expression.contains("\"waitText\"") => vec![reply(
-                request,
-                json!({"result": {"value": {"found": false}}}),
-            )],
-            ("Runtime.evaluate", "ok") => vec![reply(
-                request,
-                json!({"result": {"value": "# Child\n# http://ok.test:9/child\n\n@1 link \"B\"\n"}}),
-            )],
+            ("Runtime.evaluate", _) if healthy.is_some() => {
+                let n = healthy.unwrap_or(1);
+                if expression.ends_with("(\"tag\",{})") {
+                    let tag = format!("k7q{}", n + 1);
+                    return answer(
+                        "tag",
+                        reply(
+                            request,
+                            json!({"result": {"value": {"tag": tag, "origin": "http://ok.test:9"}}}),
+                        ),
+                    );
+                }
+                if expression.contains("\"baseline\"") {
+                    if frames.stops_on_baseline && n == 1 {
+                        return Vec::new();
+                    }
+                    return answer(
+                        "baseline",
+                        reply(
+                            request,
+                            json!({"result": {"value": {"previous": format!("# OOPIF k7q{} origin=http://ok.test:9\nold", n + 1)}}}),
+                        ),
+                    );
+                }
+                if expression.contains("\"waitSelector\"") {
+                    if frames.stops_on_read {
+                        return Vec::new();
+                    }
+                    return vec![reply(
+                        request,
+                        json!({"result": {"value": {"found": true}}}),
+                    )];
+                }
+                if expression.contains("\"waitText\"") {
+                    waits += 1;
+                    if frames.stops_on_read || frames.slow_once_on_wait && n == 1 && waits == 1 {
+                        return Vec::new();
+                    }
+                    return vec![reply(
+                        request,
+                        json!({"result": {"value": {"found": frames.slow_once_on_wait}}}),
+                    )];
+                }
+                if frames.stops_on_read {
+                    return Vec::new();
+                }
+                answer(
+                    "read",
+                    reply(
+                        request,
+                        json!({"result": {"value": "# Child\n# http://ok.test:9/child\n\n@1 link \"B\"\n"}}),
+                    ),
+                )
+            }
             _ => Vec::new(),
         }
     }
