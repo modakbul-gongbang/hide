@@ -3564,7 +3564,11 @@ impl Engine {
                 }
                 "max_workers" => machine_workers = Some(number()?.clamp(1, 64) as u32),
                 "question_deadline_hours" => config.question_deadline_ms = number()? * HOUR_MS,
-                "stall_minutes" => config.stall_ms = number()? * MINUTE_MS,
+                "stall_minutes" => config.stall_ms = number()?.max(1) * MINUTE_MS,
+                "no_report_minutes" => config.no_report_ms = number()?.max(1) * MINUTE_MS,
+                "archive_fold_days" => config.archive_fold_ms = number()? * DAY_MS,
+                "verify_failure_limit" => config.verify_failure_limit = number()?.max(1) as u32,
+                "autonomy_diff_limit" => config.autonomy_diff_limit = number()? as u32,
                 "watch_interval_minutes" => config.watch_interval_ms = number()?.max(5) * MINUTE_MS,
                 "watch_daily_limit" => config.watch_daily_limit = number()? as u32,
                 "outside_read_minutes" => config.outside_read_ms = number()?.max(1) * MINUTE_MS,

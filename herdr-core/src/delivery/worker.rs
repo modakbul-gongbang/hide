@@ -215,6 +215,8 @@ pub(crate) struct WatchWork {
     pub status_changed_at_unix_ms: u64,
     pub home: Option<PathBuf>,
     pub channel: Option<Arc<dyn crate::host_access::HostChannel>>,
+    /// The watching Factory's own stall window, when it set one.
+    pub inactivity_ms: Option<u64>,
 }
 
 fn read_activity(work: WatchWork) -> watch::Reading {
@@ -227,6 +229,7 @@ fn read_activity(work: WatchWork) -> watch::Reading {
         session_modified_at_unix_ms: None,
         failure: None,
         gone: work.gone,
+        inactivity_ms: work.inactivity_ms,
     };
     if work.gone {
         return reading;
@@ -965,6 +968,7 @@ mod tests {
                     status_changed_at_unix_ms: 1,
                     home: None,
                     channel: Some(channel.clone()),
+                    inactivity_ms: None,
                 })
                 .collect();
             let readings: Vec<_> = group_targets(work)

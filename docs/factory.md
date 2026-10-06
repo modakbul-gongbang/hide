@@ -168,7 +168,7 @@ Each open Factory is a code-owned recipient named `factory:<factory id>` in the 
 - The engine reads its letters from the ledger on each tick, up to 16 at a time, applies each once, and confirms it. A request or block letter also gets a reply carrying the engine's JSON answer. No composer input or doorbell is involved.
 - The letter's sender must be a live worker of that Factory, or the letter is refused with `sender_not_a_worker` and logged.
 - A worker's CLI report is a typed body `{"factory": <command>}` sent under an intent made from the pane and the body, so a retry applies once. A harness that follows the letter protocol only is read as a question (a `request` or `block` letter becomes a blocking question with a 24 hour deadline, taking a `Recommendation:`, `Suggestion:`, `추천:` or `제안:` line as the suggestion) or as a completion (a `report` letter becomes `done`).
-- A watch whose observer is the Factory warns after 30 quiet minutes instead of 20. The engine turns the first warning into a stalled stop; it does not wait for the second warning or for the human notice, which the ledger skips for a code-owned recipient.
+- A watch whose observer is the Factory warns after the Factory's `stall_minutes` (30 by default) instead of 20; the host hands each open Factory's window to the watch readings, so a change applies at the next reading. The engine turns the first warning into a stalled stop; it does not wait for the second warning or for the human notice, which the ledger skips for a code-owned recipient.
 - The Factory writes to a worker with `report` letters, and starts a watch on the worker again each time it does, because a report to its parent ends the sender's watch.
 
 ## The worker lifecycle
@@ -202,7 +202,7 @@ A worker reports through `hide factory` and gets its answer in the same call.
 `ask` needs a suggestion, a default action and a deadline of 1 to 720 hours, and the worker continues with the default; `block` has no default, so the Task blocks, releases its slot and sleeps.
 `done` opens a pull request on a GitHub Factory when none exists, goes to `verifying`, and puts the worker to sleep.
 `decide` records a decision.
-A worker whose agent rests for the no-report window of 2 minutes after a turn that reported nothing stops the Task as "no report"; a worker that goes quiet for 30 minutes stops it as "stalled".
+A worker whose agent rests for the no-report window (`no_report_minutes`, 2) after a turn that reported nothing stops the Task as "no report"; a worker that goes quiet for the stall window (`stall_minutes`, 30) stops it as "stalled".
 
 ## Intake review and judgments
 
@@ -420,20 +420,24 @@ A Factory's `merge_mode` cannot be `auto` while it has no verification (`auto_ne
 | Key | Value | Default |
 | --- | --- | --- |
 | `merge_mode` | `auto` or `manual` | `manual` until `init` chose a verification, then `auto` |
-| `merge_method` | `merge`, `squash` or `rebase` | The first the repository allows (squash, merge, rebase) |
+| `merge_method` | `merge`, `squash` or `rebase` | The first the repository allows (merge, squash, rebase) |
 | `verify` | Commands joined by `&&&`; empty clears | none |
 | `ci` | Comma-separated check names | none |
 | `no_verification` | Any value | none |
 | `quick_check` | A shell command; empty clears | none |
 | `max_workers` | 1 to 64, machine-wide | 5 |
 | `question_deadline_hours` | Hours | 24 |
-| `stall_minutes` | Minutes | 30 (stored; the quiet window is the watch's fixed 30 minutes) |
+| `stall_minutes` | Minutes, at least 1: the quiet window of each worker's watch | 30 |
+| `no_report_minutes` | Minutes, at least 1, after a turn ends without a report | 2 |
 | `watch_interval_minutes` | Minutes, at least 5 | 30 |
 | `watch_daily_limit` | Count | 5 |
 | `outside_read_minutes` | Minutes, at least 1 | 2 |
 | `cancel_keep_days` | Days | 7 |
 | `done_fold_days` | Days | 3 |
+| `archive_fold_days` | Days before a finished Task leaves the list | 90 |
 | `new_task_limit` | Count | 3 |
+| `verify_failure_limit` | Count, at least 1 | 3 |
+| `autonomy_diff_limit` | Changed lines an autonomous Task may merge alone | 200 |
 | `verify_timeout_minutes` | Minutes per command, at least 1 | 60 |
 | `disk_floor_gb` | Gigabytes | 20 |
 | `default_runtime` | `claude` or `codex` | `claude` |
@@ -448,7 +452,6 @@ A Factory's `merge_mode` cannot be `auto` while it has no verification (`auto_ne
 `max_workers` is the machine's, not the Factory's, and any Factory's `config` sets the same value.
 `worker_args` holds the whole argument list for one runtime, such as a permission mode the operator chose, and an empty list removes it.
 `harness` places the named instruction in each worker's first prompt; gates never trust a harness's own claims, and a harness's own checks belong in `verify`.
-The 2-minute no-report window, the 90-day fold, the 3-failure limit and the 200-line autonomy limit are fixed in the Factory's configuration record and have no key.
 
 ## The `hide factory` command
 

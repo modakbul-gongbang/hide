@@ -431,8 +431,13 @@ impl Runtime {
     }
 
     /// The Factory host publishes which Factories exist.
-    pub(crate) fn set_factory_recipients(&mut self, ids: std::collections::BTreeSet<String>) {
-        self.factory_recipients = ids;
+    /// The open Factories, each with the inactivity window its workers'
+    /// watches use.
+    pub(crate) fn set_factory_recipients(
+        &mut self,
+        factories: std::collections::BTreeMap<String, u64>,
+    ) {
+        self.factory_recipients = factories;
     }
 
     /// A code-owned recipient is current while its Factory exists and the
@@ -441,7 +446,9 @@ impl Runtime {
         actor
             .pane_id
             .strip_prefix(crate::delivery::FACTORY_PREFIX)
-            .is_some_and(|id| self.factory_recipients.contains(id) && *actor == Actor::factory(id))
+            .is_some_and(|id| {
+                self.factory_recipients.contains_key(id) && *actor == Actor::factory(id)
+            })
     }
 
     /// The authority the Factory host acts with: its own recipient, never a
@@ -596,6 +603,11 @@ impl Runtime {
                     status_changed_at_unix_ms: watch.status_changed_at_unix_ms,
                     home: self.home_path.clone(),
                     channel,
+                    inactivity_ms: watch
+                        .parent
+                        .pane_id
+                        .strip_prefix(crate::delivery::FACTORY_PREFIX)
+                        .and_then(|id| self.factory_recipients.get(id).copied()),
                 }
             })
             .collect()
@@ -1072,7 +1084,7 @@ pub(crate) mod tests {
             guard.factory_delivery("f-1").err().as_deref(),
             Some("factory_unavailable")
         );
-        guard.set_factory_recipients(["f-1".to_owned()].into());
+        guard.set_factory_recipients([("f-1".to_owned(), 30 * 60_000)].into());
         let prepared = guard
             .prepare_delivery("local", "sender", &context, None, send("once"))
             .unwrap();

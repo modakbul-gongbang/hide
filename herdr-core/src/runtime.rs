@@ -1071,7 +1071,8 @@ pub struct Runtime {
     delivery_observations: HashMap<String, delivery::Observation>,
     /// Open Factories' code-owned recipients (`factory:<id>`), set by the
     /// Factory host; a letter to any other `factory:` name has no recipient.
-    factory_recipients: std::collections::BTreeSet<String>,
+    /// Each open Factory's id with its stall window (D-30, B24).
+    factory_recipients: std::collections::BTreeMap<String, u64>,
     delivery_overflow: HashSet<String>,
     delivery_connected: HashSet<String>,
     /// Stable identities are separate from device labels: labels are mutable
@@ -1776,7 +1777,7 @@ impl Runtime {
             delivery_ledger,
             delivery_client: None,
             delivery_observations: HashMap::new(),
-            factory_recipients: std::collections::BTreeSet::new(),
+            factory_recipients: std::collections::BTreeMap::new(),
             delivery_overflow: HashSet::new(),
             delivery_connected: HashSet::new(),
             local_machine_id: options.machine_id.clone(),

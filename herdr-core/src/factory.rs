@@ -318,11 +318,11 @@ fn owner_of(engine: &Engine, answer: &Value) -> Option<String> {
 
 /// Open Factories become delivery recipients; closed ones stop receiving.
 fn publish_recipients(engine: Option<&Engine>, runtime: &Weak<Mutex<Runtime>>) {
-    let ids: BTreeSet<String> = engine
+    let ids: BTreeMap<String, u64> = engine
         .into_iter()
         .flat_map(Engine::factories)
         .filter(|factory| !factory.closed)
-        .map(|factory| factory.id.clone())
+        .map(|factory| (factory.id.clone(), factory.config.stall_ms))
         .collect();
     if let Some(runtime) = lock(runtime) {
         guard(&runtime).set_factory_recipients(ids);

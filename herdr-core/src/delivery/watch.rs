@@ -69,7 +69,8 @@ impl Watch {
 }
 
 /// How long a watch waits before its first warning: a Factory observer
-/// stops a quiet worker after 30 minutes, every other observer after 20.
+/// stops a quiet worker after 30 minutes unless the reading carries the
+/// Factory's own window, every other observer after 20.
 pub fn inactivity_window(watch: &Watch) -> u64 {
     if watch.parent.code_owned() {
         super::FACTORY_INACTIVITY_MS
@@ -182,6 +183,9 @@ pub struct Reading {
     pub session_modified_at_unix_ms: Option<u64>,
     pub failure: Option<String>,
     pub gone: bool,
+    /// A window that replaces [`inactivity_window`] for this watch: a
+    /// Factory's stall setting (D-30).
+    pub inactivity_ms: Option<u64>,
 }
 
 #[derive(Default)]
@@ -289,7 +293,12 @@ pub fn tick(ledger: &mut Ledger, readings: &[Reading], now: u64) -> Result<Tick,
             watch.last_activity_at_unix_ms
         };
         let due = match (watch.warning_count, watch.first_warning_at_unix_ms) {
-            (0, _) => now.saturating_sub(activity) >= inactivity_window(watch),
+            (0, _) => {
+                now.saturating_sub(activity)
+                    >= reading
+                        .inactivity_ms
+                        .unwrap_or_else(|| inactivity_window(watch))
+            }
             (1, Some(first)) => now.saturating_sub(first) >= SECOND_WARNING_MS,
             _ => false,
         };
@@ -424,6 +433,7 @@ mod tests {
             session_modified_at_unix_ms: None,
             failure: None,
             gone: false,
+            inactivity_ms: None,
         }
     }
 
@@ -563,6 +573,20 @@ mod tests {
     }
 
     #[test]
+    fn a_factory_s_stall_setting_replaces_the_thirty_minute_window() {
+        let mut ledger = Ledger::default();
+        let watch = start(&mut ledger, &Actor::factory("f-1"), &actor("worker"), 10).unwrap();
+        let within = |id: &str| Reading {
+            inactivity_ms: Some(45 * 60_000),
+            ..reading(id, 10)
+        };
+        tick(&mut ledger, &[within(&watch.id)], 10 + 45 * 60_000 - 1).unwrap();
+        assert!(ledger.letters.is_empty());
+        tick(&mut ledger, &[within(&watch.id)], 10 + 45 * 60_000).unwrap();
+        assert_eq!(ledger.letters.len(), 1);
+    }
+
+    #[test]
     fn two_warnings_keep_the_first_deadline_across_restart_and_reset_on_activity() {
         let mut ledger = Ledger::default();
         let watch = start(&mut ledger, &actor("parent"), &actor("target"), 10).unwrap();
@@ -689,6 +713,7 @@ mod tests {
             session_modified_at_unix_ms: None,
             failure: None,
             gone: false,
+            inactivity_ms: None,
         };
         reading.gone = true;
         tick(&mut ledger, &[reading], 2 + INACTIVITY_MS).unwrap();

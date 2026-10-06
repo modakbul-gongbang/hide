@@ -105,6 +105,7 @@ mod tests {
             session_modified_at_unix_ms: None,
             failure: None,
             gone: false,
+            inactivity_ms: None,
         };
         watch::tick(ledger, &[reading], activity + INACTIVITY_MS).unwrap();
         started
@@ -188,6 +189,7 @@ mod tests {
             session_modified_at_unix_ms: None,
             failure: None,
             gone: false,
+            inactivity_ms: None,
         };
         watch::tick(&mut ledger, &[reading(10)], due).unwrap();
         assert_eq!(ledger.watches[0].warning_count, 2);
