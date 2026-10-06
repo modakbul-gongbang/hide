@@ -14,6 +14,7 @@ import { useInterfaceTranslation } from "./i18n/client";
 import { modChord, TERMINAL_COPY, TERMINAL_PASTE } from "./shortcuts";
 import { sleepCaption, wakingLine } from "./sleep";
 import type { AgentSleep, PaneRow, TerminalPane } from "./snapshot";
+import { caughtUp } from "./operatorFocus";
 import { useShellStore } from "./store";
 import { attachTerminal, bracketedPaste, focusTerminal, requestView, setTextScale, terminalSelectionText } from "./terminals";
 
@@ -203,15 +204,19 @@ export const PaneView = memo(function PaneView({
     setTextScale(paneId, scale);
   }, [paneId, scale]);
 
+  // The snapshot's focused pane moves DOM focus only once it includes the
+  // operator's last click; a snapshot that predates it would pull the keys
+  // back off the pane just clicked (`operatorFocus.ts`).
+  const snapshotIncludesLastClick = useShellStore(caughtUp);
   useEffect(() => {
-    if (!focused) return;
+    if (!focused || !snapshotIncludesLastClick) return;
     // A palette that holds the keyboard keeps it: a focus that lands late (the
     // core's answer to a choice made in ⌘K) must not take the keys the
     // operator is typing into a palette opened since. The palette hands the
     // keyboard back to the focused pane when it closes (`restoreFocus`).
     if (document.activeElement?.closest("[data-palette]")) return;
     focusTerminal(paneId);
-  }, [paneId, focused]);
+  }, [paneId, focused, snapshotIncludesLastClick]);
 
   // ⌘V of an image is the shell's; text paste stays xterm's own. The listener
   // runs in the capture phase, before xterm's textarea sees the event.

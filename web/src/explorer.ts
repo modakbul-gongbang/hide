@@ -103,13 +103,16 @@ function higherRisk(current: ChangedFileStatus | undefined, candidate: ChangedFi
 }
 
 /**
- * The line above the Explorer tree about the checkout's Git status: still
- * loading, unavailable, or decorations kept from an earlier read after the
- * latest one failed, which are never shown as current (PRD S5.5 B20, B22).
- * Nothing when the status is current.
+ * The mark in the Explorer header about the checkout's Git status, with the
+ * sentence its tooltip reads: still loading, unavailable, or decorations kept
+ * from an earlier read after the latest one failed, which are never shown as
+ * current (PRD S5.5 B20, B22). Nothing when the status is current, and nothing
+ * for a folder that is not a repository, which the operator has nothing to do
+ * about (issue 570). It sits in the header row, so it never moves a row.
  */
-export function explorerGitLine(changes: ChangesSnapshot | null, t: TFunction<"translation">): { state: "loading" | "unavailable" | "stale"; text: string } | null {
+export function explorerGitMark(changes: ChangesSnapshot | null, t: TFunction<"translation">): { state: "loading" | "unavailable" | "stale"; text: string } | null {
   if (!changes) return { state: "loading", text: t("explorer.gitLoading") };
+  if (changes.not_a_repository) return null;
   if (changes.unavailable_reason) return { state: "unavailable", text: t("explorer.gitUnavailable", { reason: changes.unavailable_reason }) };
   if (changes.stale_reason) return { state: "stale", text: t("explorer.gitStale", { reason: changes.stale_reason }) };
   return null;

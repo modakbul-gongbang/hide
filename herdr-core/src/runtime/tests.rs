@@ -40,6 +40,8 @@ mod labels;
 mod lineage;
 #[path = "tests/memory.rs"]
 mod memory;
+#[path = "tests/operator_focus.rs"]
+mod operator_focus;
 #[path = "tests/project_sessions.rs"]
 mod project_sessions;
 #[path = "tests/projects.rs"]

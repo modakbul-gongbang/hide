@@ -1,6 +1,7 @@
 import { configureAttachments, receiveAttachmentRefusal } from "./attachments";
 import { connectionAfterHealthFails, nextBackoff } from "./connection";
 import { clearPending, receiveBytes, receiveBytesError, receiveBytesRefusal } from "./fileBytes";
+import { isOperatorFocus, numbered } from "./operatorFocus";
 import { noteArrival, probeEnabled } from "./probe";
 import { useShellStore, type TerminalChunk } from "./store";
 import { hostKind } from "./host";
@@ -36,6 +37,7 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; sendBi
   let healthFails = 0;
   let revision = 0;
   let terminalSequence = 0;
+  let operatorFocusSequence = 0;
   let reconnectTimer: number | undefined;
 
   // Decided once: the probe is a measurement seam, not a per-frame branch.
@@ -47,6 +49,16 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; sendBi
       // the state and the log keeps the fact.
       useShellStore.getState().noteDiagnostic(`dispatch dropped: ${event.kind} while socket not open`);
       return false;
+    }
+    // Each operator focus carries this page's next number, so the snapshot
+    // can say whether it includes the last one sent (`operatorFocus.ts`).
+    // The number counts only once the frame has left.
+    if (isOperatorFocus(event)) {
+      const sequence = operatorFocusSequence + 1;
+      socket.send(JSON.stringify(numbered(event, sequence)));
+      operatorFocusSequence = sequence;
+      useShellStore.getState().noteOperatorFocusSent(sequence);
+      return true;
     }
     socket.send(JSON.stringify(event));
     return true;
@@ -75,6 +87,7 @@ export function connectShell(handlers: Handlers): { dispatch: DispatchFn; sendBi
     ws.binaryType = "arraybuffer";
     socket = ws;
     ws.addEventListener("open", () => {
+      useShellStore.getState().releaseOperatorFocus();
       ws.send(
         JSON.stringify({
           token,

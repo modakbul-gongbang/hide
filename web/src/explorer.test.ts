@@ -3,7 +3,7 @@ import type { TFunction } from "i18next";
 import { createInterfaceI18n } from "./i18n/instance";
 import {
   decorationFor,
-  explorerGitLine,
+  explorerGitMark,
   explorerRows,
   filteredRows,
   firstChildSelection,
@@ -278,17 +278,21 @@ describe("removal selection", () => {
   });
 });
 
-describe("the Explorer's Git status line (S5.5 B20, B22)", () => {
+describe("the Explorer's Git status mark (S5.5 B20, B22)", () => {
   const base = { root_path: "/repo", entries: [], committed: [], selected_path: null, diff: null } as unknown as ChangesSnapshot;
   it("says a failed read is unavailable or out of date and never draws it as current", () => {
-    expect(explorerGitLine(null, t)).toEqual({ state: "loading", text: "Loading Git status" });
-    expect(explorerGitLine({ ...base, unavailable_reason: "git is not installed" }, t)?.text).toBe("Git status unavailable: git is not installed");
-    expect(explorerGitLine({ ...base, stale_reason: "git status timed out" }, t)?.state).toBe("stale");
-    expect(explorerGitLine(base, t)).toBeNull();
+    expect(explorerGitMark(null, t)).toEqual({ state: "loading", text: "Loading Git status" });
+    expect(explorerGitMark({ ...base, unavailable_reason: "git is not installed" }, t)?.text).toBe("Git status unavailable: git is not installed");
+    expect(explorerGitMark({ ...base, stale_reason: "git status timed out" }, t)?.state).toBe("stale");
+    expect(explorerGitMark(base, t)).toBeNull();
   });
 
-  it("words the line in the chosen language", () => {
-    expect(explorerGitLine({ ...base, unavailable_reason: "git is not installed" }, ko)?.text).toBe("Git 상태를 읽을 수 없습니다: git is not installed");
+  it("draws nothing for a folder that is not a repository", () => {
+    expect(explorerGitMark({ ...base, unavailable_reason: "/plain is not inside a Git repository", not_a_repository: true }, t)).toBeNull();
+  });
+
+  it("words the mark's sentence in the chosen language", () => {
+    expect(explorerGitMark({ ...base, unavailable_reason: "git is not installed" }, ko)?.text).toBe("Git 상태를 읽을 수 없습니다: git is not installed");
   });
 });
 

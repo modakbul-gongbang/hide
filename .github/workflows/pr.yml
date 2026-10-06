@@ -23,21 +23,30 @@
 #
 # Each gate here has a local command in CONTRIBUTING.md under "CI gates".
 #
-# Runner placement is a capacity decision. This organization's plan runs five
-# macOS jobs at a time across every repository, and on 2026-09-28 one run held
-# all five for 26 minutes, so a second pull request waited up to 70 minutes
-# before its lanes started. A run therefore uses two macOS jobs: the Electron
-# end-to-end and the web end-to-end's `@platform` tests, the ones that touch
-# what differs by operating system (Trash, process ownership, file watching and
-# saving, worktree paths, terminal input, ⌘ chords and Korean input).
+# Runner placement is a capacity decision. This organization's plan runs 20
+# jobs at once and five of them on macOS across every repository, and on
+# 2026-09-28 one run held all five for 26 minutes, so a second pull request
+# waited up to 70 minutes before its lanes started. A pull request therefore
+# asks for a macOS runner only for what a macOS runner alone proves: `desktop
+# e2e` for a change to the desktop app or the web code it drives, and `os
+# contract (macos)` for a change to `hide-platform` or `hide-herdr-client`.
+# Core and daemon changes run on Linux and Windows and leave the macOS
+# `@platform` tests, the macOS mailbox lane and the rest of the OS contract to
+# `nightly.yml`.
 # Everything else runs on Linux: the Rust suite, the unit suites, the invariant
-# checks, the whole web end-to-end, dealt out to six shards by `web-e2e.yml`,
+# checks, the whole web end-to-end, dealt out to four shards by `web-e2e.yml`,
 # and the remote mailbox lane over private SSH (`remote-mailbox`).
-# `nightly.yml` runs the whole web end-to-end on macOS, so the move of the
-# web end-to-end costs no macOS coverage, only its delay. On Windows, `windows check`
+# `nightly.yml` runs the web end-to-end on macOS, so the move of the web
+# end-to-end costs no macOS coverage, only its delay. On Windows, `windows check`
 # compiles the workspace and runs the daemon's and the app's suites there,
 # beside the OS contract's Windows leg (issue #293), and `windows e2e` runs the
 # browser `@platform` tests.
+#
+# Short jobs are merged because each job costs a runner start, a checkout and a
+# place in the queue: one `checks` job runs the web shell's and the desktop
+# app's typecheck, lint and unit suites, and `web-e2e.yml` fetches zsh in its
+# build job and deals the shards from a fixed list. docs/TESTING.md counts the
+# jobs of a run.
 #
 # A flaky test does not fail a lane. CI retries a failed test once, Playwright
 # for the end-to-end suites and cargo-nextest for the Rust workspace; a test
@@ -174,12 +183,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/ci-flaky-report.py --suite rust --junit target/nextest/ci/junit*.xml
 
-  web-checks:
-    name: web checks
+  checks:
+    name: web and desktop checks
     needs: plan
-    if: contains(fromJSON(needs.plan.outputs.lanes), 'web-checks')
+    if: contains(fromJSON(needs.plan.outputs.lanes), 'checks')
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v7
       - uses: pnpm/action-setup@v6
@@ -191,6 +200,7 @@ jobs:
           cache: pnpm
           cache-dependency-path: pnpm-lock.yaml
       - name: Install dependencies
+        id: install
         run: bash scripts/verify-web.sh install
       - name: Web shell typecheck, lint, unit test, and build
         run: |
@@ -198,28 +208,11 @@ jobs:
           bash scripts/verify-web.sh web lint
           bash scripts/verify-web.sh web test
           bash scripts/verify-web.sh web build
-
-  desktop-checks:
-    name: desktop checks
-    needs: plan
-    if: contains(fromJSON(needs.plan.outputs.lanes), 'desktop-checks')
-    runs-on: ubuntu-latest
-    timeout-minutes: 15
-    steps:
-      - uses: actions/checkout@v7
-      - uses: pnpm/action-setup@v6
-        with:
-          version: 10
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-          cache-dependency-path: pnpm-lock.yaml
-      - name: Install dependencies
-        run: bash scripts/verify-web.sh install
       - name: Desktop app typecheck, lint, and unit test
         # The menu is built from the web registry, so the plan brings this
-        # lane for a registry change too.
+        # lane for a registry change too. It stands on its own, so it runs
+        # whatever the step above answered, but not after a failed install.
+        if: ${{ !cancelled() && steps.install.outcome == 'success' }}
         run: |
           bash scripts/verify-web.sh desktop typecheck
           bash scripts/verify-web.sh desktop lint
@@ -392,7 +385,8 @@ jobs:
   # The web shell is the same code on every operating system, so the whole
   # suite runs once, on Linux, where runners are plentiful. What differs by
   # system is the daemon and Herdr under it, and the `@platform` tests cover
-  # that on macOS and Windows.
+  # that: they run in this suite on Linux, in `windows-e2e` on Windows and in
+  # `nightly.yml` on macOS.
   web-e2e:
     name: web e2e
     needs: plan
@@ -405,129 +399,60 @@ jobs:
       lane: linux
       runner: ubuntu-latest
       herdr-platform: linux-x86_64
-      # Six shards: the suite is about 20 job-minutes of tests (a shard's
-      # End-to-end step took 213-240 s at six and 131-182 s at eight,
-      # 2026-10-01 runs 36896943318 and 36889286322) and every shard repeats
-      # about a minute of setup. Six cost 29 shard job-minutes, 31 with the
-      # build and zsh jobs, and the lane took 7.7 minutes from the build job's
-      # start to the last shard, queueing aside; eight cost about 34 and no
-      # less wall time, and four would cost about 25 and, estimated from the
-      # same numbers, run about 10 minutes, past the 8-minute lane this
-      # replaced. The organization runs 20 jobs at once, so fewer jobs per run
-      # also queue less.
-      shards: 6
-
-  web-e2e-platform:
-    name: web e2e (macOS)
-    needs: plan
-    if: contains(fromJSON(needs.plan.outputs.lanes), 'web-e2e-platform')
-    uses: ./.github/workflows/web-e2e.yml
-    permissions:
-      contents: read
-      issues: write
-    with:
-      lane: macos
-      runner: macos-15
-      herdr-platform: macos-aarch64
-      shards: 1
-      grep: "@platform"
+      # Four shards: the suite is about 20 job-minutes of tests and every
+      # shard repeats about a minute of setup. Six shards ran 4.5 to 7.5
+      # minutes each (2026-10-05) but 23 of 99 runs waited over 10 minutes for
+      # a Linux shard, because the organization runs 20 jobs at once and a
+      # full run asked for 23. Four shards put two fewer jobs in the queue; each
+      # shard's time at four is measured after merge (docs/TESTING.md).
+      shards: 4
 
   # The remote mailbox crate-boundary lane (herdr-core/tests/remote_delivery.rs,
-  # docs/TESTING.md): the candidate CLI binaries, two private pinned Herdr
-  # servers and a loopback SSH server. It has its own job because it was the
-  # tail of `web e2e (macOS)` (6.8 minutes of `@platform` tests, then 3.2 of
+  # docs/TESTING.md), in `remote-mailbox.yml`. It has its own job because it was
+  # the tail of `web e2e (macOS)` (6.8 minutes of `@platform` tests, then 3.2 of
   # this lane after a 4.4-minute build of every CLI binary, 14.4 minutes in
-  # all, the longest job of a run on 2026-10-05) and it runs on Linux, which
-  # drops its macOS execution: nightly.yml ran it there through `verify`, which
-  # plans every lane, and no run of it on macOS remains. Its macOS-only fixture
+  # all, the longest job of a run on 2026-10-05). It runs on Linux here: it
+  # checks the SSH return route, helper attestation and the durable mailbox,
+  # the same code on every system; what differs by system under it is
+  # `os-contract`'s and `windows check`'s to prove. The fixture's macOS-only
   # branches (codesign of the staged binaries, BSD `ps` and `strip`, the SFTP
-  # server path) go unrun until a nightly macOS run of the lane exists. The lane
-  # checks the SSH return route, helper attestation and the durable mailbox; what
-  # differs by system under it (process lookup, files, the local stream) is
-  # `os-contract`'s and `windows check`'s to prove. It is planned by the crates
-  # it builds and tests (`MAILBOX_CRATES` in scripts/ci-plan.py).
+  # server path) and the Mac as the usual remote device are why `nightly.yml`
+  # runs it on macOS too. It is planned for a change to the crates it builds
+  # and tests (`MAILBOX_CRATES` in scripts/ci-plan.py).
   remote-mailbox:
     name: remote mailbox
     needs: plan
     if: contains(fromJSON(needs.plan.outputs.lanes), 'remote-mailbox')
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
+    uses: ./.github/workflows/remote-mailbox.yml
     permissions:
       contents: read
       issues: write
-    steps:
-      - uses: actions/checkout@v7
-        timeout-minutes: 5
-      - uses: Swatinem/rust-cache@v2
-        timeout-minutes: 5
-        with:
-          workspaces: ". -> target"
-          # Its own key: this build adds 48 dependencies the hided build does
-          # not, and a cache saves only under a new key.
-          shared-key: web-e2e-mailbox
-          save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Install zsh and the SFTP server
-        # The fixture starts every pane's shell from SHELL=/bin/zsh, and the
-        # Herdr fetch script is zsh; the image has neither. The helper install
-        # needs the SFTP server the fixture's sshd serves. The mirror can
-        # stall (web-e2e.yml), so apt retries and gives up on a silent
-        # connection.
-        timeout-minutes: 5
-        run: |
-          printf 'Acquire::Retries "3";\nAcquire::http::Timeout "30";\nAcquire::https::Timeout "30";\n' \
-            | sudo tee /etc/apt/apt.conf.d/99-ci-timeouts >/dev/null
-          sudo apt-get install -y --no-install-recommends zsh openssh-sftp-server
-      - name: Install cargo-nextest
-        timeout-minutes: 3
-        run: bash scripts/install-nextest.sh
-      - name: Build the CLI binaries
-        # hided, hide, the agent hooks and the host helper: the lane stages and
-        # starts all four.
-        timeout-minutes: 20
-        run: bash scripts/verify-cargo.sh cli
-      - name: Fetch the pinned Herdr runtime
-        id: herdr
-        timeout-minutes: 5
-        # Assigned first, so a failed fetch fails this step rather than
-        # handing the next one an empty path.
-        run: |
-          bin=$(zsh scripts/fetch-herdr-runtime.sh --platform linux-x86_64)
-          echo "bin=$bin" >> "$GITHUB_OUTPUT"
-      - name: Remote mailbox over private SSH
-        timeout-minutes: 10
-        env:
-          HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
-        run: bash scripts/verify-cargo.sh nextest --profile ci -p herdr-core --test remote_delivery --run-ignored only
-      - name: Report flaky tests
-        if: ${{ !cancelled() }}
-        continue-on-error: true
-        timeout-minutes: 5
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/ci-flaky-report.py --suite rust --junit target/nextest/ci/junit*.xml
-      - name: Keep the lane's run directory
-        # The daemon's and both Herdr servers' logs behind a failed run, without
-        # the staged binaries, the copies of them the install places in each
-        # account's helper and bin folders, and the fixture's SSH keys.
-        if: ${{ failure() }}
-        uses: actions/upload-artifact@v7
-        with:
-          name: hide-remote-mailbox-logs
-          path: |
-            agents/runs/rd-*
-            !agents/runs/rd-*/cli/**
-            !agents/runs/rd-*/*/*/.ssh/**
-            !agents/runs/rd-*/*/*/helper/**
-            !agents/runs/rd-*/*/*/bin/**
-          if-no-files-found: ignore
+    with:
+      runner: ubuntu-latest
+      herdr-platform: linux-x86_64
 
-  # The OS contract's Linux and Windows legs (see os-contract.yml). Its macOS
-  # leg runs in `desktop-e2e` below, on the runner that job already holds.
+  # The OS contract's Linux and Windows legs (see os-contract.yml), for any
+  # change to what differs by system.
   os-contract:
     name: os contract
     needs: plan
     if: contains(fromJSON(needs.plan.outputs.lanes), 'os-contract')
     uses: ./.github/workflows/os-contract.yml
+    with:
+      systems: '["linux","windows"]'
+    permissions:
+      contents: read
+      issues: write
+
+  # Its macOS leg, for a change to `hide-platform` or `hide-herdr-client` (and
+  # a full plan); the nightly runs it for every other change.
+  os-contract-macos:
+    name: os contract (macOS)
+    needs: plan
+    if: contains(fromJSON(needs.plan.outputs.lanes), 'os-contract-macos')
+    uses: ./.github/workflows/os-contract.yml
+    with:
+      systems: '["macos"]'
     permissions:
       contents: read
       issues: write
@@ -555,10 +480,6 @@ jobs:
         with:
           workspaces: ". -> target"
           save-if: ${{ github.ref == 'refs/heads/main' }}
-      - name: Install cargo-nextest
-        # The Rust tests below run under nextest's `ci` profile (one retry).
-        timeout-minutes: 3
-        run: bash scripts/install-nextest.sh
       - name: Build hide and hided for the desktop app
         # hide-agent-hooks and hide-host-helper too: the home-layout spec
         # stages every binary the packaged app carries.
@@ -581,15 +502,6 @@ jobs:
         run: echo "bin=$(zsh scripts/fetch-herdr-runtime.sh)" >> "$GITHUB_OUTPUT"
       - name: Compare the binary schema and version with the pin on macOS
         run: python3 scripts/check-herdr-schema.py --herdr-bin "${{ steps.herdr.outputs.bin }}"
-      - name: OS contract on macOS
-        # The macOS leg of os-contract.yml, here because this job already
-        # holds a macOS runner and the workspace build it needs.
-        timeout-minutes: 10
-        env:
-          HIDE_E2E_HERDR_BIN: ${{ steps.herdr.outputs.bin }}
-        run: |
-          bash scripts/verify-cargo.sh nextest --profile ci -p hide-platform -p hide-herdr-client
-          bash scripts/verify-cargo.sh nextest --profile ci -p hide-herdr-client --test real_herdr --run-ignored only --no-capture
       - name: Desktop app end-to-end
         # The desktop app against an isolated Herdr, starting its own hided
         # through the hide CLI built above. Electron downloads its runtime on
@@ -610,13 +522,6 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: python3 scripts/ci-flaky-report.py --suite desktop --playwright desktop/e2e-report.json
-      - name: Report flaky Rust tests
-        if: ${{ !cancelled() }}
-        continue-on-error: true
-        timeout-minutes: 5
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: python3 scripts/ci-flaky-report.py --suite rust --junit target/nextest/ci/junit*.xml
       - name: Keep the e2e run's logs
         # A flaky run keeps them as a failed one does; see web-e2e.yml.
         if: ${{ failure() || steps.flaky.outputs.flaky == 'true' }}
@@ -630,7 +535,7 @@ jobs:
 
   verify:
     name: verify
-    needs: [plan, policy, rust, web-checks, desktop-checks, os-contract, windows-check, windows-e2e, web-e2e, web-e2e-platform, remote-mailbox, desktop-e2e]
+    needs: [plan, policy, rust, checks, os-contract, os-contract-macos, windows-check, windows-e2e, web-e2e, remote-mailbox, desktop-e2e]
     if: always()
     runs-on: ubuntu-latest
     timeout-minutes: 5

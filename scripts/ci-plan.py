@@ -6,9 +6,11 @@
 step: a planned lane must have succeeded and an unplanned one must have been
 skipped, so a lane whose `if:` is wrong fails `verify` instead of passing it.
 
-A push to main, a comparison that cannot be computed, and a path no rule
-claims all plan every lane. docs/TESTING.md, "Which lanes a pull request
-runs", owns the rules and the reasons for them.
+A push to main, a comparison that cannot be computed, a path no rule claims
+and the nightly call all plan every lane. No lane takes a macOS runner for
+anything but what only macOS proves (`os-contract-macos`, `desktop-e2e`); the
+rest of the macOS checks are jobs of `nightly.yml`. docs/TESTING.md, "Which
+lanes a pull request runs", owns the rules and the reasons for them.
 """
 import argparse
 from fnmatch import fnmatchcase
@@ -24,13 +26,12 @@ ROOT = Path(__file__).resolve().parent.parent
 LANES = (
     "policy",
     "rust",
-    "web-checks",
-    "desktop-checks",
+    "checks",
     "os-contract",
+    "os-contract-macos",
     "windows-check",
     "windows-e2e",
     "web-e2e",
-    "web-e2e-platform",
     "remote-mailbox",
     "desktop-e2e",
 )
@@ -47,12 +48,15 @@ OS_CRATES = {
     "hide-kit",
     "hide-platform",
 }
+# The OS contract's macOS leg tests only these two, so only a change to one of
+# them plans it; the others reach it through the nightly.
+OS_CONTRACT_CRATES = {"hide-herdr-client", "hide-platform"}
+OS_LANES = ("os-contract", "windows-check", "windows-e2e")
 # The remote mailbox lane builds `hided`, `hide`, the host helper and the hook
 # binary, and runs `herdr-core`'s `remote_delivery` test against them over
 # private SSH; a change to any crate they link, or to the test, can change its
-# result, and nothing else can.
+# result, and nothing else can. Web code and web specs do not reach it.
 MAILBOX_CRATES = {"herdr-core", "hided", "hide-agent-hooks", "hide-host"}
-OS_LANES = ("os-contract", "windows-check", "windows-e2e", "web-e2e-platform", "desktop-e2e")
 
 # Web files the desktop host imports or drives through native input: the host
 # bridge, the shortcut registry the menu is built from, the store and
@@ -81,7 +85,7 @@ SHARED_WEB = (
     "web/src/App.tsx",
     "web/src/main.tsx",
 )
-SHARED_WEB_LANES = ("desktop-checks", "desktop-e2e", "web-e2e-platform", "windows-e2e")
+SHARED_WEB_LANES = ("checks", "desktop-e2e", "windows-e2e")
 
 # Files a lane outside their own directory reads: a change to one also plans
 # that lane, and the Rust crates whose tests read it. An entry ending in `/`
@@ -95,9 +99,9 @@ READERS = (
     ("web/src/", {"rust"}, {"herdr-core"}),
     ("hided/src/", {"rust"}, {"herdr-core"}),
     # web/e2e/s2, s3 and s7 import the wire path conversion.
-    ("desktop/src/main/wirePath.ts", {"web-checks", "web-e2e", "web-e2e-platform", "windows-e2e"}, set()),
+    ("desktop/src/main/wirePath.ts", {"checks", "web-e2e", "windows-e2e"}, set()),
     # web/src/settings.test.ts, theme.test.ts and web/e2e/theme.spec.ts read the tokens.
-    ("design/tokens.json", {"web-checks", "web-e2e"}, set()),
+    ("design/tokens.json", {"checks", "web-e2e"}, set()),
 )
 
 
@@ -129,27 +133,27 @@ POLICY_ONLY = (
 # Paths whose readers are a known set of lanes. `web/e2e` helpers are imported
 # by the desktop suites too, and `desktop/e2e` unit tests run in `windows
 # check`, so neither is web-only or desktop-only.
-WEB_E2E_LANES = {"web-checks", "web-e2e", "web-e2e-platform", "windows-e2e", "desktop-checks", "desktop-e2e", "windows-check"}
-DESKTOP_E2E_LANES = {"desktop-checks", "desktop-e2e", "windows-check"}
+WEB_E2E_LANES = {"checks", "web-e2e", "windows-e2e", "desktop-e2e", "windows-check"}
+DESKTOP_E2E_LANES = {"checks", "desktop-e2e", "windows-check"}
 NAMED_LANES = (
     ("web/e2e/*", WEB_E2E_LANES),
     ("desktop/e2e/*", DESKTOP_E2E_LANES),
-    ("web/playwright.config.ts", {"web-checks", "web-e2e", "web-e2e-platform", "windows-e2e"}),
+    ("web/playwright.config.ts", {"checks", "web-e2e", "windows-e2e"}),
     ("desktop/playwright.config.ts", DESKTOP_E2E_LANES),
     ("desktop/vitest.config.ts", DESKTOP_E2E_LANES),
     # `web` and `desktop` lint share the e2e rules and the size check.
-    ("web/eslint.config.js", {"web-checks", "desktop-checks"}),
-    ("web/eslint.e2e.mjs", {"web-checks", "desktop-checks"}),
-    ("web/eslint-rules/*", {"web-checks", "desktop-checks"}),
-    ("web/scripts/check-e2e-test-size.mjs", {"web-checks", "desktop-checks"}),
-    ("web/scripts/gen-types.mjs", {"web-checks", "web-e2e"}),
-    ("desktop/eslint.config.mjs", {"desktop-checks"}),
-    ("desktop/eslint.globals.mjs", {"desktop-checks"}),
+    ("web/eslint.config.js", {"checks"}),
+    ("web/eslint.e2e.mjs", {"checks"}),
+    ("web/eslint-rules/*", {"checks"}),
+    ("web/scripts/check-e2e-test-size.mjs", {"checks"}),
+    ("web/scripts/gen-types.mjs", {"checks", "web-e2e"}),
+    ("desktop/eslint.config.mjs", {"checks"}),
+    ("desktop/eslint.globals.mjs", {"checks"}),
     # `build.mjs` is the e2e's build; `package.mjs` and `smoke-package.mjs` run
     # in `package.yml`, which has its own trigger on this folder.
-    ("desktop/scripts/build.mjs", {"desktop-checks", "desktop-e2e"}),
-    ("desktop/scripts/package.mjs", {"desktop-checks"}),
-    ("desktop/scripts/smoke-package.mjs", {"desktop-checks"}),
+    ("desktop/scripts/build.mjs", {"checks", "desktop-e2e"}),
+    ("desktop/scripts/package.mjs", {"checks"}),
+    ("desktop/scripts/smoke-package.mjs", {"checks"}),
 )
 
 
@@ -233,30 +237,32 @@ def classify(path, status, crates, root):
         # Every end-to-end lane drives hided, so a crate it links reaches them.
         if "hided" in packages:
             lanes.add("web-e2e")
-        if crate["name"] in OS_CRATES:
-            lanes.update(OS_LANES)
         if packages & MAILBOX_CRATES:
             lanes.add("remote-mailbox")
+        if crate["name"] in OS_CRATES:
+            lanes.update(OS_LANES)
+        if crate["name"] in OS_CONTRACT_CRATES:
+            lanes.add("os-contract-macos")
         return lanes, f"crate {crate['name']}: {path}", packages
     if parts[0] == "web" and len(parts) > 1:
         if parts[1] == "e2e" and len(parts) == 3 and path.name.endswith(".spec.ts"):
-            lanes = {"web-checks", "web-e2e"}
+            lanes = {"checks", "web-e2e"}
             spec = root / path
             # A deleted spec cannot be read; keep the platform lanes for it.
             if status == "D" or "@platform" in spec.read_text(encoding="utf-8"):
-                lanes.update(("web-e2e-platform", "windows-e2e"))
+                lanes.add("windows-e2e")
             return lanes, f"web e2e spec: {path}", set()
         if parts[1] in ("src", "public") or path.as_posix() in ("web/index.html", "web/mobile.html"):
-            lanes = {"web-checks", "web-e2e"}
+            lanes = {"checks", "web-e2e"}
             if path.as_posix() in SHARED_WEB:
                 lanes.update(SHARED_WEB_LANES)
                 return lanes, f"web shared with the desktop host: {path}", set()
             return lanes, f"web shell: {path}", set()
     if parts[0] == "desktop" and len(parts) > 1:
         if parts[1] == "e2e" and len(parts) == 3 and path.name.endswith(".spec.ts"):
-            return {"desktop-checks", "desktop-e2e"}, f"desktop e2e spec: {path}", set()
+            return {"checks", "desktop-e2e"}, f"desktop e2e spec: {path}", set()
         if parts[1] in ("src", "static"):
-            lanes = {"desktop-checks", "desktop-e2e"}
+            lanes = {"checks", "desktop-e2e"}
             if parts[1:3] == ("src", "main"):
                 # The main process owns paths, child processes and the daemon
                 # start; its unit suite runs on Windows in `windows check`.
@@ -300,9 +306,6 @@ def select(entries, crates, root=ROOT, full_reason=None):
         for lane in LANES:
             reasons[lane] = list(full)
         packages = {crate["name"] for crate in crates.values()}
-    # The OS contract's macOS leg runs inside `desktop e2e`.
-    if reasons["os-contract"] and not reasons["desktop-e2e"]:
-        reasons["desktop-e2e"].append("the OS contract's macOS leg")
     planned = [lane for lane in LANES if reasons[lane]]
     return {
         "full": bool(full),

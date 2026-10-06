@@ -769,7 +769,11 @@ While the index is being built the tree says so, and a checkout whose files cann
 Git status decorates each row with one status mark: Modified, Added, Untracked, Renamed, and Conflict render as `M`, `A`, `U`, `R`, and `!` with a semantic color and a matching status name in tooltip and accessibility help.
 A folder with any changed descendant renders a dot mark; the mark describes derived folder state and never relabels the folder as a modified file.
 Deleted descendants still mark an existing ancestor folder but never create a file row that no longer exists.
-Clean and unavailable decoration both reserve the slot, while loading and failure are distinguished by a panel notice above the still-usable tree.
+Clean and unavailable decoration both reserve the slot.
+The checkout's Git status is a mark in the Explorer's root row, beside the refresh button, so its answer never moves a row the operator is aiming at.
+While the first answer is on its way the mark is a small spinner.
+When a read failed for a reason the operator can repair, such as a `git` that cannot run or a repository Git cannot read, or when the decorations are kept from an earlier read after the latest one failed, it is a warning `!` badge whose tooltip gives the reason.
+A folder that is not a repository has nothing to repair, so it draws no mark and the diagnostic log records it (`changes.unavailable`).
 The decoration is not a control and cannot intercept file open, disclosure, inline editing, drag, keyboard navigation, or the context menu.
 
 Git state comes from the root-scoped History projection.
@@ -1279,6 +1283,7 @@ A child's question or completion reaches the operator through its ancestors: the
 An uninstrumented mark (agent detected but its subagents not visible to Hide) is drawn only where an agent was detected, is a mark plus an accessible name and never a color alone, and its subagent count sits beside it as a badge; a count Hide cannot read is drawn as unknown and never as a zero, because a zero claims the agent is working alone.
 An Overview agent row reuses the same agent identity and state presentation as the sidebar and relationship sheet; a missing row means the current live projection has no agent there, and an uninstrumented mark never means zero.
 The header wash marks the pane Hide is showing, while the neutral split-pane outline marks the terminal that owns keyboard focus; moving keyboard focus into Overview keeps the shown wash and removes the terminal outline.
+Keys typed after a click go to the pane clicked last, whatever order snapshots arrive in: the header may briefly follow an older snapshot, but keyboard focus does not leave the last-clicked pane until the core has answered that click, and a focus move the core makes afterwards (Herdr's own move, or a refused click) is followed.
 Unread weight is never reused to mean parent, child, delegated, or selected.
 
 ## Settings: each machine's install kit
