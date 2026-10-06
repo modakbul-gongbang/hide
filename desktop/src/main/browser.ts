@@ -119,7 +119,7 @@ export class BrowserViews {
     if (!page.visible || !this.windowBack) return;
     this.returnTo = null;
     page.view.webContents.focus();
-    this.log.event("browser.window_return", { page_focused: page.view.webContents.isFocused() });
+    this.log.event("browser.window_return", { id: page.id, page_focused: page.view.webContents.isFocused() });
   }
 
   cdpIncarnation(scope: CdpScope): number | null { return this.cdpScopes.get(JSON.stringify([scope.workspace, scope.area_id])) ?? null; }
@@ -269,7 +269,7 @@ export class BrowserViews {
       // it would after Escape, once it is shown: the overlay that covered it
       // goes away through the shell's next sync, which can land after the window returns.
       if (held) this.returnTo = held.page;
-      this.log.event("browser.window_blur", { held: held !== null, owed: this.returnTo !== null });
+      this.log.event("browser.window_blur", { held: held !== null, id: held?.page.id ?? null, owed: this.returnTo !== null });
     });
     window.on("focus", () => {
       this.windowBack = true;
@@ -277,8 +277,12 @@ export class BrowserViews {
       this.giveBack();
     });
     // Where the keyboard goes after a window's return: the order of these, the
-    // page's blur and the shell's focus after `browser.window_return`, says what took it.
+    // pages' focus, blur and visibility after `browser.window_return`, says what took it.
     window.webContents.on("focus", () => this.log.event("browser.shell_focus", { window_focused: window.isFocused(), owed: this.returnTo !== null }));
+    // macOS reports the window hidden while nothing of it is drawn (covered,
+    // or ordered out), and the shell then draws no frame, so it sends no sync.
+    window.on("show", () => this.log.event("browser.window_visible", { visible: true, owed: this.returnTo !== null }));
+    window.on("hide", () => this.log.event("browser.window_visible", { visible: false, owed: this.returnTo !== null }));
     window.on("closed", () => {
       this.cancelCycle();
       for (const page of [...this.pages.values()]) this.destroy(page, "window_closed");
@@ -530,8 +534,9 @@ export class BrowserViews {
       this.log.event("browser.page_gone", { reason: details.reason });
       this.update(page, { loading: false, failure: this.words()("native.browser.stopped") });
     });
-    contents.on("blur", () => this.log.event("browser.page_blur", { window_focused: this.window?.isFocused() ?? false, owed: this.returnTo !== null }));
+    contents.on("blur", () => this.log.event("browser.page_blur", { id: page.id, owed_page: this.returnTo === page, visible: page.visible, window_focused: this.window?.isFocused() ?? false, owed: this.returnTo !== null }));
     contents.on("focus", () => {
+      this.log.event("browser.page_focus", { id: page.id, owed_page: this.returnTo === page, visible: page.visible, window_focused: this.window?.isFocused() ?? false, owed: this.returnTo !== null });
       // Another page holding the keyboard settles the debt: it is not the page the hold began on.
       if (this.returnTo && this.returnTo !== page) this.returnTo = null;
       if (page.visible) this.emit({ kind: "focus", workspace: page.workspace, id: page.id });
@@ -808,6 +813,7 @@ export class BrowserViews {
     // shell preserves its logical page owner and consumes release/Escape.
     page.visible = visible;
     page.view.setVisible(visible);
+    this.log.event("browser.page_visible", { id: page.id, visible, owed_page: this.returnTo === page, held: this.cycleInput?.page === page });
     if (visible && this.returnTo === page) this.giveBack();
     if (!visible && this.cycleInput?.page === page && this.window?.isFocused()) this.window.webContents.focus();
   }
