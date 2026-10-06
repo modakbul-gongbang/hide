@@ -187,12 +187,13 @@ async fn serve(
             },
             accepted = listener.accept() => {
                 let (stream, _) = accepted?;
+                if !online || sessions.len() >= CONNECTION_CAP { continue; }
                 // OpenSSH sets TCP_NODELAY on its sockets. Without it a reply
                 // split over two writes waits for the client's delayed ACK
                 // (about 40 ms on Linux), and the install's serial 32 KB SFTP
-                // reads then took 46 ms each instead of 2.
-                stream.set_nodelay(true)?;
-                if !online || sessions.len() >= CONNECTION_CAP { continue; }
+                // reads then took 46 ms each instead of 2. A peer that already
+                // reset the socket fails the call; its session ends on its own.
+                let _ = stream.set_nodelay(true);
                 let config = Arc::clone(&config);
                 let shared = Arc::clone(&shared);
                 sessions.spawn(async move {
