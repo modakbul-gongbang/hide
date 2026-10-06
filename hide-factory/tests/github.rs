@@ -557,8 +557,10 @@ fn a_held_issue_that_cannot_be_read_keeps_its_task_and_a_deleted_one_is_gone() {
         hub.issues
             .insert(9, ("Listed".into(), "body".into(), "CLOSED".into()));
         hub.list_cap = Some(1);
-        hub.view_errors
-            .insert(1, "issue view refused: transferred to another repository".into());
+        hub.view_errors.insert(
+            1,
+            "issue view refused: transferred to another repository".into(),
+        );
         hub.view_errors.insert(
             2,
             "GraphQL: Could not resolve to an issue or pull request with the number of 2.".into(),
@@ -634,7 +636,9 @@ fn a_worker_s_closing_keyword_in_a_decision_stays_text() {
         at: 0,
     });
     let body = hide_factory::engine::pr_body(&t, &factory());
-    let fence = body.find("````text").expect("a fence longer than the text's");
+    let fence = body
+        .find("````text")
+        .expect("a fence longer than the text's");
     let fixes = body.find("Fixes #2").unwrap();
     let close = body[fixes..].find("````").map(|i| i + fixes).unwrap();
     assert!(fence < fixes && fixes < close, "{body}");

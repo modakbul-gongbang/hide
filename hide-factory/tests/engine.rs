@@ -1847,7 +1847,10 @@ fn a_task_taken_before_its_start_expires_after_the_keep_period() {
     h.advance(3 * MINUTE_MS);
     h.engine.tick();
     assert_eq!(h.state(&f, &t), TaskState::Outside);
-    assert!(h.task(&f, &t).cancelled_at.is_some(), "its keep period runs");
+    assert!(
+        h.task(&f, &t).cancelled_at.is_some(),
+        "its keep period runs"
+    );
     h.advance(8 * DAY_MS);
     h.engine.tick();
     assert!(h.task(&f, &t).purged, "folded after the keep period");

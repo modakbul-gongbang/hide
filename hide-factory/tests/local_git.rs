@@ -383,7 +383,10 @@ fn a_report_after_the_remote_deleted_the_task_branch_still_pushes() {
     assert_eq!(pr.number, 7);
     // The pull request merged and the remote deleted its branch; the Task
     // was reverted and reports again with a new commit.
-    git(&remote, &["update-ref", "-d", &format!("refs/heads/{branch}")]);
+    git(
+        &remote,
+        &["update-ref", "-d", &format!("refs/heads/{branch}")],
+    );
     write(&worktree, "b.txt", "three\n");
     git(&worktree, &["commit", "--quiet", "-am", "again"]);
     projects.open_pr(&factory, &t, "body").unwrap();

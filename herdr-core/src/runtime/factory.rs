@@ -370,7 +370,11 @@ mod tests {
         let none = runtime.factory_lineage("w0:p1");
         assert!(none.agents.is_empty() && none.complete);
         let looped = runtime.factory_lineage("w9:p1");
-        assert_eq!(looped.agents, vec!["agent-b", "agent-a"], "a loop ends the walk");
+        assert_eq!(
+            looped.agents,
+            vec!["agent-b", "agent-a"],
+            "a loop ends the walk"
+        );
         assert!(!looped.complete, "a loop cannot rule out a worker above");
     }
 

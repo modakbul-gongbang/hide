@@ -717,7 +717,10 @@ impl TaskSource for SharedProjects {
         let own_heads: BTreeSet<String> = tasks
             .iter()
             .flat_map(|task| {
-                [Some(task.branch_slug()), task.worker.as_ref().map(|w| w.branch.clone())]
+                [
+                    Some(task.branch_slug()),
+                    task.worker.as_ref().map(|w| w.branch.clone()),
+                ]
             })
             .flatten()
             .collect();
@@ -762,9 +765,7 @@ impl TaskSource for SharedProjects {
                                 .flatten()
                                 .any(|i| i["number"].as_u64() == Some(*number))
                         })
-                        .filter(|pr| {
-                            pr["number"].as_u64().is_none_or(|n| !own_prs.contains(&n))
-                        })
+                        .filter(|pr| pr["number"].as_u64().is_none_or(|n| !own_prs.contains(&n)))
                         .filter(|pr| {
                             pr["isCrossRepository"].as_bool() == Some(true)
                                 || pr["headRefName"]
@@ -852,7 +853,12 @@ impl MergeTarget for SharedProjects {
         let remote = this.git(
             "git.push",
             &path,
-            &["ls-remote", "--heads", "origin", &format!("refs/heads/{branch}")],
+            &[
+                "ls-remote",
+                "--heads",
+                "origin",
+                &format!("refs/heads/{branch}"),
+            ],
         )?;
         if remote.trim().is_empty() {
             this.git(
@@ -1260,7 +1266,15 @@ impl MergeTarget for SharedProjects {
         let existing = this.gh_json(
             "github.pr_find",
             &[
-                "pr", "list", "--repo", &repo, "--head", &branch, "--state", "open", "--json",
+                "pr",
+                "list",
+                "--repo",
+                &repo,
+                "--head",
+                &branch,
+                "--state",
+                "open",
+                "--json",
                 "number,isCrossRepository",
             ],
         )?;

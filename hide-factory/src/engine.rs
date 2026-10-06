@@ -361,7 +361,11 @@ impl Engine {
     pub fn caller_role(&self, caller: &Caller<'_>, command: &Command) -> Result<Role, Refusal> {
         let bound = self
             .role_for(caller.pane, caller.cwd)
-            .or_else(|| caller.claimed.and_then(|pane| self.role_for(Some(pane), None)))
+            .or_else(|| {
+                caller
+                    .claimed
+                    .and_then(|pane| self.role_for(Some(pane), None))
+            })
             .or_else(|| self.role_for_agents(caller.ancestor_agents))
             .or_else(|| {
                 caller
@@ -4564,9 +4568,10 @@ impl Engine {
         // the slot.
         let starting: Vec<_> = self.starting.keys().cloned().collect();
         for (factory, id) in starting {
-            if self.task(&factory, &id).is_none_or(|t| {
-                !matches!(t.state, TaskState::Waiting | TaskState::Relanding)
-            }) {
+            if self
+                .task(&factory, &id)
+                .is_none_or(|t| !matches!(t.state, TaskState::Waiting | TaskState::Relanding))
+            {
                 // A start the adapter took over is never replayed by its
                 // intent: a later start is a new attempt. A spawn whose agent
                 // had not shown yet is asked again as the same attempt, so a
@@ -6086,11 +6091,7 @@ pub fn pr_body(task: &Task, factory: &Factory) -> String {
             .iter()
             .map(|decision| format!("- {}\n", decision.text))
             .collect();
-        let longest = text
-            .split(|c| c != '`')
-            .map(str::len)
-            .max()
-            .unwrap_or(0);
+        let longest = text.split(|c| c != '`').map(str::len).max().unwrap_or(0);
         let fence = "`".repeat(longest.max(2) + 1);
         body.push_str(&format!("\n## 결정 기록\n{fence}text\n{text}{fence}\n"));
     }
