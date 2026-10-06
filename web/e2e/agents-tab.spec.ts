@@ -19,6 +19,26 @@ test.describe.configure({ timeout: 120_000 });
 const read = (file: string) => (fs.existsSync(file) ? fs.readFileSync(file, "utf8") : "");
 
 /**
+ * A `codex` that speaks just enough of `codex app-server` for the kit's trust step to hear that this
+ * Codex has no hook trust: it answers `initialize` and refuses every other request as an unknown method.
+ */
+const CODEX_WITHOUT_HOOK_TRUST = [
+  "#!/bin/sh",
+  '[ "$1" = app-server ] || exit 0',
+  "while IFS= read -r line; do",
+  '  case "$line" in',
+  "    *'\"id\"'*)",
+  '      id=$(printf \'%s\' "$line" | sed \'s/.*"id":\\([0-9]*\\).*/\\1/\')',
+  '      case "$line" in',
+  '        *\'"initialize"\'*) printf \'{"id":%s,"result":{}}\\n\' "$id" ;;',
+  '        *) printf \'{"id":%s,"error":{"code":-32601,"message":"method not found"}}\\n\' "$id" ;;',
+  "      esac ;;",
+  "  esac",
+  "done",
+  "",
+].join("\n");
+
+/**
  * A private HOME with four agents installed (a program in `~/.local/bin`, which the kit searches; Pi,
  * OpenCode and Cursor have none) and a kit record, so Claude Code and Codex are on and the rest wait.
  */
@@ -27,7 +47,9 @@ async function start(label: string) {
   const home = path.join(fs.mkdtempSync(path.join(herdr.root, "ag-")), "home");
   for (const folder of [".claude", ".codex", ".gemini", ".grok"]) fs.mkdirSync(path.join(home, folder), { recursive: true });
   fs.mkdirSync(path.join(home, ".local", "bin"), { recursive: true });
-  for (const program of ["claude", "codex", "gemini", "grok"]) fs.writeFileSync(path.join(home, ".local", "bin", program), "#!/bin/sh\n", { mode: 0o755 });
+  for (const program of ["claude", "codex", "gemini", "grok"]) {
+    fs.writeFileSync(path.join(home, ".local", "bin", program), program === "codex" ? CODEX_WITHOUT_HOOK_TRUST : "#!/bin/sh\n", { mode: 0o755 });
+  }
   fs.mkdirSync(path.join(home, ".hide", "kit"), { recursive: true });
   fs.writeFileSync(path.join(home, ".hide", "kit", "installed.json"), JSON.stringify({ format: 1, installed: [] }));
   const daemon = await startHided(herdr, label, home, {}, true);
