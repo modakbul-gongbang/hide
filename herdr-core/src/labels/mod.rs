@@ -84,15 +84,17 @@ impl LabelServices {
         })
     }
 
-    /// The worker for this machine's Herdr server at `socket_path`.
+    /// The worker for this machine's Herdr server at `socket_path`, reading
+    /// conversations through the core's own node.
     pub(crate) fn local_worker(
         &self,
         socket_path: &Path,
+        node: Arc<dyn NodeLink>,
         wake: Wake,
     ) -> Result<Option<LabelWorker>, String> {
-        let Some(home) = self.home.clone() else {
+        if self.home.is_none() {
             return Ok(None);
-        };
+        }
         *self
             .local_wake
             .lock()
@@ -105,7 +107,9 @@ impl LabelServices {
             },
             Arc::clone(&self.store),
             Arc::clone(&self.analyzer),
-            Arc::new(worker::LocalTranscripts { home }),
+            Arc::new(NodeTranscripts::new(Box::new(move || {
+                Ok(Arc::clone(&node))
+            }))),
             wake,
         )
         .map(Some)
@@ -141,7 +145,7 @@ impl LabelServices {
             },
             Arc::clone(&self.store),
             Arc::clone(&self.analyzer),
-            Arc::new(DeviceTranscripts::of_device(device_id, runtime)),
+            Arc::new(NodeTranscripts::of_device(device_id, runtime)),
             wake,
         )
     }
@@ -181,13 +185,14 @@ pub(crate) fn analysis_settings(
 pub(crate) type ChannelSource =
     Box<dyn Fn() -> Result<Arc<dyn NodeLink>, &'static str> + Send + Sync>;
 
-/// A device's conversations, read by its helper and brought here in memory
-/// only (PRD D-03); nothing of them is stored.
-pub(crate) struct DeviceTranscripts {
+/// A node's conversations, read on its machine and brought here in memory
+/// only (PRD D-03); nothing of them is stored. The core's own node answers in
+/// process, a device's through its helper.
+pub(crate) struct NodeTranscripts {
     channel: ChannelSource,
 }
 
-impl DeviceTranscripts {
+impl NodeTranscripts {
     pub(crate) fn new(channel: ChannelSource) -> Self {
         Self { channel }
     }
@@ -206,7 +211,7 @@ impl DeviceTranscripts {
     }
 }
 
-impl TranscriptSource for DeviceTranscripts {
+impl TranscriptSource for NodeTranscripts {
     fn read(&self, request: &LabelTranscriptRequest) -> Result<LabelTranscript, ReadFailure> {
         let channel =
             (self.channel)().map_err(|reason| ReadFailure::Unavailable(reason.to_owned()))?;

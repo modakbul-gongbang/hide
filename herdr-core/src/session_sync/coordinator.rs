@@ -1157,7 +1157,10 @@ fn start_label_worker(
         let _ = wake_sender.send(CoordinatorMessage::Labels);
     });
     let worker = match &context.target {
-        SessionSyncTarget::Local { socket_path } => services.local_worker(socket_path, wake),
+        SessionSyncTarget::Local { socket_path } => match context.node() {
+            Some(node) => services.local_worker(socket_path, Arc::clone(node), wake),
+            None => Ok(None),
+        },
         SessionSyncTarget::Remote { target_id, .. } => services
             .device_worker(target_id, context.runtime.clone(), wake)
             .map(Some),

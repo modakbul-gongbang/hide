@@ -15,14 +15,12 @@ use hide_ai::{
 use hide_session::label_transcript::{LabelTranscript, LabelTranscriptRequest};
 use serde_json::{Value, json};
 
-use super::DeviceTranscripts;
+use super::NodeTranscripts;
 use super::analyzer::LabelAnalyzer;
 use super::facts::Requester;
 use super::input::OperatorInput;
 use super::store::{LOCAL_TARGET, LabelStore};
-use super::worker::{
-    LabelWorker, LocalTranscripts, ObservedAgent, ReadFailure, TranscriptSource, WorkerConfig,
-};
+use super::worker::{LabelWorker, ObservedAgent, ReadFailure, TranscriptSource, WorkerConfig};
 use crate::sidebar::{AgentLabel, SessionSnapshotPayload};
 
 /// A provider that answers from a queue and can hold an answer back.
@@ -127,7 +125,7 @@ impl AiBackend for Scripted {
 
 /// Counts the reads it passes on to this machine's files.
 struct CountingSource {
-    inner: LocalTranscripts,
+    inner: super::NodeTranscripts,
     reads: AtomicUsize,
 }
 
@@ -190,8 +188,10 @@ impl Harness {
 
     fn worker(&self, store: Arc<LabelStore>) -> (LabelWorker, Receiver<()>, Arc<CountingSource>) {
         let source = Arc::new(CountingSource {
-            inner: LocalTranscripts {
-                home: self.home.path().to_path_buf(),
+            inner: {
+                let node: Arc<dyn crate::node_access::NodeLink> =
+                    Arc::new(hide_node::Local::new(Some(self.home.path().to_path_buf())));
+                super::NodeTranscripts::new(Box::new(move || Ok(Arc::clone(&node))))
             },
             reads: AtomicUsize::new(0),
         });
@@ -205,7 +205,7 @@ impl Harness {
             self.store(),
             "device:mini",
             "device-mini.lock",
-            Arc::new(DeviceTranscripts::new(channel)),
+            Arc::new(NodeTranscripts::new(channel)),
         )
     }
 
