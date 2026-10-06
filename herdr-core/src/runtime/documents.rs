@@ -1057,7 +1057,7 @@ impl Runtime {
             self.document_saves.remove(tab_id);
             return false;
         };
-        let saved = hide_host::document::revision_of(unsettled.contents.as_bytes());
+        let saved = hide_node_link::document::revision_of(unsettled.contents.as_bytes());
         match result {
             Ok(Some(revision)) if revision == saved => {
                 slot.unsettled = None;

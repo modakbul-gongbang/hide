@@ -552,9 +552,9 @@ fn ask_worktrees(
 ) {
     let mut answers = Vec::new();
     for root in roots {
-        match call_as::<Option<hide_host::worktrees::RepositoryWorktrees>>(
+        match call_as::<Option<hide_node_link::worktrees::RepositoryWorktrees>>(
             channel,
-            hide_host::protocol::Call::Worktrees {
+            hide_node_link::protocol::Call::Worktrees {
                 path: root.clone(),
                 bases: Default::default(),
                 base_override: None,
@@ -591,7 +591,7 @@ fn ask_facts(
     for path in paths {
         match call_as::<ProjectFacts>(
             channel,
-            hide_host::protocol::Call::Project { path: path.clone() },
+            hide_node_link::protocol::Call::Project { path: path.clone() },
             FACTS_TIMEOUT,
         ) {
             Ok(facts) => answers.push((path.clone(), Fact::Known(facts))),
@@ -629,9 +629,9 @@ impl Runtime {
             }
         };
         let ask = move || {
-            call_as::<hide_host::register::Registrable>(
+            call_as::<hide_node_link::register::Registrable>(
                 channel.as_ref(),
-                hide_host::protocol::Call::Registrable { path: path.clone() },
+                hide_node_link::protocol::Call::Registrable { path: path.clone() },
                 REGISTRABLE_TIMEOUT,
             )
             .map_err(|error| match error {
@@ -674,7 +674,7 @@ impl Runtime {
         &mut self,
         device: &str,
         label: String,
-        answer: Result<hide_host::register::Registrable, String>,
+        answer: Result<hide_node_link::register::Registrable, String>,
     ) -> bool {
         // A device removed while its helper judged the folder takes no
         // registration from that late answer.

@@ -2,10 +2,10 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::Duration;
 
-use hide_host::document::Document;
-use hide_host::protocol::{Call, RevisionNow, RootRef};
-use hide_host::save::Saved;
-use hide_host::{ErrorCode, RootIdentity};
+use hide_node_link::document::Document;
+use hide_node_link::protocol::{Call, RevisionNow, RootRef};
+use hide_node_link::save::Saved;
+use hide_node_link::{ErrorCode, RootIdentity};
 use hide_platform::fs::identity;
 use hide_platform::path::{self, PathError, RelPath};
 
@@ -545,7 +545,7 @@ pub fn apply_explorer_operation(
             inode: operation.expected_inode,
         },
     };
-    call_as::<hide_host::mutate::Changed>(channel, call, CHANGE_TIMEOUT)
+    call_as::<hide_node_link::mutate::Changed>(channel, call, CHANGE_TIMEOUT)
         .map(drop)
         .map_err(|error| change_failure(operation, error))
 }
@@ -653,7 +653,7 @@ pub(crate) mod tests {
             language: Some("txt".to_owned()),
             document_kind: DocumentKind::Text,
             contents_utf8: Some("old".to_owned()),
-            revision: Some(hide_host::document::revision_of(b"old")),
+            revision: Some(hide_node_link::document::revision_of(b"old")),
             dirty: false,
             readonly_reason: None,
             conflict: None,

@@ -212,7 +212,7 @@ impl Runtime {
         target_id: &str,
         root_path: &str,
         generation: u64,
-        result: Result<hide_host::list::Listing, String>,
+        result: Result<hide_node_link::list::Listing, String>,
     ) -> bool {
         let Some(status_index) = self
             .snapshot

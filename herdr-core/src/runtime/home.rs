@@ -10,7 +10,7 @@
 
 use super::*;
 use crate::node_access::LinkError;
-use hide_host::home::HomeSynced;
+use hide_node_link::home::HomeSynced;
 
 /// Where one device's Home links stand. `requested` is the project set last
 /// sent to its helper, by a start or a background sync, whatever it answered;
@@ -161,7 +161,7 @@ impl Runtime {
         let synced = match synced {
             Ok(synced) => synced,
             Err(LinkError::Refused(error))
-                if error.code == hide_host::error::ErrorCode::HomeConflict =>
+                if error.code == hide_node_link::error::ErrorCode::HomeConflict =>
             {
                 self.log_home_sync_failure(device, "home.conflict", &error.message);
                 self.set_request_error(

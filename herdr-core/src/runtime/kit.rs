@@ -75,7 +75,7 @@ pub(crate) struct DeviceKitCall {
 /// What a device's kit call answered.
 pub(crate) enum DeviceKitAnswer {
     Report(Result<KitReport, String>),
-    Removed(Result<hide_host::protocol::KitRemoved, String>),
+    Removed(Result<hide_node_link::protocol::KitRemoved, String>),
 }
 
 /// Where one device stands with the first-run agent choice in this run.
@@ -948,7 +948,7 @@ impl Runtime {
     fn ingest_device_kit_removal(
         &mut self,
         device_id: &str,
-        removed: Result<hide_host::protocol::KitRemoved, String>,
+        removed: Result<hide_node_link::protocol::KitRemoved, String>,
     ) -> bool {
         match removed {
             Ok(removed) => crate::diagnostic!(serde_json::json!({

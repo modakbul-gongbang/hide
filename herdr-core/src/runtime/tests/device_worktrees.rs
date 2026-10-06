@@ -178,13 +178,16 @@ struct UnsupportedPreflight(Arc<FakeDevice>);
 impl crate::node_access::NodeLink for UnsupportedPreflight {
     fn call(
         &self,
-        call: hide_host::protocol::Call,
+        call: hide_node_link::protocol::Call,
         timeout: Duration,
     ) -> Result<crate::node_access::LinkAnswer, crate::node_access::LinkError> {
-        if matches!(call, hide_host::protocol::Call::WorktreeRemovalCheck { .. }) {
+        if matches!(
+            call,
+            hide_node_link::protocol::Call::WorktreeRemovalCheck { .. }
+        ) {
             return Err(crate::node_access::LinkError::Refused(
-                hide_host::HostError::new(
-                    hide_host::ErrorCode::InvalidRequest,
+                hide_node_link::HostError::new(
+                    hide_node_link::ErrorCode::InvalidRequest,
                     "Unsupported worktree preflight. Reconnect to update the device helper"
                         .to_owned(),
                 ),

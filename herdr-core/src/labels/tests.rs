@@ -676,12 +676,12 @@ struct OlderHelper;
 impl crate::node_access::NodeLink for OlderHelper {
     fn call(
         &self,
-        _: hide_host::protocol::Call,
+        _: hide_node_link::protocol::Call,
         _: Duration,
     ) -> Result<crate::node_access::LinkAnswer, crate::node_access::LinkError> {
         Err(crate::node_access::LinkError::Refused(
-            hide_host::error::HostError::new(
-                hide_host::error::ErrorCode::InvalidRequest,
+            hide_node_link::error::HostError::new(
+                hide_node_link::error::ErrorCode::InvalidRequest,
                 "unknown variant `label_transcript`",
             ),
         ))
@@ -695,11 +695,11 @@ struct HelperAt(PathBuf);
 impl crate::node_access::NodeLink for HelperAt {
     fn call(
         &self,
-        call: hide_host::protocol::Call,
+        call: hide_node_link::protocol::Call,
         timeout: Duration,
     ) -> Result<crate::node_access::LinkAnswer, crate::node_access::LinkError> {
         match call {
-            hide_host::protocol::Call::LabelTranscript { request } => {
+            hide_node_link::protocol::Call::LabelTranscript { request } => {
                 hide_host::serve::label_transcript(&self.0, &request)
                     .map(crate::node_access::LinkAnswer::Parsed)
                     .map_err(crate::node_access::LinkError::Refused)

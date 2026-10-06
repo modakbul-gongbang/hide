@@ -261,11 +261,11 @@ fn remote_session_sync_reconciles_target_scoped_structured_terminals() {
 }
 
 /// A helper listing with these (name, is_directory) rows, in its order.
-fn listing(rows: &[(&str, bool)]) -> hide_host::list::Listing {
-    hide_host::list::Listing {
+fn listing(rows: &[(&str, bool)]) -> hide_node_link::list::Listing {
+    hide_node_link::list::Listing {
         entries: rows
             .iter()
-            .map(|(name, is_directory)| hide_host::list::Entry {
+            .map(|(name, is_directory)| hide_node_link::list::Entry {
                 name: (*name).to_owned(),
                 is_directory: *is_directory,
                 inode: 1,

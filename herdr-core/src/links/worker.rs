@@ -11,7 +11,7 @@
 use super::store::{IssueLinks, LinkStore, Opened, PrLinks};
 use super::{BACKFILL_MS, PaneFact, ParentFact, ProjectFacts, ProjectLinkSummary, now_ms};
 use crate::node_access::{LinkError, NodeLink, call_as};
-use hide_host::protocol::Call;
+use hide_node_link::protocol::Call;
 use hide_session::links::{self, Candidate, ReadRequest};
 use std::collections::{BTreeMap, HashMap, VecDeque};
 use std::path::{Path, PathBuf};
@@ -859,7 +859,7 @@ fn device_code(error: &LinkError) -> String {
         LinkError::Busy => "device_helper_busy".to_owned(),
         LinkError::Unknown(_) => "device_helper_unknown".to_owned(),
         // A helper older than protocol 18 does not know the call.
-        LinkError::Refused(error) if error.code == hide_host::ErrorCode::InvalidRequest => {
+        LinkError::Refused(error) if error.code == hide_node_link::ErrorCode::InvalidRequest => {
             "device_helper_unsupported".to_owned()
         }
         LinkError::Refused(error) => error.message.clone(),

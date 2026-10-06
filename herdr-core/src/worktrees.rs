@@ -489,9 +489,9 @@ fn read(
             project.root_path.display()
         ));
     };
-    match crate::node_access::call_as::<Option<hide_host::worktrees::RepositoryWorktrees>>(
+    match crate::node_access::call_as::<Option<hide_node_link::worktrees::RepositoryWorktrees>>(
         node,
-        hide_host::protocol::Call::Worktrees {
+        hide_node_link::protocol::Call::Worktrees {
             path: path.to_owned(),
             bases: project.bases.clone(),
             base_override: project.base_override.clone(),
@@ -526,7 +526,7 @@ fn read_project(
 /// carrying the deletion gate its facts decide. The gate's pane and agent
 /// counts are filled when the catalog places the row.
 pub fn project_snapshot(
-    facts: hide_host::worktrees::RepositoryWorktrees,
+    facts: hide_node_link::worktrees::RepositoryWorktrees,
 ) -> ProjectWorktreesSnapshot {
     if let Some(reason) = facts.unavailable_reason.as_deref() {
         crate::diagnostic!(serde_json::json!({
@@ -563,7 +563,7 @@ pub fn project_snapshot(
     }
 }
 
-fn worktree_snapshot(facts: hide_host::worktrees::WorktreeFacts) -> WorktreeSnapshot {
+fn worktree_snapshot(facts: hide_node_link::worktrees::WorktreeFacts) -> WorktreeSnapshot {
     if let Some(reason) = facts.unavailable_reason.as_deref() {
         crate::diagnostic!(serde_json::json!({
             "component": "worktrees",

@@ -23,10 +23,6 @@ use crate::root::Root;
 /// cut or allowed to dominate the wire.
 pub const MAX_DIFF_BYTES: usize = 256 * 1024;
 
-/// The further diffs one read answers at most: one per View area the shell
-/// can show side by side (PRD S7 A5), so a read stays bounded whoever asks.
-pub const MAX_DIFFS: usize = 6;
-
 /// What to read: the folder below the root the answer is limited to, the
 /// file whose diff to fetch and which group it is in, and the branch the
 /// committed group is measured against. `base: None` measures against the
@@ -43,7 +39,7 @@ pub struct ChangesQuery {
     pub diffs: Vec<DiffTarget>,
 }
 
-pub use hide_node_link::git::DiffTarget;
+pub use hide_node_link::git::{DiffTarget, MAX_DIFFS};
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 pub struct Changes {

@@ -9,10 +9,18 @@
 //! shapes are still those of `hide-session` and `hide-kit`, named here for
 //! their types only.
 
+pub mod bytes;
+pub mod document;
 pub mod error;
 pub mod git;
+pub mod home;
+pub mod index;
 pub mod link;
+pub mod list;
+pub mod mutate;
 pub mod protocol;
+pub mod register;
+pub mod save;
 pub mod worktrees;
 
 pub use error::{ErrorCode, HostError, HostResult};

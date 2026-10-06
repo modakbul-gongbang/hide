@@ -18,41 +18,10 @@ use std::path::Path;
 
 use cap_std::fs::{Dir, OpenOptions};
 use hide_platform::fs::{atomic, identity};
-use serde::{Deserialize, Serialize};
 
 use crate::error::{ErrorCode, HostError, HostResult};
 use crate::root::{Root, open_parent};
-
-/// What a change did, as the caller's result carries it.
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
-pub struct Changed {}
-
-/// A name a creation or a rename may carry: one component, and not one of the
-/// shapes that would name a different path.
-pub fn valid_name(name: &str) -> HostResult<&str> {
-    let refuse = |message: String| Err(HostError::new(ErrorCode::InvalidPath, message));
-    if name.is_empty() {
-        return refuse("A name is required".to_owned());
-    }
-    if name.contains('/') {
-        return refuse("A name cannot contain /".to_owned());
-    }
-    if name.contains('\0') {
-        return refuse("A name cannot contain NUL".to_owned());
-    }
-    if name == "." || name == ".." {
-        return refuse(format!("{name} is not a valid name"));
-    }
-    // A name this system would read as something else (a `\` on Windows,
-    // a device name, a trailing dot) is refused rather than created as it.
-    if let Err(error) = hide_platform::path::RelPath::root()
-        .join(name)
-        .and_then(|path| path.to_native())
-    {
-        return refuse(format!("{name} is not a valid name here: {error}"));
-    }
-    Ok(name)
-}
+pub use hide_node_link::mutate::{Changed, valid_name};
 
 /// A new empty file, or a new folder, named `name` in `parent`.
 pub fn create(dir: &Dir, parent: &Path, name: &str, directory: bool) -> HostResult<Changed> {

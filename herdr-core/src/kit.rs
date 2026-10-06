@@ -221,13 +221,13 @@ pub(crate) fn spawn_device_worker(
 }
 
 fn call_device(call: &DeviceKitCall) -> DeviceKitAnswer {
-    use hide_host::protocol::KitAction;
+    use hide_node_link::protocol::KitAction;
     let action = match &call.work {
         DeviceKitWork::Job(job) => action_of(job),
         DeviceKitWork::Remove => KitAction::Remove,
     };
     let removing = action == KitAction::Remove;
-    let kit = hide_host::protocol::Call::Kit {
+    let kit = hide_node_link::protocol::Call::Kit {
         action,
         cli_dir: call.cli_dir.clone(),
         herdr_socket: call.herdr_socket.clone(),

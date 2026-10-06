@@ -2588,14 +2588,14 @@ impl Runtime {
     pub(crate) fn confirmed_worktree_removal(
         &self,
         id: u64,
-    ) -> Option<hide_host::worktrees::ConfirmedRemoval> {
+    ) -> Option<hide_node_link::worktrees::ConfirmedRemoval> {
         self.worktree_removal_request(id, "removing")
     }
 
     pub(crate) fn worktree_preflight_request(
         &self,
         id: u64,
-    ) -> Option<hide_host::worktrees::ConfirmedRemoval> {
+    ) -> Option<hide_node_link::worktrees::ConfirmedRemoval> {
         self.worktree_removal_request(id, "checking")
     }
 
@@ -2603,10 +2603,10 @@ impl Runtime {
         &self,
         id: u64,
         phase: &str,
-    ) -> Option<hide_host::worktrees::ConfirmedRemoval> {
+    ) -> Option<hide_node_link::worktrees::ConfirmedRemoval> {
         let removal = self.snapshot.worktree_removal.as_ref()?;
         (removal.id == id && removal.phase == phase).then(|| {
-            hide_host::worktrees::ConfirmedRemoval {
+            hide_node_link::worktrees::ConfirmedRemoval {
                 repository_root: removal.repository_root.clone(),
                 checkout_path: removal.checkout_path.clone(),
                 expected_head_sha: removal.expected_head_sha.clone(),

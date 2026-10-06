@@ -4,8 +4,8 @@
 
 use super::*;
 use crate::node_access::{LinkAnswer, LinkError, NodeLink};
-use hide_host::protocol::{Call, KitAction};
 use hide_kit::{ComponentId, ComponentReport, ComponentState, KitReport};
+use hide_node_link::protocol::{Call, KitAction};
 use std::sync::{Arc, Mutex};
 
 const DEVICE: &str = "studio";
@@ -71,7 +71,7 @@ impl NodeLink for KitDevice {
             let _ = gate.recv();
         }
         if removing {
-            let removed = hide_host::protocol::KitRemoved {
+            let removed = hide_node_link::protocol::KitRemoved {
                 kit: hide_kit::RemoveReport {
                     components: vec![(ComponentId::Cli, hide_kit::RemoveOutcome::Removed)],
                     agents: Vec::new(),

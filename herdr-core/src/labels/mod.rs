@@ -26,7 +26,7 @@ use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex, Weak};
 use std::time::Duration;
 
-use hide_host::protocol::Call;
+use hide_node_link::protocol::Call;
 use hide_session::label_transcript::{LabelTranscript, LabelTranscriptRequest};
 
 use crate::node_access::{LinkError, NodeLink, call_as};
@@ -230,7 +230,9 @@ impl TranscriptSource for NodeTranscripts {
             LinkError::Unknown(_) => ReadFailure::Unavailable("device_helper_unknown".to_owned()),
             // A helper older than protocol 12 does not know the call; the
             // device's kit status already offers the reinstall (B15).
-            LinkError::Refused(error) if error.code == hide_host::ErrorCode::InvalidRequest => {
+            LinkError::Refused(error)
+                if error.code == hide_node_link::ErrorCode::InvalidRequest =>
+            {
                 ReadFailure::Refused("device_helper_unsupported".to_owned())
             }
             LinkError::Refused(error) => ReadFailure::Refused(error.message),

@@ -9,7 +9,7 @@
 use super::*;
 use crate::fake_herdr::FakeHerdr;
 use crate::node_access::{LinkAnswer, LinkError, NodeLink};
-use hide_host::protocol::Call;
+use hide_node_link::protocol::Call;
 use serde_json::{Value, json};
 
 const DEVICE: &str = "device-h";

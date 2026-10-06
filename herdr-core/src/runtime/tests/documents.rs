@@ -11,7 +11,7 @@ use super::*;
 use crate::model::{ViewDisplayState, ViewNodeSnapshot};
 use crate::node_access::{LinkAnswer, LinkError, NodeLink};
 use crate::view_layout::{DisplayKind, Edge};
-use hide_host::protocol::Call;
+use hide_node_link::protocol::Call;
 use serde_json::Value;
 use std::sync::Condvar;
 
@@ -48,7 +48,7 @@ pub(super) struct FakeDevice {
     gate: Mutex<Gate>,
     released: Condvar,
     saves: Mutex<Vec<String>>,
-    pins: Mutex<HashMap<String, hide_host::RootIdentity>>,
+    pins: Mutex<HashMap<String, hide_node_link::RootIdentity>>,
     closes: Mutex<Vec<&'static str>>,
 }
 
@@ -156,11 +156,11 @@ impl NodeLink for FakeDevice {
         }
     }
 
-    fn pinned(&self, root: &str) -> Option<hide_host::RootIdentity> {
+    fn pinned(&self, root: &str) -> Option<hide_node_link::RootIdentity> {
         self.pins.lock().unwrap().get(root).copied()
     }
 
-    fn pin(&self, root: &str, identity: Option<hide_host::RootIdentity>) {
+    fn pin(&self, root: &str, identity: Option<hide_node_link::RootIdentity>) {
         let mut pins = self.pins.lock().unwrap();
         match identity {
             Some(identity) => pins.insert(root.to_owned(), identity),
@@ -347,7 +347,7 @@ fn a_device_file_is_read_on_a_worker_and_shows_as_a_tab_when_it_arrives() {
     assert_eq!(document.contents_utf8.as_deref(), Some("old\n"));
     assert_eq!(
         document.revision.as_deref(),
-        Some(hide_host::document::revision_of(b"old\n").as_str())
+        Some(hide_node_link::document::revision_of(b"old\n").as_str())
     );
 }
 
@@ -408,7 +408,7 @@ fn a_device_save_writes_the_draft_and_moves_the_revision() {
     let document = f.document("a.txt").unwrap();
     assert_eq!(
         document.revision.as_deref(),
-        Some(hide_host::document::revision_of(b"new\n").as_str())
+        Some(hide_node_link::document::revision_of(b"new\n").as_str())
     );
     assert_eq!(document.save, None);
 }
@@ -435,7 +435,7 @@ fn a_device_save_over_a_changed_file_is_a_conflict_until_the_operator_keeps_edit
     let conflict = document.conflict.unwrap();
     assert_eq!(
         conflict.disk_revision.as_deref(),
-        Some(hide_host::document::revision_of(b"theirs\n").as_str())
+        Some(hide_node_link::document::revision_of(b"theirs\n").as_str())
     );
     assert_eq!(f.last_error().as_deref(), Some("file.save_conflict"));
 
@@ -551,7 +551,7 @@ fn an_unknown_save_waits_for_the_device_and_blocks_the_next_save_until_read_back
     let document = f.document("a.txt").unwrap();
     assert_eq!(
         document.revision.as_deref(),
-        Some(hide_host::document::revision_of(b"new\n").as_str())
+        Some(hide_node_link::document::revision_of(b"new\n").as_str())
     );
     assert!(document.dirty, "the newer draft is still unsaved");
     assert_eq!(document.contents_utf8.as_deref(), Some("newer\n"));
@@ -1004,7 +1004,7 @@ fn a_device_explorer_change_runs_on_its_host_and_the_open_tab_follows_it() {
             .get(&tab_id)
             .is_some_and(|document| {
                 document.revision.as_deref()
-                    == Some(hide_host::document::revision_of(b"new\n").as_str())
+                    == Some(hide_node_link::document::revision_of(b"new\n").as_str())
             })
     });
     assert_eq!(
@@ -1081,7 +1081,7 @@ fn reload_and_save_do_not_overtake_each_other_on_one_tab() {
     f.wait_for_document("a.txt", "the save", |document| !document.dirty);
     assert_eq!(
         f.document("a.txt").unwrap().revision.as_deref(),
-        Some(hide_host::document::revision_of(b"saved\n").as_str())
+        Some(hide_node_link::document::revision_of(b"saved\n").as_str())
     );
 
     std::fs::write(f.root.join("a.txt"), "outside\n").unwrap();

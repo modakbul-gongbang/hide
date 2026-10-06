@@ -18,9 +18,9 @@ use std::sync::{Arc, Mutex, Weak, mpsc};
 use std::thread;
 use std::time::Duration;
 
-use hide_host::ErrorCode;
 use hide_host::git::{ChangedFile, Changes, DiffTarget, FileStatus};
-use hide_host::protocol::Call;
+use hide_node_link::ErrorCode;
+use hide_node_link::protocol::Call;
 use hide_platform::path;
 
 use crate::files::DocumentRoot;

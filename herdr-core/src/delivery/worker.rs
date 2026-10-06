@@ -256,7 +256,7 @@ fn read_activity(work: WatchWork) -> watch::Reading {
         let own = link.in_process();
         crate::node_access::call_as::<hide_session::session_activity::SessionActivity>(
             link.as_ref(),
-            hide_host::protocol::Call::SessionActivity { request },
+            hide_node_link::protocol::Call::SessionActivity { request },
             Duration::from_secs(5),
         )
         .map_err(|error| match error {
@@ -915,12 +915,12 @@ mod tests {
     impl crate::node_access::NodeLink for ActivityPeer {
         fn call(
             &self,
-            call: hide_host::protocol::Call,
+            call: hide_node_link::protocol::Call,
             timeout: Duration,
         ) -> Result<crate::node_access::LinkAnswer, crate::node_access::LinkError> {
             assert!(matches!(
                 call,
-                hide_host::protocol::Call::SessionActivity { .. }
+                hide_node_link::protocol::Call::SessionActivity { .. }
             ));
             assert_eq!(timeout, Duration::from_secs(5));
             let sample = self.0.fetch_add(100, Ordering::Relaxed) + 100;

@@ -547,7 +547,7 @@ fn a_device_registration_is_listed_without_panes_pinned_and_removed_on_that_devi
     assert!(runtime.ingest_device_registration(
         TARGET,
         "Other".to_owned(),
-        Ok(hide_host::register::Registrable {
+        Ok(hide_node_link::register::Registrable {
             root: t.other.clone(),
             is_git: false,
         }),
@@ -687,7 +687,7 @@ fn a_tab_in_a_device_registration_without_a_workspace_creates_one_there() {
     assert!(runtime.ingest_device_registration(
         TARGET,
         "Other".to_owned(),
-        Ok(hide_host::register::Registrable {
+        Ok(hide_node_link::register::Registrable {
             root: t.other.clone(),
             is_git: false,
         }),
@@ -1027,7 +1027,7 @@ fn a_registration_answer_after_its_device_was_removed_is_dropped() {
     assert!(!runtime.ingest_device_registration(
         TARGET,
         "Other".to_owned(),
-        Ok(hide_host::register::Registrable {
+        Ok(hide_node_link::register::Registrable {
             root: t.other.clone(),
             is_git: false,
         }),

@@ -10,9 +10,9 @@
 
 use std::time::Duration;
 
-use hide_host::ErrorCode;
-use hide_host::list::Listing;
-use hide_host::protocol::{Call, RootOpened, RootRef};
+use hide_node_link::ErrorCode;
+use hide_node_link::list::Listing;
+use hide_node_link::protocol::{Call, RootOpened, RootRef};
 pub use hide_node_link::{LinkAnswer, LinkError, NodeLink, call_as};
 
 const LIST_TIMEOUT: Duration = Duration::from_secs(30);
@@ -72,12 +72,12 @@ pub fn list_folder(
         let answered = listing.entries.len();
         listing
             .entries
-            .retain(|entry| hide_host::mutate::valid_name(&entry.name).is_ok());
-        if listing.entries.len() > hide_host::list::LIST_CAP {
-            listing.entries.truncate(hide_host::list::LIST_CAP);
+            .retain(|entry| hide_node_link::mutate::valid_name(&entry.name).is_ok());
+        if listing.entries.len() > hide_node_link::list::LIST_CAP {
+            listing.entries.truncate(hide_node_link::list::LIST_CAP);
             listing.truncated = true;
         }
-        if listing.entries.len() < answered.min(hide_host::list::LIST_CAP) {
+        if listing.entries.len() < answered.min(hide_node_link::list::LIST_CAP) {
             crate::diagnostic!(serde_json::json!({
                 "component": "node_access", "kind": "host.listing_names_refused",
                 "root": root, "refused": answered - listing.entries.len(),
@@ -90,7 +90,7 @@ pub fn list_folder(
 /// How long a watch poll waits for its stamps; the next poll asks again.
 const STAMPS_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// A stamp per watched folder of a checkout (`hide_host::list::stamps`), for a
+/// A stamp per watched folder of a checkout (`hide_node_link::list::stamps`), for a
 /// device Explorer's watch. A replaced root is refused and stays pinned: only
 /// an explicit read by the operator adopts the folder now at that path.
 pub fn folder_stamps(
@@ -116,7 +116,7 @@ pub fn read_bytes(
     relative: &str,
     offset: u64,
     length: u64,
-) -> Result<hide_host::bytes::Range, LinkError> {
+) -> Result<hide_node_link::bytes::Range, LinkError> {
     let root_ref = pinned_root(channel, root, LIST_TIMEOUT)?;
     let result = call_as(
         channel,
@@ -144,7 +144,7 @@ const INDEX_TIMEOUT: Duration = Duration::from_secs(120);
 pub fn index_root(
     channel: &(impl NodeLink + ?Sized),
     root: &str,
-) -> Result<hide_host::index::Walked, LinkError> {
+) -> Result<hide_node_link::index::Walked, LinkError> {
     let root_ref = pinned_root(channel, root, LIST_TIMEOUT)?;
     let result = call_as(channel, Call::Index { root: root_ref }, INDEX_TIMEOUT);
     if let Err(LinkError::Refused(error)) = &result
@@ -152,15 +152,15 @@ pub fn index_root(
     {
         channel.pin(root, None);
     }
-    result.map(|mut walked: hide_host::index::Walked| {
+    result.map(|mut walked: hide_node_link::index::Walked| {
         // As for a listing: only relative paths inside the root, in the
         // wire's spelling whatever system the device runs, and no more of
         // them than the walk cap.
         walked
             .paths
             .retain(|path| hide_platform::path::RelPath::parse(path).is_ok());
-        if walked.paths.len() > hide_host::index::INDEX_CAP {
-            walked.paths.truncate(hide_host::index::INDEX_CAP);
+        if walked.paths.len() > hide_node_link::index::INDEX_CAP {
+            walked.paths.truncate(hide_node_link::index::INDEX_CAP);
             walked.truncated = true;
         }
         walked
@@ -170,7 +170,7 @@ pub fn index_root(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use hide_host::RootIdentity;
+    use hide_node_link::RootIdentity;
 
     /// A device helper that answers whatever it likes.
     struct Hostile;
@@ -196,7 +196,8 @@ mod tests {
                         "../outside".to_owned(),
                         "/etc/passwd".to_owned(),
                     ];
-                    paths.extend((0..hide_host::index::INDEX_CAP + 5).map(|n| format!("f{n}")));
+                    paths
+                        .extend((0..hide_node_link::index::INDEX_CAP + 5).map(|n| format!("f{n}")));
                     serde_json::json!({"paths": paths, "truncated": false})
                 }
                 _ => serde_json::json!(null),
@@ -218,7 +219,7 @@ mod tests {
     #[test]
     fn a_hostile_listing_or_walk_is_confined_and_capped() {
         let listing = list_folder(&Hostile, "/r", "").unwrap();
-        assert_eq!(listing.entries.len(), hide_host::list::LIST_CAP);
+        assert_eq!(listing.entries.len(), hide_node_link::list::LIST_CAP);
         assert!(listing.truncated);
         assert_eq!(listing.entries[0].name, "ok.txt");
         assert!(
@@ -229,7 +230,7 @@ mod tests {
         );
 
         let walked = index_root(&Hostile, "/r").unwrap();
-        assert_eq!(walked.paths.len(), hide_host::index::INDEX_CAP);
+        assert_eq!(walked.paths.len(), hide_node_link::index::INDEX_CAP);
         assert!(walked.truncated);
         assert_eq!(walked.paths[0], "src/a.rs");
         assert!(

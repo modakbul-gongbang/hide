@@ -2495,10 +2495,10 @@ pub struct MemoryNoticeSnapshot {
 }
 
 /// What kind of document an open file is, decided once by the host that
-/// read it (`hide_host::document`) and drawn by the shell as one view per
+/// read it (`hide_node_link::document`) and drawn by the shell as one view per
 /// kind. Adding a kind is one variant there and one case in the shell's
 /// switch; nothing else in the shell inspects extensions or bytes.
-pub use hide_host::document::DocumentKind;
+pub use hide_node_link::document::DocumentKind;
 
 #[derive(Clone, Debug, PartialEq, Serialize)]
 pub struct EditorDocumentSnapshot {

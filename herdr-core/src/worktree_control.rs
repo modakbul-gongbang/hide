@@ -104,7 +104,7 @@ pub fn spawn_worktree_preflight(
         };
         let Some(removal) = request else { return; };
         let result = crate::node_access::call_as::<()>(target.host.as_ref(),
-            hide_host::protocol::Call::WorktreeRemovalCheck { removal }, HOST_REMOVE_TIMEOUT)
+            hide_node_link::protocol::Call::WorktreeRemovalCheck { removal }, HOST_REMOVE_TIMEOUT)
             .map_err(|error| format!("{}. No panes were closed.", error.to_string().trim_end_matches('.')));
         crate::diagnostic!(serde_json::json!({"component":"worktree_removal", "kind":"preflight_finished", "id":id, "accepted":result.is_ok()}));
         if let Ok(mut guard) = runtime.lock() {
@@ -192,12 +192,12 @@ pub fn spawn_worktree_close(
 /// never came leaves the removal's effect unknown, which is not a success.
 fn remove_on_host(
     host: &dyn crate::node_access::NodeLink,
-    removal: hide_host::worktrees::ConfirmedRemoval,
+    removal: hide_node_link::worktrees::ConfirmedRemoval,
 ) -> Result<String, String> {
     let path = removal.checkout_path.clone();
-    match crate::node_access::call_as::<hide_host::worktrees::RemovalOutcome>(
+    match crate::node_access::call_as::<hide_node_link::worktrees::RemovalOutcome>(
         host,
-        hide_host::protocol::Call::WorktreeRemove { removal },
+        hide_node_link::protocol::Call::WorktreeRemove { removal },
         HOST_REMOVE_TIMEOUT,
     ) {
         Ok(outcome) if outcome.removed => Ok(outcome.message),
@@ -220,7 +220,7 @@ fn check_new_branch(
 ) -> Result<(), String> {
     crate::node_access::call_as::<()>(
         host,
-        hide_host::protocol::Call::BranchCheck {
+        hide_node_link::protocol::Call::BranchCheck {
             path: repository_root.to_owned(),
             branch: branch.to_owned(),
         },
@@ -238,7 +238,7 @@ fn host_directory(
 ) -> Result<Option<String>, String> {
     crate::node_access::call_as::<Option<String>>(
         host,
-        hide_host::protocol::Call::Directory {
+        hide_node_link::protocol::Call::Directory {
             path: path.to_owned(),
         },
         HOST_CHECK_TIMEOUT,
@@ -1126,7 +1126,7 @@ fn open_tab_and_start_agent(target: &TabTarget, request: &CheckoutTabRequest) {
 }
 
 /// How long the helper may take to bring a Home in step: a stat per
-/// project and a link each, at most [`hide_host::home::MAX_LINKS`].
+/// project and a link each, at most [`hide_node_link::home::MAX_LINKS`].
 const HOME_SYNC_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// A Home start or a new tab in Home (PRD home-device-rail D-04): the
@@ -1195,10 +1195,10 @@ pub fn spawn_home_link_sync(
 fn sync_home(
     host: &dyn crate::node_access::NodeLink,
     projects: &[String],
-) -> Result<hide_host::home::HomeSynced, crate::node_access::LinkError> {
+) -> Result<hide_node_link::home::HomeSynced, crate::node_access::LinkError> {
     crate::node_access::call_as(
         host,
-        hide_host::protocol::Call::HomeSync {
+        hide_node_link::protocol::Call::HomeSync {
             projects: projects.to_vec(),
         },
         HOME_SYNC_TIMEOUT,
@@ -2830,7 +2830,7 @@ mod tests {
         impl crate::node_access::NodeLink for Busy {
             fn call(
                 &self,
-                _call: hide_host::protocol::Call,
+                _call: hide_node_link::protocol::Call,
                 _timeout: std::time::Duration,
             ) -> Result<crate::node_access::LinkAnswer, crate::node_access::LinkError> {
                 Err(crate::node_access::LinkError::Unknown(

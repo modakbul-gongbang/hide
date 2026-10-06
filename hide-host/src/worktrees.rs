@@ -16,7 +16,6 @@ use std::process::Command;
 use std::time::Duration;
 
 use hide_platform::process::OwnedChild;
-use serde::{Deserialize, Serialize};
 
 use crate::error::{ErrorCode, HostError, HostResult};
 
@@ -25,65 +24,6 @@ use crate::error::{ErrorCode, HostError, HostResult};
 /// project's answer behind it; a status over evicted iCloud files ran for
 /// minutes before this bound existed.
 pub const GIT_DEADLINE: Duration = Duration::from_secs(15);
-
-/// A repository's worktrees, as Git reports them. `None` from [`read`] is a
-/// folder that is not a repository, which is not a failure.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
-pub struct RepositoryWorktrees {
-    pub root_path: String,
-    pub shared_git_path: Option<String>,
-    pub default_branch: Option<String>,
-    pub branches: Vec<String>,
-    pub base_branch: Option<String>,
-    pub base_source: String,
-    pub base_branch_fallback: Option<String>,
-    pub worktrees: Vec<WorktreeFacts>,
-    /// Why this repository has no worktree list. An empty list with no reason
-    /// means the repository genuinely has none.
-    pub unavailable_reason: Option<String>,
-}
-
-/// One worktree's Git facts.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
-pub struct WorktreeFacts {
-    pub path: String,
-    pub branch: Option<String>,
-    pub head_sha: Option<String>,
-    /// Git lists the worktree but its path is not on disk.
-    pub missing: bool,
-    pub is_main: bool,
-    /// `Some("")` is locked without a reason; `None` is unlocked.
-    pub lock_reason: Option<String>,
-    /// Measured repository boundaries relative to this checkout.
-    pub ignored_repositories: Vec<String>,
-    pub ignored_scan_unavailable: Option<String>,
-    /// Another listed worktree lies inside this one.
-    pub nested: bool,
-    pub dirty: bool,
-    pub changed_file_count: u32,
-    pub base_branch: Option<String>,
-    pub ahead: u32,
-    pub behind: u32,
-    pub added_lines: u32,
-    pub removed_lines: u32,
-    pub merged: Option<bool>,
-    pub upstream_state: String,
-    pub unpushed: Option<Unpushed>,
-    pub behind_upstream: Option<u32>,
-    pub created_at_unix_ms: Option<u64>,
-    pub last_commit_unix_seconds: Option<u64>,
-    pub last_commit_subject: Option<String>,
-    pub last_fetch_at_unix_ms: Option<u64>,
-    pub measured_at_unix_ms: Option<u64>,
-    pub unavailable_reason: Option<String>,
-}
-
-/// Commits a branch has that its upstream does not, and the upstream's remote.
-#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
-pub struct Unpushed {
-    pub remote: String,
-    pub count: u32,
-}
 
 /// Reads the repository that holds `path`: its main worktree, default
 /// branch, local branches and every listed worktree. `bases` names a branch's
@@ -1649,7 +1589,9 @@ fn still_registered(admin: &Path) -> bool {
     !named.exists()
 }
 
-pub use hide_node_link::worktrees::{ConfirmedRemoval, RemovalOutcome};
+pub use hide_node_link::worktrees::{
+    ConfirmedRemoval, RemovalOutcome, RepositoryWorktrees, Unpushed, WorktreeFacts,
+};
 
 /// Measures the accepted deletion without changing files or Git registration.
 /// The core asks before closing any pane; removal repeats the same checks.
