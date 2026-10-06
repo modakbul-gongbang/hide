@@ -24,19 +24,33 @@ pub const BELL_PROMPT: &str = "Hide has pending mail. Read hide inbox for the fu
 #[derive(Deserialize)]
 struct PromptInput {
     prompt: Option<String>,
+    session_id: Option<String>,
 }
 
-/// Whether a runtime's `UserPromptSubmit` payload carries Hide's own bell as
-/// the submitted prompt. A truncated or unreadable payload is not the bell:
-/// an operator prompt that is mistaken for one would hand its turn the letter
-/// bodies, while a bell mistaken for an operator prompt only waits for the
-/// next bell.
-pub fn prompt_is_bell(payload: &[u8], truncated: bool) -> bool {
-    !truncated
-        && serde_json::from_slice::<PromptInput>(payload)
-            .ok()
-            .and_then(|input| input.prompt)
-            .is_some_and(|prompt| prompt.trim() == BELL_PROMPT)
+/// The submitted prompt and the session id of a runtime's `UserPromptSubmit`
+/// payload; a truncated or unreadable payload yields neither, so its prompt is
+/// never taken for the bell and its hook never counts as a submission.
+pub struct Prompt {
+    pub bell: bool,
+    pub session: Option<String>,
+}
+
+pub fn read_prompt(payload: &[u8], truncated: bool) -> Prompt {
+    let input = (!truncated)
+        .then(|| serde_json::from_slice::<PromptInput>(payload).ok())
+        .flatten();
+    Prompt {
+        bell: input
+            .as_ref()
+            .and_then(|input| input.prompt.as_deref())
+            .is_some_and(|prompt| prompt.trim() == BELL_PROMPT),
+        session: input.and_then(|input| input.session_id).filter(|id| {
+            !id.is_empty()
+                && id.len() <= 256
+                && !id.starts_with('-')
+                && !id.chars().any(char::is_control)
+        }),
+    }
 }
 
 #[derive(Deserialize)]
@@ -62,14 +76,16 @@ impl From<&'static str> for Failure {
 
 /// What the agent receives for the submitted prompt: the letter bodies when
 /// `bell` says the prompt was Hide's bell, otherwise at most a count.
-pub fn pull(deadline: Instant, bell: bool) -> Result<Option<Intake>, Failure> {
+pub fn pull(deadline: Instant, prompt: &Prompt) -> Result<Option<Intake>, Failure> {
     let pull_deadline = deadline.checked_sub(CONFIRM_RESERVE).ok_or("deadline")?;
-    let arguments: &[&str] = if bell {
-        &["inbox", "--hook", "--bell"]
-    } else {
-        &["inbox", "--hook"]
-    };
-    let answer = run_cli(arguments, pull_deadline)?;
+    let mut arguments = vec!["inbox", "--hook"];
+    if prompt.bell {
+        arguments.push("--bell");
+    }
+    if let Some(session) = &prompt.session {
+        arguments.extend(["--session", session]);
+    }
+    let answer = run_cli(&arguments, pull_deadline)?;
     let intake: Intake = serde_json::from_value(answer).map_err(|_| "format")?;
     if intake.context.len() > CONTEXT_LIMIT
         || intake.ids.len() > 5
@@ -249,17 +265,24 @@ mod tests {
         let payload = |prompt: &str| {
             serde_json::to_vec(&serde_json::json!({"session_id":"s","prompt":prompt})).unwrap()
         };
-        assert!(prompt_is_bell(&payload(BELL_PROMPT), false));
-        assert!(prompt_is_bell(&payload(&format!("{BELL_PROMPT}\n")), false));
-        assert!(!prompt_is_bell(&payload(BELL_PROMPT), true));
-        assert!(!prompt_is_bell(&payload("please run the tests"), false));
-        assert!(!prompt_is_bell(
-            &payload(&format!("{BELL_PROMPT} and more")),
-            false
-        ));
-        assert!(!prompt_is_bell(b"{\"session_id\":\"s\"}", false));
-        assert!(!prompt_is_bell(b"not json", false));
-        assert!(!prompt_is_bell(b"", false));
+        let bell = |bytes: &[u8], truncated| read_prompt(bytes, truncated).bell;
+        assert!(bell(&payload(BELL_PROMPT), false));
+        assert!(bell(&payload(&format!("{BELL_PROMPT}\n")), false));
+        assert!(!bell(&payload(BELL_PROMPT), true));
+        assert!(!bell(&payload("please run the tests"), false));
+        assert!(!bell(&payload(&format!("{BELL_PROMPT} and more")), false));
+        assert!(!bell(b"{\"session_id\":\"s\"}", false));
+        assert!(!bell(b"not json", false));
+        assert!(!bell(b"", false));
+        assert_eq!(
+            read_prompt(&payload("x"), false).session.as_deref(),
+            Some("s")
+        );
+        assert_eq!(read_prompt(&payload("x"), true).session, None);
+        assert_eq!(
+            read_prompt(b"{\"session_id\":\"-rf\"}", false).session,
+            None
+        );
     }
 
     #[test]

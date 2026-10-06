@@ -4,7 +4,7 @@ use herdr_core::delivery::{BODY_LIMIT, Command, HOOK_LETTERS};
 
 use crate::env::{self, Env};
 
-pub const USAGE: &str = "hide request send <target> --intent <key> --body <text> [--kind request|block|report]\nhide request reply <id> --intent <key> --body <text>\nhide request ack|cancel|show <id>\nhide inbox [--hook [--bell]]\nhide watch start <target> [--observer <id>] [--actor <id>]\nhide watch assign <watch-or-target-id> --observer <id> [--actor <id>] [--expected-generation <n>] [--approval <text>]\nhide watch stop <id>\nhide watch list\nDelivery commands require a running daemon and a current agent pane; they do not require an open renderer.";
+pub const USAGE: &str = "hide request send <target> --intent <key> --body <text> [--kind request|block|report]\nhide request reply <id> --intent <key> --body <text>\nhide request ack|cancel|show <id>\nhide inbox [--hook [--bell] [--session <id>]]\nhide watch start <target> [--observer <id>] [--actor <id>]\nhide watch assign <watch-or-target-id> --observer <id> [--actor <id>] [--expected-generation <n>] [--approval <text>]\nhide watch stop <id>\nhide watch list\nDelivery commands require a running daemon and a current agent pane; they do not require an open renderer.";
 
 pub fn parse<'a>(
     topic: &str,
@@ -14,11 +14,20 @@ pub fn parse<'a>(
     if topic == "inbox" {
         return match verb {
             None => Ok(Command::Inbox),
-            Some("--hook") => match args.next().map(String::as_str) {
-                None => Ok(Command::Pull { bell: false }),
-                Some("--bell") if args.next().is_none() => Ok(Command::Pull { bell: true }),
-                _ => Err(USAGE.into()),
-            },
+            Some("--hook") => {
+                let mut bell = false;
+                let mut session = None;
+                while let Some(flag) = args.next() {
+                    match flag.as_str() {
+                        "--bell" if !bell => bell = true,
+                        "--session" if session.is_none() => {
+                            session = Some(args.next().filter(|id| key(id)).ok_or(USAGE)?.clone());
+                        }
+                        _ => return Err(USAGE.into()),
+                    }
+                }
+                Ok(Command::Pull { bell, session })
+            }
             Some("--confirm") => {
                 let ids: Vec<_> = args.cloned().collect();
                 if ids.is_empty() || ids.len() > HOOK_LETTERS || !ids.iter().all(|id| key(id)) {
@@ -179,13 +188,28 @@ mod tests {
         assert!(parse_line(&["inbox", "wait"]).is_err());
         assert_eq!(
             parse_line(&["inbox", "--hook"]).unwrap(),
-            Command::Pull { bell: false }
+            Command::Pull {
+                bell: false,
+                session: None
+            }
         );
         assert_eq!(
             parse_line(&["inbox", "--hook", "--bell"]).unwrap(),
-            Command::Pull { bell: true }
+            Command::Pull {
+                bell: true,
+                session: None
+            }
+        );
+        assert_eq!(
+            parse_line(&["inbox", "--hook", "--session", "abc", "--bell"]).unwrap(),
+            Command::Pull {
+                bell: true,
+                session: Some("abc".into())
+            }
         );
         assert!(parse_line(&["inbox", "--hook", "--bell", "extra"]).is_err());
+        assert!(parse_line(&["inbox", "--hook", "--session"]).is_err());
+        assert!(parse_line(&["inbox", "--hook", "--session", "-x"]).is_err());
         assert!(parse_line(&["inbox", "--bell"]).is_err());
         assert!(parse_line(&["request", "send", "target", "--body", "body"]).is_err());
         assert_eq!(

@@ -38,6 +38,10 @@ pub enum Command {
     Pull {
         #[serde(default)]
         bell: bool,
+        /// The session id the hook's runtime reported. The hook only counts
+        /// as a submission in the pane when it is the pane's own session.
+        #[serde(default)]
+        session: Option<String>,
     },
     Confirm {
         ids: Vec<String>,
@@ -247,8 +251,8 @@ pub fn apply(
                     .collect::<Vec<_>>()
             ))
         }
-        Command::Pull { bell: true } => Ok(json!(pull(ledger, actor)?)),
-        Command::Pull { bell: false } => Ok(json!(operator_prompt_intake(ledger, actor)?)),
+        Command::Pull { bell: true, .. } => Ok(json!(pull(ledger, actor)?)),
+        Command::Pull { bell: false, .. } => Ok(json!(operator_prompt_intake(ledger, actor)?)),
         Command::Confirm { ids } => {
             if ids.len() > HOOK_LETTERS {
                 return Err("capacity".into());
@@ -526,7 +530,10 @@ mod tests {
         let before = ledger.clone();
         for command in [
             Command::Inbox,
-            Command::Pull { bell: true },
+            Command::Pull {
+                bell: true,
+                session: None,
+            },
             Command::Show {
                 id: letter.id.clone(),
             },
@@ -749,7 +756,17 @@ mod tests {
     }
 
     fn pull_for(ledger: &mut Ledger, recipient: &Actor, bell: bool) -> Intake {
-        let answer = apply(ledger, recipient, None, &Command::Pull { bell }, 100).unwrap();
+        let answer = apply(
+            ledger,
+            recipient,
+            None,
+            &Command::Pull {
+                bell,
+                session: None,
+            },
+            100,
+        )
+        .unwrap();
         serde_json::from_value(answer).unwrap()
     }
 

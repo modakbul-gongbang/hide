@@ -223,7 +223,15 @@ impl Runtime {
             .actor
             .clone();
         actor.require_native_identity()?;
-        if matches!(command, Command::Pull { .. }) {
+        // Only the pane's own session proves its composer was submitted: any
+        // process in the pane can run `hide inbox --hook`, and none of them
+        // may clear the operator's draft.
+        if let Command::Pull {
+            session: Some(session),
+            ..
+        } = &command
+            && crate::wire::session_digest(session) == actor.session
+        {
             self.note_prompt_submitted(&actor.pane_id);
         }
         let resolves_to_caller = |key: &str| {
@@ -829,7 +837,7 @@ pub(crate) mod tests {
     }
 
     #[test]
-    fn a_prompt_hook_pull_is_a_submission_whoever_typed_the_prompt() {
+    fn only_a_prompt_hook_of_the_panes_own_session_is_a_submission() {
         let root = tempfile::tempdir().unwrap();
         let (runtime, _, target, path) = fixture(root.path());
         let (worker, client) = Worker::spawn(
@@ -840,17 +848,43 @@ pub(crate) mod tests {
         .unwrap();
         let mut guard = runtime.lock().unwrap();
         guard.install_delivery_client(client);
+        let own = crate::wire::session_digest("hook-session");
+        let payload: SessionSnapshotPayload = serde_json::from_value(json!({"agents":[
+            {"id":"sender","pane_id":"sender","agent":"codex","agent_status":"working","state_change_seq":1,"lineage_session":"sender-session"},
+            {"id":"recipient","pane_id":"recipient","agent":"codex","agent_status":"idle","state_change_seq":2,"lineage_session":own},
+        ]})).unwrap();
+        guard.observe_delivery("local", &payload, None);
         let context = authority(&target.actor).context;
         clocks(&mut guard, "recipient", true);
         guard
             .prepare_delivery("local", "recipient", &context, None, Command::Inbox)
             .unwrap();
         assert_eq!(written(&mut guard), (false, false, false));
-        for bell in [false, true] {
+        for (bell, session, submitted) in [
+            (false, Some("hook-session"), true),
+            (true, Some("hook-session"), true),
+            // Any process in the pane can run the hook command; a session
+            // that is not the pane's own, or none, clears no draft.
+            (false, Some("another-session"), false),
+            (true, None, false),
+        ] {
             guard
-                .prepare_delivery("local", "recipient", &context, None, Command::Pull { bell })
+                .prepare_delivery(
+                    "local",
+                    "recipient",
+                    &context,
+                    None,
+                    Command::Pull {
+                        bell,
+                        session: session.map(str::to_owned),
+                    },
+                )
                 .unwrap();
-            assert_eq!(written(&mut guard), (false, true, false), "bell {bell}");
+            assert_eq!(
+                written(&mut guard),
+                (false, submitted, false),
+                "bell {bell} session {session:?}"
+            );
         }
         drop(guard);
         drop(worker);

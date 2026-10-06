@@ -16,8 +16,8 @@ use hide_platform::process::OwnedChild;
 const FAKE_HIDE: &str = r#"#!/bin/sh
 echo "$@" >> "$FAKE_HIDE_LOG"
 case "$*" in
-  "inbox --hook --bell") echo '{"ok":true,"result":{"context":"LETTER-BODY","ids":["letter-1"],"remaining":0}}' ;;
-  "inbox --hook") echo '{"ok":true,"result":{"context":"LETTERS-WAITING","ids":[],"remaining":0}}' ;;
+  "inbox --hook --bell --session fixture-session") echo '{"ok":true,"result":{"context":"LETTER-BODY","ids":["letter-1"],"remaining":0}}' ;;
+  "inbox --hook --session fixture-session") echo '{"ok":true,"result":{"context":"LETTERS-WAITING","ids":[],"remaining":0}}' ;;
   "inbox --confirm letter-1") echo '{"ok":true,"result":{"confirmed":["letter-1"]}}' ;;
   *) echo '{"ok":false,"reason":"unexpected"}' ;;
 esac
@@ -108,7 +108,10 @@ fn the_bell_turn_receives_the_letter_bodies_and_confirms_them() {
     assert!(stdout.contains("LETTER-BODY"), "{stdout}");
     assert_eq!(
         kit.asked(),
-        ["inbox --hook --bell", "inbox --confirm letter-1"]
+        [
+            "inbox --hook --bell --session fixture-session",
+            "inbox --confirm letter-1"
+        ]
     );
 }
 
@@ -118,12 +121,12 @@ fn an_operator_prompt_receives_only_the_count_and_confirms_nothing() {
     let stdout = kit.prompt("please run the tests");
     assert!(stdout.contains("LETTERS-WAITING"), "{stdout}");
     assert!(!stdout.contains("LETTER-BODY"));
-    assert_eq!(kit.asked(), ["inbox --hook"]);
+    assert_eq!(kit.asked(), ["inbox --hook --session fixture-session"]);
 }
 
 #[test]
 fn a_prompt_that_only_starts_like_the_bell_is_an_operator_prompt() {
     let kit = Kit::new();
     kit.prompt(&format!("{BELL_PROMPT} Also fix the build."));
-    assert_eq!(kit.asked(), ["inbox --hook"]);
+    assert_eq!(kit.asked(), ["inbox --hook --session fixture-session"]);
 }

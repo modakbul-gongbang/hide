@@ -1107,7 +1107,10 @@ mod tests {
         )
         .unwrap();
         for command in [
-            Command::Pull { bell: true },
+            Command::Pull {
+                bell: true,
+                session: None,
+            },
             Command::Confirm {
                 ids: vec![letter.id.clone()],
             },

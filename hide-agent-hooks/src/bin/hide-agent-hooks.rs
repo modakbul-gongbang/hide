@@ -169,10 +169,15 @@ fn run_hook(arguments: &[String], started: Instant) {
     } else {
         None
     };
-    let bell = payload.as_ref().is_some_and(|(bytes, truncated)| {
-        event == HookEvent::UserPromptSubmit
-            && hide_agent_hooks::delivery::prompt_is_bell(bytes, *truncated)
-    });
+    let prompt = match (&payload, event) {
+        (Some((bytes, truncated)), HookEvent::UserPromptSubmit) => {
+            hide_agent_hooks::delivery::read_prompt(bytes, *truncated)
+        }
+        _ => hide_agent_hooks::delivery::Prompt {
+            bell: false,
+            session: None,
+        },
+    };
     let mut output = if let Some(runtime) = runtime.filter(|_| memory_injection) {
         memory_output_before_deadline(runtime, event, home.clone(), deadline, payload)
     } else {
@@ -189,7 +194,7 @@ fn run_hook(arguments: &[String], started: Instant) {
         });
     }
     let intake = if event == HookEvent::UserPromptSubmit && runtime.is_some() {
-        match hide_agent_hooks::delivery::pull(delivery_deadline, bell) {
+        match hide_agent_hooks::delivery::pull(delivery_deadline, &prompt) {
             Ok(intake) => intake,
             Err(failure) => {
                 hide_agent_hooks::delivery::diagnose_failure(&home, &failure);
