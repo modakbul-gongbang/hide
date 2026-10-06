@@ -163,13 +163,20 @@ const OVERLAY_SELECTOR = [
   STILL_LAYER_SELECTOR,
 ].join(",");
 
+// TEMP evidence for issue 511: what each flush judged, newest last.
+const tempFlushes: unknown[] = [];
+(window as unknown as { __temp511: unknown[] }).__temp511 = tempFlushes;
+let tempLayers: string[] = [];
+
 function overlayRects(): { rects: BrowserRect[]; moving: boolean } {
   const rects: BrowserRect[] = [];
   let moving = false;
+  tempLayers = [];
   for (const element of document.querySelectorAll<HTMLElement>(OVERLAY_SELECTOR)) {
     if (element.querySelector('[data-slot="tooltip-content"]')) continue;
     const box = element.getBoundingClientRect();
     if (box.width <= 0 || box.height <= 0) continue;
+    tempLayers.push(`${element.tagName} role=${element.getAttribute("role")} slot=${element.getAttribute("data-slot") ?? element.firstElementChild?.getAttribute("data-slot")} state=${element.getAttribute("data-state") ?? element.firstElementChild?.getAttribute("data-state")} rect=${[box.left, box.top, box.width, box.height].map(Math.round).join(",")}`);
     rects.push({ x: box.left, y: box.top, width: box.width, height: box.height });
     if (!element.matches(STILL_LAYER_SELECTOR)) moving = true;
   }
@@ -364,6 +371,8 @@ class BrowserSyncLoop {
       ...(this.attachmentEpoch === undefined ? {} : { attachment_epoch: this.attachmentEpoch }),
     };
     this.visible = sync.displays.flatMap((row) => (row.visible && row.rect ? [row.rect] : []));
+    tempFlushes.push({ at: new Date().toISOString(), dragging, layers: tempLayers, rows: sync.displays.map((row) => `${row.id} rect=${row.rect ? [row.rect.x, row.rect.y, row.rect.width, row.rect.height].map(Math.round).join(",") : null} visible=${row.visible} frozen=${this.frozen.has(row.id)}`), sent: JSON.stringify(sync) !== this.lastSent });
+    if (tempFlushes.length > 16) tempFlushes.shift();
     const text = JSON.stringify(sync);
     if (text !== this.lastSent) {
       this.lastSent = text;

@@ -98,6 +98,7 @@ test.afterEach(async () => {
       });
       const pointer = () => app!.evaluate(({ BrowserWindow, screen }) => ({ cursor: screen.getCursorScreenPoint(), bounds: BrowserWindow.getAllWindows()[0]!.getContentBounds() }));
       console.log(JSON.stringify({ event: "temp.layers", dom: await describe(), native: await pointer() }));
+      console.log(JSON.stringify({ event: "temp.flushes", flushes: await shell.evaluate(() => (window as unknown as { __temp511?: unknown[] }).__temp511 ?? null) }));
       await app.evaluate(({ BrowserWindow }) => BrowserWindow.getAllWindows()[0]!.webContents.invalidate());
       console.log(JSON.stringify({ ts: new Date().toISOString(), event: "temp.after_invalidate", raf_ms: await frame(), shell: await state() }));
       console.log(hostLog(run.env).filter((line) => String(line.event).startsWith("browser.page_visible") || String(line.event).startsWith("browser.window_return")).slice(-4).map((line) => JSON.stringify(line)).join("\n"));
