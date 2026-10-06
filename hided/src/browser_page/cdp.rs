@@ -24,6 +24,9 @@ const KEPT: &[&str] = &[
 /// messages, so the count never drops one a command reads; the byte bound
 /// keeps a page that logs large values from growing the client.
 const MAX_EVENTS: usize = 4096;
+/// Calls one round of `call_all` keeps in flight: the gateway's pending cap
+/// per client (`MAX_PENDING` in `browserCdp.ts`).
+const MAX_BATCH: usize = 32;
 const MAX_EVENT_BYTES: usize = 16 * 1024 * 1024;
 
 #[derive(Debug)]
@@ -129,6 +132,22 @@ impl Cdp {
     /// one each. A call with no answer by the deadline is `Timeout`; the
     /// connection ending is the error of the whole batch.
     pub async fn call_all(
+        &mut self,
+        calls: &[(&str, Value, &str)],
+        timeout: Duration,
+    ) -> Result<Vec<Result<Value, CdpError>>, CdpError> {
+        // The gateway keeps `MAX_PENDING` (32) commands in flight per client
+        // and answers each as its page does, not in order, so a batch is one
+        // round of concurrent calls, each under the same deadline from the
+        // moment it was sent; a larger one goes in rounds of that size.
+        let mut answers = Vec::with_capacity(calls.len());
+        for chunk in calls.chunks(MAX_BATCH) {
+            answers.extend(self.call_round(chunk, timeout).await?);
+        }
+        Ok(answers)
+    }
+
+    async fn call_round(
         &mut self,
         calls: &[(&str, Value, &str)],
         timeout: Duration,

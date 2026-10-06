@@ -92,6 +92,13 @@ pub struct Frames {
     pub slow_once_on_wait: bool,
     /// What the top document answers a `waitText` with.
     pub wait_found: bool,
+    /// Whether the first healthy frame finds the text a `waitText` asks for
+    /// (the others never do).
+    pub frame_wait_found: bool,
+    /// The first healthy frame leaves its first `Page.enable` unanswered.
+    pub slow_enable_once: bool,
+    /// The first healthy frame leaves its first snapshot read unanswered.
+    pub slow_read_once: bool,
 }
 
 /// A top document with `hung` frames that never answer `Page.enable` and
@@ -103,6 +110,8 @@ pub fn page_with_frames(
 ) -> impl FnMut(&Value) -> Vec<Value> + Send {
     let mut held: std::collections::HashMap<&'static str, Vec<Value>> = Default::default();
     let mut waits = 0;
+    let mut enables_of_first = 0;
+    let mut reads_of_first = 0;
     move |request| {
         let session = request["sessionId"].as_str().unwrap_or("");
         let expression = request["params"]["expression"].as_str().unwrap_or("");
@@ -141,7 +150,15 @@ pub fn page_with_frames(
             ("Target.setAutoAttach", _) => vec![reply(request, json!({}))],
             ("Page.enable", "f1") => before.clone().into_iter().collect(),
             ("Page.enable", session) if session.starts_with('f') => Vec::new(),
-            ("Page.enable", _) => answer("enable", reply(request, json!({}))),
+            ("Page.enable", _) => {
+                if healthy == Some(1) {
+                    enables_of_first += 1;
+                    if frames.slow_enable_once && enables_of_first == 1 {
+                        return Vec::new();
+                    }
+                }
+                answer("enable", reply(request, json!({})))
+            }
             ("Runtime.evaluate", _) if expression == "0" => vec![reply(
                 request,
                 json!({"result": {"type": "number", "value": 0}}),
@@ -196,10 +213,17 @@ pub fn page_with_frames(
                     if frames.stops_on_read || frames.slow_once_on_wait && n == 1 && waits == 1 {
                         return Vec::new();
                     }
-                    return vec![reply(
-                        request,
-                        json!({"result": {"value": {"found": frames.slow_once_on_wait}}}),
-                    )];
+                    let found = frames.slow_once_on_wait || frames.frame_wait_found && n == 1;
+                    return answer(
+                        "wait",
+                        reply(request, json!({"result": {"value": {"found": found}}})),
+                    );
+                }
+                if n == 1 {
+                    reads_of_first += 1;
+                    if frames.slow_read_once && reads_of_first == 1 {
+                        return Vec::new();
+                    }
                 }
                 if frames.stops_on_read {
                     return Vec::new();
