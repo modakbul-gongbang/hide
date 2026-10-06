@@ -1320,13 +1320,47 @@ fn an_outside_pull_request_takes_a_running_task_and_its_merge_finishes_it() {
     h.advance(3 * MINUTE_MS);
     h.engine.tick();
     assert_eq!(h.state(&f, &t), TaskState::Done);
-    assert_eq!(
-        h.world().removed,
-        vec![t.clone()],
-        "its merge frees the worktree"
-    );
-    assert!(h.world().branches_deleted.is_empty());
     tick_until(&mut h, &f, &after, TaskState::Running);
+    // The stopped worker's own work was never merged: its worktree keeps the
+    // keep period from the takeover, not from the Task's last change.
+    h.advance(6 * DAY_MS);
+    h.engine.tick();
+    assert!(h.world().removed.is_empty(), "the worktree stays 7 days");
+    h.advance(2 * DAY_MS);
+    h.engine.tick();
+    assert_eq!(h.world().removed, vec![t.clone()]);
+}
+
+#[test]
+fn a_task_waiting_long_on_a_person_keeps_its_worktree_after_an_outside_pull_request() {
+    let mut h = Bench::new(true);
+    let f = github_factory(&mut h, MergeMode::Auto);
+    let t = h.ready("Waits", &[]);
+    let pane = h.task(&f, &t).worker.unwrap().pane.unwrap();
+    h.engine.letter(Inbound {
+        id: "letter-1".into(),
+        factory: f.clone(),
+        sender_pane: pane,
+        kind: "block".into(),
+        body: "Which license?".into(),
+    });
+    assert_eq!(h.state(&f, &t), TaskState::Blocked);
+    h.advance(9 * DAY_MS);
+    let issue = h.task(&f, &t).issue.unwrap();
+    h.world().outside.push_back(OutsideEvent::ClosingPr {
+        issue,
+        pr: 56,
+        url: "pr/56".into(),
+        merged: false,
+    });
+    h.advance(3 * MINUTE_MS);
+    h.engine.tick();
+    assert_eq!(h.state(&f, &t), TaskState::Outside);
+    h.advance(6 * DAY_MS);
+    h.engine.tick();
+    assert!(h.world().removed.is_empty(), "{:?}", h.world().removed);
+    let revived = h.op(Command::Revive { task: t.clone() });
+    assert_eq!(revived["ok"], true, "{revived}");
 }
 
 #[test]

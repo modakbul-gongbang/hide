@@ -3012,6 +3012,25 @@ impl Engine {
         }
     }
 
+    /// An outside pull request takes the Task over (D-27, B50): a worker is
+    /// stopped and its worktree kept for the keep period from now, so the
+    /// work it had not reported survives until then.
+    fn follow_outside(&mut self, factory_id: &str, task: &Task) {
+        let Some(worker) = &task.worker else { return };
+        if task.purged {
+            return;
+        }
+        self.stop_worker(factory_id, &task.id, worker);
+        let now = self.now();
+        self.with_task(factory_id, &task.id, |t| {
+            t.cancelled_at = Some(now);
+            t.cancelled_from = Some(t.state);
+            if let Some(w) = &mut t.worker {
+                w.asleep = true;
+            }
+        });
+    }
+
     fn release_worker(&mut self, factory_id: &str, id: &str) {
         let Some(worker) = self.task(factory_id, id).and_then(|t| t.worker.clone()) else {
             return;
@@ -4463,8 +4482,8 @@ impl Engine {
                             json!({"pr": pr}),
                         );
                         self.cancel_verification(factory_id, &task.id);
+                        self.follow_outside(factory_id, &task);
                         self.set_state(factory_id, &task.id, TaskState::Done);
-                        self.release_worker(factory_id, &task.id);
                     }
                     TaskState::Outside => {}
                     TaskState::Running
@@ -4473,18 +4492,8 @@ impl Engine {
                     | TaskState::Paused
                     | TaskState::MergeWaiting
                     | TaskState::Stopped => {
-                        // Stop the worker; the worktree stays 7 days (B50).
                         self.cancel_verification(factory_id, &task.id);
-                        if let Some(worker) = &task.worker {
-                            self.stop_worker(factory_id, &task.id, worker);
-                        }
-                        self.with_task(factory_id, &task.id, |t| {
-                            t.cancelled_at = Some(t.updated_at);
-                            t.cancelled_from = Some(t.state);
-                            if let Some(w) = &mut t.worker {
-                                w.asleep = true;
-                            }
-                        });
+                        self.follow_outside(factory_id, &task);
                         self.set_state(factory_id, &task.id, TaskState::Outside);
                         self.notice(factory_id, &task.id, &format!("밖의 PR이 이 Task의 issue를 닫습니다: {url}. worker를 멈췄고 worktree는 7일 남습니다. 되살리려면 hide factory revive {}", task.display_id()));
                     }
@@ -4505,9 +4514,9 @@ impl Engine {
                     return;
                 }
                 if task.state == TaskState::Outside {
-                    // Its outside PR closed the issue: follow it to done.
+                    // Its outside PR closed the issue: follow it to done; the
+                    // stopped worker's worktree keeps its period (B50).
                     self.set_state(factory_id, &task.id, TaskState::Done);
-                    self.release_worker(factory_id, &task.id);
                     return;
                 }
                 self.cancel(factory_id, &task.id);
@@ -4917,8 +4926,8 @@ impl Engine {
                     .factories
                     .get(&t.factory)
                     .map_or(7 * DAY_MS, |f| f.config.cancel_keep_ms);
-                t.state == TaskState::Done
-                    || (matches!(t.state, TaskState::Cancelled | TaskState::Outside)
+                (t.state == TaskState::Done && t.cancelled_at.is_none())
+                    || (kept_for_revive(t)
                         && t.cancelled_at
                             .is_some_and(|at| now.saturating_sub(at) > keep))
             })
@@ -5233,7 +5242,7 @@ impl Engine {
         let now = self.now();
         let expired: Vec<(String, String)> = self
             .all_tasks()
-            .filter(|t| matches!(t.state, TaskState::Cancelled | TaskState::Outside) && !t.purged)
+            .filter(|t| kept_for_revive(t) && !t.purged)
             .filter(|t| {
                 let keep = self
                     .factories
@@ -5254,6 +5263,17 @@ impl Engine {
             self.with_task(&factory, &id, |t| t.purged = true);
             self.record(&factory, Some(&id), "cleanup.cancelled", json!({}));
         }
+    }
+}
+
+/// A Task whose worktree waits out the keep period: cancelled, taken over
+/// by an outside pull request, or done through one (its worker's own work was
+/// never merged).
+fn kept_for_revive(task: &Task) -> bool {
+    match task.state {
+        TaskState::Cancelled | TaskState::Outside => true,
+        TaskState::Done => task.cancelled_at.is_some(),
+        _ => false,
     }
 }
 

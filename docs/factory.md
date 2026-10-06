@@ -60,7 +60,8 @@ The engine opens the store when a store file already exists at start, or on the 
 A run's log keeps only its last 1 MiB when the run ends.
 
 The Factory deletes no Task, question, decision, discovery, attempt or attachment.
-It removes a worker's worktree and pane when the Task is done and main verification has passed or an outside pull request merged it, when a cancelled Task or one an outside pull request took passes its keep period, and, only under disk pressure, for finished Tasks.
+It removes a worker's worktree and pane when the Task is done and main verification has passed, when a cancelled Task or one an outside pull request took passes its keep period, and, only under disk pressure, for finished Tasks.
+An outside pull request that takes a Task stops its worker and starts the keep period at that moment; the worktree waits the period out even when that pull request merges and the Task is done, because the worker's own work was never merged.
 The removal runs from the repository's main checkout through the host's guarded worktree removal.
 A finished Task keeps its branch; a cancelled or outside Task loses its local branch with its worktree, and the Factory never deletes a remote branch.
 A finished Task folds out of the board's Done column after 3 days and out of every list after 90 days; its page still opens.
@@ -331,7 +332,7 @@ A failed read backs off 1, 2, 5, 15 and then 30 minutes on a rate-limit, server 
 | What the Factory sees | What it does |
 | --- | --- |
 | A pull request the Factory did not open closes a Task's issue, and it is open | The Task becomes `outside`. A running worker is stopped, its worktree stays for the keep period, and a notice offers `revive`. |
-| That pull request merges | The Task is `done`, and a dependent Task's predecessor counts as merged. |
+| That pull request merges | The Task is `done`, and a dependent Task's predecessor counts as merged. A stopped worker's worktree still waits out its keep period. |
 | The issue closes with no pull request, or the `factory` label is removed | The Task is cancelled with a notice, kept for the keep period. |
 | A person edits the issue body | A Task before its start goes back to `drafting` and is reviewed again. A running Task gets a scope-change question. |
 | A person labels an issue the Factory does not hold | A new Task is drafted from the issue, and a person confirms its card in the inbox before it is Ready. The body is not edited. |
