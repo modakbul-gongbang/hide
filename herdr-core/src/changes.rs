@@ -255,7 +255,7 @@ pub fn read(request: &ChangesRequest) -> ChangesSnapshot {
             .ok()
             .map(path::RelPath::into_string)
     };
-    let selected = request.selected_path.as_deref().and_then(&relative);
+    let selected = request.selected_path.as_deref().and_then(relative);
     // A View diff outside the folder History reads cannot be taken here: the
     // helper answers only paths under that folder, and a Workspace's views
     // are shared by every Project registered in its checkout. Its display
