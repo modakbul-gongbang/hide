@@ -232,6 +232,60 @@ fn review_questions_hold_the_task_until_answered_and_re_adding_is_idempotent() {
     assert_eq!(h.writes("issue.create").len(), 1);
 }
 
+#[test]
+fn a_prd_changed_while_running_becomes_the_task_s_only_once_approved() {
+    let mut h = Bench::new(false);
+    let f = h.factory(true);
+    let t = h.ready("Spec", &[]);
+    assert_eq!(h.state(&f, &t), TaskState::Running);
+    let prd = h.dir.path().join("prd.md");
+    std::fs::write(&prd, "# v2\n").unwrap();
+    let mut changed = card("Spec", &[]);
+    changed.goal = Some("Make Spec work the v2 way".into());
+    changed.prd = Some(prd.to_string_lossy().into_owned());
+    let readd = |h: &mut Bench, card: CardInput| {
+        h.op(Command::Add {
+            project: None,
+            task: Some(t.clone()),
+            issue: None,
+            card,
+            producer_pane: None,
+        })
+    };
+    readd(&mut h, changed.clone());
+    readd(&mut h, changed);
+    let before = h.task(&f, &t);
+    assert_eq!(
+        before.card.goal, "Make Spec work",
+        "nothing changes before approval"
+    );
+    assert!(before.attachments.is_empty());
+    assert_eq!(
+        before.open_questions().count(),
+        1,
+        "a second re-add replaces the first"
+    );
+
+    let question = open_question(&h, &f, &t);
+    h.op(Command::Answer {
+        task: t.clone(),
+        question: Some(question.id),
+        choice: Some("approve".into()),
+        text: None,
+    });
+    let after = h.task(&f, &t);
+    assert_eq!(after.card.goal, "Make Spec work the v2 way");
+    assert_eq!(after.attachments.len(), 1);
+    let path = after.attachments[0].path.clone();
+    assert_eq!(std::fs::read_to_string(&path).unwrap(), "# v2\n");
+    let told = h
+        .world()
+        .messages
+        .iter()
+        .any(|(task, body)| *task == t && body.contains(&path) && body.contains("the v2 way"));
+    assert!(told, "the worker gets the new card and the PRD copy");
+}
+
 // --------------------------------------------------------------------- DAG
 
 /// Six Tasks with a fork and a join run in topological order with at most

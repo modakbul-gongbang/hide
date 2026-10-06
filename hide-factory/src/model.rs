@@ -477,6 +477,12 @@ impl IssueRef {
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct CardChange {
+    pub card: Card,
+    pub attachment: Option<Attachment>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Attachment {
     /// Absolute path of the private copy the worker reads.
     pub path: String,
@@ -507,8 +513,13 @@ pub enum QuestionKind {
     Default,
     /// A worker question that cannot proceed without an answer (B27).
     Blocking,
-    /// A scope change: a person approves a wider scope (B29 ③).
-    ScopeChange,
+    /// A scope change: a person approves a wider scope (B29 ③). A card or
+    /// PRD added again while the Task runs carries it here and becomes the
+    /// Task's on approval (B16).
+    ScopeChange {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        change: Option<Box<CardChange>>,
+    },
     /// The new-task cap was reached (B31).
     NewTaskCap,
     /// A worker proposed a new Task outside autonomy (B30).

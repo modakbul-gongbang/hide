@@ -79,6 +79,8 @@ fn fixture() -> Fixture {
     git(&project, &["init", "--quiet", "--initial-branch=main"]);
     git(&project, &["config", "user.email", "factory@example.com"]);
     git(&project, &["config", "user.name", "Factory"]);
+    // The machine's own signing setting must not reach the fixture.
+    git(&project, &["config", "commit.gpgsign", "false"]);
     write(&project, "a.txt", "one\n");
     write(&project, "Makefile", "test:\n\ttrue\n");
     git(&project, &["add", "."]);

@@ -1334,13 +1334,7 @@ impl Engine {
             if unchanged {
                 return Ok(self.add_answer(factory_id, id));
             }
-            if let Some(attachment) = attachment {
-                self.with_task(factory_id, id, |task| {
-                    task.flags.push(format!(
-                        "pending PRD v{} {}",
-                        attachment.version, attachment.sha256
-                    ));
-                });
+            if let Some(attachment) = &attachment {
                 self.record(
                     factory_id,
                     Some(id),
@@ -1348,11 +1342,26 @@ impl Engine {
                     json!({"version": attachment.version}),
                 );
             }
+            // A newer re-add replaces a pending one rather than queueing two.
+            self.with_task(factory_id, id, |task| {
+                for question in task.questions.iter_mut().filter(|q| {
+                    q.open() && matches!(&q.kind, QuestionKind::ScopeChange { change: Some(_) })
+                }) {
+                    question.answer = Some(Answer {
+                        text: "replaced by a newer re-add".into(),
+                        chose: None,
+                        relayed_by: "re-add".into(),
+                        at: now,
+                    });
+                }
+            });
             self.add_question(
                 factory_id,
                 id,
                 QuestionOrigin::Engine,
-                QuestionKind::ScopeChange,
+                QuestionKind::ScopeChange {
+                    change: Some(Box::new(CardChange { card, attachment })),
+                },
                 "실행 중에 카드나 PRD가 바뀌었습니다. 새 범위를 승인할까요?",
                 "approve",
                 Some("지금 범위로 진행".into()),
@@ -1868,20 +1877,34 @@ impl Engine {
                 }
                 self.advance_merge(factory, id);
             }
-            QuestionKind::ScopeChange => {
+            QuestionKind::ScopeChange { change } => {
                 let approved = decision == "approve";
+                let mut prd = None;
                 self.with_task(factory, id, |task| {
                     if approved {
                         task.scope_approved = true;
-                        if let Some(flag) =
-                            task.flags.iter().position(|f| f.starts_with("pending PRD"))
-                        {
-                            task.flags.remove(flag);
+                        if let Some(change) = change {
+                            task.card = change.card.clone();
+                            if let Some(attachment) = &change.attachment {
+                                prd = Some(format!(
+                                    "\nPRD v{}: {} (읽기 전용)",
+                                    attachment.version, attachment.path
+                                ));
+                                task.attachments.push(attachment.clone());
+                            }
                         }
                     }
                 });
+                let card = match (approved, change) {
+                    (true, Some(_)) => self
+                        .task(factory, id)
+                        .map(|t| format!("\n새 카드:\n{}", card_text(&t.card)))
+                        .unwrap_or_default(),
+                    _ => String::new(),
+                };
+                let prd = prd.unwrap_or_default();
                 self.reply(factory, id, target.letter.as_deref(), &if approved {
-                    format!("Factory: 범위 변경이 승인되었습니다. {text}")
+                    format!("Factory: 범위 변경이 승인되었습니다. {text}{card}{prd}")
                 } else {
                     format!("Factory: 범위 변경은 승인되지 않았습니다. 지금 범위 안에서 진행하세요. {text}")
                 });
@@ -2240,7 +2263,7 @@ impl Engine {
                     factory,
                     id,
                     QuestionOrigin::Worker,
-                    QuestionKind::ScopeChange,
+                    QuestionKind::ScopeChange { change: None },
                     &format!("범위 변경: {text}"),
                     "approve",
                     Some("범위를 넓히지 않고 진행".into()),
@@ -2723,8 +2746,10 @@ impl Engine {
         let now = self.now();
         // Questions with a default wait only here, until answer or deadline (B26).
         let waiting_question = task.open_questions().any(|q| {
-            matches!(q.kind, QuestionKind::Default | QuestionKind::ScopeChange)
-                && q.deadline.is_none_or(|d| d > now)
+            matches!(
+                q.kind,
+                QuestionKind::Default | QuestionKind::ScopeChange { .. }
+            ) && q.deadline.is_none_or(|d| d > now)
         });
         if waiting_question {
             return;
@@ -2814,7 +2839,7 @@ impl Engine {
         if task.open_questions().any(|q| {
             !matches!(
                 q.kind,
-                QuestionKind::Notice | QuestionKind::Default | QuestionKind::ScopeChange
+                QuestionKind::Notice | QuestionKind::Default | QuestionKind::ScopeChange { .. }
             )
         }) {
             gates.push(Gate::OpenQuestion);
@@ -3887,7 +3912,7 @@ impl Engine {
             for question in task.open_questions() {
                 if matches!(
                     question.kind,
-                    QuestionKind::Default | QuestionKind::ScopeChange
+                    QuestionKind::Default | QuestionKind::ScopeChange { .. }
                 ) && question.deadline.is_some_and(|d| d <= now)
                 {
                     expired.push((
@@ -4425,7 +4450,7 @@ impl Engine {
                             factory_id,
                             &task.id,
                             QuestionOrigin::Engine,
-                            QuestionKind::ScopeChange,
+                            QuestionKind::ScopeChange { change: None },
                             "사람이 issue 본문을 고쳤습니다. 새 범위를 승인할까요?",
                             "approve",
                             Some("지금 범위로 진행".into()),
@@ -5296,6 +5321,21 @@ fn worker_name(factory: &Factory, task: &Task) -> String {
     )
 }
 
+/// The card as a worker reads it: goal, criteria and what is out of scope.
+fn card_text(card: &Card) -> String {
+    let mut text = format!("목표:\n{}\n\n완료 조건:\n", card.goal);
+    for criterion in &card.criteria {
+        text.push_str(&format!("- {criterion}\n"));
+    }
+    if !card.out_of_scope.is_empty() {
+        text.push_str("\n범위 밖 (하지 마세요):\n");
+        for item in &card.out_of_scope {
+            text.push_str(&format!("- {item}\n"));
+        }
+    }
+    text
+}
+
 /// The worker's first prompt (B22): the card, the attachments, the harness
 /// preset and the Factory's reporting rules.
 pub fn worker_prompt(task: &Task, factory: &Factory, resumed: bool, hide: &str) -> String {
@@ -5308,16 +5348,7 @@ pub fn worker_prompt(task: &Task, factory: &Factory, resumed: bool, hide: &str) 
         task.display_id(),
         task.card.title
     ));
-    prompt.push_str(&format!("목표:\n{}\n\n완료 조건:\n", task.card.goal));
-    for criterion in &task.card.criteria {
-        prompt.push_str(&format!("- {criterion}\n"));
-    }
-    if !task.card.out_of_scope.is_empty() {
-        prompt.push_str("\n범위 밖 (하지 마세요):\n");
-        for item in &task.card.out_of_scope {
-            prompt.push_str(&format!("- {item}\n"));
-        }
-    }
+    prompt.push_str(&card_text(&task.card));
     for attachment in &task.attachments {
         prompt.push_str(&format!("\n첨부 (읽기 전용): {}\n", attachment.path));
     }

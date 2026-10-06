@@ -456,7 +456,7 @@ fn question_kind(kind: &QuestionKind) -> &'static str {
         QuestionKind::Split { .. } => "split",
         QuestionKind::Default => "default",
         QuestionKind::Blocking => "blocking",
-        QuestionKind::ScopeChange => "scope_change",
+        QuestionKind::ScopeChange { .. } => "scope_change",
         QuestionKind::NewTaskCap => "new_task_cap",
         QuestionKind::ProposedTask { .. } => "proposed_task",
         QuestionKind::Action => "action",
@@ -470,7 +470,7 @@ fn question_kind(kind: &QuestionKind) -> &'static str {
 fn answer_result(task: &Task, kind: &QuestionKind, tasks: &BTreeMap<String, Task>) -> String {
     match kind {
         QuestionKind::Blocking => unblocks("worker를 깨워 이어감", task, tasks),
-        QuestionKind::Default | QuestionKind::ScopeChange => {
+        QuestionKind::Default | QuestionKind::ScopeChange { .. } => {
             "기본 행동과 다르면 worker가 반영, 같으면 머지로 감".into()
         }
         QuestionKind::Intake | QuestionKind::ConfirmCard => "남은 질문이 없으면 Ready".into(),
