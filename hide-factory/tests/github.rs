@@ -427,11 +427,35 @@ fn outside_work_is_read_from_issues_and_closing_pull_requests() {
             ),
         );
         hub.prs.insert(9, json!({"number": 9, "url": "pr/9", "state": "OPEN", "headRefName": "someone/fix", "closingIssuesReferences": [{"number": 1}]}));
+        // An open pull request from a fork closes issue 3's held Task's issue
+        // too, but anyone can open one: it takes nothing until merged.
+        hub.prs.insert(10, json!({"number": 10, "url": "pr/10", "state": "OPEN", "headRefName": "fix", "isCrossRepository": true, "closingIssuesReferences": [{"number": 5}]}));
+        hub.issues.insert(
+            5,
+            (
+                "Forked".into(),
+                "<!-- hide-factory: f-1/T-5 -->".into(),
+                "OPEN".into(),
+            ),
+        );
     }
     let held = task("T-1", Some(1));
     let closed = task("T-3", Some(3));
     let gone = task("T-4", Some(4));
-    let events = p.observe(&factory, &[&held, &closed, &gone]).unwrap();
+    let forked = task("T-5", Some(5));
+    let events = p
+        .observe(&factory, &[&held, &closed, &gone, &forked])
+        .unwrap();
+    assert!(
+        !events.iter().any(|event| matches!(
+            event,
+            OutsideEvent::ClosingPr {
+                issue: IssueRef::Github { number: 5 },
+                ..
+            }
+        )),
+        "{events:?}"
+    );
     assert!(
         events.contains(&OutsideEvent::ClosingPr {
             issue: IssueRef::Github { number: 1 },

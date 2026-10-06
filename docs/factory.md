@@ -339,7 +339,7 @@ A failed read backs off 1, 2, 5, 15 and then 30 minutes on a rate-limit, server 
 
 | What the Factory sees | What it does |
 | --- | --- |
-| A pull request the Factory did not open closes a Task's issue, and it is open | The Task becomes `outside`. A running worker is stopped, its worktree stays for the keep period, and a notice offers `revive`. |
+| A pull request the Factory did not open closes a Task's issue, and it is open | A pull request from a fork counts only once it is merged, since anyone can open one. Otherwise the Task becomes `outside`. A running worker is stopped, its worktree stays for the keep period, and a notice offers `revive`. |
 | That pull request merges | The Task is `done`, and a dependent Task's predecessor counts as merged. A stopped worker's worktree still waits out its keep period. |
 | The issue closes with no pull request, or the `factory` label is removed | The Task is cancelled with a notice, kept for the keep period. |
 | A person edits the issue body | A Task before its start goes back to `drafting` and is reviewed again. A running Task gets a scope-change question. |

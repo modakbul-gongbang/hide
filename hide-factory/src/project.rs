@@ -620,7 +620,7 @@ impl TaskSource for SharedProjects {
                 "--limit",
                 "100",
                 "--json",
-                "number,url,state,headRefName,closingIssuesReferences",
+                "number,url,state,headRefName,isCrossRepository,closingIssuesReferences",
             ],
         )?;
         let held: BTreeMap<u64, &&Task> = tasks
@@ -713,6 +713,12 @@ impl TaskSource for SharedProjects {
                         })
                         .filter(|pr| {
                             pr["headRefName"].as_str() != Some(task.branch_slug().as_str())
+                        })
+                        // Anyone can open a pull request from a fork: it takes
+                        // a Task only once a maintainer merged it (D-27).
+                        .filter(|pr| {
+                            pr["state"].as_str() == Some("MERGED")
+                                || pr["isCrossRepository"].as_bool() != Some(true)
                         })
                         .collect();
                     if let Some(pr) = closing
