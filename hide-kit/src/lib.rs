@@ -584,10 +584,12 @@ pub fn status(target: &KitTarget) -> KitReport {
 #[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "state", rename_all = "snake_case")]
 pub enum CodexDaemonOff {
-    /// Codex answered that it is off, and a read afterwards agrees.
+    /// Codex answered that autostart is off, a read afterwards agrees, and
+    /// no daemon answers any more.
     Done,
-    /// The setting is as it was. `reason` is a code the screen turns into a
-    /// line; `detail` is Codex's own words, for the core's log only.
+    /// `reason` is a code the screen turns into a line; `detail` is Codex's
+    /// own words, for the core's log only. Only `StopFailed` leaves the
+    /// setting off; every other reason leaves it as it was.
     Failed {
         reason: CodexDaemonOffFailure,
         #[serde(default)]

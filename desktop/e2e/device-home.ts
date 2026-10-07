@@ -104,11 +104,14 @@ export function seedKitRecord(home: string): void {
 
 /**
  * A `codex` in the account's `~/.local/bin` that has the shared daemon and
- * answers `codex features` the way Codex 0.160 does, so a runner without Codex
- * reads as a machine that has one. The kit only reads the setting
- * (`features list`); `features disable` writes `fake-daemon`, which a spec
- * checks never appears. A machine whose PATH has a real Codex runs that one
- * instead, against this HOME's `.codex`.
+ * answers `codex features` and `codex app-server daemon` the way Codex 0.160
+ * does, so a runner without Codex reads as a machine that has one. The kit
+ * only reads the setting (`features list`) unless the operator turns the
+ * shared server off; `features disable` writes `fake-daemon`, which a spec
+ * checks never appears on its own. The daemon answers while
+ * `fake-daemon-running` exists (`startCodexDaemon`), and `daemon stop` removes
+ * it. A machine whose PATH has a real Codex runs that one instead, against
+ * this HOME's `.codex`.
  */
 function seedCodex(home: string): void {
   const bin = path.join(home, ".local", "bin");
@@ -116,11 +119,14 @@ function seedCodex(home: string): void {
   const script = [
     "#!/bin/sh",
     'state="${CODEX_HOME:-$HOME/.codex}/fake-daemon"',
-    'case "$1 $2" in',
-    "  '--version ') echo 'codex-cli 0.160.0' ;;",
-    "  'features list') echo \"daemon_auto_start    stable  $(cat \"$state\" 2>/dev/null || echo true)\" ;;",
-    "  'features disable') echo false > \"$state\" ;;",
-    "  'features enable') echo true > \"$state\" ;;",
+    'running="${CODEX_HOME:-$HOME/.codex}/fake-daemon-running"',
+    'case "$1 $2 $3" in',
+    "  '--version  ') echo 'codex-cli 0.160.0' ;;",
+    "  'features list ') echo \"daemon_auto_start    stable  $(cat \"$state\" 2>/dev/null || echo true)\" ;;",
+    "  'features disable '*) echo false > \"$state\" ;;",
+    "  'features enable '*) echo true > \"$state\" ;;",
+    "  'app-server daemon version') [ -e \"$running\" ] || { echo 'Error: failed to connect' >&2; exit 1; }; echo '{\"status\":\"running\"}' ;;",
+    "  'app-server daemon stop') rm -f \"$running\" ;;",
     "  *) exit 1 ;;",
     "esac",
     "",
@@ -137,6 +143,16 @@ function seedClaude(home: string): void {
 
 /** Whether a Codex setting the kit must never write was written: the stand-in's `features disable` leaves this file. */
 export const codexDaemonWritten = (home: string) => fs.existsSync(path.join(home, ".codex", "fake-daemon"));
+
+/** Starts the stand-in's shared daemon: `app-server daemon version` answers until `daemon stop`. */
+export const startCodexDaemon = (home: string) => fs.writeFileSync(path.join(home, ".codex", "fake-daemon-running"), "");
+
+/** Whether the stand-in's shared daemon still answers. */
+export const codexDaemonAnswers = (home: string) => fs.existsSync(path.join(home, ".codex", "fake-daemon-running"));
+
+/** The stand-in's autostart setting, `true` until `features disable`. */
+export const codexAutostart = (home: string) => (fs.existsSync(path.join(home, ".codex", "fake-daemon"))
+  ? fs.readFileSync(path.join(home, ".codex", "fake-daemon"), "utf8").trim() === "true" : true);
 
 /**
  * A daemon folder laid out as the app's Contents/Resources: this build's
