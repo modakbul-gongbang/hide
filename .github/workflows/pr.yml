@@ -128,6 +128,7 @@ jobs:
           bash scripts/check-no-workstation-identity.sh
           bash scripts/check-worktree-removal-boundary.sh
           zsh scripts/check-herdr-pin-single-source.sh
+          python3 scripts/check-core-touches-no-machine.py
 
   rust:
     name: rust workspace
@@ -253,7 +254,7 @@ jobs:
       # differently and rebuilt the crates under it: herdr-core compiled three
       # times and compiling took about 6 of the job's 11 minutes (2026-10-05).
       TEST_TARGETS: >-
-        -p hided -p hide-host -p hide-kit -p hide-agent-hooks -p herdr-core -p hide-ai
+        -p hided -p hide-host -p hide-node -p hide-kit -p hide-agent-hooks -p herdr-core -p hide-ai
         --lib --bin hide-agent-hooks
         --test opener_lifecycle --test connect_stop --test handshake --test real_herdr
         --test hook_deadline --test windows_hook_command --test claude_cli
@@ -285,6 +286,7 @@ jobs:
         timeout-minutes: 25
         run: |
           bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'package(hided) & kind(lib) & (test(pane_auth) | test(opener) | test(open_command) | test(workspace_cli))'
+          bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'package(hide-node) & kind(lib)'
           bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'binary_id(hided::opener_lifecycle)'
           bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'package(hide-host) & kind(lib) & test(workspace_bridge)'
           bash scripts/verify-cargo.sh nextest --profile ci $TEST_TARGETS -E 'binary_id(hided::connect_stop)'

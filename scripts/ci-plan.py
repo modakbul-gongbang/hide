@@ -145,6 +145,7 @@ POLICY_ONLY = (
     "scripts/nightly-report.cjs",
     "scripts/check-agent-asset-committed.sh", "scripts/check-capability-readers-off-lock.sh",
     "scripts/check-harness-ignore-anchor.sh", "scripts/check-herdr-pin-single-source.sh",
+    "scripts/check-core-touches-no-machine.py",
     "scripts/check-no-workstation-identity.*", "scripts/check-worktree-removal-boundary.sh",
     "scripts/check-hide-full.sh", "scripts/check-hide-screens.mjs", "scripts/check-typed-live-remote.sh",
     "scripts/check-release-assets.mjs", "scripts/release-draft.mjs",
