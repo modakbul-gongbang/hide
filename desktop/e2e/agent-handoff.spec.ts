@@ -76,7 +76,7 @@ test("handoff roots have provenance without delegation or a focus change in eith
     await expect(page.locator(`[data-pane-children="${parent}"]`)).toHaveCount(0);
     const facts = { parent, roots, state: run.env.HIDE_STATE_DIR, home: run.env.HOME, socket: herdr.socket, head: execFileSync("git", ["rev-parse", "HEAD"], { cwd: path.resolve(__dirname, "../.."), encoding: "utf8" }).trim(), provider: "synthetic native CLI" };
     await screenshot(page, "agent-handoff-roots");
-    await captureNativeWindow(app, "agent-handoff-roots-native", facts);
+    await captureNativeWindow(app, "agent-handoff-roots-native", facts).catch((error) => failures.push(error));
     await openCurrentProjectOverview(page, "fixture");
     await page.locator('[data-lens-tile-button="agents"]').click();
     for (const status of ["turn", "working", "resting"]) await page.locator(`[data-graph-chip="${status}"]`).click();
@@ -84,7 +84,7 @@ test("handoff roots have provenance without delegation or a focus change in eith
     await expect(page.locator(`[data-graph-row="${parent}"]`)).toHaveAttribute("data-depth", "0");
     await expect(page.locator("[data-graph-edge]")).toHaveCount(0);
     await screenshot(page, "agent-handoff-graph");
-    await captureNativeWindow(app, "agent-handoff-graph-native", facts);
+    await captureNativeWindow(app, "agent-handoff-graph-native", facts).catch((error) => failures.push(error));
   } catch (error) {
     failures.push(error);
   } finally {
