@@ -439,6 +439,19 @@ impl Runtime {
                 );
                 return true;
             }
+            if matches!(
+                &payload.request,
+                RemoteControlRequest::TogglePaneZoom { .. }
+            ) && remote_pane_alone_unzoomed(&session, &pane_id)
+            {
+                self.push_diagnostic(
+                    "remote.control.zoom_single_pane",
+                    format!(
+                        "Pane {pane_id} on {target_id} is its tab's only pane; zoom was not sent"
+                    ),
+                );
+                return true;
+            }
         }
 
         // The Workspace that holds the agent or tab the request chooses,
